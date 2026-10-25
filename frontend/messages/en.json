@@ -1437,6 +1437,8 @@
   "chat_invite_error_add_lock_busy": "Another member is already adding someone to this conversation. Try again in a moment.",
   "chat_invite_error_no_device_added": "Nobody was added: none of their devices could be invited.",
   "chat_invite_error_commit_race_lost": "The conversation changed at the same moment: nobody was added. Try again.",
+  "chat_invite_error_removed_meanwhile": "Nobody was added: a person you invited was just removed from the conversation by another member.",
+  "chat_invite_error_tree_unconfirmed": "Nobody was added: the conversation's state could not be checked. Try again.",
   "chat_invite_error_failed": "The invitation failed. Try again.",
   "common_you_label": "You",
   "chat_group_no_members_label": "No members to display.",

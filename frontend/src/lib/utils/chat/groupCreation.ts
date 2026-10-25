@@ -17,7 +17,7 @@ import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
-import { addDevicesRebuildingOnRace } from './commitRace';
+import { AddAbortedError, addDevicesRebuildingOnRace } from './commitRace';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -205,6 +205,7 @@ export async function createNewGroup(
         const raced = await addDevicesRebuildingOnRace(
           mlsService,
           groupId,
+          userId,
           ownDevices.map((d) => ({ ...d, userId })),
           log
         );
@@ -319,6 +320,16 @@ export type BulkAdditionRefusal =
    * so it was not rebuilt: nothing was added, the invite can be retried.
    */
   | 'commit-race-lost'
+  /**
+   * A person on the roster when the invitation began was taken off it by a concurrent Remove while
+   * the Add was being rebuilt: the invitation stopped rather than undo that removal. Nothing added.
+   */
+  | 'removed-meanwhile'
+  /**
+   * The tree could not be confirmed at the server's epoch, so which invited devices already hold a
+   * leaf is unknown: nothing was staged, the invite can be retried.
+   */
+  | 'tree-unconfirmed'
   /** Something threw before the commit merged (logged). */
   | 'failed';
 
@@ -434,10 +445,20 @@ async function processBulkAddition(
       // a refusal whose catch-up moved the epoch is staged again on the tree that won, offering only
       // the devices still without a leaf (CC-1, CC-4). Every candidate is excluded from the commit
       // broadcast (the added subset receives the Welcome instead).
-      const raced = await addDevicesRebuildingOnRace(mlsService, conversation.id, allDevices, log);
+      //
+      // A REBUILD RE-CONFIRMS THE GESTURE'S PREMISE FIRST (`rosterPremise`): the commit that won may
+      // be a Remove of the very person invited, and an invitation must never undo a removal.
+      const raced = await addDevicesRebuildingOnRace(
+        mlsService,
+        conversation.id,
+        userId,
+        allDevices,
+        log,
+        await rosterPremise(mlsService, conversation.id, targetUsers, log)
+      );
       if (raced.kind === 'already-in-tree') {
-        // The commit that won admitted every one of them: their Welcome and registration were its
-        // author's. The Add is done, and nothing is announced twice.
+        // The tree, CONFIRMED at the server's epoch, holds every one of them: their Welcome and
+        // registration were the winning commit's author's. The Add is done, nothing announced twice.
         addedUsers = new Set(allDevices.map((d) => d.userId));
         log(`[SYNC] every invited device already holds a leaf - added by another member's commit`);
         return { kind: 'added', addedUsers: [...addedUsers] };
@@ -516,6 +537,15 @@ async function processBulkAddition(
   } catch (e: any) {
     // The one failure the member can act on, so it reaches them (`inviteMembersToCurrentGroup`).
     if (e instanceof FollowerTabCommitError) throw e;
+    // ABANDONED BEFORE ANY STAGE (`AddAbortedError`): nothing was committed or registered. A premise
+    // that could not be READ is a rebuild that could not be justified - retried like a lost race.
+    if (e instanceof AddAbortedError) {
+      log(`[SYNC] the Add was abandoned before its stage (${e.why}) - nobody added`);
+      console.warn(`[SYNC] processBulkAddition: ${e.message}`);
+      if (e.why === 'removed-meanwhile') return notAdded('removed-meanwhile');
+      if (e.why === 'tree-unconfirmed') return notAdded('tree-unconfirmed');
+      return notAdded('commit-race-lost');
+    }
     // A RACE THAT PROVED NO PROGRESS (`rebuildableRefusal` declined it): another commit held or took
     // the epoch and this device could not see it land, so nothing was added and nothing may be
     // guessed. Its own reason, so the member is told to retry rather than that the Add broke.
@@ -533,6 +563,56 @@ async function processBulkAddition(
   }
   if (addedUsers === null || addedUsers.size === 0) return notAdded('no-device-added');
   return { kind: 'added', addedUsers: [...addedUsers] };
+}
+
+/**
+ * The premise of a member's invitation, re-checked before each REBUILD of its Add
+ * (`addDevicesRebuildingOnRace`): every invited person who was on the roster when the invitation
+ * began is still on it. A rebuild exists because another commit won, and that commit may be a Remove
+ * of the very person invited (an approved join ask declined by another member, a member's device
+ * re-added while an admin removes them) - re-adding them would undo it. The first pass needs no
+ * check: it IS the gesture, made a moment ago.
+ *
+ * The roster is read once now, as the baseline. A baseline or a later read that fails proves
+ * nothing, so a rebuild that needs it is abandoned (`premise-unreadable`) rather than guessed.
+ *
+ * WHAT IT CANNOT SEE: a person absent from the roster at the start, added AND removed by other
+ * commits between two passes - the roster reads the same both times. The rebuild then re-adds them.
+ */
+async function rosterPremise(
+  mlsService: IMlsService,
+  groupId: string,
+  invited: readonly string[],
+  log: (msg: string) => void
+): Promise<(attempt: number) => Promise<void>> {
+  const rosterOf = async (): Promise<Set<string>> =>
+    new Set((await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId));
+  const atStart = await rosterOf().catch((e: unknown) => {
+    log(
+      `[SYNC] roster of ${groupId.slice(0, 8)}... unreadable at the invite: ${String(e).slice(0, 100)}`
+    );
+    return null;
+  });
+  return async (attempt) => {
+    if (attempt === 0) return;
+    if (atStart === null) {
+      throw new AddAbortedError(groupId, 'premise-unreadable', 'no roster baseline to rebuild on');
+    }
+    let now: Set<string>;
+    try {
+      now = await rosterOf();
+    } catch (e) {
+      throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
+    }
+    const removed = invited.filter((u) => atStart.has(u) && !now.has(u));
+    if (removed.length > 0) {
+      throw new AddAbortedError(
+        groupId,
+        'removed-meanwhile',
+        `${removed.join(', ')} left the roster while the Add was rebuilt`
+      );
+    }
+  };
 }
 
 /**
@@ -559,6 +639,7 @@ async function performDirectAdd(
     const raced = await addDevicesRebuildingOnRace(
       mlsService,
       groupId,
+      userId,
       allDevices.map((d) => ({
         ...d,
         userId: contactDeviceIds.has(d.deviceId) ? contact : userId,

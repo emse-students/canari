@@ -518,11 +518,21 @@ describe('BaseMlsService - a commit refused concurrent_commit', () => {
       currentEpoch: 195,
     });
     ctx.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 195, belowFloor: false });
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    vi.spyOn(console, 'log').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
 
     await expect(runCommit(ctx, 'g')).rejects.toBeInstanceOf(CommitRefusedError);
 
     expect(ctx.state.epoch).toBe(195);
     expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
     expect(isInEpochGap('g')).toBe(false);
+    // An ordinary race, so no `[GAP]` narration (the GAP rows assert none) - ONE `[COMMIT]` line.
+    expect(lines.filter((l) => l.includes('[GAP]'))).toEqual([]);
+    expect(lines.filter((l) => l.includes('refused concurrent_commit at epoch 195'))).toHaveLength(
+      1
+    );
+    vi.restoreAllMocks();
   });
 });

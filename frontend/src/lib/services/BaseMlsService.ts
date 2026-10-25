@@ -5097,20 +5097,32 @@ export abstract class BaseMlsService implements IMlsService {
     // a landed winner is applied, so the caller sees the epoch MOVE - the proof its rebuild needs
     // (`rebuildableRefusal`) - and a winner not landed leaves the epoch where it was, so the caller
     // surfaces the refusal instead. No gap is marked unless the log itself shows the server ahead.
+    //
+    // ONE `[COMMIT]` LINE, NEVER A `[GAP]` ONE: this read is part of an ordinary race, and the replay's
+    // own narration (`[GAP] ... healed=false (nothing to replay ...)` on every refusal whose winner had
+    // not landed) named a gap that was never there - noise the GAP rows assert the absence of. Its
+    // lines are kept and carried, as detail, only when the log really shows the server ahead.
     if (reason === 'concurrent_commit' && (activeEpoch === undefined || activeEpoch <= baseEpoch)) {
+      const detail: string[] = [];
       try {
-        const replay = await attemptCommitReplay(this, groupId, this.userId, log);
+        const replay = await attemptCommitReplay(this, groupId, this.userId, (msg) =>
+          detail.push(msg)
+        );
         if (replay.applied > 0) scheduleOutboundMlsPersist();
-        if (!replay.healed && (replay.activeEpoch ?? 0) > this.getEpoch(groupId)) {
+        const now = this.getEpoch(groupId);
+        if (!replay.healed && (replay.activeEpoch ?? 0) > now) {
           markEpochGap(groupId);
-          log(
-            `[GAP] ${short} still behind the commit log after a concurrent_commit refusal - left to the sync watchdog`
+          console.warn(
+            `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: the commit log is ahead (${replay.activeEpoch}) and could not be applied (now ${now}) - left to the sync watchdog: ${detail.join(' | ').slice(0, 240)}`
           );
+          return;
         }
+        log(
+          `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: read the commit log, ${replay.applied} commit(s) applied, now epoch ${now}`
+        );
       } catch (e) {
         console.warn(
-          `[GAP] commit log unreadable for ${short} after a concurrent_commit refusal:`,
-          e
+          `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: the commit log could not be read - nothing to rebuild on: ${String(e).slice(0, 120)}`
         );
       }
       return;

@@ -88,6 +88,8 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
   'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
   'no-device-added': () => m.chat_invite_error_no_device_added(),
   'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
+  'removed-meanwhile': () => m.chat_invite_error_removed_meanwhile(),
+  'tree-unconfirmed': () => m.chat_invite_error_tree_unconfirmed(),
   failed: () => m.chat_invite_error_failed(),
 };
 

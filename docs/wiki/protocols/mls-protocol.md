@@ -600,10 +600,34 @@ ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
   what the gate read while the winner held the lock, so "not ahead" is not an answer. A winner that
   landed is applied - the progress the rebuild needs; one that did not leaves the epoch, and no gap is
   marked. CC-4 lost an Add here: a leaf refresh accepted at epoch 3, the Add beside it refused with
-  `currentEpoch=2`, nothing rebuilt.
+  `currentEpoch=2`, nothing rebuilt. That read says so in ONE `[COMMIT]` line, never in the replay's
+  `[GAP]` narration: an ordinary race is not a gap, and the GAP rows assert the absence of `[GAP]`
+  lines. The replay's lines are carried, as detail, only when the log shows the server ahead and the
+  group is marked.
+- **Every pass re-checks the gesture's premise BEFORE it stages**, because the commit that won may be
+  a Remove of the very person being added - and a rebuild must never re-admit someone a removal just
+  took out. An abandoned Add throws `AddAbortedError` (`commitRace.ts`), typed by `why`: nothing
+  staged, nothing registered, no history served.
+  - The sweep (`confirmPendingAddPremise`, `actions.ts`) re-runs `automaticAdmission` on a tree
+    confirmed at the server's epoch (`not-a-member-device` when the user holds no leaf there - a
+    removed person is a new person again), then re-reads the pending row (`invitation-withdrawn` when
+    a removal's record deleted it), in EVERY pass, the first included.
+  - A member's invitation (`rosterPremise`, `groupCreation.ts`) re-reads the roster before each
+    REBUILD: a person on it when the invitation began and off it now (`removed-meanwhile`) was removed
+    concurrently - an approved join ask another member declined - and the member is told so. What it
+    cannot see: a person absent at the start, added AND removed by other commits between two passes.
+  - A read that would show the premise and fails is `premise-unreadable` - the rebuild is not
+    justified, and the invitation answers `commit-race-lost` (retry).
+- **A device is filtered out of an Add only on a tree CONFIRMED CURRENT** (`readConfirmedTree`,
+  `utils/chat/confirmedTree.ts` - the helper a Remove's "out" reads too, the whole confirmation under
+  the MLS lock like rung 1). A tree behind a Remove still shows the removed device: filtering on it
+  skipped an Add that was owed, and when every candidate was filtered the invitation answered `added`
+  for people nobody added. A tree holding none of the candidates needs no confirmation (the gate
+  decides the commit built on it); one that cannot be confirmed aborts `tree-unconfirmed`, never
+  `added`. All three bulk Adds go through it: an invitation, a 1:1 creation, a group's own devices.
 - **No progress is surfaced, or kept durable - never dropped.** An invitation is a gesture with no
   durable row (a new person enters only by a member's own Add), so its refusal comes back as a typed
-  reason - `commit-race-lost`, `add-lock-busy` - and every reason is a sentence the member sees
+  reason - `commit-race-lost`, `add-lock-busy`, `removed-meanwhile`, `tree-unconfirmed` - and every reason is a sentence the member sees
   (`reportBulkAdditionRefusal`); the member retries. A sweep's pending row is durable: a race without
   progress, or a busy add lock, leaves it `pending` for the next sweep.
 

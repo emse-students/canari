@@ -50,7 +50,8 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
-import { rebuildOnRace } from './commitRace';
+import { AddAbortedError, rebuildOnRace } from './commitRace';
+import { readConfirmedTree } from './confirmedTree';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import {
   DeviceTrustRefusedError,
@@ -88,18 +89,40 @@ export interface JoinApprovalRequest {
  *
  * `unreadable`: the tree could not be read, which proves no membership, so the caller adds nothing
  * and asks no one - another member, or the next sweep, answers.
+ *
+ * `confirmAs` (this device's user) makes a `member-device` answer one read at the SERVER'S epoch
+ * ({@link readConfirmedTree}): a tree behind a Remove still holds the removed person, and an Add
+ * decided on it re-admits someone a member just took out. `newcomer` needs no confirmation - it
+ * adds nobody. A tree that cannot be confirmed is `unreadable`.
  */
 type AutomaticAdmission = 'member-device' | 'newcomer' | 'unreadable';
 
 async function automaticAdmission(deps: {
-  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  mlsService: IMlsService;
   groupId: string;
   userId: string;
   /** The caller's log tag, so the line reads in the sequence it belongs to. */
   tag: string;
   log: (message: string) => void;
+  confirmAs?: string;
 }): Promise<AutomaticAdmission> {
-  const { mlsService, groupId, userId, tag, log } = deps;
+  const { mlsService, groupId, userId, tag, log, confirmAs } = deps;
+  if (confirmAs !== undefined) {
+    const reading = await readConfirmedTree(
+      mlsService,
+      groupId,
+      confirmAs,
+      tag,
+      (identities) => !treeHoldsUser(identities, userId)
+    );
+    if (reading.status === 'unconfirmed') {
+      log(
+        `${tag} Tree of ${groupId.slice(0, 8)}... not confirmed at the server's epoch, cannot say whether ${userId} is a member - nothing added`
+      );
+      return 'unreadable';
+    }
+    return treeHoldsUser(reading.identities, userId) ? 'member-device' : 'newcomer';
+  }
   try {
     const identities = await mlsService.getGroupMemberIdentities(groupId);
     return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
@@ -108,6 +131,67 @@ async function automaticAdmission(deps: {
       `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
     );
     return 'unreadable';
+  }
+}
+
+/**
+ * What an automatic Add of a pending device rests on, re-checked in EVERY pass of its Add
+ * (`rebuildOnRace`) - the commit that won a race may be the Remove of the very person:
+ * - the user is still a MEMBER, read from the tree confirmed at the server's epoch
+ *   ({@link automaticAdmission} with `confirmAs`) - a removed person is a new person again, and only
+ *   a member's gesture brings one in;
+ * - the pending row is still on the server - a removal deletes it, and an Add answering a row that
+ *   is gone answers nobody.
+ *
+ * @throws {@link AddAbortedError} when either no longer holds, or cannot be read: nothing is staged
+ *   and nothing registered.
+ */
+async function confirmPendingAddPremise(deps: {
+  mlsService: IMlsService;
+  groupId: string;
+  inv: PendingInvitationRow;
+  userId: string;
+  myDeviceId: string;
+  log: (message: string) => void;
+}): Promise<void> {
+  const { mlsService, groupId, inv, userId, myDeviceId, log } = deps;
+  const admission = await automaticAdmission({
+    mlsService,
+    groupId,
+    userId: inv.userId,
+    tag: '[PENDING]',
+    log,
+    confirmAs: userId,
+  });
+  if (admission === 'unreadable') {
+    throw new AddAbortedError(groupId, 'tree-unconfirmed', `membership of ${inv.userId} unknown`);
+  }
+  if (admission === 'newcomer') {
+    throw new AddAbortedError(
+      groupId,
+      'not-a-member-device',
+      `${inv.userId} holds no leaf at the server's epoch`
+    );
+  }
+  let rows: PendingInvitationRow[];
+  try {
+    rows = await mlsService.getPendingInvitations(userId, myDeviceId);
+  } catch (e) {
+    throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
+  }
+  const stillPending = rows.some(
+    (r) =>
+      r.groupId === groupId &&
+      r.userId === inv.userId &&
+      r.deviceId === inv.deviceId &&
+      r.status === 'pending'
+  );
+  if (!stillPending) {
+    throw new AddAbortedError(
+      groupId,
+      'invitation-withdrawn',
+      `the pending row of ${inv.deviceId} is gone from the server`
+    );
   }
 }
 
@@ -584,18 +668,22 @@ export async function processPendingInvitations(params: {
           // A LOST RACE IS REBUILT ON PROVEN PROGRESS (`rebuildOnRace`, the rule every gesture
           // shares): the refusal's catch-up moved the epoch, so the Add is staged again on the tree
           // that won. One that proved nothing reaches the catch below, and the row stays pending.
+          // EVERY PASS RE-CHECKS THE PREMISE FIRST (`confirmPendingAddPremise`): the commit that won
+          // may be the Remove of this very person, and a rebuild must never re-admit them.
           packageAdded = targetDevice.keyPackage;
           const device = targetDevice;
           const result = await rebuildOnRace(
             mlsService,
             groupId,
             `the pending Add of ${inv.deviceId}`,
-            () =>
-              mlsService.addMember(
+            async () => {
+              await confirmPendingAddPremise({ mlsService, groupId, inv, userId, myDeviceId, log });
+              return mlsService.addMember(
                 groupId,
                 { keyPackage: device.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
                 [`${inv.userId}:${inv.deviceId}`]
-              ),
+              );
+            },
             log
           );
 
@@ -636,6 +724,14 @@ export async function processPendingInvitations(params: {
           if (e instanceof DeviceTrustRefusedError) {
             reportDeviceTrustRefusal('[PENDING]', groupId, e);
             await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
+            continue;
+          }
+          // THE PREMISE WENT BEFORE ANY STAGE: nothing committed, nothing registered, no history.
+          // The row is left as the server holds it - the next sweep reads it again, or finds it gone.
+          if (e instanceof AddAbortedError) {
+            log(
+              `[PENDING] Add of ${inv.deviceId} to ${groupId.slice(0, 8)}... abandoned before its stage (${e.why}) - nothing committed`
+            );
             continue;
           }
           const errStr = String(e);

@@ -1469,6 +1469,8 @@
   "chat_invite_error_add_lock_busy": "Un autre membre ajoute déjà quelqu'un à cette conversation. Réessayez dans un instant.",
   "chat_invite_error_no_device_added": "Personne n'a été ajouté : aucun de leurs appareils n'a pu être invité.",
   "chat_invite_error_commit_race_lost": "La conversation a changé au même moment : personne n'a été ajouté. Réessayez.",
+  "chat_invite_error_removed_meanwhile": "Personne n'a été ajouté : une personne invitée vient d'être retirée de la conversation par un autre membre.",
+  "chat_invite_error_tree_unconfirmed": "Personne n'a été ajouté : l'état de la conversation n'a pas pu être vérifié. Réessayez.",
   "chat_invite_error_failed": "L'ajout a échoué. Réessayez.",
   "common_you_label": "Vous",
   "chat_group_no_members_label": "Aucun membre à afficher.",

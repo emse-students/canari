@@ -249,6 +249,12 @@ describe('processPendingInvitations - a new user is never added automatically', 
       registerMember: vi.fn().mockResolvedValue(undefined),
       sendWelcome: vi.fn().mockResolvedValue(undefined),
       sendCommit: vi.fn().mockResolvedValue(undefined),
+      // The tree an Add's premise is re-read from (`confirmPendingAddPremise`): at the server's epoch.
+      getEpoch: vi.fn().mockReturnValue(0),
+      fetchCommitsSince: vi
+        .fn()
+        .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
+      runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
       ...overrides,
     } as unknown as IMlsService;
   }

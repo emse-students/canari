@@ -26,14 +26,52 @@ import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
  */
 const G = 'g1';
 
-/** The group as one member holds it, the tree and the epoch moving as the gate makes them. */
-function group() {
-  return { epoch: 2, tree: ['w2:dev-2', 'w1:dev-1'] };
+/**
+ * The group as one member holds it, the tree and the epoch moving as the gate makes them - plus the
+ * server's commit log past the local epoch (`serverAhead`, applied in order by a replay) and whether
+ * that log can be read at all.
+ */
+function group(tree: string[] = ['w2:dev-2', 'w1:dev-1']) {
+  return {
+    epoch: 2,
+    tree,
+    serverAhead: [] as Array<(tree: string[]) => string[]>,
+    logUnreadable: false,
+  };
 }
+
+/** The confirmation an Add's tree goes through (`readConfirmedTree`), on the in-memory group. */
+function confirmable(state: ReturnType<typeof group>) {
+  return {
+    runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+    fetchCommitsSince: vi.fn(async (_g: string, since: number) => {
+      if (state.logUnreadable) throw new Error('commit log unreachable');
+      return {
+        commits: state.serverAhead.map((_, i) => ({ baseEpoch: since + i, proto: 'AQID' })),
+        activeEpoch: state.epoch + state.serverAhead.length,
+        belowFloor: false,
+      };
+    }),
+    settleUnresolvedCommitFromLog: vi.fn(async () => 'none'),
+    processIncomingMessage: vi.fn(async () => {
+      const next = state.serverAhead.shift();
+      if (next) state.tree = next(state.tree);
+      state.epoch += 1;
+      return null;
+    }),
+  };
+}
+
+const without = (user: string) => (tree: string[]) =>
+  tree.filter((leaf) => !leaf.startsWith(`${user}:`));
 
 function inviteHarness() {
   const state = group();
+  /** The server's roster, read before each rebuild (`rosterPremise`). */
+  const roster = new Set(['w1', 'w2']);
   const mlsService = {
+    ...confirmable(state),
+    getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
     getEpoch: vi.fn(() => state.epoch),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
     registerMember: vi.fn(async () => {}),
@@ -68,7 +106,7 @@ function inviteHarness() {
     saveConversation: vi.fn(async () => {}),
     log: vi.fn(),
   };
-  return { state, mlsService, deps };
+  return { state, roster, mlsService, deps };
 }
 
 describe('inviteMembersToGroup - a lost commit race', () => {
@@ -126,6 +164,50 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(h.mlsService.sendWelcome).not.toHaveBeenCalled();
   });
 
+  it('B2: a rebuild over a concurrent Remove of the SAME person stops - the removal is never undone', async () => {
+    const h = inviteHarness();
+    // Approving w4's ask: their seat is on the roster when the invitation begins.
+    h.roster.add('w4');
+    h.mlsService.addMembersBulk.mockImplementationOnce(async () => {
+      // Another member declined w4 meanwhile: the roster row went, and their commit took the epoch.
+      h.roster.delete('w4');
+      h.state.epoch = 3;
+      throw new CommitRefusedError('epoch_mismatch', 2, 3);
+    });
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'removed-meanwhile' });
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(h.state.tree).not.toContain('w4:w4-dev');
+    expect(h.mlsService.registerMember).not.toHaveBeenCalledWith(G, 'w4');
+  });
+
+  it('B3: a device a STALE tree still shows is not filtered - the tree is caught up, and the Add is made', async () => {
+    const h = inviteHarness();
+    // This device never applied the Remove that took w4's device out: its tree still shows it.
+    h.state.tree.push('w4:w4-dev');
+    h.state.serverAhead.push(without('w4'));
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(h.mlsService.processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['w4'] });
+    expect(h.mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('B3: a tree that cannot be confirmed never answers `added` for people nobody added', async () => {
+    const h = inviteHarness();
+    h.state.tree.push('w4:w4-dev');
+    h.state.logUnreadable = true;
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'tree-unconfirmed' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
   it('a busy add lock is answered as its own reason, never as an Add', async () => {
     const h = inviteHarness();
     h.mlsService.acquireAddLock.mockResolvedValue(false);
@@ -143,8 +225,9 @@ function readyConversation(id: string): Conversation {
 
 /** A sweep of one pending row: a device of `w4`, a user the tree already holds. */
 function sweepHarness() {
-  const state = { epoch: 2, tree: ['w2:dev-2', 'w4:old-phone'] };
+  const state = group(['w2:dev-2', 'w4:old-phone']);
   const mlsService = {
+    ...confirmable(state),
     getDeviceId: vi.fn(() => 'dev-2'),
     getEpoch: vi.fn(() => state.epoch),
     getLocalGroups: vi.fn(() => [G]),
@@ -217,6 +300,50 @@ describe('processPendingInvitations - a lost commit race', () => {
     expect(h.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
     // Read as the race it is: the sweep asks whether the invitation was fulfilled meanwhile.
     expect(h.mlsService.getDeviceMemberships).toHaveBeenCalledWith('w4', 'w4-new');
+  });
+
+  it('B1: the commit that won REMOVED the person - the rebuild stops, nothing staged or registered', async () => {
+    const h = sweepHarness();
+    h.mlsService.addMember.mockImplementationOnce(async () => {
+      // An admin's Remove of w4 took the epoch; the refusal's catch-up applied it.
+      h.state.tree = without('w4')(h.state.tree);
+      h.state.epoch = 3;
+      throw new CommitRefusedError('epoch_mismatch', 2, 3);
+    });
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(h.state.tree).not.toContain('w4:w4-new');
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
+    expect(h.mlsService.sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('B1: the pending row was withdrawn meanwhile (the record of a removal) - the rebuild stops', async () => {
+    const h = sweepHarness();
+    h.mlsService.addMember.mockImplementationOnce(async () => {
+      // The removal's record landed (the row is gone); its commit is not applied here yet.
+      h.mlsService.getPendingInvitations.mockResolvedValue([]);
+      h.state.epoch = 3;
+      throw new CommitRefusedError('epoch_mismatch', 2, 3);
+    });
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
+    expect(h.mlsService.sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('B1: a tree BEHIND the Remove of the person is caught up before the first stage - no Add', async () => {
+    const h = sweepHarness();
+    h.state.serverAhead.push(without('w4'));
+
+    await h.run();
+
+    expect(h.mlsService.processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.addMember).not.toHaveBeenCalled();
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
   });
 
   it('a busy add lock leaves the row pending - nothing is retired or staged', async () => {
