@@ -62,6 +62,20 @@ const outcome = (p) =>
   );
 const loggedOut = async (cx) => (await evaluate(cx, LOGIN_SHOWING)) === true;
 
+/**
+ * Waits for the gesture's commit to be HELD, and when it never comes, says what the GESTURE did. A
+ * pick that failed is otherwise swallowed by `outcome` and the row reports only "1 held request(s)
+ * never happened" (OFF-5, 2026-10-25: the app logged nothing at all, and the cause was unreadable).
+ */
+async function awaitHeldOrSay(f, g, timeoutMs) {
+  try {
+    await f.awaitHeld(1, timeoutMs);
+  } catch (e) {
+    const settled = await Promise.race([g, new Promise((r) => setTimeout(() => r({ pending: true }), 1000))]);
+    throw new Error(`${String(e?.message ?? e)}; the gesture: ${JSON.stringify(settled)}`);
+  }
+}
+
 /** Restores a cut and waits for the gateway; the ms it took, or null. */
 async function restoreAndReconnect(cx, restore, timeoutMs = 45_000) {
   const before = cx.events.length;
@@ -91,7 +105,7 @@ const ACTIONS = {
     const rules = [{ ...COMMIT_POST, fault: 'hold once' }];
     const f = await armFault(W1, rules);
     const g = outcome(addMembers(W1, [c.name(spec.subject)]));
-    await f.awaitHeld(1, 45_000);
+    await awaitHeldOrSay(f, g, 45_000);
     const cutW1 = await cutHard(W1);
     await f.fail();
     const unknown = await awaitLine(W1, resubmissionLine(c.group.id, c.fromEpoch, 'unknown'), 30_000);
@@ -158,7 +172,7 @@ const ACTIONS = {
     const rules = [{ ...COMMIT_POST, fault: 'hold-answer once' }];
     const f = await armFault(A1, rules);
     const g = outcome(addMembers(A1, [c.name(spec.subject)]));
-    await f.awaitHeld(1, 60_000);
+    await awaitHeldOrSay(f, g, 60_000);
     radios(false);
     let unknown = null;
     let returnedAt = null;
