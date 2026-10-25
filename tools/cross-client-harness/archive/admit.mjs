@@ -1,7 +1,7 @@
 /**
  * THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - a group link, the ask it raises, and who may answer it.
  *
- *   bun archive/admit.mjs --row ADM-1|ADM-2|ADM-3|ADM-4|ADM-8   # browsers
+ *   bun archive/admit.mjs --row ADM-1|ADM-2|ADM-3|ADM-4|ADM-8|ADM-9|ADM-10   # browsers
  *   bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7               # A1 on the v1.4.0 APK (class B)
  *
  * `docs/wiki/cross-client-campaign-1-4-1.md` section 4.2; the table, the waiting seat's route table
@@ -27,7 +27,9 @@ import {
   probeOwn,
   raceOwn,
   rateLimitedOwn,
+  reinviteOwn,
   seatState,
+  staleAddOwn,
 } from '../admitrows.mjs';
 import { apiAt, apiGet, apiPost, evaluate, goto, send } from '../chat.mjs';
 import { psql, srvLines } from '../estate.mjs';
@@ -182,6 +184,65 @@ const ACTIONS = {
       members: c.members,
       detail: { follow: w.follow, asks, exclusionsStatus: exclusions.status },
       judge: () => declinedOwn({ asks, after, excluded, listed, shown }),
+    };
+  },
+
+  /** ADM-9: declined, then a NEW link, waiting again, and the Add built after the Decline admits. */
+  async 'ADM-9'(c) {
+    const { decline, approve } = spec.reinvite;
+    await followAndWait(c);
+    const firstAsks = await asksOn(c, c.members);
+    await answerWhereShown(firstAsks, decline, c.user[spec.joiner], 'decline');
+    const declined = await seatReaches(c, c.user[spec.joiner], 'absent', 60_000);
+    // A NEW LINK, minted after the Decline: the old one is the ask that was answered.
+    c.link = await mintGroupLink(seats.seat[c.owner].cx, c.group.name);
+    await closeOverlays(seats.seat[c.owner].cx);
+    const again = await followAndWait(c);
+    const asks = await asksOn(c, c.members);
+    await answerWhereShown(asks, approve, c.user[spec.joiner], 'approve');
+    const admitted = await seatReaches(c, c.user[spec.joiner], 'admitted', 60_000);
+    const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 90_000)) !== null;
+    return {
+      members: admitted.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
+      detail: { firstAsks, asks, follow: again.follow },
+      judge: () => reinviteOwn({ declined, rewaiting: again.waitingSeat, asks, admitted, listed }),
+    };
+  },
+
+  /** ADM-10: the Add's commit held, the Decline settled, then the Add released - it admits nobody. */
+  async 'ADM-10'(c) {
+    const { approve, decline } = spec.stale;
+    await followAndWait(c);
+    const asks = await asksOn(c, c.members);
+    const A = seats.seat[approve];
+    const fa = await armFault(A.cx, [{ ...COMMIT_POST, fault: 'hold once' }]);
+    await answerAsk(A.cx, c.user[spec.joiner], 'approve');
+    const held = await outcome(fa.awaitHeld(1, 45_000));
+    // THE DECLINE LANDS AND SETTLES WHILE THE ADD IS HELD: that order is the whole row.
+    await answerWhereShown(asks, decline, c.user[spec.joiner], 'decline');
+    const declined = await seatReaches(c, c.user[spec.joiner], 'absent', 60_000);
+    const declinedAt = now();
+    await fa.release();
+    const trail = [];
+    for (let i = 0; i < 30; i++) {
+      trail.push(seatState(serverView(c.group.id), c.user[spec.joiner]).state);
+      await sleep(1_000);
+    }
+    const records = await fa.disarm();
+    const after = seatState(serverView(c.group.id), c.user[spec.joiner]);
+    const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 5_000)) !== null;
+    const joiner = c.user[spec.joiner].toLowerCase();
+    const gateRefused = srvLines('chat-delivery-service', c.startSince).filter(
+      (l) => l.includes('NOT_ENROLLED') && l.includes(`group=${c.group.id}`) && l.includes(`user=${joiner.slice(0, 8)}`)
+    ).length;
+    const routeEnrolled = srvLines('chat-delivery-service', declinedAt).filter(
+      (l) => /\[ADD_MEMBER\]\[add-member-[0-9a-f]+\] DONE /.test(l) && l.includes(`group=${c.group.id}`) && l.toLowerCase().includes(`user=${joiner}`)
+    ).length;
+    return {
+      members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
+      records: { [approve]: records.records },
+      detail: { asks, declinedAt, trail },
+      judge: () => staleAddOwn({ held, declined, trail, after, listed, gateRefused, routeEnrolled }),
     };
   },
 

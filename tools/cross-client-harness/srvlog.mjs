@@ -1129,7 +1129,7 @@ const SEVERE = [
  * server line - its warm-process staging is logged by the PHONE (`[BG_WELCOME]`/`[BG_STATE]` in
  * Rust), which the logcat window reads, and its server face is #2287's `[BG_WELCOME]` route below.
  */
-const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6'];
+const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6', 'ADM-9', 'ADM-10'];
 const THROTTLED = String.raw`repeat=10*, said at 1, 10, 100\.\.\.`;
 const ROW_RULES = [
   // ── #2358: a new person joins a group only through a member ───────────────────────────────────
@@ -1168,8 +1168,9 @@ const ROW_RULES = [
     name: 'decline answered',
     tag: /\[JOIN_DECLINE\]/,
     shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=(withdrawn|already-admitted|not-awaiting|gone)$/,
-    // ADM-4 declines too: its closing Decline puts the group back as it began (`archive/admit.mjs`).
-    rows: ['ADM-2', 'ADM-3', 'ADM-4'],
+    // ADM-4 declines too: its closing Decline puts the group back as it began (`archive/admit.mjs`);
+    // ADM-9 declines the first ask and ADM-10 settles a Decline under a held Add.
+    rows: ['ADM-2', 'ADM-3', 'ADM-4', 'ADM-9', 'ADM-10'],
   },
   // THE ASK TOLD TO THE MEMBERS AND ITS SETTLEMENT (`join-ask-announce.ts`): every waiting row
   // raises one and settles it. `NOT announced` and a throw past the guard are other spellings and
@@ -1209,7 +1210,16 @@ const ROW_RULES = [
     name: 'admitted by a member',
     tag: /\] ADMITTED group=/,
     shape: /\[[A-Z_]+\]\[[^\]]+\] ADMITTED group=\S+ users=\d+ door=(admits|welcome) - a member's Add answered their invitation-link ask$/,
-    rows: ['ADM-1', 'ADM-3', 'ADM-5', 'ADM-6'],
+    rows: ['ADM-1', 'ADM-3', 'ADM-5', 'ADM-6', 'ADM-9'],
+  },
+  // AN ADD WHOSE PERSON LEFT SINCE ITS BASE, refused at the commit gate (`messaging.service.ts`):
+  // the Add carried a seat a Decline withdrew. ADM-10 orders it so on purpose and ASSERTS the line;
+  // ADM-3 races the two and meets it whenever the Decline wins.
+  {
+    name: 'stale Add refused at the gate',
+    tag: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED /,
+    shape: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=\S+ user=[0-9a-f]{1,8} reason=departed_since_base baseSeatGeneration=\d+ committer=[0-9a-f]{1,8} - its admits dropped, the leaf has no seat$/,
+    rows: ['ADM-3', 'ADM-10'],
   },
   // The waiting seat's own commit refused at the gate - nothing it does admits anyone.
   {

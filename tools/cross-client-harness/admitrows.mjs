@@ -1,5 +1,5 @@
 /**
- * THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..8 - their table, the waiting seat's route table,
+ * THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..10 - their table, the waiting seat's route table,
  * and their judges.
  *
  * Pure, so `archive/admit-selftest.mjs` pins every judge on a checkout with no rig; the action is
@@ -87,6 +87,24 @@ export const ADMIT_ROWS = {
     what: 'a link minted on a 1:1 or on a key group raises no ask: only a GROUP conversation takes one',
     note: "minted and accepted through the API (the panel offers no link there): the mint's refusal, or the accept's, is the answer, and no ask line nor awaiting row may follow",
   },
+  'ADM-9': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    reinvite: { decline: 'W2', approve: 'W1' },
+    what: 'W2 Declines W4; W1 then mints a NEW link, W4 follows it and waits again, W1 Adds: a Decline is not a ban, and an invitation built after it admits',
+    note: 'asked by the coordinator 2026-10-26 with the ADM-3 fix (a Decline now holds against an earlier Add): the fix must not turn a Decline into a refusal of every later invitation',
+  },
+  'ADM-10': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    stale: { approve: 'W1', decline: 'W2' },
+    what: "W1's Add commit is held, W2 Declines and the Decline settles, then the Add is released: the stale Add admits nobody - refused at the commit gate AND by the member-add route that follows it",
+    note: 'ADM-3 releases both answers together and accepts either winner; this row ORDERS them, Decline first, which is the case 1.4.1-alpha.4 got wrong (the commit gate held, the member-add route re-enrolled)',
+  },
 };
 
 /** Whether an `apiCall` answer is the waiting seat's refusal. */
@@ -173,6 +191,39 @@ export function raceOwn({ outcomes, after, listedTrail }) {
     { what: `both answers were given (${Object.entries(outcomes).map(([d, o]) => `${d} ${o.ok ? 'ok' : o.error}`).join('; ')})`, ok: Object.keys(outcomes).length === 2 },
     { what: `one side won and the server and the joiner agree (${after.state}, ${after.active} seat(s), ${listedAtEnd ? 'listed' : 'not listed'})`, ok: consistent },
     { what: `an admitted person was never stripped (${listedTrail.map((v) => (v ? 'L' : '-')).join('')})`, ok: !stripped },
+  ];
+}
+
+/**
+ * ADM-9: declined, then invited again by a NEW link, waiting again, admitted. A Decline that also
+ * refused the second invitation would be a ban nobody decided.
+ */
+export function reinviteOwn({ declined, rewaiting, asks, admitted, listed }) {
+  return [
+    { what: `the first ask was declined (${declined.state}, ${declined.active} seat(s))`, ok: declined.state === 'absent' && declined.active === 0 },
+    { what: `the new link left the joiner waiting again (${rewaiting})`, ok: rewaiting === 'waiting' },
+    ...Object.entries(asks).map(([d, v]) => ({ what: `${d} shows the second ask (${ms(v)})`, ok: v !== null })),
+    { what: `the Add built after the Decline admitted the joiner (${admitted.state}, ${admitted.active} active seat(s))`, ok: admitted.state === 'admitted' && admitted.active > 0 },
+    { what: `the joiner lists the conversation (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
+  ];
+}
+
+/**
+ * ADM-10: an Add built before a Decline and landing after it. `trail` is the joiner's server state
+ * sampled from the release on; one `admitted` sample is a person let in against a settled Decline.
+ * `gateRefused` counts the commit gate's `NOT_ENROLLED` lines about the joiner in this group, and
+ * `routeEnrolled` the member-add route's `DONE` lines about the joiner after the Decline - the two
+ * doors the alpha.4 run proved distinct.
+ */
+export function staleAddOwn({ held, declined, trail, after, listed, gateRefused, routeEnrolled }) {
+  return [
+    { what: `the Add's commit was held before the Decline (${held.ok ? 'held' : held.error})`, ok: held.ok === true },
+    { what: `the Decline settled first (${declined.state})`, ok: declined.state === 'absent' },
+    { what: `the commit gate refused the stale Add (${gateRefused} NOT_ENROLLED line(s))`, ok: gateRefused > 0 },
+    { what: `the member-add route enrolled nobody after the Decline (${routeEnrolled} DONE line(s))`, ok: routeEnrolled === 0 },
+    { what: `the joiner was never admitted after the release (${trail.map((s) => s[0]).join('')})`, ok: !trail.includes('admitted') },
+    { what: `the joiner ends with no roster row and no seat (${after.state}, ${after.active} seat(s))`, ok: after.state === 'absent' && after.active === 0 },
+    { what: `the joiner never lists the conversation (${listed ? 'LISTED' : 'not listed'})`, ok: !listed },
   ];
 }
 

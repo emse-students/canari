@@ -507,11 +507,11 @@ export const PHASES = {
     scripts: ['kill.mjs --row KILL-1', 'kill.mjs --row KILL-2', 'kill.mjs --row KILL-5', 'kill.mjs --row RM-3'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
-  // A GROUP LINK AND ITS ASK (ADM-1..4, ADM-8), browsers only. ADM-5..7 are NOT here: they need A1 on
+  // A GROUP LINK AND ITS ASK (ADM-1..4, ADM-8..10), browsers only. ADM-5..7 are NOT here: they need A1 on
   // the v1.4.0 APK, installed by the operator - `bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7`.
   ADMIT: {
     title: '1.4.1 - a group link: the ask, Add or Decline, and what a waiting seat may not do',
-    scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8'],
+    scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8', 'admit.mjs --row ADM-9', 'admit.mjs --row ADM-10'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
   // A NEW DEVICE OF THE OWNER (DEV-1..4, DEV-6), browsers only: every row mints on W3 (and W6); DUP-7
