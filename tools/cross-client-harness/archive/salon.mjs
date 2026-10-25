@@ -14,7 +14,8 @@
  * invariant is the salon's own - every user the server entitles holds an active seat in the salon's
  * group, and nobody else does (`salonrows.mjs` `salonEntitlement`), read once the seats settled.
  */
-import { clearOverlays, evaluate, openChannel } from '../chat.mjs';
+import { clearOverlays as clearDialogs, evaluate, openChannel } from '../chat.mjs';
+import { closeOverlays as closePanels } from '../groupnav.mjs';
 import {
   PERMISSION_LABELS,
   caption,
@@ -55,6 +56,17 @@ const since = new Date().toISOString();
 let seats = null;
 let community = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Clears the dialogs AND the side panel. `chat.mjs`'s `clearOverlays` closes dialogs only, so the
+ * community settings panel this runner opens (the invitation link, a role, the permission grid)
+ * stayed up: below the `xl` width its scrim covered the next salon row (RM-5, 2026-10-25: "no stable
+ * element", the scrim on top).
+ */
+async function clearOverlays(cx) {
+  await clearDialogs(cx);
+  await closePanels(cx);
+}
 const outcome = (p) =>
   p.then(
     (value) => ({ ok: true, value }),
