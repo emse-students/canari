@@ -82,6 +82,28 @@ and no second pull happens; a restore that throws before phase 1 still opens the
 `startupOrder.test.ts` updated; a frame decrypted between the gate and phase 2 survives phase 2's
 stored-page write.
 
+## P3 - Remove `registerMember` from the Add client paths; then the Decline and departure guards hold everywhere (review of #2419, 2026-10-25)
+
+The commit gate enrols the people an accepted Add admits, and refuses a person who left, was
+removed or was declined after the Add was built (`departed_since_base`,
+[mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)).
+That guard holds at the gate, so on a settlement and on an outbox replay. But every client Add path
+still calls `registerMember` after a DIRECT accept, and that route enrols the person whatever the
+gate refused, so on the direct path a departure or a Decline that came first is still undone, as
+before #2419. Not a regression. The source fix is to delete the post-accept calls
+(`processBulkAddition`, `performDirectAdd`, the pending-invitation and `welcome_request` Adds),
+which is gated on the server version: see
+[legacy-compatibility](legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
+The same deletion turns the accepted cost of a deliberate re-invite right after a Decline or a
+self-leave (refused at the gate, repaired today by that call) into a refusal on every path.
+
+Also accepted there, and left open: **a stale Add landing after the declined person RE-ASKED by
+link lifts the new ask and admits them.** An awaiting seat counts as already on the roster, so the
+departure check never runs, and member B's Decline is overridden silently by member A's Add,
+which was built before it. It needs a re-ask at the same epoch as the Decline, plus a stale Add.
+A fix would order the ask itself against the Add's base epoch (stamp the ask's seat generation
+and refuse a lift by an Add built before it). Not designed.
+
 ## P3 - Three Welcome paths still end in a conversation row or skip a key-group step (2026-10-25)
 
 What wrote and then probed a key group's conversation row is fixed

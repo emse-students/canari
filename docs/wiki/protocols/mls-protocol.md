@@ -925,9 +925,10 @@ accepted commit" below), `already-admitted`
 `not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
 row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
 `gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
-the race against an Add holds against it: that Add was built on the epoch the Decline left
-unchanged, so the gate enrols nobody (`departed_since_base`) and drops its admits; the adding
-member's direct-path `registerMember` can still enrol the person while that call exists (below).
+the race against an Add holds against it AT THE GATE: that Add was built on the epoch the Decline
+left unchanged, so the gate enrols nobody (`departed_since_base`) and drops its admits - which is
+all a settlement or an outbox replay does. On a direct accept the adding member's `registerMember`
+still enrols the person, undoing the Decline, until that call goes (below).
 Anything else keeps the ask, logged with its reason.
 
 **The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
@@ -1405,17 +1406,26 @@ frame is queued for a device whose Welcome will be refused, and no stale row lat
   epoch began at (`epochSeatGeneration`, migration 039). A departure recorded later than the base's
   generation is one the Add could not have seen. **An ask that EXPIRES records nothing:** no member
   decided anything, and a member's Add built while it was open is the answer it waited for - refusing
-  it because a timer ran would let a clock decide an admission. **The cost is one-sided:** a re-invite
-  built after a self-leave or a Decline at that same epoch is refused too - nothing distinguishes it
-  from the stale Add - and is enrolled by the client's own `registerMember` on a direct accept, or not
-  at all if its answer was also lost, until a new Add. Even enrolled that way, it has lost a span:
-  its admits were dropped, so no `admittedAtEpoch` row is kept and a frame sent between the accept
-  and that `registerMember` (or the Welcome) is not queued for the invitee's devices. Once any commit
-  lands after the departure, a new Add enrols as usual. **The guard holds only where
-  `registerMember` is not called:** a settlement and an outbox replay. While clients still make that
-  call after a direct accept, a stale Add answered directly is re-enrolled by it, exactly as before
-  this check existed - not a regression, and closed when the call goes
+  it because a timer ran would let a clock decide an admission. **The cost is one-sided, accepted (owner, 2026-10-25):** a
+  DELIBERATE re-invite right after a self-leave or a Decline, in a quiet group, is refused too -
+  nothing distinguishes it from the stale Add. In numbers: the epoch is E, begun at generation G-1
+  (`epochSeatGeneration` = G-1); the Decline moves the group to G and stamps G; nothing moves the
+  epoch until the next commit, so the re-invite is built on E and compared against G-1 < G. It is
+  bounded to ONE Add: that Add's own commit advances to E+1, which records G, so any Add after it is
+  compared against G and enrols. The refused one is repaired by the client's `registerMember` on a
+  direct accept, with a span lost - its admits were dropped, so no `admittedAtEpoch` row is kept and
+  a frame sent between the accept and that call (or the Welcome) is not queued for the invitee's
+  devices - or not at all if its answer was also lost, until a new Add.
+
+  **Where the guard holds: at the commit gate, so on a settlement and an outbox replay - NOT on a
+  direct accept.** Every client Add path still calls `registerMember` after a direct accept, and that
+  route enrols the person whatever the gate refused, so a departure or a Decline that came first is
+  still undone there, exactly as before this check existed. Not a regression; the source fix is
+  deleting that call, owed in [backlog](../backlog.md#p3---remove-registermember-from-the-add-client-paths-then-the-decline-and-departure-guards-hold-everywhere-review-of-2419-2026-10-25) and gated on the server version
   ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25)).
+  **Also accepted, and open there:** a stale Add landing after the declined person RE-ASKED by link
+  finds the new awaiting seat - already on the roster, so never checked - and lifts it: the Decline
+  is overridden silently.
 
 A seat already on the roster is left as it is (one awaiting a member's admission is lifted). A key
 group has no conversation roster: its people are social-service's entitlement, asked before the

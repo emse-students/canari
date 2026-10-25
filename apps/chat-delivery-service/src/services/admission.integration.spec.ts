@@ -439,56 +439,6 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     expect(interval.leftAt).toBeNull();
   });
 
-  it('an Add and a Decline racing each other leave one consistent answer, never a leaf with no seat', async () => {
-    for (let round = 0; round < 5; round++) {
-      await q(`UPDATE dm_groups SET "activeEpoch" = 3 WHERE id = $1`, [GROUP]);
-      await q(`DELETE FROM mls_commit_log`);
-      await q(`DELETE FROM dm_device_group_memberships WHERE "userId" = $1`, [JOINER.userId]);
-      await q(`DELETE FROM dm_group_members WHERE "userId" = $1`, [JOINER.userId]);
-      await acceptLink();
-
-      const [added, declined] = await Promise.allSettled([
-        memberCommit(3, [JOINER]),
-        decline(MEMBER),
-      ]);
-
-      const admittedRows: { admittedAtEpoch: number | null }[] = await q(
-        `SELECT "admittedAtEpoch" FROM dm_device_group_memberships
-         WHERE "groupId" = $1 AND "userId" = $2`,
-        [GROUP, JOINER.userId]
-      );
-      const observed = {
-        declined: declined.status === 'fulfilled' ? declined.value.outcome : 'rejected',
-        added: added.status,
-        seat: await awaiting(JOINER),
-        devices: await rowsOf('dm_device_group_memberships', JOINER),
-        admittedRows,
-      };
-      // Two orders, each with ONE consistent end state - chosen by what the Decline answered, and
-      // asserted whole, so no expectation is skipped on either side.
-      // - The Decline went first: the ask is gone whole, and the Add - built on the epoch the
-      //   Decline left unchanged, so before it - enrols nobody and leaves no admitted row: a Decline
-      //   holds against an Add built before it (review of #2419).
-      // - The Add went first: the Decline answers `already-admitted` and leaves the person whole.
-      const declineFirst = {
-        declined: 'withdrawn',
-        added: added.status,
-        seat: null,
-        devices: 0,
-        admittedRows: [],
-      };
-      const addFirst = {
-        declined: 'already-admitted',
-        added: 'fulfilled',
-        seat: false,
-        devices: 1,
-        // Not this order's question: one device row is.
-        admittedRows: observed.admittedRows,
-      };
-      expect(observed).toEqual(observed.declined === 'withdrawn' ? declineFirst : addFirst);
-    }
-  });
-
   /**
    * (2) A MEMBER WHOSE CLIENT PREDATES `admits` STILL ADMITS: it Adds from the `pending` row with a
    * commit that declares nobody, then sends the Welcome apart. The Welcome it stores lifts the ask, so

@@ -250,8 +250,10 @@ Add was answered directly. That cuts both ways: it rescues the one re-invite the
 from a stale Add (with a span lost - the refused admits left no `admittedAtEpoch` row, so a frame sent
 between the accept and this call or the Welcome is not queued for the invitee's devices), and it
 re-enrols the departed person of a stale Add answered directly, as before the gate's check existed.
-So the guard holds only on the paths that skip this call - a settlement, an outbox replay - until the
-call goes. It stays for a
+So the gate's guard - a departure or a member's Decline holds against an Add built before it -
+holds only on the paths that skip this call (a settlement, an outbox replay); on a direct accept the
+Decline or departure is still undone, until the call goes
+([backlog](backlog.md#p3---remove-registermember-from-the-add-client-paths-then-the-decline-and-departure-guards-hold-everywhere-review-of-2419-2026-10-25)). It stays for a
 store build live before production deploys, whose server does not enrol: dropping it there would
 lose the enrolment of every Add, not only of the settled ones.
 **Transitional loss, accepted:** an Add the PRE-DEPLOY server accepted with its answer lost, and
