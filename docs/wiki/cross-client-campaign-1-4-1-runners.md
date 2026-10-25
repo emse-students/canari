@@ -127,7 +127,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | --- | --- | --- | --- | --- | --- | --- |
 | KILL-1 | a refresh commit held before the server or after the accept (alternating), the tab closed 0-800 ms into the hold, 20 runs | `reopen.mjs` `killSeat`/`reviveSeat`, `fault.mjs` | - | no | U | 40 min |
 | KILL-2 | as KILL-1 with the whole browser killed and relaunched, 10 runs | `reopen.mjs`, `launch.mjs` | - | no | U | 40 min |
-| KILL-3 | as KILL-1 on A1, swiped from recents (the death proven by its pid), 10 runs | `reopen.mjs` | - | no | B | 50 min |
+| KILL-3 | W1's browser killed after a send or a receive, 12 runs over `KILL3_WINDOWS` (moved from A1, 2026-10-26) | `reopen.mjs` | - | no | U | 45 min |
 | KILL-4 | `am force-stop` at fractions of the send-to-request window, measured on an un-killed run (the client writes no `[CHECKPOINT]` line; `am kill` cannot reach a foreground process) | `reopen.mjs`, `fault.mjs` | - | no | B | 40 min |
 | KILL-5 | W1's Add with `POST /api/mls/welcome` held, the tab closed; W2 joins once | `reopen.mjs`, `fault.mjs` | - | no | U | 30 min |
 

@@ -278,7 +278,9 @@ The design question is where these marks live so that they reach disk WITH the s
 describe, on both platforms - an IndexedDB store written in the checkpoint's own transaction on
 web, and the MLS state or a file the native checkpoint writes beside `mls.bin` - and what each
 reader does at startup. Measure first: a KILL-2 run with per-run console capture on each window,
-and a native kill (KILL-3) after a send.
+and a kill after a send. KILL-3 is that kill on the WEB side since 2026-10-26: W1's browser, after a send
+and after a receive. The NATIVE half (`mls.bin`) has no row, because no rig tool holds the Tauri
+commit POST.
 
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 

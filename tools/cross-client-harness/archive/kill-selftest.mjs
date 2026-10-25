@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { COOKIE_COMMIT_MS, KILL_ROWS, REFRESH_COOKIE_TTL_S, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn,REFRESH_COOKIE_TTL_S, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -26,7 +26,24 @@ console.log('the table');
 const rows = Object.entries(KILL_ROWS);
 ok('every seat a row names is opened', rows.every(([, r]) => [r.subject, r.next, ...(r.setup ?? [])].filter(Boolean).every((d) => r.devices.includes(d))));
 ok('KILL-1 is 20 runs of a tab close, KILL-2 a browser kill', KILL_ROWS['KILL-1'].runs === 20 && KILL_ROWS['KILL-1'].kill === 'tab' && KILL_ROWS['KILL-2'].kill === 'browser');
-ok('KILL-3 and KILL-4 are played on A1', KILL_ROWS['KILL-3'].devices[0] === 'A1' && KILL_ROWS['KILL-4'].devices[0] === 'A1');
+ok('KILL-4 is played on A1, KILL-3 on a web seat with a browser kill', KILL_ROWS['KILL-4'].devices[0] === 'A1' && KILL_ROWS['KILL-3'].devices[0] === 'W1' && KILL_ROWS['KILL-3'].kill === 'browser');
+ok('KILL-3 is no longer blocked, KILL-4 still is', !KILL_BLOCKED['KILL-3'] && !!KILL_BLOCKED['KILL-4']);
+
+// ── KILL-3 ───────────────────────────────────────────────────────────────────────────────────────
+console.log('KILL-3 kill3Outcome');
+const k3 = (over = {}) => kill3Outcome({ window: 'after-send', killedShown: 1, outShown: 1, inShown: 1, accepts: 0, moved: 0, caughtUpMs: 900, ...over });
+const tw3 = Array.from({ length: KILL_ROWS['KILL-3'].runs }, (_, i) => kill3WindowOf(i));
+ok('twelve runs are three of each window', Object.keys(KILL3_WINDOWS).every((w) => tw3.filter((x) => x === w).length === 3));
+ok('the held windows hold, the others observe', KILL3_WINDOWS['send-before-server'].startsWith('hold ') && KILL3_WINDOWS['send-after-accept'].startsWith('hold-answer') && KILL3_WINDOWS['after-send'] === null);
+ok('delivered once, nothing committed, the ratchet alive -> all hold', allOk(k3().assertions));
+ok('the next message out lost (a rolled-back ratchet) fails', failing(k3({ outShown: 0 }).assertions) === 1);
+ok('a stored message lost after the kill fails', failing(k3({ window: 'send-after-accept', killedShown: 0 }).assertions) === 1);
+ok('a received message shown twice after the revival fails', failing(k3({ window: 'after-receive', killedShown: 2 }).assertions) === 1);
+ok('a message that never reached the server may be absent', allOk(k3({ window: 'send-before-server', killedShown: 0 }).assertions));
+ok('... but never twice', failing(k3({ window: 'send-before-server', killedShown: 2 }).assertions) === 1);
+ok('a commit coming of a plain send is a heal, and fails', failing(k3({ accepts: 1, moved: 1 }).assertions) === 1);
+ok('a row that skipped a window fails its coverage', failing(kill3WindowsOwn([{ window: 'after-send' }, { window: 'after-receive' }])) === 1);
+ok('every window played -> coverage holds', allOk(kill3WindowsOwn(Object.keys(KILL3_WINDOWS).map((window) => ({ window })))));
 ok('KILL-4 says why it is not timed on a line, and why not am kill', /CHECKPOINT/.test(KILL_ROWS['KILL-4'].note) && /am kill/.test(KILL_ROWS['KILL-4'].note));
 ok('KILL-4 fractions lie strictly inside the window', KILL_ROWS['KILL-4'].fractions.every((f) => f > 0 && f < 1));
 ok('RM-3 removes a member it set up and adds one it did not', KILL_ROWS['RM-3'].setup.includes(KILL_ROWS['RM-3'].subject) && !KILL_ROWS['RM-3'].setup.includes(KILL_ROWS['RM-3'].next));
