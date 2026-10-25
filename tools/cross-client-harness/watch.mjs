@@ -1154,6 +1154,27 @@ const NOTABLE = [
   // THE SWEEP'S TALLY, guarded on `totalWelcomes > 0`, so it prints only when Welcomes really went
   // out. `notable` for that reason: it is never routine.
   /^\[PENDING\] \d+ Welcome\(s\) sent\.$/,
+  // -- A COMMIT RACE LOST AND ANSWERED (#2416 Add, #2414 Remove; CC and SETTLE, 2026-10-25) --------
+  //
+  // The expected, necessary outcomes of a race, taken VERBATIM from the two pull requests and
+  // anchored end to end: an Add abandoned before its stage (the reasons are the whole of
+  // `AddAbortReason`), a refused commit rebuilt on the tree that won (`rebuildableRefusal` returns
+  // only `epoch-moved` or `seat-claim-overtaken`), the commit log read after a `concurrent_commit`,
+  // and a Remove that found its target already gone. NOTABLE: nothing failed, and a reader following
+  // a race wants each step. The `epoch`-carrying ones reached `notable` already through the generic
+  // rule, by accident of a word - these say it on purpose. The two `concurrent_commit` WARNINGS (the
+  // log could not be applied, or not read) are pinned too: the sync watchdog owns what they leave,
+  // and the line is the evidence of handing it over.
+  /^\[PENDING\] Add of \S+ to [0-9a-f]{8}\.\.\. abandoned before its stage \((?:tree-unconfirmed|not-a-member-device|invitation-withdrawn|removed-meanwhile|premise-unreadable)\) - nothing committed$/,
+  /^\[SYNC\] the Add was abandoned before its stage \((?:tree-unconfirmed|not-a-member-device|invitation-withdrawn|removed-meanwhile|premise-unreadable)\) - nobody added$/,
+  /^\[\w+\] Tree of [0-9a-f]{8}\.\.\. not confirmed at the server's epoch, cannot say whether \S+ is a member - nothing added$/,
+  /^\[COMMIT_RACE\] [0-9a-f]{8}\.\.\. .+ was refused \((?:epoch-moved|seat-claim-overtaken), now epoch \d+\) - rebuilding on the tree that won$/,
+  /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: read the commit log, \d+ commit\(s\) applied, now epoch \d+$/,
+  /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: the commit log is ahead \(\d+\) and could not be applied \(now \d+\) - left to the sync watchdog: .+$/,
+  /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: the commit log could not be read - nothing to rebuild on: .+$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8}… [0-9a-f]{8} holds no leaf at epoch \d+ - nothing to commit$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8}… [0-9a-f]{8} removed from the tree, now epoch \d+$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8}… the Remove of [0-9a-f]{8} was refused \((?:epoch-moved|seat-claim-overtaken), now epoch \d+\) - re-reading the tree$/,
   // -- THE `[QUEUE]` WELCOME BUFFER AND THE FRAMES LEFT BEHIND, read whole (2026-08-25) ----------
   //
   // Read the same way `[PENDING]` above was: every line of the site placed in one pass, because a
@@ -1200,15 +1221,17 @@ const NOTABLE = [
   /^\[MLS\] Message for absent conversation \S+ - retry after restore$/,
   /^\[BUFFER\] recovery started for unknown group \S+$/,
   // THE FRAMES EARLIER DRAINS LEFT UNACKNOWLEDGED, asked for again now that the reason they could
-  // not be read is gone. Both trigger/reason pairs are enumerated rather than left to `\S+`: the
-  // reasons are the whole of `UnackedReason` (`unknown-group`, `absent-conversation`) and the
-  // triggers are its only two call sites. A third pair appearing must land in `unexplained`.
-  /^\[QUEUE\] (?:conversations restored|welcome processed): re-fetching for \d+ group\(s\) left behind as (?:unknown-group|absent-conversation) \[[^\]]*\]$/,
+  // not be read is gone. Triggers and reasons are enumerated rather than left to `\S+`: the reasons
+  // are the whole of `UnackedReason` (`unackedFrames.ts`), joined by ` + ` when one pull serves
+  // several, and the triggers are the five call sites of `refetchFramesLeftBehind`. A new one
+  // appearing must land in `unexplained` - it did on 2026-10-25 (GAP-1, alpha.3): `conversation rows
+  // seeded`, the boot re-fetch #2408 added, plus two keyed sites the list had never named.
+  /^\[QUEUE\] (?:conversations restored|welcome processed|conversation rows seeded|conversation [0-9a-f]{8}… now exists|key group [0-9a-f]{8}\.\.\. identified): re-fetching for \d+ group\(s\) left behind as (?:unknown-group|absent-conversation|behind-refused-backlog|unscoped-distribution-group)(?: \+ (?:unknown-group|absent-conversation|behind-refused-backlog|unscoped-distribution-group))* \[[^\]]*\]$/,
   // THE SAME RE-FETCH DECLINING TO RUN, because the socket is closed and the reconnect pull covers
   // it. `notable` deliberately: the fetch that was owed did NOT happen, and the thing that makes
   // that safe is a pull in another mechanism entirely. It already reached `stateChanges` through
   // the generic reconnect rule, which is an accident of the word - the rule here is the intent.
-  /^\[QUEUE\] (?:conversations restored|welcome processed): socket closed, the reconnect pull covers it$/,
+  /^\[QUEUE\] (?:conversations restored|welcome processed|conversation rows seeded|conversation [0-9a-f]{8}… now exists|key group [0-9a-f]{8}\.\.\. identified): socket closed, the reconnect pull covers it$/,
   // THE POST-WELCOME COOLDOWN DECLINING TO DO HARM. A `welcome_request` arrived for a device we
   // served seconds ago; it is still decrypting the Welcome and its history bundle, and kicking now
   // would evict a freshly-added leaf into `UseAfterEviction` on its first send. So it skips.

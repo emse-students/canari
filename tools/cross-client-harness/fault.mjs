@@ -220,6 +220,8 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
   const records = [];
   /** Requests a `hold` / `hold-answer` stopped, in arrival order, not yet released or failed. */
   const held = [];
+  /** `rewrite` answers still being read and transformed - drained by `disarm` before it disables. */
+  const rewrites = new Set();
   const waiters = new Set();
   const wake = () => {
     for (const w of waiters) w(); // a waiter may delete itself: deleting the visited entry of a Set is safe
@@ -314,9 +316,15 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
       case 'hold-answer':
         held.push(record);
         break;
-      case 'rewrite':
-        void rewriteAnswer(p, rule, record);
+      case 'rewrite': {
+        // TRACKED, because it answers LATER: the body is read and transformed first. `disarm` drains
+        // these before `Fetch.disable` - disabled under it, the fulfil fails ("Fetch domain is not
+        // enabled") and the transform's capture is lost with it (GAP-2, 2026-10-25: a premise
+        // failure on a frame that was in the pull all along).
+        const pending = rewriteAnswer(p, rule, record).finally(() => rewrites.delete(pending));
+        rewrites.add(pending);
         break;
+      }
       case 'rewrite-url': {
         let next = req.url;
         try {
@@ -408,6 +416,10 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
         armed = false;
         const left = await settleHeld('release');
         if (left) log(`  [fault] disarm released ${left} request(s) still held`);
+        if (rewrites.size) {
+          log(`  [fault] disarm waits for ${rewrites.size} rewrite(s) still being answered`);
+          await Promise.allSettled(rewrites);
+        }
         await cx.send('Fetch.disable').catch((e) => log(`  [fault] Fetch.disable failed: ${e.message}`));
         unsubscribe();
         log('  [fault] disarmed');

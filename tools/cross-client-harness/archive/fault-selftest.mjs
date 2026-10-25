@@ -206,6 +206,34 @@ const quiet = () => {};
   await f.disarm();
 }
 
+// A DISARM RIGHT AFTER A REWRITE FIRED waits for its answer before disabling (GAP-2, 2026-10-25): a
+// body read that takes a while must still be transformed and fulfilled, never cut by Fetch.disable.
+{
+  const cx = fakeCx();
+  const realSend = cx.send;
+  let releaseBody;
+  const bodyGate = new Promise((r) => (releaseBody = r));
+  cx.send = async (method, params) => {
+    if (method === 'Fetch.getResponseBody') {
+      cx.sent.push({ method, params });
+      await bodyGate;
+      return { body: JSON.stringify([{ id: 'x1' }]), base64Encoded: false };
+    }
+    return realSend(method, params);
+  };
+  const seen = [];
+  const f = await armFault(cx, [{ match: '/api/mls/messages/', method: 'GET', fault: 'rewrite once', transform: (t) => (seen.push(t), t) }], { log: quiet });
+  cx.pause({ requestId: 'slow', request: { url: 'https://h/api/mls/messages/u/d', method: 'GET' }, responseStatusCode: 200 });
+  await tick();
+  const disarming = f.disarm();
+  await tick();
+  ok('disarm does not disable while a rewrite is still reading its body', !cx.sent.some((s) => s.method === 'Fetch.disable'));
+  releaseBody();
+  await disarming;
+  const order = cx.sent.map((s) => s.method);
+  ok('... the rewrite is transformed and fulfilled, THEN Fetch is disabled', seen.length === 1 && order.indexOf('Fetch.fulfillRequest') !== -1 && order.indexOf('Fetch.fulfillRequest') < order.indexOf('Fetch.disable'));
+}
+
 console.log(
   failures
     ? `[fault] ${failures} FAILURE(S) - the fault atom decides wrongly or leaves a request paused`

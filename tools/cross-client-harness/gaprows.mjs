@@ -151,8 +151,20 @@ export function linesAbout(lines, groupId, injectedIds = []) {
     generationGap: about.filter((t) => t.includes(`[MLS] LOST frame for ${short}`) && t.includes('generation too far ahead')),
     duplicate: [...about.filter((t) => t.includes(`[MLS] Duplicate delivery for ${short}`)), ...queueRepeat],
     reAdd: about.filter((t) => t.includes(`[MLS] Decryption error for ${short}`)),
+    ownEcho: about.filter((t) => ownEchoLine(short).test(t)),
   };
 }
+
+/**
+ * A device's own frame handed back to it, recognised BEFORE the MLS layer and ACKed (#2421) - what
+ * GAP-2's own replay must produce. Anchored on the stable part only: the line is a `console.warn`
+ * (the level is not relied on - `ignoringExpectedLog` strips it), the channel/queue detail in the
+ * parenthesis is the delivery's, and the clause after `;` (which of the two causes) may be reworded.
+ *
+ * @param {string} short the group id's first eight characters
+ */
+export const ownEchoLine = (short) =>
+  new RegExp(`\\[MLS\\] Own frame for ${short}… delivered back to this device \\([^)]*\\) - ACKed, not offered to MLS(?:;|$)`);
 
 /**
  * GAP-1: the commits were taken out of the pull and rung 1's fetch was held, so the frames of N+2 met
@@ -186,6 +198,9 @@ export function pastFrameOwn({ injected, epochBefore, epochAfter, shown, lines }
     { what: `never read as an epoch gap (${lines.gap.length} [GAP] line(s))`, ok: lines.gap.length === 0 },
     { what: `never a re-add (${lines.reAdd.length})`, ok: lines.reAdd.length === 0 },
     { what: `never counted a loss (${lines.lost.length} LOST line(s))`, ok: lines.lost.length === 0 },
+    // POSITIVE, NOT ONLY AN ABSENCE: "no LOST line" also holds for a frame dropped in silence. The
+    // own frame must be RECOGNISED as one, exactly once (#2421's own-echo line).
+    { what: `our own frame was recognised as an own echo, once (${lines.ownEcho.length})`, ok: lines.ownEcho.length === 1 },
     { what: `the replay moved no epoch (${epochBefore} -> ${epochAfter})`, ok: epochBefore === epochAfter },
   ];
   for (const [m, n] of Object.entries(shown)) out.push({ what: `${m} still shows ONCE on W2 (${n})`, ok: n === 1 });

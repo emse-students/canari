@@ -346,6 +346,25 @@ const CASES = [
     '[01:40:12] [MLS] Message for absent conversation b6a425af… - retry after restore',
     'notable',
   ],
+  // A commit race lost and answered (#2416, #2414), verbatim from the two pull requests, and the
+  // controls: a reason outside the enum, and the same sentence saying something WAS committed.
+  ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (tree-unconfirmed) - nothing committed', 'notable'],
+  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - nobody added', 'notable'],
+  ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (gave-up) - nothing committed', 'unexplained'],
+  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - half of them added', 'unexplained'],
+  ["log", "[04:00:00] [PENDING] Tree of 46163138... not confirmed at the server's epoch, cannot say whether c71e1a5b is a member - nothing added", 'notable'],
+  ['log', '[04:00:00] [COMMIT_RACE] 46163138... the Add of 1 device(s) was refused (epoch-moved, now epoch 3) - rebuilding on the tree that won', 'notable'],
+  ['log', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: read the commit log, 1 commit(s) applied, now epoch 3', 'notable'],
+  ['warn', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: the commit log is ahead (4) and could not be applied (now 2) - left to the sync watchdog: x', 'notable'],
+  ['warn', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: the commit log could not be read - nothing to rebuild on: TypeError: fetch failed', 'notable'],
+  ['log', '[04:00:00] [REMOVE_MEMBER] 46163138… 223bc34e holds no leaf at epoch 3 - nothing to commit', 'notable'],
+  ['log', '[04:00:00] [REMOVE_MEMBER] 46163138… 223bc34e removed from the tree, now epoch 3', 'notable'],
+  ['log', '[04:00:00] [REMOVE_MEMBER] 46163138… the Remove of 223bc34e was refused (epoch-moved, now epoch 3) - re-reading the tree', 'notable'],
+  // The boot re-fetch #2408 added (GAP-1, 2026-10-25), a keyed site with two reasons joined, and a
+  // trigger nobody wrote, which stays dirt.
+  ['log', '[04:15:13] [QUEUE] conversation rows seeded: re-fetching for 1 group(s) left behind as absent-conversation [13c295e1]', 'notable'],
+  ['log', '[04:15:13] [QUEUE] conversation 13c295e1… now exists: re-fetching for 1 group(s) left behind as absent-conversation + behind-refused-backlog [13c295e1]', 'notable'],
+  ['log', '[04:15:13] [QUEUE] something else happened: re-fetching for 1 group(s) left behind as absent-conversation [13c295e1]', 'unexplained'],
   // Both trigger/reason pairs, which are the whole of `UnackedReason` and its only two call sites.
   [
     'log',
