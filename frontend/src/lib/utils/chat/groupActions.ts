@@ -14,7 +14,7 @@ import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
-import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -24,6 +24,10 @@ import {
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
 import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
+import { rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
  * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
@@ -305,19 +309,35 @@ async function notifyMembershipChange(
  * Removes a member from the MLS group (admin action):
  *  1. Ends the membership on the server (dm_group_members + dm_device_group_memberships, and the
  *     membership interval that makes the removal hold against a later re-add).
- *  2. MLS remove commit - removes the leaf from the tree and advances the epoch for all.
+ *  2. MLS remove commit - removes the leaf from the tree and advances the epoch for all, REBUILT on
+ *     the epoch that beat it when it loses the race (see below).
  *  3. Broadcasts `memberRemoved` to remaining members.
  *
  * **THE SERVER RECORD COMES FIRST, AND A FAILURE THERE ABORTS THE REMOVAL** (user, 2026-10-14: a
  * Remove holds against a later re-add). The record used to be written LAST and best-effort: a
  * failed call left one log line, no exclusion window, and a later re-add was served the whole gap.
- * In this order every outcome is durable without a queue of its own:
- *  - the record fails: nothing has happened, the error reaches the person who asked, they retry;
- *  - the record lands and the commit fails: the roster no longer names the member while the tree
- *    still holds their leaves - which is exactly the state `removeStrayLeaves` collects, on every
- *    member's next connection, with a Remove commit of its own. The removal completes itself.
- * The window also opens on the safe side: it starts BEFORE the commit, so nothing sent between the
- * two can later be served to the member as if they had still been in.
+ * The window opens on the safe side: it starts BEFORE the commit, so nothing sent between the two can
+ * later be served to the member as if they had still been in. And the order is what gates DELIVERY:
+ * the record deletes the member's device rows, so no application frame reaches them from that
+ * instant, while the server's parting hint (`group:parting`) still queues them the Remove commit
+ * that names them. Committing first would leave the removed devices on the fan-out for as long as the
+ * record took - or for good if it then failed - with a tree that says they are out.
+ *
+ * **A LOST RACE IS REBUILT, NOT LEFT TO A SWEEP** (CC-2, 1.4.1 dev campaign, 2026-10-25). Another
+ * commit can take the epoch between the record and this commit - an Add, a leaf refresh, another
+ * holder's collector - and the gate refuses ours `epoch_mismatch`. It used to reach the caller as a
+ * logged `CommitRefusedError`: the member off the roster and still in the tree, the person who asked
+ * told nothing, and `removeStrayLeaves` finishing the job at some holder's next connection. Now the
+ * refusal's catch-up has applied the winning commit, the tree is read again, and the Remove is staged
+ * again on it - under {@link rebuildableRefusal}, the one rule an admission follows too: only a
+ * refusal that MOVED the epoch (or an overtaken seat claim, each one an eviction) is rebuilt, so the
+ * loop ends on a proof, never on a count. A tree that no longer holds the member (the winner removed
+ * them) commits nothing. Every other ending - a refusal that moved nothing, an unknown outcome, an
+ * unreadable tree - throws {@link MemberRemovalNotCommittedError}, so the caller can say so; the
+ * collector still completes it from durable state (roster against tree), which is what it is for.
+ *
+ * **A FOLLOWER TAB IS REFUSED BEFORE THE RECORD**: it may not commit (`FollowerTabCommitError`), and
+ * learning that from the commit, after the record, was the half-removal itself.
  */
 export async function removeMemberAndBroadcast(params: {
   mlsService: IMlsService;
@@ -327,25 +347,86 @@ export async function removeMemberAndBroadcast(params: {
   deviceKeyB64: string;
 }) {
   const { mlsService, groupId, memberId, userId, deviceKeyB64 } = params;
+  const short = groupId.slice(0, 8);
+
+  // 0. Known from leadership, a fact here - never learnt from a commit refused after the record.
+  if (getTabLeadership() === 'follower') {
+    console.warn(`[REMOVE_MEMBER] ${short}… removal asked of a follower tab - nothing recorded`);
+    throw new FollowerTabCommitError(groupId);
+  }
 
   // 1. The server record. Propagates: a removal the server did not record is not a removal yet.
   try {
     await mlsService.removeMemberFromServer(groupId, memberId);
   } catch (e) {
     console.warn(
-      `[REMOVE_MEMBER] Server refused or missed the removal in ${groupId.slice(0, 8)}… - nothing committed, the removal is not done: ${String(e).slice(0, 120)}`
+      `[REMOVE_MEMBER] Server refused or missed the removal in ${short}… - nothing committed, the removal is not done: ${String(e).slice(0, 120)}`
     );
     throw e;
   }
 
-  // 2. MLS remove commit: removes the member's leaf for all remaining members. A failure here is
-  // completed by `removeStrayLeaves` (see above), and still reaches the caller.
-  await mlsService.removeMember(groupId, [memberId]);
+  // 2. MLS remove commit, rebuilt on the epoch that beat it (see above).
+  await commitMemberRemoval(mlsService, groupId, memberId);
 
   // 3. Notify remaining members.
   await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+}
+
+/**
+ * Commits the Remove of every leaf of `memberId` in `groupId`, rebuilding it on the epoch that beat
+ * it, for the reasons {@link removeMemberAndBroadcast} gives. Resolves once the tree holds no leaf of
+ * the member - by this commit, or by the one that won the race; throws
+ * {@link MemberRemovalNotCommittedError} otherwise.
+ */
+async function commitMemberRemoval(
+  mlsService: IMlsService,
+  groupId: string,
+  memberId: string
+): Promise<void> {
+  const short = groupId.slice(0, 8);
+  const who = memberId.slice(0, 8);
+  for (;;) {
+    let leafIdentities: string[];
+    try {
+      leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
+    } catch (e) {
+      console.warn(
+        `[REMOVE_MEMBER] ${short}… tree unreadable before the Remove of ${who} - recorded, NOT committed: ${String(e).slice(0, 120)}`
+      );
+      throw new MemberRemovalNotCommittedError(groupId, memberId, e);
+    }
+    if (!treeHoldsUser(leafIdentities, memberId)) {
+      // The winner of a race removed them (another remover, a holder's collector), or they never
+      // held a leaf here: the tree already agrees with the roster, and a Remove would stage nothing.
+      console.log(
+        `[REMOVE_MEMBER] ${short}… ${who} holds no leaf at epoch ${mlsService.getEpoch(groupId)} - nothing to commit`
+      );
+      return;
+    }
+    const builtOn = mlsService.getEpoch(groupId);
+    try {
+      await mlsService.removeMember(groupId, [memberId]);
+      console.log(
+        `[REMOVE_MEMBER] ${short}… ${who} removed from the tree, epoch ${builtOn} -> ${mlsService.getEpoch(groupId)}`
+      );
+      return;
+    } catch (e) {
+      const caughtUpTo = mlsService.getEpoch(groupId);
+      const rebuild = rebuildableRefusal(e, builtOn, caughtUpTo);
+      if (rebuild !== null) {
+        console.log(
+          `[REMOVE_MEMBER] ${short}… the Remove of ${who} built on epoch ${builtOn} was refused (${rebuild}, now ${caughtUpTo}) - re-reading the tree`
+        );
+        continue;
+      }
+      console.warn(
+        `[REMOVE_MEMBER] ${short}… the Remove of ${who} built on epoch ${builtOn} did not land and cannot be rebuilt (${String(e).slice(0, 120)}; epoch now ${caughtUpTo}) - recorded, NOT committed`
+      );
+      throw new MemberRemovalNotCommittedError(groupId, memberId, e);
+    }
+  }
 }
 
 /**

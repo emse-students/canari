@@ -941,7 +941,40 @@ answer path can forget it.
 
 **The removal order - the record first, and the commit still reaches the removed member.**
 `removeMemberAndBroadcast` calls the server first, then commits the MLS remove, then broadcasts
-`memberRemoved`. `removeGroupMember` (called by somebody other than the removed person) reads the
+`memberRemoved`. A follower tab is refused BEFORE the record (`FollowerTabCommitError`): it may not
+commit, and learning that from the commit, after the record, was a half-removal.
+
+**A Remove that loses the commit race is REBUILT, never left to a sweep** (CC-2, 1.4.1 dev campaign,
+2026-10-25). Between the record and the commit another commit can take the epoch - a concurrent Add,
+a leaf refresh, another holder's collector - and the gate refuses ours `epoch_mismatch`. That refusal
+used to reach the caller as a `CommitRefusedError` it only logged: the member off the roster and still
+in the tree, the person who asked told nothing, and `removeStrayLeaves` finishing the job at some
+holder's next connection. Now `commitMemberRemoval` (`groupActions.ts`) re-reads the tree after the
+refusal's catch-up applied the winner, and stages the Remove again on it, under `rebuildableRefusal`
+(`CommitRefusedError.ts`) - the one rule the newcomer admission follows too: only a refusal whose
+catch-up MOVED the epoch, or an overtaken seat claim (each one an eviction), is rebuilt, so the loop
+ends on a proof, never on a count. A tree that no longer holds the member (the winner removed them)
+commits nothing. Every other ending - a refusal that moved nothing, an unknown outcome, an unreadable
+tree - throws `MemberRemovalNotCommittedError`, and the person who asked is told by TYPE
+(`reportMemberRemovalFailure`): "removed, the key change finishes at the next connection", never
+"failed", because the record IS the removal and is not rolled back. The collector still completes
+that case from durable state (roster against tree).
+
+**Why the record stays first rather than moving after the commit.** The record is what gates
+delivery: it deletes the member's device rows, so no application frame reaches them from that instant,
+while the parting hint below still queues them the Remove commit that names them. Committed first, the
+removed devices would stay on the fan-out until the record landed - or for good if it then failed -
+with a tree that says they are out; and the exclusion window would open after the commit, so a frame
+sent between the two could later be served to them as if they had been in.
+
+**The removed device's replay is refused, by the same ordering, and that is a separate item.** The
+Remove commit it is queued is built on whatever epoch the group reached - one epoch past its own
+whenever any commit landed between the record and the Remove (a lost race always does, rebuilt or
+not). It sees an epoch gap, asks for the commits it missed, and is answered `403` on
+`commits?sinceEpoch` (and `user-members`, `group-info`): it is no longer a member, so it is not
+entitled to them. The 403 is the answer - "you are out" - but the replay reads it as an error
+(`[GAP] replay error ... 403`). Classifying it at the throw and retiring the conversation from it is
+an eviction decision, gated on proof, so it is owed separately ([backlog](../backlog.md)). `removeGroupMember` (called by somebody other than the removed person) reads the
 removed person's devices and writes each into the Redis hash `group:parting:{gid}` (`partingKey`),
 then deletes their device memberships, then deletes the roster row and closes the interval in one
 transaction. **The hint is written FIRST** because the rows it is derived from are gone after the

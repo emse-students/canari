@@ -82,7 +82,10 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
-import { reportFollowerTabRefusal } from '$lib/utils/chat/conversationRefusalMessage';
+import {
+  reportFollowerTabRefusal,
+  reportMemberRemovalFailure,
+} from '$lib/utils/chat/conversationRefusalMessage';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -2280,6 +2283,10 @@ export function useConversations() {
       confirmLabel: common_remove_label(),
     });
     if (!confirmed) return;
+    // THE ROSTER IS REREAD WHENEVER THE SERVER RECORDED THE REMOVAL - on success, and when only its
+    // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
+    // `try`, so a failed reread is never reported as a failed removal.
+    let recorded: boolean;
     try {
       await removeMemberAndBroadcast({
         mlsService: ctx.ensureMls(),
@@ -2288,14 +2295,20 @@ export function useConversations() {
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
       });
-      membershipCache.delete(convo.id);
-      groupMembers = groupMembers.filter((m) => m !== memberId);
-      await loadGroupMembers(convo.id, ctx);
+      recorded = true;
       ctx.log(`${memberId} retire du groupe.`);
     } catch (e) {
+      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
       ctx.log(`Erreur retrait membre: ${String(e)}`);
-      reportFollowerTabRefusal(e);
+      if (reportFollowerTabRefusal(e)) return;
+      recorded = reportMemberRemovalFailure(e) === 'recorded';
     }
+    if (!recorded) return;
+    membershipCache.delete(convo.id);
+    groupMembers = groupMembers.filter((m) => m !== memberId);
+    await loadGroupMembers(convo.id, ctx).catch((e: unknown) =>
+      ctx.log(`[REMOVE_MEMBER] member list not reread after the removal: ${String(e)}`)
+    );
   }
 
   // ── Exposed API ───────────────────────────────────────────────────────────

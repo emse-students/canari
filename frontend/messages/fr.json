@@ -1461,6 +1461,8 @@
   "chat_group_remove_member_label": "Retirer {member}",
   "chat_group_remove_member_title": "Retirer du groupe",
   "chat_group_remove_member_confirm": "Retirer ce membre du groupe ? La personne perdra l'accès à la conversation, et il faudra une nouvelle invitation pour la faire revenir.",
+  "chat_group_remove_member_keys_pending": "Membre retiré du groupe : plus aucun message ne lui parvient. Le changement de clés se terminera à la prochaine connexion.",
+  "chat_group_remove_member_failed": "Le membre n'a pas pu être retiré. Réessayez.",
   "common_you_label": "Vous",
   "chat_group_no_members_label": "Aucun membre à afficher.",
   "chat_group_leave_button": "Quitter le groupe",

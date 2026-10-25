@@ -54,3 +54,33 @@ export class CommitRefusedError extends Error {
     this.name = 'CommitRefusedError';
   }
 }
+
+/**
+ * Why a commit the server REFUSED may be rebuilt and submitted again, or `null` when it may not.
+ *
+ * THE ONE RULE FOR EVERY CALLER THAT REBUILDS A MEMBER'S GESTURE (an admission, a removal), so a
+ * lost race ends the same way whoever lost it. TERMINATION IS A PROOF, NEVER A COUNT:
+ *
+ * - `epoch-moved`: the refusal's catch-up (`catchUpOnRefusedCommit`) took the local epoch past the
+ *   one the commit was built on, so one foreign commit was consumed - a rebuild reads the tree that
+ *   commit left. A refusal that moved nothing proves nothing, and ends the gesture;
+ * - `seat-claim-overtaken`: the whole commit was refused because an unrelated eviction moved the
+ *   group's seat generation on every submission `runCommitTransaction` made - each refusal proves
+ *   an eviction landed, and the epoch stood still, so the rebuild stages on the same tree.
+ *
+ * Read from the TYPE and its `reason` field, never from the message.
+ *
+ * @param error - what the commit threw.
+ * @param builtOn - the local epoch the commit was staged on, read before it was.
+ * @param epochNow - the local epoch after the refusal.
+ */
+export function rebuildableRefusal(
+  error: unknown,
+  builtOn: number,
+  epochNow: number
+): 'epoch-moved' | 'seat-claim-overtaken' | null {
+  if (!(error instanceof CommitRefusedError)) return null;
+  if (epochNow > builtOn) return 'epoch-moved';
+  if (error.reason === SEAT_CLAIM_OVERTAKEN_REASON) return 'seat-claim-overtaken';
+  return null;
+}
