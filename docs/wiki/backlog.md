@@ -27,6 +27,108 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
+
+**Not built. Starts AFTER the stable `1.4.1`, not before.** Today following a person is free and
+silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
+author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
+[profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
+
+### The decisions
+
+1. **Member reposts.** A member may republish another member's post to THEIR OWN followers, with
+   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an entity
+   (association, list, institution) is reposted without asking. Never an anonymous post. A block
+   applies both ways. Hiding the original removes every repost. Same rules for reels. A repost
+   enters the Suivis feed of the reposter's followers at the time of the repost; a notification goes
+   only to readers who NEWLY see the post (the D38 rule).
+2. **Follow requests.** Following a PERSON becomes a request the person accepts or refuses.
+   Associations, lists and institutions stay free to follow, with no acceptance phase. Students are
+   PRIVATE by default (requests to approve), every other profile public (accepted automatically);
+   each user may change their own setting.
+3. **Existing follows are kept**, recorded as accepted. Every user gets a followers list with a
+   "remove follower" action. The processing goes into the register (C5) and the privacy policy.
+4. **Visibility opens to accepted followers.** The user: *"Si on garde le systeme d'acceptation,
+   pas la peine d'avoir des barrieres, meme entre espace, campus, formation etc. On peut ouvrir les
+   vannes de visibilite je pense."* With acceptance in place, a personal post is visible to its
+   author's ACCEPTED followers whatever their space, campus or formation, and the D34-D36 rule
+   "personnel never see a student's personal post"
+   ([profiles-and-access](profiles-and-access.md#d34-d36---who-is-who)) no longer holds for a
+   personnel the student accepted. Read grants (WP7) stay out of the personal branch.
+5. **The opening reaches ONLY accepted followers** (user, 2026-10-25, answering the lead's open
+   question). The Tout feed stays filtered by spaces for non-followers, so what widens is exactly
+   what the author approved, one person at a time.
+
+### Open questions for the user, each with the lead's recommendation
+
+- **Q1 - What does "private" hide from a non-follower who shares a space?** Today they see the
+  student's personal posts in Tout. Recommended: "private" governs who may FOLLOW (the acceptance),
+  and space visibility stays as it is; narrowing it to followers only (the Instagram model) would
+  make a student's posts vanish for their own promo, a change nobody asked for.
+- **Q2 - Does a member's repost of an ENTITY post widen that entity's audience?** Recommended: no.
+  An association's audience is its admins' choice (D38 needs their acceptance), so a member's
+  repost places the post in Suivis only for followers who already see it. A repost of a PERSONAL
+  post with the author's consent does widen it to the reposter's accepted followers, which is what
+  the consent is for.
+- **Q3 - Minors.** The terms admit members aged 15 and over. Private-by-default for students is the
+  protection; confirm that no age-based rule is wanted beyond it (no stored age was assumed here,
+  and none should be added for this).
+- **Q4 - Search and suggestions.** Recommended: a private account stays findable by name and can be
+  asked; its posts reach only accepted followers (plus the space rule, per Q1).
+
+### The work packages, in order, each with its starting point and its proof
+
+- **WP-F1 - follow status and the setting** (a DATA MIGRATION: it ships with a stable only on the
+  user's go). Add `status` (`pending` / `accepted`) to `user_follows`, every existing row
+  `accepted`; a user setting "approve followers", defaulted from the profile (student private,
+  others public). Start: `apps/social-service/src/follows/entities/user-follow.entity.ts`,
+  `follows/follows.service.ts:81` (`followUser`), `posts/posts.controller.ts:181`. Proof:
+  migration idempotence spec, a follow on a private account lands `pending`, on a public one
+  `accepted`.
+- **WP-F2 - every reader of `user_follows` reads accepted rows only.** Enumerate the consumers, not
+  only the feed: the Suivis arm (`posts/posts.service.ts` ~1361 and `getFollowedUserIdsForUser`),
+  the announce sweep (`spaces/reader-spaces.ts`, the two `user_follows` subqueries), the live start
+  push (`lives/live-announcer.ts`), the account erasure. Proof: a pending follower gets no Suivis
+  row, no announce, no live push.
+- **WP-F3 - the request inbox, the followers list and "remove follower".** Reuse the D38b inbox
+  pattern (`/notifications/requests`); accept, refuse, remove; a refusal and a removal tell nobody.
+  User-facing strings through Paraglide. Proof: component tests plus a rig row (two contexts: ask,
+  accept, see; remove, stop seeing).
+- **WP-F4 - a block deletes pending requests both ways**, beside the existing severing
+  (`apps/core-service/src/users/user-blocks.service.ts:164`). Proof: a block leaves no row in
+  either direction, whatever its status.
+- **WP-F5 - the visibility predicate** (a DISCLOSURE change: adversarial Opus review mandatory).
+  Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  (`spaces/reader-spaces.ts:204-242`), NEVER for an anonymous post (following someone must not
+  unmask what they posted anonymously), never through a read grant, and keep it monotone for the
+  newly-reached computation. Ships only after WP-F3 is live, so every user can see and prune the
+  grandfathered followers before those followers gain cross-space reach (see risks). Proof: an
+  integration matrix (accepted / pending / none x same space / other space x personal / anonymous
+  / association post), and the existing read-grants spec unchanged.
+- **WP-F6 - member reposts.** The consent setting (per author, per post); the SQL alongside the
+  republication kinds (`posts/republication-sql.ts:6` and `:14` restrict republishers to entities
+  today); the consent check modelled on `posts/personal-republications.service.ts:159`; feed
+  placement in Suivis at the repost time; the newly-reached notification; the cascades (hide,
+  delete, block, erasure); reels included; the share action in
+  `frontend/src/lib/posts/sharePost.ts`. Proof: the D38b refusal list re-run for a member
+  reposter, a hide removing every repost, a notification only for the newly reached.
+- **WP-F7 - texts.** Privacy policy (`/legal/privacy`), register C5
+  ([register](compliance/register-of-processing.md)), terms (`/legal/cgu`), in the same pull
+  request as the code that makes them true, and the D34-D41 tables of
+  [profiles-and-access](profiles-and-access.md).
+
+### Risks, and what proves each away
+
+- **Disclosure.** WP-F5 widens who reads a personal post. Grandfathered follows were never
+  consented to, so the predicate change must not land before the followers list and "remove
+  follower" are live, and each user should be told once that followers now see their posts across
+  spaces. Proof: WP-F5's matrix, and the Opus review.
+- **Minors.** Private by default for students is the guard; a student who switches to public does
+  so by choice. Proof: the default asserted per profile in WP-F1's spec.
+- **Notification volume.** A follow request is one push to one person; a repost notifies only the
+  newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
+  Proof: the newly-reached spec counting zero for readers who already saw the post.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
