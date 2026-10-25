@@ -107,8 +107,8 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     hgetall: async () => ({}),
     mget: async (...keys: string[]) => keys.flat().map(() => null),
     // Every member device is online, so a welcome_request is forwarded rather than stored.
-    exists: async () => 1,
-    publish: async () => 1,
+    exists: async (_key: string) => 1,
+    publish: async (_channel: string, _payload: string) => 1,
   };
 
   const invitations = () =>
@@ -794,5 +794,118 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       .map(([line]) => String(line))
       .filter((line) => line.includes('[WELCOME_REQ]') && line.includes('START'));
     expect(starts.map((line) => /repeat=(\d+)/.exec(line)?.[1])).toEqual(['1', '10']);
+  });
+
+  /**
+   * THE ASK IS PUT TO EVERY ONLINE ADMITTED MEMBER, LIVE (dev, 2026-10-25): the `welcome_request`
+   * election reached ONE member, and the others - the owner with the conversation open included -
+   * learned of the ask only at their next sweep, minutes later. And the outcome reaches the same
+   * screens, so a member whose answer lost the race settles on what the server holds.
+   */
+  describe('the ask and its outcome reach every online admitted member', () => {
+    /** A second device of OTHER, which is offline. */
+    const OTHER_OFFLINE = { userId: OTHER.userId, deviceId: 'dev-o-off' };
+    /** Online with an active device row in the group, and no roster seat: not a member. */
+    const STRANGER = { userId: 'stranger', deviceId: 'dev-s' };
+    /** A seat that itself awaits a member: it answers nothing, so it is asked nothing. */
+    const ASKER_2 = { userId: 'asker-2', deviceId: 'dev-a2' };
+    const offline = new Set([`user:online:${OTHER_OFFLINE.userId}:${OTHER_OFFLINE.deviceId}`]);
+    let frames: Array<{ to: string; type: string; data: Record<string, unknown> }>;
+
+    const seat = async (who: { userId: string }, awaitingAdmission: boolean) =>
+      q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role, "awaitingAdmission")
+         VALUES ($1, $2, 'member', $3)`,
+        [GROUP, who.userId, awaitingAdmission]
+      );
+    const activeDevice = async (who: { userId: string; deviceId: string }) =>
+      q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'active')`,
+        [who.userId, who.deviceId, GROUP]
+      );
+    /** The control frames of `type` published so far, as `user:device` -> data. */
+    const framesOf = (type: string) =>
+      frames
+        .filter((f) => f.type === type)
+        .map((f) => ({ to: f.to, data: f.data }))
+        .sort((a, b) => a.to.localeCompare(b.to));
+
+    beforeEach(async () => {
+      frames = [];
+      jest
+        .spyOn(redis, 'exists')
+        .mockImplementation(async (key: string) => (offline.has(key) ? 0 : 1));
+      jest.spyOn(redis, 'publish').mockImplementation(async (_channel: string, payload: string) => {
+        const env = JSON.parse(payload) as { recipientId: string; deviceId: string; proto: string };
+        const frame = JSON.parse(Buffer.from(env.proto, 'base64').toString()) as {
+          type: string;
+          data: Record<string, unknown>;
+        };
+        frames.push({
+          to: `${env.recipientId}:${env.deviceId}`,
+          type: frame.type,
+          data: frame.data,
+        });
+        return 1;
+      });
+      await seat(OTHER, false);
+      await activeDevice(OTHER);
+      await activeDevice(OTHER_OFFLINE);
+      await activeDevice(STRANGER);
+      await seat(ASKER_2, true);
+      await activeDevice(ASKER_2);
+    });
+
+    afterEach(() => {
+      (redis.exists as unknown as jest.SpyInstance).mockRestore();
+      (redis.publish as unknown as jest.SpyInstance).mockRestore();
+    });
+
+    it('tells each online device of each admitted member once - never the asker, a stranger, a waiting seat or an offline device', async () => {
+      await acceptLink();
+
+      expect(framesOf('group.join_ask')).toEqual(
+        [MEMBER, OTHER].map((who) => ({
+          to: `${who.userId}:${who.deviceId}`,
+          // Every device the link seated (an earlier case registered a second one).
+          data: {
+            groupId: GROUP,
+            requesterUserId: JOINER.userId,
+            requesterDeviceIds: expect.arrayContaining([JOINER.deviceId]),
+          },
+        }))
+      );
+    });
+
+    it("settles a Decline on every other member's screen, once, and a second Decline settles nothing", async () => {
+      await acceptLink();
+
+      await expect(decline(MEMBER)).resolves.toEqual({ outcome: 'withdrawn' });
+      await expect(decline(OTHER)).resolves.toEqual({ outcome: 'gone' });
+
+      expect(framesOf('group.join_ask.settled')).toEqual(
+        [MEMBER, OTHER].map((who) => ({
+          to: `${who.userId}:${who.deviceId}`,
+          data: { groupId: GROUP, userId: JOINER.userId, outcome: 'declined' },
+        }))
+      );
+    });
+
+    it('settles an Add once: a second Add and a late Decline announce nothing more', async () => {
+      await acceptLink();
+
+      await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+      await expect(memberCommit(4, [JOINER])).resolves.toMatchObject({ accepted: true });
+      await expect(decline(OTHER)).resolves.toEqual({ outcome: 'already-admitted' });
+
+      // The joiner is a member now, and still told nothing about their own ask.
+      expect(framesOf('group.join_ask.settled')).toEqual(
+        [MEMBER, OTHER].map((who) => ({
+          to: `${who.userId}:${who.deviceId}`,
+          data: { groupId: GROUP, userId: JOINER.userId, outcome: 'admitted' },
+        }))
+      );
+    });
   });
 });

@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   answerJoinRequest,
   canAnswerJoinRequests,
+  joinRequestClock,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
   setJoinRequestHandlers,
+  settleJoinRequest,
   settleSweptJoinRequests,
 } from './joinRequests.svelte';
 
@@ -124,5 +126,76 @@ describe('joinRequests - a member answers', () => {
     expect(canAnswerJoinRequests()).toBe(true);
     setJoinRequestHandlers(null);
     expect(canAnswerJoinRequests()).toBe(false);
+  });
+});
+
+/**
+ * ANY MEMBER MAY ANSWER, SO EVERY MEMBER'S SCREEN SETTLES ON THE SERVER'S OUTCOME
+ * (`group.join_ask.settled`) - the member who did not answer, and the one whose answer lost the race
+ * (two Adds, or an Add and a Decline the server's seat lock ordered), without a refresh.
+ */
+describe('joinRequests - settling on the outcome another member made', () => {
+  it("takes the ask off this screen on the server's outcome, whichever member answered", () => {
+    raiseJoinRequest(ask('carol', 'c1'));
+    raiseJoinRequest(ask('dave', 'd1'));
+
+    settleJoinRequest({ groupId: 'g1', userId: 'Carol', outcome: 'declined' });
+
+    expect(pendingJoinRequests().map((r) => r.userId)).toEqual(['dave']);
+  });
+
+  it('lets the losing answer find nothing left to remove, and says it succeeded only if it did', async () => {
+    // Another member declined while this member's Add was in flight: the Add did not happen.
+    setJoinRequestHandlers({
+      approve: vi.fn(async () => {
+        settleJoinRequest({ groupId: 'g1', userId: 'carol', outcome: 'declined' });
+        return { done: false as const, reason: 'invitation-withdrawn' };
+      }),
+      decline: vi.fn(),
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    raiseJoinRequest(ask('carol', 'c1'));
+    const [request] = pendingJoinRequests();
+
+    expect(await answerJoinRequest(request, 'approve')).toBe(false);
+    // The server's outcome stands on screen: the ask is gone, not restored by the failed answer.
+    expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it('does not raise a live ask whose reads began before the server settled it', () => {
+    // The `welcome_request` handler, or the announced ask, read the roster and the tree; the
+    // settlement arrived in between, and the raise that followed used to put the ask back.
+    const seenAt = joinRequestClock();
+    settleJoinRequest({ groupId: 'g1', userId: 'carol', outcome: 'admitted' });
+
+    raiseJoinRequest({ ...ask('carol', 'c1'), seenAt });
+
+    expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it('raises a live ask that began after the settlement - a new ask of the same person', () => {
+    settleJoinRequest({ groupId: 'g1', userId: 'carol', outcome: 'declined' });
+    const seenAt = joinRequestClock();
+
+    raiseJoinRequest({ ...ask('carol', 'c1'), seenAt });
+
+    expect(pendingJoinRequests().map((r) => r.userId)).toEqual(['carol']);
+  });
+
+  it('leaves the sweep alone: its rows are the durable state, and it carries no start', () => {
+    settleJoinRequest({ groupId: 'g1', userId: 'carol', outcome: 'declined' });
+
+    settleSweptJoinRequests([ask('carol', 'c1')]);
+
+    expect(pendingJoinRequests().map((r) => r.userId)).toEqual(['carol']);
+  });
+
+  it('forgets the settlements with the asks at sign-out', () => {
+    settleJoinRequest({ groupId: 'g1', userId: 'carol', outcome: 'declined' });
+    resetJoinRequests();
+
+    expect(joinRequestClock()).toBe(0);
+    raiseJoinRequest({ ...ask('carol', 'c1'), seenAt: 0 });
+    expect(pendingJoinRequests()).toHaveLength(1);
   });
 });

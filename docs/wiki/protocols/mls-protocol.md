@@ -1082,7 +1082,34 @@ stored row would outlive the ask and keep Add and Decline on screen for someone 
 already admitted. Both answer through one path (`answerJoinRequestOrToast`). Add is the member's own Add (`inviteMembersToGroup`,
 signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
 stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
-completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
+completed sweep replaces the asks on screen.
+
+**Every online member sees the ask at once, and sees it go at once (2026-10-25).** A
+`welcome_request` reaches ONE elected device, so every other member used to learn of an ask only at
+their next sweep, minutes later. Now chat-delivery announces it itself: `acceptGroupInvite` sends
+`group.join_ask` (`groupId`, `requesterUserId`, `requesterDeviceIds`) to every online device of every
+ADMITTED member except the asker, and the outcome goes out the same way as
+`group.join_ask.settled` (`outcome: 'admitted' | 'declined'`) - after the transaction that lifted
+`awaitingAdmission` (either door) or the Decline that withdrew the seat commits, and only for a seat
+that call really changed, so a second Add or a late Decline announces nothing
+(`utils/join-ask-announce.ts`). The client raises the announced ask through the same gates as the
+sweep (`raiseAnnouncedJoinAsk`: a group, the member's own tree read, `automaticAdmission`), and it is
+the same entry, keyed `(group, person)`, so the sweep and the elected device's `welcome_request` do
+not duplicate it. The election stays for the mechanical answer to a member's own new device. A
+settlement removes the ask on every screen, so the member who lost an Add/Decline race sees the
+winner's outcome without a refresh. A raise that read its facts before a settlement arrived is not
+raised (`joinRequestClock`, a count of settlements, never a wall clock). An expired ask
+(`expireUnansweredAsks`) is not announced; the next sweep removes it.
+
+**The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
+conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,
+for this device's seat, `deviceMembership.awaitingAdmission`; discovery stores it on the row
+(`Conversation.awaitingAdmission`, IndexedDB and SQLite schema v15, `syncAdmissionFlags`), and a
+`pending` row that carries it (`isNeverAdmitted`, `admissionState.ts`) reads "En attente qu'un membre
+vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming such a row - declined,
+or expired - discovery removes it with no status read: there is no past and no exclusion to keep.
+Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
+never-admitted, and both demotions out of `active` clear the flag.
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask

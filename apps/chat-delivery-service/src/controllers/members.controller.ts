@@ -53,6 +53,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { cutUserId } from '../utils/log-repeat';
+import { announceJoinAskSettled } from '../utils/join-ask-announce';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
@@ -909,6 +910,17 @@ export class MembersController {
     this.logger.log(
       `[JOIN_DECLINE] group=${safeGroupId} caller=${caller} target=${safeUserId} outcome=${outcome}`
     );
+    // Committed: every other online member's ask settles on it now, not at its next sweep.
+    if (outcome === 'withdrawn') {
+      await announceJoinAskSettled(
+        this.dataSource.manager,
+        this.redis,
+        safeGroupId,
+        [safeUserId],
+        'declined',
+        caller
+      );
+    }
     return { outcome };
   }
 

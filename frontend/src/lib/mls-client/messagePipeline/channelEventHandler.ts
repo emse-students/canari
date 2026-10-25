@@ -20,6 +20,8 @@ import type { MessageHandlerDeps } from './deps';
  */
 export interface ChannelEventContext extends Pick<
   MessageHandlerDeps,
+  | 'onJoinAsk'
+  | 'onJoinAskSettled'
   | 'conversations'
   | 'userId'
   | 'addMessageToChat'
@@ -81,6 +83,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelMessageDeleted,
     log,
     onOutOfSync,
+    onJoinAsk,
+    onJoinAskSettled,
   } = ctx;
 
   // NO LINE ON ENTRY. It used to log every event here, which meant a line per `typing` and
@@ -111,6 +115,39 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       );
     }
     setTyping(conversationId, userId, data.state !== 'stop');
+    return;
+  }
+
+  // A new person asks to join a group conversation, announced to every online admitted member.
+  if (event.type === 'group.join_ask') {
+    const data = event.data || {};
+    const groupId = String(data.groupId || '');
+    const requesterUserId = String(data.requesterUserId || '');
+    if (!groupId || !requesterUserId) {
+      return unaddressable(log, event.type, groupId ? 'requesterUserId' : 'groupId');
+    }
+    const requesterDeviceIds = Array.isArray(data.requesterDeviceIds)
+      ? (data.requesterDeviceIds as unknown[]).filter(
+          (d): d is string => typeof d === 'string' && !!d
+        )
+      : [];
+    onJoinAsk?.({ groupId, requesterUserId, requesterDeviceIds });
+    return;
+  }
+
+  // That ask was answered by some member: the server's outcome takes it off this screen.
+  if (event.type === 'group.join_ask.settled') {
+    const data = event.data || {};
+    const groupId = String(data.groupId || '');
+    const userId = String(data.userId || '');
+    if (!groupId || !userId) return unaddressable(log, event.type, groupId ? 'userId' : 'groupId');
+    if (data.outcome !== 'admitted' && data.outcome !== 'declined') {
+      log(
+        `[ERROR] ${event.type} carries an unknown outcome "${String(data.outcome)}" - the ask stays`
+      );
+      return;
+    }
+    onJoinAskSettled?.({ groupId, userId, outcome: data.outcome });
     return;
   }
 

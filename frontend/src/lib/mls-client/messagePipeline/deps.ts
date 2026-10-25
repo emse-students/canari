@@ -7,6 +7,8 @@ import type {
   MessageReaction,
 } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
+import type { AnnouncedJoinAsk } from '$lib/utils/chat/actions';
+import type { SettledJoinAsk } from '$lib/utils/chat/joinRequests.svelte';
 
 /**
  * Dependencies injected into setupMessageHandler.
@@ -109,6 +111,14 @@ export interface MessageHandlerDeps {
     messageId: string;
     deletedBy?: string;
   }) => void;
+  /**
+   * A new person's ask the server announced to every online admitted member (`group.join_ask`),
+   * raised before this device's member once its own tree says the person holds no leaf
+   * (`raiseAnnouncedJoinAsk`).
+   */
+  onJoinAsk?: (ask: AnnouncedJoinAsk) => void;
+  /** An ask answered, by whichever member, as the server holds it (`group.join_ask.settled`). */
+  onJoinAskSettled?: (settled: SettledJoinAsk) => void;
   /** A participant's read watermark moved forward - `at` is how far they have now read. */
   onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;

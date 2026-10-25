@@ -37,6 +37,17 @@ export interface JoinRequestHandlers {
 }
 
 const requests = new SvelteMap<string, JoinRequest>();
+/**
+ * How many asks the server has said were answered this session, and, per ask, the count at which it
+ * was - THE ORDER BETWEEN A SETTLEMENT AND A RAISE THAT READ ITS FACTS BEFORE IT. A live raise reads
+ * the roster and the tree over a few awaits; a settlement arriving in between used to be undone by the
+ * raise that followed it, and the answered ask stood until the next sweep. A raise says when it began
+ * ({@link joinRequestClock}, `JoinApprovalRequest.seenAt`), and one that began before the ask's
+ * settlement is not raised. A raise that began after it read facts the server wrote before announcing
+ * it, so it can only be a NEW ask. No clock of the wall: a count of events, in the order they arrived.
+ */
+let settlements = 0;
+const settledAt = new SvelteMap<string, number>();
 // Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
 let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
@@ -44,9 +55,23 @@ function keyOf(groupId: string, userId: string): string {
   return `${groupId}|${canonicalUserId(userId)}`;
 }
 
-/** Records one ask; a second device of the same person joins the same entry. */
+/** The settlement count a live raise starts at - see {@link settledAt}. */
+export function joinRequestClock(): number {
+  return settlements;
+}
+
+/**
+ * Records one ask; a second device of the same person joins the same entry. An ask whose raise began
+ * before the server settled it (`seenAt`) is not recorded: it was answered while it was being read.
+ */
 export function raiseJoinRequest(ask: JoinApprovalRequest): void {
   const key = keyOf(ask.groupId, ask.requesterUserId);
+  if (ask.seenAt !== undefined && (settledAt.get(key) ?? 0) > ask.seenAt) {
+    console.log(
+      `[JOIN_REQUEST] ${canonicalUserId(ask.requesterUserId)} in ${ask.groupId.slice(0, 8)}... was answered while this ask was being read - not raised`
+    );
+    return;
+  }
   const known = requests.get(key);
   if (known) {
     if (known.deviceIds.includes(ask.requesterDeviceId)) return;
@@ -75,6 +100,32 @@ export function settleSweptJoinRequests(raised: readonly JoinApprovalRequest[]):
     if (!keep.includes(key)) requests.delete(key);
   }
   for (const ask of raised) raiseJoinRequest(ask);
+}
+
+/**
+ * An ask answered by SOME member, as the server holds it (`group.join_ask.settled`): a member's Add
+ * admitted the person, or a member's Decline withdrew the seat.
+ */
+export interface SettledJoinAsk {
+  groupId: string;
+  userId: string;
+  outcome: 'admitted' | 'declined';
+}
+
+/**
+ * Takes an ask off this screen because the SERVER says it was answered - by another member, or by
+ * this one on another device, or by a race this member's own answer lost (two Adds, or an Add and a
+ * Decline the server's seat lock ordered). The outcome is the server's, so a losing answer settles on
+ * it without a refresh; the member's own answer, still in flight, then finds nothing to remove.
+ */
+export function settleJoinRequest(settled: SettledJoinAsk): void {
+  const key = keyOf(settled.groupId, settled.userId);
+  settlements += 1;
+  settledAt.set(key, settlements);
+  if (!requests.delete(key)) return;
+  console.log(
+    `[JOIN_REQUEST] ${canonicalUserId(settled.userId)} ${settled.outcome} in ${settled.groupId.slice(0, 8)}... by a member - the ask leaves this screen`
+  );
 }
 
 /** The asks awaiting an answer, oldest first. Reactive. */
@@ -139,4 +190,6 @@ export async function answerJoinRequest(
 /** Forgets every ask (sign-out, tests): they belong to the account that was signed in. */
 export function resetJoinRequests(): void {
   requests.clear();
+  settledAt.clear();
+  settlements = 0;
 }

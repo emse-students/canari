@@ -70,6 +70,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { announceJoinAskSettled, devicePresenceKey } from '../utils/join-ask-announce';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
@@ -1252,7 +1253,7 @@ export class MessagingService {
 
   /** The presence key for one DEVICE. The gateway writes it on connect and lets it expire. */
   private presenceKey(userId: string, deviceId: string): string {
-    return `user:online:${userId}:${deviceId}`;
+    return devicePresenceKey(userId, deviceId);
   }
 
   /**
@@ -2332,8 +2333,11 @@ export class MessagingService {
       // the committer, which `submitCommit` is already built for - it rolls the staged commit back
       // on a reject - against a loss that no later call can repair.
       let queuedWelcome: QueuedMessage | null = null;
+      /** The invitation-link asks this commit answered, announced once it has committed. */
+      let admittedAsks: string[] = [];
       try {
         await this.groupRepo.manager.transaction(async (m) => {
+          admittedAsks = [];
           // THE ADMITS WRITE SEATS, SO THEY TAKE THE SEAT LOCK - first, before any row, so this
           // transaction and an eviction always take their locks in the same order. In a key group
           // each admitted person was asked of social-service before any lock, against a claim
@@ -2504,7 +2508,7 @@ export class MessagingService {
           // Welcome it carries, so the person is a member from this epoch on. Written with the
           // advance, so the flag never outlives the leaf nor goes before it; a roster write, so
           // before any device row like the enrolment. A key group has no roster rows: nothing matches.
-          await this.liftAwaitingAdmission(
+          admittedAsks = await this.liftAwaitingAdmission(
             m,
             groupId,
             [...admitted.map((a) => a.userId), ...(welcome ? [welcome.userId] : [])],
@@ -2712,6 +2716,7 @@ export class MessagingService {
       }
 
       this.logger.log(`[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`);
+      await this.announceAdmitted(groupId, admittedAsks, committer);
 
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
@@ -3761,6 +3766,12 @@ export class MessagingService {
    * THE WELCOME IS WHAT EVERY ADD SHIPS, so it lifts the flag for a member whose client predates
    * `admits` (it Adds from the `pending` row and sends the Welcome apart): without it, that joiner
    * turned `active` under a flag nothing would ever clear, and every commit of theirs was refused.
+   *
+   * @returns the people whose ask this lift answered, for the caller to announce once its
+   *   transaction has committed ({@link announceJoinAskSettled}) - never from inside it. For ONE
+   *   person the guarded update's count says it; for several, who still awaited is read first, in
+   *   this same transaction, which holds the seat lock a Decline takes - so the read and the guarded
+   *   update see the same flags.
    */
   private async liftAwaitingAdmission(
     m: EntityManager,
@@ -3769,19 +3780,52 @@ export class MessagingService {
     traceId: string,
     tag: string,
     door: 'admits' | 'welcome'
-  ): Promise<void> {
-    if (userIds.length === 0) return;
-    const lifted = await m
-      .getRepository(GroupMember)
-      .update(
-        { groupId, userId: In([...new Set(userIds)]), awaitingAdmission: true },
-        { awaitingAdmission: false }
-      );
-    if ((lifted.affected ?? 0) > 0) {
+  ): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const people = [...new Set(userIds)];
+    const repo = m.getRepository(GroupMember);
+    const flagged =
+      people.length === 1
+        ? people
+        : (
+            await repo.find({
+              where: { groupId, userId: In(people), awaitingAdmission: true },
+              select: { userId: true },
+            })
+          ).map((r) => r.userId);
+    if (flagged.length === 0) return [];
+    const lifted = await repo.update(
+      { groupId, userId: In(people), awaitingAdmission: true },
+      { awaitingAdmission: false }
+    );
+    const admitted = (lifted.affected ?? 0) > 0 ? flagged : [];
+    if (admitted.length > 0) {
       this.logger.log(
-        `[${tag}][${traceId}] ADMITTED group=${groupId} users=${lifted.affected} door=${door} - a member's Add answered their invitation-link ask`
+        `[${tag}][${traceId}] ADMITTED group=${groupId} users=${admitted.length} door=${door} - a member's Add answered their invitation-link ask`
       );
     }
+    return admitted;
+  }
+
+  /**
+   * Announces, AFTER the transaction that lifted them committed, the asks a member's Add answered -
+   * so every other member's screen settles on `admitted` live. Best-effort and never thrown
+   * ({@link announceJoinAskSettled}).
+   */
+  private async announceAdmitted(
+    groupId: string,
+    admitted: readonly string[],
+    actor: string
+  ): Promise<void> {
+    if (admitted.length === 0) return;
+    await announceJoinAskSettled(
+      this.groupRepo.manager,
+      this.redis,
+      groupId,
+      admitted,
+      'admitted',
+      actor
+    );
   }
 
   /** `userId`'s roster seat in `groupId`, or `null` - the one read of `dm_group_members` here. */
@@ -5217,7 +5261,10 @@ export class MessagingService {
   ): Promise<QueuedMessage[]> {
     const { seats, welcome } = opts;
     if (!groupId) return this.queuedMessageRepo.save(rows);
-    return this.queuedMessageRepo.manager.transaction(async (manager) => {
+    /** The invitation-link ask a stored Welcome answered, announced once the store committed. */
+    let admittedAsks: string[] = [];
+    const stored = await this.queuedMessageRepo.manager.transaction(async (manager) => {
+      admittedAsks = [];
       // THE SEAT LOCK, SHARED, BEFORE THE GROUP ROW - the order every seat writer takes them in. The
       // recipients were read with no lock, so an eviction may have deleted a seat and its queued
       // frames since; holding the lock shared, no eviction runs until these rows are written, and the
@@ -5286,7 +5333,7 @@ export class MessagingService {
         await this.ensurePendingSeat(manager, groupId, welcome);
         // A Welcome stored by an admitted member admits its target ({@link liftAwaitingAdmission}).
         if (!welcome.keyGroup) {
-          await this.liftAwaitingAdmission(
+          admittedAsks = await this.liftAwaitingAdmission(
             manager,
             groupId,
             [welcome.userId],
@@ -5298,6 +5345,8 @@ export class MessagingService {
       }
       return saved;
     });
+    if (welcome) await this.announceAdmitted(groupId, admittedAsks, rows[0]?.senderId ?? '');
+    return stored;
   }
 
   /**

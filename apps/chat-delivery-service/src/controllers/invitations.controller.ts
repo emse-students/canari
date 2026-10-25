@@ -38,6 +38,7 @@ import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { announceJoinAsk } from '../utils/join-ask-announce';
 import {
   refuseAwaitingSeat,
   callerSeatStanding,
@@ -234,9 +235,12 @@ export class InvitationsController {
       `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`
     );
 
-    // Put the ask to a member now instead of at their next sync: notifyWelcomeRequest forwards a
-    // welcome_request to an online member (whose client shows "X asks to join") and, if none is
-    // online, wakes one via FCM. Best-effort - the pending rows above are the durable ask.
+    // THE ASK IS PUT TO EVERY ONLINE ADMITTED MEMBER, live (`announceJoinAsk`): any member may
+    // answer it. Best-effort - the pending rows above are the durable ask every member's sweep reads.
+    await announceJoinAsk(this.deviceGroupRepo.manager, this.redis, group.id, callerId, deviceIds);
+
+    // And the welcome_request, as before: forwarded to ONE elected online member (the device that
+    // answers a relayed request mechanically) or, if none is online, a wake of one via FCM.
     for (const deviceId of deviceIds) {
       try {
         await this.messagingService.notifyWelcomeRequest(callerId, {

@@ -18,8 +18,15 @@ import type { IMlsService } from '$lib/mlsService';
 import {
   handleWelcomeRequest,
   processPendingInvitations,
+  raiseAnnouncedJoinAsk,
   type JoinApprovalRequest,
 } from './actions';
+import {
+  pendingJoinRequests,
+  raiseJoinRequest,
+  resetJoinRequests,
+  settleJoinRequest,
+} from './joinRequests.svelte';
 import { resetWelcomeSent } from './welcomeSent';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 
@@ -118,10 +125,12 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     await run('g-adm-approval', mlsService, 'stranger', { onJoinApprovalRequested });
 
     expect(onJoinApprovalRequested).toHaveBeenCalledTimes(1);
+    // A LIVE raise says when its reads began (`seenAt`), so an ask settled meanwhile is not raised.
     expect(onJoinApprovalRequested).toHaveBeenCalledWith({
       groupId: 'g-adm-approval',
       requesterUserId: 'stranger',
       requesterDeviceId: 'dev-1',
+      seenAt: expect.any(Number),
     });
     expect(mlsService.addMember).not.toHaveBeenCalled();
   });
@@ -411,5 +420,80 @@ describe('processPendingInvitations - a new user is never added automatically', 
       expect.objectContaining({ userId: 'peer', deviceId: 'new-phone' }),
       ['peer:new-phone']
     );
+  });
+});
+
+// ── the ask announced to every online admitted member ───────────────────────
+
+/**
+ * THE SERVER PUTS AN INVITATION-LINK ASK TO EVERY ONLINE ADMITTED MEMBER (`group.join_ask`), not to
+ * the one member the `welcome_request` election picks - measured on dev 2026-10-25, the owner with
+ * the conversation open learned of it minutes later, at its next sweep. Raised here from this
+ * device's own tree, and it adds nobody.
+ */
+describe('raiseAnnouncedJoinAsk - every online member sees the ask live', () => {
+  const announced = (groupId: string, deviceIds = ['dev-1', 'dev-2']) => ({
+    groupId,
+    requesterUserId: 'stranger',
+    requesterDeviceIds: deviceIds,
+  });
+  const raise = (
+    groupId: string,
+    identities: () => Promise<string[]>,
+    conversations: Map<string, Conversation> = activeConversations(groupId),
+    deviceIds?: string[]
+  ) =>
+    raiseAnnouncedJoinAsk({
+      mlsService: { getGroupMemberIdentities: vi.fn(identities) },
+      conversations,
+      ask: announced(groupId, deviceIds),
+      log: vi.fn(),
+      onJoinApprovalRequested: raiseJoinRequest,
+    });
+
+  beforeEach(() => {
+    resetJoinRequests();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('raises one ask holding every device of a person absent from the tree', async () => {
+    await raise('g-ann', async () => ['me:self', 'peer:p1']);
+
+    expect(pendingJoinRequests()).toEqual([
+      { groupId: 'g-ann', userId: 'stranger', deviceIds: ['dev-1', 'dev-2'] },
+    ]);
+  });
+
+  it("raises nothing for a person who already holds a leaf - another member's Add came first", async () => {
+    await raise('g-ann-member', async () => ['me:self', 'stranger:dev-1']);
+
+    expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it('raises nothing when the tree cannot be read, or for a 1:1 conversation', async () => {
+    await raise('g-ann-unread', async () => {
+      throw new Error('Group not found');
+    });
+    await raise('g-ann-dm', async () => ['me:self'], activeConversations('g-ann-dm', 'direct'));
+
+    expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it("is one entry with the elected member's welcome_request and the sweep raising the same ask", async () => {
+    raiseJoinRequest({ groupId: 'g-ann', requesterUserId: 'stranger', requesterDeviceId: 'dev-1' });
+    await raise('g-ann', async () => ['me:self']);
+
+    expect(pendingJoinRequests()).toHaveLength(1);
+  });
+
+  it('does not put back an ask the server settled while the tree was being read', async () => {
+    await raise('g-ann-race', async () => {
+      // Another member declined; the settlement arrives before this read answers.
+      settleJoinRequest({ groupId: 'g-ann-race', userId: 'stranger', outcome: 'declined' });
+      return ['me:self'];
+    });
+
+    expect(pendingJoinRequests()).toEqual([]);
   });
 });

@@ -1017,6 +1017,26 @@ Welcome is owed, a window the add lock does not cover on every path. The row is 
 stranded=N` on the log when any seat is pending with all three false. Client side:
 [mls-recovery-ladder](../protocols/mls-recovery-ladder.md#a-silent-reader-is-handed-to-the-roster-repair-by-the-groups-list).
 
+### An invitation-link ask is announced to every online member, and so is its outcome (2026-10-25)
+
+`utils/join-ask-announce.ts` is the one place both frames are built. The audience is every `active`
+device row of every ADMITTED seat (`ADMITTED_SEAT`, so an awaiting seat never hears another's ask),
+minus the asker, filtered by the gateway's presence key (`devicePresenceKey`, shared with
+`messaging.service.ts`). Each goes out on the generic control path (`chat:messages`,
+`isWelcomeRequest: true`, `proto` = the JSON frame), which the gateway relays as is:
+
+- `group.join_ask` from `acceptGroupInvite`, after the seat is written, beside the existing
+  `welcome_request` to ONE elected device (that election now only answers a member's own devices);
+- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn` only,
+  and with `outcome: 'admitted'` after the transaction in which `liftAwaitingAdmission` cleared a
+  flag commits - the commit door and the Welcome door, which now return the users they lifted, so a
+  second Add announces nothing.
+
+An offline member gets nothing and learns it at its next sweep (`GET mls/invitations/pending`); a
+failed publish is logged `[JOIN_ASK]` at WARN and changes no outcome. The log is
+`[JOIN_ASK] ANNOUNCED|SETTLED ... devices=N`. Client side and the race it settles:
+[mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
 ### A fulfilled invitation is retired by whoever can PROVE it, and a vouch does not replay
 
 `getPendingInvitations` serves every `pending` row in the caller's groups, and the caller's first
