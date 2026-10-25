@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { KILL_ROWS, WINDOWS, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, storageLost, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { COOKIE_COMMIT_MS, KILL_ROWS, REFRESH_COOKIE_TTL_S, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, storageLost, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -98,6 +98,12 @@ ok('the KILL-2 replay revival (storage whole, an empty cookie jar) is lost and n
 ok('control: a jar that kept other cookies is not lost (a product sign-out clears only its own)', storageLost({ quotaDb: true, idb: null, estimate: null, cookies: 3 }) === null);
 ok('control: a jar not read accuses nothing', storageLost({ quotaDb: true, idb: null, estimate: null, cookies: null }) === null);
 ok('control: one failing call alone is enough',storageLost({ quotaDb: true, idb: 'UnknownError: Internal error.', estimate: null }) !== null);
+// KILL-2's premise: the kill waits for the newest refresh cookie to reach disk (2026-10-25).
+const T0 = 1_800_000_000_000;
+const exp = (receivedMs) => receivedMs / 1000 + REFRESH_COOKIE_TTL_S;
+ok('a cookie received 70 s ago is on disk', cookieCommitWaitMs({ expiresSec: exp(T0 - 70_000), nowMs: T0 }) === 0);
+ok('control: the reproduced sign-out (kill 5 s after a rotation) waits out the rest', cookieCommitWaitMs({ expiresSec: exp(T0 - 5_000), nowMs: T0 }) === COOKIE_COMMIT_MS - 5_000);
+ok('control: no refresh cookie is an unmet premise, not a zero wait', cookieCommitWaitMs({ expiresSec: null, nowMs: T0 }) === null);
 ok('control: an unreadable panel misses everyone', panelMissing(null, ['a', 'b']).length === 2);
 
 if (failures) {
