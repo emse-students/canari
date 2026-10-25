@@ -49,8 +49,8 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | built ([#2399](https://github.com/emse-students/canari/pull/2399)) |
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | built ([#2400](https://github.com/emse-students/canari/pull/2400)); ADM-5..7 wait on the old APK's install |
 | `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | built ([#2401](https://github.com/emse-students/canari/pull/2401)); W6 owes its `names.mjs` entry and one human sign-in |
-| `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | built (draft PR); its invariant is the salon's entitlement, not the message probe |
-| `archive/big.mjs` | BIG-1..3 | everything at twelve devices | owed |
+| `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | built ([#2402](https://github.com/emse-students/canari/pull/2402)); its invariant is the salon's entitlement, not the message probe |
+| `archive/big.mjs` | BIG-1..3 | everything at twelve devices | built (draft PR); W7 and W8 owe their `names.mjs` entries and one human sign-in each |
 
 ## 3. Row by row
 
@@ -153,7 +153,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| BIG-1..3 | `campaign-big` at twelve devices: one bulk Add, a burst with two commits, a community removal then a newcomer | `addMembers`, `campaign-fixtures.mjs` | seats **W6-W8** (`launch.mjs`, `names.mjs`); the checkpoint time read on A1 and I1 | Q4 for I1 | B | 115 min |
+| BIG-1..3 | every seat (ten: W1-W8, A1, I1): one bulk Add, a burst with two commits, a community removal then a newcomer | `addMembers`, `mintRowGroup`, `comm.mjs`; BIG-3 reads Graine sessions from `channel_messages` | seats **W6-W8** (`launch.mjs`, `names.example.mjs`: W7 = peer, W8 = third); the checkpoint time read from each phone's WebView line | Q4 for I1 | B | 115 min |
 
 ### TOK, NET (`settle.mjs`, `offline.mjs`)
 

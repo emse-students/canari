@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-103 scripts.
+104 scripts.
 
 | script | what it is |
 |---|---|
@@ -29,6 +29,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
+| `bigrows.mjs` | THE LARGE-GROUP ROWS OF THE 1.4.1 CAMPAIGN - BIG-1..3 - their table and judges. |
 | `buildstamp.mjs` | The identity a frontend build gives itself, read back. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
 | `callpeer.mjs` | A desktop Chrome as the OTHER END of a phone call, and the receiver's numbers read from it. |
@@ -141,11 +142,12 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-89 scripts.
+90 scripts.
 
 | script | what it is |
 |---|---|
 | `archive/admit.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - a group link, the ask it raises, and who may answer it. |
+| `archive/big.mjs` | THE LARGE-GROUP ROWS OF THE 1.4.1 CAMPAIGN - every seat the rig has, in one conversation. |
 | `archive/cc.mjs` | CC-1..4 OF THE 1.4.1 CAMPAIGN - two commits built on the SAME epoch, released together. |
 | `archive/comm1.mjs` | COMM-1: a community, a channel, a message - and both peers converge on it. |
 | `archive/comm11.mjs` | COMM-11: kicked from a community, and taken out of every private salon inside it. |
@@ -239,12 +241,13 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-57 scripts.
+58 scripts.
 
 | script | what it is |
 |---|---|
 | `archive/a1plan-selftest.mjs` | THE A1 APK IS BUILT FOR THE ESTATE `SITE` NAMES, AND NEVER FOR PRODUCTION. |
 | `archive/admit-selftest.mjs` | THE ADMISSION ROWS' OWN JUDGEMENTS AND THE WAITING SEAT'S ROUTE TABLE, PINNED (`admitrows.mjs`). |
+| `archive/big-selftest.mjs` | THE LARGE-GROUP ROWS' OWN JUDGEMENTS, PINNED (`bigrows.mjs`). |
 | `archive/campaign-selftest.mjs` | ON DEV, A DESTRUCTIVE GESTURE TOUCHES ONLY WHAT THE CAMPAIGN CREATED - pinned (R5, 2026-10-24). |
 | `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
 | `archive/cc-selftest.mjs` | THE CC ROWS' OWN JUDGEMENTS, PINNED (`ccrows.mjs`). |
@@ -357,4 +360,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-296 scripts in total.
+299 scripts in total.

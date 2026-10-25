@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`, `devicerows.mjs`, `salonrows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`, `devicerows.mjs`, `salonrows.mjs`, `bigrows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1180,6 +1180,20 @@ W1's permission grid. **A salon is not a sidebar conversation**, so section 4.0'
 replaced by the salon's own invariant: every user the server entitles holds an active seat in the
 salon's group, and nobody else does (`salonEntitlement`). Judgements in `salonrows.mjs`, pinned by
 `archive/salon-selftest.mjs`.
+
+```sh
+bun archive/big.mjs --row BIG-1|BIG-2|BIG-3   # every seat: W1-W8, A1, I1 (class B, run by hand)
+```
+
+**THE LARGE ROWS USE EVERY SEAT.** The owner is on W1, W3, W6, A1 and I1, the peer on W2 and **W7**,
+the third account on W4 and **W8**, the fourth on W5. W7 and W8 must be declared in `names.mjs` and
+signed in once by a human. BIG-1 and BIG-2 mint a group and add the three other accounts in ONE bulk
+Add. BIG-1 reads each phone's `[MLS] Encrypted state checkpoint persisted. (N ms)` line, recorded
+with the phone's build. BIG-2's two commits are W1 leaf refreshes armed inside its own burst. BIG-3
+mints a community under `joined` history, removes the third account, then admits the fourth, and
+reads each sender's Graine sessions per phase from `channel_messages`. Its invariant is the
+community's membership (`communityEntitlement`). There is no `checks.mjs` phase: the rows need both
+phones. Judgements in `bigrows.mjs`, pinned by `archive/big-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

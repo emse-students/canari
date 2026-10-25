@@ -107,7 +107,9 @@ export const DEV_AUTHENTIK = { url: "<https://... dev's VITE_AUTHENTIK_URL>", cl
  */
 // W6 IS THE SECOND SCRATCH DEVICE OF THE OWNER (1.4.1 campaign, DEV-4 and DEV-6 mint two devices): wipeable
 // like W3, owner account like W3, and its CAS session paid once by a human like W3's.
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, W4: 9226, W5: 9227, W6: 9228, A2: 9335, I1: 9444 };
+// W7 AND W8 ARE SECOND SEATS OF THE PEER AND THE THIRD ACCOUNT (1.4.1 campaign, BIG-1..3): every
+// account but the fourth then has more than one device in the large group.
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, W4: 9226, W5: 9227, W6: 9228, W7: 9229, W8: 9230, A2: 9335, I1: 9444 };
 
 /**
  * WHICH PHYSICAL PHONE EACH ANDROID NAME IS - and it is REQUIRED as soon as two are attached.
@@ -146,7 +148,7 @@ export const UDID_OF = { I1: "<UDID of the iPhone>" };
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, W4: SITE, W5: SITE, W6: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, W4: SITE, W5: SITE, W6: SITE, W7: SITE, W8: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -167,6 +169,8 @@ export const ACCOUNT_OF = {
   // them here and refuses without a web seat; `launch.mjs` starts these two profiles.
   W4: "<third key>",
   W5: "<fourth key>",
+  W7: "<peer key>",
+  W8: "<third key>",
 };
 
 /**
