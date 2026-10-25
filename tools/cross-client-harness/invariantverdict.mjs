@@ -92,6 +92,38 @@ export function forbiddenIn(lines) {
 }
 
 /**
+ * The members still behind the server's epoch for `group`: the condition the reload pass waits on
+ * before it judges. A reloaded client CONNECTS, and its connection may commit (the stray-leaf sweep
+ * removes a leaver's leaf exactly there) - so a judge reading the clients and then the server samples
+ * a moving group, and reads "W1 at 2, the server at 3" across one commit W1 itself made (RM-8,
+ * 2026-10-25). Waiting until nobody is behind is the settlement; the bound stays the judge's.
+ *
+ * @param {Record<string, Record<string, number>|null>} epochsByDevice member device -> its `__canariMlsEpochs()`
+ * @param {string} group
+ * @param {number|null} serverEpoch
+ * @returns {string[]} the devices whose epoch is absent or below the server's
+ */
+export function behindServer(epochsByDevice, group, serverEpoch) {
+  if (serverEpoch === null || serverEpoch === undefined) return [];
+  return Object.entries(epochsByDevice)
+    .filter(([, epochs]) => !(epochs && Number.isFinite(epochs[group]) && epochs[group] >= serverEpoch))
+    .map(([device]) => device);
+}
+
+/**
+ * The group has SETTLED when its last two rounds agree: nobody behind, at the same server epoch. One
+ * clean round is not enough - a connection commit may be one round trip from landing - and two clean
+ * rounds at different epochs are a group still moving.
+ *
+ * @param {{serverEpoch: number|null, behind: string[]}[]} rounds oldest first
+ */
+export function settledRounds(rounds) {
+  if (rounds.length < 2) return false;
+  const [a, b] = rounds.slice(-2);
+  return a.behind.length === 0 && b.behind.length === 0 && a.serverEpoch === b.serverEpoch;
+}
+
+/**
  * Judge one invariant pass.
  *
  * @param {object} obs

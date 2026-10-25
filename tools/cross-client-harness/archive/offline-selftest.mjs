@@ -10,7 +10,8 @@
  *   bun archive/offline-selftest.mjs
  */
 import { fulfilBody } from '../fault.mjs';
-import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { GROUP_CREATION_NARRATION, ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -104,6 +105,20 @@ ok('gone on the server, still listed on W2 -> half-left', failing(departureOwn({
 ok('member on the server, W2 not listing it -> half-left', failing(departureOwn({ view: view(['u1', 'u2']), user: 'u2', listed: false, atServerEpoch: false, gesture: refused })) === 1);
 ok('member on both, but W2 behind the epoch -> half-left', failing(departureOwn({ view: view(['u1', 'u2']), user: 'u2', listed: true, atServerEpoch: false, gesture: refused })) === 1);
 ok('a "completed" leave that left W2 a member fails', failing(departureOwn({ view: view(['u1', 'u2']), user: 'u2', listed: true, atServerEpoch: true, gesture: done })) === 1);
+
+// The exit replay's narration, as W2 logged it on dev.9335201 (2026-10-25), and a KEPT exit that stays dirt.
+const narrated = (l) => EXIT_REPLAY_NARRATION.some((re) => re.test(l));
+ok('the replay announcement is narration', narrated('[EXIT] replaying 1 exit(s) the server never answered - oldest owed for 2s'));
+ok('the replayed leave is narration', narrated('[EXIT] 477435be... leave replayed - server removed this user'));
+ok('a replayed DELETE is not RM-8 narration', !narrated('[EXIT] 477435be... delete replayed - server deleted it'));
+ok('an exit that could not be recorded stays dirt', !narrated('[EXIT] 477435be... leave could NOT be recorded (x) - a transport failure loses it'));
+
+// The lost departure notice: RM-8's narration ONLY, and only for the cut's transport failure.
+const LOST = 'warning: [05:57:54.976] [GROUP] memberLeft notice for 477435be… NOT delivered, and not sent later - the members see the roster change without it: DeliveryUnreachableError: [DELIVERY] the delivery service could not be reached';
+const rep = () => ({ errors: [], warnings: [LOST], unexplained: [], badHttp: [], exceptions: [], severe: [], wsEvents: [] });
+ok('RM-8 names the lost notice as expected', ignoringExpectedLog(rep(), RM8_NARRATION).warnings.length === 0);
+ok('control: under any other row (the group-creation narration every owner gets) it stays dirt', ignoringExpectedLog(rep(), GROUP_CREATION_NARRATION).warnings.length === 1);
+ok('control: lost to a REFUSAL rather than the cut, it stays dirt in RM-8 too', !RM8_NARRATION.some((re) => re.test(LOST.replace(/^warning: \[[^\]]+\] /, '').replace('DeliveryUnreachableError', 'DeliveryRefusedError'))));
 
 // ── the rig pieces ───────────────────────────────────────────────────────────────────────────────
 console.log('the rig pieces');

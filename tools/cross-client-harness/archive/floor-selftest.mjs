@@ -61,6 +61,12 @@ ok('an invariant fails -> FAIL, with its number and pass', (() => {
   return v.verdict === 'FAIL' && v.failures.some((f) => f.startsWith('invariant 3 (after a reload'));
 })());
 ok('a missing invariant is a FAIL, never a PASS', composeVerdict({ own: good, invariant: null }).verdict === 'FAIL');
+const unsettledInv = { ok: false, passes: [cleanInv.passes[0], { pass: 'after a reload of every web client', ok: false, failures: [], approximations: [], unsettled: 'the group never settled after the reload' }] };
+ok('a reload pass that never settled -> INCONCLUSIVE with the reason, never a PASS or a FAIL', (() => {
+  const v = composeVerdict({ own: good, invariant: unsettledInv });
+  return v.verdict === 'INCONCLUSIVE' && v.failures.some((f) => f.includes('never settled'));
+})());
+ok('... and a premise missing still wins: INVALID', composeVerdict({ own: good, invariant: unsettledInv, premise: ['no group'] }).verdict === 'INVALID');
 ok('nothing asserted -> INVALID', composeVerdict({}).verdict === 'INVALID');
 ok('a premise missing -> INVALID, even over clean assertions', composeVerdict({ own: good, invariant: cleanInv, premise: ['W4 never listed'] }).verdict === 'INVALID');
 ok('a premise outranks a fault that never fired', composeVerdict({ own: good, invariant: cleanInv, premise: ['x'], vacuousFaults: [{ rule: 0, fault: 'hold' }] }).verdict === 'INVALID');

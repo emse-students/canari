@@ -27,6 +27,32 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
+
+`processBulkAddition` (`groupCreation.ts`) asks `isBlockedWith` for each invitee before the Add. A
+check that THROWS (a captive portal, a dropped link) only logs `[ERROR] Could not check whether <id>
+can be added, skipping`, and the invitee leaves the batch. The user is told only when NOBODY is left
+(`nobody-reachable`, `chat_invite_error_nobody_reachable`). With several invitees and one that could
+not be checked, the others are added, the gesture reads as a success, and the dropped person is
+named nowhere on screen - the user silently loses part of an action. The same shape follows two
+steps later: an invitee whose device fetch comes back empty is skipped with `[WARN] Skipped: no
+devices found` and no notice. Found by reading while the campaign ran the portal row (NET-3) on
+`1.4.1-alpha.3`; the fix is to carry the skipped users in `BulkAdditionOutcome` and name them in
+the notice. A blocked invitee is skipped deliberately and stays out of this.
+
+## P3 - A leave made while the link is down loses its `memberLeft` notice for good (RM-8, 2026-10-25)
+
+When a member leaves while every request fails, `leaveGroupAndBroadcast`'s notice send throws:
+`[GROUP] memberLeft notice for <8>… NOT delivered, and not sent later - the members see the roster
+change without it: DeliveryUnreachableError`. The exit itself is kept and replayed on reconnect
+(`pendingGroupExits.ts`, `[EXIT] ... leave replayed - server removed this user`), but the notice is
+not: the local state is already forgotten, so nothing can encrypt it later. The others see the
+roster change and the leaver's leaf goes at their next connection (`strayLeaves.ts`), but no
+"X left" line ever appears in the conversation. Read on `1.4.1-alpha.3` (dev.9335201) by RM-8. Either
+the owed exit carries the notice and its replay sends it before the server step, or the exit
+replay produces the notice. RM-8 names the line as expected, in that row only, until then. The
+online cousin of this is the GRP-6 entry below (a 403 race), whose fix is ordering.
+
 ## P3 - A salon's `memberAdded` notice carries no minted id (review of #2412, 2026-10-25)
 
 `inviteMemberToChannel` (`useChannelWorkspaces.svelte.ts`) still sends its `memberAdded` through
