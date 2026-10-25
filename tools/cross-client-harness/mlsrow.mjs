@@ -43,7 +43,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * subject (measured on dev, 2026-10-25 - every FLOOR draw died on the uuid test before it acted).
  * A uuid is still accepted for the older shape. The test exists because the id is spliced into SQL.
  */
-const USER_ID = /^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+export const USER_ID = /^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const rows = (out) =>
   String(out)
     .split('\n')

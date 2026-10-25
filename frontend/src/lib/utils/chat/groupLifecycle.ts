@@ -2,6 +2,7 @@ import type { GroupMeta, IMlsService } from '$lib/mls-client/IMlsService';
 import { workspaceScope, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { scopeForChannel } from '$lib/utils/graine/runtime';
 import type { ConversationLifecycle } from '$lib/types';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
 export type { ConversationLifecycle };
 
@@ -128,10 +129,44 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
       if (input.isStillUserMember) {
         return { action: 'keep', reason: 'alive and still a member (stale snapshot)' };
       }
-      // No longer a member of a live group -> a real exclusion (rule 4).
-      return input.lifecycle === 'active'
-        ? { action: 'markRemoved', reason: 'excluded (no longer a member) from a live group' }
-        : { action: 'keep', reason: 'placeholder for an exclusion (pending)' };
+      // No longer a member of a live group -> a real exclusion (rule 4), whatever the row's
+      // lifecycle. A `pending` row used to be KEPT here, which was harmless only while nothing
+      // could answer `false` (the roster's 403 was swallowed as doubt); once the 403 is read, a
+      // kept `pending` row is a recovery re-run on every sweep for ever (re-review of #2493). A
+      // never-admitted row never reaches this: discovery removes it before asking anything.
+      return { action: 'markRemoved', reason: 'excluded (no longer a member) from a live group' };
+  }
+}
+
+/**
+ * Whether this account is still a member of the live group `groupId`, asked of the group itself -
+ * `isStillUserMember` for {@link decideAbsentGroupFate}. THE ONE READER of that fact, for discovery
+ * and for recovery alike, so the two cannot read one answer two ways.
+ *
+ * The server's 403 `NOT_A_MEMBER` on the roster read is its answer "no seat" and is `false`, typed at
+ * the throw (`ApiRefusalError`), never read from a message. Anything else - a transport failure, a
+ * 5xx, another refusal - answers nothing and is `null`, and says so.
+ */
+export async function readStillUserMember(
+  mlsService: Pick<IMlsService, 'getGroupUserMembers'>,
+  groupId: string,
+  userId: string,
+  log: (msg: string) => void
+): Promise<boolean | null> {
+  try {
+    const members = await mlsService.getGroupUserMembers(groupId);
+    return members.some((m) => m.userId === userId);
+  } catch (e) {
+    if (e instanceof ApiRefusalError && e.status === 403 && e.code === 'NOT_A_MEMBER') {
+      log(
+        `[MEMBERSHIP] ${groupId.slice(0, 8)}... the group's roster refuses this account (403 NOT_A_MEMBER) - not a member`
+      );
+      return false;
+    }
+    log(
+      `[MEMBERSHIP] ${groupId.slice(0, 8)}... the group's roster could not be read: ${String(e).slice(0, 120)} - membership unknown`
+    );
+    return null;
   }
 }
 

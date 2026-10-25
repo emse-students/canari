@@ -49,6 +49,7 @@ import {
   openSeats,
   serverView,
   userOf,
+  USER_ID,
   watchersOf,
 } from '../mlsrow.mjs';
 import { clientBuild, errorDetail, finishObserved, record } from '../results.mjs';
@@ -370,9 +371,10 @@ const ACTIONS = {
   async 'ADM-8'(c) {
     const W1 = seats.seat.W1.cx;
     const J = seats.seat[spec.joiner].cx;
-    // INTERPOLATED INTO SQL, so each id is proven a uuid first.
+    // INTERPOLATED INTO SQL, so each id is proven a user id first: the 64-hex digest the server keys
+    // an account by, or the older uuid ({@link USER_ID}).
     const lower = (u) => {
-      if (!UUID.test(String(u).toLowerCase())) throw new Error(`ADM-8: '${u}' is not a user id`);
+      if (!USER_ID.test(String(u))) throw new Error(`ADM-8: '${u}' is not a user id`);
       return String(u).toLowerCase();
     };
     const groupOf = {

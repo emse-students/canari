@@ -99,7 +99,7 @@ describe('InvitationsController - who may report a device active', () => {
           useValue: {
             deviceAddressability: jest.fn().mockResolvedValue({ ok: true }),
             activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
-            deactivateDeviceMembership: jest.fn().mockResolvedValue(undefined),
+            deactivateDeviceMembership: jest.fn().mockResolvedValue(true),
           },
         },
       ],
