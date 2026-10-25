@@ -89,7 +89,7 @@ async function deadReport(w) {
 /** Revives `seat`, reopens the group on it, and settles the run on the server and the seat. */
 async function reviveAndSettle(c, seat, how, label, fromEpoch) {
   const revived = await reviveSeat(seat, how, label);
-  await openGroup(seat.cx, c.group.name, { label: id });
+  revived.listedMs = await openRevived(seat, c.group.name);
   // A KEPT COMMIT SETTLES AT THE CONNECTION: given the bound every settlement here gets, then read.
   await awaitClientEpoch(seat.cx, c.group.id, fromEpoch + 1, 30_000);
   const serverEpoch = serverView(c.group.id).activeEpoch;
@@ -139,6 +139,17 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   return run;
 }
 
+/**
+ * Opens the group on a REVIVED seat once its sidebar lists it: a fresh document draws its conversation
+ * list after the unlock, and `openGroup` looked before it had (KILL-5, 2026-10-25: "no sidebar row",
+ * the row there seconds later). The wait is recorded; a seat that never lists the group still throws.
+ */
+async function openRevived(seat, name) {
+  const listedMs = await awaitListed(seat.cx, name, 60_000);
+  await openGroup(seat.cx, name, { label: id });
+  return listedMs;
+}
+
 const ACTIONS = {
   /** KILL-1..3: alternating windows, a drawn delay inside each. */
   async runs(c) {
@@ -182,7 +193,7 @@ const ACTIONS = {
     const killed = await killSeat(W1, 'tab');
     const gesture = await g;
     const revived = await reviveSeat(W1, 'tab', `${id}:W1`);
-    await openGroup(W1.cx, c.group.name, { label: id });
+    revived.listedMs = await openRevived(W1, c.group.name);
     const W2 = seats.seat.W2;
     const listed = (await awaitListed(W2.cx, c.group.name, 90_000)) !== null;
     const caughtUpMs = listed ? await awaitClientEpoch(W2.cx, c.group.id, serverView(c.group.id).activeEpoch, 60_000) : null;
@@ -219,7 +230,7 @@ const ACTIONS = {
     const seatsAtKill = activeSeats(atKill, W4user).length;
     const commitBeforeKill = accepts(commitSequence(commitLines(c.group.id, c.startSince)));
     const revived = await reviveSeat(W1, 'tab', `${id}:W1`);
-    await openGroup(W1.cx, c.group.name, { label: id });
+    revived.listedMs = await openRevived(W1, c.group.name);
 
     // THE NEXT MEMBER COMMIT: W2 Adds W5.
     const W2 = seats.seat.W2;
