@@ -27,6 +27,10 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## MiGallery face matching - option C decided 2026-10-25, lots A1-A9 in [the design page](migallery-face-matching-option-c.md)
+
+A1 is a draft pull request in the MiGallery repository; A8 (cutover) and any production use wait for the DPO's answer on [DPIA R1](compliance/dpia-migallery-faces.md) and for the school IT department's written agreement.
+
 ## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
 
 When a frame this device already read comes back (`SecretReuseError` at its own epoch),

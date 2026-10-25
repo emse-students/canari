@@ -130,6 +130,7 @@
 
 - [Register of processing](compliance/register-of-processing.md) - the Art. 30 register: one row per processing across Canari, MiConnect, MiGallery, Sky, Le Cercle and Portail-etu, the processors, and the OPEN gaps
 - [DPIA: MiGallery face recognition](compliance/dpia-migallery-faces.md) - the AIPD: description, necessity, risks (non-members' faces first), measures, residual risk
+- [MiGallery face matching, option C](migallery-face-matching-option-c.md) - the decided design (stored float16 embeddings, min-distance match, suggested band), the measured numbers and lots A1-A9
 - [Breach procedure](compliance/breach-procedure.md) - Art. 33/34 runbook: detection, the 72 h clock, who decides, the CNIL notification, the French user notice, the breach register template
 - [Data-subject requests](compliance/data-subject-requests.md) - the manual procedure for access, export, erasure and objection within 30 days, the request log, the tables to read per service
 - [Dossier for the school's DPO](compliance/dso-dossier.md) - French: the three questions only the DPO can answer, the recipients, the points flagged
