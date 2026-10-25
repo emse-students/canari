@@ -45,7 +45,10 @@ export const KILL_ROWS = {
       'can take the PROFILE with it: on 2026-10-25 a kill left W1 with no quota database, every storage call failed ' +
       'and the gate read as LOCKED. The other profiles surviving the same kill does not make it safe, so `killSeat` ' +
       'asserts the quota database and the cookie jar before the kill and `reviveSeat` probes both before the PIN (`storageLost`). ' +
-      'A casualty is replayed on a fresh profile; two in a row on one build mark the row BLOCKED-ON-RIG for the campaign',
+      'A casualty is replayed on a fresh profile; two in a row on one build mark the row BLOCKED-ON-RIG for the campaign. ' +
+      "EACH KILL WAITS UNTIL W1's NEWEST REFRESH COOKIE IS ON DISK (`cookieCommitWaitMs`): Chrome commits its cookie store " +
+      'lazily (~30 s), every revival rotates the token, and a kill inside that window relaunched on a superseded token and ' +
+      'signed W1 out (2026-10-25) - a product P2 of its own, not this row\'s subject',
   },
   'KILL-3': {
     devices: ['A1', 'W2'],
@@ -203,6 +206,35 @@ export function storageLost({ quotaDb, idb, estimate, cookies = null }) {
     cookies === 0 && 'no cookie at all for the site (the cookie jar)',
   ].filter(Boolean);
   return failed.length ? failed.join('; ') : null;
+}
+
+/**
+ * The refresh cookie's lifetime the server sets (`SESSION_TTL_SECONDS`, auth-sessions.service.ts), so
+ * a cookie's expiry minus this is the moment the browser received its last rotation.
+ */
+export const REFRESH_COOKIE_TTL_S = 7 * 24 * 60 * 60;
+
+/** How long after a Set-Cookie Chrome's cookie store is taken to have committed it to disk. */
+export const COOKIE_COMMIT_MS = 35_000;
+
+/**
+ * How long a browser kill must still wait so the profile's cookie file holds the CURRENT refresh
+ * cookie: 0 when it does, null when the browser holds no refresh cookie at all (the premise is unmet).
+ *
+ * CHROME COMMITS ITS COOKIE STORE LAZILY, ABOUT EVERY 30 S (KILL-2, 2026-10-25). Every revival is a
+ * refresh and every refresh rotates, so a kill inside that window relaunches on the token BEFORE the
+ * rotation - and two rotations inside it put the client two generations behind, which the server
+ * reads as a replay and answers by revoking the session: the row was ending on the sign-in screen,
+ * a product P2 filed apart ([backlog](../../docs/wiki/backlog.md)). KILL-2's subject is a commit in
+ * flight, not the cookie store, so it kills only once the newest rotation is on disk.
+ *
+ * @param {{expiresSec: number|null, nowMs: number, ttlS?: number, commitMs?: number}} p
+ *   `expiresSec`: the refresh cookie's expiry as the browser reports it (seconds), null when absent
+ */
+export function cookieCommitWaitMs({ expiresSec, nowMs, ttlS = REFRESH_COOKIE_TTL_S, commitMs = COOKIE_COMMIT_MS }) {
+  if (expiresSec === null || expiresSec === undefined || expiresSec <= 0) return null;
+  const receivedMs = (expiresSec - ttlS) * 1000;
+  return Math.max(0, Math.ceil(receivedMs + commitMs - nowMs));
 }
 
 /**

@@ -19,7 +19,8 @@ import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL_BLOCKED, KILL_ROWS, WINDOWS, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL_BLOCKED, KILL_ROWS, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { SITE } from '../site.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
   COMMIT_POST,
@@ -108,6 +109,26 @@ async function trafficBothWays(c, seat, other, i) {
 }
 
 /**
+ * Waits until the browser's newest refresh cookie is committed to the profile's cookie file, so a
+ * browser kill relaunches on the CURRENT token (`cookieCommitWaitMs`). Returns how long it waited;
+ * throws when the browser holds no refresh cookie, a premise the row cannot play without.
+ */
+async function awaitCookieCommitted(cx, label) {
+  const host = new URL(SITE).hostname;
+  let waitedMs = 0;
+  for (;;) {
+    const { cookies } = await cx.send('Network.getAllCookies');
+    const refresh = cookies.find((c) => c.name === 'canari_refresh' && c.domain === host);
+    const waitMs = cookieCommitWaitMs({ expiresSec: refresh?.expires ?? null, nowMs: Date.now() });
+    if (waitMs === null) throw new Error(`${label}: no refresh cookie for ${host} before the kill - the seat is not signed in`);
+    if (waitMs === 0) return waitedMs;
+    console.log(`[${id}] ${label}: waiting ${waitMs} ms for the newest refresh cookie to reach disk`);
+    await sleep(waitMs);
+    waitedMs += waitMs;
+  }
+}
+
+/**
  * One run: a refresh commit held on its side of the server, the kill after the drawn delay (or at the
  * fraction of the measured window), the revival, the outcome.
  */
@@ -115,6 +136,8 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   const killer = spec.devices[0];
   const seat = seats.seat[killer];
   const other = seats.seat.W2;
+  // Before the commit is held, never after: the drawn delay places the kill, and nothing may stretch it.
+  const cookieWaitMs = spec.kill === 'browser' ? await awaitCookieCommitted(seat.cx, `${killer}#${i + 1}`) : null;
   const fromEpoch = serverView(c.group.id).activeEpoch;
   const runStart = now();
   await armLeafRefresh(seat.cx, c.user[killer], c.device, c.group.id);
@@ -135,7 +158,7 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   const seq = commitSequence(commitLines(c.group.id, runStart));
   const { outShown, inShown } = await trafficBothWays(c, seat, other, i);
   const judged = runOutcome({ window: window ?? 'stage', seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown });
-  const run = { run: i + 1, window: window ?? 'stage', delayMs, fraction, msAfterSend: Date.now() - sentAt, heldAtKill, acceptedAtKill, killed, revived, dead, ...judged };
+  const run = { run: i + 1, window: window ?? 'stage', delayMs, fraction, msAfterSend: Date.now() - sentAt, cookieWaitMs, heldAtKill, acceptedAtKill, killed, revived, dead, ...judged };
   console.log(`[${id}] run ${i + 1}: ${run.window}${fraction === null ? ` +${delayMs} ms` : ` at ${fraction}`} -> ${judged.outcome}${judged.assertions.every((a) => a.ok) ? '' : ' (FAILING)'}`);
   return run;
 }
