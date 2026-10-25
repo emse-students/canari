@@ -541,12 +541,18 @@ async function play() {
   const act = await ACTIONS[id](c);
   if (act.premise?.length) return { premise: act.premise, records: act.records, offline: act.offline, detail: { group: group.id, fromEpoch, ...act.detail } };
 
-  // EVERY JOINER LISTS THE GROUP BEFORE THE INVARIANT SENDS TO IT; one that never does is judged below.
-  for (const d of act.joiners ?? [spec.subject]) await awaitListed(cx(d), group.name, 60_000);
+  // EVERY JOINER LISTS THE GROUP BEFORE THE INVARIANT SENDS TO IT; one that never does is judged below
+  // by the roster (`settled` in `settlerows.mjs`), and LEFT OUT OF THE INVARIANT'S MEMBERS - the probe
+  // throws opening a conversation a seat does not list, which recorded eight rows of the 2026-10-25
+  // pass as ERROR or INVALID with no verdict on the row's own question (an Add whose commit was
+  // settled late never enrolled its invitee). Excluded, the roster assertion fails: FAIL, with evidence.
+  const unlisted = [];
+  for (const d of act.joiners ?? [spec.subject]) if ((await awaitListed(cx(d), group.name, 60_000)) === null) unlisted.push(d);
+  if (unlisted.length) console.log(`[${id}] ${unlisted.join(', ')} never listed ${group.name} - its Add is judged by the roster`);
   const invariant = await checkInvariant({
     group: group.id,
     targets: seats.targets,
-    members: spec.devices,
+    members: spec.devices.filter((d) => !unlisted.includes(d)),
     conversation: group.name,
     fromEpoch,
     since,
@@ -563,7 +569,7 @@ async function play() {
     records: act.records,
     offline: act.offline,
     narration: settleNarration(group.id),
-    detail: { group: group.id, name: group.name, side: side?.id ?? null, fromEpoch, decisions: seq, faultRecords: act.records, ...act.detail, ...(spec.note ? { note: spec.note } : {}) },
+    detail: { group: group.id, name: group.name, side: side?.id ?? null, fromEpoch, decisions: seq, faultRecords: act.records, ...act.detail, ...(unlisted.length ? { unlisted } : {}), ...(spec.note ? { note: spec.note } : {}) },
   };
 }
 

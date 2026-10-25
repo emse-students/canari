@@ -110,6 +110,9 @@ const CASES = [
     'notable',
   ],
   ['log', '[14:24:09] [HISTORY_REQ] 642f389a... same state as d82cd226… (7e5952f8…) - nothing to do', 'notable'],
+  // The admission gate's not-drained decision (DUP-1, 2026-10-25), and a line that does not finish.
+  ['debug', '[03:29:47] [QUEUE] group b8ea5710 not known drained: pulled=false pulling=true socket=true idle=true', 'notable'],
+  ['debug', '[03:29:47] [QUEUE] group b8ea5710 not known drained: pulled=false pulling=true', 'unexplained'],
   // An addressed history answer filtered on the reader's windows: what a newcomer was withheld, worth
   // reading on every pass (CC-4, 2026-10-25) and not dirt. A line that does not finish is not it.
   [

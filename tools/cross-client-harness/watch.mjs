@@ -1004,6 +1004,11 @@ const NOTABLE = [
   // it. NOTABLE, not benign: `kept 0` to a long-standing member would be the finding, and the counts
   // travel with any dirty row that needs them. The other spellings of the tag stay unclassified.
   /^\[HISTORY_ENTITLEMENT\] [0-9a-f]{8}… - answer addressed to [0-9a-f]{8}, filtered on .+: withheld \d+, \d+ undated within \d+ min of one, \d+ undatable; kept \d+$/,
+  // THE ADMISSION GATE WAITING FOR A GROUP TO DRAIN (`BaseMlsService.isGroupDrained`, a `debug`
+  // decision line): the evidence it stands on, printed when it does NOT hold - a pull still in
+  // flight right after a reload, typically. `observeWhenDrained` resolves it; DUP-1 met it on the
+  // invariant's reload (2026-10-25). Notable, never dirt: it names why an observation waited.
+  /^\[QUEUE\] group [0-9a-f]{8} not known drained: pulled=(?:true|false) pulling=(?:true|false) socket=(?:true|false) idle=(?:true|false)$/,
   // THE FOUR WAYS THE ANSWER ENDS WITHOUT SENDING ANYTHING, classified from the SITE and all at once.
   // `actions.ts` writes eight `[HISTORY_REQ]` spellings and exactly two of them had a rule - the two
   // above - so the campaign was meeting the other six one run at a time and paying a triage for each.
