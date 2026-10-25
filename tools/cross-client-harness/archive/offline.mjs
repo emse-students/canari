@@ -22,6 +22,7 @@ import {
   COMMIT_POST,
   armLeafRefresh,
   assertRowOwns,
+  awaitAddLockFree,
   awaitClientEpoch,
   awaitListed,
   awaitServer,
@@ -100,6 +101,9 @@ const ACTIONS = {
     // W2 MOVES THE GROUP THREE EPOCHS: an Add of W4 (its own commit, which makes its leaf its own),
     // then two refreshes of that leaf.
     let advanced = 0;
+    // W1 TOOK THE ADD LOCK and was cut holding it; W2's Add is refused until the server drops it.
+    const lockFreedMs = await awaitAddLockFree(c.group.id, 45_000);
+    if (lockFreedMs === null) premise.push("W1's add lock was still held on the server 45 s after its cut");
     await closeOverlays(W2);
     await openGroup(W2, c.group.name, { navigate: false, label: id });
     const w4 = await outcome(addMembers(W2, [c.name('W4')]));
@@ -133,7 +137,7 @@ const ACTIONS = {
       members: reissued.settled ? spec.devices : spec.devices.filter((d) => d !== spec.subject),
       joiners: ['W4', ...(reissued.settled ? [spec.subject] : [])],
       narration: { W1: settleNarration(c.group.id) },
-      detail: { gesture, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
+      detail: { gesture, lockFreedMs, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
       judge: (view) => staleStageOwn({ seqAfter: commitSequence(commitLines(c.group.id, returnedAt)), clearedLine, caughtUpMs, view, subject: c.user[spec.subject], advanced }),
     };
   },

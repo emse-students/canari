@@ -19,7 +19,7 @@ import { subjectFor } from './accounts.mjs';
 import { assertCampaignOwned, ledger, recordCreated } from './campaign.mjs';
 import { client, evaluate, until } from './chat.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
-import { psql, srvLines } from './estate.mjs';
+import { psql, redis, srvLines } from './estate.mjs';
 import { armFault } from './fault.mjs';
 import { createGroup } from './groupnav.mjs';
 import { serverView } from './invariant.mjs';
@@ -212,6 +212,26 @@ export async function awaitServer(group, predicate, timeoutMs = 30_000) {
     view = serverView(group);
   }
   return { ...view, settled: true };
+}
+
+/**
+ * Waits until the server holds no add lock on `group` (`mls:addlock:<groupId>`, chat-delivery
+ * `utils/add-lock.ts`), and returns how long that took - or `null` at the bound.
+ *
+ * WHY A ROW NEEDS IT: a member that stages an Add and is then cut off leaves the lock to its TTL, and
+ * any other member's Add meanwhile is refused at the lock (`Add-lock busy ... invite cancelled`) - by
+ * design, one Add per group at a time. A row that needs a second member to Add after such a cut
+ * waits for the lock to be GONE on the server, a fact, rather than for a guessed TTL
+ * (OFF-3, 2026-10-25: W2's Add came 15 s after W1's cut and was cancelled, so the row was INVALID).
+ */
+export async function awaitAddLockFree(group, timeoutMs = 45_000) {
+  if (!UUID.test(group)) throw new Error(`awaitAddLockFree: '${group}' is not a group id`);
+  const started = Date.now();
+  while (String(redis(`EXISTS 'mls:addlock:${group}'`)).trim() !== '0') {
+    if (Date.now() - started > timeoutMs) return null;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return Date.now() - started;
 }
 
 /**
