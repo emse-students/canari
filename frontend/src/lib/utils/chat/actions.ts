@@ -836,18 +836,14 @@ export async function discoverMissingGroups(params: {
         // other reconcilers). We only query the server for genuinely undecided cases: a conv
         // already `deletedRemotely` short-circuits without a network call.
         let serverStatus: GroupServerStatus = { kind: 'unknown' };
-        let isStillUserMember: boolean | null = null;
         if (convo.lifecycle !== 'removed') {
           serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
-          // Anti-race: only re-validate our actual membership on a LIVE group absent from our
-          // getUserGroups snapshot (which may be stale for a group just created/joined).
-          if (serverStatus.kind === 'active') {
-            const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
-            isStillUserMember =
-              userMembers === null ? null : userMembers.some((m) => m.userId === userId);
-          }
         }
 
+        // THE KIND OF GROUP IS DECIDED BEFORE ITS ROSTER IS ASKED FOR, from the row already in hand.
+        // A key-distribution group has no conversation roster: the server refuses
+        // `user-members` on it with a 403, and asking anyway printed that refusal at every boot of a
+        // device holding such a row - a question whose answer the status read above already carried.
         if (
           (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') &&
           isDistributionGroupMeta(serverStatus.meta)
@@ -864,6 +860,15 @@ export async function discoverMissingGroups(params: {
             log,
           });
           continue;
+        }
+
+        // Anti-race: only re-validate our actual membership on a LIVE conversation group absent
+        // from our getUserGroups snapshot (which may be stale for a group just created/joined).
+        let isStillUserMember: boolean | null = null;
+        if (serverStatus.kind === 'active') {
+          const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
+          isStillUserMember =
+            userMembers === null ? null : userMembers.some((m) => m.userId === userId);
         }
 
         const fate = decideAbsentGroupFate({

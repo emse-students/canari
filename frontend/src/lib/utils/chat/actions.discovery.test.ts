@@ -523,6 +523,10 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(conversations.has('graine-group')).toBe(false);
     expect(deleteConversation).toHaveBeenCalledWith('graine-group');
     expect(mlsService.noteDistributionGroup).toHaveBeenCalledWith('graine-group');
+    // THE KIND IS READ BEFORE THE ROSTER IS ASKED FOR. The server refuses `user-members` on a key
+    // group with a 403, so asking first printed that refusal at every boot - for a question the
+    // status row already in hand had answered.
+    expect(mlsService.getGroupUserMembers).not.toHaveBeenCalledWith('graine-group');
   });
 
   it('purges nothing when the list is EMPTY while this device holds trees', async () => {
