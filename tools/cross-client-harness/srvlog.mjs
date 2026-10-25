@@ -860,6 +860,14 @@ const NOTABLE = [
   // Their refusal twin, `ADMIT_REFUSED`, is a `warn` and is deliberately not matched here.
   /\[COMMIT\]\[commit-[0-9a-f]+\] ADMITS group=\S+ atEpoch=\d+ devices=\S+$/,
   /\[SEND\]\[send-[0-9a-f]+\] PENDING_ADMITTED group=\S+ frameEpoch=\d+ devices=\S+$/,
+  // A REMOVAL'S COMMIT QUEUED TO THE DEVICES IT REMOVES, and AN ADDRESSED HISTORY ANSWER NARROWED TO
+  // ITS READER (1.4.x, `messaging.service.ts`). Both are `log` narration of a mechanism doing its job,
+  // met unexplained on the first CC-3 draw of 2026-10-25 - notable because a reader following a
+  // Remove or a newcomer's history wants to see who the server reached. Anchored to the end so a
+  // reworded line is read again rather than forgiven.
+  /\[COMMIT\]\[commit-[0-9a-f]+\] PARTING group=[0-9a-f]{8} removes=\d+ - commit also queued to \d+ removed device\(s\)(?:: \S+)?$/,
+  /\[SEND\]\[[\w-]+-[0-9a-f]+\] ADDRESSED group=\S+ matched=\d+ of \d+ addressed, \d+ member device\(s\) not addressed: \d+$/,
+  /\[SEND\]\[[\w-]+-[0-9a-f]+\] ADDRESSED_CONVERSATION group=\S+ to=\S+ - every addressee declared [\w-]+$/,
   // AN INTERNET SCANNER LOOKING FOR SECRETS ON A PUBLIC HOST - reported, and never a gate.
   //
   // NOTABLE rather than BENIGN, unlike the crawler 404s above, because the answer to "was this site
