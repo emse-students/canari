@@ -59,11 +59,46 @@ function dispatch(work: () => Promise<void>): void {
 }
 
 /**
- * Resolves once every announcement started so far has finished. Nothing in the request path waits
- * on it; it is what a test - or a shutdown - awaits instead of guessing how long a publish takes.
+ * Resolves once every announcement started so far - and every one THOSE started - has finished.
+ * Nothing in the request path waits on it; it is what a test awaits instead of guessing how long a
+ * publish takes.
  */
 export async function joinAskAnnouncementsSettled(): Promise<void> {
   while (inFlight.size > 0) await Promise.all(inFlight);
+}
+
+/**
+ * WHAT A RETIRING REPLICA STILL OWES (`drainOnSigterm`'s `beforeExit`, wired in `main.ts`): the
+ * join-ask work in flight when the drain reaches it - a FIXED set, read once, so the wait is bounded
+ * by work that already exists and never by work started later. Nothing starts from a request by
+ * then (the listener is closed and every request answered), and the expiry cron runs its expiry and
+ * its announcements as ONE tracked unit ({@link trackJoinAskWork}), so a SIGTERM that lands during it
+ * waits for both. A publish that never returns is bounded by the release's own drain (`docker stop
+ * --time`, `ROLLING_DRAIN_SECONDS` in `infrastructure/lib/rolling.sh`), which no code here
+ * duplicates.
+ */
+export async function finishJoinAskWorkInFlight(): Promise<void> {
+  const owed = [...inFlight];
+  if (owed.length === 0) return;
+  logger.log(`[JOIN_ASK] DRAIN finishing ${owed.length} announcement(s) before exit`);
+  await Promise.all(owed);
+}
+
+/**
+ * Runs `work` as tracked join-ask work and returns its result: a drain waits for it exactly as for
+ * an announcement ({@link finishJoinAskWorkInFlight}). For work that DECIDES announcements and then
+ * makes them - the expiry cron - so a shutdown between the two cannot lose them.
+ */
+export function trackJoinAskWork<T>(work: () => Promise<T>): Promise<T> {
+  const running = work();
+  // Tracked for its settlement only; its own caller sees (and logs) a rejection.
+  const settled = running.then(
+    () => undefined,
+    () => undefined
+  );
+  inFlight.add(settled);
+  void settled.finally(() => inFlight.delete(settled));
+  return running;
 }
 
 /**
@@ -194,15 +229,16 @@ export function announceJoinAsk(
 /**
  * Announces the asks the stale-pending purge expired (`expireUnansweredAsks`), each of which
  * committed in a transaction of its own - so a member's screen loses an ask nobody answered when the
- * server drops it, not at its next sweep.
+ * server drops it, not at its next sweep. AWAITED, not dispatched: its one caller is the cron, which
+ * answers nobody, and runs the expiry and this as one tracked unit ({@link trackJoinAskWork}).
  */
-export function announceExpiredAsks(
+export async function announceExpiredAsks(
   m: EntityManager,
   redis: EvalCapable,
   expired: ReadonlyArray<{ groupId: string; userId: string; askId: string }>
-): void {
+): Promise<void> {
   for (const ask of expired) {
-    announceJoinAskSettled(m, redis, ask.groupId, [ask], 'expired', '');
+    await settleAsks(m, redis, ask.groupId, [ask], 'expired', '');
   }
 }
 
@@ -224,24 +260,34 @@ export function announceJoinAskSettled(
   actor: string
 ): void {
   if (asks.length === 0) return;
-  dispatch(async () => {
-    for (const ask of asks) {
-      const sent = await publishToAdmittedMembers(
-        m,
-        redis,
-        groupId,
-        [ask.userId],
-        {
-          type: 'group.join_ask.settled',
-          data: { groupId, askId: ask.askId, userId: ask.userId, outcome },
-        },
-        actor
+  dispatch(() => settleAsks(m, redis, groupId, asks, outcome, actor));
+}
+
+/** Publishes the settlement of each of `asks`, one after the other; never thrown. */
+async function settleAsks(
+  m: EntityManager,
+  redis: EvalCapable,
+  groupId: string,
+  asks: readonly AnsweredAsk[],
+  outcome: JoinAskOutcome,
+  actor: string
+): Promise<void> {
+  for (const ask of asks) {
+    const sent = await publishToAdmittedMembers(
+      m,
+      redis,
+      groupId,
+      [ask.userId],
+      {
+        type: 'group.join_ask.settled',
+        data: { groupId, askId: ask.askId, userId: ask.userId, outcome },
+      },
+      actor
+    );
+    if (sent !== null) {
+      logger.log(
+        `[JOIN_ASK] SETTLED group=${groupId} asker=${cutUserId(ask.userId)} ask=${ask.askId.slice(0, 8)} outcome=${outcome} devices=${sent}`
       );
-      if (sent !== null) {
-        logger.log(
-          `[JOIN_ASK] SETTLED group=${groupId} asker=${cutUserId(ask.userId)} ask=${ask.askId.slice(0, 8)} outcome=${outcome} devices=${sent}`
-        );
-      }
     }
-  });
+  }
 }

@@ -46,7 +46,7 @@ import { CallsService } from './calls.service';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
 import { AppController } from '../app.controller';
 import { JOIN_ASK_PUBLISH_LUA } from './addressing';
-import { joinAskAnnouncementsSettled } from '../utils/join-ask-announce';
+import { finishJoinAskWorkInFlight, joinAskAnnouncementsSettled } from '../utils/join-ask-announce';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -1078,6 +1078,53 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       expect(await framesOf('group.join_ask.settled')).toEqual(
         toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
       );
+    });
+
+    /**
+     * Review of #2442 (R4): the admitted asks are taken when the commit's TRANSACTION commits, so a
+     * step after it that throws - here the parting cleanup - cannot lose the announcement of an
+     * admission that is already true on the server.
+     */
+    it('still settles an admission when a step after the commit throws', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      const clearParting = jest
+        .spyOn(service as unknown as { clearParting: () => Promise<void> }, 'clearParting')
+        .mockRejectedValueOnce(new Error('parting cleanup failed'));
+
+      await expect(memberCommit(3, [JOINER])).rejects.toThrow('parting cleanup failed');
+      clearParting.mockRestore();
+
+      expect(await awaiting(JOINER)).toBe(false);
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
+      );
+    });
+
+    /**
+     * The expiry cron runs its expiry and its announcements as ONE tracked unit, so the work a
+     * retiring replica waits for (`finishJoinAskWorkInFlight`, the drain's `beforeExit`) holds it
+     * from the first database read: a SIGTERM while it runs cannot leave an ask expired unannounced.
+     */
+    it('lets a drain that starts during the expiry cron wait for its announcements', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      await q(
+        `UPDATE dm_device_group_memberships SET "pendingSince" = now() - interval '30 days'
+         WHERE "userId" = $1`,
+        [JOINER.userId]
+      );
+
+      // The SIGTERM lands as the cron starts: only the drain's own wait stands between this and
+      // the frames - the cron itself is not awaited before it.
+      const cron = purgeStalePending();
+      await finishJoinAskWorkInFlight();
+
+      expect(frames.filter((f) => f.type === 'group.join_ask.settled').map((f) => f.data)).toEqual([
+        { groupId: GROUP, askId, userId: JOINER.userId, outcome: 'expired' },
+        { groupId: GROUP, askId, userId: JOINER.userId, outcome: 'expired' },
+      ]);
+      await cron;
     });
   });
 });

@@ -43,7 +43,7 @@ import {
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
 import { expireUnansweredAsks, seatKey } from './utils/group-membership';
-import { announceExpiredAsks } from './utils/join-ask-announce';
+import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -1245,7 +1245,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * 90 of them inside its window, and ONE created 32 days earlier whose `updatedAt` was two days
    * old. Its window had been reset by a write it had no part in, so it could never expire.
    */
-  private async cleanupStalePendingInvitations() {
+  private cleanupStalePendingInvitations(): Promise<void> {
+    // ONE TRACKED UNIT FROM ITS FIRST READ: a replica retired while this runs finishes it - the
+    // expiries and their announcements included - before it exits (`finishJoinAskWorkInFlight`), so
+    // no ask is expired unannounced. Tracked here, synchronously, so no await precedes it.
+    return trackJoinAskWork(() => this.runStalePendingCleanup());
+  }
+
+  /** The body of {@link cleanupStalePendingInvitations}, run only as its tracked unit. */
+  private async runStalePendingCleanup(): Promise<void> {
     const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);
 
     const stale = await this.deviceGroupRepo.find({
@@ -1259,8 +1267,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       stale,
       expiry
     );
-    // Each expiry committed in its own transaction: every online member's ask goes now.
-    announceExpiredAsks(this.groupMemberRepo.manager, this.redis, expired);
+    // Each expiry committed in its own transaction: every online member's ask goes now - awaited,
+    // as part of this tracked unit.
+    await announceExpiredAsks(this.groupMemberRepo.manager, this.redis, expired);
     if (awaiting.size > 0) {
       this.logger.log(
         `[CRON] cleanupStalePendingInvitations: ${awaiting.size} invitation-link ask(s) awaiting a member - ${JSON.stringify(outcomes)}`
