@@ -178,6 +178,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
     // REAL: with no unresolved commit recorded it settles nothing, which is the case here.
     settleUnresolvedCommitFromLog: proto.settleUnresolvedCommitFromLog,
+    // What a replay that applied commits announces (a lost invitation's wake): nothing waits here.
+    notifyCommitsApplied: vi.fn(),
     groupsWithPendingCommit: vi.fn(async () => []),
     registerDistributionGroup: proto.registerDistributionGroup,
     isDistributionBaseSettled: proto.isDistributionBaseSettled,

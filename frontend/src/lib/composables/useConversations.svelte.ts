@@ -74,7 +74,10 @@ import {
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
-import { makeLostInvitationReplanner } from '$lib/utils/chat/lostInvitationReplanner';
+import {
+  makeLostInvitationReplanner,
+  makeUnrecordedInvitationTeller,
+} from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   findConversationKeyByGroupId,
@@ -1268,7 +1271,10 @@ export function useConversations() {
         // restore SUCCEEDED - on a map a failed restore left empty, every entry would read as a
         // conversation that does not exist.
         if (mlsService && restored) {
-          mlsService.setOwedInvitationReplanner(lostInvitationReplanner(ctx, mlsService, gen));
+          mlsService.setOwedInvitationReplanner(
+            lostInvitationReplanner(ctx, mlsService, gen),
+            makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
+          );
           replannerMls = mlsService;
         }
       }

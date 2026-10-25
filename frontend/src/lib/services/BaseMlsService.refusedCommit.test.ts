@@ -74,6 +74,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     groupsWithPendingCommit: vi.fn(async () => []),
     // What a replay held behind a refused backlog asks for: the pull that ends the hold.
     notifyConversationAvailable: vi.fn(),
+    // What a replay that applied commits announces (a lost invitation's wake): nothing waits here.
+    notifyCommitsApplied: vi.fn(),
     // REAL: with no staged commit kept they settle nothing and submit once, which is the
     // case here (`BaseMlsService.unresolvedCommit.test.ts` owns the others).
     ...Object.fromEntries(

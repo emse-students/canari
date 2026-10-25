@@ -668,13 +668,7 @@ export class PushController {
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    const acquired = await acquireAddLock(
-      this.redis,
-      this.logger,
-      { groupId, userId, deviceId },
-      'push'
-    );
-    return { acquired };
+    return acquireAddLock(this.redis, this.logger, { groupId, userId, deviceId }, 'push');
   }
 
   /**
@@ -684,18 +678,21 @@ export class PushController {
   @Delete('mls/push/release-add-lock')
   async releaseAddLockPush(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string }
+    @Body() body: { userId: string; deviceId: string; groupId: string; token?: string }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    const token = body.token ? sanitizeQueryValue(body.token, 'token') : undefined;
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
+    // The Android service sends no token yet: the LEGACY owner-only release (`utils/add-lock.ts`).
     const released = await releaseAddLock(
       this.redis,
       this.logger,
       { groupId, userId, deviceId },
-      'push'
+      'push',
+      token
     );
     return { released };
   }

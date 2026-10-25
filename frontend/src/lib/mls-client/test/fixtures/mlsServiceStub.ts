@@ -103,6 +103,7 @@ export function createMlsServiceStub(
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     notifyConversationAvailable: vi.fn(),
+    notifyCommitsApplied: vi.fn(),
     // Still a member by default: eviction is the exception, and a stub that answered `false` would
     // retire every conversation the commit path touches.
     isGroupActive: vi.fn().mockResolvedValue(true),

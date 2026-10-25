@@ -244,7 +244,10 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     await settle();
     releases[1].resolve();
     await ok;
-    expect(mls.setOwedInvitationReplanner).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+    expect(mls.setOwedInvitationReplanner).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Function),
+      expect.any(Function)
+    );
 
     // The sign-out removes it: the next account must not re-plan into this session's map.
     convs.invalidateRestores();

@@ -13,7 +13,13 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
-import { ADD_LOCK_TTL_SEC, addLockKey, addLockOwner } from '../utils/add-lock';
+import {
+  ADD_LOCK_TTL_SEC,
+  addLockKey,
+  addLockOwner,
+  addLockValue,
+  releaseAddLock,
+} from '../utils/add-lock';
 
 /**
  * ONE LOCK, TWO DOORS, AND THEY DISAGREED ABOUT HOW LONG IT LIVES.
@@ -49,8 +55,14 @@ const GROUP = 'g1';
 interface Door {
   name: string;
   via: 'jwt' | 'push';
-  take: (c: { locks: LocksController; push: PushController }) => Promise<{ acquired: boolean }>;
-  drop: (c: { locks: LocksController; push: PushController }) => Promise<{ released: boolean }>;
+  take: (c: {
+    locks: LocksController;
+    push: PushController;
+  }) => Promise<{ acquired: boolean; token?: string; retryAfterMs?: number }>;
+  drop: (
+    c: { locks: LocksController; push: PushController },
+    token?: string
+  ) => Promise<{ released: boolean }>;
 }
 
 const DOORS: Door[] = [
@@ -58,7 +70,8 @@ const DOORS: Door[] = [
     name: 'the JWT door',
     via: 'jwt',
     take: ({ locks }) => locks.acquireAddLock({ groupId: GROUP, deviceId: DEVICE }, USER),
-    drop: ({ locks }) => locks.releaseAddLock({ groupId: GROUP, deviceId: DEVICE }, USER),
+    drop: ({ locks }, token) =>
+      locks.releaseAddLock({ groupId: GROUP, deviceId: DEVICE, ...(token ? { token } : {}) }, USER),
   },
   {
     name: 'the PushSecret door',
@@ -69,11 +82,12 @@ const DOORS: Door[] = [
         deviceId: DEVICE,
         groupId: GROUP,
       }),
-    drop: ({ push }) =>
+    drop: ({ push }, token) =>
       push.releaseAddLockPush('PushSecret sekret', {
         userId: USER,
         deviceId: DEVICE,
         groupId: GROUP,
+        ...(token ? { token } : {}),
       }),
   },
 ];
@@ -83,7 +97,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
   let push: PushController;
   let controllers: { locks: LocksController; push: PushController };
 
-  const redis = { set: jest.fn(), eval: jest.fn() };
+  const redis = { set: jest.fn(), eval: jest.fn(), pttl: jest.fn() };
   const pushTokenRepo = { findOne: jest.fn(), update: jest.fn() };
   const emptyRepo = () => ({ findOne: jest.fn(), find: jest.fn(), save: jest.fn() });
 
@@ -115,42 +129,66 @@ describe('the MLS add-lock - one policy, both doors', () => {
     pushTokenRepo.findOne.mockResolvedValue({ pushSecret: SECRET });
     redis.set.mockResolvedValue('OK');
     redis.eval.mockResolvedValue(1);
+    redis.pttl.mockResolvedValue(12_345);
   });
 
   describe.each(DOORS)('$name', ({ take, drop }) => {
-    it('takes the one key, for the one lifetime, with the one owner', async () => {
-      await take(controllers);
+    it('takes the one key, for the one lifetime, with the one owner and a token of its own', async () => {
+      const taken = await take(controllers);
 
       expect(redis.set).toHaveBeenCalledTimes(1);
+      expect(taken.acquired).toBe(true);
+      expect(taken.token).toEqual(expect.any(String));
       expect(redis.set).toHaveBeenCalledWith(
         addLockKey(GROUP),
-        addLockOwner(USER, DEVICE),
+        addLockValue(addLockOwner(USER, DEVICE), taken.token as string),
         'EX',
         ADD_LOCK_TTL_SEC,
         'NX'
       );
     });
 
-    it('reports the lock taken', async () => {
-      await expect(take(controllers)).resolves.toEqual({ acquired: true });
+    it('mints a different token for every acquisition', async () => {
+      const a = await take(controllers);
+      const b = await take(controllers);
+      expect(a.token).not.toBe(b.token);
     });
 
-    it('reports the lock refused when another device holds it, and does not pretend otherwise', async () => {
+    it("reports the lock refused - with the holder's remaining lifetime, the server's own fact", async () => {
       redis.set.mockResolvedValue(null);
 
-      await expect(take(controllers)).resolves.toEqual({ acquired: false });
+      await expect(take(controllers)).resolves.toEqual({ acquired: false, retryAfterMs: 12_345 });
+      expect(redis.pttl).toHaveBeenCalledWith(addLockKey(GROUP));
     });
 
-    it('releases only under its own ownership check', async () => {
-      await drop(controllers);
+    it('a refusal whose key vanished meanwhile says 0 ms, never a negative', async () => {
+      redis.set.mockResolvedValue(null);
+      redis.pttl.mockResolvedValue(-2);
+
+      await expect(take(controllers)).resolves.toEqual({ acquired: false, retryAfterMs: 0 });
+    });
+
+    it('a release WITH its token deletes exactly that acquisition', async () => {
+      await drop(controllers, 'tok-1');
 
       expect(redis.eval).toHaveBeenCalledTimes(1);
-      const [script, keyCount, key, owner] = redis.eval.mock.calls[0];
+      const [script, keyCount, key, value, ...rest] = redis.eval.mock.calls[0];
       expect(script).toContain("redis.call('get', KEYS[1]) == ARGV[1]");
       expect(script).toContain("redis.call('del', KEYS[1])");
       expect(keyCount).toBe(1);
       expect(key).toBe(addLockKey(GROUP));
+      expect(value).toBe(addLockValue(addLockOwner(USER, DEVICE), 'tok-1'));
+      expect(rest).toEqual([]);
+    });
+
+    it('a release with NO token takes the legacy owner-only path', async () => {
+      await drop(controllers);
+
+      const [script, , key, owner, prefix] = redis.eval.mock.calls[0];
+      expect(script).toContain('string.sub');
+      expect(key).toBe(addLockKey(GROUP));
       expect(owner).toBe(addLockOwner(USER, DEVICE));
+      expect(prefix).toBe(addLockOwner(USER, DEVICE) + '#');
     });
 
     it('reports a release it did not perform as not released', async () => {
@@ -172,5 +210,50 @@ describe('the MLS add-lock - one policy, both doors', () => {
     expect(DOORS).toHaveLength(2);
     expect(locks).toBeInstanceOf(LocksController);
     expect(push).toBeInstanceOf(PushController);
+  });
+
+  /**
+   * What each release DELETES, against a model of the key: the two scripts are told apart by their
+   * arguments (a token value alone, or the owner and its prefix), so the model applies the rule each
+   * script states.
+   */
+  describe('what each release deletes', () => {
+    const OWNER = addLockOwner(USER, DEVICE);
+    const logger = { log: jest.fn() } as never;
+    let held: string | null;
+    const store = {
+      eval: jest.fn(async (_script: string, _n: number, _key: string, a1: string, a2?: string) => {
+        const legacy = a2 !== undefined;
+        const match = legacy ? held === a1 || (held?.startsWith(a2) ?? false) : held === a1;
+        if (!match) return 0;
+        held = null;
+        return 1;
+      }),
+    } as never;
+    const holder = { groupId: GROUP, userId: USER, deviceId: DEVICE };
+
+    it('a WRONG token frees nothing - a late release never deletes a live acquisition of its own device', async () => {
+      held = addLockValue(OWNER, 'live');
+      await expect(releaseAddLock(store, logger, holder, 'jwt', 'stale')).resolves.toBe(false);
+      expect(held).toBe(addLockValue(OWNER, 'live'));
+    });
+
+    it('the right token frees its acquisition', async () => {
+      held = addLockValue(OWNER, 'live');
+      await expect(releaseAddLock(store, logger, holder, 'jwt', 'live')).resolves.toBe(true);
+      expect(held).toBeNull();
+    });
+
+    it('a LEGACY client (no token) still releases a token lock of its own device, and a bare owner', async () => {
+      held = addLockValue(OWNER, 'live');
+      await expect(releaseAddLock(store, logger, holder, 'jwt')).resolves.toBe(true);
+      held = OWNER;
+      await expect(releaseAddLock(store, logger, holder, 'jwt')).resolves.toBe(true);
+    });
+
+    it('the legacy release never frees ANOTHER device lock', async () => {
+      held = addLockValue(addLockOwner(USER, 'd2'), 'theirs');
+      await expect(releaseAddLock(store, logger, holder, 'jwt')).resolves.toBe(false);
+    });
   });
 });

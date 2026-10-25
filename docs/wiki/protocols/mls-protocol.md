@@ -665,18 +665,35 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   before would re-plan an invitation whose stage that settlement is about to record again). **Never
   while this device holds an add lock**: the server's lock is not re-entrant, so a re-plan run under
   one would be refused its own and read as "busy" - the drain waits, and the release asks for it.
-  **A release lost with the connection is sent again before the next acquire** (`addLockReleasesOwed`):
-  the server's lock (`SET NX EX`) refuses even its own holder, so the cut Add's lock would refuse the
-  re-plan for its whole TTL, and an expiry is not an event. The release deletes only this device's
-  lock, so sending it late never frees another's. The server's semantics are unchanged.
+- **The add lock has a token per acquisition, and a release this device owes is sent before its
+  next acquire** (`add-lock.ts` on the server, `addLockMarkers.ts` on the client). The server's lock
+  (`SET NX EX`) refuses even its own holder, so a release lost with the connection - or never sent by
+  a page that died mid-Add - would refuse the re-plan for the whole TTL. Every acquisition is marked
+  DURABLY with its token until a release of it is answered, so a reload is the same case as a live
+  page. The marker is claimed synchronously, so two racing acquires never both send it, and no
+  release is sent for a group this page holds. The release names its token, so a late one frees
+  that acquisition or nothing: never a lock taken since, by this page or by the Android background
+  service. A release with no token is the legacy owner-only one
+  ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-add-lock-released-by-owner-alone-with-no-token-2026-10-25)).
+- **A refused acquire carries the server's own fact about when the lock ends** (`retryAfterMs`, its
+  `PTTL`). A lost invitation waiting on that group is re-planned at that moment, once per group
+  (`wakeAtAddLockExpiry`). This is the one timer, and the server states its value. The holder's
+  release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
+  registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
   `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
   the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
   a refused add lock or a tree that could not be confirmed (a log unread, a replay held behind
   refused frames, a catch-up short) is `waiting` - the entry stays, and the event that lifts the wait
   drains again (`notifyConversationAvailable`, the external-join re-admission included, a processed
-  Welcome, a COMMIT APPLIED in the group - which is how another device's Add ends - an add lock
-  released, the next connection). A `removed` conversation is told as gone; no row and no group (the
+  Welcome, a COMMIT APPLIED in the group - from the frame queue or from a log replay
+  (`notifyCommitsApplied`) - the server-stated end of a refused lock, this device's own add lock
+  released, the next connection). Which event lifts which wait: a pending conversation, by its
+  Welcome or its re-admission; a missing row, by `notifyConversationAvailable`; another device's
+  lock, by its stated end (or its commit, as a bound); an unconfirmed tree, by the commits applied
+  that confirm it - a log that could not be read with the socket still open is lifted by the
+  group's next commit or the next connection, and a catch-up stopped short by the commits it did
+  apply, then by the next commit. A `removed` conversation is told as gone; no row and no group (the
   member deleted it) concludes with a log. **A drain runs for ONE re-planner**: a sign-out during it
   stops it, and a re-plan that ends after the session did tells nothing and keeps its entry.
 - **The re-plan is the invitation made again** through `processBulkAddition`, under `rosterPremise`
@@ -705,9 +722,8 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
 
 Not covered, in [backlog](../backlog.md): a 1:1 creation and a group's own devices carry no
 invitation; a kept commit is settled only by a connection, while the toast promises "once it is
-back"; a re-plan that dies between its merge and its Welcomes finds `already-in-tree` next time
-and sends none; and a release owed is remembered in memory only, so a reload within the lock's TTL
-waits for the next event.
+back"; and a re-plan that dies between its merge and its Welcomes finds `already-in-tree` next
+time and sends none.
 
 ### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 

@@ -150,7 +150,7 @@ import {
   type MlsStateWriteLatch,
 } from '$lib/utils/hex';
 import { m } from '$lib/paraglide/messages';
-import { showPinnedToast, showToast } from '$lib/stores/toast.svelte';
+import { showPinnedToast } from '$lib/stores/toast.svelte';
 import {
   MAX_REFUSED_ROTATION_RELOADS,
   REFUSED_ROTATION_RELOADS_KEY,
@@ -219,7 +219,13 @@ import {
   type LostInvitationCause,
   type OwedInvitationReplanner,
   type ReplanVerdict,
+  type UnrecordedInvitationTeller,
 } from '$lib/mls-client/owedInvitations';
+import {
+  claimAddLockMarker,
+  clearAddLockMarker,
+  markAddLock,
+} from '$lib/mls-client/addLockMarkers';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -2066,6 +2072,11 @@ export abstract class BaseMlsService implements IMlsService {
     this.replanOwedInvitationsIn(groupId, 'conversation available');
   }
 
+  /** @inheritdoc */
+  notifyCommitsApplied(groupId: string): void {
+    this.replanOwedInvitationsIn(groupId, 'commit applied');
+  }
+
   /** Runs `fn` under the global MLS client mutex (shared with the drain and catch-up sessions). */
   runUnderMlsLock<T>(fn: () => Promise<T>): Promise<T> {
     return this.messageScheduler.runUnderMlsLock(fn);
@@ -2474,9 +2485,7 @@ export abstract class BaseMlsService implements IMlsService {
           // A COMMIT APPLIED is how an Add holding the group's lock ENDS - another device's, whose
           // lock refused a re-plan here - and how a tree that could not be confirmed catches up: a
           // lost invitation that waited on either is re-planned now.
-          if (msg.isCommit && groupId && cbResult !== false) {
-            this.replanOwedInvitationsIn(groupId, 'commit applied');
-          }
+          if (msg.isCommit && groupId && cbResult !== false) this.notifyCommitsApplied(groupId);
         } catch (e) {
           console.error(`[QUEUE] Error processing message:`, e);
 
@@ -3654,41 +3663,56 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Takes the group's add lock - after sending again a release of THIS device's that got no answer
-   * ({@link addLockReleasesOwed}). The server's lock refuses its own holder (`SET NX`), so a lock
-   * left up by a release lost with the connection would refuse this device's next Add for its whole
-   * TTL - and an expiry is not an event anything wakes on. The release deletes only a lock this
-   * device still owns, so sending it late can never free another device's.
+   * Takes the group's add lock.
+   *
+   * FIRST, A RELEASE THIS DEVICE STILL OWES IS SENT (`addLockMarkers.ts`): every acquisition is
+   * marked durably until a release of it is ANSWERED, and the server's lock refuses even its own
+   * holder (`SET NX`) - so a release lost with the connection, or never sent by a page that died
+   * mid-Add, would refuse this device's next Add for the whole TTL. The marker is CLAIMED
+   * synchronously, so two acquires racing in this page never both send it, and none is sent for a
+   * group this page holds; the release names the acquisition's TOKEN, so a late one frees that
+   * acquisition or nothing - never a lock taken since (this page's, or the Android service's).
+   *
+   * A REFUSAL CARRIES THE SERVER'S OWN FACT ABOUT WHEN THE LOCK ENDS (`retryAfterMs`): a lost
+   * invitation waiting on this group is re-planned at that moment ({@link wakeAtAddLockExpiry}) -
+   * the holder's release sends no frame, so nothing else would say it.
    */
   async acquireAddLock(groupId: string): Promise<boolean> {
-    if (this.addLockReleasesOwed.has(groupId)) {
-      const released = await this.delivery.releaseAddLock(groupId);
-      console.log(
-        `[ADD_LOCK] ${groupId.slice(0, 8)}... the release lost earlier was sent again before acquiring: ${released ? 'answered' : 'still unanswered'}`
-      );
-      if (released) this.addLockReleasesOwed.delete(groupId);
+    const short = groupId.slice(0, 8);
+    if (!this.addLocksHeld.has(groupId)) {
+      const owed = claimAddLockMarker(this.userId, groupId);
+      if (owed) {
+        const released = await this.delivery.releaseAddLock(groupId, owed.token);
+        console.log(
+          `[ADD_LOCK] ${short}... a release this device owed (${owed.token ? 'token' : 'no token'}) was sent before acquiring: ${released ? 'answered' : 'still unanswered - kept'}`
+        );
+        if (!released) markAddLock(this.userId, groupId, owed.token);
+      }
     }
-    const acquired = await this.delivery.acquireAddLock(groupId);
-    if (acquired) {
-      // Taken, so whatever the lost release left has expired: nothing is owed any more.
-      this.addLockReleasesOwed.delete(groupId);
-      this.addLocksHeld.add(groupId);
+    const answer = await this.delivery.acquireAddLock(groupId);
+    if (answer.acquired) {
+      this.addLocksHeld.set(groupId, answer.token);
+      markAddLock(this.userId, groupId, answer.token);
+      return true;
     }
-    return acquired;
+    this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
+    return false;
   }
 
   /**
-   * Releases the group's add lock - and, once this device holds none, drains the lost invitations a
-   * held lock deferred ({@link replanOwedInvitations}): the server's lock is not re-entrant, so a
-   * re-plan run under one would be refused its own. Forgotten as HELD before the request; a release
-   * the server did not answer is remembered as OWED, and sent again before the next acquire.
+   * Releases the group's add lock - naming the acquisition's token - and, once this device holds
+   * none, drains the lost invitations a held lock deferred ({@link replanOwedInvitations}): the
+   * server's lock is not re-entrant, so a re-plan run under one would be refused its own. Forgotten
+   * as HELD before the request; its marker leaves only when the release is ANSWERED, so an unanswered
+   * one is sent again before the next acquire.
    */
   async releaseAddLock(groupId: string): Promise<void> {
+    const token = this.addLocksHeld.get(groupId);
     this.addLocksHeld.delete(groupId);
     try {
-      const released = await this.delivery.releaseAddLock(groupId);
-      if (released) this.addLockReleasesOwed.delete(groupId);
-      else this.addLockReleasesOwed.add(groupId);
+      if (await this.delivery.releaseAddLock(groupId, token)) {
+        clearAddLockMarker(this.userId, groupId, token);
+      }
     } finally {
       if (
         this.addLocksHeld.size === 0 &&
@@ -3698,6 +3722,34 @@ export abstract class BaseMlsService implements IMlsService {
         this.replanOwedInvitations('add lock released');
       }
     }
+  }
+
+  /**
+   * A refused acquire on a group where a lost invitation waits: re-plans it when the server SAID the
+   * holder's lock ends - one wake per group, a fact and not a guess (an earlier release by the holder
+   * is only a bound this does not need to observe). No stated end (a server that predates it, an
+   * acquire nothing answered): no wake, the next commit or connection drains.
+   */
+  private wakeAtAddLockExpiry(groupId: string, retryAfterMs: number | undefined): void {
+    if (!this.owedInvitationReplanner || !owesInvitationIn(this.userId, groupId)) return;
+    const short = groupId.slice(0, 8);
+    if (retryAfterMs === undefined) {
+      console.log(
+        `[INVITE_OWED] ${short}... the add lock was refused with no stated end - the next commit in the group or the next connection re-plans`
+      );
+      return;
+    }
+    clearTimeout(this.addLockExpiryWakes.get(groupId));
+    console.log(
+      `[INVITE_OWED] ${short}... the add lock was refused - re-planned when the server says it ends, in ${retryAfterMs} ms`
+    );
+    this.addLockExpiryWakes.set(
+      groupId,
+      setTimeout(() => {
+        this.addLockExpiryWakes.delete(groupId);
+        this.replanOwedInvitationsIn(groupId, 'add lock ended (server-stated)');
+      }, retryAfterMs)
+    );
   }
 
   async createRemoteGroup(name: string, isGroup = true): Promise<string> {
@@ -5010,7 +5062,10 @@ export abstract class BaseMlsService implements IMlsService {
       console.error(
         `[INVITE_OWED] ${groupId.slice(0, 8)}... the Add of ${invitation.users.length} invited person(s) staged on epoch ${baseEpoch} did not land (${cause}${reason ? `: ${reason}` : ''}) and could NOT be recorded (${e.reason}) - not re-planned, the member is told`
       );
-      showToast(m.chat_invite_error_failed());
+      // Told BY THE CONVERSATION'S NAME, which only the chat layer holds: at once if its teller is
+      // registered, else once it is (the conversations restored) - never a nameless toast.
+      if (this.unrecordedInvitationTeller) this.unrecordedInvitationTeller(groupId);
+      else this.unrecordedInvitationsUntold.push(groupId);
       return false;
     }
     console.log(
@@ -5038,14 +5093,32 @@ export abstract class BaseMlsService implements IMlsService {
    * per group, this device included), so a re-plan run while one is held is refused its own lock:
    * the drain waits for the release instead ({@link releaseAddLock}).
    */
-  private readonly addLocksHeld = new Set<string>();
-  /** The groups whose add lock THIS device released without an answer (see {@link acquireAddLock}). */
-  private readonly addLockReleasesOwed = new Set<string>();
+  private readonly addLocksHeld = new Map<string, string | undefined>();
+  /** The one wake per group at the end of a lock the server refused (see {@link wakeAtAddLockExpiry}). */
+  private readonly addLockExpiryWakes = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Who tells the member of an invitation that could not be recorded, by its conversation's name. */
+  private unrecordedInvitationTeller: UnrecordedInvitationTeller | null = null;
+  /** The groups of such invitations, until a teller is registered (the conversations restored). */
+  private unrecordedInvitationsUntold: string[] = [];
 
   /** See {@link IMlsService.setOwedInvitationReplanner}. */
-  setOwedInvitationReplanner(replanner: OwedInvitationReplanner | null): void {
+  setOwedInvitationReplanner(
+    replanner: OwedInvitationReplanner | null,
+    tellUnrecorded: UnrecordedInvitationTeller | null = null
+  ): void {
     this.owedInvitationReplanner = replanner;
+    this.unrecordedInvitationTeller = replanner ? tellUnrecorded : null;
     this.owedInvitationGeneration++;
+    if (!replanner) {
+      // The session's wakes and notices are its own: the next account inherits none.
+      for (const wake of this.addLockExpiryWakes.values()) clearTimeout(wake);
+      this.addLockExpiryWakes.clear();
+      this.unrecordedInvitationsUntold = [];
+    } else if (tellUnrecorded) {
+      const untold = this.unrecordedInvitationsUntold;
+      this.unrecordedInvitationsUntold = [];
+      for (const groupId of untold) tellUnrecorded(groupId);
+    }
     // Drained by the connection's settlement, once it has settled every kept stage. A re-planner that
     // arrives after that settlement drains at once, while the gateway answers; one that arrives
     // before it leaves the drain to it - draining first would re-plan an invitation whose stage that

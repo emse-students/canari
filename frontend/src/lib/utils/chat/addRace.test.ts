@@ -59,6 +59,7 @@ function confirmable(state: ReturnType<typeof group>) {
       };
     }),
     settleUnresolvedCommitFromLog: vi.fn(async () => 'none'),
+    notifyCommitsApplied: vi.fn(),
     processIncomingMessage: vi.fn(async () => {
       const next = state.serverAhead.shift();
       if (next) state.tree = next(state.tree);

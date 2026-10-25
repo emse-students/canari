@@ -41,6 +41,11 @@ export const ACCOUNT_KEY = {
    * group ids, epochs and the invited user ids, emptied as each re-plan concludes.
    */
   owedInvitations: (userId: string) => `mls_owed_invitations:v1:${userId}`,
+  /**
+   * `addLockMarkers.ts`: the add locks this device took and has not had a release ANSWERED for - per
+   * group, the token of the acquisition, cleared when its release is answered.
+   */
+  addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -176,6 +181,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.deviceId(userId),
     ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.owedInvitations(userId),
+    ACCOUNT_KEY.addLockMarkers(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),

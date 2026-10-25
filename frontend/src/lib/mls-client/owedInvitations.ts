@@ -1,4 +1,5 @@
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { accountStore } from './accountStore';
 import type { CommitInvitation } from './commitSubmission';
 
 /**
@@ -69,6 +70,12 @@ export type ReplanVerdict = 'concluded' | 'waiting';
  */
 export type OwedInvitationReplanner = (owed: OwedInvitation) => Promise<ReplanVerdict>;
 
+/**
+ * Tells the member, by the conversation's name, that an invitation of theirs in `groupId` did not
+ * land and could not even be recorded for a re-plan (`OwedInvitationNotRecordedError`).
+ */
+export type UnrecordedInvitationTeller = (groupId: string) => void;
+
 /** Whether `userId` is owed a re-plan in `groupId` - the gate of an event-driven drain. */
 export function owesInvitationIn(userId: string, groupId: string): boolean {
   return Object.values(readAll(userId)).some((o) => o.groupId === groupId);
@@ -89,27 +96,6 @@ function isOwed(v: unknown): v is OwedInvitation {
   );
 }
 
-/**
- * The per-account store, resolved ONCE: a page with no usable `localStorage` (blocked site data, a
- * runtime without one) says so in one line, not on every Welcome and lock release that asks.
- */
-let store: Storage | null | undefined;
-function storage(): Storage | null {
-  if (store !== undefined) return store;
-  try {
-    const s = globalThis.localStorage;
-    // The accessor itself may throw, and a present object may refuse its first read.
-    s.getItem('__owed_invitations_probe__');
-    store = s;
-  } catch (e) {
-    store = null;
-    console.error(
-      `[INVITE_OWED] no usable local storage - a lost invitation cannot be recorded, and is told instead: ${String(e).slice(0, 120)}`
-    );
-  }
-  return store;
-}
-
 /** The record could not be WRITTEN: nothing is owed a re-plan, so the caller tells the member. */
 export class OwedInvitationNotRecordedError extends Error {
   constructor(readonly reason: string) {
@@ -119,7 +105,7 @@ export class OwedInvitationNotRecordedError extends Error {
 }
 
 function readAll(userId: string): Record<string, OwedInvitation> {
-  const s = storage();
+  const s = accountStore();
   if (!s) return {};
   try {
     const raw = s.getItem(ACCOUNT_KEY.owedInvitations(userId));
@@ -141,7 +127,7 @@ function readAll(userId: string): Record<string, OwedInvitation> {
 
 /** @throws {@link OwedInvitationNotRecordedError} when the store is missing or refuses the write. */
 function writeAll(userId: string, all: Record<string, OwedInvitation>): void {
-  const s = storage();
+  const s = accountStore();
   if (!s) throw new OwedInvitationNotRecordedError('no usable local storage');
   const key = ACCOUNT_KEY.owedInvitations(userId);
   try {

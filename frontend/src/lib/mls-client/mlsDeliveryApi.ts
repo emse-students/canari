@@ -61,6 +61,15 @@ export type GroupUserMemberRow = {
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
+ * What the add-lock acquire answered (`apps/chat-delivery-service/src/utils/add-lock.ts`): taken,
+ * with the token its release names; or refused, with how long the holder's lock has left. Either
+ * field is absent from a server that predates it, and `retryAfterMs` also when nothing answered.
+ */
+export type AddLockAnswer =
+  | { acquired: true; token: string | undefined }
+  | { acquired: false; retryAfterMs: number | undefined };
+
+/**
  * How long one pending page may stay COMPLETELY SILENT before it is abandoned.
  *
  * Not a budget for the page: {@link fetchJsonUnderProgressDeadline} re-arms it on the response head
@@ -1555,44 +1564,64 @@ export class MlsDeliveryApi {
 
   /**
    * Acquires a distributed Redis lock to serialise concurrent `addMember` commits on `groupId`.
-   * Returns `false` if another device already holds the lock (caller should abort or retry).
    *
    * How long the lock lives is the SERVER's to decide (`ADD_LOCK_TTL_SEC`, sized on this client's
-   * own worst case: bulk add + state persist + validated commit + the Welcome loop, H1). This used
-   * to send a `ttlMs` no caller ever varied, and the background push door - which has no such
-   * field - took the same lock for half as long.
+   * own worst case: bulk add + state persist + validated commit + the Welcome loop, H1).
+   *
+   * @returns taken, with the TOKEN its release must name (absent from a server that predates it); or
+   *   refused, with how long the holder's lock has left (`retryAfterMs`, the server's `PTTL`) - absent
+   *   when the server predates it, or when it did not answer at all, which is never read as "held".
    */
-  async acquireAddLock(groupId: string): Promise<boolean> {
+  async acquireAddLock(groupId: string): Promise<AddLockAnswer> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ groupId, deviceId: this.deviceId }),
       });
-      if (!res.ok) return false;
-      const data = await res.json();
-      return data.acquired === true;
-    } catch {
-      // Fail-safe: cannot prove the lock was acquired → assume not acquired.
-      // Returning true here would allow concurrent commits if Redis is temporarily
-      // unavailable, which would fragment epochs and desync local WASM states.
-      return false;
+      if (!res.ok) {
+        console.warn(
+          `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire was answered ${res.status} - not taken, and not known to be held`
+        );
+        return { acquired: false, retryAfterMs: undefined };
+      }
+      const data = (await res.json()) as {
+        acquired?: unknown;
+        token?: unknown;
+        retryAfterMs?: unknown;
+      };
+      if (data.acquired === true) {
+        return { acquired: true, token: typeof data.token === 'string' ? data.token : undefined };
+      }
+      return {
+        acquired: false,
+        retryAfterMs: typeof data.retryAfterMs === 'number' ? data.retryAfterMs : undefined,
+      };
+    } catch (e) {
+      // Fail-safe: cannot prove the lock was acquired → assume not acquired. Returning true here
+      // would allow concurrent commits if Redis is temporarily unavailable, which would fragment
+      // epochs and desync local WASM states.
+      console.warn(
+        `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire got no answer - not taken, and not known to be held: ${String(e).slice(0, 120)}`
+      );
+      return { acquired: false, retryAfterMs: undefined };
     }
   }
 
   /**
-   * Releases the add-lock previously acquired by {@link acquireAddLock}. Non-throwing.
+   * Releases the acquisition of the add-lock `token` names (`undefined`: the legacy owner-only
+   * release, for a server that returned no token). Non-throwing.
    *
    * @returns whether the server answered the release. `false` means the lock may still be up on the
-   *   server for its whole TTL - the caller remembers it and sends it again before its next acquire,
-   *   since the server's lock refuses even its own holder.
+   *   server for its whole TTL - the caller keeps its marker (`addLockMarkers.ts`), and the next
+   *   acquire sends it again.
    */
-  async releaseAddLock(groupId: string): Promise<boolean> {
+  async releaseAddLock(groupId: string, token: string | undefined): Promise<boolean> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'DELETE',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId, ...(token ? { token } : {}) }),
       });
       if (res.ok) return true;
       console.warn(

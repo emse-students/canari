@@ -1,5 +1,9 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import type { OwedInvitation, OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import type {
+  OwedInvitation,
+  OwedInvitationReplanner,
+  UnrecordedInvitationTeller,
+} from '$lib/mls-client/owedInvitations';
 import type { Conversation } from '$lib/types';
 import { findConversationKeyByGroupId } from './conversations';
 import type { LostInvitationOutcome } from './groupCreation';
@@ -103,5 +107,27 @@ export function makeLostInvitationReplanner(
       deps.report({ kind: 'not-completed', reason: 'failed' }, convo.name);
     }
     return 'concluded';
+  };
+}
+
+/**
+ * Tells the member, BY THE CONVERSATION'S NAME, of an invitation whose loss could not even be
+ * recorded (`OwedInvitationNotRecordedError`): the same sentence as a re-plan that could not
+ * complete, since a new invitation can. A conversation this device holds no row for has no name to
+ * say it with, and is logged.
+ */
+export function makeUnrecordedInvitationTeller(
+  deps: Pick<LostInvitationReplannerDeps, 'conversations' | 'report'>
+): UnrecordedInvitationTeller {
+  return (groupId) => {
+    const key = findConversationKeyByGroupId(deps.conversations, groupId);
+    const convo = key === undefined ? undefined : deps.conversations.get(key);
+    if (!convo) {
+      console.warn(
+        `[INVITE_OWED] ${groupId.slice(0, 8)}... an unrecorded lost invitation has no conversation row to be told in`
+      );
+      return;
+    }
+    deps.report({ kind: 'not-completed', reason: 'failed' }, convo.name);
   };
 }

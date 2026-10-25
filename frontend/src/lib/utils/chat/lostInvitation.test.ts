@@ -53,6 +53,7 @@ function harness() {
       belowFloor: false,
     })),
     settleUnresolvedCommitFromLog: vi.fn(async () => 'none'),
+    notifyCommitsApplied: vi.fn(),
     processIncomingMessage: vi.fn(async () => null),
     getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
     removalEpochs: vi.fn(async (_g: string, u: string) => departures.get(u) ?? []),

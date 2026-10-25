@@ -16,6 +16,7 @@ function makeMls(overrides: Record<string, unknown>) {
     fetchCommitsSince: vi.fn(),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
     settleUnresolvedCommitFromLog: vi.fn().mockResolvedValue('none'),
+    notifyCommitsApplied: vi.fn(),
     ...overrides,
   } as any;
 }
@@ -61,6 +62,38 @@ describe('attemptCommitReplay', () => {
     expect(mls.settleUnresolvedCommitFromLog).toHaveBeenCalledExactlyOnceWith('g', 'AQ==');
     expect(mls.processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ healed: true, applied: 2 });
+  });
+
+  /**
+   * A REPLAY THAT APPLIED COMMITS SAYS SO - the one path that applies commits outside the frame
+   * queue, so a lost invitation waiting on a commit in the group (an unconfirmed tree, another
+   * device's Add holding the lock) is woken by it too. A replay that applied none says nothing.
+   */
+  it('announces the commits it applied, and nothing when it applied none', async () => {
+    let epoch = 5;
+    const mls = makeMls({
+      getEpoch: vi.fn(() => epoch),
+      fetchCommitsSince: vi.fn().mockResolvedValue({
+        commits: [{ baseEpoch: 5, proto: 'AQ==' }],
+        activeEpoch: 6,
+        belowFloor: false,
+      }),
+      processIncomingMessage: vi.fn(async () => {
+        epoch++;
+        return null;
+      }),
+    });
+    await attemptCommitReplay(mls, 'g', 'user-a', noop);
+    expect(mls.notifyCommitsApplied).toHaveBeenCalledExactlyOnceWith('g');
+
+    const idle = makeMls({
+      getEpoch: vi.fn(() => 6),
+      fetchCommitsSince: vi
+        .fn()
+        .mockResolvedValue({ commits: [], activeEpoch: 6, belowFloor: false }),
+    });
+    await attemptCommitReplay(idle, 'g', 'user-a', noop);
+    expect(idle.notifyCommitsApplied).not.toHaveBeenCalled();
   });
 
   it('settles with NO row when the log has nothing at the base epoch yet', async () => {

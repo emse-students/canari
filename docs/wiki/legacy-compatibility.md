@@ -222,6 +222,24 @@ state-composition line ends `N legacy bare leaves` (`MlsManager::legacy_bare_lea
 when that reads 0 on the bench phones and on the rig's clients, and no build older than 61ac71d7c9 can
 still commit into a group. Then the bare arm goes from both readers, and a bare identity names nobody.
 
+### No date yet - the add-lock released by OWNER alone, with no token (2026-10-25)
+
+**Site (server):** `releaseAddLock` in `apps/chat-delivery-service/src/utils/add-lock.ts`
+(`RELEASE_IF_OWNER_LEGACY`), reached by both doors (`DELETE mls/add-lock`, `DELETE
+mls/push/release-add-lock`) when the body carries no `token`.
+**Site (client):** `MlsDeliveryApi.acquireAddLock` / `releaseAddLock` in
+`frontend/src/lib/mls-client/mlsDeliveryApi.ts`: an acquire answered without a `token` (a server
+older than this change) is released with none.
+**Shim:** since #2426 every acquisition writes `owner#token` and answers the token, and a release
+naming it deletes that acquisition or nothing. A release with no token still deletes ANY acquisition
+of the same device (the bare `owner` an older server wrote, or a `owner#token` value). It is kept for
+two callers: web and app clients older than #2426, and the Android background service
+(`CanariFirebaseMessagingService.kt`), which does not send the token yet. That path is exactly as
+blind as before: a late release can still free a live lock of the same device.
+**Removal condition:** the Android service sends its token, AND `minClientVersion` is at or above the
+first stable carrying #2426 on both stores. Then a token-less release is refused, not legacy. On the
+client side, the token-less release goes once every estate's chat-delivery-service answers the token.
+
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
 **Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).

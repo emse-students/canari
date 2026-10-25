@@ -1,4 +1,7 @@
-import { makeLostInvitationReplanner } from './lostInvitationReplanner';
+import {
+  makeLostInvitationReplanner,
+  makeUnrecordedInvitationTeller,
+} from './lostInvitationReplanner';
 import type { OwedInvitation } from '$lib/mls-client/owedInvitations';
 import type { Conversation } from '$lib/types';
 
@@ -97,6 +100,15 @@ describe('makeLostInvitationReplanner - what a lost invitation waits for, and wh
     const h = harness([[G, {}]]);
     h.deps.replan.mockRejectedValueOnce(new Error('boom'));
     expect(await h.replanner(owed)).toBe('concluded');
+    expect(h.deps.report).toHaveBeenCalledExactlyOnceWith(
+      { kind: 'not-completed', reason: 'failed' },
+      'Club'
+    );
+  });
+
+  it('an invitation that could not be RECORDED is told by its conversation name', () => {
+    const h = harness([['w1::w5', {}]]);
+    makeUnrecordedInvitationTeller(h.deps as never)(G);
     expect(h.deps.report).toHaveBeenCalledExactlyOnceWith(
       { kind: 'not-completed', reason: 'failed' },
       'Club'
