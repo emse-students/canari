@@ -155,8 +155,12 @@ async function readClient(slot, group, markers, provoked) {
       // A MISS IS THE VERDICT'S TO JUDGE (count 0), so it is not thrown - but it is printed with the
       // pane state `awaitMessage` attaches, which is what separates absent, late and scrolled away.
       await awaitMessage(cx, m, 20_000).catch((e) => console.log(`[invariant] ${target.device}: ${String(e?.message ?? e).slice(0, 300)}`));
-      received.push({ marker: m, ...JSON.parse(await evaluate(cx, RECEIVED(m))) });
     }
+    // ONE SNAPSHOT FOR EVERY MARKER, read once all have arrived: positions read one marker at a time
+    // straddled a redraw of the list (a stored page drawn between the two reads, KILL-1, 2026-10-25),
+    // and an order compared across two different lists is not an order.
+    const snapshot = JSON.parse(await evaluate(cx, `JSON.stringify([${markers.map((m) => RECEIVED(m)).join(',')}].map(function (s) { return JSON.parse(s); }))`));
+    markers.forEach((m, i) => received.push({ marker: m, ...snapshot[i] }));
   }
   return {
     device: target.device ?? String(target.port),
