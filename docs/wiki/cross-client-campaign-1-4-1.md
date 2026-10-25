@@ -235,11 +235,25 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 | RM-1 | W1 removes W2 while W2's own Add is in flight | exactly one wins; if the Remove, W2's Add is refused and W2 ends with no leaf and no re-add; if the Add, the Remove is rebuilt on top and both effects hold | W1 W2 W4 | `hold` W2's commit, release after W1's | U | 30 min |
 | RM-2 | Remove a member while they send ten messages | messages before the Remove's epoch delivered; after it, refused to the sender with a typed error, never shown as sent | W1 W2 | none | U | 20 min |
 | RM-3 | The remover dies after the roster delete and before the Remove commit lands | RECORDED: the leaf survives (known P2, [backlog](backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358)); the row measures that the next member commit or repair removes it, and how long | W1 W2 W4 W5 | the roster DELETE's answer held, then `Target.closeTarget`; W2 Adds W5 as the next member commit | U | 30 min |
-| RM-4 | Two admins rewrite one salon's access list at once | one wins; the other gets `409 CHANNEL_ACCESS_CHANGED`, named in the panel; visibility, allowlist and write policy are the winner's; any begun departure settled `cancelled` | W1 W2 (both admins) | release both PATCHes together | U | 30 min |
+| RM-4 | Two admins rewrite one salon's access list at once: each GRANTS a different member | one wins; the other gets `409 CHANNEL_ACCESS_CHANGED`, named in the panel; the allowlist is the winner's; the loser's grantee is neither allowed nor seated, the winner's is both | W1 W2 (both admins) | release both PATCHes together | U | 30 min |
+| RM-4b | Two admins each revoke a different member of one private salon | both `DELETE /members/:userId` stand, none refused; both targets off the list, unseated, a departure recorded for each | W1 W2 (both admins) | release both DELETEs together | U | 30 min |
 | RM-5 | A community kick races an invitation into a private salon for the same user | the kick retries inline; `409 DEPARTURE_SUPERSEDED` only if three races outlast it; the user ends either kicked with no salon seed, or a member with one - never half | W1 W2 W4 | release both together, x5 | U | 30 min |
 | RM-6 | A member holding only `channel.manage` makes a salon private while leaving off an admin | `403 REMOVAL_EXCEEDS_ACTOR`, named; no group minted, no departure begun | W1 W2 | none | U | 15 min |
 | RM-7 | A role demotion of the actor races their removal of someone | the removal reads the COMMITTED role: refused if the demotion committed first | W1 W2 W4 | release both together | U | 20 min |
 | RM-8 | Leave a group while offline (#2259) | what can be sent is sent before the server step; the rest is refused with a reason; no half-left group | W1 W2 | `cut()` | U | 15 min |
+
+**WHY RM-4 IS A GRANT RACE AND RM-4b EXISTS (2026-10-25).** RM-4 was written as two admins each
+revoking a member through the access PATCH, and on `1.4.1-alpha.3` both revokes landed with neither
+hold firing: the panel's trash calls `removeMemberFromChannel`, a
+`DELETE /api/channels/:id/members/:userId` that strips one user under the lock. The PATCH - whose
+re-read `FOR UPDATE` refuses `409 CHANNEL_ACCESS_CHANGED` - is sent by a grant, the visibility toggle
+and the write policy alone, and EVERY such PATCH reaches that re-read: the save is
+`departDistributionGroups`'s roster write, with cuts or with none. So **"a begun departure settled
+`cancelled` by a refused drop" is unreachable as a RACE from the UI**: no panel gesture builds a PATCH
+that drops someone. A panel that went STALE does send one - it never re-reads the list after loading
+it, and the PATCH carries no base, so the server takes the stale list as meant and cuts whoever was
+granted since, answered 200 ([backlog](backlog.md#p2---a-salon-access-rewrite-from-a-stale-panel-silently-cuts-whoever-was-granted-since-found-2026-10-25)).
+RM-4's judge names that outcome when it sees two 200s.
 
 #### ADM - group-link admission, new and old clients
 

@@ -19,11 +19,15 @@ import { mark } from './marker.mjs';
  */
 export const ROW_GROUPS = ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'ADM', 'DEV', 'BIG', 'TOK', 'NET'];
 
-/** `FLOOR-2` -> `FLOOR2`, refusing an id that is not a 1.4.1 row. */
+/**
+ * `FLOOR-2` -> `FLOOR2`, `RM-4b` -> `RM4b`, refusing an id that is not a 1.4.1 row. The one lower-case
+ * letter is a sibling row on the same subject (RM-4b, the revoke race beside RM-4's grant race), and
+ * `debris.mjs` allows exactly that letter.
+ */
 export function rowStem(rowId) {
-  const m = /^([A-Z]+)-(\d+)$/.exec(String(rowId));
+  const m = /^([A-Z]+)-(\d+)([a-z]?)$/.exec(String(rowId));
   if (!m || !ROW_GROUPS.includes(m[1])) throw new Error(`rowStem: '${rowId}' is not a 1.4.1 row id (${ROW_GROUPS.join(' ')})`);
-  return `${m[1]}${m[2]}`;
+  return `${m[1]}${m[2]}${m[3]}`;
 }
 
 /**

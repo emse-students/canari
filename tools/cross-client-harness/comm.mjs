@@ -961,8 +961,22 @@ export async function chooseOption(cx, trigger, optionLabel) {
  * It MARKS rather than returns a handle, for the same reason `revokeChannelAccess` does: the click
  * that follows goes through `realClick`, which hit-tests, and a hit-test needs a selector.
  */
-async function markMemberRow(cx, displayName) {
-  const marked = await evaluate(
+async function markMemberRow(cx, displayName, timeoutMs = 20_000) {
+  // POLLED UNTIL THE ROW IS THERE, because a row is drawn only once its member's profile lookup has
+  // settled (`membersByFamilyName`), so a roster can show one member before another. The roster wait
+  // in `openCommunityMembers` cannot stand in for it: it counts role controls, and the invite form's
+  // own control is one of them - two controls were "a roster" with only the creator listed (RM-4..6,
+  // 2026-10-25: no row for a member the panel drew a moment later).
+  const t0 = Date.now();
+  let marked = 'no-row';
+  while ((marked = await markMemberRowOnce(cx, displayName)) !== 'marked' && Date.now() - t0 < timeoutMs) await new Promise((r) => setTimeout(r, 250));
+  if (marked !== 'marked') throw new Error(`markMemberRow: ${marked} for "${displayName}" after ${timeoutMs} ms`);
+  return '[data-harness-member]';
+}
+
+/** One read of {@link markMemberRow}: 'marked' when the row was found and marked, else 'no-row'. */
+async function markMemberRowOnce(cx, displayName) {
+  return evaluate(
     cx,
     `(function () {
        var name = ${JSON.stringify(displayName)};
@@ -983,8 +997,6 @@ async function markMemberRow(cx, displayName) {
        return 'marked';
      })()`
   );
-  if (marked !== 'marked') throw new Error(`markMemberRow: ${marked} for "${displayName}"`);
-  return '[data-harness-member]';
 }
 
 /**
@@ -1099,7 +1111,7 @@ export async function openCommunityMembers(cx) {
        return document.querySelectorAll(${JSON.stringify(ROLE_TRIGGER())}).length > 1;
      })()`,
     20000
-  ).catch(() => {});
+  ).catch((e) => console.log(`[openCommunityMembers] the roster shows at most one member after 20 s - read as it is: ${e.message}`));
   return communityMembers(cx);
 }
 

@@ -1,7 +1,7 @@
 /**
  * THE SALON ROWS OF THE 1.4.1 CAMPAIGN - the removal bound (#2284) on a salon's access list.
  *
- *   bun archive/salon.mjs --row RM-4|RM-5|RM-6
+ *   bun archive/salon.mjs --row RM-4|RM-4b|RM-5|RM-6
  *
  * `docs/wiki/cross-client-campaign-1-4-1.md` section 4.2; the table and every judge are `salonrows.mjs`.
  *
@@ -14,7 +14,8 @@
  * invariant is the salon's own - every user the server entitles holds an active seat in the salon's
  * group, and nobody else does (`salonrows.mjs` `salonEntitlement`), read once the seats settled.
  */
-import { clearOverlays, evaluate, openChannel } from '../chat.mjs';
+import { clearOverlays as clearDialogs, evaluate, openChannel, until } from '../chat.mjs';
+import { closeOverlays as closePanels } from '../groupnav.mjs';
 import {
   PERMISSION_LABELS,
   caption,
@@ -42,7 +43,7 @@ import { awaitUserRouting, channelIdOf, communityMemberIds, communityRoles, isCo
 import { closeSeats, displayNameOf, observersOf, openSeats, userOf } from '../mlsrow.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName } from '../rowkit.mjs';
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, salonEntitlement, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, statusesIn } from '../salonrows.mjs';
 
 const argv = process.argv.slice(2);
 const id = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -55,6 +56,17 @@ const since = new Date().toISOString();
 let seats = null;
 let community = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Clears the dialogs AND the side panel. `chat.mjs`'s `clearOverlays` closes dialogs only, so the
+ * community settings panel this runner opens (the invitation link, a role, the permission grid)
+ * stayed up: below the `xl` width its scrim covered the next salon row (RM-5, 2026-10-25: "no stable
+ * element", the scrim on top).
+ */
+async function clearOverlays(cx) {
+  await clearDialogs(cx);
+  await closePanels(cx);
+}
 const outcome = (p) =>
   p.then(
     (value) => ({ ok: true, value }),
@@ -111,6 +123,10 @@ async function moderatorOnlyManagesChannels(cx) {
       .toLowerCase()
       .startsWith('mod');
   await communityTab(cx, 'roles');
+  // THE GRID IS WAITED FOR, never read on the click: `clearOverlays` closes the side panel, so the
+  // tab opens it fresh and the table renders after the click returns - read at once, it answered no
+  // roles at all (RM-6, 2026-10-25: "no moderator column in the grid ()").
+  await until(cx, `document.querySelectorAll('table thead th').length > 1`, 15_000);
   for (let pass = 0; pass < 4; pass++) {
     const grid = await permissionGrid(cx);
     const col = (grid.roles ?? []).findIndex(isModerator);
@@ -130,50 +146,84 @@ async function moderatorOnlyManagesChannels(cx) {
   await clearOverlays(cx);
 }
 
+/**
+ * THE TWO ADMINS' RACE, ONE SHAPE FOR RM-4 AND RM-4b: each opens the salon's access panel, arms a
+ * hold on `rule`, plays `gesture` on its own target, and both requests are released together once
+ * both are held. Returns what each seat was answered, whether each was held, and the fault records.
+ */
+async function heldRace(c, rule, gesture) {
+  const admins = Object.keys(spec.race);
+  const faults = {};
+  for (const admin of admins) {
+    const cx = seats.seat[admin].cx;
+    await openChannel(cx, c.community, c.salon);
+    await openChannelAccess(cx);
+    faults[admin] = await armFault(cx, [{ ...rule, fault: 'hold once' }]);
+  }
+  const pending = Object.fromEntries(admins.map((admin) => [admin, outcome(gesture(seats.seat[admin].cx, c.name(spec.race[admin])))]));
+  const held = {};
+  for (const admin of admins) held[admin] = (await outcome(faults[admin].awaitHeld(1, 45_000))).ok;
+  await Promise.all(Object.values(faults).map((f) => f.release()));
+  const gestures = {};
+  for (const admin of admins) gestures[admin] = await pending[admin];
+  const status = {};
+  const records = {};
+  for (const admin of admins) {
+    status[admin] = lastStatus(seats.seat[admin].cx, rule.match, rule.method);
+    records[admin] = (await faults[admin].disarm()).records;
+  }
+  return { held, status, records, gestures, named: {} };
+}
+
+/** Per user id (lower case), whether it holds an active seat in the salon's group. */
+const seatedOf = (dist, users) =>
+  Object.fromEntries(users.map((u) => [u.toLowerCase(), (dist?.devices ?? []).some((d) => d.userId.toLowerCase() === u.toLowerCase() && d.status === 'active')]));
+
 const ACTIONS = {
-  /** RM-4: W1 revokes W4 and W2 revokes W5, both PATCHes held and released together. */
+  /** RM-4: W1 grants W4 and W2 grants W5, both access PATCHes held and released together. */
   async 'RM-4'(c) {
     const access = `/api/channels/${c.channelId}/access`;
     const before = salonDistribution(c.channelId).allowedUsers;
-    const droppedBy = Object.fromEntries(Object.entries(spec.race).map(([admin, target]) => [admin, c.user[target]]));
-    const intended = intendedLists(before, droppedBy);
-    const faults = {};
+    const targetOf = Object.fromEntries(Object.entries(spec.race).map(([admin, target]) => [admin, c.user[target]]));
+    const intended = intendedLists(before, targetOf, 'grant');
+    const race = await heldRace(c, { match: access, method: 'PATCH' }, grantChannelAccess);
     for (const admin of Object.keys(spec.race)) {
-      const cx = seats.seat[admin].cx;
-      await openChannel(cx, c.community, c.salon);
-      await openChannelAccess(cx);
-      faults[admin] = await armFault(cx, [{ match: access, method: 'PATCH', fault: 'hold once' }]);
+      race.named[admin] = race.status[admin] === 409 ? await drawn(seats.seat[admin].cx, NAMED.CHANNEL_ACCESS_CHANGED) : false;
+      await clearOverlays(seats.seat[admin].cx);
     }
-    const gestures = Object.fromEntries(Object.entries(spec.race).map(([admin, target]) => [admin, outcome(revokeChannelAccess(seats.seat[admin].cx, c.name(target)))]));
-    const held = {};
-    for (const admin of Object.keys(spec.race)) held[admin] = (await outcome(faults[admin].awaitHeld(1, 45_000))).ok;
-    await Promise.all(Object.values(faults).map((f) => f.release()));
-    const done = {};
-    for (const [admin, g] of Object.entries(gestures)) done[admin] = await g;
-    const status = {};
-    const named = {};
-    const records = {};
-    for (const admin of Object.keys(spec.race)) {
-      const cx = seats.seat[admin].cx;
-      status[admin] = lastStatus(cx, access, 'PATCH');
-      named[admin] = status[admin] === 409 ? await drawn(cx, NAMED.CHANNEL_ACCESS_CHANGED) : false;
-      records[admin] = (await faults[admin].disarm()).records;
-      await clearOverlays(cx);
+    // EACH GRANTEE GIVEN ITS ANSWER BEFORE THE SEATS ARE READ: an allowed member commits its own Add
+    // once it loads the salon, and one left off is given the bound to stay out.
+    const allowedNow = salonDistribution(c.channelId).allowedUsers.map((u) => u.toLowerCase());
+    for (const [admin, target] of Object.entries(spec.race)) {
+      if (allowedNow.includes(targetOf[admin].toLowerCase())) await seatIn(c, target);
+      else await awaitUserRouting(c.channelId, targetOf[admin], false, 60_000);
     }
-    // THE WINNER'S TARGET IS CUT BY THE SERVER'S DEPARTURE: given its bound before the seats are read.
-    const winner = Object.keys(status).find((a) => status[a] >= 200 && status[a] < 300);
-    if (winner) await awaitUserRouting(c.channelId, droppedBy[winner], false, 60_000);
     const dist = salonDistribution(c.channelId);
-    const seated = {};
-    const departed = {};
-    for (const u of Object.values(droppedBy)) {
-      seated[u.toLowerCase()] = dist.devices.some((d) => d.userId.toLowerCase() === u.toLowerCase() && d.status === 'active');
-      departed[u.toLowerCase()] = departedCount(dist.groupId, u);
-    }
+    const seated = seatedOf(dist, Object.values(targetOf));
     return {
-      records,
-      detail: { before: before.map((u) => u.slice(0, 8)), status, named, held, gestures: done, after: dist.allowedUsers.map((u) => u.slice(0, 8)) },
-      judge: () => accessRaceOwn({ held, status, named, intended, droppedBy, allowed: dist.allowedUsers, seated, departed }),
+      records: race.records,
+      detail: { before: before.map((u) => u.slice(0, 8)), status: race.status, named: race.named, held: race.held, gestures: race.gestures, after: dist.allowedUsers.map((u) => u.slice(0, 8)) },
+      judge: () => accessRaceOwn({ held: race.held, status: race.status, named: race.named, intended, targetOf, allowed: dist.allowedUsers, seated }),
+    };
+  },
+
+  /** RM-4b: W1 revokes W4 and W2 revokes W5 through the panel's per-member DELETE, held and released together. */
+  async 'RM-4b'(c) {
+    const before = salonDistribution(c.channelId).allowedUsers;
+    const targetOf = Object.fromEntries(Object.entries(spec.race).map(([admin, target]) => [admin, c.user[target]]));
+    const expected = before.filter((u) => !Object.values(targetOf).some((t) => t.toLowerCase() === u.toLowerCase()));
+    // `/api/channels/<salon>/members/` - the salon's own route, never the community kick's
+    // (`/api/channels/workspaces/<id>/members/`), which RM-5 holds.
+    const race = await heldRace(c, { match: `/api/channels/${c.channelId}/members/`, method: 'DELETE' }, revokeChannelAccess);
+    for (const admin of Object.keys(spec.race)) await clearOverlays(seats.seat[admin].cx);
+    for (const u of Object.values(targetOf)) await awaitUserRouting(c.channelId, u, false, 60_000);
+    const dist = salonDistribution(c.channelId);
+    const seated = seatedOf(dist, Object.values(targetOf));
+    const departed = Object.fromEntries(Object.values(targetOf).map((u) => [u.toLowerCase(), departedCount(dist.groupId, u)]));
+    return {
+      records: race.records,
+      detail: { before: before.map((u) => u.slice(0, 8)), status: race.status, held: race.held, gestures: race.gestures, departed, after: dist.allowedUsers.map((u) => u.slice(0, 8)) },
+      judge: () => revokeRaceOwn({ held: race.held, status: race.status, expected, targetOf, allowed: dist.allowedUsers, seated, departed }),
     };
   },
 
@@ -263,7 +313,10 @@ async function play() {
   await clearOverlays(W1);
   const workspaceId = workspaceIdOf(community, { memberUserId: user.W1 });
   if (!workspaceId) return { premise: [`${community} is not on the server after its creation`], detail: {} };
-  const c = { user, name, community, link, workspaceId, salon: `${community}-salon` };
+  // LOWER CASE, because a salon granted live is drawn lowercased on the grantee until it reloads (the
+  // P3 in `docs/wiki/backlog.md`, RM-4 2026-10-25): with a mixed-case name the grantee's row never
+  // matched and the premise failed on a defect that is not this row's subject.
+  const c = { user, name, community, link, workspaceId, salon: `${community}-salon`.toLowerCase() };
   for (const d of spec.devices.filter((x) => x !== 'W1')) await joinByLink(c, d);
   const premise = spec.devices.filter((d) => !isCommunityMember(workspaceId, user[d])).map((d) => `${d} is not a member of ${community}`);
   if (premise.length) return { premise, detail: { workspaceId } };

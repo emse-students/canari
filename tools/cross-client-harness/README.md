@@ -1168,8 +1168,14 @@ profile**: it must be declared in `names.mjs` (owner account) and signed in once
 played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
 
 ```sh
-bun archive/salon.mjs --row RM-4|RM-5|RM-6
+bun archive/salon.mjs --row RM-4|RM-4b|RM-5|RM-6
 ```
+
+**RM-4 RACES TWO GRANTS, RM-4b TWO REVOKES, because the panel sends them down different routes.**
+A grant (and the visibility toggle, and the write policy) is the access PATCH, whose locked
+re-read refuses `409 CHANNEL_ACCESS_CHANGED`; the trash beside a member is
+`DELETE /api/channels/:id/members/:userId`, which strips one user under the lock, so two revokes of
+two members both stand. RM-4 held a revoke's PATCH until 2026-10-25, a request the panel never sent.
 
 **A SALON ROW MINTS ITS OWN COMMUNITY.** W1 creates it, the other seats join by its link, and it is
 deleted once the verdict is on disk, so the roles, the private salon and the kicked member are the

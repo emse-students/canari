@@ -100,7 +100,8 @@ undefined`SKIPPED` - not played on the bench (Q2): unit coverage stands in |unde
 | RM-1 | W1 removes W2 while W2's own Add is in flight | W1 W2 W4 - U | `pending` |
 | RM-2 | Remove a member while they send ten messages | W1 W2 - U | `pending` |
 | RM-3 | The remover dies after the roster delete and before the Remove commit lands | W1 W2 W4 - U | `pending` |
-| RM-4 | Two admins rewrite one salon's access list at once | W1 W2 (both admins) - U | `pending` |
+| RM-4 | Two admins rewrite one salon's access list at once: each grants a different member | W1 W2 (both admins) - U | `pending` |
+| RM-4b | Two admins each revoke a different member of one private salon | W1 W2 (both admins) - U | `pending` |
 | RM-5 | A community kick races an invitation into a private salon for the same user | W1 W2 W4 - U | `pending` |
 | RM-6 | A member holding only `channel.manage` makes a salon private while leaving off an admin | W1 W2 - U | `pending` |
 | RM-7 | A role demotion of the actor races their removal of someone | W1 W2 W4 - U | `pending` |

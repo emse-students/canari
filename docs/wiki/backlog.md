@@ -46,6 +46,40 @@ seat yet), so the empty row stays. Owed: a server-side path that ends a group no
 `assertCallerMayMutateMembership`) each read a caller's standing on a group in their own way. Fold them onto the one kind-aware read (`standingOnGroupOfKind`) with a spec per
 route, so a group-keyed route has one answer to the question rather than three.
 
+## P2 - A salon access rewrite from a stale panel silently cuts whoever was granted since (found 2026-10-25)
+
+Found by reading, while redesigning RM-4; not yet reproduced. `ChannelSettingsPanel` reads the
+salon's access list ONCE, when its access tab opens (`loadChannelAccess`, guarded by
+`accessLoadedFor`), and never again. Three of its controls send the WHOLE list it holds:
+- a grant (`addAllowedUser`, the list plus one);
+- the visibility toggle (`handleTogglePrivacy`);
+- the write policy (`setWritePolicy`).
+
+`PATCH /api/channels/:id/access` carries no base the client read. `updateChannelAccess` therefore
+diffs the panel's list against its OWN fresh read, and anyone granted since the panel loaded falls in
+`dropped`: cut from the salon's key distribution and its list, answered 200. The re-read
+`FOR UPDATE` compares the row with the server's read, not with the client's, so it refuses
+`409 CHANNEL_ACCESS_CHANGED` only when two writes fall between that read and the lock.
+
+The path: admin A opens the access tab, admin B grants X, then A changes the write policy (or grants
+Y) - and X is removed with no confirmation, no refusal and no trace on A's screen. The same holds for
+any API client that sends a list lacking someone.
+
+The fix belongs at the decision: the client sends the list it read as a base (or the server takes a
+delta: one grant, one policy), and a base that differs from the row is refused with the existing
+`409`, which the panel already names. RM-4's judge names a two-200 outcome that dropped a grantee as
+this lost update.
+
+## P3 - A salon granted live shows its name in lower case until the grantee reloads (RM-4, 2026-10-25)
+
+When an admin adds a member to a private salon's access list, the server announces it to the grantee
+(`channel.member.joined`, carrying the salon's stored name). The grantee's sidebar then draws the
+salon with its name lower-cased: `<Name>-salon` reads `<name>-salon`. It does so until a reload, which
+brings back the stored case. The creator's own sidebar shows the stored case throughout. Read on
+`1.4.1-alpha.3`; the name is stored in its original case. Where the case is lost on the receiving
+path is not yet read. The salon runner now mints lower-case salon names, so its rows no longer
+depend on this.
+
 ## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
 
 When a frame this device already read comes back (`SecretReuseError` at its own epoch),

@@ -114,7 +114,8 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | RM-1 | `hold` W2's own Add, W1 Removes W2, release | `fault.mjs` | extracted `removeMember` | no | U | 30 min |
 | RM-2 | Remove while the removed member sends ten | `send` | the typed refusal read on the sender | no | U | 20 min |
 | RM-3 | hold the roster DELETE's answer, close the remover's tab; W2 Adds W5; measure how long W4's seat survives | `fault.mjs` `hold-answer`, `reopen.mjs` | - | no | U | 30 min |
-| RM-4 | two admins each revoke a different member of one private salon, both PATCHes held and released together | `comm.mjs` `revokeChannelAccess`, `fault.mjs` `hold` | a community of the row's own (W2 made admin there, never in the venue) | no | U | 30 min |
+| RM-4 | two admins each grant a different member into one private salon, both access PATCHes held and released together | `comm.mjs` `grantChannelAccess`, `fault.mjs` `hold` | a community of the row's own (W2 made admin there, never in the venue) | no | U | 30 min |
+| RM-4b | two admins each revoke a different member, both `DELETE /api/channels/:id/members/:userId` held and released together | `comm.mjs` `revokeChannelAccess`, `fault.mjs` `hold` | as RM-4 | no | U | 30 min |
 | RM-5 | a kick (`removeCommunityMember`) races a grant (`grantChannelAccess`) for W4, x5; W4 rejoins by link between cycles | as RM-4 | - | no | U | 30 min |
 | RM-6 | a `channel.manage`-only member makes a salon private leaving out an admin | `comm.mjs` `permissionGrid`, `cyclePermissionCell` | the moderator role of the row's community cut down to `channel.manage` | no | U | 15 min |
 | RM-7 | the actor's demotion races their removal of someone | `fault.mjs` | the demotion gesture | no | U | 20 min |

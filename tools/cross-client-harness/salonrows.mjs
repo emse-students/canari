@@ -16,14 +16,31 @@ export const NAMED = {
 
 /** The rows `archive/salon.mjs` plays. */
 export const SALON_ROWS = {
+  // RM-4 IS A GRANT RACE, AND IT WAS A REVOKE RACE UNTIL 2026-10-25. The panel's revoke is NOT an
+  // access-list rewrite: its trash button calls `removeMemberFromChannel`, a `DELETE
+  // /api/channels/:id/members/:userId` that strips one user under the lock, so the row held a PATCH
+  // that was never sent and both revokes landed. The only panel gestures that rewrite the list - the
+  // PATCH whose locked re-read refuses `409 CHANNEL_ACCESS_CHANGED` - are a grant, the visibility
+  // toggle and the write policy, and EVERY such PATCH reaches that re-read, not only one that drops
+  // someone (`updateChannelAccess`: the save is inside `departDistributionGroups`'s roster write,
+  // cuts or none). The revoke race is a row of its own, RM-4b, on the path the panel really sends.
   'RM-4': {
     devices: ['W1', 'W2', 'W4', 'W5'],
     admins: ['W2'],
     salon: 'private',
-    allow: ['W2', 'W4', 'W5'],
-    // EACH ADMIN DROPS SOMEONE: a drop is what reaches the locked re-read (`updateChannelAccess`).
+    allow: ['W2'],
+    gesture: 'grant',
     race: { W1: 'W4', W2: 'W5' },
-    what: "W1 and W2, both admins, each revoke a different member from one private salon's access list, both PATCHes held and released together",
+    what: "W1 and W2, both admins, each grant a different member into one private salon, both access PATCHes held and released together",
+  },
+  'RM-4b': {
+    devices: ['W1', 'W2', 'W4', 'W5'],
+    admins: ['W2'],
+    salon: 'private',
+    allow: ['W2', 'W4', 'W5'],
+    gesture: 'revoke',
+    race: { W1: 'W4', W2: 'W5' },
+    what: "W1 and W2, both admins, each revoke a different member of one private salon through the panel's per-member DELETE, both held and released together",
   },
   'RM-5': {
     devices: ['W1', 'W2', 'W4'],
@@ -72,46 +89,82 @@ export function statusesIn(events, pathPart, method = null) {
 }
 
 /**
- * The allowlist each admin INTENDED: the list both read, minus the member it revoked.
+ * The allowlist each admin INTENDED: the list both read, plus the member it granted (`grant`) or
+ * minus the member it revoked (`revoke`).
  *
  * @param {string[]} before the allowlist both panels showed (user ids)
- * @param {Record<string, string>} droppedBy admin seat -> the user id it revoked
+ * @param {Record<string, string>} targetOf admin seat -> the user id it granted or revoked
+ * @param {'grant'|'revoke'} gesture
  */
-export function intendedLists(before, droppedBy) {
-  return Object.fromEntries(Object.entries(droppedBy).map(([admin, gone]) => [admin, (before ?? []).filter((u) => low(u) !== low(gone))]));
+export function intendedLists(before, targetOf, gesture) {
+  if (gesture !== 'grant' && gesture !== 'revoke') throw new Error(`intendedLists: unknown gesture '${gesture}'`);
+  return Object.fromEntries(
+    Object.entries(targetOf).map(([admin, u]) => [admin, gesture === 'grant' ? [...(before ?? []), u] : (before ?? []).filter((x) => low(x) !== low(u))])
+  );
 }
 
 /**
- * RM-4: one admin's rewrite stood whole, the other was refused `409 CHANNEL_ACCESS_CHANGED` and told
- * so, and the loser's target was cut off by nobody.
+ * RM-4, the grant race: one admin's rewrite stood whole, the other was refused `409
+ * CHANNEL_ACCESS_CHANGED` and told so, and only the winner's grantee got in.
+ *
+ * TWO 2xx IS NAMED FOR WHAT IT IS. The PATCH carries no base the client read, so the server's 409
+ * fires only when both requests fall between its own read and its lock; a rewrite that reads after
+ * the other's save carries the panel's stale list and DROPS the first grantee, answered 200. The
+ * judge says which of the two it saw, so the verdict carries the evidence.
  *
  * @param {object} p
  * @param {Record<string, boolean>} p.held per admin, whether its PATCH was held (the race happened)
  * @param {Record<string, number|null>} p.status per admin, the PATCH's answer
  * @param {Record<string, boolean>} p.named per admin, whether its panel drew the refusal
  * @param {Record<string, string[]>} p.intended per admin, the allowlist it meant
- * @param {Record<string, string>} p.droppedBy per admin, the user it revoked
+ * @param {Record<string, string>} p.targetOf per admin, the user it granted
  * @param {string[]} p.allowed the salon's allowlist afterwards (server)
  * @param {Record<string, boolean>} p.seated per user id, whether it holds an active seat in the salon's group
- * @param {Record<string, number>} p.departed per user id, the `departed` rows recorded for it
  */
-export function accessRaceOwn({ held, status, named, intended, droppedBy, allowed, seated, departed }) {
+export function accessRaceOwn({ held, status, named, intended, targetOf, allowed, seated }) {
   const admins = Object.keys(held);
   const out = admins.map((a) => ({ what: `${a}'s PATCH was held and released with the other (${held[a] ? 'held' : 'NOT held'})`, ok: held[a] }));
   const winners = admins.filter((a) => ok2xx(status[a]));
   const losers = admins.filter((a) => status[a] === 409);
-  out.push({ what: `one rewrite won and the other was refused 409 (${admins.map((a) => `${a} ${status[a] ?? 'no answer'}`).join(', ')})`, ok: winners.length === 1 && losers.length === 1 });
+  const lost = winners.length === 2 ? admins.filter((a) => !(allowed ?? []).map(low).includes(low(targetOf[a]))) : [];
+  const why = lost.length ? `; ${lost.map((a) => `${a}'s grantee`).join(', ')} DROPPED by the other's stale list - a lost update` : '';
+  out.push({ what: `one rewrite won and the other was refused 409 (${admins.map((a) => `${a} ${status[a] ?? 'no answer'}`).join(', ')}${why})`, ok: winners.length === 1 && losers.length === 1 });
   if (winners.length !== 1 || losers.length !== 1) return out;
   const [win] = winners;
   const [lose] = losers;
   out.push({ what: `${lose}'s panel names the refusal (CHANNEL_ACCESS_CHANGED)`, ok: named[lose] === true });
   out.push({ what: `the allowlist is ${win}'s whole edit (${show(allowed)} vs ${show(intended[win])})`, ok: sameSet(allowed, intended[win]) });
-  const spared = droppedBy[lose];
-  out.push({ what: `${lose}'s target is still allowed - the refused rewrite cut nobody off`, ok: (allowed ?? []).map(low).includes(low(spared)) });
-  out.push({ what: `${lose}'s target keeps its seat in the salon's group (${seated[low(spared)] ? 'seated' : 'NO seat'})`, ok: seated[low(spared)] === true });
-  out.push({ what: `no departure was recorded for ${lose}'s target (${departed[low(spared)] ?? 0})`, ok: (departed[low(spared)] ?? 0) === 0 });
-  const cut = droppedBy[win];
-  out.push({ what: `${win}'s target lost its seat in the salon's group (${seated[low(cut)] ? 'STILL seated' : 'gone'})`, ok: seated[low(cut)] === false });
+  const refused = targetOf[lose];
+  out.push({ what: `${lose}'s grantee is not allowed - the refused rewrite let nobody in`, ok: !(allowed ?? []).map(low).includes(low(refused)) });
+  out.push({ what: `${lose}'s grantee holds no seat in the salon's group (${seated[low(refused)] ? 'SEATED' : 'none'})`, ok: seated[low(refused)] === false });
+  const admitted = targetOf[win];
+  out.push({ what: `${win}'s grantee holds a seat in the salon's group (${seated[low(admitted)] ? 'seated' : 'NO seat'})`, ok: seated[low(admitted)] === true });
+  return out;
+}
+
+/**
+ * RM-4b, the revoke race on the path the panel sends: two per-member DELETEs, each stripping its own
+ * user under the lock - so BOTH stand, nothing is refused, and both targets are cut.
+ *
+ * @param {object} p
+ * @param {Record<string, boolean>} p.held per admin, whether its DELETE was held
+ * @param {Record<string, number|null>} p.status per admin, the DELETE's answer
+ * @param {string[]} p.expected the allowlist both revokes leave (the list both read, minus both targets)
+ * @param {Record<string, string>} p.targetOf per admin, the user it revoked
+ * @param {string[]} p.allowed the salon's allowlist afterwards (server)
+ * @param {Record<string, boolean>} p.seated per user id, whether it holds an active seat in the salon's group
+ * @param {Record<string, number>} p.departed per user id, the `departed` rows recorded for it
+ */
+export function revokeRaceOwn({ held, status, expected, targetOf, allowed, seated, departed }) {
+  const admins = Object.keys(held);
+  const out = admins.map((a) => ({ what: `${a}'s DELETE was held and released with the other (${held[a] ? 'held' : 'NOT held'})`, ok: held[a] }));
+  out.push({ what: `both revokes stood, none refused (${admins.map((a) => `${a} ${status[a] ?? 'no answer'}`).join(', ')})`, ok: admins.every((a) => ok2xx(status[a])) });
+  out.push({ what: `the allowlist lost both targets and nobody else (${show(allowed)} vs ${show(expected)})`, ok: sameSet(allowed, expected) });
+  for (const a of admins) {
+    const u = targetOf[a];
+    out.push({ what: `${a}'s target holds no seat in the salon's group (${seated[low(u)] ? 'STILL seated' : 'gone'})`, ok: seated[low(u)] === false });
+    out.push({ what: `a departure was recorded for ${a}'s target (${departed[low(u)] ?? 0})`, ok: (departed[low(u)] ?? 0) >= 1 });
+  }
   return out;
 }
 

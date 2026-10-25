@@ -24,7 +24,7 @@
  * runners mint, never by relaxing a shape.
  */
 import { readdirSync, readFileSync } from 'node:fs';
-import { isGroupDebris } from '../debris.mjs';
+import { isCommunityDebris, isGroupDebris } from '../debris.mjs';
 import { mark } from '../marker.mjs';
 import { ROW_GROUPS, rowGroupName, rowMessageMark } from '../rowkit.mjs';
 
@@ -160,6 +160,26 @@ spared('ORE0185', 'idem');
 spared('SBXORD', 'the sandbox prefix without a run mark names no run');
 spared('sbxord-k7p2a', 'lower case is not a stamp');
 spared(`SBXORD-${Date.now().toString(36)}-X`, 'no runner mints a trailing segment');
+
+// ---------------------------------------------------------------- communities (`isCommunityDebris`)
+const communitySwept = (name, why) => {
+  if (!isCommunityDebris(name)) problems.push(`community NOT swept but must be: ${name} - ${why}`);
+};
+const communitySpared = (name, why) => {
+  if (isCommunityDebris(name)) problems.push(`community SWEPT but must not be: ${name} - ${why}`);
+};
+// The salon runner (`archive/salon.mjs`) mints its community as `rowGroupName(id)`, one per run.
+for (const row of ['RM-4', 'RM-4b', 'RM-5', 'RM-6', 'RM-8']) communitySwept(rowGroupName(row), `salon.mjs rowGroupName('${row}')`);
+// The COMM checks' venues, one with its arm.
+communitySwept(`C8 ${mark('COMM8')}`, 'the COMM venue shape');
+communitySwept(`C12 shared ${mark('COMM12')}`, "COMM-12's arm between the two");
+// CONTROLS: the shared venue, a person's community, and a row prefix that mints no community.
+communitySpared('Canari Test Venue', 'the shared venue is never deleted');
+communitySpared('Le réseau des Marteaux', "a person's community");
+communitySpared('RM4', 'the prefix without a run tail names no run');
+communitySpared(rowGroupName('ADM-1'), 'ADM mints groups, never communities');
+communitySpared(`rm4-${Date.now().toString(36)}`, 'lower case is not a stamp');
+communitySpared(`RM4bb-${Date.now().toString(36)}`, 'one sibling letter, never two');
 
 if (problems.length) {
   for (const p of problems) console.error(`  FAIL ${p}`);

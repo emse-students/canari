@@ -46,7 +46,7 @@
  */
 import { client, openChannel } from './chat.mjs';
 import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
-import { isGroupDebris } from './debris.mjs';
+import { isCommunityDebris, isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
 import { planCampaignSweep } from './campaign.mjs';
 import { sweepArgs } from './campaign-ledger.mjs';
@@ -60,9 +60,9 @@ import { SITE } from './site.mjs';
  * every run of it left a community behind that no sweep would ever take. Found 2026-08-20 with four
  * of seven communities matching and a fifth sitting there in plain sight. Widen this by ENUMERATING
  * what the runners mint, never by relaxing it: the price of a loose pattern here is a real
- * community, typed name and all, and there is no undo.
+ * community, typed name and all, and there is no undo. The list is `debris.mjs`'s
+ * `COMMUNITY_DEBRIS`, beside the group one, so `debris-selftest.mjs` pins both.
  */
-const DEBRIS = /^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/;
 
 /**
  * THE SAME ALLOWLIST, FOR THE OTHER ESTATE, and enumerated from the runners rather than guessed:
@@ -115,7 +115,7 @@ const named = psql(`SELECT id, name FROM channel_workspaces ORDER BY "createdAt"
     return { id: line.slice(0, at), name: line.slice(at + 1) };
   });
 
-let debris = named.filter((w) => DEBRIS.test(w.name));
+let debris = named.filter((w) => isCommunityDebris(w.name));
 
 // NAMES THE ESTATE, because this file DELETES. It said "on production" unconditionally while
 // routing through `estate.mjs`, which picks the local containers or production from `SITE` - so on
@@ -133,7 +133,7 @@ for (const w of debris) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
 // and a scratch probe on 2026-08-21 that minted `C22 PROBE-<mark>` outside the shape. Naming the
 // rest costs one line and makes the next escape visible on the run that causes it. These are REAL
 // communities, so they are listed and never touched.
-const strangers = named.filter((w) => !DEBRIS.test(w.name));
+const strangers = named.filter((w) => !isCommunityDebris(w.name));
 if (strangers.length > 0) {
   console.log(`[cleanup] ${strangers.length} NOT matched - left alone, check none of these is debris:`);
   for (const w of strangers) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
@@ -323,23 +323,25 @@ for (const w of debris) {
 }
 
 // Re-read rather than trust the gestures: the dialog reports success from the screen, and what the
-// campaign needs is the table saying they are gone.
-const left = psql(`SELECT name FROM channel_workspaces`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter((l) => DEBRIS.test(l));
+// campaign needs is the table saying they are gone. ONLY THIS RUN'S TARGETS are counted: a candidate
+// `--only` did not name was left on purpose (printed above as LEFT), and counting it here printed
+// "groups -2/0 swept" and would fail a sweep that did everything it was asked (2026-10-25).
+const namesIn = (sql) =>
+  psql(sql)
+    .split('\n')
+    .map((l) => l.trim());
+const stillThere = (present, targets) => targets.filter((n) => present.includes(n));
+
+const left = stillThere(
+  namesIn(`SELECT name FROM channel_workspaces`),
+  debris.map((w) => w.name)
+);
 
 const salonsLeft = shared
-  ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`)
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => SALON_DEBRIS.test(l))
+  ? stillThere(namesIn(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`), salonDebris)
   : [];
 
-const groupsLeft = psql(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter(isGroupDebris);
+const groupsLeft = stillThere(namesIn(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`), groupDebris);
 
 console.log(
   `[cleanup] communities ${debris.length - left.length}/${debris.length} swept, ${left.length} left`
@@ -352,8 +354,8 @@ console.log(
   `[cleanup] salons ${salonDebris.length - salonsLeft.length}/${salonDebris.length} swept, ` +
     `${salonsLeft.length} left`
 );
-for (const name of [...left, ...salonsLeft]) console.log(`  still there: ${name}`);
+for (const name of [...left, ...salonsLeft, ...groupsLeft]) console.log(`  still there: ${name}`);
 for (const f of failed) console.log(`  failure: ${f}`);
 
 w1.close();
-process.exit(left.length === 0 && salonsLeft.length === 0 ? 0 : 1);
+process.exit(left.length === 0 && salonsLeft.length === 0 && groupsLeft.length === 0 ? 0 : 1);
