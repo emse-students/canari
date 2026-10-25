@@ -809,6 +809,23 @@ const DECRYPT_CLASSIFIED = [
  */
 const SEVERE_BUT_EXPECTED = /CannotDecryptOwnMessage/i;
 
+/**
+ * NORMAL ONLY WHERE A ROW PROVOKES IT, so these lines are NARRATION (a row names them) and never a
+ * rule. Their group holds frames the delivery queue refused for lack of a conversation row, still
+ * queued: those frames bring the missing epochs, so a member that lost a commit race, a Remove, a
+ * pending Add or a gap replay does not replay past them and waits for their pull (#2414/#2416).
+ *
+ * TESTED BEFORE `NOTABLE`, because they all name an epoch and the generic `/epoch|GAP|.../` rule
+ * would otherwise claim them in every row. A CC row with no refused frame queued must show them
+ * UNEXPLAINED (`classify-selftest.mjs` pins it). The `…` after the id is optional: one spelling
+ * names none.
+ */
+export const REFUSED_FOR_LACK_OF_ROW_NARRATION = [
+  /^\[(?:REMOVE_MEMBER|COMMIT_RACE|PENDING)\] [0-9a-f]{8}(?:…|\.\.\.)? not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed$/,
+  /^\[GAP\] [0-9a-f]{8}(?:…|\.\.\.)? not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked$/,
+  /^\[COMMIT\] [0-9a-f]{8}(?:…|\.\.\.)? refused concurrent_commit at epoch \d+: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on$/,
+];
+
 /** Console text that must be reported even though it is not an error - it means something happened. */
 const NOTABLE = [
   /SecretReuse|out of bounds|Duplicate|silent ACK|ACK silencieux/i,
@@ -1743,7 +1760,7 @@ export async function report(w) {
    */
   const t = (l) => strip(l.text);
   const warnings = lines.filter((l) => l.level === 'warning' || l.level === 'warn');
-  const notable = lines.filter((l) => NOTABLE.some((r) => r.test(t(l))));
+  const notable = lines.filter((l) => !REFUSED_FOR_LACK_OF_ROW_NARRATION.some((r) => r.test(t(l))) && NOTABLE.some((r) => r.test(t(l))));
   const classified = lines.filter(
     (l) => DECRYPT_CLASSIFIED.some((r) => r.test(t(l))) && !SEVERE_BUT_EXPECTED.test(t(l))
   );
