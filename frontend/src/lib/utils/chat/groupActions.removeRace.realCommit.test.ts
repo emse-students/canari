@@ -31,15 +31,30 @@ function realCommitService() {
   const state = { epoch: 7, tree: [`${ME}:da`, `${BOB}:d1`] };
   /** What another member's commit does to this tree when it is applied under the lock. */
   const winner = { pending: null as null | ((tree: string[]) => string[]) };
+  /** The server's commit log past the local epoch, or a log that cannot be read. */
+  const server = { ahead: [] as Array<(tree: string[]) => string[]>, unreadable: false };
+  /** Whether the MLS lock is held, and every replayed commit applied WITHOUT it. */
+  const lock = { held: false, appliedOutside: 0 };
   const recorder = recordingStage(() => state.epoch);
   const stub = createMlsServiceStub();
   vi.mocked(stub.getEpoch).mockImplementation(() => state.epoch);
   vi.mocked(stub.getGroupMemberIdentities).mockImplementation(async () => [...state.tree]);
-  vi.mocked(stub.fetchCommitsSince).mockImplementation(async () => ({
-    commits: [],
-    activeEpoch: state.epoch,
-    belowFloor: false,
-  }));
+  vi.mocked(stub.fetchCommitsSince).mockImplementation(async (_g, since) => {
+    if (server.unreadable) throw new Error('commit log unreachable');
+    return {
+      commits: server.ahead.map((_, i) => ({ baseEpoch: since + i, proto: 'AQID' })),
+      activeEpoch: state.epoch + server.ahead.length,
+      belowFloor: false,
+    };
+  });
+  // A replayed commit, applied the way a live member applies it.
+  vi.mocked(stub.processIncomingMessage).mockImplementation(async () => {
+    if (!lock.held) lock.appliedOutside += 1;
+    const next = server.ahead.shift();
+    if (next) state.tree = next(state.tree);
+    state.epoch += 1;
+    return null;
+  });
   const stage = recorder.wrap(async () => {
     if (!state.tree.some((leaf) => leaf.startsWith(`${BOB}:`))) {
       throw new Error(`NoSuchMember("no leaf carries any of the identities [\\"${BOB}\\"]")`);
@@ -59,7 +74,12 @@ function realCommitService() {
         state.epoch += 1;
         winner.pending = null;
       }
-      return fn();
+      lock.held = true;
+      try {
+        return await fn();
+      } finally {
+        lock.held = false;
+      }
     },
     freshEpoch: async () => state.epoch,
     groupsWithPendingCommit: async () => [],
@@ -82,7 +102,7 @@ function realCommitService() {
       ].map((name) => [name, proto[name]])
     ),
   });
-  return { svc: svc as unknown as IMlsService, state, winner, submitCommit };
+  return { svc: svc as unknown as IMlsService, state, winner, server, lock, submitCommit };
 }
 
 const run = (svc: IMlsService) =>
@@ -134,5 +154,43 @@ describe('removeMemberAndBroadcast through the real commit path', () => {
 
     await expect(run(svc)).rejects.toBeInstanceOf(MemberRemovalNotCommittedError);
     expect(state.tree).toContain(`${BOB}:d1`);
+  });
+
+  it('a tree BEHIND an Add that re-admitted the member is replayed UNDER THE LOCK, then the Remove commits', async () => {
+    const { svc, state, server, lock, submitCommit } = realCommitService();
+    // This device never applied the Add that brought Bob back: its tree says "out".
+    state.tree = [`${ME}:da`];
+    server.ahead.push((tree) => [...tree, `${BOB}:d1`]);
+
+    await expect(run(svc)).resolves.toBe('committed');
+
+    expect(svc.processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(lock.appliedOutside).toBe(0);
+    expect(submitCommit).toHaveBeenCalledTimes(1);
+    expect(state.tree).toEqual([`${ME}:da`]);
+  });
+
+  it('a commit log that cannot be read leaves "out" UNCONFIRMED - surfaced, nothing submitted', async () => {
+    const { svc, state, server, submitCommit } = realCommitService();
+    state.tree = [`${ME}:da`];
+    server.unreadable = true;
+
+    const failure = await run(svc).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(MemberRemovalNotCommittedError);
+    expect((failure as MemberRemovalNotCommittedError).why).toBe('tree-unconfirmed');
+    expect(submitCommit).not.toHaveBeenCalled();
+  });
+
+  it('a tree the replay cannot bring to the server epoch is UNCONFIRMED, never "out"', async () => {
+    const { svc, state, server, submitCommit } = realCommitService();
+    state.tree = [`${ME}:da`];
+    server.ahead.push((tree) => [...tree, `${BOB}:d1`]);
+    vi.mocked(svc.processIncomingMessage).mockRejectedValue(new Error('wrong epoch'));
+
+    const failure = await run(svc).catch((e: unknown) => e);
+
+    expect((failure as MemberRemovalNotCommittedError).why).toBe('tree-unconfirmed');
+    expect(submitCommit).not.toHaveBeenCalled();
   });
 });

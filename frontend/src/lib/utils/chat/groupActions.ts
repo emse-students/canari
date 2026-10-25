@@ -29,7 +29,7 @@ import {
   CommitOutcomeUnknownError,
   FollowerTabCommitError,
 } from '$lib/mls-client/commitSubmission';
-import { attemptCommitReplay } from './commitReplay';
+import { readConfirmedTree } from './confirmedTree';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
@@ -350,7 +350,11 @@ async function notifyMembershipChange(
  *
  * **THE `memberRemoved` NOTICE FOLLOWS THE RECORD** (decided 2026-10-25): sent on `committed` AND when
  * the record landed but the commit did not - safe, because the record already cut the removed
- * device's rows - and NOT on `already-out`, whose winner sent its own.
+ * device's rows - and NOT on `already-out`. So a collector's removal leaves no line, and two gestures
+ * can both send one: a `concurrent_commit` that moved nothing is surfaced, not rebuilt, and there may
+ * have been no winner at all - a duplicate line is accepted. On an unknown outcome the notice is still
+ * attempted: the send settles the kept commit first and is refused only if it is still unanswered
+ * (history-reconciliation, "The removal order").
  *
  * **A FOLLOWER TAB IS REFUSED BEFORE THE RECORD**: it may not commit (`FollowerTabCommitError`), and
  * learning that from the commit, after the record, was the half-removal itself.
@@ -492,9 +496,8 @@ async function commitMemberRemoval(
 /**
  * What this device's tree says of `memberId`: `holds` a leaf, `out` - confirmed at the server's
  * epoch - or `unconfirmed`. A tree that holds the member needs no confirmation: the commit that
- * follows is decided by the gate. One that does NOT is trusted only once its epoch is the server's:
- * when the commit log is ahead, the existing rung-1 replay (`attemptCommitReplay`) applies what is
- * missing first, and a tree still behind - or a log that cannot be read - proves nothing.
+ * follows is decided by the gate. One that does NOT is trusted only once confirmed current, under the
+ * MLS lock ({@link readConfirmedTree}, the one helper an Add's device filter uses too).
  */
 async function memberStanding(
   mlsService: IMlsService,
@@ -502,28 +505,15 @@ async function memberStanding(
   memberId: string,
   actingUserId: string
 ): Promise<'holds' | 'out' | 'unconfirmed'> {
-  const short = groupId.slice(0, 8);
-  try {
-    if (treeHoldsUser(await mlsService.getGroupMemberIdentities(groupId), memberId)) return 'holds';
-    const epoch = mlsService.getEpoch(groupId);
-    const { activeEpoch } = await mlsService.fetchCommitsSince(groupId, epoch);
-    if (activeEpoch <= epoch) return 'out';
-    await attemptCommitReplay(mlsService, groupId, actingUserId, (msg) => console.log(msg));
-    if (mlsService.getEpoch(groupId) < activeEpoch) {
-      console.warn(
-        `[REMOVE_MEMBER] ${short}… the tree is still behind the server (epoch ${mlsService.getEpoch(groupId)} < ${activeEpoch}) - its answer is not trusted`
-      );
-      return 'unconfirmed';
-    }
-    return treeHoldsUser(await mlsService.getGroupMemberIdentities(groupId), memberId)
-      ? 'holds'
-      : 'out';
-  } catch (e) {
-    console.warn(
-      `[REMOVE_MEMBER] ${short}… the tree could not be confirmed: ${String(e).slice(0, 120)}`
-    );
-    return 'unconfirmed';
-  }
+  const reading = await readConfirmedTree(
+    mlsService,
+    groupId,
+    actingUserId,
+    '[REMOVE_MEMBER]',
+    (identities) => treeHoldsUser(identities, memberId)
+  );
+  if (reading.status === 'unconfirmed') return 'unconfirmed';
+  return treeHoldsUser(reading.identities, memberId) ? 'holds' : 'out';
 }
 
 /**

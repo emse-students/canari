@@ -963,7 +963,10 @@ platform. So every failure of the commit except an unknown outcome (whose kept s
 decides) asks the tree again (`memberStanding`), and a tree without the member resolves `already-out`,
 quietly: no warning and no second notice. That answer is trusted only at the server's epoch: a tree
 behind an Add that re-admitted the member would say "out" of someone still in, so when the commit log
-is ahead the rung-1 replay applies it first, and a tree that cannot be brought there is
+is ahead the rung-1 replay applies it first - the whole confirmation (log read, replay, re-read) under
+the MLS lock, like the pipeline's rung 1, because the replay applies commits and may merge or clear a
+staged one, and only sends may mutate the client outside the mutex (`readConfirmedTree`,
+`confirmedTree.ts`, the one helper an Add's device filter uses too) - and a tree that cannot be brought there is
 `tree-unconfirmed` - surfaced, never "out". Every other ending throws `MemberRemovalNotCommittedError`
 and the person who asked is told by TYPE (`reportMemberRemovalFailure`): "removed, the key change
 finishes at the next connection", never "failed", because the record IS the removal and is not rolled
@@ -972,7 +975,20 @@ refusal it carries as its `cause` still reaches its own sentence.
 
 **The `memberRemoved` notice follows the record** (decided 2026-10-25): sent on `committed` AND when
 the record landed but the commit did not - safe, because the record already cut the removed device's
-rows - and not on `already-out`, whose winner sent its own.
+rows - and not on `already-out`. What that rule does NOT promise, stated as it is:
+
+- **`already-out` sends no notice, whoever took the member out.** A concurrent Remove of the same
+  person by another member sends its own; a holder's collector (`removeStrayLeaves`) sends none, and
+  the members then see the roster change without the line.
+- **Two gestures can both send it.** A `concurrent_commit` refusal that moved nothing is not rebuilt,
+  and there may have been NO winner - the lock holder's commit can itself fail or land only later. The
+  member is still in the tree, so this gesture surfaces `MemberRemovalNotCommittedError` and sends the
+  notice, and a concurrent Remove of the same person sends its own: a duplicate line, accepted.
+- **An unknown outcome still attempts the notice, and the attempt is a resubmission.** A send into a
+  group whose state holds an unresolved commit is not refused outright: `sendMessage` settles the kept
+  commit first (`settleBeforeSend`, `BaseMlsService.ts`) and sends once it is merged or cleared. Only a
+  resubmission still unanswered refuses the send (`CommitOutcomeUnknownError`), and the notice is then
+  lost with its `NOT delivered` line - a true one, since no notice is sent later.
 
 **Why the record stays first rather than moving after the commit.** The record is what gates
 delivery: it deletes the member's device rows, so no application frame reaches them from that instant,
