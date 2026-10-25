@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -104,6 +104,8 @@ describe('the MLS add-lock - one policy, both doors', () => {
   let controllers: { locks: LocksController; push: PushController };
 
   const redis = { set: jest.fn(), eval: jest.fn(), pttl: jest.fn() };
+  /** The membership gate both doors ask before the lock; an admitted member here. */
+  const messaging = { assertCallerActsOnGroup: jest.fn() };
   const pushTokenRepo = { findOne: jest.fn(), update: jest.fn() };
   const emptyRepo = () => ({ findOne: jest.fn(), find: jest.fn(), save: jest.fn() });
 
@@ -117,7 +119,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: 'REDIS_CLIENT', useValue: redis },
-        { provide: MessagingService, useValue: {} as unknown as MessagingService },
+        { provide: MessagingService, useValue: messaging as unknown as MessagingService },
       ],
     })
       .overrideGuard(ThrottlerGuard)
@@ -136,6 +138,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
     redis.set.mockResolvedValue('OK');
     redis.eval.mockResolvedValue(1);
     redis.pttl.mockResolvedValue(12_345);
+    messaging.assertCallerActsOnGroup.mockResolvedValue(undefined);
   });
 
   describe.each(DOORS)('$name', ({ take, drop }) => {
@@ -227,6 +230,40 @@ describe('the MLS add-lock - one policy, both doors', () => {
         }
       }
     );
+
+    it("asks the group's membership of the caller before it takes the lock", async () => {
+      await take(controllers);
+
+      expect(messaging.assertCallerActsOnGroup).toHaveBeenCalledTimes(1);
+      expect(messaging.assertCallerActsOnGroup).toHaveBeenCalledWith(
+        expect.any(String),
+        GROUP,
+        USER
+      );
+    });
+
+    it('takes nothing for a caller the group refuses, and passes the 403 on', async () => {
+      messaging.assertCallerActsOnGroup.mockRejectedValue(
+        new ForbiddenException({ code: 'NOT_A_MEMBER' })
+      );
+
+      await expect(take(controllers)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it('releases without asking the membership - the release can only drop its own lock', async () => {
+      await drop(controllers);
+
+      expect(messaging.assertCallerActsOnGroup).not.toHaveBeenCalled();
+    });
+  });
+
+  it('the PushSecret door stays bound to its user and device before membership is asked', async () => {
+    pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'not-the-hash-of-sekret' });
+
+    await expect(DOORS[1].take(controllers)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(messaging.assertCallerActsOnGroup).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
   });
 
   it('the lifetime is long enough to cover the work the lock is held across', () => {

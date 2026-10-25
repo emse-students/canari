@@ -1201,9 +1201,29 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 |---|---|---|
 | POST | `/api/mls/groups` | Create group record |
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
-| PATCH | `/api/mls/groups/:groupId` | Rename group |
-| PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group |
+| PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
+| PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
+
+**A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
+says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
+may act on THIS group, and is the one check the group's metadata and lifecycle routes, the add-lock's
+two doors and the device-membership deletions share. An admitted member passes - any member, as the
+conversation panel offers rename, photo and delete to every member; a caller with no seat (never a
+member, removed, or the group absent or tombstoned) gets the 403 `NOT_A_MEMBER`, the same for an
+unknown and a known id; a seat awaiting admission gets the 409 `awaiting_admission`. A key group
+answers from its active device rows (`standingOnGroupOfKind`, which `memberOfGroupKind` also reads).
+A tombstoned group is read as absent by its `deletedAt`, never inferred from the purge of its seats,
+so a replayed delete is the 403 the client's owed-exit drain reads as done. Two narrower rules sit on
+top: rename, photo and delete-for-everyone refuse a key-distribution group to EVERY caller (403
+`KEY_DISTRIBUTION_GROUP`, after the membership check, so a stranger still reads `NOT_A_MEMBER`) -
+its lifecycle is the internal `mls/distribution-groups` routes'; and a member ending ANOTHER user's
+device row may end only a row that is not `active` (the pending invitation the group cannot honour),
+and never one in a key-distribution group. The condition rides the delete itself (`status <> 'active'`),
+after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
+locking the device row first would invert it and can deadlock; a row left behind is active and is the
+403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 
@@ -1321,8 +1341,8 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership status |
 | POST | `/api/mls/kick-stale-user` | Reset all devices for a user to pending |
 | POST | `/api/mls/kick-stale-device` | Reset single device to pending |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all device memberships |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership (own device; an admitted member of the group may end another user's row only while it is not `active`) |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all device memberships (own device) |
 | POST | `/api/mls/groups/:groupId/force_leave` | Force device exit from group |
 
 ### Push notifications
@@ -2189,7 +2209,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/add-lock` | Acquire distributed add-lock |
+| POST | `/api/mls/add-lock` | Acquire distributed add-lock (admitted member; so does the PushSecret door) |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
 
 ### Calls

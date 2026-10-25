@@ -18,7 +18,7 @@ export const RefusalCode = {
   DEVICE_LIMIT_REACHED: 'DEVICE_LIMIT_REACHED',
   /** 400 - a key package that does not parse or names another device. Never retryable. */
   KEY_PACKAGE_IDENTITY_INVALID: 'KEY_PACKAGE_IDENTITY_INVALID',
-  /** 403 - a key-distribution group is joined through its community, not by this route. */
+  /** 403 - a key-distribution group is joined and managed only through its community. */
   KEY_DISTRIBUTION_GROUP: 'KEY_DISTRIBUTION_GROUP',
   /** 403 - a block stands between two people. Neutral: never who blocked whom. */
   USER_BLOCKED: 'USER_BLOCKED',

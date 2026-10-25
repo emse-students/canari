@@ -656,7 +656,8 @@ export class PushController {
    * Acquires the distributed add-lock for a group.
    * Called by the Android background service before creating a Welcome package
    * to prevent concurrent epoch forks when multiple devices race to add the same requester.
-   * Auth: PushSecret (no JWT - app may be killed).
+   * Auth: PushSecret (no JWT - app may be killed), and the user must be an admitted member of the
+   * group, as on the JWT door.
    */
   @Post('mls/push/acquire-add-lock')
   async acquireAddLockPush(
@@ -667,6 +668,8 @@ export class PushController {
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    // The PushSecret binds the call to this user and device; membership is the group's own question.
+    await this.messagingService.assertCallerActsOnGroup('ADD_LOCK_PUSH', groupId, userId);
 
     return acquireAddLock(this.redis, this.logger, { groupId, userId, deviceId }, 'push');
   }

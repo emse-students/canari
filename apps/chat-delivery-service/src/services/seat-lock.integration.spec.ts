@@ -1098,4 +1098,77 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(routes.has(`${GONE.userId}:${GONE.deviceId}`)).toBe(false);
     });
   });
+
+  describe("a member ends another user's device row only while it is not active", () => {
+    const controller = () =>
+      new InvitationsController(
+        ds.getRepository(DeviceGroupMembership),
+        ds.getRepository(GroupMember),
+        ds.getRepository(Group),
+        ds.getRepository(GroupInvite),
+        ds.getRepository(KeyPackage),
+        ds.getRepository(RevokedDevice),
+        ds.getRepository(QueuedMessage),
+        redis as unknown as Redis,
+        {} as unknown as MessagingService
+      );
+    const statusOf = async (who: { userId: string; deviceId: string }) => {
+      const rows: Array<{ status: string }> = await q(
+        `SELECT status FROM dm_device_group_memberships
+          WHERE "groupId" = $1 AND "userId" = $2 AND "deviceId" = $3`,
+        [GROUP, who.userId, who.deviceId]
+      );
+      return rows[0]?.status ?? null;
+    };
+
+    beforeEach(async () => {
+      await q(`UPDATE dm_groups SET "deletedAt" = NULL WHERE id = $1`, [GROUP]);
+      // SENDER is an admitted member on the roster; PEER's device rows are the targets.
+      await ds.getRepository(GroupMember).save({ groupId: GROUP, userId: SENDER.userId });
+    });
+
+    it("refuses ending another member's ACTIVE row and leaves it in place", async () => {
+      const refusal = await controller()
+        .deleteDeviceMembership(PEER.userId, PEER.deviceId, GROUP, SENDER.userId)
+        .catch((e: unknown) => e);
+
+      expect((refusal as { getResponse(): unknown }).getResponse()).toMatchObject({
+        code: 'MEMBERSHIP_NOT_ALLOWED',
+      });
+      expect(await statusOf(PEER)).toBe('active');
+    });
+
+    it("ends another user's PENDING row", async () => {
+      await q(
+        `UPDATE dm_device_group_memberships SET status = 'pending'
+          WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, PEER.userId]
+      );
+
+      await expect(
+        controller().deleteDeviceMembership(PEER.userId, PEER.deviceId, GROUP, SENDER.userId)
+      ).resolves.toMatchObject({ status: 'deleted', affected: 1 });
+      expect(await statusOf(PEER)).toBeNull();
+    });
+
+    it("ends the caller's own ACTIVE row", async () => {
+      await expect(
+        controller().deleteDeviceMembership(PEER.userId, PEER.deviceId, GROUP, PEER.userId)
+      ).resolves.toMatchObject({ status: 'deleted', affected: 1 });
+      expect(await statusOf(PEER)).toBeNull();
+    });
+
+    it('answers NOT_A_MEMBER for a tombstoned group that still holds the seat', async () => {
+      await q(`UPDATE dm_groups SET "deletedAt" = now() WHERE id = $1`, [GROUP]);
+
+      const refusal = await controller()
+        .deleteDeviceMembership(PEER.userId, PEER.deviceId, GROUP, SENDER.userId)
+        .catch((e: unknown) => e);
+
+      expect((refusal as { getResponse(): unknown }).getResponse()).toMatchObject({
+        code: 'NOT_A_MEMBER',
+      });
+      expect(await statusOf(PEER)).toBe('active');
+    });
+  });
 });

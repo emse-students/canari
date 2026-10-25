@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { GroupsController } from './groups.controller';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { GroupMember } from '../entities/group-member.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
@@ -47,6 +48,7 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
       providers: [
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        { provide: getRepositoryToken(GroupMember), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
         // `createGroup` enrols the creator through the ONE `pending -> active` writer since

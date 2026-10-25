@@ -2725,7 +2725,16 @@ export class MlsDeliveryApi {
         { method: 'DELETE', headers: await this.auth() }
       );
       if (!res.ok) {
-        console.error(`deleteDeviceMembership failed: ${res.status}`);
+        const refusal = await refusalFromResponse(res, 'deleteDeviceMembership');
+        // AN EXPECTED RACE, NOT A FAILURE: the invitation this sweep read as pending was honoured
+        // meanwhile, so the row is `active` and only its owner ends it. Nothing is owed.
+        if (refusal.status === 403 && refusal.code === 'MEMBERSHIP_NOT_ALLOWED') {
+          console.debug(
+            `[MLS] deleteDeviceMembership: group=${sanitizeForLog(groupId)} device=${sanitizeForLog(deviceId)} is active now - left to its owner`
+          );
+          return { status: 'refused', affected: 0 };
+        }
+        console.error(`deleteDeviceMembership failed: ${res.status} code=${refusal.code}`);
         return { status: 'error', affected: 0 };
       }
       return await res.json();
