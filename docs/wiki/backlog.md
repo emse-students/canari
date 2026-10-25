@@ -71,6 +71,35 @@ brings back the stored case. The creator's own sidebar shows the stored case thr
 path is not yet read. The salon runner now mints lower-case salon names, so its rows no longer
 depend on this.
 
+## P2 - A joiner receives the next commit before its Welcome and asks for a re-Add it does not need (DUP-2, 2026-10-25)
+
+When an Add's commit is accepted but its answer is lost, the committer merges late. It merges when
+its resubmission is answered `duplicate`, and only then delivers the Welcome it owes
+(`deliverOwedWelcomes`, #2452). Until then the server already counts the joiner as a member, and it
+fans the group's next commit to the joiner's device, which has no Welcome yet. Read on
+`1.4.1-alpha.4` (dev.f49f499), DUP-2. One member's Add 2->3 was accepted with its answer lost, and
+its resubmission was held about 12 s. Another member removed a third member, 3->4, during the hold.
+Timeline on the joiner, in seconds from the Add's acceptance:
+
+- **+7.8**: the epoch-3 Remove commit arrives for a group the joiner does not know. The joiner logs
+  `[PIPELINE] Out-of-sync … - requestReAdd`, `[BUFFER] recovery started for unknown group`, then
+  `[READD] sendWelcomeRequest… (invited, Welcome owed by a member)` and `welcome_request sent`, and
+  closes with `[PIPELINE] Recovery attempt finished`.
+- **+11.7**: the committer's held resubmission is answered `duplicate` and merged. The owed Welcome is
+  delivered.
+- **+12.2**: the Welcome is processed, the buffered commit is re-queued, the group is re-fetched as
+  "left behind as unknown-group", and the joiner lands at epoch 4. That re-fetch is the next entry's
+  duplicate.
+
+Nothing is lost, and the race heals. But the Welcome was never missing, only late, so the
+`welcome_request` asks a member for work that was already on its way, and the joiner's log narrates a
+recovery that was not one. Which side owns the fix is open:
+
+- the server does not fan a commit to a device it has not yet seen a Welcome for;
+- or the joiner treats "Welcome owed by a member" as a wait, not a recovery.
+
+The group of that run is kept on dev for the reading.
+
 ## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
 
 When a frame this device already read comes back (`SecretReuseError` at its own epoch),
@@ -82,6 +111,13 @@ replay)`. The frame is not damaged and nothing failed, so both Rust lines accuse
 `1.4.1-alpha.3` (dev.9335201): an ACK eaten by a captive portal left one frame queued, and the
 reload re-fetched it. The fix is to classify `SecretReuseError` before the fork judgement and the
 error line, carrying it as the type the TS classifier already keys on.
+
+**A second path makes the duplicate (DUP-2, `1.4.1-alpha.4`, 2026-10-25).** The re-fetch that runs
+after a late Welcome (the entry above) re-reads an epoch-4 application frame that live delivery had
+already read. The same two Rust lines follow at WARN and DEBUG, then `Duplicate delivery … silent ACK
+(SecretReuseError, already read by live delivery)`. Here the duplicate comes from the client itself,
+not from a lost ACK: the re-fetch fetches what the live socket had already delivered. So this is two
+defects: the misnaming above, and a re-fetch that re-reads frames the live socket already delivered.
 
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 
