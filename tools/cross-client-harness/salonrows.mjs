@@ -244,3 +244,52 @@ export function salonEntitlement({ pass, dist, members, users }) {
   }
   return { ok: failures.length === 0, passes: [{ pass, ok: failures.length === 0, failures, approximations: [{ invariant: 'S', what: "a salon is not a sidebar conversation: section 4.0's message probe is replaced by the entitlement check" }] }] };
 }
+
+const short = (id) => String(id).slice(0, 8);
+const anyOf = (ids) => `(?:${ids.map(short).join('|') || '(?!)'})`;
+
+/**
+ * WHAT A SALON ROW'S COMMUNITY SAYS ABOUT ITSELF, ONE LINE PER EVENT, scoped to the row's own ids.
+ *
+ * Every salon row mints a community, joins three people to it by link, makes a private salon and
+ * grants or revokes in it - and each of those says so once: the join landing in a channel, the link
+ * carrying no admission proof (a plain invite, so no past), the creator endorsing the link, the key
+ * group's Welcome installed as a seed carrier, the admitter's grant, a joiner waiting for the
+ * admitter's Welcome rather than joining by external commit, a role landing, the panel's
+ * function-entry logs and a route's first preload. First met on RM-4's first alpha.4 run
+ * (2026-10-25), which was the first time the row reached judging.
+ *
+ * NOT HERE, ON PURPOSE: the lines said once per READ rather than per decision - Graine's `sending 0
+ * of 0` / `holds nothing` answers and absorbs, `stored page empty`, `page … decoded after its salon
+ * entry` - which are fixed at the source and stay dirt until then; and `redelivered Welcome ignored`,
+ * a duplicate delivery the backlog already carries.
+ *
+ * @param {{workspaceId: string, channelIds: string[], keyGroupIds: string[]}} p
+ */
+export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
+  const ws = short(workspaceId);
+  const ch = anyOf(channelIds);
+  const kg = anyOf(keyGroupIds);
+  const R = (s) => new RegExp(s);
+  return [
+    R(String.raw`^Joined channel ${ch}…$`),
+    /^\[INVITE\] this link carries no admission proof - joining with no past$/,
+    R(String.raw`^\[GRAINE\] invite link to community ${ws} endorsed by device web-[0-9a-f]{4}$`),
+    R(String.raw`^\[WELCOME\] ${kg}\.\.\. is a KEY-DISTRIBUTION group \(server row\) - installing it as a seed carrier$`),
+    R(String.raw`^\[QUEUE\] Welcome for key group ${kg}\.\.\. - not announced to the conversation layer$`),
+    R(String.raw`^\[GRAINE\] ADMIT salon grantee [0-9a-f]{8} to ${ch} \(community ${ws}\)$`),
+    R(String.raw`^\[GRAINE\] salon ${ch} of ${ws}: a Welcome is owed to this device \(queued, or an add in flight\) - not joining by external commit, the admitter's Welcome is the door$`),
+    R(String.raw`^\[WORKSPACE\] my role in ${ws} is now "[^"]+" \(canManage=(?:true|false) canManageChannels=(?:true|false) canModerate=(?:true|false)\)$`),
+    R(String.raw`^\[channelSettings\.(?:loadChannelAccess|refreshAccess)\] channel_${ch}…$`),
+    R(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser\] \{"channelId":"channel_${ch}…","userId":"[0-9a-f]{8}…"\}$`),
+    /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
+  ];
+}
+
+/**
+ * The access race's LOSER: the panel's `409 CHANNEL_ACCESS_CHANGED` on one of the row's channels -
+ * RM-4's subject, so forgiven to that row at `debug` only (`salon.mjs`). Any other code stays dirt.
+ */
+export function salonRaceRefusal(channelIds) {
+  return new RegExp(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser failed\] ChannelApiError: \{"code":"CHANNEL_ACCESS_CHANGED",.*"channelId":"${anyOf(channelIds)}…"`);
+}

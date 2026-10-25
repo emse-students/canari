@@ -768,7 +768,12 @@ const comm = [
   ['a channel invite preview is a read', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalInvitesController] internal channel invite preview token=fVcgu-Y-`, 'benign'],
   ['an invite minted says what it revoked', `${NEST}[ChannelService] [INVITE] created workspace=00000000-0000-4000-8000-000000000001 by=aaaaaaaa expiresAt=never maxUses=unlimited replaced=0`, 'notable'],
   ['an invite with a limit is the same event, not a new one', `${NEST}[ChannelService] [INVITE] created workspace=00000000-0000-4000-8000-000000000001 by=aaaaaaaa expiresAt=2026-09-01T00:00:00.000Z maxUses=5 replaced=2`, 'notable'],
-  ['a join admits a person to everything the community says', `${NEST}[ChannelService] [INVITE] accepted workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa`, 'notable'],
+  ['a join admits a person to everything the community says', `${NEST}[ChannelService] [INVITE] accepted workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa voucher=no`, 'notable'],
+  ['control: the pre-voucher spelling only a stale bundle prints stays visible', `${NEST}[ChannelService] [INVITE] accepted workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa`, 'unexplained'],
+  ['the standing of a new community creator', `${NEST}[ChannelService] [WORKSPACE] creator standing workspace=00000000-0000-4000-8000-000000000001 manage=true moderate=true manageChannels=true`, 'notable'],
+  ['a role granted to a member', `${NEST}[ChannelService] [WORKSPACE] role set workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb role="Administrateur" by=aaaaaaaa`, 'notable'],
+  ['control: a role set but not announced is a failure, not narration', `${NEST}[ChannelService] [WORKSPACE] role set but not announced workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb: boom`, 'unexplained'],
+  ['the admission a key group commit asked for', `${NEST}[MessagingService] [COMMIT][commit-16f0f945] ADMITS_ASKED group=00000000-0000-4000-8000-000000000002 channel=00000000-0000-4000-8000-000000000003 people=1 entitled=1`, 'notable'],
   // THE POLL TRIPLET. Two are content; the third ends the thing and turns every further vote into a
   // 403, which is the whole subject of COMM-15.
   ['posting a poll is content', `${NEST}[ChannelService] [POLL] created channel=00000000-0000-4000-8000-000000000003 message=00000000-0000-4000-8000-000000000004 options=3 endsAt=none`, 'benign'],
@@ -1031,7 +1036,7 @@ check(
     ['... in a TOK row too, by family', L('MessagingService', `[COMMIT][commit-1234abcd] DUPLICATE group=${G} device=${DEV} baseEpoch=4 - already accepted, answered again`), 'TOK-2', 'CC-1'],
     ['a revoked device committing', W('MessagingService', `[COMMIT][commit-1234abcd] REJECT device_revoked group=${G} device=${DEV} sender=aaaaaaaa`), 'DEV-2', 'DEV-1'],
     ['a removal exceeding the actor', W('ChannelService', `[WORKSPACE] refused removal - target holds more than the actor workspace=w-1 target=bbbbbbbb by=aaaaaaaa locked=true`), 'RM-6', 'RM-4'],
-    ['an access rewrite refused, salon changed', W('ChannelService', `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=c-1 by=aaaaaaaa`), 'RM-4', 'RM-6'],
+    ['an access rewrite refused, salon changed', W('ChannelService', `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=c-1 by=aaaaaaaa base=1 current=2`), 'RM-4', 'RM-6'],
     ['privacy refused, minted group kept', W('ChannelService', `[CHANNEL_GRAINE] privacy refused, minted group kept channel=c-1 group=g-1 by=aaaaaaaa`), 'RM-4', 'RM-6'],
     ['a departure superseded, retried', W('ChannelService', `[KEY_DISTRIBUTION] departure superseded, retrying workspace=w-1 user=bbbbbbbb reason=kicked attempt=1/3`), 'RM-5', 'RM-4'],
     ['a departure SUPERSEDED for good', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED - granted a private salon since its read workspace=w-1 user=bbbbbbbb reason=kicked salons=1`), 'RM-5', 'RM-6'],
