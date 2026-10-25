@@ -464,11 +464,13 @@ const BENIGN = [
   // own creation (2026-10-22).
   /^\[GROUP\] Group created successfully \(id=[0-9a-f]{8}…\)$/,
   /^\[OK\] Group [0-9a-f]{8}… created\.$/,
-  /^Inviting \d+ member\(s\): \S+$/,
+  // A BULK ADD NAMES EVERY MEMBER, comma-separated - the single-\S+ rules matched only a one-member
+  // Add, so FLOOR-2's three-member Add came back PASS-DIRTY on its own subject (2026-10-25).
+  /^Inviting \d+ member\(s\): \S+(?:, \S+)*$/,
   /^\[SYNC\] bulk\.addedDeviceIds: \S+$/,
   /^\[SYNC\] Welcome -> \S+ OK$/,
-  /^\[OK\] Added: \S+ \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
-  /^\[SYNC\] Members added: \S+ \(\d+\/\d+ delivered\)$/,
+  /^\[OK\] Added: \S+(?:, \S+)* \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
+  /^\[SYNC\] Members added: \S+(?:, \S+)* \(\d+\/\d+ delivered\)$/,
   /^\S+ retire du groupe\.$/,
   // The rename, on the renamer (`useConversations`) and on the other member (`systemMessageHandler`),
   // spelt as the app spells it since the name left the log line - the old rules matched nothing.
@@ -483,6 +485,12 @@ const BENIGN = [
   /^\[WELCOME\] Group \S+ ready$/,
   /^\[WELCOME\] \S+ already held - redelivered Welcome ignored \(idempotent\)$/,
   /^\[SYNC\] Welcome processed for \S+, refreshing\.\.\.$/,
+  // THE 1.4.x ADMITTED DEVICE'S TWO DECISION LINES, read on FLOOR-2 (2026-10-25): it solicits the
+  // inviter's addressed history push, and it records the first sight of its admitted leaf for the
+  // refresh schedule. Only the ADMITTED spellings - a commit-sourced first sight, or a REFUSED
+  // addressed frame, stays dirt.
+  /^\[HISTORY_ADDRESSED\] [0-9a-f]{8}\u2026 admitted - the inviter's push is solicited$/,
+  /^\[LEAF_REFRESH\] [0-9a-f]{8}\.\.\. first sight of this leaf \(admitted, no refresh of ours on record\) - observed now, its first refresh is owed from \d+\.\d d after this or seven days after its admission, whichever is later$/,
   // A group the OWNER deleted, seen by the other side. `del1.mjs` and the GRP teardowns both produce
   // it, and it is the discovery pass reporting a tombstone it handled correctly.
   /^\[DISCOVERY\] UI group ".*" deleted \(tombstone\) server-side - marked removed$/,
