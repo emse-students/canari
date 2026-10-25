@@ -196,7 +196,7 @@ import {
   segmentedCiphertextLength,
   writesSegmented,
 } from '$lib/mediaSegmented';
-import { refresh } from '$lib/stores/auth';
+import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
 import { sendRenewingOn401 } from '$lib/utils/renewOn401';
 import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
 import {
@@ -313,7 +313,12 @@ export async function fetchUpload(
         )
       : fetchWithAnswerDeadline(url, init);
   };
-  return sendRenewingOn401(send, authToken, () => refresh(), where);
+  return sendRenewingOn401(send, authToken, {
+    tokenNow: () => getToken(),
+    renew: () => refresh(),
+    refusedRenewed: () => new SessionExpiredError(),
+    where,
+  });
 }
 
 /**

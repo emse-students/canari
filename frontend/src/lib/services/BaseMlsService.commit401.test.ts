@@ -14,7 +14,7 @@ import {
   CommitOutcomeUnknownError,
   type PendingSubmissionRead,
 } from '$lib/mls-client/commitSubmission';
-import { MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
+import { DeliveryRefusedRenewedTokenError, MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
 import { SessionExpiredError } from '$lib/stores/auth';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
@@ -24,7 +24,8 @@ import { isTransportFailure, TransportFailureError } from '$lib/utils/transportF
  * The dev campaign's TOK-1 armed one 401 on `POST /api/mls/commit`: the client logged the admits,
  * then `ApiRefusalError (401)`, cleared the staged Add and left the group at its old epoch. A 401 is
  * the auth guard's answer before the gate, so the SAME bytes go again after a renewal
- * (`renewOn401.ts`), and the transaction sees one answer and merges once. TOK-2 is the renewal
+ * (`renewOn401.ts`), and the transaction sees one answer and merges once. A renewed token refused too
+ * is a typed failed request (`DeliveryRefusedRenewedTokenError`), never a logout. TOK-2 is the renewal
  * failing as a transport failure: no answer, so the commit's outcome is unknown and its stage is
  * KEPT for the settle that already owns that case - never cleared, never a logout.
  *
@@ -155,19 +156,35 @@ describe('runCommitTransaction - a commit answered 401', () => {
     expect(c.state.has(G)).toBe(false);
   });
 
-  it('a 401 on the renewed token too: SessionExpiredError, the stage cleared (nothing reached the gate), no resubmission', async () => {
-    const f = vi.fn().mockResolvedValue(answer(401));
+  it('a 401 on the renewed token too: a typed failed request, the stage cleared (nothing reached the gate), no logout, no resubmission', async () => {
+    const f = vi.fn().mockImplementation(async () => answer(401));
     const refresh = vi.fn().mockResolvedValue('fresh');
     const c = ctx(f, refresh);
-    await expect(run(c)).rejects.toBeInstanceOf(SessionExpiredError);
+    const err = await run(c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryRefusedRenewedTokenError);
+    expect(err).not.toBeInstanceOf(SessionExpiredError);
     expect(commitCalls(f)).toHaveLength(2);
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
     expect(c.unresolvedGroups.has(G)).toBe(false);
   });
 
+  it('the same refusal on a RESUBMISSION says nothing of the first request: kept as unknown', async () => {
+    const f = vi
+      .fn()
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Failed to fetch')))
+      .mockImplementation(async () => answer(401));
+    const refresh = vi.fn().mockResolvedValue('fresh');
+    const c = ctx(f, refresh);
+    const err = await run(c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
+    expect(c.clearPendingCommit).not.toHaveBeenCalled();
+    expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
+    expect(c.unresolvedGroups.has(G)).toBe(true);
+  });
+
   it('TOK-2: a renewal that gets no answer keeps the stage as UNKNOWN - a transport failure, never a session verdict', async () => {
-    const f = vi.fn().mockResolvedValue(answer(401));
+    const f = vi.fn().mockImplementation(async () => answer(401));
     const refresh = vi
       .fn()
       .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));

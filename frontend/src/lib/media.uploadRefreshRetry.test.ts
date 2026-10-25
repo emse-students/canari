@@ -14,7 +14,8 @@ class FakeSessionExpired extends Error {
   }
 }
 vi.mock('$lib/stores/auth', () => ({
-  getToken: () => Promise.resolve('token'),
+  // The token in memory is the refused one, so the rule renews (a different one would be used as is).
+  getToken: () => Promise.resolve('stale'),
   refresh: () => refreshMock(),
   SessionExpiredError: FakeSessionExpired,
 }));

@@ -114,7 +114,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
 
   log(`[API] → ${method} ${logUrl}`);
   // A 401 renews the token and sends the same request once more, a 401 on the renewed token is a
-  // `SessionExpiredError`, and a failed renewal is rethrown AS IT CAME (`refresh()` separates a dead
+  // `SessionExpiredError` here, and a failed renewal is rethrown AS IT CAME (`refresh()` separates a dead
   // cookie, a non-verdict answer and a transport failure at its own throw) - the one rule, in
   // `renewOn401.ts`, shared with the media upload and the MLS delivery API.
   return sendRenewingOn401(
@@ -126,7 +126,13 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
       return answer;
     },
     token,
-    () => refresh(),
-    `${method} ${logUrl}`
+    {
+      tokenNow: () => getToken(),
+      renew: () => refresh(),
+      // Core's guard IS the session authority: a renewed token it refuses means the session is over.
+      refusedRenewed: () => new SessionExpiredError(),
+      where: `${method} ${logUrl}`,
+      signal: init.signal,
+    }
   );
 }

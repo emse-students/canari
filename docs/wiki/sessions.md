@@ -535,19 +535,44 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
 
 ## A 401 renews the token and sends the same request once - one rule, every caller
 
-A 401 on a first-party request is the auth guard's answer about the BEARER, given before any handler
-runs, so the request did nothing and sending it again is safe, a POST included. ONE implementation,
-`sendRenewingOn401` in `frontend/src/lib/utils/renewOn401.ts`: renew through the single-flight
-`refresh()`, send the SAME request once more with the renewed token, and only a 401 on THAT token is a
-`SessionExpiredError`. Whatever the renewal threw is rethrown as it came, so a dead cookie, a refresh
-answered 5xx (`RefreshFailedError`) and a refresh that reached nobody (a transport failure, never a
-logout) stay three types. Its callers: `apiFetch`, `fetchUpload`, and `MlsDeliveryApi`, which builds
-its own headers on an injected `fetch` (Tauri passes `plugin-http`) and so takes the rule as a `fetch`
-decorator, `renewingOn401`, applied once in its constructor to every request carrying a bearer.
+ONE implementation, `frontend/src/lib/utils/renewOn401.ts`. On a 401 to a request that carried a
+bearer: use the token in memory if another caller already renewed it (the single flight only joins a
+refresh while it is PENDING), else renew through `refresh()`; send the SAME request once more; release
+each unread 401 body (`plugin-http` holds the connection until then). The renewal is BOUNDED by the
+request it serves - it is raced against the caller's signal, so a deadline (`trackedFetch`) ends the
+request at the deadline, as a `RequestDeadlineError`, while a renewal error that settles in time
+reaches the caller as itself. Whatever the renewal threw is rethrown as it came: a dead cookie
+(`SessionExpiredError`), a refresh answered 5xx (`RefreshFailedError`), a refresh that reached nobody
+(a transport failure, never a logout).
 
-The MLS delivery API had none until 2026-10-25: a commit answered 401 ended an Add with the group at its
-old epoch (TOK-1; what the commit gate makes of each outcome is in
-[mls-protocol](protocols/mls-protocol.md)). Two delivery paths do not use the injected `fetch` and are
-outside the rule: the best-effort keepalive POST (`deliveryKeepalivePost`, a `null` on any failure) and
-the ACK queue (`ackMessagesWithRetry`, its own retry ladder). Tests: `renewOn401.test.ts`,
-`mlsDeliveryApi.renewOn401.test.ts`, `apiFetch.test.ts`.
+**What a 401 on the RENEWED token means is the caller's to say, because it depends on whose guard
+answered.** `apiFetch` and the media upload answer `SessionExpiredError`: core's guard IS the session
+authority. The MLS delivery API answers `DeliveryRefusedRenewedTokenError` (an `ApiRefusalError`, status
+401) - a failed request, NEVER a logout. `refresh()` has just proven the session alive, and the delivery
+guard also answers 401 for its own faults (an internal shared secret unset, an internal signature
+refused). A logout there would have reached the login's catch (`sessionAuth.ts`, which forgets the user
+and clears the restore key on `SessionExpiredError`) through the unguarded delivery steps of
+`syncConnectionAfterWsOpen` - the KeyPackage publication itself catches its failure.
+
+**The premise that makes the resend safe is a fact of today's servers, not of HTTP.** On `/api/mls/*`
+every 401 comes from the guard, before any handler. Social-service also answers 401 from INSIDE
+handlers (authorization refusals in its posts routes), where a resend is useless rather than unsafe; a
+handler-level 401 added under `/api/mls` would turn a commit's resend into a second submission (the gate
+would still answer it `duplicate`). Both server-side corrections are a P3 in
+[backlog](backlog.md#p3---a-guard-answers-5xx-for-its-own-faults-and-an-authorization-refusal-is-a-403-review-of-2420-2026-10-25).
+
+`MlsDeliveryApi` builds its own headers on an injected `fetch` (Tauri passes `plugin-http`) and takes
+the rule as a `fetch` decorator, `renewingOn401`, applied once in its constructor
+(`productionDeliveryApi`, the one construction that ships, pinned by its test). It covers every route
+of that class through the injected `fetch`, except the pending pull, which applies the rule itself
+(`resendAfter401`) OUTSIDE its page-halving ladder: a slow renewal is not a silent page, and a failed
+one is thrown as itself rather than halved. Outside the rule: the delivery keepalive POST
+(`deliveryKeepalivePost`, `null` on any failure) and the ACK queue (`ackMessagesWithRetry`, its own
+ladder); and every request that still sends a raw bearer without either wrapper -
+`ChatBackgroundService`, the fetches of `sessionAuth.ts`, `PushNotificationService`, `mediaBlobCache`,
+`segmentedMediaReader`, `mediaTouch`, and the direct fetches of the associations and forms modules.
+
+The MLS delivery API had no rule until 2026-10-25: a commit answered 401 ended an Add with the group at
+its old epoch (TOK-1; what the commit gate makes of each outcome is in
+[mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
+`mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.

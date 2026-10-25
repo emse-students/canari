@@ -5,11 +5,13 @@
  * bearer, given before the epoch gate - ended an Add with `ApiRefusalError (401)`, and the group
  * stayed at its old epoch. Every other first-party request renewed and resent (`apiFetch`, the media
  * upload); this class sent a plain `fetch` and nothing turned its 401 into a renewal. One rule now,
- * `renewOn401.ts`: renew, resend the SAME request once, `SessionExpiredError` only when the renewed
- * token is refused too, and a renewal that got no answer rethrown as the transport failure it is.
+ * `renewOn401.ts`: renew, resend the SAME request once, and a renewal that got no answer rethrown as
+ * the transport failure it is. A renewed token refused too is `DeliveryRefusedRenewedTokenError`, a
+ * failed request and NEVER a logout: the delivery guard also answers 401 for its own faults.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MlsDeliveryApi } from './mlsDeliveryApi';
+import { DeliveryRefusedRenewedTokenError, MlsDeliveryApi } from './mlsDeliveryApi';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { SessionExpiredError } from '$lib/stores/auth';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
@@ -67,23 +69,30 @@ describe('submitCommit answered 401', () => {
     );
   });
 
-  it('throws SessionExpiredError when the renewed token is refused too, and sends no third', async () => {
-    const f = vi.fn().mockResolvedValue(answer(401));
+  it('a renewed token refused too is a typed failed request - never a session verdict - and no third', async () => {
+    const f = vi
+      .fn()
+      .mockImplementation(async () => answer(401, { code: 'INTERNAL_AUTH_UNCONFIGURED' }));
     const refresh = vi.fn().mockResolvedValue('fresh');
-    await expect(submit(api(f, refresh))).rejects.toBeInstanceOf(SessionExpiredError);
+    const err = await submit(api(f, refresh)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryRefusedRenewedTokenError);
+    expect(err).toBeInstanceOf(ApiRefusalError);
+    expect(err).not.toBeInstanceOf(SessionExpiredError);
+    expect((err as ApiRefusalError).status).toBe(401);
+    expect((err as ApiRefusalError).code).toBe('INTERNAL_AUTH_UNCONFIGURED');
     expect(f).toHaveBeenCalledTimes(2);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it('rethrows a renewal refused as dead AS ITSELF, with no resend', async () => {
-    const f = vi.fn().mockResolvedValue(answer(401));
+    const f = vi.fn().mockImplementation(async () => answer(401));
     const refresh = vi.fn().mockRejectedValue(new SessionExpiredError());
     await expect(submit(api(f, refresh))).rejects.toBeInstanceOf(SessionExpiredError);
     expect(f).toHaveBeenCalledTimes(1);
   });
 
   it('rethrows a renewal that got NO ANSWER as a transport failure - never a session verdict', async () => {
-    const f = vi.fn().mockResolvedValue(answer(401));
+    const f = vi.fn().mockImplementation(async () => answer(401));
     const refresh = vi
       .fn()
       .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
@@ -142,10 +151,62 @@ describe('the other MLS delivery writes answered 401', () => {
     expect(second).toBe(first);
   });
 
-  it.each(siblings)('%s ends in SessionExpiredError on a second 401', async (_route, call) => {
-    const f = vi.fn().mockResolvedValue(answer(401));
+  it.each(siblings)('%s fails, never a logout, on a second 401', async (_route, call) => {
+    const f = vi.fn().mockImplementation(async () => answer(401));
     const refresh = vi.fn().mockResolvedValue('fresh');
-    await expect(call(api(f, refresh))).rejects.toBeInstanceOf(SessionExpiredError);
+    const err = await call(api(f, refresh)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryRefusedRenewedTokenError);
     expect(f).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * THE PENDING PULL APPLIES THE RULE OUTSIDE ITS PAGE-HALVING LADDER: a page that goes silent is asked
+ * smaller, but a renewal is not a page - a slow one must not halve, a failed one is thrown as itself.
+ */
+describe('the pending pull answered 401', () => {
+  const page = (rows: unknown[]) => answer(200, rows);
+  const limits = (f: ReturnType<typeof vi.fn>) =>
+    f.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
+
+  it('renews and asks the SAME page again, under its own stall timer', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(answer(401))
+      .mockResolvedValueOnce(page([{ createdAt: 'a' }]))
+      .mockResolvedValueOnce(page([]));
+    const refresh = vi.fn().mockResolvedValue('fresh');
+    const rows = await api(f, refresh).pullPendingMessagesJson();
+    expect(rows).toHaveLength(1);
+    expect(bearers(f).slice(0, 2)).toEqual(['Bearer stale', 'Bearer fresh']);
+    expect(limits(f).slice(0, 2)).toEqual(['500', '500']);
+  });
+
+  it('a renewal slower than the stall timer does not halve the page', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn().mockResolvedValueOnce(answer(401)).mockResolvedValueOnce(page([]));
+      const refresh = vi.fn(
+        () => new Promise<string>((resolve) => setTimeout(() => resolve('fresh'), 60))
+      );
+      const pull = api(f, refresh).pullPendingMessagesJson({ stallTimeoutMs: 10 });
+      await vi.advanceTimersByTimeAsync(60);
+      await pull;
+      expect(limits(f)).toEqual(['500', '500']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a renewal nobody answered is thrown as a transport failure, never halved', async () => {
+    const f = vi.fn().mockImplementation(async () => answer(401));
+    const refresh = vi
+      .fn()
+      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
+    const err = await api(f, refresh)
+      .pullPendingMessagesJson()
+      .catch((e: unknown) => e);
+    expect(isTransportFailure(err)).toBe(true);
+    expect(f).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,5 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
-import { fetchJsonUnderProgressDeadline } from './progressDeadline';
+import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
@@ -11,7 +11,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
-import { renewingOn401 } from '$lib/utils/renewOn401';
+import { renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -599,14 +599,47 @@ export class GroupExitRefusedError extends Error {
   }
 }
 
+/**
+ * The delivery service answered 401 to a request sent again with a token `refresh()` had JUST
+ * renewed - a failed request, NEVER a logout.
+ *
+ * Not a `SessionExpiredError`, deliberately: the refresh that minted the token is the proof the
+ * session is alive, and the delivery guard also answers 401 for faults of its own (an internal
+ * shared secret missing or an internal signature refused), which a logout would turn into a user
+ * signed out - and, at login, their restore key cleared - for a server misconfiguration. An
+ * `ApiRefusalError` with status 401, so the commit gate's reading of a 401 applies unchanged: a first
+ * submission refused this way never reached the gate (cleared), a resubmission says nothing of the
+ * earlier request (unknown).
+ */
+export class DeliveryRefusedRenewedTokenError extends ApiRefusalError {
+  constructor(where: string, code: string | null) {
+    super(
+      401,
+      code,
+      `${where} refused a token renewed for it (401) - a failed request, not a logout`
+    );
+    this.name = 'DeliveryRefusedRenewedTokenError';
+  }
+}
+
+/** The 401 rule's answer for a renewed token the delivery service refuses too. */
+async function deliveryRefusedRenewed(
+  answer: { status: number },
+  where: string
+): Promise<DeliveryRefusedRenewedTokenError> {
+  const code = answer instanceof Response ? (await refusalFromResponse(answer, where)).code : null;
+  return new DeliveryRefusedRenewedTokenError(where, code);
+}
+
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
   /**
    * Renews the access token after a 401 (`refresh` from the auth store, single-flight). Given, every
-   * request this class sends with a bearer obeys the one 401 rule (`renewOn401.ts`): renew, send
-   * the SAME request once more, `SessionExpiredError` only when the renewed token is refused too.
-   * The one production construction (`BaseMlsService`) passes it; a test that reads a single
+   * request of this class through its injected `fetch` obeys the one 401 rule (`renewOn401.ts`):
+   * renew, send the SAME request once more, and a 401 on the renewed token is a
+   * {@link DeliveryRefusedRenewedTokenError} - never a logout. The production construction
+   * (`productionDeliveryApi`, whose test pins that it passes this) does; a test that reads a single
    * response leaves it out and gets the 401 as the answer it is.
    */
   refreshToken?: () => Promise<string>;
@@ -624,7 +657,16 @@ export class MlsDeliveryApi {
   deviceId = 'pending';
 
   private readonly getToken: () => Promise<string>;
+  /** The injected `fetch` under the 401 rule - what every route uses. */
   private readonly f: MlsDeliveryFetch;
+  /** The injected `fetch` as given, for the one route that applies the rule itself (the pending pull). */
+  private readonly rawF: MlsDeliveryFetch;
+  /** What the 401 rule needs beside the request, or `null` when no renewal was given. */
+  private readonly renewal: {
+    tokenNow: () => Promise<string>;
+    renew: () => Promise<string>;
+    refusedRenewed: typeof deliveryRefusedRenewed;
+  } | null;
   /** Key-package 404 reasons this build did not know and has already warned about (once each). */
   private readonly unknownKeyPackageReasonsWarned = new Set<string>();
 
@@ -632,12 +674,21 @@ export class MlsDeliveryApi {
     this.historyUrl = opts.historyUrl;
     this.getToken = opts.getToken;
     const f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
-    // A 401 here is the auth guard's answer about the BEARER, given before any handler runs, so the
-    // request did nothing and the same bytes may go again: a commit answered 401 used to end an Add
-    // with the group left at its old epoch (TOK-1). Wrapped ONCE, here, so every route of this class
-    // obeys it - and under each caller's own deadline, which keeps a commit inside the MLS lock-hold
-    // budget (`COMMIT_LOCK_HOLD_BUDGET_MS`) whatever the renewal costs.
-    this.f = opts.refreshToken ? renewingOn401(f, opts.refreshToken) : f;
+    // A 401 on `/api/mls` is the auth guard's answer about the BEARER, given before any handler
+    // runs (no handler there answers 401 today), so the request did nothing and the same bytes may go
+    // again: a commit answered 401 used to end an Add with the group left at its old epoch (TOK-1).
+    // Wrapped ONCE, here, for every route through `this.f`; the pending pull applies the rule itself,
+    // outside its page-halving ladder. The renewal is raced against each caller's deadline signal,
+    // which keeps a commit inside the MLS lock-hold budget (`COMMIT_LOCK_HOLD_BUDGET_MS`).
+    this.rawF = f;
+    this.renewal = opts.refreshToken
+      ? {
+          tokenNow: this.getToken,
+          renew: opts.refreshToken,
+          refusedRenewed: deliveryRefusedRenewed,
+        }
+      : null;
+    this.f = this.renewal ? renewingOn401(f, this.renewal) : f;
   }
 
   /**
@@ -687,7 +738,11 @@ export class MlsDeliveryApi {
    * thing this field exists to surface.
    */
   private async auth(extra: Record<string, string> = {}): Promise<Record<string, string>> {
-    const token = await this.getToken();
+    return this.headersFor(await this.getToken(), extra);
+  }
+
+  /** {@link auth}'s headers for a token already in hand. */
+  private headersFor(token: string, extra: Record<string, string> = {}): Record<string, string> {
     return { Authorization: `Bearer ${token}`, 'X-Canari-Device': this.deviceId, ...extra };
   }
 
@@ -756,20 +811,24 @@ export class MlsDeliveryApi {
       // that applies rule 5 (history-answer-addressing, rule 6), and withholds it from any other.
       url.searchParams.set('caps', ADDRESSED_HISTORY_CAPABILITY);
 
-      let batch: Array<{ createdAt?: string }>;
       // OUTSIDE the try below: a token that cannot be had is not a page asked for too big. It used to
       // be inside, so the offline cold start's refresh failure walked the whole ladder - eight
       // requests, 250 down to 1, none of which ever left the device (Mi 9T, 2026-10-15).
-      const headers = await this.auth();
-      try {
-        const page = await fetchJsonUnderProgressDeadline<Array<{ createdAt?: string }>>(
-          this.f,
+      const token = await this.getToken();
+      // The RAW fetch: this route applies the 401 rule itself, below, so the renewal runs outside
+      // the stall timer - a slow refresh is not a silent page, and must not halve one.
+      const fetchPage = (
+        bearer: string
+      ): Promise<ProgressDeadlineResult<Array<{ createdAt?: string }>>> =>
+        fetchJsonUnderProgressDeadline<Array<{ createdAt?: string }>>(
+          this.rawF,
           url.toString(),
-          { headers },
+          { headers: this.headersFor(bearer) },
           stallTimeoutMs
         );
-        if (!page.ok) break;
-        batch = page.body;
+      let page: ProgressDeadlineResult<Array<{ createdAt?: string }>>;
+      try {
+        page = await fetchPage(token);
       } catch (e) {
         // A TRANSPORT FAILURE IS NOT A SIZE PROBLEM. Nobody answered, so no smaller question can get
         // a different answer from the same dead link: halving it eight times was eight warn lines and
@@ -800,6 +859,18 @@ export class MlsDeliveryApi {
         }
         throw e;
       }
+      // THE 401 RULE, OUTSIDE THE LADDER: whatever the renewal or the resend throws (a dead cookie, a
+      // refresh nobody answered, a renewed token refused) is thrown as itself, never read as a page
+      // too big, and the resend has its own stall timer.
+      if (page.status === 401 && this.renewal) {
+        page = await resendAfter401(page, fetchPage, token, {
+          ...this.renewal,
+          refusedRenewed: (answer) => this.renewal!.refusedRenewed(answer, 'GET /api/mls/messages'),
+          where: 'GET /api/mls/messages',
+        });
+      }
+      if (!page.ok) break;
+      const batch = page.body;
       if (!Array.isArray(batch) || batch.length === 0) break;
 
       if (opts?.onPage) await opts.onPage(batch);

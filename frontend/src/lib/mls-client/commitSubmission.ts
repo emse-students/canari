@@ -243,9 +243,10 @@ export class FollowerTabCommitError extends Error {
  * the answer was lost. A RESUBMISSION reads some of these 4xx differently
  * ({@link refusesOnlyThisRequest}).
  *
- * A {@link SessionExpiredError} is one too: it is the auth guard's 401 to the request AND to its
- * resend with a renewed token (`renewOn401.ts`), or a token that could not be had before anything
- * was sent - in every case no request of these bytes reached the gate.
+ * A {@link SessionExpiredError} is one too: the refresh cookie proven dead, either before anything
+ * was sent (no token to send with) or by the renewal after the request's 401 (`renewOn401.ts`) - in
+ * every case no request of these bytes reached the gate. A renewed token refused too arrives as a
+ * 401 `ApiRefusalError` (`DeliveryRefusedRenewedTokenError`) and is read by the status above.
  */
 export function isDefinitiveCommitRefusal(error: unknown): boolean {
   return (
@@ -259,8 +260,8 @@ export function isDefinitiveCommitRefusal(error: unknown): boolean {
  * guard (a session that expired, a device revoked since, a committer no longer a member) or a 429
  * from the throttler, all given before the gate. On a resubmission they say nothing of the EARLIER
  * request of the same bytes, which may have landed - an expired session after an accepted but
- * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused. A
- * {@link SessionExpiredError} is the same 401, proven against a renewed token.
+ * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused. So is a
+ * {@link SessionExpiredError}: the dead cookie it reports says nothing of an earlier request either.
  */
 export function refusesOnlyThisRequest(error: unknown): boolean {
   return (
