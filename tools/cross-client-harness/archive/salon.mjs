@@ -92,9 +92,17 @@ async function drawn(cx, key, ms = 10_000) {
   }
 }
 
-/** The `departed` rows recorded for `userId` in the salon's group. INTERPOLATED, so both are proven uuids. */
+/** A user id as the server spells it: 64 hex characters, never a uuid. */
+const USER_ID = /^[0-9a-f]{64}$/i;
+
+/**
+ * The `departed` rows recorded for `userId` in the salon's group. INTERPOLATED, so both are proven
+ * ids first - and an id that is not one THROWS: until 2026-10-25 a user id was checked against the
+ * uuid pattern, every one failed it, and the count read 0 without a query (RM-4b's first run FAILED
+ * on that alone, while the server logged both departures).
+ */
 function departedCount(groupId, userId) {
-  if (!groupId || !UUID.test(groupId) || !UUID.test(userId)) return 0;
+  if (!groupId || !UUID.test(groupId) || !USER_ID.test(userId)) throw new Error(`departedCount: not a group uuid and a user id (${String(groupId).slice(0, 8)}, ${String(userId).slice(0, 8)})`);
   return Number(psql(`SELECT count(*) FROM distribution_departures WHERE "groupId" = '${groupId}' AND lower("userId") = '${userId.toLowerCase()}' AND outcome = 'departed'`).trim() || 0);
 }
 
