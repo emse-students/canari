@@ -34,7 +34,6 @@ import {
   permissionGrid,
   removeCommunityMember,
   revokeChannelAccess,
-  saveChannelAccess,
   setChannelPrivate,
   setMemberRole,
 } from '../comm.mjs';
@@ -319,9 +318,9 @@ const ACTIONS = {
     const access = `/api/channels/${c.channelId}/access`;
     await openChannel(M, c.community, c.salon);
     await openChannelAccess(M);
-    await setChannelPrivate(M, true);
+    // THE TOGGLE IS THE WRITE (#1171): no save follows it, and its answer is the row's subject.
     const before = statusCount(M, access, 'PATCH');
-    const save = await outcome(saveChannelAccess(M));
+    const save = await outcome(setChannelPrivate(M, true));
     const status = await statusAfter(M, access, 'PATCH', before);
     const named = await drawn(M, NAMED.REMOVAL_EXCEEDS_ACTOR);
     await clearOverlays(M);

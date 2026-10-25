@@ -618,25 +618,39 @@ export async function channelAccessState(cx) {
 }
 
 /**
- * Sets the open channel's visibility toggle to `wanted` and returns whether it had to move it.
+ * Flips the open channel's visibility toward `wanted` and reports what the SERVER made of it:
+ * `{ moved, landed }` - whether the toggle had to be pressed, and whether it now reads `wanted`.
  *
  * IDEMPOTENT BY READING FIRST, because the control is a toggle and not a pair of radio buttons: a
  * check that clicks it unconditionally sets the state it wanted exactly when the state was already
  * wrong, which is the one case it was not testing.
+ *
+ * THE TOGGLE IS THE SAVE, BEHIND A CONFIRMATION (#1171, 2026-09-28). The panel has no "Enregistrer"
+ * any more: pressing the switch asks `showConfirm`, and only the answer sends the PATCH, which the
+ * switch shows as `aria-busy` until it is answered. The panel flips `aria-checked` only on an
+ * accepted write, so a refusal (RM-6's `REMOVAL_EXCEEDS_ACTOR`) is `landed: false`, not a timeout.
+ * Until 2026-10-25 this waited for the flip with no confirmation answered, and timed out.
  */
 export async function setChannelPrivate(cx, wanted) {
   const before = await channelAccessState(cx);
-  if (before.isPrivate === wanted) return false;
+  if (before.isPrivate === wanted) return { moved: false, landed: true };
   await realClick(cx, 'button[role=switch][aria-checked]');
+  await confirmDialog(cx, 'common_confirm_button');
+  // SETTLED: the dialog gone and the switch not busy. The answer sets `privacySaving` in the same
+  // task as the confirm resolves, before any CDP round trip can look, so "not busy" after the
+  // dialog closed is the write answered - accepted or refused - never the write not yet begun.
+  const confirm = JSON.stringify(caption('common_confirm_button'));
   await until(
     cx,
     `(function () {
+       var open = [].slice.call(document.querySelectorAll('button')).some(function (b) { return (b.innerText || '').trim() === ${confirm}; });
        var sw = document.querySelector('button[role=switch][aria-checked]');
-       return !!sw && sw.getAttribute('aria-checked') === ${JSON.stringify(String(wanted))};
+       return !open && !!sw && sw.getAttribute('aria-busy') !== 'true';
      })()`,
-    5000
+    30_000
   );
-  return true;
+  const after = await channelAccessState(cx);
+  return { moved: true, landed: after.isPrivate === wanted };
 }
 
 /**
