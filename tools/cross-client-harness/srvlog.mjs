@@ -712,8 +712,17 @@ const NOTABLE = [
   // to report" and never the tag. The rate line is a LOG carrying the distribution whatever the
   // verdict, and the clean hole sentence is the other; the WARN (`were re-keyed`) and the ERROR
   // (`HOLE in their commit log`) are the findings and stay unclassified on purpose.
-  /\[CRON\] reportCommitLogHealth: commit rate over the last hour - (no group committed|\d+ commit\(s\) in \d+ group\(s\); .*, 0 group\(s\) at >= \d+ by one device)/,
+  // The rate line's last clause follows a `; `, never a `, ` (`app.controller.ts`): the rule spelt it
+  // with a comma from #1397 on and matched NO real line, so every hourly report that landed in a
+  // row's window read unexplained - CC-3 on alpha.4, 2026-10-25. `srvclassify-selftest` now holds
+  // the server's own spelling, and `1 group(s) at >= 8` stays a finding.
+  /\[CRON\] reportCommitLogHealth: commit rate over the last hour - (no group committed|\d+ commit\(s\) in \d+ group\(s\); .*; 0 group\(s\) at >= \d+ by one device)$/,
   /\[CRON\] reportCommitLogHealth: every commit log is contiguous /,
+  // THE TURN METER'S HOURLY READING (#2187, `calls.service.ts`, `turn-usage-meter.service.ts`), same
+  // rule: the two spellings that say "under budget" and nothing else. `BUDGET REACHED` (an error),
+  // the unreadable budget and the UNAVAILABLE meter (warns) are the findings and stay unmatched.
+  /\[CallsService\] \[TURN-METER\] \d{4}-\d{2} \(UTC calendar month\): [\d.]+\/\d+ GB metered egress \([\d.]+%\) - TURN available$/,
+  /\[TurnUsageMeter\] \[ICE\] TURN meter \d{4}-\d{2}: \d+ egress bytes \(account-wide\)$/,
   // A DEVICE ASKING WHICH GROUPS IT STILL BELONGS TO, AND THE NUMBER THAT DECIDES WHETHER IT IS NEWS.
   //
   // `[DEVICE_MEMBERSHIPS]` was matched by NOTHING and landed in `unexplained` every time a device

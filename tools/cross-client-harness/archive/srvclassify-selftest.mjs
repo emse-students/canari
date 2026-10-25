@@ -571,6 +571,14 @@ const fcmCallers = [
   ['an admission the server refused is forgiven by nothing', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMIT_REFUSED group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b reason=no_key_package`, 'unexplained'],
   // A TOKEN BEING STORED IS NOT A NOTIFICATION BEING SENT. The handler 400s when the body carries
   // neither token, so this line always means a write happened and there is nothing to decide.
+  // THE HOURLY REPORTS AS THE SERVER SPELLS THEM (CC-3, alpha.4): the commit-rate line with its `; `
+  // separators, and the TURN meter under budget - each with the finding it must not swallow.
+  ['the hourly commit rate with no busy group', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 9 commit(s) in 3 group(s); per group p50=3 p90=4 max=4; busiest single committer per group p50=2 p90=3 max=3; 0 group(s) at >= 8 by one device`, 'notable'],
+  ['the hourly commit rate when nothing committed', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - no group committed`, 'notable'],
+  ['control: a busy group in the commit rate is a finding', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 40 commit(s) in 3 group(s); per group p50=3 p90=30 max=30; busiest single committer per group p50=2 p90=29 max=29; 1 group(s) at >= 8 by one device`, 'unexplained'],
+  ['the TURN meter under budget', `${NEST}[CallsService] [TURN-METER] 2026-10 (UTC calendar month): 0.62/950 GB metered egress (0.1%) - TURN available`, 'notable'],
+  ['the TURN meter read in bytes', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [TurnUsageMeter] [ICE] TURN meter 2026-10: 615362488 egress bytes (account-wide)`, 'notable'],
+  ['control: the TURN budget reached is a finding', `[Nest] 1  - 08/14/2026, 12:43:51 PM   ERROR [CallsService] [TURN-METER] 2026-10 (UTC calendar month): 951.00/950 GB metered egress (100.1%) - BUDGET REACHED, TURN is withheld from every call`, 'unexplained'],
   ['a device rotating its push token is routine', `${NEST}[PushController] [PUSH_REFRESH] user=aaaaaaaa device=tauri-a-b fcm=true voip=false`, 'benign'],
 ];
 for (const [name, line, want] of fcmCallers) {
