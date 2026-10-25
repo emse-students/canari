@@ -145,14 +145,21 @@ async function play() {
   // A JOINER MUST LIST THE GROUP BEFORE THE INVARIANT CAN SEND TO IT; one that never does is the
   // row's finding (its Add was lost), judged by the roster below - the invariant then names it too.
   const joiners = Object.values(spec.race).map((a) => a.add).filter((d) => d && d !== loserJoiner);
-  for (const d of joiners) await awaitListed(cx(d), group.name, 60_000);
+  //
+  // AND IT IS LEFT OUT OF THE INVARIANT'S MEMBERS, as a non-member it is. The probe opens every
+  // member's conversation and THROWS on one that is not listed, which turned CC-4's lost Add into an
+  // ERROR with no verdict on the row's own question (2026-10-25: W2's Add refused `concurrent_commit`,
+  // never rebuilt). Excluded, the roster assertion fails and the row reads FAIL, with the evidence.
+  const unlisted = [];
+  for (const d of joiners) if ((await awaitListed(cx(d), group.name, 60_000)) === null) unlisted.push(d);
+  if (unlisted.length) console.log(`[${id}] ${unlisted.join(', ')} never listed ${group.name} - its Add is judged lost by the roster`);
   await awaitServer(group.id, (v) => v.activeEpoch > fromEpoch, 30_000);
 
   // CC-4: A REFRESH THAT LOST IS ASKED AGAIN AT W1'S NEXT SEND, and that send must be the ROW'S, not
   // the invariant's. Left to the invariant, the retry committed while the probe was reading epochs:
   // every client read 3 a few ms before the commit landed and the server, read last, said 4 - a FAIL
   // of the instrument (2026-10-25). So the row sends once more and waits for the second commit.
-  if (id === 'CC-4') {
+  if (id === 'CC-4' && unlisted.length === 0) {
     await send(cx('W1'), `${id} refresh retry [${rowMessageMark(id, 'R')}]`);
     await awaitServer(group.id, (v) => v.activeEpoch >= fromEpoch + 2, 30_000);
   }
@@ -160,7 +167,7 @@ async function play() {
   const invariant = await checkInvariant({
     group: group.id,
     targets: seats.targets,
-    members: spec.members.filter((d) => d !== loserJoiner),
+    members: spec.members.filter((d) => d !== loserJoiner && !unlisted.includes(d)),
     conversation: group.name,
     fromEpoch,
     since,
@@ -200,6 +207,7 @@ async function play() {
       faultRecords: race.records,
       outcomes: race.outcomes,
       ...(lockLoser ? { lockLoser } : {}),
+      ...(unlisted.length ? { unlisted } : {}),
       ...(armed ? { armedAt: armed.at, ledgerAfter } : {}),
     },
   };
