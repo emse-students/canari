@@ -163,6 +163,10 @@ function dmDeps() {
     // Annotated to `IMlsService`'s own shape rather than inferred from this one happy answer: a
     // test below replaces the mock with the empty result, which an inferred `welcome: Uint8Array`
     // would refuse.
+    // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
+    getGroupMemberIdentities: vi.fn(async () => [] as string[]),
+    // The Add reads its tree under the MLS lock (`readConfirmedTree`).
+    runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
     addMembersBulk: vi.fn(async (): Promise<BulkAddResult> => ({
       addedDeviceIds: ['peer-dev'],
       skipped: [],

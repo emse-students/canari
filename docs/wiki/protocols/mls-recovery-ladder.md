@@ -102,7 +102,12 @@ and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same la
    pull, and without it the hold lasted until the stuck-gap escalation or a reconnect. **A pull that
    dies half-way re-arms its groups** (`rearmRefusedBacklog`): its start took them off the work list
    while only a WHOLE listing discharges the mark, so the next event asking for that backlog would
-   otherwise take nothing and pull nothing. Event-driven both ways: no timer.
+   otherwise take nothing and pull nothing; and a discharge removes the group's work-list entry with
+   its mark, so overlapping pulls (one dead, one whole) leave no entry for a notify to pull for. No
+   timer either way - and none behind it: the next pull rides the group's next event (a held frame or
+   replay, a new row, a reconnect). Nothing re-attempts a refused commit on a clock - no outbox
+   backoff, the stale-leaf refresh waits for the epoch to move - so a quiet group whose pull died
+   waits for that event.
 
    The row itself is written by every path that can make it appear, and each one announces it: the
    redelivered Welcome of a held group with no row (`writeRowForHeldGroup` - from storage when

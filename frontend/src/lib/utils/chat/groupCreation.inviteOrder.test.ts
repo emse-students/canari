@@ -27,6 +27,10 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
     fetchUserDevices: vi.fn(async (u: string) => [{ deviceId: `${u}-dev` }]),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
+    // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
+    getGroupMemberIdentities: vi.fn(async () => [] as string[]),
+    // The Add reads its tree under the MLS lock (`readConfirmedTree`).
+    runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: ['bob-dev', 'carol-dev'],
       skipped: [],

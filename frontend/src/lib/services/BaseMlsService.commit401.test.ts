@@ -20,7 +20,7 @@ import {
   MlsDeliveryApi,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * AN ADD WHOSE COMMIT IS ANSWERED 401 IS MERGED ONCE, NEVER LOST, AND NEVER A LOGOUT BY ITSELF.

@@ -49,7 +49,9 @@ import {
 } from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { AddAbortedError, rebuildOnRace } from './commitRace';
+import { readConfirmedTree, type TreeReading } from './confirmedTree';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import {
   DeviceTrustRefusedError,
@@ -87,6 +89,11 @@ export interface JoinApprovalRequest {
  *
  * `unreadable`: the tree could not be read, which proves no membership, so the caller adds nothing
  * and asks no one - another member, or the next sweep, answers.
+ *
+ * `confirmed` hands it a reading of the tree CONFIRMED at the server's epoch
+ * ({@link readConfirmedTree}) instead of the local one: a tree behind a Remove still holds the
+ * removed person, and an Add decided on it re-admits someone a member just took out. A reading that
+ * could not be confirmed is `unreadable`.
  */
 type AutomaticAdmission = 'member-device' | 'newcomer' | 'unreadable';
 
@@ -97,8 +104,18 @@ async function automaticAdmission(deps: {
   /** The caller's log tag, so the line reads in the sequence it belongs to. */
   tag: string;
   log: (message: string) => void;
+  confirmed?: TreeReading;
 }): Promise<AutomaticAdmission> {
-  const { mlsService, groupId, userId, tag, log } = deps;
+  const { mlsService, groupId, userId, tag, log, confirmed } = deps;
+  if (confirmed !== undefined) {
+    if (confirmed.status === 'unconfirmed') {
+      log(
+        `${tag} Tree of ${groupId.slice(0, 8)}... not confirmed at the server's epoch, cannot say whether ${userId} is a member - nothing added`
+      );
+      return 'unreadable';
+    }
+    return treeHoldsUser(confirmed.identities, userId) ? 'member-device' : 'newcomer';
+  }
   try {
     const identities = await mlsService.getGroupMemberIdentities(groupId);
     return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
@@ -107,6 +124,111 @@ async function automaticAdmission(deps: {
       `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
     );
     return 'unreadable';
+  }
+}
+
+/** What every automatic Add of one group rests on, as one read of the server gives it. */
+interface PendingAddFacts {
+  /** The tree, confirmed at the server's epoch - or not. */
+  tree: TreeReading;
+  /** The pending rows the server still holds, or why they could not be read. */
+  rows: PendingInvitationRow[] | { unreadable: string };
+}
+
+/**
+ * Reads {@link PendingAddFacts} for one attempt of one row's Add.
+ *
+ * THE TREE IS READ ONCE PER PASS OF A GROUP, not once per row (round 3 of #2416): confirming it costs
+ * a commit-log read under the global MLS lock, and every row of a group is judged against the same
+ * tree until an epoch moves. A pass is an epoch: an Add (or the commit that beat it) moves it and the
+ * next row reads afresh; a REBUILD always reads afresh (`fresh`), since an overtaken seat claim
+ * rebuilds without moving it.
+ *
+ * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
+ * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
+ * B, staged after row A, that a device being removed is "still pending", and re-admit it.
+ */
+function pendingAddFactsOf(deps: {
+  mlsService: IMlsService;
+  groupId: string;
+  userId: string;
+  myDeviceId: string;
+}): (fresh: boolean) => Promise<PendingAddFacts> {
+  const { mlsService, groupId, userId, myDeviceId } = deps;
+  let pass: { epoch: number; tree: Promise<TreeReading> } | null = null;
+  return async (fresh) => {
+    const epoch = mlsService.getEpoch(groupId);
+    if (fresh || pass === null || pass.epoch !== epoch) {
+      // Always confirmed: the one read serves every row, whichever user each names.
+      pass = {
+        epoch,
+        tree: readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false),
+      };
+    }
+    const tree = await pass.tree;
+    const rows = await mlsService
+      .getPendingInvitations(userId, myDeviceId)
+      .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
+    return { tree, rows };
+  };
+}
+
+/**
+ * What an automatic Add of a pending device rests on, re-checked in EVERY pass of its Add
+ * (`rebuildOnRace`) - the commit that won a race may be the Remove of the very person:
+ * - the user is still a MEMBER, read from the tree confirmed at the server's epoch
+ *   ({@link automaticAdmission} on the confirmed reading) - a removed person is a new person again,
+ *   and only a member's gesture brings one in;
+ * - the pending row is still on the server - a removal deletes it, and an Add answering a row that
+ *   is gone answers nobody.
+ *
+ * Read by {@link pendingAddFactsOf}: the tree once per pass of the group, the list on every attempt.
+ *
+ * @throws {@link AddAbortedError} when either no longer holds, or cannot be read: nothing is staged
+ *   and nothing registered.
+ */
+async function confirmPendingAddPremise(deps: {
+  mlsService: IMlsService;
+  groupId: string;
+  inv: PendingInvitationRow;
+  facts: PendingAddFacts;
+  log: (message: string) => void;
+}): Promise<void> {
+  const { mlsService, groupId, inv, facts, log } = deps;
+  const admission = await automaticAdmission({
+    mlsService,
+    groupId,
+    userId: inv.userId,
+    tag: '[PENDING]',
+    log,
+    confirmed: facts.tree,
+  });
+  if (admission === 'unreadable') {
+    throw new AddAbortedError(groupId, 'tree-unconfirmed', `membership of ${inv.userId} unknown`);
+  }
+  if (admission === 'newcomer') {
+    throw new AddAbortedError(
+      groupId,
+      'not-a-member-device',
+      `${inv.userId} holds no leaf at the server's epoch`
+    );
+  }
+  if (!Array.isArray(facts.rows)) {
+    throw new AddAbortedError(groupId, 'premise-unreadable', facts.rows.unreadable);
+  }
+  const stillPending = facts.rows.some(
+    (r) =>
+      r.groupId === groupId &&
+      r.userId === inv.userId &&
+      r.deviceId === inv.deviceId &&
+      r.status === 'pending'
+  );
+  if (!stillPending) {
+    throw new AddAbortedError(
+      groupId,
+      'invitation-withdrawn',
+      `the pending row of ${inv.deviceId} is gone from the server`
+    );
   }
 }
 
@@ -433,6 +555,8 @@ export async function processPendingInvitations(params: {
       // ── Add pending devices ───────────────────────────────────────────────
       // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
+      // The server state every Add of this group is judged against, read once per pass.
+      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
 
       for (const inv of currentPending) {
         const admission = await automaticAdmission({
@@ -579,11 +703,33 @@ export async function processPendingInvitations(params: {
           // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
           // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
           // only sent once the commit is accepted. [[C7]]
+          //
+          // A LOST RACE IS REBUILT ON PROVEN PROGRESS (`rebuildOnRace`, the rule every gesture
+          // shares): the refusal's catch-up moved the epoch, so the Add is staged again on the tree
+          // that won. One that proved nothing reaches the catch below, and the row stays pending.
+          // EVERY PASS RE-CHECKS THE PREMISE FIRST (`confirmPendingAddPremise`): the commit that won
+          // may be the Remove of this very person, and a rebuild must never re-admit them.
           packageAdded = targetDevice.keyPackage;
-          const result = await mlsService.addMember(
+          const device = targetDevice;
+          const result = await rebuildOnRace(
+            mlsService,
             groupId,
-            { keyPackage: targetDevice.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
-            [`${inv.userId}:${inv.deviceId}`]
+            `the pending Add of ${inv.deviceId}`,
+            async (attempt) => {
+              await confirmPendingAddPremise({
+                mlsService,
+                groupId,
+                inv,
+                facts: await pendingAddFacts(attempt > 0),
+                log,
+              });
+              return mlsService.addMember(
+                groupId,
+                { keyPackage: device.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
+                [`${inv.userId}:${inv.deviceId}`]
+              );
+            },
+            log
           );
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
@@ -623,6 +769,14 @@ export async function processPendingInvitations(params: {
           if (e instanceof DeviceTrustRefusedError) {
             reportDeviceTrustRefusal('[PENDING]', groupId, e);
             await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
+            continue;
+          }
+          // THE PREMISE WENT BEFORE ANY STAGE: nothing committed, nothing registered, no history.
+          // The row is left as the server holds it - the next sweep reads it again, or finds it gone.
+          if (e instanceof AddAbortedError) {
+            log(
+              `[PENDING] Add of ${inv.deviceId} to ${groupId.slice(0, 8)}... abandoned before its stage (${e.why}) - nothing committed`
+            );
             continue;
           }
           const errStr = String(e);
@@ -670,9 +824,11 @@ export async function processPendingInvitations(params: {
               );
             }
           } else if (
-            // The server's refusal is TYPED (`CommitRefusedError`); `WrongEpoch` is openmls's own
-            // error, raised inside the WASM engine with no type crossing that boundary.
-            (e instanceof CommitRefusedError && e.reason === 'epoch_mismatch') ||
+            // The server's refusal is TYPED (`isCommitRaceRefusal`: `epoch_mismatch` AND
+            // `concurrent_commit`, one race seen at two instants - CC-4 lost an Add to the second);
+            // `WrongEpoch` is openmls's own error, raised inside the WASM engine with no type
+            // crossing that boundary.
+            isCommitRaceRefusal(e) ||
             errStr.includes('WrongEpoch')
           ) {
             // Transient concurrent race (gap 1): another device committed simultaneously.

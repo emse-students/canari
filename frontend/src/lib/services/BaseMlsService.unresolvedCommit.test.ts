@@ -441,7 +441,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       await expect(run(c)).rejects.toBeInstanceOf(CommitRefusedError);
       expect(c.delivery.submitCommit).toHaveBeenCalledTimes(2);
       expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-      expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, currentEpoch);
+      expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, currentEpoch, 'epoch_mismatch');
       expect(c.mergePendingCommit).not.toHaveBeenCalled();
       expect(c.state.size).toBe(0);
     }

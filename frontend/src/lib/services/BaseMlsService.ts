@@ -4614,7 +4614,12 @@ export abstract class BaseMlsService implements IMlsService {
               )
             );
             // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
-            await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
+            await this.catchUpOnRefusedCommit(
+              groupId,
+              baseEpoch,
+              validation.currentEpoch,
+              validation.reason
+            );
             throw new CommitRefusedError(
               validation.reason || 'epoch_mismatch',
               baseEpoch,
@@ -5075,18 +5080,70 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @param baseEpoch - the epoch we staged the commit on, i.e. our local epoch.
    * @param activeEpoch - the server's own epoch, absent when it refused for any other reason.
+   * @param reason - the gate's refusal reason; `concurrent_commit` is read below.
    */
   private async catchUpOnRefusedCommit(
     groupId: string,
     baseEpoch: number,
-    activeEpoch: number | undefined
+    activeEpoch: number | undefined,
+    reason?: string
   ): Promise<void> {
+    const short = groupId.slice(0, 8);
+    const log = (msg: string) => console.log(msg);
+    // A `concurrent_commit` REPORTS THE EPOCH IT READ WHILE ANOTHER COMMIT HELD THE GATE'S LOCK, so
+    // "not ahead" there is not an answer: the lock holder may have landed a moment after that read
+    // (CC-4, 2026-10-25: a leaf refresh accepted at epoch 3, the Add beside it refused with
+    // `currentEpoch=2`, nothing rebuilt, the Add lost). The log is read ONCE, here, under the lock:
+    // a landed winner is applied, so the caller sees the epoch MOVE - the proof its rebuild needs
+    // (`rebuildableRefusal`) - and a winner not landed leaves the epoch where it was, so the caller
+    // surfaces the refusal instead. No gap is marked unless the log itself shows the server ahead.
+    //
+    // ONE `[COMMIT]` LINE, NEVER A `[GAP]` ONE: this read is part of an ordinary race, and the replay's
+    // own narration (`[GAP] ... healed=false (nothing to replay ...)` on every refusal whose winner had
+    // not landed) named a gap that was never there - noise the GAP rows assert the absence of. Its
+    // lines are kept and carried, as detail, only when the log really shows the server ahead.
+    if (reason === 'concurrent_commit' && (activeEpoch === undefined || activeEpoch <= baseEpoch)) {
+      const detail: string[] = [];
+      try {
+        // The same books as every rung-1 replay (`replayAndRecord`), its narration kept quiet.
+        const replay = await replayAndRecord(
+          this,
+          groupId,
+          this.userId,
+          (msg) => detail.push(msg),
+          {
+            persist: scheduleOutboundMlsPersist,
+            refusedBacklog: 'hold',
+          }
+        );
+        if (replay.heldBehindRefusedBacklog) {
+          log(
+            `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on`
+          );
+          return;
+        }
+        const now = this.getEpoch(groupId);
+        if (!replay.healed && (replay.activeEpoch ?? 0) > now) {
+          markEpochGap(groupId);
+          console.warn(
+            `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: the commit log is ahead (${replay.activeEpoch}) and could not be applied (now ${now}) - left to the sync watchdog: ${detail.join(' | ').slice(0, 240)}`
+          );
+          return;
+        }
+        log(
+          `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: read the commit log, ${replay.applied} commit(s) applied, now epoch ${now}`
+        );
+      } catch (e) {
+        console.warn(
+          `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: the commit log could not be read - nothing to rebuild on: ${String(e).slice(0, 120)}`
+        );
+      }
+      return;
+    }
     // The EPOCHS decide, not the reason string: a refusal that does not report a server epoch ahead
     // of ours says nothing about a gap, and re-applying commits would answer a question nobody asked.
     if (activeEpoch === undefined || activeEpoch <= baseEpoch) return;
 
-    const short = groupId.slice(0, 8);
-    const log = (msg: string) => console.log(msg);
     log(`[GAP] commit refused on ${short}: we are at ${baseEpoch}, the server at ${activeEpoch}`);
     markEpochGap(groupId);
     let exhausted: string | undefined;

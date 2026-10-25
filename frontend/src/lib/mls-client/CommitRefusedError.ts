@@ -56,6 +56,19 @@ export class CommitRefusedError extends Error {
 }
 
 /**
+ * Whether `error` is the gate refusing a commit because ANOTHER commit took, or was taking, the same
+ * epoch: `epoch_mismatch` (it landed) or `concurrent_commit` (it held the gate's lock). Both are the
+ * same race seen at two instants, and every caller reads them alike - by the TYPE and its `reason`
+ * field, never the message.
+ */
+export function isCommitRaceRefusal(error: unknown): error is CommitRefusedError {
+  return (
+    error instanceof CommitRefusedError &&
+    (error.reason === 'epoch_mismatch' || error.reason === 'concurrent_commit')
+  );
+}
+
+/**
  * Why a commit the server REFUSED may be rebuilt and submitted again, or `null` when it may not.
  *
  * THE ONE RULE FOR EVERY CALLER THAT REBUILDS A MEMBER'S GESTURE (an admission, a removal), so a

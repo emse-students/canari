@@ -483,3 +483,90 @@ describe('BaseMlsService - a refused commit held behind a refused backlog', () =
     vi.restoreAllMocks();
   });
 });
+
+/**
+ * A `concurrent_commit` REPORTS THE EPOCH THE GATE READ WHILE ANOTHER COMMIT HELD ITS LOCK (CC-4,
+ * 2026-10-25): "not ahead" there is not an answer, so the log is read once - a winner that landed is
+ * applied, which is the progress a caller's rebuild needs; one that did not leaves the epoch, and no
+ * gap is marked for a group that has none.
+ */
+describe('BaseMlsService - a commit refused concurrent_commit', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('reads the log once and applies the winner that landed, so the epoch MOVES', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 195,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AQID' }],
+      activeEpoch: 196,
+      belowFloor: false,
+    });
+
+    await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected: concurrent_commit');
+
+    expect(ctx.fetchCommitsSince).toHaveBeenCalledWith('g', 195);
+    expect(ctx.state.epoch).toBe(196);
+    expect(isInEpochGap('g')).toBe(false);
+  });
+
+  it('held behind a refused backlog: asks for its pull once, in ONE [COMMIT] line, no [GAP]', async () => {
+    resetUnackedFrames();
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 195,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AQID' }],
+      activeEpoch: 196,
+      belowFloor: false,
+    });
+    noteUnackedFrame('g', 'absent-conversation');
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    vi.spyOn(console, 'log').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
+
+    await expect(runCommit(ctx, 'g')).rejects.toBeInstanceOf(CommitRefusedError);
+
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    expect(lines.filter((l) => l.includes('[GAP]'))).toEqual([]);
+    expect(lines.filter((l) => l.includes('refused concurrent_commit at epoch 195'))).toHaveLength(
+      1
+    );
+    vi.restoreAllMocks();
+    resetUnackedFrames();
+  });
+
+  it('leaves the epoch and marks no gap when the winner has not landed yet', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 195,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 195, belowFloor: false });
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    vi.spyOn(console, 'log').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
+
+    await expect(runCommit(ctx, 'g')).rejects.toBeInstanceOf(CommitRefusedError);
+
+    expect(ctx.state.epoch).toBe(195);
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(isInEpochGap('g')).toBe(false);
+    // An ordinary race, so no `[GAP]` narration (the GAP rows assert none) - ONE `[COMMIT]` line.
+    expect(lines.filter((l) => l.includes('[GAP]'))).toEqual([]);
+    expect(lines.filter((l) => l.includes('refused concurrent_commit at epoch 195'))).toHaveLength(
+      1
+    );
+    vi.restoreAllMocks();
+  });
+});

@@ -83,6 +83,7 @@ import {
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
+  reportBulkAdditionRefusal,
   reportFollowerTabRefusal,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
@@ -2052,7 +2053,7 @@ export function useConversations() {
     // (device fetch + bulk commit + welcomes) takes several seconds.
     pendingInvites = { groupId: convo.id, ids: normalized };
     try {
-      await inviteMembersToGroup(normalized, convo, {
+      const outcome = await inviteMembersToGroup(normalized, convo, {
         mlsService: ctx.ensureMls(),
         storage: ctx.storage,
         userId: ctx.userId,
@@ -2063,6 +2064,8 @@ export function useConversations() {
         saveConversation: (name) => saveConversation(name, ctx),
         log: ctx.log,
       });
+      // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
+      if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
       await loadGroupMembers(convo.id, ctx);
     } catch (e) {
       // `processBulkAddition` lets only this refusal through; anything else is its own to report.

@@ -35,6 +35,18 @@ and `removeStrayLeaves` commits it at a holder's next connection. Waiting for th
 clock. The candidate is an EVENT-driven wait for the winner's epoch (the local epoch moving past the
 refused base), which needs a proof of termination when the winner itself fails. Not built.
 
+## P3 - A pass's unconfirmed tree aborts the group's later pending rows (review of #2416, 2026-10-25)
+
+`pendingAddFactsOf` caches the confirmed tree for a pass, an `unconfirmed` reading included, so every later row of that group aborts `tree-unconfirmed` in the same sweep. Conservative (nothing is added on an unknown tree) and the next sweep retries; a fresh read per row after an unconfirmed one is the candidate. Not built.
+
+## P3 - The add lock is not renewed through a long rebuild chain (review of #2416, 2026-10-25)
+
+An Add takes the server's add lock (`ADD_LOCK_TTL_SEC`, `apps/chat-delivery-service/src/utils/add-lock.ts`)
+once, and nothing renews it while `rebuildOnRace` rebuilds. Each rebuild now adds round trips (the
+confirmed tree, the premise re-reads), so a long chain can outlive the TTL, and a second Add could
+take the lock while the first is still staging. Candidate fixes: renew the lock in each attempt, or
+bound the chain by the TTL and surface `add-lock-busy`. Not built.
+
 ## P3 - A removed device replays the commits it missed and is answered 403, read as a replay error (CC-2, 1.4.1 dev campaign, 2026-10-25)
 
 The Remove commit the server queues to a removed device (`group:parting`) is built on the group's
