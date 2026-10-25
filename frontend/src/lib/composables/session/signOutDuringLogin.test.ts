@@ -453,7 +453,8 @@ describe('a sign-out during a login in progress', () => {
     const s = session([a.client]);
     const rung = vi.fn();
     (s.cb.loadAndRestoreConversations as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      s.ctx.timers.reconnect = setTimeout(rung, 60_000);
+      // Zero delay: cleared, it never runs; left armed, the flush below runs it.
+      s.ctx.timers.reconnect = setTimeout(rung, 0) as unknown as typeof s.ctx.timers.reconnect;
       throw new Error('restore failed');
     });
 
@@ -463,6 +464,8 @@ describe('a sign-out during a login in progress', () => {
     expect(s.cb.onLoginFailed).toHaveBeenCalled();
     expect(s.ctx.isLoggedIn(), 'a failed login left the session flag up').toBe(false);
     expect(s.ctx.timers.reconnect, 'a failed login left a reconnect rung armed').toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rung, 'the rung armed by the failed login still ran').not.toHaveBeenCalled();
   });
   it('a revocation wipe that fails after its own sign-out is accused, not filed as a stopped login', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
