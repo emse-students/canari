@@ -399,7 +399,9 @@ try {
   const scope = out.detail?.workspaceId ? { workspaceId: out.detail.workspaceId, ...communityChannels(out.detail.workspaceId) } : null;
   const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds))] : [])] : [];
   const logs = Object.fromEntries(spec.devices.map((d) => [d, narration]));
-  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs });
+  // RM-6's 403 IS ITS SUBJECT: the manager's flip refused on the salon's own access path, nothing wider.
+  const refusals = id === 'RM-6' && out.detail?.channelId ? { [spec.manager]: [{ path: new RegExp(`^/api/channels/${out.detail.channelId}/access$`), status: [403] }] } : {};
+  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs, refusals });
   await finishObserved(
     id,
     verdict,
