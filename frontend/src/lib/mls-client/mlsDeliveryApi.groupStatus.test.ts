@@ -2,9 +2,9 @@ import { MlsDeliveryApi, NotAGroupMemberError, type MlsDeliveryFetch } from './m
 
 /**
  * `getGroupServerStatus` must distinguish an ABSENT group (legitimate purge) from a genuine
- * network ERROR (doubt -> keep it). Backend-specific trap: `GET mls/groups/:id` returns the
- * handler's `null` as an EMPTY BODY (200) -> `res.json()` throws. Without the fix, that case was
- * classified 'error' ("uncertain status") and the deleted conversation was never purged.
+ * network ERROR (doubt -> keep it). 'absent' PURGES, so it is read only from the delivery
+ * service's JSON: the handler answers `{ found: false }` for a missing row. A bare `null` used to
+ * leave Nest as an empty untyped 200, which a captive portal can answer too.
  */
 function makeApi(fetchImpl: MlsDeliveryFetch): MlsDeliveryApi {
   return new MlsDeliveryApi({
@@ -14,14 +14,39 @@ function makeApi(fetchImpl: MlsDeliveryFetch): MlsDeliveryApi {
   });
 }
 
-function response(body: string, init: { status?: number }): Response {
-  return new Response(body, { status: init.status ?? 200 });
+/** The JSON content type the real server sends, unless a case is about a body that is not the API's. */
+function response(body: string, init: { status?: number; contentType?: string | null }): Response {
+  const type = init.contentType === undefined ? 'application/json' : init.contentType;
+  return new Response(body, {
+    status: init.status ?? 200,
+    headers: type === null ? {} : { 'content-type': type },
+  });
 }
 
 describe('getGroupServerStatus', () => {
-  it("corps vide sur 200 (handler a renvoye null) -> 'absent'", async () => {
-    const api = makeApi(async () => response('', { status: 200 }));
+  it("the server's { found: false } on 200 -> 'absent'", async () => {
+    const api = makeApi(async () => response('{"found":false}', { status: 200 }));
     expect(await api.getGroupServerStatus('g1')).toBe('absent');
+  });
+
+  it("a captive portal's 200 text/html -> 'error', never a purge", async () => {
+    const api = makeApi(async () =>
+      response('<html>Sign in to use this network</html>', {
+        status: 200,
+        contentType: 'text/html',
+      })
+    );
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
+  });
+
+  it("an empty untyped 200 -> 'error': it cannot be told from a portal's, so it never purges", async () => {
+    const api = makeApi(async () => response('', { status: 200, contentType: null }));
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
+  });
+
+  it("a JSON type whose body does not parse -> 'error'", async () => {
+    const api = makeApi(async () => response('{"half', { status: 200 }));
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
   });
 
   it('corps "null" litteral sur 200 -> \'absent\'', async () => {

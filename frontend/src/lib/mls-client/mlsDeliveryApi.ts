@@ -1551,8 +1551,13 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
-    const data = await res.json();
-    // The server returns null (no body content) when nothing is stored.
+    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`), never "no base". The server
+    // spells "nothing stored" `{ groupInfo: null }` - a bare `null` used to leave it as an empty,
+    // untyped body that no reader can tell from a portal's.
+    const data = (await readApiJson(
+      res,
+      `GET /api/mls/group-info (group ${groupId.slice(0, 8)})`
+    )) as { groupInfo?: unknown; baseEpoch: number; activeEpoch?: unknown } | null;
     if (!data || typeof data.groupInfo !== 'string') return null;
     // `activeEpoch` defaults to the base, never to 0: an older server that does not send it must
     // read as "nothing known to be stale", where 0 would call every published base stale.
@@ -1910,13 +1915,13 @@ export class MlsDeliveryApi {
     // that as "accepted, answer unreadable" dropped the outbox entry of a message nobody received
     // (cross-client rig, `1.4.1-alpha.3`). A 2xx that is not the delivery service's JSON is NO
     // ANSWER (`NotFromApiError`, typed at the throw in `readApiJson`), and so is a body lost after
-    // the head: the outbox keeps the entry and retries it like any transport failure, and the
-    // receivers deduplicate on the inner messageId should the first one have landed after all.
+    // the head: the outbox keeps the entry and retries it on its backoff ladder like any transport
+    // failure, and the receivers deduplicate on the inner messageId should the first one have
+    // landed after all.
     let answered: unknown;
     try {
       answered = await readApiJson(res, `POST /api/mls/send (group ${groupId.slice(0, 8)})`);
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') throw e;
       console.warn(
         `[DELIVERY] send to ${groupId.slice(0, 8)} answered ${res.status} with no answer of the delivery service - not accepted, kept for a retry:`,
         e
@@ -2342,12 +2347,20 @@ export class MlsDeliveryApi {
    * public readers ({@link getGroupMeta}, {@link getGroupServerStatus}) parse it differently but ask
    * the same question, and each used to send its own request (14 calls for 7 groups, HAR 2026-10-05).
    */
-  private readGroupRow(groupId: string): Promise<{ ok: boolean; status: number; text: string }> {
+  private readGroupRow(
+    groupId: string
+  ): Promise<{ ok: boolean; status: number; text: string; fromApi: boolean }> {
     return this.joinInFlight(`group:${groupId}`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
         headers: await this.auth(),
       });
-      return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' };
+      return {
+        ok: res.ok,
+        status: res.status,
+        text: res.ok ? await res.text() : '',
+        // WHO ANSWERED, read from the head (`responseOrigin`): a portal's page is not a group row.
+        fromApi: responseOrigin(res) === 'gateway',
+      };
     });
   }
 
@@ -2378,7 +2391,7 @@ export class MlsDeliveryApi {
    *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
-    let res: { ok: boolean; status: number; text: string };
+    let res: { ok: boolean; status: number; text: string; fromApi: boolean };
     try {
       res = await this.readGroupRow(groupId);
     } catch {
@@ -2388,18 +2401,25 @@ export class MlsDeliveryApi {
     if (res.status === 404) return 'absent';
     // Other non-2xx (401/5xx/…) = real doubt -> never purge on error.
     if (!res.ok) return 'error';
-    // The `GET mls/groups/:id` handler returns the group object, or `null` when not found.
-    // NestJS serializes that `null` as an EMPTY body (200) -> `res.json()` would throw. An empty
-    // or "null" 2xx body from THIS endpoint therefore unambiguously means "group absent" (not a
-    // network error). This distinction lets discovery purge a deleted group instead of keeping
-    // it indefinitely as "uncertain status". [[lifecycle]]
-    const trimmed = res.text.trim();
-    if (trimmed === '' || trimmed === 'null') return 'absent';
+    // 'absent' PURGES the local conversation and its MLS state, so it is read only from the
+    // delivery service's own JSON: the handler answers `{ found: false }` (an object with no id)
+    // for a missing row. A 2xx that is not that JSON - a captive portal's page, an empty untyped
+    // body (also what a server older than that answer sends for its bare `null`), a body that does
+    // not parse - is NO ANSWER, and doubt never purges. [[lifecycle]]
+    if (!res.fromApi) {
+      console.warn(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} without the delivery service's JSON - unknown, nothing purged`
+      );
+      return 'error';
+    }
     let g: unknown;
     try {
-      g = JSON.parse(trimmed);
-    } catch {
-      return 'absent';
+      g = JSON.parse(res.text);
+    } catch (e) {
+      console.warn(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} with an unparseable body (${String(e)}) - unknown, nothing purged`
+      );
+      return 'error';
     }
     if (!g || typeof g !== 'object') return 'absent';
     const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;

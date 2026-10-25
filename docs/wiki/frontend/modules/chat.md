@@ -1315,20 +1315,32 @@ what was answered**, in ONE helper (`utils/apiJson.ts`, `readApiJson` / `assertA
 
 `NotFromApiError` is a `TransportFailureError`, so `isTransportFailure` reads it and every caller
 already does the right thing: the send throws `DeliveryUnreachableError`, the entry stays `pending`
-and goes again on the reconnect resume, and receivers deduplicate on the inner messageId. The same
-reading covers the commit gate (kept and resubmitted, never a refusal), `POST /group-info` (never
-`stored: false`), the Welcome, both key-package publishes, the ACK (ids kept, then persisted), the
-pending pull (fails at once instead of halving nine times), the push registration (not counted, so
-it registers again), the media `complete` and the payments onboarding. The discriminator is the
+and goes again on the outbox's backoff ladder (up to 60 s after the portal ends - connectivity never
+left "reachable", see [backlog](../../backlog.md)), and receivers deduplicate on the inner messageId.
+The same reading covers the commit gate (kept and resubmitted, never a refusal), `GET` and `POST
+/group-info` (never "no base", never `stored: false`), the key-group base on social-service, the
+Welcome, both key-package publishes, the ACK (ids kept, then persisted), the pending pull (a non-JSON
+or unparseable page fails at once instead of halving nine times), the push registration (not
+counted, so it registers again), the media `complete` and the payments onboarding.
+
+**A PURGE IS NEVER READ FROM A NON-ANSWER.** `getGroupServerStatus` answered `absent` - which purges
+the local conversation and its MLS state - for any 2xx body that did not parse, so a portal's page
+erased a conversation. `absent` now comes only from the delivery service's JSON. The server spells
+a missing row `{ found: false }`, and "nothing stored" on `GET /group-info` `{ groupInfo: null }`,
+because a handler's bare `null` leaves Nest as an empty, untyped `200` that a portal can send too.
+Every older client already reads both objects as before. An empty untyped `200` is now `error`
+(doubt, nothing purged). The discriminator is the
 content type `responseOrigin` already used for an edge refusal, plus the parse - facts the
 response carries, never a guess from its words. The log line an operator reads is
 `[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept
 for a retry: NotFromApiError: POST /api/mls/send (group <group>) answered 200 with text/html... -
 not the API, read as no answer`.
 
-**Not covered**: a 2xx a caller believes WITHOUT reading anything (`renameGroup`, most `apiFetch`
-writes) still reads a portal's `200` as done; the native background sender (Kotlin, Swift) is
-untouched. Pinned by `apiJson.test.ts`, `mlsDeliveryApi.notFromApi.test.ts` and `outbox.test.ts`.
+**Not covered**, each in [backlog](../../backlog.md): a 2xx a caller believes WITHOUT reading
+anything (`deleteGroupOnServer`, `renameGroup`, most `apiFetch` writes), the Android background
+senders, and connectivity's reading of a portal as "reachable". Pinned by `apiJson.test.ts`,
+`mlsDeliveryApi.notFromApi.test.ts`, `mlsDeliveryApi.groupStatus.test.ts`,
+`ChannelService.notFromApi.test.ts`, `outbox.test.ts` and the two chat-delivery controller specs.
 
 `enqueue` logs too: it is the first trace of a message on this device, and without it a send that
 never reached the queue cannot be told apart from one the queue accepted and lost. Correlating a

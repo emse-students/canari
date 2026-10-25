@@ -4915,7 +4915,8 @@ describe('a 2xx a captive portal answered is no answer (cross-client rig, 1.4.1-
     expect(conversations.get('g1')!.messages[0].status).toBe('pending');
     expect(logs.some((l) => l.includes('sent, the server answered no receive time'))).toBe(false);
 
-    // The portal ends: the existing transport-failure resume sends it again, now.
+    // The portal ends. In production the kept entry goes on its backoff ladder (connectivity never
+    // left "reachable", backlog P3); a reconnect transition stands in for that retry here.
     connectivity.notifyServerUnreachable();
     connectivity.notifyServerReachable();
     await outboxIdle();

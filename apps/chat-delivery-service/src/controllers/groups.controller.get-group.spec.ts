@@ -93,7 +93,7 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
 
     const got = await controller.getGroup('g-missing');
 
-    expect(got).toBeNull();
+    expect(got).toEqual({ found: false });
     expect(groupInfoRepo.findOne).not.toHaveBeenCalled();
   });
 });

@@ -98,6 +98,24 @@ describe('the commit gate, the published base and the pull read a portal the sam
     expect(failure).toBeInstanceOf(NotFromApiError);
   });
 
+  it('a portal 200 on GET /group-info is no answer, never "no base"', async () => {
+    const { api } = makeApi(portal, () => Response.json({ groupInfo: null }));
+    const failure = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(NotFromApiError);
+    // The server's own "nothing stored" is still read as no base.
+    await expect(api.fetchGroupInfo('g1')).resolves.toBeNull();
+  });
+
+  it('a JSON-typed pull page that does not parse fails at once too, as the same type', async () => {
+    const { api, fetchImpl } = makeApi(
+      () => new Response('{"half', { status: 200, headers: { 'content-type': 'application/json' } })
+    );
+    const failure = await api.pullPendingMessagesJson().catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(NotFromApiError);
+    expect((failure as NotFromApiError).cause).toBeInstanceOf(SyntaxError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('a portal 200 on the pending pull fails at once - one request, no halving against it', async () => {
     const { api, fetchImpl } = makeApi(portal);
     const failure = await api.pullPendingMessagesJson().catch((e: unknown) => e);
