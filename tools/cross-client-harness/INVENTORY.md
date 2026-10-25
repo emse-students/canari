@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-102 scripts.
+103 scripts.
 
 | script | what it is |
 |---|---|
@@ -98,6 +98,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `results.mjs` | Append-only result log for the campaign. |
 | `rowkit.mjs` | THE PURE HALF OF EVERY 1.4.1 ROW RUNNER - the names a row mints, and how its verdict is composed. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
+| `salonrows.mjs` | THE SALON ROWS OF THE 1.4.1 CAMPAIGN - RM-4..6, the removal bound (#2284) - their table and judges. |
 | `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
 | `seed-bench.mjs` | Tops the LOCAL estate up with what the verification rows need to look at: a feed long enough to |
 | `seedargs.mjs` | The argument grammar of `seed-bench.mjs`, kept pure so `archive/seedargs-selftest.mjs` can hold it. |
@@ -140,7 +141,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-88 scripts.
+89 scripts.
 
 | script | what it is |
 |---|---|
@@ -223,6 +224,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
 | `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
 | `archive/roster.mjs` | THE MEMBERSHIP TABLE ITSELF - the four rows nothing on this board could have caught. |
+| `archive/salon.mjs` | THE SALON ROWS OF THE 1.4.1 CAMPAIGN - the removal bound (#2284) on a salon's access list. |
 | `archive/search.mjs` | SEARCH-1..6 - the two searches this app has (in-conversation full-history, and the sidebar |
 | `archive/settle.mjs` | THE SETTLEMENT ROWS OF THE 1.4.1 CAMPAIGN - a commit whose ANSWER is lost, refused or late. |
 | `archive/tab1.mjs` | TAB-1 - the OS notification for a message, and the silence that must precede it. |
@@ -237,7 +239,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-56 scripts.
+57 scripts.
 
 | script | what it is |
 |---|---|
@@ -282,6 +284,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
+| `archive/salon-selftest.mjs` | THE SALON ROWS' OWN JUDGEMENTS, PINNED (`salonrows.mjs`). |
 | `archive/seedargs-selftest.mjs` | THE SEEDER'S GRAMMAR REFUSES WHAT IT DOES NOT KNOW, AND THIS HOLDS IT TO THAT. |
 | `archive/selector-selftest.mjs` | EVERY UI STRING THE RIG CLICKS MUST STILL EXIST IN THE APP. |
 | `archive/sendtrace-selftest.mjs` | Pins `sendsByDevice` and `mobileNavOrder` - the two readers the iPhone needs because what the |
@@ -354,4 +357,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-293 scripts in total.
+296 scripts in total.
