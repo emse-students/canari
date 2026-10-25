@@ -27,6 +27,11 @@ its detail. Any other CSP refusal is dirt. It goes when the owner turns the zone
 **THE iPHONE (I1) RUNS `1.4.1-alpha.4` FROM TESTFLIGHT AND READS NO ROWS (2026-10-25)** - it is
 signed out, and nothing signs it in until the owner decides; every `+I1` row stays `pending`.
 
+**AN UNEXPLAINED GATE FLAKE IS OPEN (2026-10-25)** - `make test-harness` failed twice and then
+passed, with the failing assertion not captured
+([backlog](backlog.md#p3---a-harness-self-test-run-failed-twice-and-could-not-be-reproduced-2026-10-25)).
+No row verdict depends on it; it stays here until it is explained.
+
 | State | Meaning |
 | --- | --- |
 | `PASS` | ran, the row's own assertions and the invariant of section 4.0 held, every window clean - and the row names the build |

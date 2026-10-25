@@ -308,6 +308,34 @@ failing what a fact on the same client could have told it. The fix is to carry t
 unknown-outcome state to where the outbox decides to attempt a send, so that it waits for the
 settlement instead of trying and failing.
 
+## P3 - One failed Add is reported three times (TOK-2, 2026-10-25)
+
+When a bulk Add fails, the client says so three times within 3 ms. Read on `1.4.1-alpha.4`, TOK-2,
+where the token renewal behind the commit failed (`DeliveryRenewalFailedError`):
+
+- an untagged `Bulk invite error: <typed error>` at log level;
+- `[SYNC] processBulkAddition failed: <typed error>` at `console.error`, with a stack;
+- `[GROUP] an invitation added nobody (failed)`.
+
+All three carry the same fact. The rule is that a line is either expected and necessary, or the
+visible end of something upstream. So one failed Add should be ONE accusing line that carries the
+typed outcome: tagged, at the level the outcome deserves, with no stack for a typed and expected
+error. The cross-client rig forgives the three as TOK-2's provoked narration until this is fixed, and
+the needle's comment points here.
+
+## P3 - A harness self-test run failed twice and could not be reproduced (2026-10-25)
+
+`make test-harness` failed twice in a row in a fresh worktree of the TOK-2 rig fix, then passed. The
+first failure stopped at the `lucide-selftest` step, the second at the `sourcestamp-selftest` step.
+Both times the kept output was only the tail, so the failing assertion was not captured. Ruled out:
+- the change under test, which touches neither file nor anything either reads (settle-row files only);
+- a missing dependency: the third run passed in the same worktree, unchanged;
+- determinism: each of the two self-tests passed three times in a row on its own afterwards.
+What was running at the same time: the rig's own replay chain, on the operator checkout, a
+different worktree. `sourcestamp-selftest` writes a file into its tree and hashes the tree twice, so
+something writing to the same tree would break it. No writer was found. If either step fails again,
+keep the full output, not the tail.
+
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
 When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the
