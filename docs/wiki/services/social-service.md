@@ -1399,11 +1399,22 @@ account erasure's name drop. A writer that changes nothing (a strip of a user no
   the answer when the answer is exactly `base + 1` (its own edit and nothing else), and reads the
   access again otherwise; on `CHANNEL_ACCESS_CHANGED` it reads the access again and THEN names the
   refusal, so the admin decides on the real list. Consecutive gestures need no reload.
-- **A request with no base (a client older than the revision) is GRANTS ONLY**: while the salon stays
-  private, every name missing from its list is kept, with a warn line counting the drops it ignored.
-  The old panel never removed through this route (its trash is the per-member `DELETE`), so this
-  costs no gesture it has. A stale visibility flip from such a client is not caught; the shim and
-  its removal are in [legacy-compatibility](../legacy-compatibility.md). A public salon made private gets its distribution group
+- **A request with no base (a client older than the revision) is read as the one gesture it can
+  be** (`baselessAllowList`). Every client the `1.0.3` floor admits runs the panel of `v0.18.29`:
+  Add sends the list it read plus its pick LAST, no write policy; the toggle sends the list and the
+  other visibility, empty when going private; the write policy sends the list, the visibility it
+  read and the policy. So a salon that stays private gains at most that last name (none on a policy
+  save) and loses nobody - an absence is not a removal, and a name present may have been revoked
+  since; and a request flipping the visibility WITH a write policy, or going private WITH a list,
+  is a panel that read the other visibility and is refused `409`. The shim and its removal are in
+  [legacy-compatibility](../legacy-compatibility.md).
+- **The per-member `DELETE` answers the row it locked, whole**: `stripFromChannels` copies the
+  visibility and write policy with the list and revision, so a panel adopting it at `base + 1` never
+  pairs that revision with a visibility read before the lock.
+- **The panel makes one access write at a time**: two of its own in flight would share a base, and
+  the second would be refused by the first.
+- **Rollback:** an image older than migration 111 writes no revision, so after rolling back and
+  forward a panel opened before the rollback can save over a write the old image made. A public salon made private gets its distribution group
 before the lock; when the change is then refused, the group is left, not retired: its id stays on the
 row, inert while the salon is public, reused by the next flip (the mint is idempotent), and possibly
 the group of a concurrent flip that did commit.

@@ -11,6 +11,9 @@
 -- Schema only: one column, NOT NULL DEFAULT 0, which PostgreSQL adds without rewriting the table.
 -- Every existing salon starts at revision 0; nothing is backfilled, nothing is dropped.
 --
+-- ROLLBACK: an image older than this migration writes no revision, so after rolling back and
+-- forward a settings panel opened before the rollback can save over a write the old image made.
+--
 -- Idempotent for CD: IF NOT EXISTS.
 --
 -- LOCK TIMEOUT: `channels` is read by every salon listing; if a long transaction holds it, this

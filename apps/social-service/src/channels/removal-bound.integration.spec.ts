@@ -570,6 +570,86 @@ maybe('a removal against PostgreSQL', () => {
       expect(await departuresOf('w4-old')).toBe(0);
     });
 
+    /**
+     * NO BASE, AND A STALE VISIBILITY (review ADV1). A's old panel read the salon private; B made it
+     * public; A saves a write policy, which that panel sends with the visibility and list it read.
+     * Taken as meant, it made the salon private again - a group minted, the community cut.
+     */
+    it('refuses an old panel that would make private again a salon made public since', async () => {
+      const id = await keyedSalon(['owner2', 'owner']);
+      const stale = await service.getChannelAccess(id, 'owner');
+      await service.updateChannelAccess(id, 'owner2', false, [], undefined, stale.accessRevision);
+      const outcome = await started(
+        service.updateChannelAccess(id, 'owner', stale.isPrivate, stale.allowedUsers, 'admins')
+      ).outcome;
+      expect(outcome).toBe(CHANNEL_ACCESS_CHANGED);
+      const row = await ds.getRepository(Channel).findOneByOrFail({ id });
+      expect(row).toMatchObject({ isPrivate: false, allowedUsers: [], writePolicy: 'everyone' });
+    });
+
+    /** The mirror (review ADV2): an old panel that read public would make B's private salon public. */
+    it('refuses an old panel that would make public a salon made private since', async () => {
+      const channels = ds.getRepository(Channel);
+      const { id } = await channels.save(
+        channels.create({ workspaceId: WS, name: `public-${salonSeq++}`, isPrivate: false })
+      );
+      const stale = await service.getChannelAccess(id, 'owner');
+      await service.updateChannelAccess(id, 'owner2', true, [], undefined, stale.accessRevision);
+      const outcome = await started(
+        service.updateChannelAccess(id, 'owner', stale.isPrivate, stale.allowedUsers, 'admins')
+      ).outcome;
+      expect(outcome).toBe(CHANNEL_ACCESS_CHANGED);
+      expect(await channels.findOneByOrFail({ id })).toMatchObject({
+        isPrivate: true,
+        allowedUsers: ['owner2'],
+        writePolicy: 'everyone',
+      });
+    });
+
+    /**
+     * NO BASE, AND A NAME REVOKED SINCE (review ADV3). The old panel's Add sends the list it read plus
+     * its pick, LAST; a name in that list may have been revoked through the per-member route since,
+     * and granting the whole list put it back - with its key distribution.
+     */
+    it("grants an old panel's pick alone, never a name revoked since its read", async () => {
+      await member('revoked-y', BASE_ROLE);
+      await member('picked-z', BASE_ROLE);
+      const id = await keyedSalon(['owner2', 'owner', 'revoked-y']);
+      const stale = await service.getChannelAccess(id, 'owner');
+      await service.removeMemberFromChannel(id, 'revoked-y', 'owner');
+      await service.updateChannelAccess(id, 'owner', true, [...stale.allowedUsers, 'picked-z']);
+      expect(await allowedOn(id)).toEqual(['owner2', 'owner', 'picked-z']);
+    });
+
+    /**
+     * THE PER-MEMBER ANSWER IS THE LOCKED ROW, WHOLE (review F3). The removal read the salon private;
+     * before its row lock, another admin made it public. The strip then changes nothing (no bump),
+     * so the answer is one revision past the panel's - and its visibility must be the locked one,
+     * or the panel adopts "private" for a public salon.
+     */
+    it('answers a removal with the visibility of the row it locked', async () => {
+      await member('dropped-f3', BASE_ROLE);
+      const id = await keyedSalon(['salons', 'dropped-f3']);
+      const panel = await service.getChannelAccess(id, 'salons');
+      beforeCall = {
+        on: '/members/dropped-f3',
+        run: async () => {
+          await q(
+            `UPDATE channels SET "isPrivate" = false, "allowedUsers" = '',
+                    "accessRevision" = "accessRevision" + 1 WHERE id = $1`,
+            [id]
+          );
+        },
+      };
+      const removed = await service.removeMemberFromChannel(id, 'dropped-f3', 'salons');
+      expect(beforeCall).toBeNull();
+      expect(removed).toMatchObject({
+        isPrivate: false,
+        allowedUsers: [],
+        accessRevision: panel.accessRevision + 1,
+      });
+    });
+
     it('still cuts a member a CURRENT-base rewrite leaves off - the probe above sees a cut', async () => {
       // The control for the two cases above: the same list, sent at the revision the server holds,
       // is a deliberate removal, and the eviction it makes is exactly what `evictionsOf` counts.

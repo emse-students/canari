@@ -216,6 +216,23 @@
     return describeCommunityRefusal(refusalCode(e)) ?? generic;
   }
 
+  /**
+   * ONE ACCESS WRITE AT A TIME, across every gesture of this tab. Two of this panel's own writes in
+   * flight would share one base revision, and the second would be refused as stale by the first -
+   * a 409 the admin caused against nobody. Not reactive: it gates a click, it draws nothing.
+   */
+  let accessWriteInFlight = false;
+
+  /** Takes the access-write slot for `gesture`, or logs and answers false when one is in flight. */
+  function claimAccessWrite(gesture: string): boolean {
+    if (accessWriteInFlight) {
+      Log.d('channelSettings access write ignored, another one is in flight', gesture);
+      return false;
+    }
+    accessWriteInFlight = true;
+    return true;
+  }
+
   /** Puts the server's answer on screen - visibility, allowlist, write policy and revision. */
   function applyAccess(state: ChannelAccessState) {
     accessIsPrivate = state.isPrivate;
@@ -289,6 +306,7 @@
       { danger: !next }
     );
     if (!confirmed) return;
+    if (!claimAccessWrite('privacy')) return;
     privacySaving = true;
     saveError = '';
     const channelId = selectedChannelId;
@@ -307,12 +325,14 @@
       saveError = await accessWriteRefused(channelId, e, m.chat_channel_access_save_error());
     } finally {
       privacySaving = false;
+      accessWriteInFlight = false;
     }
   }
 
   /** Persists the chosen write policy optimistically, reverting on failure - same shape as `setNotifLevel`. */
   async function setWritePolicy(next: ChannelWritePolicy) {
     if (next === writePolicy || writePolicySaving) return;
+    if (!claimAccessWrite('writePolicy')) return;
     const previous = writePolicy;
     writePolicy = next;
     writePolicySaving = true;
@@ -334,6 +354,7 @@
       saveError = await accessWriteRefused(channelId, e, m.chat_channel_access_save_error());
     } finally {
       writePolicySaving = false;
+      accessWriteInFlight = false;
     }
   }
 
@@ -353,6 +374,7 @@
       addingUserId = '';
       return;
     }
+    if (!claimAccessWrite('add')) return;
     memberAdding = true;
     accessError = '';
     const next = [...accessAllowedUserIds, uid];
@@ -376,6 +398,7 @@
       membersError = await accessWriteRefused(channelId, e, m.chat_channel_add_access_error());
     } finally {
       memberAdding = false;
+      accessWriteInFlight = false;
     }
   }
 
@@ -385,6 +408,7 @@
       confirmLabel: m.common_remove_label(),
     });
     if (!confirmed) return;
+    if (!claimAccessWrite('remove')) return;
     memberRemoving = { ...memberRemoving, [userId]: true };
     const channelId = selectedChannelId;
     const base = accessRevision;
@@ -402,6 +426,7 @@
       const updated = { ...memberRemoving };
       delete updated[userId];
       memberRemoving = updated;
+      accessWriteInFlight = false;
     }
   }
 

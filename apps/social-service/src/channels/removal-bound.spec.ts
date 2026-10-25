@@ -344,22 +344,43 @@ describe('removals bounded by the actor', () => {
       });
     });
 
-    it('drops nobody on a baseless rewrite - an old panel grants, it never removes here', async () => {
+    it('drops nobody on a baseless Add, and grants only the name it appended', async () => {
       const { service, channel, rosterWrites } = grantedSince();
+      // The old panel's Add: the list it read, plus its pick LAST, no write policy.
+      const saved = await service.updateChannelAccess(SALON, 'u-salons', true, [
+        'u-salons',
+        'u-member',
+        'u-admin',
+      ]);
+      // u-mod, absent from the stale list, is kept; u-admin, the pick, is added.
+      expect(new Set(channel.allowedUsers)).toEqual(
+        new Set(['u-salons', 'u-member', 'u-mod', 'u-admin'])
+      );
+      expect(saved).toMatchObject({ accessRevision: 2 });
+      // No departure cut anyone: the roster write ran with no cut to make.
+      expect(rosterWrites).toHaveBeenCalledWith([], 'access_updated', WS, expect.any(Function));
+    });
+
+    it('grants nothing on a baseless write-policy save, whatever its list names', async () => {
+      const { service, channel } = grantedSince();
       const saved = await service.updateChannelAccess(
         SALON,
         'u-salons',
         true,
-        ['u-salons', 'u-member', 'u-admin'],
+        ['u-salons', 'u-admin'],
         'admins'
       );
-      // u-mod, absent from the stale list, is kept; u-admin, the old panel's grant, is added.
-      expect(new Set(channel.allowedUsers)).toEqual(
-        new Set(['u-salons', 'u-member', 'u-admin', 'u-mod'])
-      );
+      expect(channel.allowedUsers).toEqual(['u-salons', 'u-member', 'u-mod']);
       expect(saved).toMatchObject({ accessRevision: 2, writePolicy: 'admins' });
-      // No departure cut anyone: the roster write ran with no cut to make.
-      expect(rosterWrites).toHaveBeenCalledWith([], 'access_updated', WS, expect.any(Function));
+    });
+
+    it('refuses a baseless request that flips the visibility no fresh gesture would', async () => {
+      // A write-policy save never flips: a request that does read the other visibility.
+      const { service, channelRepo } = grantedSince();
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-salons', false, [], 'admins'))
+      ).toBe(CHANNEL_ACCESS_CHANGED);
+      expect(channelRepo.save).not.toHaveBeenCalled();
     });
 
     it('raises the revision on a per-member removal and answers it', async () => {
@@ -375,7 +396,9 @@ describe('removals bounded by the actor', () => {
       // Every community member sees a public salon; going private takes it from whoever is left off.
       const { service, channelRepo } = makeService({ isPrivate: false });
       expect(
-        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod')))
+        await outcome(
+          service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod'), undefined, 0)
+        )
       ).toBe(BOUND);
       expect(channelRepo.save).not.toHaveBeenCalled();
     });
@@ -385,8 +408,11 @@ describe('removals bounded by the actor', () => {
       expect(await outcome(service.updateChannelAccess(SALON, 'u-salons', false, []))).toBe(
         'allowed'
       );
+      // At the revision the flip to public answered.
       expect(
-        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod')))
+        await outcome(
+          service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod'), undefined, 1)
+        )
       ).toBe(BOUND);
     });
 
@@ -394,7 +420,14 @@ describe('removals bounded by the actor', () => {
       const salonManager = makeService({ isPrivate: false });
       expect(
         await outcome(
-          salonManager.service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member'))
+          salonManager.service.updateChannelAccess(
+            SALON,
+            'u-salons',
+            true,
+            everyoneBut('u-member'),
+            undefined,
+            0
+          )
         )
       ).toBe('allowed');
       const admin = makeService({ isPrivate: false });

@@ -395,6 +395,41 @@ describe('ChannelSettingsPanel - the revision every access write is based on', (
     ]);
   });
 
+  it('sends one access write at a time, so its own two gestures cannot refuse each other', async () => {
+    await mountOnAccessTab('salon-a');
+    let release: () => void = () => {};
+    service.updateChannelAccess.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              ok: true,
+              channelId: 'salon-a',
+              isPrivate: true,
+              allowedUsers: ['owner', 'peer'],
+              writePolicy: 'everyone',
+              accessRevision: REVISION + 1,
+            });
+        })
+    );
+    await addPeer();
+    // The Add is still in flight: a write-policy pick now would share its base.
+    await pickWritePolicy(m.chat_channel_write_admins());
+    expect(service.updateChannelAccess).toHaveBeenCalledTimes(1);
+
+    release();
+    await settle();
+    await pickWritePolicy(m.chat_channel_write_admins());
+    expect(service.updateChannelAccess).toHaveBeenCalledTimes(2);
+    expect(service.updateChannelAccess).toHaveBeenLastCalledWith(
+      'salon-a',
+      REVISION + 1,
+      true,
+      ['owner', 'peer'],
+      'admins'
+    );
+  });
+
   it('reads the access again when its write landed on top of another one', async () => {
     await mountOnAccessTab('salon-a');
     // Saved, but two revisions on: somebody else wrote between this panel's read and its save.

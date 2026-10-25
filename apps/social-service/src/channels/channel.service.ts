@@ -1040,6 +1040,10 @@ export class ChannelService implements OnApplicationBootstrap {
       // rewrite a list that no longer names them as if nothing had happened. Unchanged, it stays.
       if (locked.allowedUsers.length !== before.length) locked.accessRevision += 1;
       await m.getRepository(Channel).save(locked);
+      // THE WHOLE ACCESS FROM THE LOCKED ROW, never half of it: a caller answering this copy (the
+      // per-member DELETE) would otherwise pair this revision with a visibility read before the lock.
+      channel.isPrivate = locked.isPrivate;
+      channel.writePolicy = locked.writePolicy;
       channel.allowedUsers = locked.allowedUsers;
       channel.accessRevision = locked.accessRevision;
     }
@@ -2921,8 +2925,8 @@ export class ChannelService implements OnApplicationBootstrap {
    *   rewrite of any other revision is refused whole with `409 CHANNEL_ACCESS_CHANGED`, carrying the
    *   current access: the caller's list predates a write it never saw, and diffing it against the row
    *   would read whoever that write granted as a removal. `undefined` is a client older than the
-   *   revision (docs/wiki/legacy-compatibility.md): its list is taken as GRANTS ONLY, so it can drop
-   *   nobody - the panel it runs never meant to, a removal there being the per-member DELETE.
+   *   revision (docs/wiki/legacy-compatibility.md): {@link baselessAllowList} reads its request as
+   *   the one gesture it can be, so it drops nobody and grants at most the name it appended.
    */
   async updateChannelAccess(
     channelId: string,
@@ -2955,22 +2959,10 @@ export class ChannelService implements OnApplicationBootstrap {
     const wasPrivate = channel.isPrivate;
     const previousAllowed = new Set(channel.allowedUsers || []);
     const requested = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
-    // A BASELESS LIST IS GRANTS ONLY. An old panel sends the list it read when it opened, so a member
-    // granted since is missing from it, and nothing in the request can tell that absence from a
-    // removal. That panel never removes through this route (its trash is the per-member DELETE), so
-    // reading every absence as "not mine to decide" loses no gesture it has.
-    const ignoredDrops =
-      baseAccessRevision === undefined && wasPrivate && isPrivate
-        ? [...previousAllowed].filter((u) => !requested.includes(u))
-        : [];
-    if (ignoredDrops.length > 0) {
-      this.logger.warn(
-        `[CHANNEL_ACCESS] baseless rewrite (client older than the access revision) would have dropped ` +
-          `${ignoredDrops.length} - kept channel=${channelId} by=${actorUserId.slice(0, 8)} ` +
-          `revision=${channel.accessRevision}`
-      );
-    }
-    const nextAllowed = [...requested, ...ignoredDrops];
+    const nextAllowed =
+      baseAccessRevision === undefined
+        ? this.baselessAllowList(channel, actorUserId, isPrivate, requested, writePolicy)
+        : requested;
     // MAKING A SALON PRIVATE GRANTS WHOEVER DID IT, the rule `createChannel` already applies to a
     // salon created private. The panel offers its allowlist only once the SERVER holds the salon
     // private (members are granted one at a time, at once), so the flip always arrives with an empty
@@ -3140,10 +3132,64 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * What a rewrite with NO base (a client older than the access revision, see
+   * docs/wiki/legacy-compatibility.md) may do, read from the only panel such a client can run.
+   *
+   * Every client the `1.0.3` floor admits runs the panel of 2026-09-28 (`v0.18.29`), whose three
+   * gestures are known exactly, and its list is the one it read when the tab opened - so the list is
+   * EVIDENCE OF NOTHING but the one name it appended:
+   *  - Add: `(isPrivate as read, list + pick)`, no write policy - the pick is the LAST element;
+   *  - the visibility toggle: `(!isPrivate as read, list)`, no write policy - going private, the list
+   *    of a public salon, which that panel always holds empty;
+   *  - the write policy: `(isPrivate as read, list, policy)`.
+   *
+   * So, refused `409 CHANNEL_ACCESS_CHANGED` when the request flips the visibility in a way no fresh
+   * gesture would: with a write policy (a policy save never flips), or going private with a list
+   * (the toggle sends none) - both are a panel that read the other visibility. Otherwise a salon that
+   * stays private gains at most the appended pick, and nobody is dropped: an absence from a stale
+   * list is not a removal (its trash is the per-member DELETE), and a name present in it is not a
+   * grant (it may have been revoked since).
+   */
+  private baselessAllowList(
+    channel: Channel,
+    actorUserId: string,
+    isPrivate: boolean,
+    requested: string[],
+    writePolicy: ChannelWritePolicy | undefined
+  ): string[] {
+    const previous = channel.allowedUsers || [];
+    if (
+      isPrivate !== channel.isPrivate &&
+      (writePolicy !== undefined || (isPrivate && requested.length > 0))
+    ) {
+      this.refuseStaleAccessRewrite(channel, actorUserId, 'none');
+    }
+    if (!isPrivate) return [];
+    if (!channel.isPrivate) return []; // going private, with the empty list the toggle sends
+    const pick = writePolicy === undefined ? requested[requested.length - 1] : undefined;
+    const next = pick && !previous.includes(pick) ? [...previous, pick] : [...previous];
+    const ignored =
+      requested.filter((u) => !next.includes(u)).length +
+      previous.filter((u) => !requested.includes(u)).length;
+    if (ignored > 0) {
+      this.logger.warn(
+        `[CHANNEL_ACCESS] baseless rewrite (client older than the access revision) - ${ignored} ` +
+          `name(s) of its list ignored, granted=${pick && next.length > previous.length ? 1 : 0} ` +
+          `channel=${channel.id} by=${actorUserId.slice(0, 8)} revision=${channel.accessRevision}`
+      );
+    }
+    return next;
+  }
+
+  /**
    * Refuses an access rewrite computed at `base` while the salon is at another revision: the typed
    * `409 CHANNEL_ACCESS_CHANGED`, carrying the CURRENT access so the caller can show it at once.
    */
-  private refuseStaleAccessRewrite(current: Channel, actorUserId: string, base: number): never {
+  private refuseStaleAccessRewrite(
+    current: Channel,
+    actorUserId: string,
+    base: number | 'none'
+  ): never {
     this.logger.warn(
       `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=${current.id} ` +
         `by=${actorUserId.slice(0, 8)} base=${base} current=${current.accessRevision}`
