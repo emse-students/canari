@@ -646,10 +646,12 @@ export async function setChannelPrivate(cx, wanted) {
  * value unconditionally is silent about the one case it was written for, which is the control
  * already holding something else.
  *
- * IT DOES NOT SAVE. `writePolicy` shares the access panel's one Save with the visibility toggle and
- * the allowlist, so a gesture that saved here would make a caller unable to change two things in
- * one round trip - and would hide which of them the server refused. {@link saveChannelAccess} stays
- * the caller's to invoke, once, deliberately.
+ * THE PICK IS THE WRITE since #1171 (2026-09-28): the panel has no Save any more, and the app sets
+ * the new label OPTIMISTICALLY, holds the trigger disabled while the request is in flight, and puts
+ * the old label back if the server refuses. So the label alone proves nothing: the helper returns
+ * only once the trigger is enabled again AND still names the wanted policy, which is the write
+ * having landed. The app flips the label and the disabled state in the same tick, so there is no
+ * window where the label matches before the request has started.
  *
  * @param cx the client with the access panel open (see {@link openChannelAccess})
  * @param policy `everyone` | `admins_moderators` | `admins` - the option VALUES, not their labels
@@ -664,11 +666,11 @@ export async function setChannelWritePolicy(cx, policy) {
     cx,
     `(function () {
        var trig = document.querySelector(${JSON.stringify(WRITE_POLICY_TRIGGER())});
-       return !!trig && trig.getAttribute('aria-label') === ${JSON.stringify(
+       return !!trig && !trig.disabled && trig.getAttribute('aria-label') === ${JSON.stringify(
          `${caption('chat_channel_who_can_write')} - ${wanted}`
        )};
      })()`,
-    5000
+    15000
   );
   return true;
 }
