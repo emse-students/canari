@@ -41,6 +41,7 @@ import {
   revokedOwn,
   addAcrossReloadPremise,
   commitLinesBy,
+  dup7Narration,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 import { recordCreated } from '../campaign.mjs';
@@ -418,6 +419,7 @@ const ACTIONS = {
     return {
       members: ['W1', 'W2', 'W4'],
       records,
+      narration: dup7Narration(c.group.id),
       detail: { invited, heldWelcome, reloaded, welcome, decisions: seq, selfRejoined },
       judge: () => welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }),
     };
@@ -483,7 +485,7 @@ try {
   // DEV-1 and the premise of every other DEV row, so both seats name their device-notice narration.
   const minting = spec.mint.length > 0;
   const logs = {
-    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : [])],
+    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : []), ...(act.narration ?? [])],
     ...(minting && spec.devices.includes('W2') ? { W2: CONTACT_DEVICE_NOTICE_NARRATION } : {}),
   };
   const refusals = {};

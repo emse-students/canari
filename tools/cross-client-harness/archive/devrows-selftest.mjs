@@ -9,6 +9,7 @@
  */
 import {
   BG_WELCOME,
+  dup7Narration,
   DEV5_ELSEWHERE,
   DEV_ROWS,
   appearances,
@@ -161,6 +162,14 @@ ok('DUP-7: no reload fails', failing(welcomeAcrossReloadOwn({ ...reload, reloade
 ok('DUP-7: joined twice fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, joined: 2 } })) === 1);
 ok('DUP-7: never joined fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, joined: 0 }, listed: false })) === 2);
 ok('DUP-7: a second copy processed as a join fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, failed: ['GroupAlreadyExists'] } })) === 1);
+{
+  // Verbatim from DUP-7 on alpha.4, stamps stripped as the gate strips them.
+  const G = 'a57fd3c2-0000-4000-8000-000000000000';
+  const n = dup7Narration(G);
+  const hit = (s) => n.some((re) => re.test(s));
+  ok('DUP-7 forgives the killed Welcome, its warning and the owed delivery of ITS group', hit('[SYNC] Welcome failed -> 223bc34e…:web-223bc34e…-mvn2msl6-7do6: TransportFailureError: request got no answer: TypeError: Failed to fetch') && hit('[WARN] No Welcome delivered: no member addition will be announced until delivery succeeds.') && hit('[COMMIT] a57fd3c2... owed Welcome of an Add delivered to web-223bc34e…-mvn2msl6-7do6'));
+  ok('control: a refused Welcome, another group, and NOT delivered stay dirt', !hit('[SYNC] Welcome failed -> 223bc34e…:web-x: ApiRefusalError: 409') && !hit('[COMMIT] 99999999... owed Welcome of an Add delivered to web-x') && !hit('[COMMIT] a57fd3c2... owed Welcome of an Add NOT delivered to web-x - still owed: boom'));
+}
 ok('DUP-7: an Add that really happens - W4 is invited in the row, never set up, and nothing is minted', DEV_ROWS['DUP-7'].mint.length === 0 && DEV_ROWS['DUP-7'].addedInRow.includes('W4') && DEV_ROWS['DUP-7'].devices.includes('W4'));
 {
   const G = 'group=dc8c0f10-0140-4150-8215-98c965289da2';

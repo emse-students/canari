@@ -292,6 +292,21 @@ export function commitLinesBy(lines, userId) {
   });
 }
 
+/**
+ * W1'S NARRATION OF THE WELCOME THE ROW KILLS, alpha.4 2026-10-25: the held send is failed by the
+ * row (`TransportFailureError`), the client says no member addition is announced yet, and the reloaded
+ * page delivers the owed Welcome (#2452). Scoped to the row's group where the line names one; any
+ * other Welcome failure - a refusal, another error - stays dirt.
+ */
+export function dup7Narration(groupId) {
+  const short = String(groupId).slice(0, 8);
+  return [
+    /^\[SYNC\] Welcome failed -> \S+: TransportFailureError: request got no answer: TypeError: Failed to fetch$/,
+    /^\[WARN\] No Welcome delivered: no member addition will be announced until delivery succeeds\.$/,
+    new RegExp(`^\\[COMMIT\\] ${short}\\.\\.\\. owed Welcome of an Add delivered to \\S+$`),
+  ];
+}
+
 export function welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }) {
   const accepts = seq.filter((d) => d.kind === 'ACCEPT').length;
   const duplicates = seq.filter((d) => d.kind === 'DUPLICATE').length;
