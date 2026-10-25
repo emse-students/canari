@@ -42,6 +42,7 @@ import {
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, settleNarration } from '../settlerows.mjs';
+import { RM8_W1_NARRATION } from '../offlinerows.mjs';
 import { GROUP_CREATION_NARRATION, consoleLines, report } from '../watch.mjs';
 import { addMembers, openGroupSettings, removeMember } from './addmember.mjs';
 import { killSeat, reviveSeat } from './reopen.mjs';
@@ -361,7 +362,11 @@ try {
   console.log(`[${id}] assertions: ${verdict}`);
   const owner = spec.devices[0];
   // THE REVIVED PAGE NARRATES ITS SETTLEMENT; that, and the group's creation, are the row's own.
-  const observers = await observersOf(seats, { logs: { [owner]: [...GROUP_CREATION_NARRATION, ...(out.detail?.group ? settleNarration(out.detail.group) : [])] }, offline: out.offline ?? [] });
+  // RM-3 adds two: W1's collection of W4's surviving leaf is the REPAIR the row measures (one
+  // departed member, the same sweep RM-8 reads), and W2's Add of W5 says what any Add says.
+  const ownerLogs = [...GROUP_CREATION_NARRATION, ...(out.detail?.group ? settleNarration(out.detail.group) : [])];
+  const logs = id === 'RM-3' ? { [owner]: [...ownerLogs, ...RM8_W1_NARRATION], W2: GROUP_CREATION_NARRATION } : { [owner]: ownerLogs };
+  const observers = await observersOf(seats, { logs, offline: out.offline ?? [] });
   await finishObserved(
     id,
     verdict,
