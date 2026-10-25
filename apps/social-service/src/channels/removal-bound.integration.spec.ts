@@ -24,7 +24,11 @@ import { join } from 'path';
 import { ForbiddenException, HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { CHANNEL_ACCESS_CHANGED, ChannelService } from './channel.service';
+import {
+  CHANNEL_ACCESS_CHANGED,
+  CHANNEL_GRANTEE_NOT_MEMBER,
+  ChannelService,
+} from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -459,6 +463,152 @@ maybe('a removal against PostgreSQL', () => {
     );
     expect(rows).toHaveLength(0);
     expect(await allowedOn(id)).toEqual(['owner']);
+  });
+
+  /**
+   * A KICK COMMITTED WHILE A GRANT WAITS ON THE REMOVAL LOCK (cross-client row RM-5). The kick read
+   * the salons its target held - none - and its roster write committed; the access-list rewrite that
+   * names the same person had read its row before, so it parks on the community's removal lock and
+   * then finds the revision unmoved (the kick cut no salon). Saving it would leave a non-member on
+   * the allowlist. Refused whole, typed, nothing written.
+   */
+  it('refuses a grant whose grantee was kicked while it waited on the removal lock', async () => {
+    await member('kicked-mid-grant', BASE_ROLE);
+    const id = await salon(['salons', 'owner']);
+    const panel = await service.getChannelAccess(id, 'salons');
+    const kick = await holder();
+    try {
+      // The kick's roster write, as it commits: the removal lock, then the membership row deleted -
+      // and no salon touched, since it held none when the kick read them.
+      await kick.client.query('BEGIN');
+      await kick.client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`,
+        [WS]
+      );
+      await kick.client.query(
+        `DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'kicked-mid-grant'`,
+        [WS]
+      );
+      const grant = started(
+        service.updateChannelAccess(
+          id,
+          'salons',
+          true,
+          [...panel.allowedUsers, 'kicked-mid-grant'],
+          undefined,
+          panel.accessRevision
+        )
+      );
+      await blockedBy(kick.pid, grant.settled);
+      await kick.client.query('COMMIT');
+      expect(await grant.outcome).toBe(CHANNEL_GRANTEE_NOT_MEMBER);
+      expect(await allowedOn(id)).toEqual(['salons', 'owner']);
+      expect((await ds.getRepository(Channel).findOneByOrFail({ id })).accessRevision).toBe(
+        panel.accessRevision
+      );
+    } finally {
+      await kick.client.query('ROLLBACK').catch(() => undefined);
+      await kick.client.end();
+    }
+  });
+
+  it('the same grant committed BEFORE the kick is taken back by the kick', async () => {
+    // The other order, unchanged: the kick reads the salon naming its target and cuts it.
+    await member('granted-then-kicked', BASE_ROLE);
+    const id = await salon(['salons', 'owner']);
+    await service.updateChannelAccess(
+      id,
+      'salons',
+      true,
+      ['salons', 'owner', 'granted-then-kicked'],
+      undefined,
+      0
+    );
+    expect(await allowedOn(id)).toEqual(['salons', 'owner', 'granted-then-kicked']);
+    expect(
+      await started(service.kickFromWorkspace(WS, 'granted-then-kicked', 'kicker')).outcome
+    ).toBe('allowed');
+    expect(await allowedOn(id)).toEqual(['salons', 'owner']);
+  });
+
+  it('keeps an entry that outlived its membership when a save does not add it', async () => {
+    // Only who a save ADDS is asked: an entry the row already holds is not re-judged by an edit
+    // that does not add it.
+    await member('kept-member', BASE_ROLE);
+    const id = await salon(['salons', 'gone-before']);
+    await service.updateChannelAccess(
+      id,
+      'salons',
+      true,
+      ['salons', 'gone-before', 'kept-member'],
+      undefined,
+      0
+    );
+    expect(await allowedOn(id)).toEqual(['salons', 'gone-before', 'kept-member']);
+  });
+
+  it('grants a member whose membership row keeps its id in mixed case', async () => {
+    // An allowlist entry is lowercased; a membership row keeps its id as written.
+    await member('Mixed-Case-Grantee', BASE_ROLE);
+    const id = await salon(['salons']);
+    await service.updateChannelAccess(
+      id,
+      'salons',
+      true,
+      ['salons', 'Mixed-Case-Grantee'],
+      undefined,
+      0
+    );
+    expect(await allowedOn(id)).toEqual(['salons', 'mixed-case-grantee']);
+  });
+
+  it('refuses a grant of a non-member before minting a group for a salon going private', async () => {
+    // The early preview: a crafted list naming someone outside the community is refused before any
+    // call to chat-delivery, so no group is minted for a flip that will not happen.
+    const channels = ds.getRepository(Channel);
+    const { id } = await channels.save(
+      channels.create({ workspaceId: WS, name: `public-${salonSeq++}`, isPrivate: false })
+    );
+    (global.fetch as unknown as jest.Mock).mockClear();
+    const outcome = await started(
+      service.updateChannelAccess(id, 'owner', true, ['owner', 'never-a-member'], undefined, 0)
+    ).outcome;
+    expect(outcome).toBe(CHANNEL_GRANTEE_NOT_MEMBER);
+    expect((global.fetch as unknown as jest.Mock).mock.calls).toHaveLength(0);
+    expect(await channels.findOneByOrFail({ id })).toMatchObject({ isPrivate: false });
+  });
+
+  it("answers a flip whose actor was kicked while it waited with the actor's 403", async () => {
+    // The actor is asked before the grantees under the lock: a flip grants its actor, so the
+    // grantee check would otherwise answer first, and about the wrong person.
+    await member('flip-admin', ADMIN_ROLE);
+    const channels = ds.getRepository(Channel);
+    const { id } = await channels.save(
+      channels.create({ workspaceId: WS, name: `public-${salonSeq++}`, isPrivate: false })
+    );
+    const kick = await holder();
+    try {
+      await kick.client.query('BEGIN');
+      await kick.client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`,
+        [WS]
+      );
+      await kick.client.query(
+        `DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'flip-admin'`,
+        [WS]
+      );
+      const flip = started(service.updateChannelAccess(id, 'flip-admin', true, [], undefined, 0));
+      await blockedBy(kick.pid, flip.settled);
+      await kick.client.query('COMMIT');
+      expect(await flip.outcome).toBeInstanceOf(ForbiddenException);
+      expect(await channels.findOneByOrFail({ id })).toMatchObject({
+        isPrivate: false,
+        accessRevision: 0,
+      });
+    } finally {
+      await kick.client.query('ROLLBACK').catch(() => undefined);
+      await kick.client.end();
+    }
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {

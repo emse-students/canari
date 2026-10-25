@@ -2,12 +2,14 @@ import {
   classifyServerStatus,
   decideAbsentGroupFate,
   decideAbsentLocalGroupFate,
+  readStillUserMember,
   reconcileAbsentLocalGroup,
   type AbsentGroupFateInput,
   type ConversationLifecycle,
   type GroupServerStatus,
 } from './groupLifecycle';
 import type { GroupMeta } from '$lib/mls-client/IMlsService';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 describe('classifyServerStatus', () => {
@@ -99,12 +101,12 @@ describe('decideAbsentGroupFate', () => {
     ).toBe('markRemoved');
   });
 
-  it('active + no longer a member + placeholder (pending) -> keep', () => {
+  it('active + no longer a member + placeholder (pending) -> markRemoved: the exclusion is proven, keeping it re-runs recovery for ever', () => {
     expect(
       decideAbsentGroupFate(
         make({ serverStatus: active(), isStillUserMember: false, lifecycle: 'pending' })
       ).action
-    ).toBe('keep');
+    ).toBe('markRemoved');
   });
 
   // ── Key invariant: never purge except on confirmed absent ──
@@ -299,5 +301,37 @@ describe('reconcileAbsentLocalGroup', () => {
     expect((await reconcileAbsentLocalGroup(mls, 'd-2')).action).toBe('keep');
     expect(mls.registerDistributionGroup).not.toHaveBeenCalled();
     expect(mls.noteDistributionGroup).toHaveBeenCalledWith('d-2');
+  });
+});
+
+describe('readStillUserMember - the one reader of the roster, for discovery and recovery', () => {
+  const log = vi.fn();
+  it('reads the roster: named -> true, not named -> false', async () => {
+    const mls = { getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'me' }]) };
+    expect(await readStillUserMember(mls as never, 'g1', 'me', log)).toBe(true);
+    expect(await readStillUserMember(mls as never, 'g1', 'other', log)).toBe(false);
+  });
+
+  it('reads the typed 403 NOT_A_MEMBER as "no", and says so', async () => {
+    const mls = {
+      getGroupUserMembers: vi
+        .fn()
+        .mockRejectedValue(
+          new ApiRefusalError(403, 'NOT_A_MEMBER', 'getGroupUserMembers failed (403)')
+        ),
+    };
+    expect(await readStillUserMember(mls as never, 'g1', 'me', log)).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('403 NOT_A_MEMBER'));
+  });
+
+  it('answers nothing on anything else - a 5xx, a 409 awaiting, a transport failure', async () => {
+    for (const e of [
+      new ApiRefusalError(503, null, 'x (503)'),
+      new ApiRefusalError(409, 'AWAITING_ADMISSION', 'x (409)'),
+      new Error('offline'),
+    ]) {
+      const mls = { getGroupUserMembers: vi.fn().mockRejectedValue(e) };
+      expect(await readStillUserMember(mls as never, 'g1', 'me', log)).toBeNull();
+    }
   });
 });
