@@ -132,6 +132,9 @@ ok('the no-answer line of THIS group is forgiven', hit(`[COMMIT] ${short}... no 
 ok('the settling banner is forgiven', hit('[COMMIT] settling 1 staged commit(s) by resubmission'));
 ok("ANOTHER group's no-answer line is NOT", !hit('[COMMIT] 99999999... no answer to the commit from epoch 3 (x) - resubmitting the same commit'));
 ok('a refusal clear failing is NOT narration', !hit(`[COMMIT] ${short}... could not clear the refused commit at 3: boom`));
+ok('the owed Welcome DELIVERED for THIS group is forgiven', hit(`[COMMIT] ${short}... owed Welcome of an Add delivered to web-abc-def`));
+ok('an owed Welcome NOT delivered stays dirt', !hit(`[COMMIT] ${short}... owed Welcome of an Add NOT delivered to web-abc-def - still owed: boom`));
+ok("ANOTHER group's owed Welcome is NOT forgiven", !hit('[COMMIT] 99999999... owed Welcome of an Add delivered to web-abc-def'));
 
 // ── what the faults provoked, forgiven one each ─────────────────────────────────────────────────
 console.log('provoked failures');

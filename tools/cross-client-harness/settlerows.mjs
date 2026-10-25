@@ -148,6 +148,10 @@ export function settleNarration(groupId) {
     `[COMMIT] ${short}... no answer to the commit from epoch`,
     `[COMMIT] ${short}... resubmission of the commit from epoch`,
     /^\[COMMIT\] settling \d+ staged commit\(s\) by resubmission$/,
+    // A KEPT ADD SETTLED LATER DELIVERS THE WELCOME ITS MERGE OWES (#2452, `BaseMlsService.ts`
+    // `deliverOwedWelcomes`) - met on DUP-4's alpha.4 PASS. Anchored to the row's group and to the
+    // `delivered` spelling: `... NOT delivered ... still owed` is an error and stays dirt.
+    new RegExp(`^\\[COMMIT\\] ${short}\\.\\.\\. owed Welcome of an Add delivered to \\S+$`),
   ];
 }
 
