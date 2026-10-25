@@ -152,6 +152,16 @@ export const EXIT_REPLAY_NARRATION = [
 ];
 
 /**
+ * RM-8 ONLY: the departure notice a cut leave loses. A P3 product gap (backlog, 2026-10-25: the exit
+ * replay does not re-send it), named as an expected line HERE because RM-8 provokes it on purpose -
+ * scoped to the transport failure the cut makes, and in no other row's narration, where it stays dirt.
+ */
+export const RM8_NARRATION = [
+  ...EXIT_REPLAY_NARRATION,
+  /^\[GROUP\] memberLeft notice for [0-9a-f]{8}… NOT delivered, and not sent later - the members see the roster change without it: DeliveryUnreachableError: /,
+];
+
+/**
  * RM-8: no half-left group. Either W2 is gone on BOTH sides (off the roster, no seat, not listed) or
  * still a member on both (on the roster, an active seat, listed, at the server's epoch).
  *

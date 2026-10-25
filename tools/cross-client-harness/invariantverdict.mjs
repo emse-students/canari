@@ -111,6 +111,19 @@ export function behindServer(epochsByDevice, group, serverEpoch) {
 }
 
 /**
+ * The group has SETTLED when its last two rounds agree: nobody behind, at the same server epoch. One
+ * clean round is not enough - a connection commit may be one round trip from landing - and two clean
+ * rounds at different epochs are a group still moving.
+ *
+ * @param {{serverEpoch: number|null, behind: string[]}[]} rounds oldest first
+ */
+export function settledRounds(rounds) {
+  if (rounds.length < 2) return false;
+  const [a, b] = rounds.slice(-2);
+  return a.behind.length === 0 && b.behind.length === 0 && a.serverEpoch === b.serverEpoch;
+}
+
+/**
  * Judge one invariant pass.
  *
  * @param {object} obs

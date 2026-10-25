@@ -54,6 +54,7 @@ export const commitsSince = (commitEpochs, fromEpoch) => (commitEpochs ?? []).fi
  *   product was never asked the question, so a `FAIL` would accuse it of a rig condition.
  * - `VACUOUS` when an armed fault never fired (`fault.mjs` `report().vacuous`): the case the row
  *   exists for did not happen, so nothing about it was proved - whatever else held.
+ * - `INCONCLUSIVE` when an invariant pass could not be judged (`unsettled`: the group never settled).
  * - `FAIL` when one of the row's own assertions or one invariant does not hold.
  * - `PASS` otherwise. `recordObserved` then gates it on the clients' and the server's windows, so a
  *   clean assertion over a dirty window still lands as `PASS-DIRTY`.
@@ -74,6 +75,9 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
   if (vacuousFaults.length) {
     return { verdict: 'VACUOUS', failures: [...vacuousFaults.map((f) => `fault #${f.rule} '${f.fault}' never fired`), ...failures] };
   }
+  // A PASS THE INVARIANT COULD NOT JUDGE (the group never settled) is no answer either way.
+  const unsettled = (invariant?.passes ?? []).filter((p) => p.unsettled).map((p) => `invariant (${p.pass}): ${p.unsettled}`);
+  if (unsettled.length) return { verdict: 'INCONCLUSIVE', failures: [...unsettled, ...failures] };
   if (!invariant && !own.length) return { verdict: 'INVALID', failures: ['the row asserted nothing'] };
   if (!invariant) failures.push('the invariant of section 4.0 was not run');
   return { verdict: failures.length ? 'FAIL' : 'PASS', failures };
@@ -85,7 +89,7 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
  */
 export const invariantDetail = (inv) =>
   inv
-    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs } : {}) }))
+    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs } : {}), ...(p.unsettled ? { unsettled: p.unsettled } : {}) }))
     : null;
 
 /**

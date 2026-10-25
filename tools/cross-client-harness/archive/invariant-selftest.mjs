@@ -7,7 +7,7 @@
  *
  *   bun archive/invariant-selftest.mjs
  */
-import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict } from '../invariantverdict.mjs';
+import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict, settledRounds } from '../invariantverdict.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -217,6 +217,11 @@ ok('a member one commit behind is waited for', behindServer({ W1: { [G]: 2 }, W2
 ok('a member ahead of a server read taken a moment earlier is not behind', behindServer({ W1: { [G]: 4 } }, G, 3).length === 0);
 ok('a member that does not hold the group, or exposes no epochs, is behind', behindServer({ W1: {}, W2: null }, G, 3).join() === 'W1,W2');
 ok('no server epoch to reach: nobody is waited for', behindServer({ W1: null }, G, null).length === 0);
+// Settled = two agreeing rounds; the controls are the RM-8 sample itself and a group still moving.
+ok('two clean rounds at one epoch: settled', settledRounds([{ serverEpoch: 3, behind: [] }, { serverEpoch: 3, behind: [] }]));
+ok('one clean round is not settled', !settledRounds([{ serverEpoch: 3, behind: [] }]));
+ok('the RM-8 sample (W1 one commit behind) is not settled', !settledRounds([{ serverEpoch: 2, behind: [] }, { serverEpoch: 3, behind: ['W1'] }]));
+ok('two clean rounds at different epochs: still moving', !settledRounds([{ serverEpoch: 2, behind: [] }, { serverEpoch: 3, behind: [] }]));
 
 console.log(failures ? `[invariant] ${failures} FAILURE(S)` : '[invariant] clean - every invariant fails on its own fault, and every approximation is named');
 process.exit(failures ? 1 : 0);
