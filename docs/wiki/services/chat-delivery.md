@@ -1026,8 +1026,12 @@ minus the asker. Each device gets ONE Redis script (`publishIfAddressable` with 
 shared with `messaging.service.ts`) and that every live session declared `join-ask-1` - read from the
 gateway's twin hash `addressing:join-ask:*` (`JOIN_ASK_PUBLISH_LUA`), never from the history value,
 which stays what every shipped chat-delivery compares whole - and publishes in the same call; all
-devices go concurrently. Announcements still running when the replica is retired are finished before
-it exits (`drainOnSigterm`'s `beforeExit`). A device with a session that did not declare it - a build
+devices go concurrently. A retired replica finishes the join-ask work in flight when its drain reaches
+`beforeExit` (`finishJoinAskWorkInFlight`, a fixed set read once - never work started later), and the
+stale-pending cron is ONE tracked unit from its first read (`trackJoinAskWork`), so a SIGTERM during
+it cannot leave an ask expired unannounced. A publish that never returns is bounded by the release's
+own drain (`ROLLING_DRAIN_SECONDS`), not by a timer here. The commit door takes the asks it admitted
+as soon as its transaction commits, so a later step that throws cannot lose their announcement. A device with a session that did not declare it - a build
 older than these frames - gets nothing, so it never logs a frame no handler took. Each frame goes out
 on the generic control path (`chat:messages`, `isWelcomeRequest: true`, `proto` = the JSON frame,
 `requiresCapability: 'join-ask-1'`), which the gateway delivers only to sessions holding it.

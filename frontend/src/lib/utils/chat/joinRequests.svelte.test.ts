@@ -80,6 +80,27 @@ describe('joinRequests - a sweep settles what it no longer raises', () => {
 
     expect(pendingJoinRequests().map((r) => r.askId)).toEqual(['a2']);
   });
+
+  it('never puts the older ask a sweep READ back over the newer one announced while it read', () => {
+    // A1 is what the sweep's rows held; A2 (the same person asking again) arrived live meanwhile.
+    const sweep = beginJoinRequestSweep();
+    raiseJoinRequest({ ...ask('carol', 'c2'), askId: 'a2' });
+
+    settleSweptJoinRequests(sweep, [{ ...ask('carol', 'c1'), askId: 'a1' }]);
+
+    expect(pendingJoinRequests()).toEqual([
+      { groupId: 'g1', userId: 'carol', deviceIds: ['c2'], askId: 'a2' },
+    ]);
+  });
+
+  it('replaces an ask that was on screen before the sweep with the newer one it read', () => {
+    raiseJoinRequest({ ...ask('carol', 'c1'), askId: 'a1' });
+    const sweep = beginJoinRequestSweep();
+
+    settleSweptJoinRequests(sweep, [{ ...ask('carol', 'c2'), askId: 'a2' }]);
+
+    expect(pendingJoinRequests().map((r) => r.askId)).toEqual(['a2']);
+  });
 });
 
 describe('joinRequests - a member answers', () => {

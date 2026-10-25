@@ -1109,7 +1109,11 @@ person's newer ask on screen, and an Add or Decline tapped on an ask already set
 is assumed; the earlier `joinRequestClock` (a count of settlements) assumed one and is gone. The
 other direction holds the same way: a completed sweep removes only asks that were ON SCREEN WHEN IT
 STARTED (`beginJoinRequestSweep`, by identity), so an ask announced while it was reading - which its
-rows may predate - is not wiped by its silence.
+rows may predate - is not wiped by its silence. The same snapshot orders two asks of one person: an
+ask on screen before the sweep is older than its rows, so the sweep's different ask replaces it; an
+ask that arrived while it read stays, and the sweep's (older) read is not raised over it
+(`settleSweptJoinRequests`; the snapshot is taken in `processDeviceInvitationsLocally` before the
+read, pinned by `joinRequestSweepOrder.test.ts`).
 
 **Only a client that routes these frames receives them.** A build older than them would log every
 one as reaching no handler, so the socket declares `join-ask-1` (`caps=addressed-history-1,join-ask-1`,

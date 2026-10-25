@@ -123,6 +123,12 @@ export function beginJoinRequestSweep(): JoinRequestSweep {
  * ONLY AN ASK THAT WAS ON SCREEN WHEN THE SWEEP STARTED can be taken away by it (`sweep`, by identity
  * - never a clock): an ask announced while the sweep was reading may postdate every row it read, so
  * the sweep's silence about it says nothing.
+ *
+ * AND THE SAME ORDER DECIDES WHICH OF TWO ASKS OF ONE PERSON STAYS. An entry on screen when the sweep
+ * started is older than the rows it read, so a different ask the sweep raised for that person is the
+ * newer one and replaces it. An entry that arrived WHILE it read is not ordered against those rows,
+ * and a live announcement is never older than a read made before it: it stays, and the sweep's ask
+ * for that person is not raised over it (the live ask's own settlement, or the next sweep, decides).
  */
 export function settleSweptJoinRequests(
   sweep: JoinRequestSweep,
@@ -133,7 +139,22 @@ export function settleSweptJoinRequests(
   for (const [key, entry] of requests) {
     if (!keep.includes(key) && sweep.shown.includes(tokenOf(key, entry))) requests.delete(key);
   }
-  for (const ask of raised) raiseJoinRequest(ask);
+  for (const ask of raised) {
+    const key = keyOf(ask.groupId, ask.requesterUserId);
+    const live = requests.get(key);
+    if (
+      live?.askId &&
+      ask.askId &&
+      live.askId !== ask.askId &&
+      !sweep.shown.includes(tokenOf(key, live))
+    ) {
+      console.log(
+        `[JOIN_REQUEST] ${live.userId} in ${short(ask.groupId)} - the sweep read ask ${ask.askId.slice(0, 8)}, ask ${live.askId.slice(0, 8)} arrived while it read and stays`
+      );
+      continue;
+    }
+    raiseJoinRequest(ask);
+  }
 }
 
 /** An ask the server says has ended (`group.join_ask.settled`), named by its identity. */

@@ -326,6 +326,29 @@ mod redis_it {
         assert_eq!(join_ask["p:1"], JOIN_ASK_CAPABILITY);
         assert_eq!(join_ask["p:2"], UNDECLARED);
 
+        // The twin lives exactly as long as its field: written by the same script with the same
+        // ttl, both expire at the same instant (script time is frozen for the whole script).
+        let expiry = |hash: String| {
+            let mut c = con.clone();
+            async move {
+                redis::cmd("HPEXPIRETIME")
+                    .arg(hash)
+                    .arg("FIELDS")
+                    .arg(1)
+                    .arg("p:1")
+                    .query_async::<Vec<i64>>(&mut c)
+                    .await
+                    .unwrap()
+            }
+        };
+        let history_expiry = expiry(sessions_key(&key)).await;
+        assert!(
+            history_expiry[0] > 0,
+            "the field carries an expiry: {:?}",
+            history_expiry
+        );
+        assert_eq!(history_expiry, expiry(join_ask_key(&key)).await);
+
         leave_session(&mut con, &key, Some("p:1"), 90)
             .await
             .unwrap();
