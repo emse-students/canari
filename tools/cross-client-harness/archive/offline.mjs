@@ -37,7 +37,7 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFFLINE_BLOCKED, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFFLINE_BLOCKED, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, RM8_W1_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, provokedFailures, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, decidedAfter, resubmissionLine, settleNarration, settledOnce } from '../settlerows.mjs';
@@ -396,8 +396,9 @@ const ACTIONS = {
       members: stayed ? spec.devices : ['W1'],
       joiners: [],
       // THE EXIT REPLAY IS THE MECHANISM UNDER TEST (#2259): its narration is expected. So is the
-      // `memberLeft` notice the cut loses - a named P3 (backlog), expected in THIS row only.
-      narration: { W2: RM8_NARRATION },
+      // `memberLeft` notice the cut loses - a named P3 (backlog), expected in THIS row only - and
+      // W1's connection sweep collecting the leaver's leaf at the reload pass.
+      narration: { W1: RM8_W1_NARRATION, W2: RM8_NARRATION },
       detail: { gesture, stayed, listed, atServerEpoch },
       judge: (v) => departureOwn({ view: v, user: c.user.W2, listed, atServerEpoch, gesture }),
     };

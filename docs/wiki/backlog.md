@@ -27,6 +27,31 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
+
+When a frame this device already read comes back (`SecretReuseError` at its own epoch),
+`messaging.rs` logs `[FORK] not a fork: the refused frame on group <id> claims our own epoch
+fingerprint at epoch N - the frame itself is damaged` at WARN, and then `MLS decryption failed at
+exactly its own epoch, so no redelivery can help` at ERROR. A line later the TS side reads the same
+refusal correctly: `Duplicate delivery … silent ACK (SecretReuseError, already read by the archive
+replay)`. The frame is not damaged and nothing failed, so both Rust lines accuse wrongly. Read on
+`1.4.1-alpha.3` (dev.9335201): an ACK eaten by a captive portal left one frame queued, and the
+reload re-fetched it. The fix is to classify `SecretReuseError` before the fork judgement and the
+error line, carrying it as the type the TS classifier already keys on.
+
+## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
+
+`processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
+It logs `console.error('[SYNC] processBulkAddition failed:', …)` and returns `not-added('failed')`,
+and `reportBulkAdditionRefusal` then toasts that the invitation added nobody. The commit is KEPT
+and resubmitted (`kept until a resubmission answers`). On `1.4.1-alpha.3` (NET-3, captive portal on
+the commit POST) it was ACCEPTED at the next settlement, about 26 s later. So an unknown outcome is
+logged as an error and shown to the member as a failure, and the member may retry an Add that is
+going to land. It wants its own outcome: an Add pending its answer, said as such, at `warn` at most.
+P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land. #2426
+changes the GESTURE-time answer to `outcome-unknown`; whether it also covers this catch-all toast is
+to be checked when it lands.
+
 ## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
 
 `processBulkAddition` (`groupCreation.ts`) asks `isBlockedWith` for each invitee before the Add. A

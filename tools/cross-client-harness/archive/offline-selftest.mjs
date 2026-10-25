@@ -10,7 +10,7 @@
  *   bun archive/offline-selftest.mjs
  */
 import { fulfilBody } from '../fault.mjs';
-import { ADD_ABANDONED_NOTICE, EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, RM8_W1_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { GROUP_CREATION_NARRATION, ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
@@ -118,7 +118,12 @@ const LOST = 'warning: [05:57:54.976] [GROUP] memberLeft notice for 477435be… 
 const rep = () => ({ errors: [], warnings: [LOST], unexplained: [], badHttp: [], exceptions: [], severe: [], wsEvents: [] });
 ok('RM-8 names the lost notice as expected', ignoringExpectedLog(rep(), RM8_NARRATION).warnings.length === 0);
 ok('control: under any other row (the group-creation narration every owner gets) it stays dirt', ignoringExpectedLog(rep(), GROUP_CREATION_NARRATION).warnings.length === 1);
-ok('control: lost to a REFUSAL rather than the cut, it stays dirt in RM-8 too', !RM8_NARRATION.some((re) => re.test(LOST.replace(/^warning: \[[^\]]+\] /, '').replace('DeliveryUnreachableError', 'DeliveryRefusedError'))));
+// W1's connection sweep, as logged on dev.9335201 (2026-10-25): the leaver alone is narration.
+const swept = (l) => RM8_W1_NARRATION.some((re) => re.test(l));
+ok("W1's sweep of the one leaver is narration", swept('[STRAY] 40934a14... 1 member(s) left but still hold a leaf - removing (3 leaves stay)'));
+ok('control: a sweep naming two departed members is not RM-8 narration', !swept('[STRAY] 40934a14... 2 member(s) left but still hold a leaf - removing (2 leaves stay)'));
+ok('control: a sweep that FAILED is not narration', !RM8_W1_NARRATION.some((re) => re.test('[STRAY] 40934a14... could not remove the departed leaves')));
+ok('control: lost to a REFUSAL rather than the cut, it stays dirt in RM-8 too',!RM8_NARRATION.some((re) => re.test(LOST.replace(/^warning: \[[^\]]+\] /, '').replace('DeliveryUnreachableError', 'DeliveryRefusedError'))));
 
 // ── the rig pieces ───────────────────────────────────────────────────────────────────────────────
 console.log('the rig pieces');
