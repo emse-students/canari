@@ -671,15 +671,31 @@ export async function requestReAdd(
     // after a PIN recovery on native), in which case NO Welcome ran and nothing else will touch the
     // roster seat.
     //
-    // SO THE SEAT IS PROMOTED HERE, whichever it was - the deterministic end of the row. Our leaf is
-    // in the tree we hold, so `active` is the truth, and a `pending` row left behind is served to
-    // every member as a work item: the next one online would Add a leaf already in the tree and its
-    // duplicate-leaf repair would kick the live one (the same reason the external-join branch below
-    // promotes). After a Welcome it is a second write of the same value, which the server takes as
-    // a no-op. Logged rather than thrown, as below.
+    // SO THE SEAT IS PROMOTED HERE, whichever it was - the deterministic end of the row - but ONLY
+    // ON PROOF THAT OUR LEAF IS IN THE TREE WE HOLD. The server cannot check that: a self-report
+    // promotes any existing seat that is not kicked and not awaiting admission (`promoteReportedSeat`),
+    // so the proof is ours to carry. Holding the state is not it - an evicted group stays held
+    // (`isGroupActive`) - and a held, active group is: `active` is then the truth, and a `pending`
+    // row left behind is served to every member as a work item, so the next one online would Add a
+    // leaf already in the tree and its duplicate-leaf repair would kick the live one (the reason the
+    // external-join branch below promotes). After a Welcome it is a second write of the same value:
+    // the server's UPDATE matches again, logs one line and re-adds an existing route, and emits
+    // nothing. Logged rather than thrown, as below.
     ownKeyPackageLogged.delete(groupId);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId);
+    const inTree = await deps.mlsService.isGroupActive(groupId).catch((e: unknown) => {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... held, but whether our leaf is in its tree could not be read: ${String(e).slice(0, 120)}`
+      );
+      return false;
+    });
+    if (!inTree) {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... the group was already held when the join took the lock - nothing built; our leaf is not proven in its tree, so the roster seat is left as it is`
+      );
+      return;
+    }
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... the group was already held when the join took the lock - nothing built, roster seat promoted, recovery done`
     );

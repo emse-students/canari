@@ -79,6 +79,8 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // Without it the success path would reject on `undefined.catch` and every join test would pass
     // for the wrong reason.
     updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
+    // Our leaf is in the tree of a group we hold, unless a test says otherwise.
+    isGroupActive: vi.fn().mockResolvedValue(true),
     ...overrides,
   };
 }
@@ -353,6 +355,27 @@ describe('requestReAdd', () => {
     );
     expect(deps.log).toHaveBeenCalledWith(
       expect.stringContaining('the group was already held when the join took the lock')
+    );
+  });
+
+  it('does not promote a held seat whose leaf is not proven in the tree (an evicted group stays held)', async () => {
+    // The server promotes any unkicked, admitted seat a device reports on itself; it cannot read
+    // the tree. Holding the state is not proof of membership - `isGroupActive` is.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi
+      .fn()
+      .mockResolvedValue([
+        membership('g1', 'pending', { welcomeQueued: false, addInFlight: false }),
+      ]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true, alreadyHeld: true });
+    deps.mlsService.isGroupActive = vi.fn().mockResolvedValue(false);
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('our leaf is not proven in its tree')
     );
   });
 

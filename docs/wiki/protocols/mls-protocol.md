@@ -1726,11 +1726,16 @@ are safe:
   fresh base, which already carries #2's leaf for our key: the next commit replaces it the same way,
   so the race converges on one leaf without the Welcome.
 
-**Whichever way the group was already held, the recovery promotes the roster seat to `active`.** The
-engine's typed refusal can be reached with NO Welcome at all - the engine held the group and the
-service's list missed it (native, after a PIN recovery) - and then nothing else ends the `pending`
-row, which every member is served as a work item to Add a leaf already in the tree. After a Welcome
-the promotion is a second write of the same value. A refusal naming a DIFFERENT group than the one
+**Whichever way the group was already held, the recovery promotes the roster seat to `active` -
+when `isGroupActive` proves our leaf is in the tree it holds.** The engine's typed refusal can be
+reached with NO Welcome at all - the engine held the group and the service's list missed it (native,
+after a PIN recovery) - and then nothing else ends the `pending` row, which every member is served as
+a work item to Add a leaf already in the tree. The proof is the client's to carry: the server's
+self-report (`POST mls/invitations/status` -> `activateDeviceMembership`, authority `report` ->
+`promoteReportedSeat`) promotes any existing seat that is not kicked and whose owner is not awaiting
+admission, and cannot read the tree; an evicted group stays held, so holding is not the proof. After
+a Welcome the promotion is a second write of the same value: the UPDATE matches the active row again,
+logs one `[INVITATION_STATUS]` line and re-adds an existing Redis route, and emits no event. A refusal naming a DIFFERENT group than the one
 asked for is not joined: the served base is unusable for this group and the join reads `build_failed`.
 
 The other design - waiting for the spent Welcome's ACK before reading the row - was not taken: it
