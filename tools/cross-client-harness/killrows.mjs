@@ -44,7 +44,8 @@ export const KILL_ROWS = {
       'THE BROWSER, NOT THE RENDERER, because the subject is the browser crashing under the user - which is also what ' +
       'can take the PROFILE with it: on 2026-10-25 a kill left W1 with no quota database, every storage call failed ' +
       'and the gate read as LOCKED. The other profiles surviving the same kill does not make it safe, so `killSeat` ' +
-      'asserts the quota database before the kill and `reviveSeat` probes the storage before the PIN (`storageLost`)',
+      'asserts the quota database and the cookie jar before the kill and `reviveSeat` probes both before the PIN (`storageLost`). ' +
+      'A casualty is replayed on a fresh profile; two in a row on one build mark the row BLOCKED-ON-RIG for the campaign',
   },
   'KILL-3': {
     devices: ['A1', 'W2'],
@@ -184,12 +185,23 @@ export function panelMissing(panel, userIds) {
  * gate - which the row recorded as a product LOCKED. The data was intact on disk and a clean restart
  * read it back, so this is the RIG's casualty and is named as one, never judged.
  *
- * @param {{quotaDb: boolean, idb: string|null, estimate: string|null}} probe `quotaDb`: the profile's
- *   quota database exists on disk; `idb` / `estimate`: the error each storage call threw, or null
+ * THE COOKIE JAR IS THE SAME CASUALTY (KILL-2 replay, 2026-10-25): the revived browser sent NO cookie
+ * at all - the server logged `no canari_refresh cookie. cookies=[]` - while the profile's cookie file
+ * still held them, so the page fell to the sign-in screen. Zero cookies for the site, not a missing
+ * refresh cookie alone: a product sign-out clears ITS cookie and leaves the others (`cf_clearance`).
+ *
+ * @param {{quotaDb: boolean, idb: string|null, estimate: string|null, cookies?: number|null}} probe
+ *   `quotaDb`: the profile's quota database exists on disk; `idb` / `estimate`: the error each storage
+ *   call threw, or null; `cookies`: how many cookies the browser holds for the site (null: not read)
  * @returns {string|null} why the storage is lost, or null when it answers
  */
-export function storageLost({ quotaDb, idb, estimate }) {
-  const failed = [!quotaDb && 'no quota database in the profile', idb && `indexedDB: ${idb}`, estimate && `storage estimate: ${estimate}`].filter(Boolean);
+export function storageLost({ quotaDb, idb, estimate, cookies = null }) {
+  const failed = [
+    !quotaDb && 'no quota database in the profile',
+    idb && `indexedDB: ${idb}`,
+    estimate && `storage estimate: ${estimate}`,
+    cookies === 0 && 'no cookie at all for the site (the cookie jar)',
+  ].filter(Boolean);
   return failed.length ? failed.join('; ') : null;
 }
 

@@ -58,6 +58,9 @@ const STORAGE_PROBE = `(async () => {
   return { idb: await err(() => indexedDB.databases()), estimate: await err(() => navigator.storage.estimate()) };
 })()`;
 
+/** How many cookies the browser holds for the site - read from the browser's jar, not the page. */
+const siteCookies = async (cx) => (await cx.send('Network.getCookies', { urls: [SITE] })).cookies?.length ?? null;
+
 const appTabs = async (port) => (await listTargets(port).catch(() => [])).filter((t) => t.type === 'page' && String(t.url).includes(APP_TAB));
 
 /** The swipe from recents: the recents screen, then the app's card thrown upward. */
@@ -103,6 +106,7 @@ export async function killSeat(seat, how) {
     // THE PREMISE OF A BROWSER KILL: a profile whose storage is whole. Without it the revival's
     // storage check below could not tell what the kill did from what was already broken.
     if (!quotaDbOf(seat.target.device)) throw new Error(`${seat.target.device}: rig - the profile has no quota database BEFORE the kill`);
+    if ((await siteCookies(seat.cx)) === 0) throw new Error(`${seat.target.device}: rig - the browser holds no cookie for the site BEFORE the kill`);
     seat.cx.close?.();
     return { how, killedAt, deadInMs: await killBrowser(seat.target.device.toLowerCase()) };
   }
@@ -162,7 +166,7 @@ export async function reviveSeat(seat, how, label) {
   // A BROWSER KILL CAN TAKE THE PROFILE'S STORAGE WITH IT (`storageLost`): read before the PIN, or the
   // gate a storage-less page can only show is recorded as the product's LOCKED.
   if (how === 'browser') {
-    const lost = storageLost({ quotaDb: quotaDbOf(target.device), ...(await evaluate(cx, STORAGE_PROBE)) });
+    const lost = storageLost({ quotaDb: quotaDbOf(target.device), ...(await evaluate(cx, STORAGE_PROBE)), cookies: await siteCookies(cx) });
     if (lost) throw new Error(`${target.device}: rig - the browser kill lost the profile's storage (${lost}); restart it cleanly, nothing to judge`);
   }
   const pin = await unlockClient(cx, target.port, target.account, { match: APP_TAB });
