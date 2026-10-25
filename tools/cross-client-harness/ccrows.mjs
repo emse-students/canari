@@ -135,6 +135,34 @@ export function lockRaceLoser(locks, racers) {
 }
 
 /**
+ * THE CONSOLE LINES EACH SEAT OF A CC RACE PROVOKED, as `forgiveLogs` - and it is per GESTURE, not
+ * per seat name. Until 2026-10-25 only W1 was forgiven the Add narration, so a racer that is not W1
+ * and Adds (CC-2's and CC-4's W2, CC-1's winner when it is W2) emitted it as dirt, and CC-1's W2 lock
+ * loser was not forgiven the block question it asks BEFORE the lock refuses it (alpha.4).
+ *
+ *   W1 always: the creation narration - it created the group and added the setup in one bulk Add.
+ *   A racer whose action is an Add: the same narration, because it made that Add.
+ *   The lock loser: the block question and the lock refusal only - it built no commit, so a commit
+ *     line from it stays dirt.
+ *
+ * Pure: the lists are passed in, so `cc-selftest` reads this without the rig.
+ *
+ * @param {Record<string, {add?: string, remove?: string, refresh?: boolean}>} race `CC_ROWS[id].race`
+ * @param {string|null} lockLoser from {@link lockRaceLoser}
+ * @param {{creation: unknown[], blockQuestion: unknown, lockRefused: unknown[]}} n the narration lists
+ * @returns {Record<string, unknown[]>}
+ */
+export function raceForgiveness(race, lockLoser, n) {
+  const out = { W1: [...n.creation] };
+  for (const [seat, action] of Object.entries(race)) {
+    if (!action.add) continue;
+    const provoked = seat === lockLoser ? [n.blockQuestion, ...n.lockRefused] : n.creation;
+    out[seat] = [...new Set([...(out[seat] ?? []), ...provoked])];
+  }
+  return out;
+}
+
+/**
  * CC-1's own judgement, once {@link lockRaceLoser} named a loser.
  *
  * @param {object} p
