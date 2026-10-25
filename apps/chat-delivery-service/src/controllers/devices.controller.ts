@@ -15,6 +15,7 @@ import {
   Logger,
   ForbiddenException,
   ConflictException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, DataSource, In, Not } from 'typeorm';
@@ -52,10 +53,12 @@ import {
 import { resolveUserDisplayName } from '../utils/display-name';
 import {
   activeRevocationWhere,
-  mergedRevocationReason,
   revocationReasonOf,
   revokedDeviceRefusal,
+  upsertRevocation,
 } from '../utils/revocation';
+import { parseSessionId } from '../utils/session-id';
+import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
 
@@ -907,10 +910,14 @@ export class DevicesController {
     @Param('deviceId') deviceId: string,
     @Query('reason') reasonRaw?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-session-id') headerSessionId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    // The caller's own session (nginx forwards the verified token's `sid`, and empties a client's):
+    // the one session a device delete never ends.
+    const callerSessionId = parseSessionId(headerSessionId, 'X-Session-Id');
     // WHO IS BANNING THE ID. Absent means the owner, which is what every caller older than the
     // parameter is when it deletes another device (the device panel). `retired` is said only by an
     // install deleting the id its own rotation abandoned (`abandonedDevices.ts`). Anything else is
@@ -940,34 +947,51 @@ export class DevicesController {
     //    constraint on (userId, deviceId) then rejects, turning a re-revocation into a 500. What
     //    the window changes is the DATE: revoking again restarts it, so a device banned, un-banned
     //    and banned again is banned from today rather than from the first time.
-    //    THE CAUSE IS MERGED, NEVER OVERWRITTEN DOWNWARD: an owner's active ban stays the owner's
-    //    whatever a later call says (`mergedRevocationReason`).
-    const existingRevoked = await this.revokedDeviceRepo.findOne({
-      where: { userId: safeUserId, deviceId: safeDeviceId },
-    });
-    const recordedReason = mergedRevocationReason(existingRevoked, reason);
+    //    THE CAUSE IS MERGED, NEVER OVERWRITTEN DOWNWARD - an owner's active ban stays the owner's
+    //    whatever a later call says - and it is merged IN THE ONE STATEMENT that writes it
+    //    (`upsertRevocation`), so two deletes racing on one id cannot both read "no owner" and the
+    //    "retired" one win.
+    const recordedReason = await upsertRevocation(
+      this.dataSource,
+      safeUserId,
+      safeDeviceId,
+      reason,
+      crypto.randomUUID()
+    );
     if (recordedReason !== reason) {
       this.logger.warn(
         `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} asked reason=${reason} - kept reason=${recordedReason}: an owner's ban is never downgraded`
       );
     }
-    await this.revokedDeviceRepo.save(
-      this.revokedDeviceRepo.create({
-        id: existingRevoked?.id ?? crypto.randomUUID(),
-        userId: safeUserId,
-        deviceId: safeDeviceId,
-        revokedAt: new Date(),
-        reason: recordedReason,
-      })
-    );
 
-    // 3. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
+    // 3. AN OWNER'S REVOCATION ENDS THE DEVICE'S SESSIONS HERE, server-side, so it never depends on
+    //    the panel's second request. Every session bound to the device except the caller's own is
+    //    ended by core-service (`endDeviceSessions`); a retirement ends none - the id was the
+    //    caller's own install's. A failure is NOT swallowed: the delete answers 503, and it is
+    //    idempotent, so the client's retry finishes it. Not covered, stated: a session bound to no
+    //    device, or to another id - the panel's own session revocation ends those.
+    let sessionsEnded = 0;
+    if (recordedReason === 'owner') {
+      try {
+        sessionsEnded = await endDeviceSessions(safeUserId, safeDeviceId, callerSessionId);
+      } catch (e) {
+        if (!(e instanceof DeviceSessionsNotEndedError)) throw e;
+        this.logger.error(
+          `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} banned, but its sessions were NOT ended (${e.detail}) - answering 503 for the client to retry`
+        );
+        throw new ServiceUnavailableException({
+          message: 'The device is banned but its sessions could not be ended yet. Retry.',
+        });
+      }
+    }
+
+    // 4. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
     //    delete the user has to make twice, and the second half is invisible from the panel they
     //    used. The denylist row above is the durable half; this is what makes it immediate.
     const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
 
     this.logger.log(
-      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} reason=${recordedReason} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted} signalled=${signalled}`
+      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} reason=${recordedReason} sessionsEnded=${sessionsEnded} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted} signalled=${signalled}`
     );
 
     return {

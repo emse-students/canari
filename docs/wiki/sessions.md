@@ -13,9 +13,9 @@ MiGallery's and the Cercle's.
 
 Canari is the one variant, deliberately: its 1 h access token is a signed JWT the six services never
 look up. The row backs the REFRESH token, and carries `sid` + `jti`
-(`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the one verifier every
-request passes through, `/api/auth/verify`, also reads that row by `sid`, so an access token lives no
-longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
+(`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the verifier every
+`auth_request` location runs, `/api/auth/verify`, also reads that row by `sid`, so through those
+locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 
@@ -364,32 +364,56 @@ device it cannot claim.
 ## An access token is only as alive as its session (2026-10-25)
 
 **`/api/auth/verify` answers an access token whose session has ended exactly as it answers an expired
-one: anonymous.** Every authenticated location in nginx runs that verifier as its `auth_request`, and
-every guarded route of every service reads the `X-Logged-In` it sets, so from the commit that deletes
-a session row - a sign-out, the owner removing it from the device panel, "sign out the others", a
-replay, a restore - every request carrying a token minted for it is a 401. The client meets that 401,
-renews, is refused the refresh, and signs out.
+one: anonymous.** Every location nginx guards with `auth_request` runs that verifier, and every
+guarded route behind it reads the `X-Logged-In` it sets, so from the commit that deletes a session
+row - a sign-out, the owner removing it from the device panel, "sign out the others", a replay, a
+restore, an owner's device revocation (below) - every request through those locations carrying a
+token minted for it is a 401. The client meets that 401, renews, is refused the refresh, and signs
+out.
 
-- **One read, at the one place every request already goes.** `AuthSessionsService.isLive(sid, sub)`
-  is a primary-key read beside the platform config the verifier already reads. Every ending of a
-  session DELETES its row, so absence is the ended state; `expiresAt` is compared too because an
-  idle-expired row may not have been swept yet. No cache and no clock: the deletion is what flips it.
-- **A token naming no session is refused.** Every token minted since the `sid` claim carries one, so
-  a token without it was not minted by the current service (`warn`, `Access refused: ... names no
-  session`).
+- **One rule, one implementation.** `AuthController.sessionOfToken` decides it for `check` (the
+  verifier) and for `requireAccessToken`, the reader of core-service's own `/api/auth` routes that
+  take the bearer token themselves. `AuthSessionsService.isLive(sid, sub)` is a primary-key read
+  beside the platform config the verifier already reads. Every ending of a session DELETES its row,
+  so absence is the ended state; `expiresAt` is compared too because an idle-expired row may not have
+  been swept yet. No cache and no clock: the deletion is what flips it.
+- **A token naming no session is ACCEPTED, by construction - and the branch has a removal date.**
+  The one issuer (`signAccessToken`) always writes `sid`, so a sid-less token was minted by a release
+  older than this check, before its deploy, and dies by its own `exp` within one
+  `ACCESS_TOKEN_TTL_SECONDS` of it. Refusing it would answer every client signed in at the deploy
+  anonymous for up to that hour. No session is read for it, `X-Session-Id` stays empty, and the
+  acceptance is logged ONCE per process at `log`, not per request. The branch is deleted one token
+  lifetime after the deploy ([legacy-compatibility](legacy-compatibility.md)). The dev estate cannot
+  rehearse it: its tokens already carry `sid`.
 - **A failed read is not an answer.** It propagates as a 5xx - nginx fails the request, and a client
   keeps its session on a 5xx; it is never turned into "anonymous" (which would sign a user out on a
   database hiccup) nor into "logged in" (which would let an ended session through).
-- **What it closes.** Every HTTP route behind `auth_request` - device registration, key-package and
-  prekey publication, commits and external joins, add locks, Welcome requests, invitation accepts, push
-  registration. A device-creating call from an ended session is refused before it reaches the
-  delivery service, whatever client version sent it.
-- **What it does not.** The gateway WebSocket authenticates its own `canari_ws_token` cookie (the
-  upgrade carries no `Authorization` header), so a socket - open, or opened within the token's hour -
-  is not cut by this; it can create nothing, since every creating call is HTTP. The push-secret
-  background routes are not behind it either: a session's ending deletes its push registration and
-  with it the secret those routes check (below). The settings panel says the socket part in as many
-  words (`settings_sessions_delay_note`).
+- **Exactly what it covers.** (1) Every HTTP route behind an `auth_request` location - in particular
+  every device-creating call: device registration, key-package and prekey publication, commits and
+  external joins, add locks, Welcome requests, invitation accepts, push registration. (2) The
+  `/api/auth` routes that read the bearer token themselves through `requireAccessToken`: the session
+  list, a session's revocation, "sign out the others", binding the current session to its device,
+  the account-restore registration, and the adminer session.
+- **Exactly what it does not.** Three families verify the access token THEMSELVES and do not read
+  the session: media-service's own token check, call-service's claim decoding, and the gateway
+  WebSocket, which authenticates its `canari_ws_token` cookie at the upgrade (a socket open, or
+  opened within the token's hour, is not cut by an ending). None of them creates a device. Their
+  liveness is tracked privately ([backlog](backlog.md)). The push-secret background routes are not
+  behind the verifier either: a session's ending deletes its push registration and with it the secret
+  those routes check (below). The settings panel says all three in as many words
+  (`settings_sessions_delay_note`).
+
+**An owner's device revocation ends that device's sessions server-side.** When chat-delivery records
+an OWNER's ban on a device id (`DELETE /mls/devices/:userId/:deviceId`,
+[chat-delivery](services/chat-delivery.md)), it asks core-service
+(`DELETE /api/internal/sessions/users/:userId/devices/:deviceId?exceptSession=`, internal secret)
+to end every session of that user BOUND to that device (`auth_sessions."deviceId"`, written by
+`bindDevice`) except the caller's own, through `AuthSessionsService.endDeviceSessions` - the same
+`DELETE ... RETURNING` + push-ending transaction as every other ending, cause `revoked-by-owner`. If
+that call fails the delete answers 503 (`DeviceSessionsNotEndedError`, never swallowed); the delete
+is idempotent, so the client's retry finishes it. A retirement (`reason=retired`) ends none - the id
+was the caller's own install's. Not covered, stated: a session bound to NO device, or to a different
+id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
 
 ## A session that ends takes its device's push registration with it (2026-10-22)
 

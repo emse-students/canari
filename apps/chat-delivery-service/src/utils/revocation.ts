@@ -1,5 +1,5 @@
 import { MoreThan } from 'typeorm';
-import type { FindOperator } from 'typeorm';
+import type { DataSource, FindOperator } from 'typeorm';
 import { DEVICE_REVOCATION_TTL_MS } from '../retention.constants';
 import type { RevokedDevice, RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode, refusalBody } from './refusal-codes';
@@ -44,19 +44,42 @@ export function revocationReasonOf(row: Pick<RevokedDevice, 'reason'>): Revocati
 }
 
 /**
- * The cause a revocation writes over an existing row: THE OWNER'S WINS AND IS NEVER DOWNGRADED. A
- * row whose ban is still active and was the owner's (or unknown, see {@link revocationReasonOf})
- * stays the owner's, whatever the new call says - otherwise the disowned device could delete its own
- * id as "retired" and enrol again. A lapsed row starts over with the new cause, like its date does.
+ * Records a ban on `userId`/`deviceId` with its cause, in ONE statement, and answers the cause
+ * that was recorded.
+ *
+ * THE OWNER'S CAUSE WINS AND IS NEVER DOWNGRADED: a row whose ban is still active and was the
+ * owner's (or unknown, see {@link revocationReasonOf}) stays the owner's whatever the new call
+ * says - otherwise a disowned device could delete its own id as "retired" and enrol again. A lapsed
+ * row starts over with the new cause, like its date does. The merge is the `CASE` of the
+ * `ON CONFLICT` arm, which reads the EXISTING row under the conflict's row lock, so two deletes
+ * racing on one id cannot both read "no owner" and the retired one win - which a read followed by a
+ * save allowed.
+ *
+ * Re-revoking restarts the ban's date, as it always has. `newId` is used only when no row exists.
  */
-export function mergedRevocationReason(
-  existing: Pick<RevokedDevice, 'reason' | 'revokedAt'> | null,
+export async function upsertRevocation(
+  db: Pick<DataSource, 'query'>,
+  userId: string,
+  deviceId: string,
   incoming: RevocationReason,
+  newId: string,
   now: number = Date.now()
-): RevocationReason {
-  if (incoming === 'owner' || !existing) return incoming;
-  const stillActive = existing.revokedAt.getTime() > activeRevocationCutoff(now).getTime();
-  return stillActive && revocationReasonOf(existing) === 'owner' ? 'owner' : incoming;
+): Promise<RevocationReason> {
+  const rows = (await db.query(
+    `INSERT INTO revoked_device (id, "userId", "deviceId", "revokedAt", reason)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT ("userId", "deviceId") DO UPDATE SET
+       "revokedAt" = EXCLUDED."revokedAt",
+       reason = CASE
+         WHEN EXCLUDED.reason = 'owner' THEN 'owner'
+         WHEN revoked_device."revokedAt" > $6
+              AND (revoked_device.reason IS NULL OR revoked_device.reason <> 'retired') THEN 'owner'
+         ELSE EXCLUDED.reason
+       END
+     RETURNING reason`,
+    [newId, userId, deviceId, new Date(now), incoming, activeRevocationCutoff(now)]
+  )) as Array<{ reason: string | null }>;
+  return rows[0]?.reason === 'retired' ? 'retired' : 'owner';
 }
 
 /**

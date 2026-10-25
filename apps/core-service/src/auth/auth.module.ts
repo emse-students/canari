@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from './auth.controller';
+import { InternalSessionsController } from './internal-sessions.controller';
 import { AdminerAccessService } from './adminer-access.service';
 import { AuthSessionsService } from './auth-sessions.service';
 import { SessionPushEndService } from './session-push-end.service';
@@ -18,7 +19,7 @@ import { AccountErasureModule } from '../account-erasure/account-erasure.module'
     PlatformModule,
     AccountErasureModule,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, InternalSessionsController],
   providers: [
     AuthSessionsService,
     SessionPushEndService,

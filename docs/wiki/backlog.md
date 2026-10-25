@@ -32,6 +32,21 @@ half, the shipped half is a pointer, never a retelling.
 What the audit left open is in the private operations notes until each item is fixed; the rule is
 in [durable-rules](durable-rules.md).
 
+## Session liveness beyond the verifier, tracked privately (2026-10-25)
+
+Two follow-ups of [sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
+are in the private operations notes until each ships: token liveness for the services that verify
+the access token themselves, and closing an open socket when its session ends (a separate pull
+request).
+
+## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
+
+Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since
+2026-10-25 also one session row. The session read is the point; the config read is the same answer
+for every request. A per-process read deduplicated across concurrent requests (one in flight, not a
+TTL cache) would remove the config's queries (`ensureDefaults` plus the row read) from most requests. Not done in the liveness change, to keep it to one
+fact. Owed: measure the verifier's query rate on production first.
+
 ## P3 - A group creation that fails before its creator is registered leaves an orphan group row (2026-10-25)
 
 When creation fails between the remote group's creation and the creator's registration, the

@@ -2697,7 +2697,7 @@
   "settings_sessions_revoked_toast": "Connection removed",
   "settings_sessions_load_error": "Unable to load your sessions.",
   "settings_sessions_revoke_error": "Signing out failed. Please try again.",
-  "settings_sessions_delay_note": "A signed-out session is refused by the server at once; only its live message connection may survive for up to an hour.",
+  "settings_sessions_delay_note": "A signed-out session is refused by the server at once for most requests; its live message connection, calls and media downloads may keep working for up to an hour.",
   "minesweeper_title": "Minesweeper",
   "minesweeper_new_game": "New game",
   "minesweeper_status_won": "You cleared the board!",

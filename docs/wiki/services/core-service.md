@@ -33,12 +33,15 @@ credential, `logout` only cleared the cookie (revoking nothing), a stolen cookie
 `JWT_SECRET` — which signs every user out of all six services at once.
 
 **The access token is never looked up by the services.** Making it a row would add a database round
-trip to every service. So the row backs the **refresh** token, and the ONE place every request
-already passes - `/api/auth/verify`, nginx's `auth_request` - reads it by the token's `sid`: an access
-token whose session has ended is answered anonymous there, so revoking a session cuts its HTTP access
-at once, not at the token's expiry. Only the gateway socket, which checks its own cookie, may outlive
-the session by up to the token's hour; the settings UI says so in as many words
-([sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+trip to every service. So the row backs the **refresh** token, and `/api/auth/verify` - nginx's
+`auth_request` - reads it by the token's `sid`, as do this service's own session routes
+(`requireAccessToken`): an access token whose session has ended is answered anonymous there, so
+revoking a session cuts its access through every `auth_request` location at once, not at the token's
+expiry. The three families that verify the token themselves - media-service's check, call-service's
+claim decoding and the gateway socket - do not read the session; the settings UI says so in as many
+words. Exact coverage, the pre-deploy token without `sid`, and the internal route
+chat-delivery calls to end a revoked device's sessions (`InternalSessionsController`) are in
+[sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25).
 
 **The row also names the MLS device it belongs to** (`deviceId`, nullable), written once per app
 start after the client unlocks MLS — the first moment it can say which device it is. It is the only

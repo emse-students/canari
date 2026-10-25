@@ -1,11 +1,18 @@
 /// <reference types="jest" />
 
+jest.mock('../internal/device-sessions', () => {
+  const actual = jest.requireActual('../internal/device-sessions');
+  return { ...actual, endDeviceSessions: jest.fn().mockResolvedValue(0) };
+});
+
 /**
  * MIGRATION 040 AND THE CAUSE OF A BAN AGAINST A REAL POSTGRESQL: the column lands on an empty and on
  * a populated `revoked_device`, replays as a no-op, leaves an older row NULL (read as the owner's),
  * and the real delete and registration routes write and read the cause through TypeORM - the owner's
  * revocation refused as `DEVICE_REVOKED_BY_OWNER`, an install's retired id as `DEVICE_REVOKED` +
- * `reason: 'retired'`, and an owner's ban never downgraded by a later "retired" delete.
+ * `reason: 'retired'`, and an owner's ban never downgraded by a later "retired" delete - including
+ * by one RACING it, since the merge is the one `INSERT ... ON CONFLICT` statement (`upsertRevocation`).
+ * Ending the device's sessions is core-service's, and is mocked here.
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads:
  * skipped without it, and run by the `test-chat-delivery-integration` job in `ci.yml`, which refuses
@@ -19,6 +26,7 @@ import { Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { DevicesController } from '../controllers/devices.controller';
+import { upsertRevocation } from '../utils/revocation';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -74,6 +82,7 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
     controller = Object.create(DevicesController.prototype) as DevicesController;
     Object.assign(controller, {
       revokedDeviceRepo: ds.getRepository(RevokedDevice),
+      dataSource: ds,
       messagingService: {
         purgeDeviceFootprint: purge,
         notifyDeviceRevoked: jest.fn().mockResolvedValue(false),
@@ -141,6 +150,29 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
       `SELECT count(*)::int AS n FROM revoked_device WHERE "deviceId" IN ('d-owner', 'd-retired')`
     )) as { n: number }[];
     expect(rows[0].n).toBe(2);
+  });
+
+  it("keeps the owner's cause when an owner's delete and a retirement race on one id", async () => {
+    // Each round starts with no row, so both statements may take the INSERT arm or meet the
+    // other's row: whichever order PostgreSQL serialises them in, the owner's cause is the one left.
+    for (let round = 0; round < 20; round++) {
+      const deviceId = `d-race-${round}`;
+      const [first, second] = round % 2 === 0 ? ['owner', 'retired'] : ['retired', 'owner'];
+      await Promise.all([
+        upsertRevocation(ds, 'u1', deviceId, first as 'owner' | 'retired', `race-${round}-a`),
+        upsertRevocation(ds, 'u1', deviceId, second as 'owner' | 'retired', `race-${round}-b`),
+      ]);
+      expect(await reasonOf(deviceId)).toBe('owner');
+    }
+  });
+
+  it('lets a lapsed ban start over with the new cause, like its date does', async () => {
+    await ds.query(
+      `INSERT INTO revoked_device (id, "userId", "deviceId", "revokedAt", reason)
+       VALUES ('lapsed-1', 'u1', 'd-lapsed', now() - interval '11 years', 'owner')`
+    );
+    expect(await upsertRevocation(ds, 'u1', 'd-lapsed', 'retired', 'unused')).toBe('retired');
+    expect(await reasonOf('d-lapsed')).toBe('retired');
   });
 
   it('refuses the prekey upload of a banned id the same way', async () => {

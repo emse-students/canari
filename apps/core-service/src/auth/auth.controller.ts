@@ -233,6 +233,9 @@ export class AuthController {
   /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
   private readonly internalSecret: string;
 
+  /** Set at the first sid-less access token this process accepts, so it is said once (`sessionOfToken`). */
+  private legacyTokenSeen = false;
+
   constructor(
     private readonly usersService: UsersService,
     private readonly platformService: PlatformService,
@@ -363,19 +366,20 @@ export class AuthController {
    * These routes live under `/api/auth`, which nginx serves unauthenticated and
    * where it deliberately blanks `X-User-Id` - so `NginxAuthGuard` would refuse
    * every request. The token is verified here instead, exactly as
-   * `/api/auth/verify` does it.
+   * `/api/auth/verify` does it - its session's liveness included
+   * ({@link sessionOfToken}), so an ended session manages no session.
    */
-  private requireAccessToken(req: Request): {
+  private async requireAccessToken(req: Request): Promise<{
     userId: string;
     isAdmin: boolean;
-  } {
+  }> {
     const header = req.headers['authorization'];
     if (!header) throw new UnauthorizedException('Missing Authorization header');
     const parts = String(header).split(' ');
     const token = parts.length > 1 ? parts[1] : parts[0];
     if (!token) throw new UnauthorizedException('Missing bearer token');
 
-    let payload: { sub?: string; admin?: boolean; type?: string };
+    let payload: { sub?: string; admin?: boolean; type?: string; sid?: unknown };
     try {
       payload = jwt.verify(token, this.jwtSecret, {
         algorithms: ['HS256'],
@@ -388,6 +392,8 @@ export class AuthController {
     if (payload.type === 'refresh')
       throw new UnauthorizedException('Refresh token is not an access token');
     if (!payload.sub) throw new UnauthorizedException('Token carries no subject');
+    const session = await this.sessionOfToken({ sub: payload.sub, sid: payload.sid });
+    if (session.state === 'ended') throw new UnauthorizedException('Session has ended');
     return { userId: payload.sub, isAdmin: !!payload.admin };
   }
 
@@ -890,7 +896,7 @@ export class AuthController {
   private async restoreRegistrationCaller(
     req: Request
   ): Promise<{ userId: string; sessionId: string; tokenId: string }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const origin = req.get('origin') ?? '';
     if (!ANDROID_APP_ORIGINS.includes(origin)) {
       this.logger.warn(
@@ -1073,7 +1079,7 @@ export class AuthController {
   /** Lists the caller's live sessions, flagging the one this request came from. */
   @Get('sessions')
   async listSessions(@Req() req: Request): Promise<{ sessions: SessionDto[] }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const currentId = this.currentSessionId(req);
     const rows = await this.authSessions.listForUser(userId);
     return {
@@ -1109,7 +1115,7 @@ export class AuthController {
     @Req() req: Request,
     @Body() body: BindDeviceDto
   ): Promise<{ bound: true }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const sessionId = this.currentSessionId(req);
     if (!sessionId) throw new UnauthorizedException('No session behind this request');
     if (typeof body?.deviceId !== 'string') throw new BadRequestException('deviceId is required');
@@ -1127,7 +1133,7 @@ export class AuthController {
   @Delete('sessions')
   @HttpCode(200)
   async revokeOtherSessions(@Req() req: Request): Promise<{ revoked: number }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const currentId = this.currentSessionId(req);
     const revoked = await this.authSessions.revokeOthers(userId, currentId);
     return { revoked };
@@ -1141,7 +1147,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<{ ok: boolean }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     // Scoped to the caller: a session id is an identifier, never an authorization.
     const ok = await this.authSessions.revokeOwned(userId, id);
     if (ok && this.currentSessionId(req) === id) {
@@ -1167,7 +1173,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response
   ): Promise<{ expiresInSeconds: number }> {
     if (!this.adminerAccess.enabled) throw new NotFoundException();
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const user = await this.usersService.findOne(userId).catch(() => null);
     if (!user?.admin) {
       this.logger.warn(`adminer session refused: ${userId} is not a global admin`);
@@ -1250,16 +1256,13 @@ export class AuthController {
     }
 
     // AN ACCESS TOKEN IS ONLY AS ALIVE AS THE SESSION IT WAS MINTED FOR - a sign-out, the owner
-    // removing it from the device panel and "sign out the others" all end it at once, for every
-    // route. This is the one place every authenticated request of every service passes through
-    // (nginx `auth_request`), so the check is made here once, and an ended session is answered the
-    // way an expired token is: anonymous, which each guarded route refuses with a 401 - the answer
-    // that ends the client's session. One primary-key read, beside the platform config this route
-    // already reads; the session's own deletion is what flips it, so no clock is involved.
-    // A token naming NO session is refused too: every token minted since the `sid` claim carries
-    // one, so a token without it was not minted by this service as it is.
-    const sessionId = await this.liveSessionOfToken(payload);
-    if (sessionId === null) return res.status(200).send();
+    // removing it from the device panel and "sign out the others" all end it at once. Every route
+    // behind nginx's `auth_request` passes here, so the check is made here once, and an ended
+    // session is answered the way an expired token is: anonymous, which each guarded route refuses
+    // with a 401 - the answer that ends the client's session. One primary-key read, beside the
+    // platform config this route already reads; the session's own deletion is what flips it.
+    const session = await this.sessionOfToken(payload);
+    if (session.state === 'ended') return res.status(200).send();
 
     const platformConfig = await this.platformService.getConfig();
     if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
@@ -1275,8 +1278,9 @@ export class AuthController {
     res.set('X-User-Id', payload.sub);
     res.set('X-Logged-In', 'true');
     res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
-    // The session this access token was minted for - proven live above.
-    res.set('X-Session-Id', sessionId);
+    // The session this access token was minted for - proven live above; empty for a token minted
+    // before the claim existed (`sessionOfToken`).
+    res.set('X-Session-Id', session.state === 'live' ? session.sessionId : '');
 
     // Mint a per-minute HMAC token so backend services can verify the request
     // genuinely came through nginx (not from a compromised container).
@@ -1292,32 +1296,48 @@ export class AuthController {
   }
 
   /**
-   * The session an access token names when it still exists for the token's subject, else null
-   * (see `check`). A
-   * database failure is NOT an answer and is not turned into one: it propagates, nginx's
+   * Whether the session an access token was minted for still exists for the token's subject - the
+   * one liveness rule of every access token this service checks (`check`, `requireAccessToken`).
+   *
+   * - `live`: the token names a session that still exists.
+   * - `ended`: it names one that does not - signed out, revoked, replaced or expired.
+   * - `legacy`: it names NONE. Accepted, by construction rather than by trust: since the release that
+   *   brought this check, the only issuer (`signAccessToken`) always writes `sid`, so a sid-less
+   *   token can only have been minted by the previous release before its deploy, and it dies by its
+   *   own `exp` within one `ACCESS_TOKEN_TTL_SECONDS`. Refusing it would answer every client that
+   *   was signed in at the deploy anonymous for up to that hour. Said ONCE per process at `log`, not
+   *   per request. The branch goes one token lifetime after the deploy
+   *   (`docs/wiki/legacy-compatibility.md`).
+   *
+   * A database failure is NOT an answer and is not turned into one: it propagates, nginx's
    * `auth_request` then fails the request with a 5xx, and a client keeps its session on a 5xx.
    */
-  private async liveSessionOfToken(payload: {
+  private async sessionOfToken(payload: {
     sub: string;
     sid?: unknown;
-  }): Promise<string | null> {
+  }): Promise<{ state: 'live'; sessionId: string } | { state: 'legacy' } | { state: 'ended' }> {
     if (typeof payload.sid !== 'string' || payload.sid.length === 0) {
-      this.logger.warn(
-        `Access refused: the access token of user=${payload.sub} names no session - answered anonymous`
-      );
-      return null;
+      if (!this.legacyTokenSeen) {
+        this.legacyTokenSeen = true;
+        this.logger.log(
+          'An access token naming no session was accepted (minted before the sid claim) - said once per process; such tokens expire within one access-token lifetime of the deploy'
+        );
+      }
+      return { state: 'legacy' };
     }
+    let live: boolean;
     try {
-      if (await this.authSessions.isLive(payload.sid, payload.sub)) return payload.sid;
+      live = await this.authSessions.isLive(payload.sid, payload.sub);
     } catch (e) {
       this.logger.error(
         `Access check FAILED: could not read session sid=${payload.sid}: ${e instanceof Error ? e.message : String(e)}`
       );
       throw e;
     }
+    if (live) return { state: 'live', sessionId: payload.sid };
     this.logger.warn(
       `Access refused: session sid=${payload.sid} user=${payload.sub} has ended - its access token is answered anonymous`
     );
-    return null;
+    return { state: 'ended' };
   }
 }

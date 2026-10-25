@@ -966,6 +966,32 @@ describe('AuthController sessions', () => {
       await expect(controller.listSessions(makeReq())).rejects.toThrow(UnauthorizedException);
     });
 
+    /**
+     * The session routes read the token themselves (`requireAccessToken`), so they apply the same
+     * liveness rule as `verify`: a token whose session has ended lists, revokes and binds nothing.
+     */
+    it('refuses a token whose session has ended, on every session route', async () => {
+      sessions.isLive.mockResolvedValue(false);
+      const bearer = jwt.sign(
+        { sub: 'user-1', type: 'access', sid: '0a0a0a0a-0000-4000-8000-0000000000a2' },
+        JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      const req = makeReq({ bearer });
+      await expect(controller.listSessions(req)).rejects.toThrow(UnauthorizedException);
+      await expect(controller.revokeSession('sid-other', req, makeRes().res)).rejects.toThrow(
+        UnauthorizedException
+      );
+      await expect(controller.revokeOtherSessions(req)).rejects.toThrow(UnauthorizedException);
+      await expect(
+        controller.bindCurrentSessionDevice(req, { deviceId: 'web-a-b' })
+      ).rejects.toThrow(UnauthorizedException);
+      expect(sessions.listForUser).not.toHaveBeenCalled();
+      expect(sessions.revokeOwned).not.toHaveBeenCalled();
+      expect(sessions.revokeOthers).not.toHaveBeenCalled();
+      expect(sessions.bindDevice).not.toHaveBeenCalled();
+    });
+
     it('scopes a single revocation to the calling user', async () => {
       const req = makeReq({ bearer: signAccess('user-1') });
       const out = makeRes();
@@ -1070,14 +1096,49 @@ describe('AuthController sessions', () => {
       expect(out.headers['X-Internal-Token']).toBeUndefined();
     });
 
-    it('answers anonymous for an access token that names no session, without a read', async () => {
-      const out = makeRes();
+    /**
+     * A TOKEN NAMING NO SESSION IS ACCEPTED, BY CONSTRUCTION: the one issuer always writes `sid`, so
+     * such a token was minted before the deploy and dies by its own `exp` within one token lifetime.
+     * No session is read for it, X-Session-Id stays empty, and the acceptance is said once per
+     * process, not per request.
+     */
+    it('accepts an unexpired access token that names no session, without a read, said once', async () => {
+      const said = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      try {
+        for (let i = 0; i < 3; i++) {
+          const out = makeRes();
+          await controller.verify(makeReq({ bearer: signAccess('user-1') }), out.res);
+          expect(out.headers['X-Logged-In']).toBe('true');
+          expect(out.headers['X-User-Id']).toBe('user-1');
+          expect(out.headers['X-Session-Id']).toBe('');
+        }
+        expect(sessions.isLive).not.toHaveBeenCalled();
+        const legacyLines = said.mock.calls.filter((c) =>
+          String(c[0]).includes('naming no session')
+        );
+        expect(legacyLines).toHaveLength(1);
+      } finally {
+        said.mockRestore();
+      }
+    });
 
-      await controller.verify(makeReq({ bearer: signAccess('user-1') }), out.res);
-
+    it('answers anonymous for an expired access token, sid or not, without a read', async () => {
+      for (const sid of [SID, undefined]) {
+        const expired = jwt.sign(
+          {
+            sub: 'user-1',
+            type: 'access',
+            ...(sid ? { sid } : {}),
+            exp: Math.floor(Date.now() / 1000) - 60,
+          },
+          JWT_SECRET
+        );
+        const out = makeRes();
+        await controller.verify(makeReq({ bearer: expired }), out.res);
+        expect(out.headers['X-Logged-In']).toBe('false');
+        expect(out.headers['X-User-Id']).toBe('');
+      }
       expect(sessions.isLive).not.toHaveBeenCalled();
-      expect(out.headers['X-Logged-In']).toBe('false');
-      expect(out.headers['X-Session-Id']).toBe('');
     });
 
     it('does not turn a failed session read into an answer: it propagates', async () => {

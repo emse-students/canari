@@ -138,7 +138,9 @@ class FakeRepo {
 
 const UPDATE_WHERE = 'id = :id AND "tokenId" = :presented AND "expiresAt" > :now';
 const DELETE_WHERE = '"userId" = :userId';
+const DELETE_DEVICE_WHERE = '"userId" = :userId AND "deviceId" = :deviceId';
 const DELETE_AND_WHERE = 'id != :keep';
+const DELETE_DEVICE_AND_WHERE = 'id != :except';
 
 class FakeQueryBuilder {
   private mode: 'update' | 'delete' | null = null;
@@ -168,7 +170,7 @@ class FakeQueryBuilder {
   }
 
   where(sql: string, params: Record<string, unknown>): this {
-    if (sql !== UPDATE_WHERE && sql !== DELETE_WHERE) {
+    if (sql !== UPDATE_WHERE && sql !== DELETE_WHERE && sql !== DELETE_DEVICE_WHERE) {
       throw new Error(`FakeRepo does not know this WHERE clause: ${sql}`);
     }
     Object.assign(this.params, params);
@@ -176,7 +178,7 @@ class FakeQueryBuilder {
   }
 
   andWhere(sql: string, params: Record<string, unknown>): this {
-    if (sql !== DELETE_AND_WHERE) {
+    if (sql !== DELETE_AND_WHERE && sql !== DELETE_DEVICE_AND_WHERE) {
       throw new Error(`FakeRepo does not know this AND clause: ${sql}`);
     }
     Object.assign(this.params, params);
@@ -203,9 +205,17 @@ class FakeQueryBuilder {
       return Promise.resolve({ affected: 1 });
     }
 
-    const { userId, keep } = this.params as { userId: string; keep?: string };
+    const { userId, keep, deviceId, except } = this.params as {
+      userId: string;
+      keep?: string;
+      deviceId?: string;
+      except?: string;
+    };
     const deleted = (r: AuthSession) =>
-      r.userId === userId && (keep === undefined || r.id !== keep);
+      r.userId === userId &&
+      (keep === undefined || r.id !== keep) &&
+      (deviceId === undefined || r.deviceId === deviceId) &&
+      (except === undefined || r.id !== except);
     // RETURNING: the deleted rows, reduced to the columns asked for, as the driver hands them back.
     const raw = this.repo.rows
       .filter(deleted)
@@ -525,6 +535,37 @@ describe('AuthSessionsService', () => {
           `user-1/unnamed/${tab.sessionId}/revoked-others`,
         ].sort()
       );
+    });
+
+    /**
+     * An owner revoking a DEVICE ends the sessions bound to it, server-side: never the caller's own,
+     * never a session bound to another device or to none, never another account's. Idempotent.
+     */
+    it("ending a device's sessions takes only the ones bound to it, and records each", async () => {
+      const { service, queued, repo } = makeService();
+      const caller = await boundSession(service, 'user-1', 'laptop-1');
+      const revoked = await boundSession(service, 'user-1', 'phone-1');
+      const unbound = await service.create('user-1');
+      const stranger = await boundSession(service, 'user-2', 'phone-1');
+
+      await expect(service.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(1);
+
+      expect(queued()).toEqual([`user-1/phone-1/${revoked}/revoked-by-owner`]);
+      expect(repo.rows.map((r) => r.id).sort()).toEqual(
+        [caller, unbound.sessionId, stranger].sort()
+      );
+      // A retry ends nothing more.
+      await expect(service.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(0);
+    });
+
+    it("never ends the caller's own session, even when it is bound to the revoked device", async () => {
+      const { service, repo } = makeService();
+      const caller = await boundSession(service, 'user-1', 'phone-1');
+
+      await expect(service.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(0);
+      expect(repo.rows.map((r) => r.id)).toEqual([caller]);
+      await expect(service.endDeviceSessions('user-1', 'phone-1', null)).resolves.toBe(1);
+      expect(repo.rows).toHaveLength(0);
     });
 
     it('a replayed refresh token, which revokes the session, records its ending', async () => {

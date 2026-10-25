@@ -385,6 +385,37 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Ends every session of `userId` BOUND to `deviceId` (`auth_sessions."deviceId"`, written by
+   * {@link bindDevice}) except `exceptSessionId`, recording each one's push ending in the same
+   * transaction - the server-side half of an owner revoking a device, asked by chat-delivery once
+   * the device's ban is recorded, so a revocation no longer depends on the panel's second request.
+   *
+   * `exceptSessionId` is the CALLER's own session: whoever deletes a device never signs itself out
+   * by doing so (an install whose identity rotation is still bound to the id it abandoned included).
+   * What it does not reach, stated: a session bound to NO device (opened, never unlocked) or bound
+   * to another id - those are ended only by the panel's own session revocation. Returns how many
+   * ended; idempotent (a second call ends nothing).
+   */
+  async endDeviceSessions(
+    userId: string,
+    deviceId: string,
+    exceptSessionId: string | null
+  ): Promise<number> {
+    return this.endSessions('revoked-by-owner', async (repo) => {
+      const qb = repo
+        .createQueryBuilder()
+        .delete()
+        .from(AuthSession)
+        .where('"userId" = :userId AND "deviceId" = :deviceId', { userId, deviceId })
+        .returning(['id', 'userId', 'deviceId']);
+      if (exceptSessionId) qb.andWhere('id != :except', { except: exceptSessionId });
+      const res = await qb.execute();
+      const ended = (res.raw ?? []) as EndedSession[];
+      return { ended, result: ended.length };
+    });
+  }
+
   /** Live sessions of a user, most recently used first. Expired rows are filtered out, not waited on. */
   async listForUser(userId: string): Promise<SessionSummary[]> {
     const rows = await this.sessions.find({

@@ -287,6 +287,27 @@ maybe('the push-ending outbox against PostgreSQL', () => {
 
     expect(await outboxRows()).toEqual([]);
   });
+
+  it("an owner's device revocation ends the sessions bound to it, never the caller's, and records each", async () => {
+    axios.delete.mockRejectedValue(Object.assign(new Error('fail'), { response: { status: 503 } }));
+    const caller = await boundSession('user-1', 'laptop-1');
+    const revoked = await boundSession('user-1', 'phone-1');
+    const unbound = await sessions.create('user-1');
+    const stranger = await boundSession('user-2', 'phone-1');
+
+    await expect(sessions.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(1);
+
+    const left = (await ds.query(`SELECT id FROM auth_sessions ORDER BY id`)) as { id: string }[];
+    expect(left.map((r) => r.id)).toEqual([caller, unbound.sessionId, stranger].sort());
+    // The drain the commit starts may already have tried it, so the attempt count is not asserted.
+    expect((await outboxRows()).map(({ attempts: _a, ...row }) => row)).toEqual([
+      { sessionId: revoked, deviceId: 'phone-1', cause: 'revoked-by-owner' },
+    ]);
+    await expect(sessions.isLive(revoked, 'user-1')).resolves.toBe(false);
+    // Idempotent: the retry a failed delete makes ends nothing more.
+    await expect(sessions.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(0);
+  });
+
   it('a session reads live until it is revoked, logged out or replaced - the verify check', async () => {
     const owned = await sessions.create('user-1');
     const loggedOut = await sessions.create('user-1');
