@@ -78,7 +78,7 @@ No row verdict depends on it; it stays here until it is explained.
 | --- | --- | --- | --- |
 | OFF-1 | Cut after the stage's checkpoint, before the POST leaves | W1 W2 - U | `pending` |
 | OFF-2 | Cut after the POST reached the server | W1 W2 - U | `pending` |
-| OFF-3 | The committer stays offline while the others advance three epochs | W1 W2 W4 - U | `pending` |
+| OFF-3 | The committer stays offline while the others advance three epochs | W1 W2 W4 - U | assertions `PASS` on `1.4.1-alpha.4`, recorded as a DEFECT, not a clean pass: the cut committer's add lock was freed by its 30 s TTL, not by a release, so the other member's Add waited on a clock ([backlog](backlog.md#p2---a-cut-holders-add-lock-ends-only-by-its-ttl-and-a-refused-waiter-sleeps-to-it-design-after-the-stable-off-3-2026-10-25)) |
 | OFF-4 | A RECEIVER offline across ten commits and a hundred messages | W1 W2 - U | `pending` - BLOCKED-ON-ACCOUNT: needs a fifth campaign account |
 | OFF-5 | The phone loses both radios in the middle of an Add it is making | +A1 - B | `pending` - BLOCKED-ON-RIG: the row holds A1's commit POST, and the Tauri apps send every first-party API call through `tauri-plugin-http`, below the WebView, where CDP `Fetch` cannot hold it (measured on A1 on 1.4.1-alpha.3, 2026-10-25); every row that faults the commit on A1 or the iPhone is blocked the same way. A radio cut timed around the commit would be a race. What would lift it: a fault point inside the app's routed fetch, in a bench build only (proposal, not built) |
 
