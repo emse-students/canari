@@ -19,6 +19,7 @@
  * the first bug turned on.
  */
 import {
+  consoleDump,
   CONTACT_DEVICE_NOTICE_NARRATION,
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
@@ -1710,6 +1711,15 @@ const CUT_LINE =
   const okE2E = rep.clean && rep.environmentException?.forgiven === 1 && g.verdict === 'PASS' && g.detail.environmentException?.W1?.name === DEV_EDGE_CSP_EXCEPTION.name;
   if (!okE2E) failures++;
   console.log(`${okE2E ? 'ok  ' : 'FAIL'} ${'forgiven'.padEnd(12)} a verdict taken with the exception reads PASS and names it (got ${g.verdict})`);
+}
+
+// A ROW THAT DID NOT PASS KEEPS EVERY CLIENT'S WHOLE CONSOLE (DUP-6, alpha.4), routine lines included.
+{
+  const ev = (text, type = 'log') => ({ method: 'Runtime.consoleAPICalled', params: { type, args: [{ value: text }] } });
+  const d = consoleDump({ W1: { cx: { events: [ev('[WS RCV] routine'), ev('boom', 'error')] } }, W2: null });
+  const ok = Object.keys(d).join() === 'W1' && d.W1 === 'info [WS RCV] routine\nerror boom';
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'consoles'.padEnd(12)} a non-PASS row keeps each client's whole console, routine lines included`);
+  if (!ok) failures++;
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');

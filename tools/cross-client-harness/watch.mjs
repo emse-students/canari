@@ -1386,6 +1386,24 @@ export function consoleLines(cx) {
 }
 
 /**
+ * EVERY OBSERVED CLIENT'S WHOLE CONSOLE, one text per label, for a row that did not PASS.
+ *
+ * `gate` records only what a classifier picked out (`dirtOf`), and a CLEAN client records nothing at
+ * all - so a FAIL whose cause sits in routine lines could not show where it failed. DUP-6 on alpha.4
+ * was exactly that: a side message never shown on W1 during a held commit, and W1's record empty.
+ * `recordObserved` writes these to files beside the ledger and names them in the row.
+ *
+ * @param {Record<string, {cx?: object} | null | undefined>} observers label -> watcher
+ * @returns {Record<string, string>} label -> `level text` lines, one per console entry
+ */
+export function consoleDump(observers) {
+  const out = {};
+  for (const [label, o] of Object.entries(observers ?? {}))
+    if (o?.cx) out[label] = consoleEntries(o.cx).map((e) => `${e.level} ${e.text}`).join('\n');
+  return out;
+}
+
+/**
  * {@link consoleLines} WITH THE LEVEL each line was printed at: `error`, `warning`, `info`, ... A
  * rule like "`[ADMISSION]` at ERROR" (`invariantverdict.mjs`) is about the level, and a client's
  * `console.error` carries no `ERROR` word in its text, so the text alone cannot answer it.
