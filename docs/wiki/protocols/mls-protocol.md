@@ -508,6 +508,8 @@ now picks its severity from the classification instead of from the bare fact tha
 for the member it was meant for (without which the classification could be right for the wrong
 reason: a malformed frame would pass the first assertion too).
 
+`requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. **A 403 on the GroupInfo read is a membership ANSWER, not a failed attempt**: it arrives typed (`NotAGroupMemberError`) and retires the conversation instead of falling back, which is what makes this seam terminate on a proof rather than on its throttle — see [mls-recovery-ladder](mls-recovery-ladder.md). Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
+
 ### Our own frame from a PAST epoch was called a loss (2026-10-25)
 
 `CannotDecryptOwnMessage` is only reached at the epoch the frame was sent in. One sent in an epoch
@@ -522,9 +524,13 @@ MLS's refusal. `isFrameFromThisDevice` (`mls-client/ownDeviceFrame.ts`) is ONE p
 places that meet such a frame: the live handler (`setupMessageHandler`, before the key-group, the
 unknown-group and the known-group branches) and the archive replay (`history.ts`, unchanged in
 behaviour). It holds when the envelope names this account AND this device's CURRENT id; the frame is
-then ACKed with one `[MLS] Own frame ... - ACKed, not offered to MLS` line and nothing else - no
-decrypt, no ledger, no loss, no reconcile. The line stays because the fanout excludes the sender's
-own devices, so reaching it means a frame was addressed back to us.
+then ACKed with one `[MLS] Own frame for <group8>… delivered back to this device (...) - ACKed, not
+offered to MLS; ...` line at WARN and nothing else - no decrypt, no ledger, no loss, no reconcile. It
+is a warning because nothing should reach it: the fan-out excludes the sending device (`isSender` in
+chat-delivery's `sendMessage`), so a frame here was addressed back to its writer. The line names the
+two suspects: a rig injecting it (GAP-2 does, deliberately), or the sender exclusion missing -
+`isSender` compares `body.senderId` with the membership `userId` case-sensitively while the send route
+accepts a case-insensitive match. That mismatch is UNMEASURED; this line is what would show it.
 
 - **The device decides, not the user**: a frame of this account's OTHER device is decryptable and
   wanted, and still reaches MLS.
@@ -533,8 +539,6 @@ own devices, so reaching it means a frame was addressed back to us.
 - An envelope without `senderDeviceId` is never ours by this test.
 
 Pinned by `setupMessageHandler.ownFrame.test.ts`.
-
-`requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. **A 403 on the GroupInfo read is a membership ANSWER, not a failed attempt**: it arrives typed (`NotAGroupMemberError`) and retires the conversation instead of falling back, which is what makes this seam terminate on a proof rather than on its throttle — see [mls-recovery-ladder](mls-recovery-ladder.md). Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
 ### The base travels inside every commit submission (COMM-22)
 

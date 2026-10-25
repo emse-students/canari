@@ -1046,7 +1046,8 @@ export async function replayConversationHistory(params: {
          *
          * The USER is not the discriminator and never could be: this account's other device wrote
          * frames that are both decryptable and wanted. The device is, and the server now carries
-         * it (`sender_device_id`).
+         * it (`sender_device_id`). The user is checked too, but only so that a device id another
+         * account happens to carry is never taken for ours (`isFrameFromThisDevice`).
          *
          * The row is marked seen so later replays answer from the cheap check above, and the
          * cursor moves past it - a frame we sent is a frame we have, by definition.

@@ -107,6 +107,11 @@ const said = (deps: ReturnType<typeof baseDeps>, needle: string) =>
     .mock.calls.map(String)
     .filter((line) => line.includes(needle));
 
+/** The own-frame line is a WARNING (nothing should reach it), so it is read from `console.warn`. */
+const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+const warned = (needle: string) =>
+  warnSpy.mock.calls.map((args) => args.map(String).join(' ')).filter((l) => l.includes(needle));
+
 describe('a frame this device sent, delivered back to it', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -130,7 +135,8 @@ describe('a frame this device sent, delivered back to it', () => {
     expect(said(deps, 'Frames are being lost')).toHaveLength(0);
     expect(vi.mocked(raiseReconcile)).not.toHaveBeenCalled();
     expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
-    expect(said(deps, 'Own frame')).toHaveLength(1);
+    expect(said(deps, 'Own frame')).toHaveLength(0);
+    expect(warned('[MLS] Own frame for ')).toHaveLength(1);
   });
 
   it('is recognised whatever the case of the user id the envelope carries', async () => {
@@ -162,7 +168,7 @@ describe('a frame this device did NOT send still reaches MLS', () => {
 
     expect(deps.mlsService.processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(deps.addMessageToChat).toHaveBeenCalledTimes(1);
-    expect(said(deps, 'Own frame')).toHaveLength(0);
+    expect(warned('Own frame')).toHaveLength(0);
   });
 
   it('from another member, unreadable at a past epoch: still a loss, still reconciled', async () => {
