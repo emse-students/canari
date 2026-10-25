@@ -208,6 +208,10 @@ export const CAMPAIGN_FIXTURES = {
   accounts: ['owner', 'peer', 'third', 'fourth'],
   dm: ['owner', 'peer'],
   privateSalon: 'campaign-private',
+  // EVERY ACCOUNT SITS IN THE VENUE: `archive/run.mjs`'s preflight refuses a run whose accounts are
+  // not all members of it (`sharedVenue`), so a venue holding the owner and the peer alone stopped
+  // every phase driving W4/W5 (2026-10-25). The owner is in it by creating it.
+  venueMembers: ['peer', 'third', 'fourth'],
   groups: [
     { name: 'campaign-g2', members: ['peer'] },
     { name: 'campaign-g4', members: ['peer', 'third', 'fourth'] },
@@ -222,8 +226,9 @@ export const CAMPAIGN_FIXTURES = {
  * built estate owes nothing and touches nothing.
  *
  * @param {{accounts: Record<string, boolean>, dm: boolean, venue: {community: boolean, publicSalon: boolean,
- *   privateSalon: boolean}, groups: Record<string, string[]|null>}} seen - `groups[name]` is the member
- *   ACCOUNT KEYS the group holds, or null when it does not exist
+ *   privateSalon: boolean, members?: string[]}, groups: Record<string, string[]|null>}} seen - `groups[name]`
+ *   is the member ACCOUNT KEYS the group holds, or null when it does not exist; `venue.members` the
+ *   account keys whose device is routed in the venue
  * @returns {string[]} owed steps, each `<what>:<detail>`, in the order they must be taken
  */
 export function fixturesOwed(seen, spec = CAMPAIGN_FIXTURES) {
@@ -232,6 +237,8 @@ export function fixturesOwed(seen, spec = CAMPAIGN_FIXTURES) {
   if (!seen.dm) owed.push(`dm:${spec.dm.join('-')}`);
   if (!seen.venue.community || !seen.venue.publicSalon) owed.push('venue:community');
   if (!seen.venue.privateSalon) owed.push(`venue:${spec.privateSalon}`);
+  const inVenue = seen.venue.members ?? [];
+  for (const m of spec.venueMembers ?? []) if (!inVenue.includes(m)) owed.push(`venue-member:${m}`);
   for (const g of spec.groups) {
     const held = seen.groups[g.name];
     if (held === null || held === undefined) owed.push(`group:${g.name}`);

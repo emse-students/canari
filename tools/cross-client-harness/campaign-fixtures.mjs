@@ -31,9 +31,15 @@ import { addMembers } from './archive/addmember.mjs';
 import { CAMPAIGN_FIXTURES, fixturesOwed } from './campaign-ledger.mjs';
 import { ESTATE, ledger, recordCreated } from './campaign.mjs';
 import { APP_TAB, client, evaluate } from './chat.mjs';
-import { createChannel, enterCommunities, openCommunity } from './comm.mjs';
+import { createChannel, enterCommunities, inviteToCommunity, openCommunity } from './comm.mjs';
 import { psql } from './estate.mjs';
-import { channelIdOf, directConversation, workspaceIdOf } from './grainedb.mjs';
+import {
+  awaitCommunityRouting,
+  channelIdOf,
+  communityMemberIds,
+  directConversation,
+  workspaceIdOf,
+} from './grainedb.mjs';
 import { closeOverlays, createDM, createGroup, openGroup } from './groupnav.mjs';
 import { ACCOUNT_OF, PORTS, VENUE } from './names.mjs';
 import { requireScript, HARNESS_ROOT } from './scriptpath.mjs';
@@ -97,7 +103,14 @@ function observe() {
     seen: {
       accounts,
       dm: !!dm,
-      venue: { community: !!workspaceId, publicSalon: !!publicId, privateSalon: !!privateId },
+      venue: {
+        community: !!workspaceId,
+        publicSalon: !!publicId,
+        privateSalon: !!privateId,
+        members: workspaceId
+          ? communityMemberIds(workspaceId).map((u) => keyOfUser[u.toLowerCase()]).filter(Boolean)
+          : [],
+      },
       groups: Object.fromEntries(Object.entries(groupIds).map(([n, id]) => [n, id ? membersOf(id) : null])),
     },
     ids: { dm: dm?.groupId ?? null, workspaceId, publicId, privateId, groupIds },
@@ -176,6 +189,26 @@ try {
     await enterCommunities(owner);
     await openCommunity(owner, VENUE.community);
     await createChannel(owner, SPEC.privateSalon, { visibility: 'private' });
+  }
+
+  // 3b. EVERY ACCOUNT IN THE VENUE (`venueMembers`): the owner invites by display name, then the
+  // member's own seat LOADS the community, because a member's device joins the delivery roster only
+  // when it loads it (`venue.mjs` says why) - a seat in `channel_members` alone carries no frame.
+  ({ seen, ids } = observe());
+  for (const k of SPEC.venueMembers.filter((m) => !seen.venue.members.includes(m))) {
+    await enterCommunities(owner);
+    await openCommunity(owner, VENUE.community);
+    await inviteToCommunity(owner, name[k], 'member');
+    const seat = await client(seats[k].port, APP_TAB, { focus: false });
+    try {
+      await enterCommunities(seat);
+      await openCommunity(seat, VENUE.community);
+    } finally {
+      seat.close();
+    }
+    const routed = await awaitCommunityRouting(ids.workspaceId, sub[k], true, 60_000);
+    if (!routed.ok) throw new Error(`[fixtures] ${k} is in the venue but its device never joined the delivery roster`);
+    console.log(`[fixtures] ${k} joined the venue, routed after ${routed.elapsedMs}ms`);
   }
 
   // 4. THE GROUPS, created by the owner, then every missing member added in ONE bulk Add - one

@@ -107,11 +107,13 @@ ok('...then the DM, the venue, its private salon and the three groups', ['dm:own
 const built = {
   accounts: { owner: true, peer: true, third: true, fourth: true },
   dm: true,
-  venue: { community: true, publicSalon: true, privateSalon: true },
+  venue: { community: true, publicSalon: true, privateSalon: true, members: ['owner', 'peer', 'third', 'fourth'] },
   groups: { 'campaign-g2': ['owner', 'peer'], 'campaign-g4': ['owner', 'peer', 'third', 'fourth'], 'campaign-big': ['owner', 'peer', 'third', 'fourth'] },
 };
 ok('a built estate owes nothing (idempotent)', fixturesOwed(built).length === 0);
 ok('a group missing one member owes exactly that member', fixturesOwed({ ...built, groups: { ...built.groups, 'campaign-g4': ['owner', 'peer', 'third'] } }).join() === 'member:campaign-g4:fourth');
+ok('a venue missing the third and fourth owes exactly them', fixturesOwed({ ...built, venue: { ...built.venue, members: ['owner', 'peer'] } }).join() === 'venue-member:third,venue-member:fourth');
+ok('every account but the owner is owed a venue seat', CAMPAIGN_FIXTURES.venueMembers.join() === 'peer,third,fourth');
 ok('the plan names exactly four accounts and three groups', CAMPAIGN_FIXTURES.accounts.length === 4 && CAMPAIGN_FIXTURES.groups.length === 3);
 
 // ── every destructive primitive calls the guard (a static read; nothing is imported) ────────────
