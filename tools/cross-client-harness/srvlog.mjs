@@ -1301,6 +1301,24 @@ export function rowVerdict(line, row) {
   };
 }
 
+/**
+ * THE ROW A PASS'S SERVER WINDOW BELONGS TO: the one row the pass recorded, or null.
+ *
+ * `run.mjs` judged its end-of-pass window with no row, so a single-row run (`--file settle.mjs --row
+ * DUP-1`) read its OWN expected line - the `DUPLICATE` answer DUP-1 exists to provoke - as out of
+ * row, and the pass exited 1 under a row verdict of PASS (alpha.4, 2026-10-25). A pass that recorded
+ * exactly one row id owns its window; a pass with several cannot say which row a line belongs to, so
+ * it keeps null and stays strict. Read from the verdicts RECORDED, not from `--row`, because `--row 1`
+ * names FLOOR-1 only inside the script.
+ *
+ * @param {{id: string}[]} recorded the verdicts this pass wrote
+ * @returns {string|null}
+ */
+export function windowRow(recorded) {
+  const ids = [...new Set(recorded.map((r) => r.id))];
+  return ids.length === 1 ? ids[0] : null;
+}
+
 // THE RULE LISTS ARE EXPORTED SO THEY CAN BE TESTED WITHOUT REACHING PRODUCTION. A pattern that
 // cannot match has no symptom on a live window - it just makes the unexplained pile bigger - so the
 // only way to catch one is to assert it against a line whose bucket is known. See

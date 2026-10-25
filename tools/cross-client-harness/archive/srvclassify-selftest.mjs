@@ -33,6 +33,7 @@ import {
   rowNamed,
   rowVerdict,
   srvReport,
+  windowRow,
 } from '../srvlog.mjs';
 
 let failures = 0;
@@ -1083,6 +1084,11 @@ check(
   check('R6 srvReport: FLOOR-1 is NOT clean on the same line', [inFloor.clean, inFloor.outOfRowCount, inFloor.lines], [false, 1, 1]);
   check('R6 srvReport: the out-of-row line says which rows expect it', /expected only in DUP-\*/.test(inFloor.outOfRow[0]), true);
   check('R6 srvReport: no row named is not clean either', asRow(null).clean, false);
+  // WHICH ROW A PASS'S WINDOW IS JUDGED AS (`run.mjs`): the one row it recorded, else none.
+  check('R6 windowRow: a single-row pass owns its window', windowRow([{ id: 'DUP-1' }]), 'DUP-1');
+  check('R6 windowRow: the same row recorded twice is still one row', windowRow([{ id: 'CC-2' }, { id: 'CC-2' }]), 'CC-2');
+  check('R6 windowRow: two rows cannot share a window - strict', windowRow([{ id: 'DUP-1' }, { id: 'FLOOR-1' }]), null);
+  check('R6 windowRow: a pass that recorded nothing names no row', windowRow([]), null);
 }
 
 
