@@ -418,7 +418,7 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
         if (left) log(`  [fault] disarm released ${left} request(s) still held`);
         if (rewrites.size) {
           log(`  [fault] disarm waits for ${rewrites.size} rewrite(s) still being answered`);
-          await Promise.allSettled([...rewrites]);
+          await Promise.allSettled(rewrites);
         }
         await cx.send('Fetch.disable').catch((e) => log(`  [fault] Fetch.disable failed: ${e.message}`));
         unsubscribe();
