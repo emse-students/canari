@@ -9,11 +9,14 @@
  *   bun archive/settle-selftest.mjs
  */
 import { forgivingProvoked, provokedFailures } from '../rowkit.mjs';
+import { ignoringExpectedLog } from '../watch.mjs';
 import {
   DUP3_SKIP,
   DUP7_ELSEWHERE,
   SEAT_CLAIM_OVERTAKEN_BODY,
   SETTLE_ROWS,
+  TOK_NARRATION,
+  authLines,
   blockedHereOnly,
   commitSequence,
   decidedAfter,
@@ -21,6 +24,8 @@ import {
   firedAtLeast,
   interveningOrder,
   nothingBefore,
+  renewalFailedOwn,
+  renewedOnceOwn,
   resubmissionLine,
   sessionSurvived,
   settleNarration,
@@ -159,6 +164,58 @@ ok('a socket close still breaks the row (unless the row forgave the cut first)',
 const untouched = rep({ clean: true });
 ok('no provoked failure returns the report unchanged', forgivingProvoked(untouched, [recs[2]]) === untouched);
 ok('firedAtLeast counts records', firedAtLeast('x', [1, 2], 2).ok && !firedAtLeast('x', [1], 2).ok);
+
+// ── TOK: #2420's [AUTH] lines, row-scoped, and the 401 they follow ──────────────────────────────
+console.log('TOK auth lines');
+// Verbatim from #2420 (head df564fccc), with the page's stamp in front.
+const A = {
+  renewing: '[05:00:00.100] [AUTH] 401 on POST /api/mls/commit - renewing the token and sending the same request once more',
+  meanwhile: '[05:00:00.100] [AUTH] POST /api/mls/commit: the token was renewed meanwhile - sent again with it',
+  ok200: '[05:00:00.300] [AUTH] 200 on POST /api/mls/commit after the token renewal',
+  failed: '[05:00:00.300] [AUTH] token renewal failed after a 401 on POST /api/mls/commit - TransportFailureError: request got no answer: TypeError: Failed to fetch - the request did nothing: DeliveryRenewalFailedError',
+  abandoned: '[05:00:00.300] [AUTH] token renewal abandoned at the request deadline after a 401 on POST /api/mls/commit - TimeoutError: x - the request did nothing: DeliveryRenewalFailedError',
+  refusedOnce: '[05:00:00.300] [AUTH] 401 on POST /api/mls/commit with a token already refused once renewed - not renewed again: DeliveryRefusedRenewedTokenError',
+  refusedAgain: '[05:00:00.300] [AUTH] 401 again on POST /api/mls/commit with a renewed token - DeliveryRefusedRenewedTokenError; that token is not renewed again',
+  account: '[05:00:00.300] [AUTH] POST /api/mls/commit was refused for one account and the token now names another - not sent again',
+  body: '[05:00:00.300] [AUTH] the 401 body of POST /api/mls/commit could not be released: TypeError: x',
+};
+const al = authLines(Object.values(A));
+ok('each [AUTH] shape lands in exactly its own key', Object.values(al).every((v) => v.length === 1) && al.renewalFailed[0] === A.failed && al.renewalAbandoned[0] === A.abandoned && al.refusedRenewedAgain[0] === A.refusedAgain);
+ok('control: a 401 on ANOTHER request is not the commit renewal', authLines([A.renewing.replace('/api/mls/commit', '/api/mls/messages/ack')]).renewing.length === 0);
+ok('control: a reworded success is not matched', authLines([A.ok200.replace('200', '201')]).okAfterRenewal.length === 0);
+
+console.log('TOK-1 judge');
+const one = (over = {}) => renewedOnceOwn({ auth: authLines([A.renewing, A.ok200]), fired401: 1, commitPosts: 2, ...over });
+ok('one 401, one renewal, the same request once more, a 200 -> all hold', allOk(one()));
+ok('control: no renewal line (the commit dropped in silence) FAILS', !allOk(one({ auth: authLines([A.ok200]) })));
+ok('control: no 200 after the renewal FAILS', !allOk(one({ auth: authLines([A.renewing]) })));
+ok('control: a third commit POST FAILS', !allOk(one({ commitPosts: 3 })));
+ok('control: a second 401 FAILS', !allOk(one({ fired401: 2 })));
+ok('control: any [AUTH] warn FAILS', !allOk(one({ auth: authLines([A.renewing, A.ok200, A.refusedAgain]) })));
+
+console.log('TOK-2 judge');
+const two = (over = {}) =>
+  renewalFailedOwn({ auth: authLines([A.renewing, A.failed]), fired401: 1, commitPosts: 1, gestureFailed: true, unknownLines: 0, epochBefore: 2, epochAfter: 2, accepts: 0, subjectAdded: false, ...over });
+ok('renewal failed typed, nothing resent, cleared, nobody added -> all hold', allOk(two()));
+ok('control: the 1.4.0 shape (kept as unknown, settled by the next send) FAILS', !allOk(two({ unknownLines: 2, epochAfter: 3, accepts: 1, subjectAdded: true })));
+ok('control: a renewal ABANDONED at the deadline is not this row', !allOk(two({ auth: authLines([A.renewing, A.abandoned]) })));
+ok('control: a gesture that reported success FAILS', !allOk(two({ gestureFailed: false })));
+ok('control: the commit sent again FAILS', !allOk(two({ commitPosts: 2 })));
+
+console.log('TOK narration and the 401');
+const narrated = (row, line) => ignoringExpectedLog(rep({ unexplained: [`log: ${line}`], warnings: [] }), TOK_NARRATION[row]).unexplained.length === 0;
+ok("TOK-1 forgives its renewal and its 200", narrated('TOK-1', A.renewing) && narrated('TOK-1', A.ok200));
+ok('control: TOK-1 does NOT forgive a failed renewal', !narrated('TOK-1', A.failed));
+ok('TOK-2 forgives its renewal and its failure, at warn level too', narrated('TOK-2', A.renewing) && ignoringExpectedLog(rep({ unexplained: [], warnings: [A.failed] }), TOK_NARRATION['TOK-2']).warnings.length === 0);
+ok('control: no TOK row forgives a renewed token refused again', !narrated('TOK-1', A.refusedAgain) && !narrated('TOK-2', A.refusedAgain));
+ok('control: the narration is the TOK rows\' only (no other settle row names it)', Object.keys(TOK_NARRATION).join() === 'TOK-1,TOK-2');
+const r401 = { rule: 0, mode: 'status-unsent', method: 'POST', url: URL_, done: 'fulfillRequest', gave: 401 };
+r = forgivingProvoked(rep({ badHttp: [`POST ${URL_} -> 401`], errors: [`Failed to load resource: the server responded with a status of 401 () <- POST ${URL_}`.replace(' <- POST ', ' ')] }), [r401]);
+ok("the row's own 401 is forgiven by its fault record (one line, one echo)", r.badHttp.length === 0 && r.forgivenAsProvoked.badHttp.length === 1);
+r = forgivingProvoked(rep({ badHttp: [`POST ${URL_} -> 401`, `POST ${URL_} -> 401`] }), [r401]);
+ok('control: a SECOND 401 on the commit stays dirt', !r.clean && r.badHttp.length === 1);
+r = forgivingProvoked(rep({ badHttp: ['POST https://dev.example/api/mls/messages/ack -> 401'] }), [r401]);
+ok('control: a 401 on another delivery request stays dirt', !r.clean && r.badHttp.length === 1);
 
 if (failures) {
   console.error(`\n${failures} settlement assertion(s) failed`);
