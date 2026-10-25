@@ -59,7 +59,7 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
    question). The Tout feed stays filtered by spaces for non-followers, so what widens is exactly
    what the author approved, one person at a time.
 
-### The four open questions, ANSWERED by the user on 2026-10-25
+### Follow requests: the four product rules taken on 2026-10-25, all of it still to build
 
 - **Q1 - ALL PERSONAL ACCOUNTS ARE PRIVATE** (user: *"Tous les comptes sont prives alors. Pas besoin
   de faire de distinctions entre les comptes."*). Following any PERSON is a request the person
