@@ -8,7 +8,7 @@ import {
 } from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
-import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
+import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
@@ -36,6 +36,9 @@ interface GroupCreationDeps {
   /** When true, skip UI selection (e.g. background key distribution via DM). */
   silent?: boolean;
 }
+
+/** What an invitation needs beyond creation: where the inviter's own `memberAdded` notice goes. */
+type InviteDeps = GroupCreationDeps & { addMessageToChat: NoticeWriter };
 
 /**
  * WHY A CONVERSATION WAS NOT CREATED - A TYPE, DECIDED WHERE THE REFUSAL HAPPENS.
@@ -348,7 +351,8 @@ export type BulkAdditionOutcome =
 /**
  * Core helper that collects all devices for the given user IDs, adds them to
  * the MLS group in a single bulk commit, delivers Welcome messages per-device,
- * and broadcasts a `memberAdded` system event to all existing members.
+ * and broadcasts a `memberAdded` system event to all existing members - writing the inviter's own
+ * notice under the frame's id, since MLS never hands this device its own frame.
  *
  * Users whose devices cannot be fetched are skipped with a warning rather than
  * aborting the entire operation.
@@ -359,7 +363,7 @@ export type BulkAdditionOutcome =
 async function processBulkAddition(
   memberIds: string[],
   conversation: Conversation,
-  deps: GroupCreationDeps
+  deps: InviteDeps
 ): Promise<BulkAdditionOutcome> {
   const { mlsService, userId, deviceKeyB64, log } = deps;
   const notAdded = (reason: BulkAdditionRefusal): BulkAdditionOutcome => ({
@@ -520,10 +524,15 @@ async function processBulkAddition(
     // Let's send one generic message listing all new users
     if (announcedUsers.size > 0) {
       try {
-        const controlMsg = encodeAppMessage(
-          mkVisibleSystem('memberAdded', JSON.stringify({ newUsers: [...announcedUsers] }))
+        // Our own notice is written under the frame's id once it is accepted: MLS never hands
+        // this device its own frame, and every other device writes the row from it.
+        await sendVisibleNotice(
+          mlsService,
+          conversation.id,
+          'memberAdded',
+          { newUsers: [...announcedUsers] },
+          { contactName: conversation.id, actor: userId, addMessageToChat: deps.addMessageToChat }
         );
-        await mlsService.sendMessage(conversation.id, controlMsg);
         await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
       } catch (e) {
         console.warn('Failed to broadcast member addition:', e);
@@ -687,7 +696,7 @@ async function performDirectAdd(
 export async function inviteMembersToGroup(
   memberIds: string[],
   conversation: Conversation,
-  deps: GroupCreationDeps
+  deps: InviteDeps
 ): Promise<BulkAdditionOutcome> {
   return processBulkAddition(memberIds, conversation, deps);
 }

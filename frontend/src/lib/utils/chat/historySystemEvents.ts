@@ -7,6 +7,7 @@ import type {
   ReadWatermarks,
 } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -19,10 +20,7 @@ import {
 } from '$lib/utils/chat/readState';
 import {
   chat_system_message_deleted,
-  chat_system_group_renamed,
-  chat_system_member_removed,
   chat_system_member_left,
-  chat_system_member_added,
   chat_system_conversation_deleted,
 } from '$lib/paraglide/messages';
 import {
@@ -254,17 +252,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       if (convo && convo.name !== data.newName) {
         setConversation(contactName, { ...convo, name: data.newName });
       }
-      const getName = await resolveDisplayNames([senderNorm]);
-      systemContent = chat_system_group_renamed({
-        sender: getName(senderNorm),
-        name: data.newName,
-      });
+      systemContent = await renderVisibleNotice('groupRenamed', data, senderNorm);
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
-      const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
-      systemContent = chat_system_member_removed({
-        sender: getName(senderNorm),
-        target: getName(data.targetUser),
-      });
+      systemContent = await renderVisibleNotice('memberRemoved', data, senderNorm);
+    } else if (parsed.system.event === 'groupImageChanged') {
+      // The notice only, which the replay never drew while the live path always did - so a device
+      // that met this frame only in the archive held one row fewer than every other member. The
+      // photo itself is the group metadata's, read fresh from the server, never from an old frame.
+      systemContent = await renderVisibleNotice('groupImageChanged', data, senderNorm);
     } else if (parsed.system.event === 'memberLeft' && data.userId) {
       // The same cross-check the live handler makes, for the same reason and with the same verdict:
       // the id is a self-asserted payload field, the stream row's sender is the identity MLS
@@ -275,16 +270,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         systemContent = chat_system_member_left({ user: getName(data.userId) });
       }
     } else if (parsed.system.event === 'memberAdded') {
-      const newUserIds: string[] =
-        data.newUsers && Array.isArray(data.newUsers)
-          ? data.newUsers
-          : data.newUser
-            ? [data.newUser]
-            : [];
-      const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
-      const added = newUserIds.map((u: string) => getName(u)).join(', ');
-      if (added)
-        systemContent = chat_system_member_added({ sender: getName(senderNorm), members: added });
+      systemContent = await renderVisibleNotice('memberAdded', data, senderNorm);
     } else if (parsed.system.event === 'channel_invitation' && data.channelId) {
       // Mirrors the live handler: both sides render the same card, the inviter's copy without a
       // Join button (`invitedName` is the discriminator). Replayed rather than ignored because an

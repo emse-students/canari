@@ -119,6 +119,14 @@ export interface AddMessageToChatOptions {
    * (an older build, or a proof this device could not check). Shown with a marker, never refused.
    */
   restoredUnverified?: boolean;
+  /**
+   * This call is the ONLY writer the row will ever get on this device - the acting device's own
+   * visible notice (`sendVisibleNotice`), which MLS never echoes back. Such a row takes the live
+   * path even during a bulk drain, exactly as an own message does: the drain buffer is discarded
+   * without flushing by a second drain start and by `resetMessageCatchupState`, and nothing else
+   * would ever write the row again.
+   */
+  soleWriter?: boolean;
 }
 
 /**

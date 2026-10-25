@@ -1,9 +1,16 @@
 // @vitest-environment happy-dom
 const leadership = vi.hoisted(() => ({ value: 'leader' as 'leader' | 'follower' | 'undecided' }));
 vi.mock('$lib/mls-client/tabLeader', () => ({ getTabLeadership: () => leadership.value }));
+// The acting device's own notice resolves names: a profile read nothing here is about.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 
 import { removeMemberAndBroadcast } from './groupActions';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
+import type { NoticeWriter } from './visibleNotices';
+import { decodeAppMessage } from '$lib/proto/codec';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import {
   COMMIT_LOCK_BUDGET_SPENT_REASON,
@@ -57,6 +64,9 @@ function harness() {
   return { mlsService, state, accept };
 }
 
+/** Where the acting device writes its own `memberRemoved` row; reset per test. */
+let ownWriter = vi.fn<NoticeWriter>(async () => {});
+
 const run = (mlsService: ReturnType<typeof createMlsServiceStub>) =>
   removeMemberAndBroadcast({
     mlsService,
@@ -64,11 +74,23 @@ const run = (mlsService: ReturnType<typeof createMlsServiceStub>) =>
     memberId: BOB,
     userId: ME,
     deviceKeyB64: 'k',
+    ownNotice: { contactName: G, addMessageToChat: ownWriter },
   });
+
+/** The id the one `memberRemoved` frame sent carries - the id every member's device writes. */
+function sentNoticeId(mlsService: ReturnType<typeof createMlsServiceStub>): string {
+  const frames = vi
+    .mocked(mlsService.sendMessage)
+    .mock.calls.map((call) => decodeAppMessage(call[1] as Uint8Array));
+  expect(frames).toHaveLength(1);
+  expect(frames[0]?.system?.event).toBe('memberRemoved');
+  return frames[0]!.messageId!;
+}
 
 describe('removeMemberAndBroadcast - a lost commit race', () => {
   beforeEach(() => {
     leadership.value = 'leader';
+    ownWriter = vi.fn<NoticeWriter>(async () => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
@@ -91,6 +113,12 @@ describe('removeMemberAndBroadcast - a lost commit race', () => {
     expect(state.tree).toEqual([`${ME}:da`, 'user-c:d1']);
     expect(state.epoch).toBe(5);
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    // The acting device holds the notice it sent, under the frame's own id.
+    expect(ownWriter).toHaveBeenCalledTimes(1);
+    expect(ownWriter.mock.calls[0][3]).toMatchObject({
+      isSystem: true,
+      messageId: sentNoticeId(mlsService),
+    });
   });
 
   it('commits nothing more when the commit that won had already removed the member', async () => {
@@ -104,8 +132,9 @@ describe('removeMemberAndBroadcast - a lost commit race', () => {
     await expect(run(mlsService)).resolves.toBe('already-out');
 
     expect(mlsService.removeMember).toHaveBeenCalledTimes(1);
-    // The winner announced it; the loser does not say it twice.
+    // The winner announced it; the loser does not say it twice - nor write a row of its own.
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(ownWriter).not.toHaveBeenCalled();
   });
 
   it('CC-3: the STAGE finds no leaf (a plain error, epoch unchanged) - the loser ends QUIETLY', async () => {
@@ -150,8 +179,10 @@ describe('removeMemberAndBroadcast - a lost commit race', () => {
     // No proof of progress, so no second attempt - the loop ends on a proof, never a count.
     expect(mlsService.removeMember).toHaveBeenCalledTimes(1);
     expect(state.tree).toContain(`${BOB}:d1`);
-    // The record IS the removal: its notice follows it even though the commit did not land.
+    // The record IS the removal: its notice follows it even though the commit did not land, and
+    // the acting device holds it too, under the frame's id.
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(ownWriter.mock.calls[0]?.[3]).toMatchObject({ messageId: sentNoticeId(mlsService) });
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('NOT committed'));
   });
 

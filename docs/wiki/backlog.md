@@ -27,6 +27,25 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P3 - A salon's `memberAdded` notice carries no minted id (review of #2412, 2026-10-25)
+
+`inviteMemberToChannel` (`useChannelWorkspaces.svelte.ts`) still sends its `memberAdded` through
+`mkSystem`, with no `messageId`, while every group notice uses `mkVisibleSystem` since the
+notice-identity fix ([chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted)).
+A salon row is server-authoritative, so the history exchange this PR is about does not reach it; what
+an id-less notice costs there (a duplicate on a replay or a re-fetch) is unmeasured. Not built.
+
+## P3 - Device-local rows written as `system` are relayed into other members' timelines (review of #2412, 2026-10-25)
+
+The acting device now writes its own visible notice under the frame's id
+([history-reconciliation](protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)).
+Left, not built: rows that only THIS device should ever hold are written with the same sentinel
+sender and a random id - the outbox's edge-blocked and send-failure lines (`outbox.ts`), the eviction
+notice (`eviction.ts`) - so they enter this device's digest, the diff pushes them to every peer that
+lacks them, and they land in other members' timelines marked unverified. The rule wanted is a
+property of the row ("device-local": never described, never relayed), carried at the write rather
+than guessed from the sender. Found by reading; the relay count in the field is unmeasured.
+
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
 When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the

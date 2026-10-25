@@ -9,6 +9,7 @@ import {
   channelInviteMessageId,
 } from '$lib/envelope';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
@@ -577,13 +578,8 @@ export async function handleSystemEvent(
   if (event === 'groupRenamed' && data.newName) {
     conversations.set(convoKey, { ...convo, name: data.newName });
     if (storage) await saveConversation(convoKey);
-    const getName = await resolveDisplayNames([senderNorm]);
-    await addMessageToChat(
-      'system',
-      m.chat_system_group_renamed({ sender: getName(senderNorm), name: data.newName }),
-      convoKey,
-      { isSystem: true, messageId }
-    );
+    const text = await renderVisibleNotice('groupRenamed', data, senderNorm);
+    if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
     log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
@@ -593,21 +589,13 @@ export async function handleSystemEvent(
       typeof data.imageMediaId === 'string' && data.imageMediaId ? data.imageMediaId : null;
     conversations.set(convoKey, { ...convo, imageMediaId });
     if (storage) await saveConversation(convoKey);
-    const getName = await resolveDisplayNames([senderNorm]);
-    await addMessageToChat(
-      'system',
-      imageMediaId
-        ? m.chat_system_group_photo_changed({ sender: getName(senderNorm) })
-        : m.chat_system_group_photo_removed({ sender: getName(senderNorm) }),
-      convoKey,
-      { isSystem: true, messageId }
-    );
+    const text = await renderVisibleNotice('groupImageChanged', data, senderNorm);
+    if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
     log(`🖼️ Group photo changed by ${senderNorm} (media=${imageMediaId ?? 'null'})`);
     return true;
   }
 
   if (event === 'memberRemoved' && data.targetUser) {
-    const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
     if (data.targetUser.toLowerCase() === userId.toLowerCase()) {
       // Current user was excluded. Mirror the peer-delete (`groupDeleted`) handling instead of a
       // silent purge: forget the WASM state (we can no longer decrypt future epochs) but KEEP the
@@ -634,15 +622,8 @@ export async function handleSystemEvent(
       });
       log(`[INFO] Excluded from group "${convoKey}" by ${senderNorm} - marked removed`);
     } else {
-      await addMessageToChat(
-        'system',
-        m.chat_system_member_removed({
-          sender: getName(senderNorm),
-          target: getName(data.targetUser),
-        }),
-        convoKey,
-        { isSystem: true, messageId }
-      );
+      const text = await renderVisibleNotice('memberRemoved', data, senderNorm);
+      if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
     }
     return true;
   }
@@ -694,22 +675,10 @@ export async function handleSystemEvent(
   }
 
   if (event === 'memberAdded') {
-    const newUserIds: string[] =
-      data.newUsers && Array.isArray(data.newUsers)
-        ? data.newUsers
-        : data.newUser
-          ? [data.newUser]
-          : [];
-    const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
-    const added = newUserIds.map((u: string) => getName(u)).join(', ');
-    if (added) {
-      await addMessageToChat(
-        'system',
-        m.chat_system_member_added({ sender: getName(senderNorm), members: added }),
-        convoKey,
-        { isSystem: true, messageId }
-      );
-    }
+    // The ONE rendering (`visibleNotices.ts`): the adder's device writes the same row under the
+    // same id itself, since MLS never hands it this frame.
+    const text = await renderVisibleNotice('memberAdded', data, senderNorm);
+    if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
     return true;
   }
 
