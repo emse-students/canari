@@ -1117,8 +1117,11 @@ access token is answered anonymous at `/api/auth/verify`
 `owner`, the delete asks core-service to end every session bound to that device except the caller's
 own (`endDeviceSessions` in `src/internal/device-sessions.ts`; the caller's `sid` comes from
 `X-Session-Id`). Every way that call can fail is the typed `DeviceSessionsNotEndedError`, answered
-503 and logged at `error` - never swallowed, never a success; the ban is already written and the
-delete is idempotent, so the client's retry completes it. A retirement ends none. What a device-bound
+503 and logged at `error` - never swallowed, never a success. The ban is already written and the
+device already signalled (the signal is sent BEFORE this step, so its failure skips neither); the
+panel still signs out the logins it shows for the row (`removeDeviceRow`), and whatever survives
+stays listed - a login whose device is gone gets its own row - for the user's retry. A retirement
+ends none. What a device-bound
 ending does not reach is stated in
 [sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25).
 

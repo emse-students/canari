@@ -213,6 +213,9 @@ const RESTORE_ANONYMOUS_LIMIT_PER_MINUTE = 120;
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
 
+/** How many ended sessions `AuthController` remembers having warned about (see `endedSessionsSaid`). */
+const ENDED_SESSIONS_SAID_CAP = 4096;
+
 /** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
 @Controller('auth')
 export class AuthController {
@@ -235,6 +238,13 @@ export class AuthController {
 
   /** Set at the first sid-less access token this process accepts, so it is said once (`sessionOfToken`). */
   private legacyTokenSeen = false;
+  /**
+   * Ended sessions whose refusal this process has already said at `warn` (`sessionOfToken`): a
+   * client holding such a token sends several requests before its refresh is refused, and the
+   * refusal is one fact per session, not per request. Bounded: the oldest entry is dropped past
+   * {@link ENDED_SESSIONS_SAID_CAP}, which costs at most a second line for that session.
+   */
+  private readonly endedSessionsSaid = new Set<string>();
 
   constructor(
     private readonly usersService: UsersService,
@@ -1335,9 +1345,18 @@ export class AuthController {
       throw e;
     }
     if (live) return { state: 'live', sessionId: payload.sid };
-    this.logger.warn(
-      `Access refused: session sid=${payload.sid} user=${payload.sub} has ended - its access token is answered anonymous`
-    );
+    if (this.endedSessionsSaid.has(payload.sid)) {
+      this.logger.debug(`Access refused again: session sid=${payload.sid} has ended`);
+    } else {
+      if (this.endedSessionsSaid.size >= ENDED_SESSIONS_SAID_CAP) {
+        const oldest = this.endedSessionsSaid.values().next().value;
+        if (oldest !== undefined) this.endedSessionsSaid.delete(oldest);
+      }
+      this.endedSessionsSaid.add(payload.sid);
+      this.logger.warn(
+        `Access refused: session sid=${payload.sid} user=${payload.sub} has ended - its access token is answered anonymous (said once per session)`
+      );
+    }
     return { state: 'ended' };
   }
 }

@@ -385,6 +385,9 @@ out.
   acceptance is logged ONCE per process at `log`, not per request. The branch is deleted one token
   lifetime after the deploy ([legacy-compatibility](legacy-compatibility.md)). The dev estate cannot
   rehearse it: its tokens already carry `sid`.
+- **An ended session is said once.** The refusal is logged at `warn` the first time per session per
+  process (a bounded set of 4096 ids), then at `debug`: a client sends several requests before its
+  refresh is refused, and the refusal is one fact.
 - **A failed read is not an answer.** It propagates as a 5xx - nginx fails the request, and a client
   keeps its session on a 5xx; it is never turned into "anonymous" (which would sign a user out on a
   database hiccup) nor into "logged in" (which would let an ended session through).
@@ -410,8 +413,10 @@ an OWNER's ban on a device id (`DELETE /mls/devices/:userId/:deviceId`,
 to end every session of that user BOUND to that device (`auth_sessions."deviceId"`, written by
 `bindDevice`) except the caller's own, through `AuthSessionsService.endDeviceSessions` - the same
 `DELETE ... RETURNING` + push-ending transaction as every other ending, cause `revoked-by-owner`. If
-that call fails the delete answers 503 (`DeviceSessionsNotEndedError`, never swallowed); the delete
-is idempotent, so the client's retry finishes it. A retirement (`reason=retired`) ends none - the id
+that call fails the delete answers 503 (`DeviceSessionsNotEndedError`, never swallowed), after the
+ban is written and the device signalled; the device panel signs the row's logins out itself on any
+answer (`removeDeviceRow`), and a login that survives stays listed as its own row for the user's
+retry. A retirement (`reason=retired`) ends none - the id
 was the caller's own install's. Not covered, stated: a session bound to NO device, or to a different
 id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
 

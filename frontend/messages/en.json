@@ -378,7 +378,7 @@
   "chat_no_shared_links": "No shared links.",
   "chat_no_shared_files": "No shared files.",
   "chat_file_label": "File",
-  "chat_device_delete_auth_error": "Device deletion failed (auth/server).",
+  "chat_device_delete_retry_error": "Removing this device did not complete. Check the list and try again.",
   "chat_device_remove_error": "Unable to remove this device.",
   "chat_device_rename_error": "Unable to rename this device.",
   "chat_device_os_browser": "Browser",

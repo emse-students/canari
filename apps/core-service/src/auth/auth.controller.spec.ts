@@ -1141,6 +1141,22 @@ describe('AuthController sessions', () => {
       expect(sessions.isLive).not.toHaveBeenCalled();
     });
 
+    it('says an ended session at warn once, not once per request', async () => {
+      sessions.isLive.mockResolvedValue(false);
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        for (let i = 0; i < 3; i++) {
+          const out = makeRes();
+          await controller.verify(makeReq({ bearer: accessFor(SID) }), out.res);
+          expect(out.headers['X-Logged-In']).toBe('false');
+        }
+        const refusals = warn.mock.calls.filter((c) => String(c[0]).includes('Access refused'));
+        expect(refusals).toHaveLength(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it('does not turn a failed session read into an answer: it propagates', async () => {
       sessions.isLive.mockRejectedValue(new Error('database down'));
       const out = makeRes();

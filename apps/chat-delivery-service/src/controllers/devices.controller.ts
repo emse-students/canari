@@ -964,12 +964,19 @@ export class DevicesController {
       );
     }
 
-    // 3. AN OWNER'S REVOCATION ENDS THE DEVICE'S SESSIONS HERE, server-side, so it never depends on
+    // 3. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
+    //    delete the user has to make twice, and the second half is invisible from the panel they
+    //    used. The denylist row above is the durable half; this is what makes it immediate. It is
+    //    sent BEFORE the sessions are ended, so a failure of that step below never skips it.
+    const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
+
+    // 4. AN OWNER'S REVOCATION ENDS THE DEVICE'S SESSIONS HERE, server-side, so it never depends on
     //    the panel's second request. Every session bound to the device except the caller's own is
     //    ended by core-service (`endDeviceSessions`); a retirement ends none - the id was the
-    //    caller's own install's. A failure is NOT swallowed: the delete answers 503, and it is
-    //    idempotent, so the client's retry finishes it. Not covered, stated: a session bound to no
-    //    device, or to another id - the panel's own session revocation ends those.
+    //    caller's own install's. A failure is NOT swallowed: the delete answers 503, the panel still
+    //    signs out the logins it shows for the device, and whatever survives stays listed for the
+    //    user's retry (a login whose device is gone gets its own row). Not covered, stated: a
+    //    session bound to no device, or to another id - the panel's own session revocation ends those.
     let sessionsEnded = 0;
     if (recordedReason === 'owner') {
       try {
@@ -977,18 +984,13 @@ export class DevicesController {
       } catch (e) {
         if (!(e instanceof DeviceSessionsNotEndedError)) throw e;
         this.logger.error(
-          `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} banned, but its sessions were NOT ended (${e.detail}) - answering 503 for the client to retry`
+          `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} banned and signalled=${signalled}, but its sessions were NOT ended (${e.detail}) - answering 503`
         );
         throw new ServiceUnavailableException({
           message: 'The device is banned but its sessions could not be ended yet. Retry.',
         });
       }
     }
-
-    // 4. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
-    //    delete the user has to make twice, and the second half is invisible from the panel they
-    //    used. The denylist row above is the durable half; this is what makes it immediate.
-    const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
 
     this.logger.log(
       `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} reason=${recordedReason} sessionsEnded=${sessionsEnded} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted} signalled=${signalled}`

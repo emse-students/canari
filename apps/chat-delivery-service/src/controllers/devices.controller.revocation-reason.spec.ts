@@ -183,9 +183,13 @@ describe('DevicesController - the cause of a ban', () => {
     it('answers 503 - never success - when the sessions could not be ended', async () => {
       endSessions.mockRejectedValue(new DeviceSessionsNotEndedError('status=500'));
       await expect(del(undefined)).rejects.toBeInstanceOf(ServiceUnavailableException);
-      // The ban is recorded (the retry is idempotent); the device is not told it is done.
+      // The ban is recorded and the device is signalled BEFORE the sessions step, so its failure
+      // skips neither.
       expect(query).toHaveBeenCalledTimes(1);
-      expect(notify).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith('u1', 'd2');
+      expect(notify.mock.invocationCallOrder[0]).toBeLessThan(
+        endSessions.mock.invocationCallOrder[0]
+      );
     });
 
     it('refuses an unknown reason rather than guessing it, and writes nothing', async () => {
