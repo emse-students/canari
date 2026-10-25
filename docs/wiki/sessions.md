@@ -130,6 +130,11 @@ superseded token; with a HOME press before the kill it had rotated again, so the
 the current one. The server's own log for the original failure says `Refresh token replay detected
 sid=… - session revoked`, in the same second as the phone's `refresh 401`.
 
+**A desktop browser has the same hole and no flush to close it** (KILL-2, 2026-10-25): Chrome
+commits its cookie store about every 30 s, and a hard kill inside that window, after two rotations,
+reproduced the replay and the sign-out. It is an open P2 in [backlog](backlog.md), with its
+reproduction and a candidate server-side fix.
+
 Two rules come out of it, and they generalise past Android:
 
 - **A rotating credential must be durably written before it is relied upon.** Every response that may
