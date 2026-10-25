@@ -2129,10 +2129,12 @@ export abstract class BaseMlsService implements IMlsService {
             this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome complete');
             // A KEY GROUP'S WELCOME IS NOT A CONVERSATION'S, and the listener below is the
             // conversation layer: it writes a sidebar row for any group it does not hold one for,
-            // then restores, reconciles and loads history for it. The handler classified the group
-            // BEFORE installing it (`handleDistributionWelcome` registers or notes it first), so the
-            // fact is in hand here; announcing it anyway persisted an `active` row for a community's
-            // key group, which the next boot's discovery then purged again.
+            // then restores, reconciles and loads history for it. A key group is in the set this
+            // reads either because the session already named it, or because `handleWelcome` read
+            // its server row and registered it BEFORE the install; announcing it anyway persisted
+            // an `active` row for a community's key group, which the next boot's discovery purged.
+            // A key group whose row was unreadable AND that the session did not name is not in the
+            // set and is still announced - it is in the backlog.
             if (this.isDistributionGroup(groupId)) {
               console.log(
                 `[QUEUE] Welcome for key group ${groupId.slice(0, 8)}... - not announced to the conversation layer`

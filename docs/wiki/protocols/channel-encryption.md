@@ -1747,26 +1747,6 @@ load.
 **A departing member's LEAF stayed in the tree** - the last of the three, and the largest. It has
 its own section below.
 
-### A key group's Welcome wrote a conversation row, and discovery asked its roster (2026-10-25)
-
-Measured at boot on `1.4.1-alpha.3`: `GET /api/mls/groups/<id>/user-members -> 403`, then
-`[DISCOVERY] ... is a Graine distribution group - removing conversation row`, for a community's key
-group. Two defects, one behind the other:
-
-- **The row came from the Welcome announcement.** Since section 20 an admitter Welcomes a newcomer
-  into the key group. `handleDistributionWelcome` installs it without a row, but the drain
-  (`BaseMlsService.processQueue`) then fired `onWelcomeProcessed` for every Welcome, and that
-  listener (`sessionAuth.ts`) builds an `active` row for any group it holds none for, saves it and
-  restores. The drain now reads `isDistributionGroup` - set by the handler BEFORE the install - and
-  does not announce a key group's Welcome.
-- **Discovery asked the roster before the kind.** `discoverMissingGroups` read the `dm_groups` row,
-  asked `getGroupUserMembers` on any active one, and only then tested `isDistributionGroupMeta` on the
-  row it already held. The server refuses that roster on a key group, so the 403 was provoked for a
-  question already answered. The kind is now tested first; the roster is asked of conversations only.
-
-What is still open - a key-group Welcome whose `dm_groups` row could not be read - is in
-[backlog](../backlog.md).
-
 ## 10. A departure moved nothing, and rotation waited on it - FIXED 2026-08-19
 
 `graineRotationReason` returns `roster` when a session's `distributionEpoch` no longer matches the
@@ -3189,6 +3169,30 @@ sealed at an epoch the newcomer cannot open.
 on the add, then `[SEND][send-...] PENDING_ADMITTED group=... frameEpoch=E devices=<device>@E` on the
 first message, and no `ACTIVATION_REDELIVER` line at all. `NOTIF-17b` is the regression witness.
 A client predating `admits` records nothing; its newcomers are routed once they activate.
+
+### A key group's Welcome wrote a conversation row, and discovery asked its roster - FIXED 2026-10-25
+
+Measured at boot on `1.4.1-alpha.3`: `GET /api/mls/groups/<id>/user-members -> 403`, then
+`[DISCOVERY] ... is a Graine distribution group - removing conversation row`, for a community's key
+group. The admitter's Welcome above is the one door that reaches the conversation machinery, and
+three places treated it as a conversation:
+
+- **The drain announced it.** `handleDistributionWelcome` installs the group without a row, but
+  `BaseMlsService.processQueue` then fired `onWelcomeProcessed` for every Welcome, and that listener
+  (`sessionAuth.ts`) builds an `active` row for any group it holds none for, saves it and restores.
+  The drain now reads `isDistributionGroup` and does not announce a key group's Welcome.
+- **An unreadable server row made it a conversation.** `handleWelcome` classified the group from
+  `getGroupMeta` alone, which answers `null` for a network failure or any non-2xx. A restart
+  re-delivering the Welcome after the startup walk had registered the group therefore took the
+  conversation path (`writeRowForHeldGroup`, `onGroupReady`). The row decides when it was read - the
+  server outranks the session's memory - and `isDistributionGroup` decides when it was not.
+- **Discovery asked the roster before the kind.** `discoverMissingGroups` asked `getGroupUserMembers`
+  of any active absent group, then tested `isDistributionGroupMeta` on the row it already held. The
+  server refuses that roster on a key group, so the 403 was provoked for a question already
+  answered. The kind is now tested first.
+
+Left open - a Welcome whose row is unreadable for a group this session does not know either - is
+in [backlog](../backlog.md).
 
 ## 21. Graine v2: an author that is proven, a ciphertext bound to its place - DECIDED BY THE USER 2026-09-28
 

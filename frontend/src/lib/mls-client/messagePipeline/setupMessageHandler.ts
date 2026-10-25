@@ -58,6 +58,7 @@ import {
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { restoredConversationRow } from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
@@ -304,6 +305,34 @@ interface WelcomeArgs {
 }
 
 /**
+ * Registers a key group from its `dm_groups` row: the scope when it can be named, the kind alone
+ * when it cannot - a private salon's row carries its channel, and the community behind it is known
+ * only if this session loaded that channel.
+ */
+function registerFromServerRow(
+  mlsService: MessageHandlerDeps['mlsService'],
+  groupId: string,
+  groupMeta: GroupMeta
+): void {
+  const workspaceId =
+    groupMeta.distributionWorkspaceId ??
+    (groupMeta.distributionChannelId ? workspaceForChannel(groupMeta.distributionChannelId) : null);
+  if (groupMeta.distributionWorkspaceId) {
+    mlsService.registerDistributionGroup(
+      workspaceScope(groupMeta.distributionWorkspaceId),
+      groupId
+    );
+  } else if (groupMeta.distributionChannelId && workspaceId) {
+    mlsService.registerDistributionGroup(
+      channelScope(workspaceId, groupMeta.distributionChannelId),
+      groupId
+    );
+  } else {
+    mlsService.noteDistributionGroup(groupId);
+  }
+}
+
+/**
  * Installs a Welcome into a Graine key-distribution group - the admitter's door of
  * channel-encryption section 20 - WITHOUT the conversation machinery of {@link handleWelcome}.
  *
@@ -331,32 +360,22 @@ async function handleDistributionWelcome({
   content: Uint8Array;
   groupId: string;
   ratchetTreeBytes: Uint8Array | undefined;
-  groupMeta: GroupMeta;
+  /**
+   * The server row, or `null` when it could not be read and this session already names the group
+   * as a key group - in which case the registration it holds is kept as it is.
+   */
+  groupMeta: GroupMeta | null;
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
 }): Promise<boolean> {
   const { mlsService, userId, log } = deps;
   const short = groupId.slice(0, 8);
-  log(`[WELCOME] ${short}... is a KEY-DISTRIBUTION group - installing it as a seed carrier`);
+  log(
+    `[WELCOME] ${short}... is a KEY-DISTRIBUTION group (${groupMeta ? 'server row' : 'server row unreadable, named by this session'}) - installing it as a seed carrier`
+  );
 
-  // The scope when it can be named, the kind alone when it cannot: a private salon's row carries
-  // its channel, and the community behind it is known only if this session loaded that channel.
-  const workspaceId =
-    groupMeta.distributionWorkspaceId ??
-    (groupMeta.distributionChannelId ? workspaceForChannel(groupMeta.distributionChannelId) : null);
-  if (groupMeta.distributionWorkspaceId) {
-    mlsService.registerDistributionGroup(
-      workspaceScope(groupMeta.distributionWorkspaceId),
-      groupId
-    );
-  } else if (groupMeta.distributionChannelId && workspaceId) {
-    mlsService.registerDistributionGroup(
-      channelScope(workspaceId, groupMeta.distributionChannelId),
-      groupId
-    );
-  } else {
-    mlsService.noteDistributionGroup(groupId);
-  }
+  // No row: the session's own registration is what classified the group, and it stays untouched.
+  if (groupMeta) registerFromServerRow(mlsService, groupId, groupMeta);
 
   const promote = () =>
     mlsService
@@ -450,7 +469,17 @@ async function handleWelcome({
   // the client that adds a community newcomer (or grants a private salon) Welcome their devices,
   // and every step below this line would build a sidebar row for it - a "Groupe" conversation
   // carrying seeds. The `dm_groups` row says which kind it is, and it is already in hand.
-  if (groupMeta?.distributionWorkspaceId || groupMeta?.distributionChannelId) {
+  //
+  // AND WHEN THE ROW CANNOT BE READ, THIS SESSION MAY ALREADY KNOW. A restart re-delivers a key
+  // group's Welcome after the startup walk registered the group; with `getGroupMeta` answering
+  // `null` (network, any non-2xx) the row's test alone sent it down the conversation path below,
+  // which writes a sidebar row for it (`writeRowForHeldGroup`, `onGroupReady`). The row decides
+  // when it was read - the server outranks what this session remembers - and memory only when it
+  // was not; "row unreadable AND group unknown in memory" is the one case left unclassified here.
+  const isKeyGroup = groupMeta
+    ? isDistributionGroupMeta(groupMeta)
+    : mlsService.isDistributionGroup(terminalId);
+  if (isKeyGroup) {
     return handleDistributionWelcome({
       content,
       groupId: terminalId,
