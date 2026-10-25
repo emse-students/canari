@@ -31,6 +31,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import { startGatewayHandshake, openGatewayConnection } from './initializeConnection';
 import type { ConnectionDeps } from './initializeConnection';
 import type { IMlsService } from './IMlsService';
+import { GatewayOpenAbandonedError } from './gatewaySocketOpen';
 
 /** Only the seams these two functions touch; everything else would be scenery. */
 const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
@@ -38,6 +39,8 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
   const setReconnectAttempts = vi.fn();
   const mlsService = {
     connect,
+    gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+    socketFence: () => 0,
     onDisconnect: vi.fn(),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     sendDisconnect: vi.fn(),
@@ -71,7 +74,7 @@ describe('a handshake started before anything awaits it', () => {
     const started = startGatewayHandshake(deps);
 
     await expect(started).resolves.toBeNull();
-    expect(connect).toHaveBeenCalledWith('jwt-access-token');
+    expect(connect).toHaveBeenCalledWith('jwt-access-token', 0);
   });
 
   it('settles to the error instead of rejecting, because nobody is listening yet', async () => {
@@ -158,12 +161,93 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 
+  it('runs nothing after the open until the socket a rotation reopened has settled', async () => {
+    // THE HANDSHAKE RUNS BESIDE A STATE LOAD THAT CAN ROTATE THE DEVICE ID, and the rotation reopens
+    // the socket under the new id. The pending fetch and the KeyPackage round must run on that
+    // socket, never on the one carrying the abandoned id - and a failed reopen fails this connection.
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const { deps, mlsService, setIsWsConnected } = makeDeps(connect);
+    let release!: () => void;
+    (mlsService as unknown as { gatewaySocketSettled: () => Promise<void> }).gatewaySocketSettled =
+      vi.fn(() => new Promise<void>((r) => (release = r)));
+    const started = startGatewayHandshake(deps);
+
+    const opened = openGatewayConnection(deps, started);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mlsService.fetchPendingMessages).not.toHaveBeenCalled();
+    expect(setIsWsConnected).not.toHaveBeenCalled();
+
+    release();
+    await expect(opened).resolves.toBe(true);
+    expect(mlsService.fetchPendingMessages).toHaveBeenCalledOnce();
+  });
+
+  it('fails the connection when the reopen after a rotation failed', async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const { deps, mlsService, setIsWsConnected } = makeDeps(connect);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (mlsService as unknown as { gatewaySocketSettled: () => Promise<void> }).gatewaySocketSettled =
+      vi.fn().mockRejectedValue(new Error('reopen refused'));
+
+    await expect(openGatewayConnection(deps, startGatewayHandshake(deps))).resolves.toBe(false);
+    expect(setIsWsConnected).toHaveBeenCalledWith(false);
+    expect(mlsService.fetchPendingMessages).not.toHaveBeenCalled();
+    // No disconnect handler heard it (it is registered after the settle) and the login has no ladder
+    // of its own: the reconnect is scheduled here, not left to the watchdog.
+    expect(deps.scheduleReconnect).toHaveBeenCalledOnce();
+  });
+
+  it('schedules nothing for a reopen failure on the reconnect path - its own ladder retries', async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const { deps, mlsService } = makeDeps(connect);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (mlsService as unknown as { gatewaySocketSettled: () => Promise<void> }).gatewaySocketSettled =
+      vi.fn().mockRejectedValue(new Error('reopen refused'));
+
+    await expect(openGatewayConnection(deps)).resolves.toBe(false);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+  });
+
+  it('treats an open a pause abandoned as no failure: nothing accused, nothing scheduled', async () => {
+    const connect = vi.fn().mockRejectedValue(new GatewayOpenAbandonedError('paused'));
+    const { deps, setIsWsConnected } = makeDeps(connect);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleError.mockClear();
+
+    await expect(openGatewayConnection(deps, startGatewayHandshake(deps))).resolves.toBe(false);
+    expect(setIsWsConnected).toHaveBeenCalledWith(false);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('reads the socket fence BEFORE the token fetch on the reconnect path', async () => {
+    // A backgrounded phone parks this await; the pause that lands in it moves the fence, and the
+    // connect handed the OLD fence opens nothing (`BaseMlsService.socketRotation.test.ts`).
+    let generation = 4;
+    let releaseToken!: (t: string) => void;
+    getTokenMock.mockReturnValueOnce(new Promise<string>((r) => (releaseToken = r)));
+    const connect = vi
+      .fn()
+      .mockRejectedValue(new GatewayOpenAbandonedError('paused during its token fetch'));
+    const { deps, mlsService } = makeDeps(connect);
+    (mlsService as unknown as { socketFence: () => number }).socketFence = () => generation;
+
+    const opened = openGatewayConnection(deps);
+    await new Promise((r) => setTimeout(r, 0));
+    generation = 5;
+    releaseToken('jwt-late');
+
+    await expect(opened).resolves.toBe(false);
+    expect(connect).toHaveBeenCalledWith('jwt-late', 4);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+  });
+
   it('opens one itself when handed nothing, which is what the reconnect path does', async () => {
     const connect = vi.fn().mockResolvedValue(undefined);
     const { deps } = makeDeps(connect);
 
     await expect(openGatewayConnection(deps)).resolves.toBe(true);
 
-    expect(connect).toHaveBeenCalledWith('jwt-access-token');
+    expect(connect).toHaveBeenCalledWith('jwt-access-token', 0);
   });
 });

@@ -38,7 +38,12 @@ import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
+import {
+  GatewayOpenAbandonedError,
+  type GatewaySocketOpen,
+} from '$lib/mls-client/gatewaySocketOpen';
 import { getToken } from '$lib/stores/auth';
+import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
@@ -273,19 +278,37 @@ export class TauriMlsService extends BaseMlsService {
     return this.ws !== null;
   }
 
-  /** Tauri-native `invoke` wrapper - opens a NativeWebSocket to the chat gateway, passing the Bearer token in the URL query string for mobile compatibility. */
-  async connect(token?: string): Promise<void> {
+  /**
+   * Opens a NativeWebSocket to the chat gateway under `open.deviceId`, passing the Bearer token in
+   * the URL query string for mobile compatibility. Reached through `connect` only.
+   *
+   * FENCED AFTER EACH AWAIT: the release of the previous socket and the native connect both yield,
+   * and a pause landing in either must leave no socket - so `open.isCurrent()` is read after each,
+   * and a native socket that arrives for an abandoned open is released rather than assigned.
+   */
+  protected override async openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
+    const { deviceId, token } = open;
     // Unlisten + disconnect before reconnecting so the Close event doesn't trigger disconnectCallback.
+    // EVERY SHARED FIELD IS LET GO BEFORE THE AWAIT, never after it: once this open yields, a pause
+    // and a resume may have handed `ws` and `wsUnlisten` to a LATER open, and a write here would
+    // clobber that one's live socket. After each await this open touches only its own locals until
+    // the fence says it is still current.
     this.clearHeartbeat();
-    if (this.ws) {
-      try {
-        this.wsUnlisten?.();
-        this.wsUnlisten = null;
-        await this.ws.disconnect();
-      } catch {
-        /* ignore */
-      }
+    const previous = this.ws;
+    if (previous) {
+      this.wsUnlisten?.();
+      this.wsUnlisten = null;
       this.ws = null;
+      try {
+        await previous.disconnect();
+      } catch (e) {
+        console.log(
+          `[WS] the previous native socket was already gone: ${sanitizeForLog(String(e))}`
+        );
+      }
+    }
+    if (!open.isCurrent()) {
+      throw new GatewayOpenAbandonedError('paused while the previous socket was released');
     }
 
     if (!this._visibilityHandler && typeof document !== 'undefined') {
@@ -337,26 +360,25 @@ export class TauriMlsService extends BaseMlsService {
 
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the
     // Bearer token explicitly in the URL query string.
-    let resolvedToken = token;
-    if (!resolvedToken) {
-      try {
-        resolvedToken = await getToken();
-      } catch {
-        // Proceed without token; gateway will reject with 401 if required.
-      }
-    }
-
     // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
     const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
-    const { url: wsUrl, redacted } = gatewaySocketUrl(
-      wsBase,
-      this.deviceId,
-      resolvedToken || undefined
-    );
+    const { url: wsUrl, redacted } = gatewaySocketUrl(wsBase, deviceId, token);
     console.log(`[WS] Opening connection → ${redacted}`);
 
-    this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
-    console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
+    const socket = await connectNativeSocket(
+      NativeWebSocket.connect(wsUrl),
+      NATIVE_CONNECT_TIMEOUT_MS
+    );
+    if (!open.isCurrent()) {
+      // The pause already settled this open; the socket the plugin handed back is nobody's.
+      console.log('[WS] a native socket arrived for an open a pause abandoned - released');
+      socket.disconnect().catch((e: unknown) => {
+        console.warn(`[WS] releasing the abandoned native socket failed: ${String(e)}`);
+      });
+      throw new GatewayOpenAbandonedError('paused during the native connect');
+    }
+    this.ws = socket;
+    console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
       // Any incoming frame proves the server is alive - reset heartbeat miss counter (parity WebMlsService).
@@ -365,6 +387,11 @@ export class TauriMlsService extends BaseMlsService {
       }
 
       if (msg.type === 'Close') {
+        // Only THIS socket's close releases the shared fields: a later open may own them now.
+        if (this.ws !== socket) {
+          console.log('[WS] a close arrived for a native socket already replaced - ignored');
+          return;
+        }
         this.ws = null;
         this.clearHeartbeat();
         const closeData = msg.data as { code: number; reason: string } | null;
@@ -551,7 +578,7 @@ export class TauriMlsService extends BaseMlsService {
    * see {@link IMlsService.pauseSocket}. The listener goes first, so the `Close` the plugin may
    * still deliver cannot report a disconnection either.
    */
-  pauseSocket(): void {
+  protected override pausePlatformSocket(): void {
     this.clearHeartbeat();
     const ws = this.ws;
     if (!ws) return;

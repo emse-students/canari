@@ -54,6 +54,16 @@ Three paths are left, none built:
   that has none. The drain needs the handler's verdict ("installed a conversation"), not "did not
   throw". Found by reading (review of #2408).
 
+## P3 - Two edges left by the gateway-socket rotation fix (review of #2407, 2026-10-25)
+
+- **A follower tab that rotates the device id while the leader's socket carries it.** Tabs of one
+  browser share the id; a follower's rotation moves the stored id under a leader whose socket still
+  carries the old one, and nothing tells the leader. Predates #2407, which reopens only its own
+  document's socket ([auth](frontend/modules/auth.md#the-device-id-is-not-final-when-the-handshake-starts-fixed-2026-10-25)).
+- **A poll deadline in the hour summer time repeats is ambiguous.** A `datetime-local` value in that
+  hour names its FIRST occurrence, so a deadline set "in an hour" during it reads as now and is
+  refused. A product edge, untested now; the test that met it pins its clock (`pollDraft.test.ts`).
+
 ## P3 - What a republication still does not move in the feeds (review of #2384, 2026-10-24)
 
 - **The promo cutoff reads `publishedAt`**, so a post published before the reader's promo opens

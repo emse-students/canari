@@ -754,10 +754,13 @@ function releaseLoginStoppedBySignOut(
   if (client) {
     client.pauseSocket();
     if (handshake) {
-      void handshake.then(() => {
+      // AND AFTER ANY REOPEN QUEUED BEHIND IT: a rotation during this login's init reopens the
+      // socket under the new id, and released at the handshake alone that reopen would outlive us.
+      const release = (): void => {
         cb.log('[INIT] Stopped login: its gateway handshake settled - socket released.');
         client.pauseSocket();
-      });
+      };
+      void handshake.then(() => client.gatewaySocketSettled()).then(release, release);
     }
   }
   // A live session here is another login's (this one's was ended by the sign-out), and so is its flag.
@@ -1344,6 +1347,10 @@ export async function loginImpl(
     // both paths above, which is everything the socket needs; the MLS state load below needs
     // nothing from the socket. Measured on production 2026-09-16, the two ran one after the other
     // and cost 236 ms + 182 ms of a 1308 ms cold start.
+    //
+    // THE ID IT CARRIES IS NOT YET FINAL: the init below can rotate it (a lost state re-enrolled, a
+    // credential naming someone else). The rotation reopens the socket under the new id itself, and
+    // `openGatewayConnection` waits for that reopen (`gatewaySocketSettled`) before anything uses it.
     //
     // THE ORDER THAT MATTERS IS NOT "BOTH FINISH" BUT "NOTHING IS PROCESSED BEFORE THE THING THAT
     // CAN PROCESS IT EXISTS", exactly as for the revocation answer above. A frame that arrives on

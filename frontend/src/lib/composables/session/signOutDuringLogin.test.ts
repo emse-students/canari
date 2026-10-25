@@ -85,7 +85,7 @@ vi.mock('$lib/utils/chat/connection', async (importOriginal) => {
     getIsTabLeader: () => true,
     // What the real one does on a leader tab, minus the token import: the socket opens beside the load.
     startGatewayHandshake: (deps: { mlsService: IMlsService }) =>
-      deps.mlsService.connect('access-token').then(
+      deps.mlsService.connect('access-token', deps.mlsService.socketFence()).then(
         () => null,
         (e: unknown) => e as Error
       ),
@@ -117,6 +117,8 @@ function fakeClient(held: { init?: Held; resolveDeviceId?: Held } = {}) {
     connect: vi.fn(async () => {
       state.socketOpen = true;
     }),
+    gatewaySocketSettled: vi.fn(async () => {}),
+    socketFence: () => 0,
     pauseSocket: vi.fn(() => {
       state.socketOpen = false;
     }),
@@ -294,6 +296,34 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.getIsLoginInProgress()).toBe(false);
     expectQuietStop(s);
     expect(logs(s.cb)).toContain('after mls-init-and-storage');
+  });
+
+  it('releases the socket again once a reopen queued by a rotation during init has settled', async () => {
+    // The init rotated the device id and queued a reopen; the sign-out lands while it is in flight.
+    // Released at the handshake alone, the socket that reopen opens would outlive the login.
+    const initHeld = deferred();
+    const a = fakeClient({ init: initHeld });
+    const reopen = deferred();
+    a.known.gatewaySocketSettled.mockImplementation(() => reopen.promise);
+    const s = session([a.client]);
+
+    const login = loginImpl(s.ctx, s.cb);
+    await a.initReached.promise;
+    await clearAuth();
+    initHeld.resolve();
+    await login;
+    await s.holder.whenRetired();
+    expect(a.state.socketOpen).toBe(false);
+
+    // The reopen lands after the release, its socket open on the stopped login's client...
+    a.state.socketOpen = true;
+    const pausesBefore = a.known.pauseSocket.mock.calls.length;
+    reopen.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // ...and is released by the wait on the settle, not left open.
+    expect(a.known.pauseSocket.mock.calls.length).toBeGreaterThan(pausesBefore);
+    expect(a.state.socketOpen, 'a reopen outlived the stopped login').toBe(false);
   });
 
   it('after the session went live: the sign-out ends it and the login opens nothing further', async () => {

@@ -1,4 +1,5 @@
 import type { IMlsService } from './IMlsService';
+import { GatewayOpenAbandonedError } from './gatewaySocketOpen';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
@@ -89,10 +90,15 @@ export type StartedHandshake = Promise<Error | null>;
 /**
  * Starts the gateway handshake WITHOUT waiting for it, so it runs beside the MLS state load.
  *
- * The two have no data dependency in either direction: the socket carries a device id and a token,
- * both of which exist before a byte of MLS state is decrypted. Measured on production 2026-09-16,
- * the handshake was 182 ms of a 1308 ms cold start and every one of those milliseconds was spent
- * waiting for a state the socket never reads.
+ * The socket carries a device id and a token, both of which exist before a byte of MLS state is
+ * decrypted. Measured on production 2026-09-16, the handshake was 182 ms of a 1308 ms cold start and
+ * every one of those milliseconds was spent waiting for a state the socket never reads.
+ *
+ * ONE DEPENDENCY RUNS THE OTHER WAY, AND IT IS THE DEVICE ID: the state load can ROTATE it (a lost
+ * state re-enrolled, a credential naming someone else). The rotation itself reopens the socket under
+ * the new id (`BaseMlsService.reopenGatewaySocketAfterRotation`), and {@link openGatewayConnection}
+ * waits for that reopen before the post-connect half. The overlap is kept: only a rotating login pays
+ * the second handshake.
  *
  * WHAT MAKES IT SAFE IS NOT HERE BUT AT THE OTHER END: an early socket can be handed a frame before
  * the MLS client that must interpret it exists, so `BaseMlsService` holds every inbound frame until
@@ -110,10 +116,12 @@ export function startGatewayHandshake(
     return null;
   }
   deps.log('Connecting to Gateway…');
+  // The fence is read BEFORE the token fetch, which is the await a pause can land in.
+  const fence = deps.mlsService.socketFence();
   return (async () => {
     const { getToken } = await import('$lib/stores/auth');
     const token = await getToken();
-    await deps.mlsService.connect(token);
+    await deps.mlsService.connect(token, fence);
   })().then(
     () => null,
     (e: unknown) => (e instanceof Error ? e : new Error(String(e)))
@@ -139,6 +147,8 @@ export async function openGatewayConnection(
     return false;
   }
 
+  /** Set when the open succeeded and the reopen a rotation queued behind it is what failed. */
+  let reopenFailed = false;
   try {
     if (started) {
       // The failure is RE-THROWN rather than returned, so both routes reach the one catch below
@@ -147,9 +157,22 @@ export async function openGatewayConnection(
       if (failure) throw failure;
     } else {
       log('Connecting to Gateway…');
+      // Read BEFORE the token fetch: a backgrounded phone parks this await, and the pause that lands
+      // in it must not be followed by a socket (`IMlsService.connect`).
+      const fence = mlsService.socketFence();
       const { getToken } = await import('$lib/stores/auth');
       const token = await getToken();
-      await mlsService.connect(token);
+      await mlsService.connect(token, fence);
+    }
+    // THE SOCKET THAT OPENED MAY NOT BE THE ONE THAT STAYS. The login's handshake runs beside the MLS
+    // state load, and that load can rotate the device identity; the rotation queues a reopen under
+    // the new id. Nothing below runs - not the pending fetch, not the KeyPackage round - until the
+    // socket carries the id it will keep, and a failed reopen fails this connection like any open.
+    try {
+      await mlsService.gatewaySocketSettled();
+    } catch (settleErr) {
+      reopenFailed = true;
+      throw settleErr;
     }
     setIsWsConnected(true);
     setReconnectAttempts(0);
@@ -192,6 +215,13 @@ export async function openGatewayConnection(
       log('Gateway connection stopped - a sign-out is in progress.');
       throw wsErr;
     }
+    // A PAUSE ABANDONED THE OPEN (backgrounded, or this login released by a sign-out): nothing was
+    // refused, so nothing accuses and nothing is scheduled - the resume opens the next socket.
+    if (wsErr instanceof GatewayOpenAbandonedError) {
+      setIsWsConnected(false);
+      log(`Gateway connection abandoned - ${wsErr.reason}; the next resume opens it.`);
+      return false;
+    }
     const msg = String(wsErr);
     setIsWsConnected(false);
     log(`Gateway inaccessible: ${msg}`);
@@ -199,6 +229,14 @@ export async function openGatewayConnection(
     // Session expired is a permanent auth failure - re-throw so callers can
     // stop retrying instead of scheduling backoff reconnects.
     if (wsErr instanceof Error && wsErr.name === 'SessionExpiredError') throw wsErr;
+    // THE REOPEN AFTER A ROTATION FAILED ON A HANDED-IN HANDSHAKE - the login's. No disconnect
+    // handler was registered to hear it (that happens above, after the settle), and the login has
+    // no ladder of its own, so the reconnect is scheduled HERE rather than left to the watchdog. The
+    // reconnect path needs none: its own failure arms the next rung.
+    if (reopenFailed && started) {
+      log('[WS] the socket reopened under the rotated device id failed - reconnect scheduled.');
+      scheduleReconnect();
+    }
     return false;
   }
 }

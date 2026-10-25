@@ -4,6 +4,7 @@ import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitS
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
+import type { GatewaySocketOpen } from '$lib/mls-client/gatewaySocketOpen';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
 import {
@@ -47,7 +48,6 @@ import {
   isHeartbeatFrame,
 } from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { getToken } from '$lib/stores/auth';
 import {
   loadMlsState,
   saveMlsState,
@@ -410,8 +410,16 @@ export class WebMlsService extends BaseMlsService {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /** WASM client wrapper - opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
-  async connect(token?: string): Promise<void> {
+  /**
+   * Opens a native browser WebSocket to the chat gateway under `open.deviceId`, wiring message/close
+   * handlers and registering reconnect listeners once. Reached through `connect` only.
+   *
+   * NO AWAIT BEFORE THE SOCKET EXISTS: the caller fetched the token, so nothing can land between the
+   * fence being read and `new WebSocket`. The deadline and the half-open socket are registered with
+   * `open.onAbandon`, so a pause settles this open at once instead of leaving it to the deadline.
+   */
+  protected override async openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
+    const { deviceId, token } = open;
     this.clearHeartbeat();
     // Close existing socket before creating a new one
     if (this.ws) {
@@ -474,41 +482,46 @@ export class WebMlsService extends BaseMlsService {
     const wsUrl = this.baseUrl.replace(/^https?:/, (match) =>
       match === 'https:' ? 'wss:' : 'ws:'
     );
-    let resolvedToken = token;
-    if (!resolvedToken) {
-      try {
-        resolvedToken = await getToken();
-      } catch {
-        /* rely on canari_ws_token cookie only */
-      }
-    }
-    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(
-      wsUrl,
-      this.deviceId,
-      resolvedToken || undefined
-    );
+    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(wsUrl, deviceId, token);
 
     return new Promise((resolve, reject) => {
       console.log(`[WS] Opening connection → ${logUrl}`);
-      this.ws = new WebSocket(fullWsUrl);
+      const socket = new WebSocket(fullWsUrl);
+      this.ws = socket;
       let resolved = false;
 
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
-          this.ws?.close();
+          // ITS OWN socket: `this.ws` may already be a later one.
+          socket.close();
           reject(new Error('WebSocket connection timeout after 15s'));
         }
       }, 15_000);
+      open.onAbandon(() => {
+        clearTimeout(timeout);
+        resolved = true;
+        socket.onopen = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        // STILL CONNECTING, which `safeCloseWebSocket` deliberately leaves alone: closed directly.
+        try {
+          socket.close();
+        } catch (e) {
+          console.warn(`[WS] closing an abandoned connecting socket failed: ${String(e)}`);
+        }
+        if (this.ws === socket) this.ws = null;
+      });
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
         this.startHeartbeat();
-        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(this.deviceId)}`);
+        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
         resolve();
       };
-      this.ws.onerror = (event) => {
+      socket.onerror = (event) => {
         clearTimeout(timeout);
         console.error('[WS] WebSocket error:', event);
         if (!resolved) {
@@ -520,7 +533,7 @@ export class WebMlsService extends BaseMlsService {
           );
         }
       };
-      this.ws.onclose = (event) => {
+      socket.onclose = (event) => {
         clearTimeout(timeout);
         if (!resolved) {
           resolved = true;
@@ -542,7 +555,7 @@ export class WebMlsService extends BaseMlsService {
           this.disconnectCallback?.();
         }
       };
-      this.ws.onmessage = async (event) => {
+      socket.onmessage = async (event) => {
         // Any incoming frame proves the server is alive - reset heartbeat miss counter.
         this.resetHeartbeatCounter();
         try {
@@ -747,7 +760,7 @@ export class WebMlsService extends BaseMlsService {
    * reports no disconnection - see {@link IMlsService.pauseSocket}. Same shape as the teardown at
    * the top of `connect`.
    */
-  pauseSocket(): void {
+  protected override pausePlatformSocket(): void {
     this.clearHeartbeat();
     const ws = this.ws;
     if (!ws) return;

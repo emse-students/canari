@@ -134,6 +134,10 @@ import {
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
+import {
+  GatewayOpenAbandonedError,
+  type GatewaySocketOpen,
+} from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
   checkpointWroteNothing,
@@ -937,10 +941,287 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── WebSocket (platform-specific) ─────────────────────────────────────────
 
-  abstract connect(token?: string): Promise<void>;
+  /**
+   * The device id the gateway socket of this document was LAST opened under, or `null` before the
+   * first open. Written synchronously when an open starts ({@link openSocketUnderCurrentId}), so it
+   * names the socket being opened as well as the one that is open; `isWsOpen()` says which.
+   */
+  private socketDeviceId: string | null = null;
+
+  /** The latest queued socket step ({@link enqueueSocketStep}); may reject, and is never awaited bare. */
+  private socketFlight: Promise<void> = Promise.resolve();
+
+  /** How many queued socket steps have not settled. Zero means the next step runs synchronously. */
+  private socketStepsPending = 0;
+
+  /**
+   * THE FENCE. Advanced by every {@link pauseSocket}; a step or an open that captured an older value
+   * neither assigns a socket nor starts one. Without it a pause landing while a reopen awaited its
+   * token or its native connect was followed by a live socket in a backgrounded or signed-out app.
+   */
+  private socketGeneration = 0;
+
+  /** Set by {@link pauseSocket}, cleared when an explicit {@link connect} starts - the resume. */
+  private socketPaused = false;
+
+  /** Settles the open in flight as abandoned; kept so a pause never leaves the queue to a deadline. */
+  private abandonPendingOpen: ((reason: string) => void) | null = null;
+
+  /**
+   * Opens the gateway socket under the device id this document holds WHEN THE OPEN STARTS.
+   *
+   * ONE SOCKET STEP AT A TIME. Every open, and the reopen a rotation asks for
+   * ({@link reopenGatewaySocketAfterRotation}), goes through one queue, because a platform open first
+   * closes the socket it finds with its handlers detached: two opens in flight together left the
+   * first one's promise to its own 15 s deadline, which then closed the SECOND socket. Queued, an
+   * open that starts reads the outcome of the one before it. With nothing pending the open runs
+   * synchronously, exactly as it did before the queue existed.
+   *
+   * THE FENCE IS TAKEN BY THE CALLER, BEFORE ITS TOKEN FETCH ({@link socketFence}): that await is
+   * where a backgrounded phone parks a reconnect, and a pause landing in it must not be followed by
+   * a socket. A `connect` whose fence a pause has passed - before the call or while it was queued -
+   * settles as {@link GatewayOpenAbandonedError} without opening anything.
+   */
+  connect(token: string, fence: number): Promise<void> {
+    if (fence !== this.socketGeneration) {
+      console.log(
+        '[WS] a connect whose token was fetched across a pause is dropped - the resume opens the socket'
+      );
+      return Promise.reject(new GatewayOpenAbandonedError('paused during its token fetch'));
+    }
+    return this.enqueueSocketStep(() => {
+      if (this.socketGeneration !== fence) {
+        console.log('[WS] a connect queued before a pause is dropped - the pause owns the socket');
+        return Promise.reject(new GatewayOpenAbandonedError('paused before it started'));
+      }
+      this.socketPaused = false;
+      return this.openSocketUnderCurrentId(token, fence);
+    });
+  }
+
+  /**
+   * The fence a caller of {@link connect} takes BEFORE fetching its token, and hands back with it.
+   * Every {@link pauseSocket} moves it, so a token fetched across a pause opens nothing.
+   */
+  socketFence(): number {
+    return this.socketGeneration;
+  }
+
+  /**
+   * Resolves once every socket step queued so far has run, and REJECTS with the last one's own
+   * failure - a reopen fetches its own token, so a `SessionExpiredError` surfaces here as one.
+   *
+   * WHY IT EXISTS: the login starts its handshake beside the MLS state load (`startGatewayHandshake`),
+   * and that load can ROTATE the device identity (a lost state re-enrolled, a credential that names
+   * someone else). The rotation queues a reopen of the socket under the new id; the post-connect half
+   * of the login waits here, so it runs on the socket that will carry this device, never on one that
+   * carries the id this document has just abandoned.
+   */
+  async gatewaySocketSettled(): Promise<void> {
+    if (this.socketStepsPending > 0) await this.socketFlight;
+  }
+
+  /**
+   * Releases the socket until the next {@link connect}, and FENCES the queue: the generation moves,
+   * so no step or open started before this assigns a socket afterwards, and an open still in flight
+   * is settled as abandoned at once through its kept handle rather than by its deadline. See
+   * {@link IMlsService.pauseSocket} for what the platform half does.
+   */
+  pauseSocket(): void {
+    this.socketGeneration++;
+    this.socketPaused = true;
+    const abandon = this.abandonPendingOpen;
+    this.abandonPendingOpen = null;
+    if (abandon) {
+      console.log('[WS] pause landed on a socket open still in flight - that open is abandoned');
+      abandon('paused');
+    }
+    this.pausePlatformSocket();
+  }
+
+  private enqueueSocketStep(step: () => Promise<void>): Promise<void> {
+    // A step that throws synchronously still settles THROUGH the queue, as a rejection.
+    const runNow = (): Promise<void> => {
+      try {
+        return step();
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    };
+    const run = this.socketStepsPending === 0 ? runNow() : this.socketFlight.then(runNow, runNow);
+    this.socketStepsPending++;
+    const settled = (): void => {
+      this.socketStepsPending--;
+    };
+    // Handling `run` here also keeps the stored copy from reporting an unhandled rejection: every
+    // caller of `connect` still receives `run` itself, with its failure.
+    run.then(settled, settled);
+    this.socketFlight = run;
+    return run;
+  }
+
+  /**
+   * Starts ONE platform open under the current id, fenced by `generation`, and returns it raced
+   * against its abandonment - so a pause settles it at once, whatever the platform is awaiting.
+   */
+  private openSocketUnderCurrentId(token: string, generation: number): Promise<void> {
+    const deviceId = this.deviceId;
+    this.socketDeviceId = deviceId;
+    const cleanups: Array<() => void> = [];
+    let abandon!: (reason: string) => void;
+    const abandoned = new Promise<never>((_, reject) => {
+      abandon = (reason) => {
+        for (const cleanup of cleanups) cleanup();
+        reject(new GatewayOpenAbandonedError(reason));
+      };
+    });
+    this.abandonPendingOpen = abandon;
+    let open: Promise<void>;
+    try {
+      open = this.openGatewaySocket({
+        deviceId,
+        token,
+        isCurrent: () => this.socketGeneration === generation,
+        onAbandon: (cleanup) => cleanups.push(cleanup),
+      });
+    } catch (e) {
+      // A platform open that throws before returning its promise leaves no handle behind.
+      this.abandonPendingOpen = null;
+      return Promise.reject(e);
+    }
+    return Promise.race([open, abandoned]).finally(() => {
+      if (this.abandonPendingOpen === abandon) this.abandonPendingOpen = null;
+    });
+  }
+
+  /**
+   * Re-opens the gateway socket under the id a rotation has just minted, when an open one still
+   * carries the abandoned id. Queued behind any open in flight, so an open that STARTED under the
+   * old id is replaced once it lands, whatever its timing against the rotation.
+   *
+   * The gateway routes by the id in the socket URL, so without this the live tab kept the abandoned
+   * id until its next reconnect: every frame addressed to the new id went by queue and push only,
+   * and the retirement of the old id was signalled (`device_revoked`) to this very socket.
+   *
+   * FENCED: a pause that lands after the rotation - before the step, during its token fetch or during
+   * the open - leaves no socket; the resume opens under the current id. The token is fetched HERE,
+   * so a refused refresh fails the step as itself (`SessionExpiredError`) rather than becoming an
+   * unauthenticated open. A failed reopen leaves no socket - the old one was closed first - and is
+   * reported on the disconnect seam when one is registered; a connection still being established
+   * has none yet, and fails on {@link gatewaySocketSettled} instead (`openGatewayConnection`).
+   */
+  private reopenGatewaySocketAfterRotation(abandoned: string): void {
+    const generation = this.socketGeneration;
+    const fenced = (): boolean => this.socketGeneration !== generation || this.socketPaused;
+    void this.enqueueSocketStep(async () => {
+      const current = this.deviceId;
+      if (fenced()) {
+        console.log(
+          `[WS] identity rotated -> ${sanitizeForLog(current)}: the socket is paused, no reopen - the resume opens under the new id`
+        );
+        return;
+      }
+      if (!this.isWsOpen()) {
+        console.log(
+          `[WS] identity rotated ${sanitizeForLog(abandoned)} -> ${sanitizeForLog(current)}: no gateway socket is open, the next open carries the new id`
+        );
+        return;
+      }
+      if (this.socketDeviceId === current) {
+        console.log(
+          `[WS] identity rotated -> ${sanitizeForLog(current)}: the gateway socket already carries it`
+        );
+        return;
+      }
+      const token = await getToken();
+      if (fenced()) {
+        console.log(
+          `[WS] identity rotated -> ${sanitizeForLog(current)}: a pause landed during the token fetch, no reopen`
+        );
+        return;
+      }
+      // The socket may have closed, or been reopened, while the token was fetched.
+      if (!this.isWsOpen() || this.socketDeviceId === this.deviceId) {
+        console.log(
+          `[WS] identity rotated -> ${sanitizeForLog(this.deviceId)}: the socket changed during the token fetch (open=${String(this.isWsOpen())}) - no reopen, the next open carries the new id`
+        );
+        return;
+      }
+      console.warn(
+        `[WS] identity rotated: the gateway socket carries the abandoned id ${sanitizeForLog(
+          this.socketDeviceId ?? '-'
+        )} - reopening it under ${sanitizeForLog(current)}`
+      );
+      // The departure signal goes first, as on a pause, so the gateway drops the old id's presence
+      // now rather than when it notices the close.
+      this.sendDisconnect();
+      await this.openSocketUnderCurrentId(token, generation);
+    }).catch((e: unknown) => {
+      if (e instanceof GatewayOpenAbandonedError) {
+        console.log(`[WS] the reopen under the rotated id was abandoned (${e.reason})`);
+        return;
+      }
+      if (this.disconnectCallback) {
+        console.error(
+          `[WS] reopening the gateway socket under the rotated id FAILED - reported as a lost socket: ${sanitizeForLog(String(e))}`
+        );
+        this.disconnectCallback();
+        return;
+      }
+      // Not a second error line: the connection waiting on it (`openGatewayConnection`) reports it.
+      console.debug(
+        `[WS] reopen under the rotated id failed before any disconnect handler was registered - reported by the connection that waits on it: ${sanitizeForLog(String(e))}`
+      );
+    });
+  }
+
+  /**
+   * The delete an abandoned id's retirement uses (`abandonedDevices.ts`): never while a socket of this
+   * document still carries that id. The delivery service signals `device_revoked` to every socket of
+   * the deleted id, and the live tab would receive a revocation addressed to itself. Waits for the
+   * queued socket steps first - the rotation queued its reopen before it asked for the retirement -
+   * and refuses otherwise, which keeps the id recorded for the next published round. The refusal is
+   * a throw carrying its reason, so the retirement says it in its one line.
+   */
+  private async deleteAbandonedDevice(
+    userId: string,
+    deviceId: string
+  ): Promise<{ status: string } | undefined> {
+    try {
+      await this.gatewaySocketSettled();
+    } catch (e) {
+      // Reported where the step ran; here only the socket it left behind matters.
+      console.debug(
+        `[MLS] retiring ${sanitizeForLog(deviceId)}: the last socket step failed (${sanitizeForLog(String(e))}) - reading the socket it left`
+      );
+    }
+    if (this.isWsOpen() && this.socketDeviceId === deviceId) {
+      throw new Error(
+        'a gateway socket of this document still carries it - its revocation would be signalled to that socket'
+      );
+    }
+    return this.deleteDevice(userId, deviceId);
+  }
+
+  /** Retires every abandoned id of this account, through {@link deleteAbandonedDevice}. */
+  private retireAbandonedIds(): void {
+    void retireAbandonedDevices({
+      userId: this.userId,
+      liveDeviceId: this.deviceId,
+      deleteDevice: (u, d) => this.deleteAbandonedDevice(u, d),
+    });
+  }
+
+  /**
+   * The platform half of {@link connect}: open the socket carrying `open.deviceId`. It re-checks
+   * `open.isCurrent()` after every await and assigns nothing once it is false, and registers its
+   * deadline and half-open socket with `open.onAbandon`.
+   */
+  protected abstract openGatewaySocket(open: GatewaySocketOpen): Promise<void>;
   abstract isWsOpen(): boolean;
   abstract sendDisconnect(): void;
-  abstract pauseSocket(): void;
+  /** The platform half of {@link pauseSocket}: send `disconnect` and release the socket silently. */
+  protected abstract pausePlatformSocket(): void;
 
   abstract sendTyping(groupId: string, isTyping: boolean): void;
 
@@ -2684,11 +2965,7 @@ export abstract class BaseMlsService implements IMlsService {
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
         forgetRefusedRotationReloads();
         // And the server is reachable: an abandoned id a rotation could not delete is retried here.
-        void retireAbandonedDevices({
-          userId: this.userId,
-          liveDeviceId: this.deviceId,
-          deleteDevice: (u, d) => this.deleteDevice(u, d),
-        });
+        this.retireAbandonedIds();
         return published;
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
@@ -2712,6 +2989,23 @@ export abstract class BaseMlsService implements IMlsService {
             this.deviceId
           )}`
         );
+        // THE SOCKET CARRIES THE NEW ID BEFORE ANYBODY CAN ADDRESS IT. The rotation queued a reopen;
+        // the package published below is what makes the new id addressable, so it waits for that
+        // reopen. Then the server's queue for the new id is read once, so nothing addressed to it
+        // while no socket carried it waits for a reconnect. Not awaited: the drain takes the MLS
+        // lock, which a round may be holding.
+        try {
+          await this.gatewaySocketSettled();
+          void this.fetchPendingMessages().catch((e: unknown) =>
+            console.warn(
+              `[MLS] re-enrolled: the pending queue of ${sanitizeForLog(this.deviceId)} could not be read: ${sanitizeForLog(String(e))}`
+            )
+          );
+        } catch (e) {
+          console.warn(
+            `[MLS] re-enrolled: the gateway socket did not reopen under ${sanitizeForLog(this.deviceId)} (${sanitizeForLog(String(e))}) - publishing anyway; the reconnect owns the socket and reads the queue`
+          );
+        }
         if (roundState.stale) {
           console.error(
             '[MLS] an ABANDONED key package round was abandoned during its re-enrolment - not publishing under the new id from this stale round'
@@ -2967,6 +3261,10 @@ export abstract class BaseMlsService implements IMlsService {
       throw e;
     }
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
+    // THE SOCKET FOLLOWS THE IDENTITY, AT THE ONE MOMENT THE IDENTITY CHANGES. The login opens its
+    // socket beside the state load that rotates here, so a socket opened (or opening) under the old
+    // id is reopened under the new one - queued BEFORE the retirement below, which waits for it.
+    this.reopenGatewaySocketAfterRotation(oldDeviceId);
     // The counters describe the ratchets of the device being abandoned, whose state was discarded
     // for a fresh one starting at generation zero. Carried over, they would burn against sends
     // that, from the peers' side, this device has never made.
@@ -2980,11 +3278,8 @@ export abstract class BaseMlsService implements IMlsService {
     recordAbandonedDevice(this.userId, oldDeviceId);
     // The refusals the abandoned id remembered were judged by pins its discarded state held.
     forgetRefusedDevicesOf({ userId: this.userId, deviceId: oldDeviceId });
-    void retireAbandonedDevices({
-      userId: this.userId,
-      liveDeviceId: this.deviceId,
-      deleteDevice: (u, d) => this.deleteDevice(u, d),
-    });
+    // Never while a socket of this document still carries the old id (`deleteAbandonedDevice`).
+    this.retireAbandonedIds();
     return oldDeviceId;
   }
 
