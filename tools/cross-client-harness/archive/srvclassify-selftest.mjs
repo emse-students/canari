@@ -578,7 +578,9 @@ const fcmCallers = [
   ['the hourly commit rate when nothing committed', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - no group committed`, 'notable'],
   ['control: a busy group in the commit rate is a finding', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 40 commit(s) in 3 group(s); per group p50=3 p90=30 max=30; busiest single committer per group p50=2 p90=29 max=29; 1 group(s) at >= 8 by one device`, 'unexplained'],
   ['the TURN meter under budget', `${NEST}[CallsService] [TURN-METER] 2026-10 (UTC calendar month): 0.62/950 GB metered egress (0.1%) - TURN available`, 'notable'],
-  ['the TURN meter read in bytes', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [TurnUsageMeter] [ICE] TURN meter 2026-10: 615362488 egress bytes (account-wide)`, 'notable'],
+  ['the TURN meter reading its dataset limits', `${NEST}[TurnUsageMeter] [ICE] TURN dataset limits: maxDuration=2764800s notOlderThan=2764800s`, 'notable'],
+  ['control: unreadable cached TURN limits are a finding', `[Nest] 1  - 10/25/2026, 5:58:30 PM   ERROR [TurnUsageMeter] [ICE] cached TURN dataset limits are unreadable (x) - re-reading`, 'unexplained'],
+  ['the TURN meter read in bytes',`[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [TurnUsageMeter] [ICE] TURN meter 2026-10: 615362488 egress bytes (account-wide)`, 'notable'],
   ['control: the TURN budget reached is a finding', `[Nest] 1  - 08/14/2026, 12:43:51 PM   ERROR [CallsService] [TURN-METER] 2026-10 (UTC calendar month): 951.00/950 GB metered egress (100.1%) - BUDGET REACHED, TURN is withheld from every call`, 'unexplained'],
   ['a device rotating its push token is routine', `${NEST}[PushController] [PUSH_REFRESH] user=aaaaaaaa device=tauri-a-b fcm=true voip=false`, 'benign'],
 ];
@@ -1013,6 +1015,7 @@ check(
     ["a member's Decline withdrew the ask", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-2', 'ADM-1'],
     ['a Decline answered already-admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
     ['a Decline refused to a non-member', W('MembersController', `[JOIN_DECLINE] REJECT group=${G} caller=none target=bbbbbbbb - not an admitted member, or their own ask`), 'ADM-4', 'ADM-2'],
+    ["KILL-1's own burst in the hourly commit rate (alpha.4)", L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 10 commit(s) in 1 group(s); per group p50=10 p90=10 max=10; busiest single committer per group p50=10 p90=10 max=10; 1 group(s) at >= 8 by one device'), 'KILL-1', 'DUP-1'],
     ["a member's Add admitted the joiner", L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=admits - a member's Add answered their invitation-link ask`), 'ADM-1', 'FLOOR-2'],
     ['a stored Welcome admitted the joiner', L('MessagingService', `[BG_WELCOME][bg-wlc-1234abcd] ADMITTED group=${G} users=1 door=welcome - a member's Add answered their invitation-link ask`), 'ADM-6', 'DEV-7'],
     ["the waiting seat's own commit refused", W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external reason=awaiting_admission`), 'ADM-4', 'ADM-5'],
@@ -1053,6 +1056,7 @@ check(
     ['a background Welcome line nobody read', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] Welcome LOST group=${G}`), 'DEV-7'],
     ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
     ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
+    ['TWO busy groups in the hourly commit rate: not one row\'s burst', L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 30 commit(s) in 2 group(s); per group p50=15 p90=15 max=15; busiest single committer per group p50=15 p90=15 max=15; 2 group(s) at >= 8 by one device'), 'KILL-1'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
 

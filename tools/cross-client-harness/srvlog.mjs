@@ -723,6 +723,9 @@ const NOTABLE = [
   // the unreadable budget and the UNAVAILABLE meter (warns) are the findings and stay unmatched.
   /\[CallsService\] \[TURN-METER\] \d{4}-\d{2} \(UTC calendar month\): [\d.]+\/\d+ GB metered egress \([\d.]+%\) - TURN available$/,
   /\[TurnUsageMeter\] \[ICE\] TURN meter \d{4}-\d{2}: \d+ egress bytes \(account-wide\)$/,
+  // The meter's hourly-at-most read of its dataset limits (`turn-usage-meter.service.ts` `limits`);
+  // the ERROR `cached TURN dataset limits are unreadable` is the finding and stays unmatched.
+  /\[TurnUsageMeter\] \[ICE\] TURN dataset limits: maxDuration=\d+s notOlderThan=\d+s$/,
   // A DEVICE ASKING WHICH GROUPS IT STILL BELONGS TO, AND THE NUMBER THAT DECIDES WHETHER IT IS NEWS.
   //
   // `[DEVICE_MEMBERSHIPS]` was matched by NOTHING and landed in `unexplained` every time a device
@@ -1183,6 +1186,17 @@ const ROW_RULES = [
     tag: /\[UNINVITED_ENTRY\]/,
     shape: /\[UNINVITED_ENTRY\] (kind=\S+ reporter=\S+ group=\S+ entrant=\S+ epoch=\d+ key=\S+|repeat reporter=\S+ group=\S+ entrant=\S+ epoch=\d+ - already counted)$/,
     rows: [],
+  },
+
+  // ── the hourly commit-rate report naming ONE busy group: KILL-1's own repeat ──────────────────
+  // KILL-1 kills W1 around its own commit twenty times in one group, so an hourly report landing in
+  // its window names exactly that group: `1 group(s) at >= 8 by one device` (alpha.4, 2026-10-25).
+  // ONE group only - two busy groups is not this row's burst - and dirt in every other row.
+  {
+    name: 'one busy group in the hourly commit rate',
+    tag: /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \d+ commit\(s\) in \d+ group\(s\);.*; [1-9]\d* group\(s\) at >= \d+ by one device$/,
+    shape: /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \d+ commit\(s\) in \d+ group\(s\); per group p50=\d+ p90=\d+ max=\d+; busiest single committer per group p50=\d+ p90=\d+ max=\d+; 1 group\(s\) at >= \d+ by one device$/,
+    rows: ['KILL-1'],
   },
 
   // ── #2287 (and #2329's server face): the background Welcome route ─────────────────────────────
