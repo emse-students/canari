@@ -44,9 +44,9 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/floor.mjs` | FLOOR-1..3 | plain sends and one bulk Add | built ([#2393](https://github.com/emse-students/canari/pull/2393)) |
 | `archive/race.mjs` | CC-1..5, RM-1, RM-2, RM-7 | two (or four) actions held by `fault.mjs` `hold` and released together | CC-1..4 built as `archive/cc.mjs` ([#2395](https://github.com/emse-students/canari/pull/2395)); RM owed |
 | `archive/settle.mjs` | DUP-1..6, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | built ([#2396](https://github.com/emse-students/canari/pull/2396)); DUP-3 records `SKIPPED`; DUP-7 moved to `devrows.mjs` (a new device) |
-| `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | built (draft PR); OFF-4 `BLOCKED-ON-ACCOUNT` |
+| `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | built ([#2398](https://github.com/emse-students/canari/pull/2398)); OFF-4 `BLOCKED-ON-ACCOUNT` |
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | built ([#2397](https://github.com/emse-students/canari/pull/2397)); GAP-4 records `SKIPPED` |
-| `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | owed |
+| `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | built (draft PR) |
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | owed |
 | `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | owed |
 | `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | owed |
@@ -112,7 +112,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | --- | --- | --- | --- | --- | --- | --- |
 | RM-1 | `hold` W2's own Add, W1 Removes W2, release | `fault.mjs` | extracted `removeMember` | no | U | 30 min |
 | RM-2 | Remove while the removed member sends ten | `send` | the typed refusal read on the sender | no | U | 20 min |
-| RM-3 | close the remover's tab on the roster-delete answer; measure how long until a later commit removes the leaf | - | a `Target.close` atom timed on a response | no | U | 30 min |
+| RM-3 | hold the roster DELETE's answer, close the remover's tab; W2 Adds W5; measure how long W4's seat survives | `fault.mjs` `hold-answer`, `reopen.mjs` | - | no | U | 30 min |
 | RM-4 | two admins PATCH one salon's access, released together | `comm.mjs` `openChannelSettings`, `fault.mjs` `hold` | the second admin role on W2 in the venue | no | U | 30 min |
 | RM-5 | a kick races an invitation into a private salon, x5 | as RM-4 | - | no | U | 30 min |
 | RM-6 | a `channel.manage`-only member makes a salon private leaving out an admin | `comm.mjs` | a role holding only `channel.manage` | no | U | 15 min |
@@ -123,11 +123,11 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| KILL-1 | `Target.close` at a random 0-800 ms after the stage, 20 runs | - | the `Target.close` atom and a reopen of the profile's app tab | no | U | 40 min |
-| KILL-2 | kill the profile's whole browser, relaunch | `launch.mjs` `kill` / `start` | timing the kill on the stage | no | U | 40 min |
-| KILL-3 | swipe A1 from recents mid-commit, 10 runs | `phone.mjs` | a recents swipe atom | no | B | 50 min |
-| KILL-4 | `am kill` on the `[CHECKPOINT]` start line | `phone.mjs`, logcat | the line-triggered kill | no | B | 40 min |
-| KILL-5 | close W1's tab on the Add's merge line, before the Welcome send | - | as KILL-1 | no | U | 30 min |
+| KILL-1 | a refresh commit held before the server or after the accept (alternating), the tab closed 0-800 ms into the hold, 20 runs | `reopen.mjs` `killSeat`/`reviveSeat`, `fault.mjs` | - | no | U | 40 min |
+| KILL-2 | as KILL-1 with the whole browser killed and relaunched, 10 runs | `reopen.mjs`, `launch.mjs` | - | no | U | 40 min |
+| KILL-3 | as KILL-1 on A1, swiped from recents (the death proven by its pid), 10 runs | `reopen.mjs` | - | no | B | 50 min |
+| KILL-4 | `am force-stop` at fractions of the send-to-request window, measured on an un-killed run (the client writes no `[CHECKPOINT]` line; `am kill` cannot reach a foreground process) | `reopen.mjs`, `fault.mjs` | - | no | B | 40 min |
+| KILL-5 | W1's Add with `POST /api/mls/welcome` held, the tab closed; W2 joins once | `reopen.mjs`, `fault.mjs` | - | no | U | 30 min |
 
 ### ADM - group-link admission (`admit.mjs`)
 
@@ -214,7 +214,7 @@ Measured against the FLOOR runner (one session including the kernel), the rest i
 | `settle.mjs` | fault forgiveness inside `checkInvariant` | 1 session |
 | `offline.mjs` | `degrade` (latency + both throughputs), the flap loop - built | done |
 | `gap.mjs` | response-rewrite fault mode, freeze atom | 1 session |
-| `kill.mjs` | `Target.close` timed on a line, recents swipe, line-triggered `am kill` | 1 session |
+| `kill.mjs` | `reopen.mjs` (`killSeat`, `reviveSeat`) - built | done |
 | `admit.mjs` | link, ask, Add/Decline gestures; route table | 1 session |
 | `devrows.mjs` | revoke gesture, W6 wipeable | 1 session |
 | `salon.mjs` | admin roles in the venue | 0.5 session |

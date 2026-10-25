@@ -494,6 +494,14 @@ export const PHASES = {
     scripts: ['offline.mjs --row OFF-3', 'offline.mjs --row NET-1', 'offline.mjs --row NET-2', 'offline.mjs --row NET-3', 'offline.mjs --row RM-8'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // A PROCESS THAT DIES WITH A COMMIT IN FLIGHT (KILL-1, KILL-2, KILL-5, RM-3), browsers only. KILL-1
+  // is twenty tab closes and KILL-2 ten browser relaunches, each with its PIN. KILL-3 and KILL-4 are
+  // NOT here: they are class B, played on A1 - `bun archive/kill.mjs --row KILL-3|KILL-4`.
+  KILL: {
+    title: '1.4.1 - a tab, a browser or a remover killed with a commit in flight',
+    scripts: ['kill.mjs --row KILL-1', 'kill.mjs --row KILL-2', 'kill.mjs --row KILL-5', 'kill.mjs --row RM-3'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**

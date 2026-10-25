@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1117,6 +1117,24 @@ leaf every 18. NET-3's portal answers every `/api/` call `200 text/html`, armed 
 `addMembers`' `beforeSubmit` so the picker's search is not what it breaks. RM-8 leaves under `cut()`
 and asks only that the server and W2 agree. Judgements in `offlinerows.mjs`, pinned by
 `archive/offline-selftest.mjs`.
+
+```sh
+bun archive/kill.mjs --row KILL-1|KILL-2|KILL-5|RM-3   # browsers: a tab closed, a browser killed
+bun archive/kill.mjs --row KILL-3|KILL-4               # A1, class B: swiped away, force-stopped
+```
+
+**A KILL ROW CHOOSES ITS SIDE OF THE SERVER, THEN DRAWS ONLY THE DELAY.** Each run's commit is a leaf
+refresh (`armLeafRefresh`, then a send), held by `fault.mjs` either before the server (`hold`) or
+after the accept (`hold-answer`); runs alternate the two, and the kill lands a drawn 0-800 ms into
+the hold. `archive/reopen.mjs` kills a seat and PROVES it dead (`killSeat`: the tab gone from the
+browser's list, the port quiet, the pid gone - a swipe that leaves the app alive throws), then
+revives it the user's way, PIN included, and replaces the seat's `cx` and `w` (`reviveSeat`). The
+outcome is read on the SERVER - merged once or cleared, the seat caught up, traffic both ways -
+because the settlement runs at the connection, before a `watch()` can attach to the new page.
+KILL-4 has no `[CHECKPOINT]` line to time on: one un-killed run measures the send-to-request window
+and each kill lands at a fraction of it. KILL-5 holds `POST /api/mls/welcome`; RM-3 holds the roster
+delete's answer and measures how long W4's seat outlives it. Judgements in `killrows.mjs`, pinned by
+`archive/kill-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 
