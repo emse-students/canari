@@ -272,6 +272,26 @@ export function addAcrossReloadPremise({ vacuous }) {
     : [];
 }
 
+/**
+ * The server's `[COMMIT][trace]` lines of the commits ONE account's devices posted: a trace is kept
+ * when its `START` line names a device of `userId`. DUP-7 judges W1's Add alone - on alpha.3 the
+ * invitee's own later external commit (its self-repair) was counted as a second accept of the Add.
+ *
+ * @param {string[]} lines chat-delivery lines
+ * @param {string} userId the poster's account
+ */
+export function commitLinesBy(lines, userId) {
+  const mine = new Set();
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[([^\]]+)\] START .*\bdevice=(\S+)/.exec(l);
+    if (m && m[2].includes(`-${userId}-`)) mine.add(m[1]);
+  }
+  return (lines ?? []).filter((l) => {
+    const t = /\[COMMIT\]\[([^\]]+)\]/.exec(l)?.[1];
+    return t !== undefined && mine.has(t);
+  });
+}
+
 export function welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }) {
   const accepts = seq.filter((d) => d.kind === 'ACCEPT').length;
   const duplicates = seq.filter((d) => d.kind === 'DUPLICATE').length;

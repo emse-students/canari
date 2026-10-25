@@ -24,6 +24,7 @@ import {
   reenrolledDevice,
   revokedOwn,
   addAcrossReloadPremise,
+  commitLinesBy,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 
@@ -161,6 +162,20 @@ ok('DUP-7: joined twice fails', failing(welcomeAcrossReloadOwn({ ...reload, welc
 ok('DUP-7: never joined fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, joined: 0 }, listed: false })) === 2);
 ok('DUP-7: a second copy processed as a join fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, failed: ['GroupAlreadyExists'] } })) === 1);
 ok('DUP-7: an Add that really happens - W4 is invited in the row, never set up, and nothing is minted', DEV_ROWS['DUP-7'].mint.length === 0 && DEV_ROWS['DUP-7'].addedInRow.includes('W4') && DEV_ROWS['DUP-7'].devices.includes('W4'));
+{
+  const G = 'group=dc8c0f10-0140-4150-8215-98c965289da2';
+  const lines = [
+    `[COMMIT][commit-a] START ${G} device=web-aaaa-mvn1-x baseEpoch=2`,
+    `[COMMIT][commit-a] ACCEPT ${G} newEpoch=3`,
+    `[COMMIT][commit-b] START ${G} device=web-aaaa-mvn1-x baseEpoch=2`,
+    `[COMMIT][commit-b] DUPLICATE ${G} device=web-aaaa-mvn1-x baseEpoch=2 - already accepted`,
+    `[COMMIT][commit-c] START ${G} device=web-bbbb-mvn2-y baseEpoch=3`,
+    `[COMMIT][commit-c] ACCEPT ${G} newEpoch=4`,
+  ];
+  const mine = commitLinesBy(lines, 'aaaa');
+  ok("DUP-7: only W1's commits are judged - the invitee's own later commit is not a second accept", mine.length === 4 && !mine.some((l) => l.includes('commit-c')));
+  ok('DUP-7: CONTROL - an account that posted nothing keeps no line', commitLinesBy(lines, 'cccc').length === 0);
+}
 ok('DUP-7: W1 never committed (rule #0 vacuous) is a premise, not a verdict', addAcrossReloadPremise({ vacuous: [0, 1] }).length === 1);
 ok('DUP-7: CONTROL - a held Welcome that never came is NOT a premise once W1 committed', addAcrossReloadPremise({ vacuous: [1] }).length === 0);
 ok('DUP-7: both rules fired, no premise', addAcrossReloadPremise({ vacuous: [] }).length === 0);

@@ -40,6 +40,7 @@ import {
   reenrolledDevice,
   revokedOwn,
   addAcrossReloadPremise,
+  commitLinesBy,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 import { recordCreated } from '../campaign.mjs';
@@ -410,11 +411,14 @@ const ACTIONS = {
     // A SECOND COPY, IF ONE COMES, comes from the reloaded W1's settlement: given the same bound.
     await sleep(15_000);
     const welcome = welcomeLines(consoleLines(W4.cx), c.group.id);
-    const seq = commitSequence(commitLines(c.group.id, c.startSince));
+    // HOW W4 GOT IN WHEN NO WELCOME CAME (alpha.3, 2026-10-25): its own repair, an external join. Recorded,
+    // never counted as the Welcome the row asks about - a heal is the evidence the primary path failed.
+    const selfRejoined = consoleLines(W4.cx).some((l) => l.includes(`[READD] ${c.group.id.slice(0, 8)}... rejoined via external commit`));
+    const seq = commitSequence(commitLinesBy(commitLines(c.group.id, c.startSince), c.user.W1));
     return {
       members: ['W1', 'W2', 'W4'],
       records,
-      detail: { invited, heldWelcome, reloaded, welcome, decisions: seq },
+      detail: { invited, heldWelcome, reloaded, welcome, decisions: seq, selfRejoined },
       judge: () => welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }),
     };
   },
