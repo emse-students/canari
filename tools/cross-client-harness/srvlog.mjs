@@ -879,6 +879,10 @@ const NOTABLE = [
   // Their refusal twin, `ADMIT_REFUSED`, is a `warn` and is deliberately not matched here.
   /\[COMMIT\]\[commit-[0-9a-f]+\] ADMITS group=\S+ atEpoch=\d+ devices=\S+$/,
   /\[SEND\]\[send-[0-9a-f]+\] PENDING_ADMITTED group=\S+ frameEpoch=\d+ devices=\S+$/,
+  // AN INVITEE ENROLLED BY THE COMMIT THAT ADDS IT (#2419, `messaging.service.ts`): one line per
+  // newcomer, in the accept transaction. Met unexplained on FLOOR-2's first alpha.4 PASS (2026-10-25).
+  // Its refusals (`departed_since_base`, `blocked`) are a different sentence and stay unmatched.
+  /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] ENROLLED by commit group=\S+ user=[0-9a-f]{8} committer=[0-9a-f]{8}$/,
   // A REMOVAL'S COMMIT QUEUED TO THE DEVICES IT REMOVES, and AN ADDRESSED HISTORY ANSWER NARROWED TO
   // ITS READER (1.4.x, `messaging.service.ts`). Both are `log` narration of a mechanism doing its job,
   // met unexplained on the first CC-3 draw of 2026-10-25 - notable because a reader following a

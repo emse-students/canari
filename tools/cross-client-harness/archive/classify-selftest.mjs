@@ -24,6 +24,7 @@ import {
   EVICTED_REJOIN_NARRATION,
   FRESH_CLIENT_NARRATION,
   FRESH_DEVICE_SESSION_NARRATION,
+  GROUP_CREATION_NARRATION,
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_SIGN_OUT_NARRATION,
@@ -1567,6 +1568,21 @@ const FORGIVE_CASES = [
     ],
     REVOKED_SIGN_OUT_NARRATION,
     { clean: false, unmatched: 8 },
+  ],
+  [
+    "the adder's own memberAdded notice is forgiven at debug (#2412)",
+    [['debug', "[15:22:58.206] [NOTICE] memberAdded written on the acting device in b5c78665… as 8107e57d - the id every member's device writes"]],
+    GROUP_CREATION_NARRATION,
+    { clean: true, unmatched: 2 },
+  ],
+  [
+    'control: the same notice at log, or for another event, is not forgiven',
+    [
+      ['log', "[15:22:58.206] [NOTICE] memberAdded written on the acting device in b5c78665… as 8107e57d - the id every member's device writes"],
+      ['debug', "[15:22:58.206] [NOTICE] memberRemoved written on the acting device in b5c78665… as 8107e57d - the id every member's device writes"],
+    ],
+    GROUP_CREATION_NARRATION,
+    { clean: false, unmatched: 3 },
   ],
 ];
 for (const [what, lines, needles, want] of FORGIVE_CASES) {

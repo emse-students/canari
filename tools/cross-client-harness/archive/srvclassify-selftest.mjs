@@ -558,6 +558,8 @@ const fcmCallers = [
   // A COMMIT ADMITTING A NEWCOMER, and a send queueing it before it has joined (user, 2026-09-28).
   ['a commit admitting a device added while dead', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMITS group=00000000-0000-4000-8000-000000000001 atEpoch=6 devices=aaaaaaaa:tauri-a-b`, 'notable'],
   ['a send queueing an admitted pending device', `${NEST}[MessagingService] [SEND][send-33f8f65a] PENDING_ADMITTED group=00000000-0000-4000-8000-000000000001 frameEpoch=6 devices=tauri-a-b@6`, 'notable'],
+  ['an invitee enrolled by the commit that adds it', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80`, 'notable'],
+  ['control: an ENROLLED line with more after it is read again', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80 and then failed`, 'unexplained'],
   // A REMOVAL'S COMMIT QUEUED TO THE REMOVED DEVICE, and an addressed history answer (1.4.x).
   ['a removal commit queued to the parting device', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 1 removed device(s): 223bc34e:web-223bc34e`, 'notable'],
   ['a removal commit that reached no parting device', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 0 removed device(s)`, 'notable'],

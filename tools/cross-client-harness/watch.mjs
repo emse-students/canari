@@ -2418,6 +2418,10 @@ export const PAGE_BOOT_NARRATION = [
  * campaign spends the most time on, and a rule that counted it as dirt would be asking the code to
  * stop saying the thing worth saying.
  *
+ * `[NOTICE] memberAdded written on the acting device ...` (#2412, `visibleNotices.ts`) is the adder
+ * writing its own "X was added" line under the frame's id, so no member reads it as relayed. A
+ * `debug` line, and only at `debug`: met on FLOOR-2's first alpha.4 PASS (2026-10-25).
+ *
  * IT IS NOT A WIDER CLASSIFIER. Every check that forgives these is a check that CREATED A GROUP, so
  * it provoked them; a check that did not create one and sees them has found something, and gets no
  * forgiveness from here.
@@ -2425,6 +2429,7 @@ export const PAGE_BOOT_NARRATION = [
 export const GROUP_CREATION_NARRATION = [
   /^\[blocks\.isBlockedWith\]/,
   /^\[SYNC\] bulk\.addedDeviceIds: /,
+  atLevels(['debug'], /^\[NOTICE\] memberAdded written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/),
 ];
 
 /**
