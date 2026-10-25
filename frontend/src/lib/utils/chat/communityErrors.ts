@@ -47,6 +47,8 @@ const COMMUNITY_REFUSALS: Record<string, () => string> = {
    * was in flight: nothing saved, and the same list would be refused again.
    */
   CHANNEL_GRANTEE_NOT_MEMBER: () => m.chat_channel_grantee_not_member_error(),
+  /** A role change computed from a member another edit changed or removed since: nothing saved. */
+  MEMBER_CHANGED_MEANWHILE: () => m.chat_community_member_changed_error(),
 };
 
 /**

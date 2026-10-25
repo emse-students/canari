@@ -91,6 +91,8 @@ function realCommitService() {
     freshEpoch: async () => state.epoch,
     groupsWithPendingCommit: async () => [],
     clearPendingCommit: vi.fn(async () => {}),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
     mergePendingCommit: vi.fn(async () => {
       state.tree = state.tree.filter((leaf) => !leaf.startsWith(`${BOB}:`));
       state.epoch += 1;
@@ -102,6 +104,7 @@ function realCommitService() {
         'removeMember',
         'runCommitTransaction',
         'mergeAccepted',
+        'noteOwnLeafReplaced',
         'settleUnresolvedLocked',
         'checkpointStageBeforeSend',
         'submitRecorded',

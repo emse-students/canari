@@ -40,7 +40,7 @@ use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
-    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
+    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, cle_feuille,
     cles_signature_epinglees, confirmer_commit, confirmer_commit_welcome_du,
     contexte_correspond_base, creer_groupe, date_feuille, envoyer_message_bytes, epoques_departs,
     exporter_group_info, exporter_ratchet_tree, exporter_secret, feuille_portant_cle,
@@ -1588,6 +1588,7 @@ pub fn run() {
             retirer_membres_par_appareil,
             rafraichir_feuille,
             date_feuille,
+            cle_feuille,
             contexte_correspond_base,
             soumission_en_attente,
             groupes_commit_en_attente,

@@ -40,6 +40,7 @@ import {
   deleteCommunity,
   enterCommunities,
   openCommunity,
+  PERMISSION_GRID_DRAWN,
   permissionGrid,
 } from '../comm.mjs';
 import { communityRoles, workspaceIdOf } from '../grainedb.mjs';
@@ -103,7 +104,7 @@ const shown = await step('read the permission grid', async () => {
   // until `GET roles` answers - so a read taken straight after finds no table at all and reports
   // "the grid offers nothing", which is an instrument describing itself. The first run of this
   // check did exactly that.
-  await until(w1, `!!document.querySelector('table tbody tr')`, 20000);
+  await until(w1, PERMISSION_GRID_DRAWN, 20000);
   return permissionGrid(w1);
 });
 

@@ -36,6 +36,12 @@ describe('describeCommunityRefusal', () => {
     );
   });
 
+  it('names a role change raced by another edit of the member, as a retry', () => {
+    expect(describeCommunityRefusal('MEMBER_CHANGED_MEANWHILE')).toBe(
+      m.chat_community_member_changed_error()
+    );
+  });
+
   it('keeps the caller generic line for a code it does not know, or none', () => {
     expect(describeCommunityRefusal('SOMETHING_ELSE')).toBeNull();
     expect(describeCommunityRefusal(undefined)).toBeNull();

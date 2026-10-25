@@ -146,6 +146,8 @@ function primitives(state: PendingState, owed: OwedState = new Map()) {
     }),
     pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? { status: 'none' }),
     groupsWithPendingCommit: vi.fn(async () => [...state.keys()]),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
     mergePendingCommit: vi.fn(async (g: string) => {
       state.delete(g);
     }),
@@ -204,6 +206,7 @@ function ctx(
     'checkpointStageBeforeSend',
     'mergeSettled',
     'mergeAccepted',
+    'noteOwnLeafReplaced',
     'consumeOwedWelcome',
     'deliverOwedWelcomes',
     'sendWelcome',

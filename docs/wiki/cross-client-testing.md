@@ -87,7 +87,7 @@ No row verdict depends on it; it stays here until it is explained.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | KILL-1 | Close the web tab at a random point between the stage and the answer, 20 runs | W1 W2 - U | `pending` |
-| KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `pending` |
+| KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `FAIL` on `1.4.1-alpha.4`, two PRODUCT findings: (A) while its first commit's answer was held, W1 built a second leaf refresh on top of it, and refreshed again after the revive - two commits no run armed; (B) a clean reload re-walked a control frame whose generation was already spent and reported it `unreadable for good (secret-reuse)`. The row's "2 accepts, the epoch moved 1" was also a RIG miscount (the epoch was read before the window opened), fixed: commits are now sorted by the epoch they name, a stray one fails the run, and each run keeps its dying and revived console. Replayed on alpha.5 |
 | KILL-3 | Swipe A1 away during a commit it is making, 10 runs | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 |
 | KILL-4 | `am kill` during the checkpoint itself | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 (its window is measured on a held commit) |
 | KILL-5 | Kill between the merge of an Add and its Welcome send (`owed_welcome`) | W1 + W3 - U | `pending` |

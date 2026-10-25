@@ -123,6 +123,43 @@ export function runOutcome({ window, seq, fromEpoch, serverEpoch, caughtUpMs, ou
  * A row of runs: every run's assertions, prefixed by its number and window, plus the coverage of both
  * windows (a kill row that played one side only did not ask its question).
  */
+/**
+ * THE COMMITS NO RUN MADE: accepts whose new epoch is not past the run's `fromEpoch`, so they landed
+ * before the run read the server - between two runs, from nothing a run armed.
+ *
+ * WHY BY EPOCH, NOT BY CLOCK. A run's window opens BEFORE it reads `fromEpoch` (so nothing of its own
+ * is missed), and a commit landing in between would otherwise be counted as the run's while the
+ * epoch it moved is not: "2 accepts, the epoch moved 1" on KILL-2 run 2 (alpha.4) was that, not a
+ * double apply. The epoch each ACCEPT names settles which side of the read it fell on.
+ *
+ * @param {{kind: string, newEpoch?: number}[]} seq the gate's decisions since the window opened
+ * @param {number} fromEpoch the server's epoch the run read before its commit
+ */
+export function strayCommits(seq, fromEpoch) {
+  return (seq ?? []).filter((d) => d.kind === 'ACCEPT' && Number.isFinite(d.newEpoch) && d.newEpoch <= fromEpoch);
+}
+
+/**
+ * A run's own decisions: everything the gate decided since the run's window opened, minus the
+ * {@link strayCommits} that moved the epoch before `fromEpoch` was read.
+ */
+export function runCommits(seq, fromEpoch) {
+  const stray = new Set(strayCommits(seq, fromEpoch));
+  return (seq ?? []).filter((d) => !stray.has(d));
+}
+
+/**
+ * The assertion a stray commit fails: an own commit no run armed is the product doing work on the
+ * normal path (KILL-2 on alpha.4: two extra leaf refreshes, between runs 1-2 and 2-3).
+ *
+ * @param {{kind: string, trace: string, newEpoch: number}[]} strays
+ * @param {string} where which gap they landed in
+ */
+export function strayCommitsOwn(strays, where) {
+  const traces = strays.map((d) => `${d.trace}->${d.newEpoch}`).join(', ');
+  return { what: `no commit landed ${where} (${strays.length}${traces ? `: ${traces}` : ''})`, ok: strays.length === 0 };
+}
+
 export function killRunsOwn(runs, { windows = true } = {}) {
   const out = [];
   if (windows) {

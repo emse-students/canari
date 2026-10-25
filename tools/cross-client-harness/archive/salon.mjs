@@ -30,10 +30,10 @@ import {
   openCommunity,
   openInviteLink,
   acceptInviteLink,
+  PERMISSION_GRID_DRAWN,
   permissionGrid,
   removeCommunityMember,
   revokeChannelAccess,
-  saveChannelAccess,
   setChannelPrivate,
   setMemberRole,
 } from '../comm.mjs';
@@ -78,7 +78,25 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Every Network event a page has received, drained or not. */
 const eventsOf = (cx) => (cx.consumed ?? []).concat(cx.events ?? []);
 /** The last status `cx` received for `pathPart` by `method`, or null. */
-const lastStatus = (cx, pathPart, method) => statusesIn(eventsOf(cx), pathPart, method).at(-1) ?? null;
+const statusCount = (cx, pathPart, method) => statusesIn(eventsOf(cx), pathPart, method).length;
+
+/**
+ * THE ANSWER TO THE REQUEST MADE SINCE `before` statuses were seen - waited for, never assumed there.
+ *
+ * A gesture resolves when the UI is done, not when its request is answered: RM-5 cycle 1 (alpha.4)
+ * read "no answer" for a kick the server had retried inline and answered, and a later cycle would
+ * have read the PREVIOUS cycle's answer instead. So the count before the gesture is the baseline, and
+ * only an answer past it is this request's. Null when none came within `ms`.
+ */
+async function statusAfter(cx, pathPart, method, before, ms = 30_000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const all = statusesIn(eventsOf(cx), pathPart, method);
+    if (all.length > before) return all.at(-1);
+    if (Date.now() > end) return null;
+    await sleep(250);
+  }
+}
 
 /** Whether `key`'s message is drawn on `cx` within `ms` - the panel NAMING a refusal. */
 async function drawn(cx, key, ms = 10_000) {
@@ -135,7 +153,7 @@ async function moderatorOnlyManagesChannels(cx) {
   // THE GRID IS WAITED FOR, never read on the click: `clearOverlays` closes the side panel, so the
   // tab opens it fresh and the table renders after the click returns - read at once, it answered no
   // roles at all (RM-6, 2026-10-25: "no moderator column in the grid ()").
-  await until(cx, `document.querySelectorAll('table thead th').length > 1`, 15_000);
+  await until(cx, PERMISSION_GRID_DRAWN, 15_000);
   for (let pass = 0; pass < 4; pass++) {
     const grid = await permissionGrid(cx);
     const col = (grid.roles ?? []).findIndex(isModerator);
@@ -169,6 +187,7 @@ async function heldRace(c, rule, gesture) {
     await openChannelAccess(cx);
     faults[admin] = await armFault(cx, [{ ...rule, fault: 'hold once' }]);
   }
+  const before = Object.fromEntries(admins.map((admin) => [admin, statusCount(seats.seat[admin].cx, rule.match, rule.method)]));
   const pending = Object.fromEntries(admins.map((admin) => [admin, outcome(gesture(seats.seat[admin].cx, c.name(spec.race[admin])))]));
   const held = {};
   for (const admin of admins) held[admin] = (await outcome(faults[admin].awaitHeld(1, 45_000))).ok;
@@ -178,7 +197,7 @@ async function heldRace(c, rule, gesture) {
   const status = {};
   const records = {};
   for (const admin of admins) {
-    status[admin] = lastStatus(seats.seat[admin].cx, rule.match, rule.method);
+    status[admin] = await statusAfter(seats.seat[admin].cx, rule.match, rule.method, before[admin]);
     records[admin] = (await faults[admin].disarm()).records;
   }
   return { held, status, records, gestures, named: {} };
@@ -259,6 +278,7 @@ const ACTIONS = {
       await openCommunity(K, c.community);
       await openChannel(G, c.community, c.salon);
       await openChannelAccess(G);
+      const before = { kick: statusCount(K, kickPath, 'DELETE'), grant: statusCount(G, access, 'PATCH') };
       const fk = await armFault(K, [{ match: kickPath, method: 'DELETE', fault: 'hold once' }]);
       const fg = await armFault(G, [{ match: access, method: 'PATCH', fault: 'hold once' }]);
       const gk = outcome(removeCommunityMember(K, c.name(S)));
@@ -266,8 +286,8 @@ const ACTIONS = {
       const held = (await outcome(fk.awaitHeld(1, 45_000))).ok && (await outcome(fg.awaitHeld(1, 45_000))).ok;
       await Promise.all([fk.release(), fg.release()]);
       const gestures = { kick: await gk, grant: await gg };
-      const kick = lastStatus(K, kickPath, 'DELETE');
-      const grant = lastStatus(G, access, 'PATCH');
+      const kick = await statusAfter(K, kickPath, 'DELETE', before.kick);
+      const grant = await statusAfter(G, access, 'PATCH', before.grant);
       const supersededNamed = kick === 409 ? await drawn(K, NAMED.DEPARTURE_SUPERSEDED) : false;
       records[spec.kicker].push(...(await fk.disarm()).records);
       records[spec.granter].push(...(await fg.disarm()).records);
@@ -298,9 +318,10 @@ const ACTIONS = {
     const access = `/api/channels/${c.channelId}/access`;
     await openChannel(M, c.community, c.salon);
     await openChannelAccess(M);
-    await setChannelPrivate(M, true);
-    const save = await outcome(saveChannelAccess(M));
-    const status = lastStatus(M, access, 'PATCH');
+    // THE TOGGLE IS THE WRITE (#1171): no save follows it, and its answer is the row's subject.
+    const before = statusCount(M, access, 'PATCH');
+    const save = await outcome(setChannelPrivate(M, true));
+    const status = await statusAfter(M, access, 'PATCH', before);
     const named = await drawn(M, NAMED.REMOVAL_EXCEEDS_ACTOR);
     await clearOverlays(M);
     const dist = salonDistribution(c.channelId);
@@ -378,7 +399,9 @@ try {
   const scope = out.detail?.workspaceId ? { workspaceId: out.detail.workspaceId, ...communityChannels(out.detail.workspaceId) } : null;
   const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds))] : [])] : [];
   const logs = Object.fromEntries(spec.devices.map((d) => [d, narration]));
-  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs });
+  // RM-6's 403 IS ITS SUBJECT: the manager's flip refused on the salon's own access path, nothing wider.
+  const refusals = id === 'RM-6' && out.detail?.channelId ? { [spec.manager]: [{ path: new RegExp(`^/api/channels/${out.detail.channelId}/access$`), status: [403] }] } : {};
+  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs, refusals });
   await finishObserved(
     id,
     verdict,

@@ -129,6 +129,45 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
   newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
   Proof: the newly-reached spec counting zero for readers who already saw the post.
 
+## P3 - what the 1.4.1 dev campaign left unexplained or noisy (2026-10-25, alpha.4)
+
+Each is a log or console line the campaign met and no row asserts on. NOISE IS NEVER ACCEPTABLE
+([CLAUDE.md](../../CLAUDE.md)): explain it or fix it, never demote it.
+
+- **A past-epoch frame older than the joiner's own Welcome is logged at WARN as an unreadable loss.**
+  Seen on ADM-1/3/4 (`[RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=2
+  group_epoch=3 ... TooDistantInThePast`), emitted while a new `WasmMlsClient` loads its state, right
+  after "Welcome complete: re-queued 1 buffered message(s)" and before "[HISTORY] ... holds 1 frame(s)
+  it can never read - reconciling". The frame predates the membership, so under the no-past-for-new-
+  members decision it is not a loss: drop it at INFO with its reason, once.
+- **A freshly minted device asks the server three times whether its own KeyPackage exists while it
+  already knows its first publication is running.** DEV-1, W3: census "0 proven" and a generate round
+  in flight, yet each of the three key-group external joins does `GET /api/mls/devices/<user>/<device>/key-package`
+  and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
+  KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
+  before the first round (never learn by failing what a fact could tell).
+- **Restored notices carry no proof and no mark (the `[AUTHORSHIP] ... carry no author proof` lines of
+  DEV-1).** Every one checked is a system notice row (`sender 'system'`), never a user message: the
+  count equals the system rows of each batch. Two classes. (a) Device-local rows relayed into other
+  members' timelines (contact lines, outbox failure lines): P3, already filed above, fix = a
+  "device-local" property set where the row is written and kept out of digest, diff and bundle.
+  (b) Shared notices (member added/removed, rename, picture, Join cards) a new device legitimately
+  restores: P2 under the Graine v2 authorship item, NOT a regression (v1.4.0 takes every restored row
+  on the relayer's word with no mark; `#2276` makes it visible in the pre-releases). Fix at the
+  source: store the event frame's verified authorship on the notice row, add a notice verdict in
+  `restoredAuthorship.ts` that verifies the signed system frame and redraws the text locally
+  (`renderVisibleNotice`) instead of taking the relayer's text; same for `channel_invitation`.
+  Interim decision owed after the stable: show the unverified mark on system rows
+  (`ChatMessageGroups.svelte` system branch) or not. Do not lower the log level; split the count
+  into notices and messages.
+- **Two flaky unit tests** (they pass alone, fail in the full parallel run, with or without recent
+  changes): `ChatArea.entryWindow.svelte.test.ts` ("never mounts more than the 20-row entry frame")
+  and `outbox.reelResume` ("KILL MID-UPLOAD"). Find the shared-state or ordering cause; a flaky gate is
+  a gate nobody believes.
+- **The rig's volume lines and its own probes** (JOIN_*, WELCOME_REQ, DISCOVERY, 409/400/403 probes,
+  DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
+  the ADM and DEV rows; a rig allowlist PR follows the chain.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
@@ -206,6 +245,40 @@ and taken as a redelivery). `getDeviceMemberships` carries `admittedAtEpoch` (it
 typed on `DeviceMembershipRow` since the review of #2466 and named in the recovery's
 `unhonoured-seat` line, so a reading of the log tells an admitted seat from a stranded one. It is not
 read as owed: a seat whose adder died would then wait for ever, and the join over it is safe.
+
+## P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)
+
+Chrome commits `localStorage` to the profile LAZILY: on a fresh profile a write made 2 s or 4.5 s
+before a hard kill of the browser was lost, one made 7 s before survived, and an IndexedDB write
+made beside it survived every time (probe of 2026-10-25; Chromium also rate-limits those commits,
+so a busy page can wait longer). The MLS state is written to IndexedDB (web) or `mls.bin`
+(native), durable when its checkpoint completes. Every ledger whose job is to describe that state
+and is kept in `localStorage` can therefore be BEHIND it after a browser killed, a crash, or an
+app swiped away (the Android WebView keeps the same store in the app's process). Three do:
+
+- **The leaf-refresh ledger** - closed by naming the leaf in each entry
+  ([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)); the cost had been one
+  extra refresh commit per such exit.
+- **The seen-ciphertext ledger** (`history_seen_cipher:<user>:<group>`, `history.ts`). Its marks
+  are written after the checkpoint that holds their ratchet advance (`commitPendingHistoryMarks`),
+  and its docblock calls the remaining window "microseconds"; it is the store's commit delay. KILL-2
+  measured the result: a read receipt consumed seconds before the kill was re-walked by the next
+  history catch-up, MLS answered `SecretReuseError` at the device's own epoch, and the client logged
+  `frame never read here and unreadable for good (secret-reuse)`, a `[FORK] not a fork` line and a
+  reconcile ask - for a frame it had read. No consumption path skipped the mark (the held-back frame
+  was drained through the ordinary pipeline after the merge); the mark was made and not kept.
+- **The send-ratchet ledger** (`sendRatchetLedger.ts`), whose header chooses `localStorage` as the
+  store "that survives the teardown". It survives a TAB teardown; it does not survive the browser's
+  or the app's process dying within the commit delay of a send whose checkpoint (not awaited on the
+  send path) had not landed either. The device then reloads a ratchet behind a frame that left and
+  re-issues its generation: the peers refuse the next frame (`SecretReuseError`) - a real message
+  lost, the defect that ledger exists to prevent. Not yet measured; the window is the same.
+
+The design question is where these marks live so that they reach disk WITH the state they
+describe, on both platforms - an IndexedDB store written in the checkpoint's own transaction on
+web, and the MLS state or a file the native checkpoint writes beside `mls.bin` - and what each
+reader does at startup. Measure first: a KILL-2 run with per-run console capture on each window,
+and a native kill (KILL-3) after a send.
 
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 

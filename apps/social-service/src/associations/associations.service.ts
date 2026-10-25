@@ -24,6 +24,7 @@ import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
+import { MEMBER_CHANGED_MEANWHILE } from '../channels/permissions';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
 import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
@@ -1008,9 +1009,31 @@ export class AssociationsService {
     if (hadManageMembers && willLoseManageMembers && !opts?.bypassLastAdmin) {
       await this.assertNotLastAdminDemotion(associationId);
     }
-    if (role !== undefined) membership.role = role;
-    if (permissions !== undefined) membership.permissions = permissions;
-    return this.memberRepo.save(membership);
+    // ONE column update of the row judged above, never a save of it: a member write must never
+    // insert a row, and a save of a stale entity re-inserts a deleted one and reverts what a
+    // concurrent writer changed. CONDITIONED on the permissions the guard above judged, so 0 rows
+    // means the row is not the one judged - gone, or its permissions changed since.
+    const changes: Partial<Pick<AssociationMember, 'role' | 'permissions'>> = {};
+    if (role !== undefined) changes.role = role;
+    if (permissions !== undefined) changes.permissions = permissions;
+    if (Object.keys(changes).length === 0) return membership;
+    const updated = await this.memberRepo.update(
+      { id: membership.id, permissions: membership.permissions },
+      changes
+    );
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `updateMemberRole: membership changed or gone since its read association=${associationId} target=${targetUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new ConflictException({
+        code: MEMBER_CHANGED_MEANWHILE,
+        message: 'This member changed meanwhile, retry.',
+      });
+    }
+    this.logger.debug(
+      `updateMemberRole: association=${associationId} target=${targetUserId.slice(0, 8)} fields=${Object.keys(changes).join(',')}`
+    );
+    return { ...membership, ...changes };
   }
 
   /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */

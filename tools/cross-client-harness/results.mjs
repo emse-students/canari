@@ -623,7 +623,7 @@ export async function recordObserved(id, verdict, detail, observers) {
  * Writes each client's console to `<STATE_DIR>/logs/consoles/`, outside the repository (the lines
  * carry ids), and returns label -> path. A write that fails is a note in the row, never a lost verdict.
  */
-function keepConsoles(id, consoles) {
+export function keepConsoles(id, consoles) {
   const labels = Object.keys(consoles);
   if (!labels.length) return null;
   const dir = join(STATE_DIR, 'logs', 'consoles');

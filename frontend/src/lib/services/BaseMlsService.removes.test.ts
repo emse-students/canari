@@ -42,6 +42,8 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       ...plainCommitLock,
       runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
       freshEpoch: vi.fn().mockResolvedValue(5),
+      // The key the merged commit gives this device's leaf, which the ledger names it by.
+      ownLeafKey: vi.fn(async () => 'k-leaf'),
       mergePendingCommit: vi.fn().mockResolvedValue(undefined),
       // No staged commit kept in the state: the commit here is answered at once.
       groupsWithPendingCommit: vi.fn(async () => []),
@@ -52,6 +54,7 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
           'checkpointStageBeforeSend',
           'submitRecorded',
           'mergeAccepted',
+          'noteOwnLeafReplaced',
         ].map((name) => [
           name,
           (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],

@@ -78,6 +78,8 @@ function ctx(fetchImpl: ReturnType<typeof vi.fn>, refreshToken: ReturnType<typeo
     owedWelcomes: vi.fn(async () => []),
     pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? { status: 'none' }),
     groupsWithPendingCommit: vi.fn(async () => [...state.keys()]),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
     mergePendingCommit: vi.fn(async (g: string) => {
       state.delete(g);
     }),
@@ -95,6 +97,7 @@ function ctx(fetchImpl: ReturnType<typeof vi.fn>, refreshToken: ReturnType<typeo
     'checkpointStageBeforeSend',
     'mergeSettled',
     'mergeAccepted',
+    'noteOwnLeafReplaced',
     'deliverOwedWelcomes',
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',

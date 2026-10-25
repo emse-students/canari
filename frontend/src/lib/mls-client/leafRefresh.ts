@@ -21,6 +21,16 @@
  *   So {@link noteOwnLeafRefreshed} is written by the one seam every own commit passes through,
  *   after the server accepted it - a refresh, a Remove and an Add alike - and by the external join.
  *
+ * **EVERY ENTRY NAMES THE LEAF IT DATES** (`leaf`: the leaf's HPKE key, `own_leaf_encryption_key`),
+ * and an entry naming another leaf dates nothing. The ledger lives in `localStorage`, which Chrome
+ * commits to disk LAZILY - a write reaches the profile about five seconds after it is made (measured
+ * 2026-10-25) - while the merge it follows is in the MLS state, on disk the moment its checkpoint
+ * completes. An unclean exit between the two (a browser killed, an app swiped away) keeps the merge
+ * and loses the entry, and the relaunch read the entry the disk kept: written for the leaf the merge
+ * REPLACED, often due, so the first send refreshed a leaf one minute old (KILL-2, 1.4.1-alpha.4).
+ * The key is read from the state itself, so the two can no longer disagree unseen: a former leaf's
+ * entry is a first sight, observed again - the direction that costs no commit.
+ *
  * **THE FIRST REFRESH IS SPREAD, OR IT IS A HERD.** The day this mechanism ships, every leaf in every
  * group is older than the interval, so a decision on age alone makes each seat refresh at its first
  * send: ~1600 commits in the first week, back to back in a 109-seat group, where a slow device keeps
@@ -86,11 +96,14 @@ export interface LeafRefreshRecord {
   epoch: number;
   /**
    * Present on an OBSERVATION only. It is not a refresh: it anchors the first one
-   * ({@link leafRefreshOffsetMs}), and it describes only the leaf it saw - `mintedAtSec` names it.
+   * ({@link leafRefreshOffsetMs}).
    */
   observed?: true;
-  /** The observed leaf's `own_leaf_minted_at`, `null` for a commit-sourced one. Observations only. */
-  mintedAtSec?: number | null;
+  /**
+   * The leaf this entry dates, as `own_leaf_encryption_key` reads it (hex). An entry is read only
+   * for the leaf it names; one without it predates the naming and describes no leaf.
+   */
+  leaf?: string;
 }
 
 /**
@@ -108,6 +121,8 @@ export interface LeafRefreshDecision {
   sinceMs: number;
   /** From when the refresh is owed, Unix ms; `null` on a first sight. */
   dueAtMs: number | null;
+  /** On a first sight: the ledger held an entry, written for ANOTHER leaf (or naming none). */
+  formerLeaf?: true;
 }
 
 /**
@@ -127,19 +142,24 @@ export function leafRefreshOffsetMs(
 /**
  * Decides whether the leaf is old enough to replace. PURE.
  *
+ * An entry is read only for the leaf it NAMES (`record.leaf === leaf`): the ledger is written after
+ * the merge, into a store an unclean exit can lose while the merge survives (see the header), so an
+ * entry naming another leaf dates a former one - whatever kind it is.
+ *
  * - A KeyPackage-dated leaf (`mintedAtSec`) is due at the LATER of `minted + interval` and its
- *   observation plus the offset. Only an observation OF THAT LEAF counts (`mintedAtSec` equal): a
- *   ledger refresh describes a commit-sourced leaf, so beside a KeyPackage-dated one it is a former
- *   incarnation (a Welcome after the group was forgotten).
+ *   observation plus the offset. A ledger REFRESH beside it cannot name it (a refresh leaves a
+ *   commit-sourced leaf), so only an observation counts.
  * - A leaf this device's own commit produced is due at `refresh + interval` (`ledger`).
  * - A commit-sourced leaf with only an observation is due at the observation plus the offset.
- * - Anything else - no entry, an entry of another incarnation, or one dated in the future - is a
+ * - Anything else - no entry, an entry of another leaf, or one dated in the future - is a
  *   `first-sight`: NEVER due, and the caller records an observation. Dating it "now" costs at most
  *   one interval of delay, while dating it "never" would turn a lost ledger into a commit in every
  *   group at the next send.
  */
 export function decideLeafRefresh(input: {
   mintedAtSec: number | null;
+  /** The current leaf, as `own_leaf_encryption_key` reads it (hex). */
+  leaf: string;
   record: LeafRefreshRecord | undefined;
   nowMs: number;
   offsetMs: number;
@@ -149,14 +169,15 @@ export function decideLeafRefresh(input: {
   const { mintedAtSec, nowMs, offsetMs } = input;
   // A date this device's clock has not reached yet was written by a clock that was ahead: believing
   // it would postpone the refresh by however far ahead that clock was. Observed again instead.
-  const record = input.record && input.record.at <= nowMs ? input.record : undefined;
-  const observation =
-    record?.observed && (record.mintedAtSec ?? null) === mintedAtSec ? record : undefined;
+  const current = input.record && input.record.at <= nowMs ? input.record : undefined;
+  const record = current?.leaf === input.leaf ? current : undefined;
+  const observation = record?.observed ? record : undefined;
   const firstSight: LeafRefreshDecision = {
     due: false,
     basis: 'first-sight',
     sinceMs: nowMs,
     dueAtMs: null,
+    ...(current && !record ? { formerLeaf: true as const } : {}),
   };
 
   let basis: LeafAgeBasis;
@@ -239,41 +260,44 @@ function writeLedgerEntry(
 }
 
 /**
- * Records that this device's own commit, accepted by the server, replaced its leaf in `groupId`.
+ * Records that this device's own commit, accepted by the server, replaced its leaf in `groupId` with
+ * `leaf` (its key, read after the merge).
  *
- * Written by `BaseMlsService.runCommitTransaction` after the merge - the one seam every own member
- * commit passes through, so a Remove or an Add counts as a refresh, as it is - and after an
- * accepted external join. A failed write costs at most one early refresh, and is said.
+ * Written by `BaseMlsService.noteOwnLeafReplaced`, which every merge of an own commit reaches - a
+ * Remove or an Add counts as a refresh, as it is - and the accepted external join. A write that
+ * fails, or that an unclean exit loses, leaves an entry naming the former leaf: the next send
+ * observes the leaf instead of refreshing it ({@link decideLeafRefresh}). A failed write is said.
  */
 export function noteOwnLeafRefreshed(
   userId: string,
   deviceId: string,
   groupId: string,
   epoch: number,
+  leaf: string,
   nowMs: number = Date.now()
 ): void {
-  writeLedgerEntry(userId, deviceId, groupId, { at: nowMs, epoch }, 'refresh');
+  writeLedgerEntry(userId, deviceId, groupId, { at: nowMs, epoch, leaf }, 'refresh');
 }
 
 /**
- * Records the first sight of a leaf this device holds no refresh of its own for - the anchor its
- * first refresh is spread from ({@link decideLeafRefresh}). `mintedAtSec` names the leaf, so the
- * observation is never read for another incarnation of it. A failed write leaves the leaf a first
- * sight at the next send, which commits nothing, and is said.
+ * Records the first sight of `leaf`, a leaf this device holds no refresh of its own for - the anchor
+ * its first refresh is spread from ({@link decideLeafRefresh}). The entry names the leaf, so it is
+ * never read for another one. A failed write leaves the leaf a first sight at the next send, which
+ * commits nothing, and is said.
  */
 export function noteLeafObserved(
   userId: string,
   deviceId: string,
   groupId: string,
   epoch: number,
-  mintedAtSec: number | null,
+  leaf: string,
   nowMs: number
 ): void {
   writeLedgerEntry(
     userId,
     deviceId,
     groupId,
-    { at: nowMs, epoch, observed: true, mintedAtSec },
+    { at: nowMs, epoch, observed: true, leaf },
     'observation'
   );
 }
@@ -319,6 +343,8 @@ export function leafRefreshHold(groupId: string): string | null {
 export type LeafRefreshOutcome =
   | 'key-group'
   | 'inactive'
+  | 'no-own-leaf'
+  | 'leaf-moved'
   | 'first-sight'
   | 'not-due'
   | 'epoch-gap'
@@ -340,6 +366,8 @@ export interface LeafRefreshDeps {
   getEpoch(groupId: string): number;
   /** `own_leaf_minted_at`: Unix seconds for a KeyPackage-dated leaf, `null` for a refreshed one. */
   ownLeafMintedAt(groupId: string): Promise<number | null>;
+  /** `own_leaf_encryption_key` as hex - what names the current leaf - or `null` with no own leaf. */
+  ownLeafKey(groupId: string): Promise<string | null>;
   /** Stages, submits and merges the refresh; throws on a refusal (the ledger is written inside). */
   refreshOwnLeaf(groupId: string): Promise<void>;
   /** The structural checkpoint, awaited. */
@@ -349,8 +377,15 @@ export interface LeafRefreshDeps {
    * epoch faces the same answer; the epoch moving is what makes the next one different.
    */
   attemptedAtEpoch: Map<string, number>;
+  /**
+   * The epoch at which each group was last REPORTED holding no leaf of ours in an active tree. The
+   * state is a defect, and every durable send reads it: said once per group and epoch, not per send.
+   */
+  noOwnLeafReportedAtEpoch: Map<string, number>;
   now(): number;
   log(message: string): void;
+  /** A line that accuses: a state that should not exist. */
+  warn(message: string): void;
 }
 
 /**
@@ -369,20 +404,56 @@ export async function refreshLeafIfDue(
   if (!(await deps.isGroupActive(groupId))) return 'inactive';
 
   const now = deps.now();
+  const leaf = await deps.ownLeafKey(groupId);
+  if (leaf === null) {
+    // AN ACTIVE GROUP WHOSE TREE HOLDS NO LEAF OF OURS IS NOT AN INACTIVE GROUP: this device believes
+    // it is a member and the tree says it is not, so it can neither refresh nor be read by anyone.
+    // Nothing here repairs it (the departure and stray-leaf paths own membership); it is said, once
+    // per group and epoch, since every durable send at that epoch decides the same thing.
+    const epoch = deps.getEpoch(groupId);
+    if (deps.noOwnLeafReportedAtEpoch.get(groupId) !== epoch) {
+      deps.noOwnLeafReportedAtEpoch.set(groupId, epoch);
+      deps.warn(
+        `[LEAF_REFRESH] ${short}... ACTIVE at epoch ${epoch} but its tree holds NO leaf of this ` +
+          'device - nothing to refresh or date; not said again before the epoch moves'
+      );
+    }
+    return 'no-own-leaf';
+  }
+  deps.noOwnLeafReportedAtEpoch.delete(groupId);
   const mintedAtSec = await deps.ownLeafMintedAt(groupId);
   const offsetMs = leafRefreshOffsetMs(deps.deviceId, groupId);
   const decision = decideLeafRefresh({
     mintedAtSec,
+    leaf,
     record: readLeafRefreshLedger(deps.userId, deps.deviceId)[groupId],
     nowMs: now,
     offsetMs,
   });
   const epoch = deps.getEpoch(groupId);
   if (decision.basis === 'first-sight') {
-    noteLeafObserved(deps.userId, deps.deviceId, groupId, epoch, mintedAtSec, now);
+    // THE LEAF IS READ AGAIN BEFORE THE OBSERVATION IS WRITTEN. This decision runs outside the MLS
+    // lock, and an own commit can merge while it awaits: that merge dates ITS leaf
+    // (`noteOwnLeafReplaced`), and an observation of the leaf read before it would overwrite that
+    // entry with one naming a leaf already gone - so the next send would read a first sight and a
+    // false "FORMER leaf" line. No await separates this read from the write below, so the leaf the
+    // write names is the leaf in the state when it is made.
+    const current = await deps.ownLeafKey(groupId);
+    if (current !== leaf) {
+      deps.log(
+        `[LEAF_REFRESH] ${short}... the leaf was replaced while deciding (an own commit merged) - ` +
+          'nothing observed, the merge dated the new one'
+      );
+      return 'leaf-moved';
+    }
+    noteLeafObserved(deps.userId, deps.deviceId, groupId, epoch, leaf, now);
     deps.log(
       `[LEAF_REFRESH] ${short}... first sight of this leaf (${mintedAtSec === null ? 'commit-sourced' : 'admitted'}, ` +
-        `no refresh of ours on record) - observed now, its first refresh is owed from ` +
+        (decision.formerLeaf
+          ? 'the entry on record dates a FORMER leaf - its write after our last merge did not ' +
+            'survive, or it predates the naming of leaves'
+          : 'no refresh of ours on record') +
+        ') - observed now, its first refresh is owed from ' +
         `${(offsetMs / (24 * 60 * 60 * 1000)).toFixed(1)} d after this` +
         (mintedAtSec === null ? '' : ' or seven days after its admission, whichever is later')
     );
