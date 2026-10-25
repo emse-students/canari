@@ -183,6 +183,13 @@ export const RM8_NARRATION = [
 ];
 
 /**
+ * RM-8's expected narration on W1: the departed member's leaf collected at W1's next connection
+ * (`strayLeaves.ts`) - BY DESIGN the only path that removes a leaver's leaf, and the reload pass is
+ * that connection. ONE departed member, the leaver: a sweep naming more is not this row's.
+ */
+export const RM8_W1_NARRATION = [/^\[STRAY\] [0-9a-f]{8}\.\.\. 1 member\(s\) left but still hold a leaf - removing \(\d+ leaves stay\)$/];
+
+/**
  * RM-8: no half-left group. Either W2 is gone on BOTH sides (off the roster, no seat, not listed) or
  * still a member on both (on the roster, an active seat, listed, at the server's epoch).
  *
