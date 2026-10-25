@@ -61,7 +61,12 @@ export async function readConfirmedTree(
         (msg) => console.log(msg),
         { persist: scheduleOutboundMlsPersist, refusedBacklog: 'hold' }
       );
-      if (replay.heldBehindRefusedBacklog) return { status: 'unconfirmed' };
+      if (replay.heldBehindRefusedBacklog) {
+        console.log(
+          `${logTag} ${short}… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed`
+        );
+        return { status: 'unconfirmed' };
+      }
       const now = mlsService.getEpoch(groupId);
       if (now < activeEpoch) {
         console.warn(

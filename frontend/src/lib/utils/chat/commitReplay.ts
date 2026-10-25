@@ -148,7 +148,8 @@ export type RecordedReplay = CommitReplayResult & {
  * - **Hold behind a refused backlog** (`refusedBacklog: 'hold'`): when this group's earlier frames
  *   were refused for lack of a row they are still queued, commits AND the application frames
  *   between them, and replaying the commits alone jumps past those frames (`max_past_epochs` is 2):
- *   47 of 150 lost on a Pixel 6a, prod 1.2.7, 2026-10-14. The pipeline passes `'judged-by-caller'`:
+ *   47 of 150 lost on a Pixel 6a, prod 1.2.7, 2026-10-14. A hold ASKS FOR THE PULL that brings them
+ *   (`notifyConversationAvailable`) and prints nothing: the caller's one line says it. The pipeline passes `'judged-by-caller'`:
  *   its own guard is narrower on purpose (a frame the backlog pull hands over must still reach the
  *   ladder, or nothing would ever discharge it).
  *
@@ -164,9 +165,11 @@ export async function replayAndRecord(
   opts: { persist: () => void; refusedBacklog: 'hold' | 'judged-by-caller' }
 ): Promise<RecordedReplay> {
   if (opts.refusedBacklog === 'hold' && refusedBacklogIsQueued(groupId)) {
-    log(
-      `[GAP] ${groupId.slice(0, 8)}… frames refused for lack of a row are still queued - no commit replay past them`
-    );
+    // HELD, AND THE PULL THAT ENDS THE HOLD IS ASKED HERE - as the pipeline's own hold asks it. The
+    // mark is discharged only by a pull, and nothing else may start one: a quiet conversation has no
+    // next frame, so the hold would last until the stuck-gap escalation (rung 2) or a reconnect. The
+    // caller says it in ONE line of its own; this prints none, so a hold is never told twice.
+    mlsService.notifyConversationAvailable(groupId);
     return { healed: false, belowFloor: false, applied: 0, heldBehindRefusedBacklog: true };
   }
   const replay = await attemptCommitReplay(mlsService, groupId, userId, log);

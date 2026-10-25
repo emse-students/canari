@@ -128,6 +128,7 @@ import {
   dischargeRefusedBacklog,
   noteUnackedFrame,
   refusedBacklogMark,
+  rearmRefusedBacklog,
   reportUnackedFrames,
   takeGroupAwaiting,
   takeGroupsAwaiting,
@@ -2650,6 +2651,9 @@ export abstract class BaseMlsService implements IMlsService {
     // holding live frames behind it (`refusedBacklogIsQueued`). A pull that died half-way proves
     // nothing about the pages it did not list.
     if (emptied) dischargeRefusedBacklog(refusalsCovered);
+    // ...and it leaves the backlog OWED A PULL, which its start took off the work list: re-armed, so
+    // the next event asking for that backlog (`notifyConversationAvailable`) pulls again.
+    else rearmRefusedBacklog(refusalsCovered);
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.
@@ -5071,7 +5075,12 @@ export abstract class BaseMlsService implements IMlsService {
         refusedBacklog: 'hold',
       });
       if (replay.healed) return;
-      if (replay.heldBehindRefusedBacklog) return;
+      if (replay.heldBehindRefusedBacklog) {
+        log(
+          `[GAP] ${short} not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked`
+        );
+        return;
+      }
       // "Still behind" merges two futures: one where the next frame closes the gap, and one where
       // NOTHING ever does because the server has no commits to give. The escalation still belongs
       // to the watchdog - deliberately, see above - but the line must say which of the two this is,

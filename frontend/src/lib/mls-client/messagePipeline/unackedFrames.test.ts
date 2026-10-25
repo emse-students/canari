@@ -1,10 +1,12 @@
 import {
   dischargeRefusedBacklog,
   noteUnackedFrame,
+  rearmRefusedBacklog,
   refusedBacklogIsQueued,
   refusedBacklogMark,
   reportUnackedFrames,
   resetUnackedFrames,
+  takeGroupAwaiting,
   takeGroupsAwaiting,
 } from './unackedFrames';
 
@@ -155,6 +157,35 @@ describe('the refused backlog the gap healer waits behind', () => {
     dischargeRefusedBacklog(pullStart);
 
     expect(refusedBacklogIsQueued('g1')).toBe(true);
+  });
+
+  it('a pull that DIED HALF-WAY re-arms its groups, so the next event pulls again', () => {
+    noteUnackedFrame('g1', 'absent-conversation');
+    // The event that started the pull took the group off the work list.
+    expect(takeGroupAwaiting('absent-conversation', 'g1')).toBe(true);
+    const pullStart = refusedBacklogMark();
+
+    // It never listed the whole mailbox: the mark stands, and nothing was left to start a pull.
+    expect(takeGroupAwaiting('absent-conversation', 'g1')).toBe(false);
+    rearmRefusedBacklog(pullStart);
+
+    expect(refusedBacklogIsQueued('g1')).toBe(true);
+    expect(takeGroupAwaiting('absent-conversation', 'g1')).toBe(true);
+  });
+
+  it('re-arms only what that pull was meant to cover, and adds nothing to the tally', () => {
+    const pullStart = refusedBacklogMark();
+    noteUnackedFrame('g2', 'absent-conversation');
+    takeGroupsAwaiting('absent-conversation');
+    const log = vi.fn();
+    reportUnackedFrames(log);
+    log.mockClear();
+
+    rearmRefusedBacklog(pullStart);
+
+    expect(takeGroupsAwaiting('absent-conversation')).toEqual([]);
+    reportUnackedFrames(log);
+    expect(log).not.toHaveBeenCalled();
   });
 
   it('a frame refused again while the pull is handled marks its group again', () => {

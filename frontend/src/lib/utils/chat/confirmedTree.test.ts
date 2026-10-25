@@ -12,7 +12,9 @@ import {
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
 import {
+  dischargeRefusedBacklog,
   noteUnackedFrame,
+  refusedBacklogMark,
   resetUnackedFrames,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 
@@ -67,7 +69,7 @@ describe('readConfirmedTree - the bookkeeping of the replay it runs', () => {
     expect(persist.scheduled).toHaveBeenCalledTimes(1);
   });
 
-  it('replays nothing past a refused backlog still queued - the reading is unconfirmed', async () => {
+  it('replays nothing past a refused backlog, ASKS FOR ITS PULL once, and replays after it', async () => {
     const { mls, state } = behindByOne();
     noteUnackedFrame(G, 'absent-conversation');
 
@@ -77,6 +79,21 @@ describe('readConfirmedTree - the bookkeeping of the replay it runs', () => {
     expect(mls.processIncomingMessage).not.toHaveBeenCalled();
     expect(state.epoch).toBe(4);
     expect(persist.scheduled).not.toHaveBeenCalled();
+    // The hold started the pull that ends it - a quiet conversation has no next frame to do so.
+    expect(mls.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    expect(mls.notifyConversationAvailable).toHaveBeenCalledWith(G);
+    // One line for the hold, and not a `[GAP]` one.
+    const said = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+    expect(said.filter((l) => l.includes('still queued'))).toHaveLength(1);
+    expect(said.filter((l) => l.includes('[GAP]'))).toEqual([]);
+
+    // That pull listed the whole mailbox: the backlog is discharged, and the next gesture replays.
+    dischargeRefusedBacklog(refusedBacklogMark());
+    await expect(readConfirmedTree(mls, G, 'me', '[TEST]', holdsBob)).resolves.toEqual({
+      status: 'read',
+      identities: ['me:da', 'bob:d1'],
+    });
+    expect(mls.notifyConversationAvailable).toHaveBeenCalledTimes(1);
   });
 
   it('THE REAL LOCK IS NOT RE-ENTRANT: a call from inside it waits for its own holder', async () => {

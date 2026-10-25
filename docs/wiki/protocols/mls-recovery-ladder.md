@@ -95,6 +95,15 @@ and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same la
    can stop mid-backlog) and not by the end of the listing (a live frame queued ahead of the listed
    rows would then meet the healer first).
 
+   **Every other replay honours the same mark, and asks for the same pull.** `replayAndRecord`
+   (`commitReplay.ts`) is rung 1 for a refused commit's catch-up and a gesture's confirmed tree
+   (`readConfirmedTree`); held behind the mark, it replays nothing and calls
+   `notifyConversationAvailable` itself, since a quiet conversation has no next frame to start that
+   pull, and without it the hold lasted until the stuck-gap escalation or a reconnect. **A pull that
+   dies half-way re-arms its groups** (`rearmRefusedBacklog`): its start took them off the work list
+   while only a WHOLE listing discharges the mark, so the next event asking for that backlog would
+   otherwise take nothing and pull nothing. Event-driven both ways: no timer.
+
    The row itself is written by every path that can make it appear, and each one announces it: the
    redelivered Welcome of a held group with no row (`writeRowForHeldGroup` - from storage when
    storage holds one the restore has not seeded yet, so its watermarks are not overwritten), the

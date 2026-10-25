@@ -132,6 +132,32 @@ export function dischargeRefusedBacklog(upTo: number): void {
 }
 
 /**
+ * A pull that started at `upTo` DIED HALF-WAY: every group it was meant to re-fetch for the refused
+ * backlog is owed a pull again, so each one still marked at or before `upTo` goes back on the work
+ * list as `absent-conversation`.
+ *
+ * WHY THE WORK LIST AND THE MARK CAN DISAGREE: the event that starts a pull TAKES its groups off the
+ * work list ({@link takeGroupAwaiting}), and only a pull that lists the whole mailbox discharges the
+ * mark ({@link dischargeRefusedBacklog}). A pull that dies between the two left the mark standing
+ * with nothing on the list - and the next event asking for this group's backlog (a held replay, a
+ * held live frame) then took nothing and started no pull, so the hold lasted until a reconnect.
+ * Re-armed by the failure itself, the next such event pulls again: no timer, one pull per event.
+ * Rows the dead pull did list and that were refused again are already back on the list; re-adding
+ * them is idempotent (a set), and the tally is left alone - nothing new was refused.
+ */
+export function rearmRefusedBacklog(upTo: number): void {
+  for (const [groupId, seq] of refusedBacklog) {
+    if (seq > upTo) continue;
+    let waiting = awaiting.get('absent-conversation');
+    if (!waiting) {
+      waiting = new Set();
+      awaiting.set('absent-conversation', waiting);
+    }
+    waiting.add(groupId);
+  }
+}
+
+/**
  * Discharges ONE group, for the events that are per-group rather than global. True if it was owed.
  *
  * The whole-reason {@link takeGroupsAwaiting} answers a global edge - a reconnect, a boot restore.
