@@ -204,6 +204,44 @@ lacks them, and they land in other members' timelines marked unverified. The rul
 property of the row ("device-local": never described, never relayed), carried at the write rather
 than guessed from the sender. Found by reading; the relay count in the field is unmeasured.
 
+**The device notice's contact line is the same class, with one difference (DEV-1, `1.4.1-alpha.3`,
+2026-10-25).** `writeContactLines` (`deviceNotices.svelte.ts`) writes the "X added a device" line with
+the same `system` sender, under a DETERMINISTIC id (`contactLineId(group, event)`), so two contacts
+that both wrote it never trade it. But the device's OWNER never writes it (`owner-alert`, no line),
+nor does a device minted after the event - so the digest diff can push a contact's line to exactly
+those devices, unverified. The DEV-1 judge reads the owner's pane at 0 lines within the row, which
+bounds the window, not the relay. **The fresh device RECEIVED them.** On DEV-1, W3's `[AUTHORSHIP] N
+restored message(s) ... relayed by <user> carry no author proof` lines name W2's account as the relayer
+of exactly 1 unverified row in the group the row had just created. That is the one line DEV-1's judge
+counts there, the line about W3 itself. Each contact relays 3 to 5 such rows per standing conversation,
+in step with the owner devices minted before. This was read from relay counts by relayer, not row by
+row. The same "device-local" property closes both.
+
+## P3 - A revoked device signs out twice: the wipe's `clearAuth`, then the session-expired path's (DEV-2, `1.4.1-alpha.3`, 2026-10-25)
+
+The revoked W3 logged `[A] logout✓200` twice, 70 ms apart and in sequence (61 ms, then 59 ms). The
+cause, from reading the code, with the timing to match: `onDeviceRevoked` (`sessionAuth.ts`) runs
+`wipeRevokedDevice`, which awaits `clearAuth()` (the first `POST /api/auth/logout`). It then calls
+`cb.onSessionExpired()` for the redirect, and `handleSessionExpired` (`ChatBackgroundService.svelte`)
+runs `clearAuth()` again (the second). The second is harmless: the session row is already gone and the
+server answers 200. But it is a write sent for nothing, and the account's sign-out handlers run twice.
+The redirect wanted is `/login` with no second sign-out: either the seam carries "already signed out"
+or the revocation gets its own path to `/login`. Until the fix lands, both lines stay dirt on DEV-2
+and DEV-3.
+
+## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
+
+`awaitOwnKeyPackagePublished` (`BaseMlsService.ts`) reads `fetchDeviceKeyPackage(self)` before an
+external join, and on a device that has not published yet the delivery service answers 404 with its
+typed reason. The client reads it correctly as "absent" and waits for the round - but the browser
+prints `Failed to load resource: ... 404` at `error` level on EVERY fresh device, which no needle may
+forgive (a 404 elsewhere on that path is a real loss). Wanted: the own-publication read answers
+`200 {held:false}`, an answer and not a failure. The same endpoint serves a PEER's package to
+`processPendingInvitations`, whose typed 404 (`deviceKeyPackage.ts`) must not change, so the fix is a
+read of one's own publication rather than a new status on the shared one; old clients that read the
+404 get a [legacy-compatibility](legacy-compatibility.md) row with its removal date. Until it lands
+the DEV rows stay `PASS-DIRTY` on this line, named.
+
 ## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
 
 The web send now reads a non-JSON 2xx as no answer

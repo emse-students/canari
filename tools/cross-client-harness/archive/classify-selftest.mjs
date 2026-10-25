@@ -19,9 +19,14 @@
  * the first bug turned on.
  */
 import {
+  CONTACT_DEVICE_NOTICE_NARRATION,
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
+  FRESH_CLIENT_NARRATION,
+  FRESH_DEVICE_SESSION_NARRATION,
   ignoringExpectedLog,
+  OWNER_DEVICE_NOTICE_NARRATION,
+  REVOKED_SIGN_OUT_NARRATION,
   PAGE_BOOT_NARRATION,
   REFUSED_FOR_LACK_OF_ROW_NARRATION,
   stripStamp,
@@ -1454,11 +1459,122 @@ const FORGIVE_CASES = [
     [/group-deleted - permanent failure$/],
     { clean: false, unmatched: 0 },
   ],
+  // THE DEV ROWS' NARRATION (read on DEV-1 and DEV-2, `1.4.1-alpha.3`, 2026-10-25). Every needle there
+  // is `atLevels`, so each list gets three cases: forgiven at its own level, NOT forgiven as an error
+  // or a warning carrying the same words, and NOT forgiven in its odd variant - the one a needle that
+  // merely matched the prefix would have swallowed.
+  [
+    "the owner's device notice, forgiven at its levels",
+    [
+      ['debug', '[10:01:02] [TRUST] 1 device event(s) handed to the notices (drain end)'],
+      ['debug', '[10:01:02] [DEVICE_NOTICE] 1 device event(s) to sort (+0 undecided)'],
+      ['log', '[10:01:02] [DEVICE_NOTICE] a new device was added to this account (first-sight)'],
+    ],
+    OWNER_DEVICE_NOTICE_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "the owner's device notice as an ERROR and a WARNING is not forgiven",
+    [
+      ['error', '[10:01:02] [DEVICE_NOTICE] a new device was added to this account (first-sight)'],
+      ['warning', '[10:01:02] [TRUST] 1 device event(s) handed to the notices (drain end)'],
+    ],
+    OWNER_DEVICE_NOTICE_NARRATION,
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    'an event the notices could not decide is not forgiven',
+    [['debug', '[10:01:02] [DEVICE_NOTICE] 2 device event(s) to sort (+1 undecided)']],
+    OWNER_DEVICE_NOTICE_NARRATION,
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    "a contact's device notice, forgiven at its levels",
+    [
+      ['debug', '[10:01:02] [TRUST] 1 device event(s) handed to the notices (drain end)'],
+      ['debug', '[10:01:02] [DEVICE_NOTICE] 1 device event(s) to sort (+0 undecided)'],
+      ['log', '[10:01:02] [DEVICE_NOTICE] contact line written in 46163138...'],
+      ['debug', '[10:01:02] [DEVICE_NOTICE] 472df672... has no stored row - no line owed'],
+    ],
+    CONTACT_DEVICE_NOTICE_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    // A warning never breaks `clean` on its own, so what is asserted is that both STAY in the bucket.
+    'a contact line as a WARNING, and a line left owed, are not forgiven',
+    [
+      ['warning', '[10:01:02] [DEVICE_NOTICE] contact line written in 46163138...'],
+      ['warning', '[10:01:02] [DEVICE_NOTICE] tree of 46163138... unreadable, its line stays owed'],
+    ],
+    CONTACT_DEVICE_NOTICE_NARRATION,
+    { clean: true, unmatched: 4, warnings: 2 },
+  ],
+  [
+    "a fresh device's first session, forgiven at its levels",
+    [
+      ['log', '[10:01:02] [A] ws-'],
+      ['log', '[10:01:02] [A] callback pkce=verifier challenged=yes'],
+      ['debug', '[10:01:02] [POSTS] first page not stored - the device key is not in hand for this account'],
+      ['log', '[10:01:02] [PIN] Keypad shown (open) - the unlock is owed to the member'],
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 46163138… created.'],
+      [
+        'debug',
+        "[10:01:02] [GRAINE] absorbed 3/3 seed(s) (0 already held; endorsements verified: 3 from the tree, 0 from the server's published keys) from 46163138… in community 472df672 - salon(s) a721e695, 495b56cb",
+      ],
+    ],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: true, unmatched: 15 },
+  ],
+  [
+    'a callback that was not challenged, and a seed lost on the way, are not forgiven',
+    [
+      ['log', '[10:01:02] [A] callback pkce=verifier challenged=no'],
+      [
+        'debug',
+        "[10:01:02] [GRAINE] absorbed 2/3 seed(s) (0 already held; endorsements verified: 2 from the tree, 0 from the server's published keys) from 46163138… in community 472df672 - salon(s) a721e695",
+      ],
+    ],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 21 },
+  ],
+  [
+    'a fresh-session line as an ERROR is not forgiven',
+    [['error', '[10:01:02] [PIN] Keypad shown (open) - the unlock is owed to the member']],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 21 },
+  ],
+  [
+    'a login that skipped PKCE is not forgiven by the fresh-client needle',
+    [['log', '[10:01:02] [A] login returnTo=/ uri=https://dev.example/callback flow=code pkce=none (server has no oidcPkce)']],
+    FRESH_CLIENT_NARRATION,
+    { clean: false, unmatched: 6 },
+  ],
+  [
+    "a revoked device's sign-out, forgiven at its levels",
+    [
+      ['debug', '[10:01:02] [TRUST] device-event consumer removed'],
+      ['info', '[10:01:02] [RESTORE] generation 4 retired (running=false, queued asks=0)'],
+      ['log', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 5 },
+  ],
+  [
+    'a restore retired with asks still queued, and a sign-out as an ERROR, are not forgiven',
+    [
+      ['info', '[10:01:02] [RESTORE] generation 4 retired (running=true, queued asks=2)'],
+      ['error', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 8 },
+  ],
 ];
 for (const [what, lines, needles, want] of FORGIVE_CASES) {
   const rep = ignoringExpectedLog(await report({ cx: cxOf(lines), label: 'selftest' }), needles);
-  const got = { clean: rep.clean, unmatched: rep.ignoredAsExpectedLog.unmatched.length };
-  const ok = got.clean === want.clean && got.unmatched === want.unmatched;
+  // `warnings` is asserted only where a case names it: a warning never breaks `clean`, so a needle
+  // forgiving one is visible ONLY as the bucket shrinking.
+  const got = { clean: rep.clean, unmatched: rep.ignoredAsExpectedLog.unmatched.length, ...('warnings' in want ? { warnings: rep.warnings.length } : {}) };
+  const ok = got.clean === want.clean && got.unmatched === want.unmatched && got.warnings === want.warnings;
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);

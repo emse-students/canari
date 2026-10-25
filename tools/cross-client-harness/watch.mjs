@@ -2220,12 +2220,120 @@ export const BROWSER_PASSWORD_FORM_HINT =
 export const MLS_CLIENT_INITIALISING = /^Initialising MLS\.\.\.$/;
 
 export const FRESH_CLIENT_NARRATION = [
-  /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+$/,
+  // ` pkce=<method>` is `auth.ts`'s own spelling since the login took PKCE (`startOidcLogin`);
+  // without it the needle matched nothing on DEV-1, 2026-10-25. Only S256: `pkce=none (server has no
+  // oidcPkce)` is a login that skipped PKCE, and it stays dirt.
+  /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+(?: pkce=S256)?$/,
   BROWSER_PASSWORD_FORM_HINT,
   MLS_CLIENT_INITIALISING,
   /^\[OUTBOX\] Flush deferred - tab leadership undecided; waiting for the election\.$/,
   /^\[OUTBOX\] Leadership decided as (?:leader|follower) after \d+ ms\.$/,
   /^\[PIPELINE\] Recovery attempt finished for [0-9a-f]{8}.$/,
+];
+
+/**
+ * WHAT THE OWNER'S OTHER DEVICES SAY WHEN ONE MORE OF THEIRS ENROLS - the DEV rows' subject, on W1.
+ *
+ * `deviceEventAudience` (`deviceTrust.ts`) sends the owner's own new device to `owner-alert`: the
+ * trust consumer hands the signed commit's device event to the notices, the notices sort it, and the
+ * owner is told once, at first sight. All three are the mechanism DEV-1 asserts on screen, logged as
+ * the coding standard requires; on a device whose owner enrolled NOTHING they are the finding, which
+ * is why they are a list the DEV rows name and never a classifier rule.
+ *
+ * EVERY NEEDLE IS `atLevels`: the same words at `warn` or `error` stay dirt. `+0 undecided` is pinned:
+ * an event the notices could not decide is the odd case and stays unexplained.
+ */
+export const OWNER_DEVICE_NOTICE_NARRATION = [
+  atLevels(['debug'], /^\[TRUST\] \d+ device event\(s\) handed to the notices \(drain end\)$/),
+  atLevels(['debug'], /^\[DEVICE_NOTICE\] \d+ device event\(s\) to sort \(\+0 undecided\)$/),
+  atLevels(['log'], /^\[DEVICE_NOTICE\] a new device was added to this account \(first-sight\)$/),
+];
+
+/**
+ * WHAT A CONTACT'S DEVICE SAYS WHEN THE OWNER ENROLS ONE MORE - the DEV rows' subject, on W2.
+ *
+ * `contact-line`: the line is written in EVERY 1:1 and group the contact shares with the owner
+ * (`writeContactLines`), once per conversation, and a held group with no stored row owes none. Those
+ * are the lines DEV-1 counts in the pane. The trust handoff and the sort are the same two as the
+ * owner's. `atLevels` throughout; `[DEVICE_NOTICE] tree of ... unreadable, its line stays owed` is a
+ * `warn` in the product and in no list, so a contact line left owed still breaks `clean`.
+ */
+export const CONTACT_DEVICE_NOTICE_NARRATION = [
+  atLevels(['debug'], /^\[TRUST\] \d+ device event\(s\) handed to the notices \(drain end\)$/),
+  atLevels(['debug'], /^\[DEVICE_NOTICE\] \d+ device event\(s\) to sort \(\+0 undecided\)$/),
+  atLevels(['log'], /^\[DEVICE_NOTICE\] contact line written in [0-9a-f]{8}\.\.\.$/),
+  atLevels(['debug'], /^\[DEVICE_NOTICE\] [0-9a-f]{8}\.\.\. has no stored row - no line owed$/),
+];
+
+/**
+ * A FRESHLY MINTED DEVICE'S FIRST SESSION, from the wipe to its first join - read on DEV-1 and DEV-2
+ * (`1.4.1-alpha.3`, 2026-10-25), where every line below was `unexplained` on the minted W3.
+ *
+ * Each is EXPECTED (the mint caused it) and NECESSARY (the coding standard's entry or decision log):
+ * - the wipe's reload: the origin was cleared (`newdevice.mjs`), so the old socket ends (`[A] ws-`), the
+ *   refresh cookie is gone and the PIN prompt is declined for it, and the login is attempted;
+ * - the PKCE callback, verifier present and challenged - `challenged=no` or `pkce=none` stays dirt;
+ * - the first page read before the PIN: the home feed's lives and progressive mount, and the posts
+ *   page left unstored because the device key is not in hand yet;
+ * - the PIN unlock a new device owes its member: the keypad, the salt asked ahead, the call view held
+ *   under the lock and released, the vault already non-persistent;
+ * - the external join WAITING for this device's own KeyPackage and woken when the round settles - the
+ *   commit gate refuses an activation without one, so the wait is the design (its 404 read is NOT
+ *   here: it is the backlog's P3 and stays dirt until the read answers 200);
+ * - discovery: a device with no state renders each of the account's groups as a placeholder;
+ * - the first community drain absorbing every seed offered (`N/N`, nothing already held), and an
+ *   empty salon page drawn as nothing;
+ * - the account's pending invitations already fulfilled by its other devices, closed with a vouch.
+ */
+export const FRESH_DEVICE_SESSION_NARRATION = [
+  atLevels(['log'], /^\[A\] ws-$/),
+  atLevels(['log'], /^\[platform\] PIN prompt declined - refresh credential already proven dead\.$/),
+  atLevels(['debug'], /^\[LOGIN\] Attempt starting, checking client version\.$/),
+  atLevels(['log'], /^\[A\] callback pkce=verifier challenged=yes$/),
+  atLevels(['debug'], /^\[LIVE\] list$/),
+  atLevels(['debug'], /^\[LIVE\] feed card: \d+ open live\(s\)$/),
+  atLevels(['debug'], /^\[progressive-mount\] all \d+ mounted$/),
+  atLevels(['debug'], /^\[POSTS\] first page not stored - the device key is not in hand for this account$/),
+  atLevels(['log'], /^\[PIN\] Asking the salt while the keypad is up\.$/),
+  atLevels(['log'], /^\[PIN\] Keypad shown \(open\) - the unlock is owed to the member$/),
+  atLevels(['log'], /^\[PIN\] Salt asked while the keypad was up\.$/),
+  atLevels(['debug'], /^\[CallView\] held under the PIN lock$/),
+  atLevels(['debug'], /^\[CallView\] PIN lock gone$/),
+  atLevels(['debug'], /^\[VAULT\] persistence already off - every slot kept$/),
+  atLevels(
+    ['log'],
+    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \(absent, a round is running\): the commit gate refuses an activation without one$/
+  ),
+  atLevels(['log'], /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/),
+  atLevels(['log'], /^\[DISCOVERY\] Placeholder [0-9a-f]{8}… created\.$/),
+  // EVERY SEED OFFERED, ABSORBED, by the backreference: `2/3` is a loss in the same sentence.
+  atLevels(
+    ['debug'],
+    /^\[GRAINE\] absorbed (\d+)\/\1 seed\(s\) \(0 already held; endorsements verified: \d+ from the tree, \d+ from the server's published keys\) from [0-9a-f]{8}… in community [0-9a-f]{8} - salon\(s\) (?:none|[0-9a-f]{8}(?:, [0-9a-f]{8})*)$/
+  ),
+  atLevels(['debug'], /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/),
+  atLevels(['debug'], /^\[CHANNEL\] channel_[0-9a-f]{8} stored page empty - nothing drawn$/),
+  atLevels(['log'], /^\[PENDING\] (?:web|tauri)-[0-9a-f]{8}…-[0-9a-z]+-[0-9a-z]+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/),
+];
+
+/**
+ * A REVOKED DEVICE SIGNING ITSELF OUT - DEV-2 and DEV-3's subject on the revoked W3, read on DEV-2
+ * (`1.4.1-alpha.3`, 2026-10-25). `clearAuthUnderway` ends every per-account store in turn and each one
+ * says what it forgot; on any device that was NOT revoked these lines are a sign-out nobody asked for.
+ *
+ * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. DEV-2's W3 logged it TWICE - the wipe's `clearAuth`
+ * and then the session-expired redirect's (the backlog's P3, "A revoked device signs out twice"). Both
+ * stay dirt until that is fixed, rather than being forgiven by a needle that cannot count.
+ */
+export const REVOKED_SIGN_OUT_NARRATION = [
+  atLevels(['debug'], /^\[TRUST\] device-event consumer removed$/),
+  atLevels(['debug'], /^\[outboxBlob\.clear\]$/),
+  atLevels(['info'], /^\[Push\] endPushRegistration noop \(no push registration on this platform\)$/),
+  atLevels(['info'], /^\[RESTORE\] generation \d+ retired \(running=false, queued asks=0\)$/),
+  atLevels(['log'], /^\[MEDIA\] signed out: staging of \d+ and replies of \d+ conversation\(s\) forgotten$/),
+  atLevels(['log'], /^\[OUTBOX\] signed out: \d+ control refusal\(s\) unbound from memory$/),
+  atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] \d+ saved community list\(s\) erased$/),
+  atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] signed out: \d+ community\(ies\) forgotten$/),
 ];
 
 /**
@@ -2493,7 +2601,9 @@ export const OIDC_LOGIN_NARRATION = [
   /^\[auth\] redirectUri: \S+ coreUrl: \S+$/,
   /^\[auth\] POSTing to core-service \/api\/auth\/oidc\/callback/,
   /^\[auth\] core-service response status: 200$/,
-  /^\[auth\] got access_token, saving user: \S+$/,
+  // `(miconnect)` names the provider the token came from, the product's spelling on 1.4.1 (DEV-1,
+  // 2026-10-25); the bare form is the older client's.
+  /^\[auth\] got access_token(?: \(miconnect\))?, saving user: \S+$/,
   /^\[auth\] handleOidcCallback complete$/,
   /^\[callback\] starting handleOidcCallback, code length: \d+$/,
   /^\[callback\] handleOidcCallback resolved, user: \S+$/,
@@ -3324,6 +3434,25 @@ export const PHONE_COLD_BOOT = [
   'push yielded to the foreground, which holds this frame',
 ];
 
+/**
+ * A NEEDLE THAT FORGIVES ONE SENTENCE AT THE LEVELS IT IS WRITTEN AT, AND NEVER ITS LOOK-ALIKE.
+ *
+ * A bare needle compares the sentence with its level stripped, so it forgives the same words logged
+ * as `console.error` or `console.warn` - the spelling a product uses when the same step FAILED or ran
+ * late. A narration list written on 2026-10-25 for the DEV rows' bootstrap and device notices is made
+ * of these instead: it claims only an `unexplained` line whose level is one of `levels`, never an
+ * entry of `errors` or `warnings`, so a look-alike that accuses still breaks `clean`.
+ *
+ * @param {string[]} levels the console levels the product writes the sentence at (`log`, `debug`, `info`)
+ * @param {RegExp} re the sentence, stamp and level stripped
+ */
+export function atLevels(levels, re) {
+  return { levels, re, toString: () => `${levels.join('|')}: ${re}` };
+}
+
+/** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
+const levelOfEntry = (line) => /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
+
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
   // one list silently compared a different string from the others and every `^`-anchored rule in it
@@ -3334,16 +3463,21 @@ export function ignoringExpectedLog(rep, needles) {
     stripStamp(line.replace(/^(?:log|info|debug|verbose|warning|warn|error|assert):\s*/, ''));
   const matched = new Set();
   /** True to KEEP the line - and records, on the way past, which needles claimed it. */
-  const keep = (line) => {
+  const keep = (bucket) => (line) => {
     const s = sentence(line);
-    const hits = needles.filter((n) => (typeof n === 'string' ? s.includes(n) : n.test(s)));
+    const hits = needles.filter((n) => {
+      if (typeof n === 'string') return s.includes(n);
+      if (n instanceof RegExp) return n.test(s);
+      // `atLevels`: the unexplained bucket only, and only at the levels it names.
+      return bucket === 'unexplained' && n.levels.includes(levelOfEntry(line)) && n.re.test(s);
+    });
     hits.forEach((n) => matched.add(n));
     return hits.length === 0;
   };
 
-  const errors = rep.errors.filter(keep);
-  const warnings = rep.warnings.filter(keep);
-  const unexplained = rep.unexplained.filter(keep);
+  const errors = rep.errors.filter(keep('errors'));
+  const warnings = rep.warnings.filter(keep('warnings'));
+  const unexplained = rep.unexplained.filter(keep('unexplained'));
   return {
     ...rep,
     errors,

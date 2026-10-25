@@ -69,14 +69,18 @@ import { commitSequence } from '../settlerows.mjs';
 import {
   AUTH_TEARDOWN_NARRATION,
   BLOCK_LIST_READ_NARRATION,
+  CONTACT_DEVICE_NOTICE_NARRATION,
   DEVICE_PANEL_NARRATION,
   FRESH_CLIENT_NARRATION,
+  FRESH_DEVICE_SESSION_NARRATION,
   GROUP_CREATION_NARRATION,
   IDP_CONSOLE_NARRATION,
   MINT_REFUSALS,
   NO_LOCAL_STATE_NARRATION,
   OIDC_LOGIN_NARRATION,
+  OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_RETURN_NARRATION,
+  REVOKED_SIGN_OUT_NARRATION,
   consoleLines,
   logcatSince,
 } from '../watch.mjs';
@@ -105,9 +109,17 @@ const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** What a freshly minted device says: the wipe, the OIDC callback, a cold client, the abandoned id's purge. */
-const MINT_NARRATION = [...IDP_CONSOLE_NARRATION, ...NO_LOCAL_STATE_NARRATION, ...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION, ...FRESH_CLIENT_NARRATION, ...BLOCK_LIST_READ_NARRATION];
+const MINT_NARRATION = [
+  ...IDP_CONSOLE_NARRATION,
+  ...NO_LOCAL_STATE_NARRATION,
+  ...OIDC_LOGIN_NARRATION,
+  ...DEVICE_PANEL_NARRATION,
+  ...FRESH_CLIENT_NARRATION,
+  ...BLOCK_LIST_READ_NARRATION,
+  ...FRESH_DEVICE_SESSION_NARRATION,
+];
 /** ... and, on the one device a row revoked, its own account of being revoked and erasing itself. */
-const REVOKED_NARRATION = [...MINT_NARRATION, ...REVOKED_RETURN_NARRATION, ...AUTH_TEARDOWN_NARRATION];
+const REVOKED_NARRATION = [...MINT_NARRATION, ...REVOKED_RETURN_NARRATION, ...AUTH_TEARDOWN_NARRATION, ...REVOKED_SIGN_OUT_NARRATION];
 
 /** Polls `probe` until it is truthy; the elapsed ms, or null at the bound. */
 async function within(probe, timeoutMs, everyMs = 1_000) {
@@ -417,7 +429,13 @@ try {
   for (const f of failures) console.log(`[${rowId}] ${f}`);
   console.log(`[${rowId}] assertions: ${verdict}`);
   const act = out.act ?? {};
-  const logs = { W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : [])] };
+  // A ROW THAT MINTS tells the owner (W1) and every contact (W2) of the new device - the subject of
+  // DEV-1 and the premise of every other DEV row, so both seats name their device-notice narration.
+  const minting = spec.mint.length > 0;
+  const logs = {
+    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : [])],
+    ...(minting && spec.devices.includes('W2') ? { W2: CONTACT_DEVICE_NOTICE_NARRATION } : {}),
+  };
   const refusals = {};
   for (const d of spec.mint) {
     logs[d] = (act.revoked ?? []).includes(d) ? REVOKED_NARRATION : MINT_NARRATION;
