@@ -618,25 +618,39 @@ export async function channelAccessState(cx) {
 }
 
 /**
- * Sets the open channel's visibility toggle to `wanted` and returns whether it had to move it.
+ * Flips the open channel's visibility toward `wanted` and reports what the SERVER made of it:
+ * `{ moved, landed }` - whether the toggle had to be pressed, and whether it now reads `wanted`.
  *
  * IDEMPOTENT BY READING FIRST, because the control is a toggle and not a pair of radio buttons: a
  * check that clicks it unconditionally sets the state it wanted exactly when the state was already
  * wrong, which is the one case it was not testing.
+ *
+ * THE TOGGLE IS THE SAVE, BEHIND A CONFIRMATION (#1171, 2026-09-28). The panel has no "Enregistrer"
+ * any more: pressing the switch asks `showConfirm`, and only the answer sends the PATCH, which the
+ * switch shows as `aria-busy` until it is answered. The panel flips `aria-checked` only on an
+ * accepted write, so a refusal (RM-6's `REMOVAL_EXCEEDS_ACTOR`) is `landed: false`, not a timeout.
+ * Until 2026-10-25 this waited for the flip with no confirmation answered, and timed out.
  */
 export async function setChannelPrivate(cx, wanted) {
   const before = await channelAccessState(cx);
-  if (before.isPrivate === wanted) return false;
+  if (before.isPrivate === wanted) return { moved: false, landed: true };
   await realClick(cx, 'button[role=switch][aria-checked]');
+  await confirmDialog(cx, 'common_confirm_button');
+  // SETTLED: the dialog gone and the switch not busy. The answer sets `privacySaving` in the same
+  // task as the confirm resolves, before any CDP round trip can look, so "not busy" after the
+  // dialog closed is the write answered - accepted or refused - never the write not yet begun.
+  const confirm = JSON.stringify(caption('common_confirm_button'));
   await until(
     cx,
     `(function () {
+       var open = [].slice.call(document.querySelectorAll('button')).some(function (b) { return (b.innerText || '').trim() === ${confirm}; });
        var sw = document.querySelector('button[role=switch][aria-checked]');
-       return !!sw && sw.getAttribute('aria-checked') === ${JSON.stringify(String(wanted))};
+       return !open && !!sw && sw.getAttribute('aria-busy') !== 'true';
      })()`,
-    5000
+    30_000
   );
-  return true;
+  const after = await channelAccessState(cx);
+  return { moved: true, landed: after.isPrivate === wanted };
 }
 
 /**
@@ -1664,83 +1678,89 @@ export async function closePollCard(cx) {
 }
 
 /*
- * THE PERMISSION GRID - two gestures, shared because two checks now drive it.
+ * THE PERMISSION GRID - two gestures, shared because three checks now drive it (COMM-6, COMM-20,
+ * RM-6). Copying them would have been the fourth time a gesture in this phase drifted between its
+ * callers.
  *
- * They were COMM-6's until COMM-20 needed the same table for a different question (what two
- * administrators editing one role at the same moment leave behind). Copying them would have been the
- * fourth time a gesture in this phase drifted between its callers.
+ * ONE CARD PER ROLE SINCE #1158 (2026-09-28), NOT A TABLE. The panel draws a `section` per role -
+ * a header pill `@<role>`, then a `li` per permission with its label and ONE cycling button; the
+ * locked administrator is a single line with no button. Until 2026-10-25 both gestures still read a
+ * `<table>` that had not existed for a month, so every grid row ended in "no moderator column" or a
+ * timeout waiting for `thead th` (RM-6 on alpha.3 and alpha.4).
  */
+
+/** The grid's sections, as a page-side expression: every `section` whose header pill names a role. */
+const ROLE_SECTIONS = `[].slice.call(document.querySelectorAll('section')).filter(function (s) {
+  var pill = s.querySelector('header span');
+  return !!pill && /^@/.test((pill.innerText || '').trim());
+})`;
+
+/** True once the grid has drawn at least one editable role (a section with buttons) - what a gesture waits on. */
+export const PERMISSION_GRID_DRAWN = `${ROLE_SECTIONS}.some(function (s) { return !!s.querySelector('li button'); })`;
+
 /**
- * The grid as the panel draws it: `{ permissions, roles, adminLocked }`.
+ * The grid as the panel draws it: `{ permissions, roles, adminLocked, cells }`.
  *
- * READ AS A TABLE, WHICH IS WHAT IT IS. Each `tbody` row is one permission and its first cell is
- * the label; each header cell after the first is a role. Nothing here depends on a class name -
- * the structure IS the meaning, and a restyling that changed the colours would not move a cell.
- *
- * `adminLocked` is the top role's column being disabled, which is the panel's own statement that
- * the administrator cannot be stripped of anything. Read from `disabled` rather than from opacity.
+ * `roles` are the section pills without their `@`, in the panel's order (priority descending, the
+ * administrator first). `permissions` are the labels of the first editable section - every editable
+ * section lists the same ones. `adminLocked` is the first section offering no button, the panel's
+ * own statement that the administrator cannot be stripped of anything. `cells[row][col]` is aligned
+ * with `permissions[row]` and `roles[col]`, read from each button's lucide glyph (the colour is a
+ * class and the wording a parameterised hint, neither of which a check may depend on); a locked
+ * section's cells are `allow`, which is what its single line says.
  */
 export async function permissionGrid(cx) {
   return JSON.parse(
     await evaluate(
       cx,
       `JSON.stringify((function () {
-         var table = document.querySelector('table');
-         if (!table) return { permissions: null, roles: null, adminLocked: null };
-         var head = [].slice.call(table.querySelectorAll('thead th'));
-         var roles = head.slice(1).map(function (th) { return (th.innerText || '').trim(); });
-         var body = [].slice.call(table.querySelectorAll('tbody tr'));
-         var permissions = body.map(function (tr) {
-           var cells = [].slice.call(tr.children);
-           return (cells[0] ? cells[0].innerText || '' : '').trim();
-         });
-         // The administrator is the FIRST column: the grid sorts roles by descending priority.
-         var lockedColumn = body.every(function (tr) {
-           var cell = tr.children[1];
-           var button = cell ? cell.querySelector('button') : null;
-           return !!button && button.disabled === true;
-         });
-         // EACH CELL'S STATE, READ FROM ITS ICON. The grid draws allow / deny / neutral as three
-         // lucide glyphs, and the icon is the only structural carrier: the colour lives in a class
-         // and the wording in a parameterised tooltip, neither of which a check may depend on.
-         // cells[row][col] is aligned with permissions[row] and roles[col].
-         var cells = body.map(function (tr) {
-           return [].slice.call(tr.children).slice(1).map(function (td) {
-             var svg = td.querySelector('button svg');
-             var cls = svg ? String(svg.getAttribute('class') || '') : '';
-             if (cls.indexOf('lucide-check') !== -1) return 'allow';
-             if (cls.indexOf('lucide-x') !== -1) return 'deny';
-             if (cls.indexOf('lucide-minus') !== -1) return 'neutral';
-             return null;
+         var sections = ${ROLE_SECTIONS};
+         if (!sections.length) return { permissions: null, roles: null, adminLocked: null, cells: null };
+         var roles = sections.map(function (s) { return (s.querySelector('header span').innerText || '').trim().replace(/^@/, ''); });
+         var editable = sections.filter(function (s) { return !!s.querySelector('li button'); });
+         var labelOf = function (li) { var p = li.querySelector('p'); return p ? (p.innerText || '').trim() : ''; };
+         var permissions = editable.length ? [].slice.call(editable[0].querySelectorAll('li')).map(labelOf) : [];
+         var adminLocked = !sections[0].querySelector('li button');
+         var stateOf = function (button) {
+           var svg = button ? button.querySelector('svg') : null;
+           var cls = svg ? String(svg.getAttribute('class') || '') : '';
+           if (cls.indexOf('lucide-check') !== -1) return 'allow';
+           if (cls.indexOf('lucide-x') !== -1) return 'deny';
+           if (cls.indexOf('lucide-minus') !== -1) return 'neutral';
+           return null;
+         };
+         var cells = permissions.map(function (label) {
+           return sections.map(function (s) {
+             if (!s.querySelector('li button')) return 'allow';
+             var li = [].slice.call(s.querySelectorAll('li')).filter(function (x) { return labelOf(x) === label; })[0];
+             return li ? stateOf(li.querySelector('button')) : null;
            });
          });
-         return { permissions: permissions, roles: roles, adminLocked: lockedColumn, cells: cells };
+         return { permissions: permissions, roles: roles, adminLocked: adminLocked, cells: cells };
        })())`
     )
   );
 }
 
 /**
- * Clicks the cell at (permission label, role column index), which CYCLES it.
+ * Clicks the cell at (permission label, role `column`), which CYCLES it. `column` keeps the
+ * numbering the table had - 1 is the first role - so a caller's index into `roles` plus one.
  *
- * The grid has no per-cell hook, so the cell is reached the same way it is read: by the row whose
- * first cell carries the label, then by column. The button is marked and clicked through the DOM
- * rather than hit-tested, because a table cell inside a horizontally scrolling container can sit
- * outside the viewport - and a `realClick` that scrolls the container first is a gesture about
- * scrolling.
+ * Marked and clicked through the DOM rather than hit-tested: the panel scrolls, and a `realClick`
+ * that scrolls it first is a gesture about scrolling.
  */
 export async function cyclePermissionCell(cx, label, column) {
   const outcome = await evaluate(
     cx,
     `(function () {
-       var body = [].slice.call(document.querySelectorAll('table tbody tr'));
-       var row = body.filter(function (tr) {
-         var first = tr.children[0];
-         return first && (first.innerText || '').trim() === ${JSON.stringify(label)};
+       var section = ${ROLE_SECTIONS}[${column} - 1];
+       if (!section) return 'no-role';
+       var li = [].slice.call(section.querySelectorAll('li')).filter(function (x) {
+         var p = x.querySelector('p');
+         return p && (p.innerText || '').trim() === ${JSON.stringify(label)};
        })[0];
-       if (!row) return 'no-row';
-       var cell = row.children[${column}];
-       var button = cell ? cell.querySelector('button') : null;
+       if (!li) return section.querySelector('li') ? 'no-row' : 'locked';
+       var button = li.querySelector('button');
        if (!button) return 'no-button';
        if (button.disabled) return 'disabled';
        button.click();
