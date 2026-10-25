@@ -1357,9 +1357,16 @@ content type `responseOrigin` already used for an edge refusal, plus the parse -
 response carries, never a guess from its words. **Where the reading DESTROYS something** (the
 refresh's sign-out, the membership 403, the profile 404, the exit 403) the header is not enough: the
 estate sits behind an edge that can answer an API client in JSON too. There `refusalOrigin` reads
-Nest's error envelope - `statusCode` equal to the HTTP status, which every `HttpException` and guard
-refusal carries because no service installs an exception filter - and a JSON body without it is the
-edge's. The remaining header-only readers (the send's edge refusal, media, live, resumable upload)
+one of the two shapes our services write: Nest's error envelope (`statusCode` equal to the HTTP
+status, which every `HttpException` built from a string and every guard refusal carries because no
+service installs an exception filter), or a coded refusal `{ code, message }` (`refusalBody`),
+which Nest sends WITHOUT `statusCode` and which is believed only when `code` belongs to the shared
+contract (`isContractRefusalCode`, `utils/refusalCodes.ts`). The membership refusals a removed
+member meets (`NOT_A_MEMBER`, `MEMBERSHIP_NOT_ALLOWED`) are coded: an envelope-only first draft read
+them as the edge's, so a removed member kept the conversation and an owed leave replayed for ever.
+Any other JSON body (a CDN's `{ type, title, status, detail, error_code }`, an unknown code) is the
+edge's. The gateway's own error pages imitate the envelope only for 413/429/5xx, statuses no
+destructive reader acts on. The remaining header-only readers (the send's edge refusal, media, live, resumable upload)
 only choose between retrying and reporting, so a misread there costs a retry, not a state. The log line an operator reads is
 `[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept
 for a retry: NotFromApiError: POST /api/mls/send (group <group>) answered 200 with text/html... -
@@ -2815,7 +2822,7 @@ Three properties, and none of them is a timer:
 `exitGroupAndCleanup` both have to read a failure, and if they disagreed about a 403 the composable
 would keep a row the drain would clear, or worse. `classifyExitFailure` in
 `utils/chat/pendingGroupExits.ts` is the only reading of it: `'already-gone'` for the delivery
-service's own 403 (Nest's envelope, never an edge's page, never a 404 - neither route sends one, see
+service's own 403 (Nest's envelope or a contract refusal code, never an edge's page, never a 404 - neither route sends one, see
 [the 2xx a portal answered](#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)), `'refused'`
 for any other status, `'unreachable'` only when `isTransportFailure` - the same predicate
 `apiFetch` uses to decide the server is unreachable - says so. Note what that means for a

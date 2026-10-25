@@ -22,6 +22,7 @@
  *   than the field) is the caller's question, never this helper's.
  */
 
+import { isContractRefusalCode } from './refusalCodes';
 import { TransportFailureError } from './transportFailure';
 
 /**
@@ -42,15 +43,25 @@ export function responseOrigin(res: Pick<Response, 'headers'>): ResponseOrigin {
 
 /**
  * WHO REFUSED, for a refusal whose reading DESTROYS something (a sign-out, a retired conversation, a
- * forgotten exit): `gateway` only when the body is Nest's own error envelope, whose `statusCode`
- * repeats the HTTP status (`{ statusCode, message, error }` - no service here installs an exception
- * filter, so every `HttpException` and every guard refusal leaves in that shape).
+ * forgotten exit): `gateway` only when the JSON body is one of the two shapes our services write.
+ *
+ * - NEST'S ENVELOPE, whose `statusCode` repeats the HTTP status (`{ statusCode, message, error }`):
+ *   no service here installs an exception filter, so every `HttpException` built from a string and
+ *   every guard refusal leaves in that shape.
+ * - A CODED REFUSAL, `{ code, message, ...extra }` (`refusalBody`): an `HttpException` built from an
+ *   OBJECT is serialised as that object alone, WITHOUT `statusCode`. Believed only when `code` is
+ *   one of the shared contract's ({@link isContractRefusalCode}) - the membership refusals
+ *   (`NOT_A_MEMBER`, `MEMBERSHIP_NOT_ALLOWED`) a removed member is answered with take this shape,
+ *   and reading them as the edge's kept a removed member's conversation and replayed an owed leave
+ *   forever. An unknown `code` string proves nothing.
  *
  * WHY THE HEADER ALONE IS NOT ENOUGH HERE: the estate sits behind an edge that can answer in JSON
- * too (a WAF or CDN block page served as `application/json` to an API client). Its body carries its
- * own fields (`status`, `title`, `errors`), never Nest's `statusCode` equal to the status, so the
- * envelope separates the two where {@link responseOrigin} cannot. A body that does not parse is the
- * edge's. The body is read from a CLONE, so the caller can still read or report the original.
+ * too (a WAF or CDN block page served as `application/json`, `{ type, title, status, detail,
+ * error_code }`). Its body never repeats the status as `statusCode` and never carries a contract
+ * code, so these two shapes separate it where {@link responseOrigin} cannot. The gateway's own
+ * error pages imitate the envelope only for 413/429/5xx, statuses no destructive reader acts on. A
+ * body that does not parse is the edge's. The body is read from a CLONE, so the caller can still
+ * read or report the original.
  *
  * Non-destructive readings keep {@link responseOrigin}: a misread there costs a retry, not a state.
  */
@@ -63,9 +74,17 @@ export async function refusalOrigin(res: Response): Promise<ResponseOrigin> {
     console.debug(`[HTTP] a ${res.status} with a JSON type did not parse - read as the edge's:`, e);
     return 'edge';
   }
-  const statusCode =
-    body && typeof body === 'object' ? (body as { statusCode?: unknown }).statusCode : undefined;
-  return statusCode === res.status ? 'gateway' : 'edge';
+  if (!body || typeof body !== 'object') {
+    console.debug(`[HTTP] a ${res.status} whose JSON is not an object - read as the edge's`);
+    return 'edge';
+  }
+  const { statusCode, code } = body as { statusCode?: unknown; code?: unknown };
+  if (statusCode === res.status || isContractRefusalCode(code)) return 'gateway';
+  console.debug(
+    `[HTTP] a ${res.status} JSON body is neither Nest's envelope nor a contract refusal code` +
+      ` (code ${typeof code === 'string' ? code : 'absent'}) - read as the edge's`
+  );
+  return 'edge';
 }
 
 /**

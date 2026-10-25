@@ -646,7 +646,7 @@ export class GroupExitRefusedError extends Error {
     readonly status: number,
     readonly operation: 'delete' | 'leave',
     /**
-     * WHO ANSWERED (`refusalOrigin`, Nest's error envelope). `classifyExitFailure` forgets an owed
+     * WHO ANSWERED (`refusalOrigin`: Nest's error envelope or a contract refusal code). `classifyExitFailure` forgets an owed
      * exit on a 403 only when the delivery service sent it; an edge's or a portal's page says
      * nothing about the group.
      */

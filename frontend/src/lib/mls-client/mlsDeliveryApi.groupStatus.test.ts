@@ -122,15 +122,58 @@ describe('getGroupServerStatus', () => {
  * apart from an outage - which it could not do while every failure was one `catch` answering `true`.
  */
 describe('getGroupMembers - a status code is an answer, a transport failure is not', () => {
-  it('raises a typed refusal on 403, carrying the group', async () => {
+  // The REAL body: `assertCallerIsGroupMember` throws `refusalBody(NOT_A_MEMBER, ...)`, which Nest
+  // serialises as `{ code, message }` alone - no `statusCode`. An envelope-only reading missed it,
+  // and a removed member kept the conversation.
+  it('raises a typed refusal on the coded 403 the route really sends, carrying the group', async () => {
     const api = makeApi(async () =>
-      response('{"statusCode":403,"message":"Caller is not a member"}', { status: 403 })
+      response('{"code":"NOT_A_MEMBER","message":"Caller is not a member of this group"}', {
+        status: 403,
+      })
     );
 
     const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(NotAGroupMemberError);
     expect((err as NotAGroupMemberError).groupId).toBe('g1');
+  });
+
+  it("a 403 whose code is not the contract's is no membership answer", async () => {
+    const api = makeApi(async () =>
+      response('{"code":"ACCESS_DENIED","message":"blocked"}', { status: 403 })
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  it('a JSON-speaking CDN 403 is no membership answer', async () => {
+    const api = makeApi(async () =>
+      response(
+        '{"type":"https://developers.cloudflare.com/x","title":"Access denied","status":403,' +
+          '"detail":"blocked","error_code":1020}',
+        { status: 403 }
+      )
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  // The gateway's own error pages imitate Nest's envelope for 5xx: a gateway origin, but a status
+  // that says nothing about membership.
+  it('an envelope-imitating 502 is no membership answer', async () => {
+    const api = makeApi(async () =>
+      response('{"statusCode":502,"message":"Bad Gateway"}', { status: 502 })
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
   });
 
   it("an edge's HTML 403 is no membership answer", async () => {
@@ -174,6 +217,7 @@ describe('getGroupMembers - a status code is an answer, a transport failure is n
  * conversations on a bad deploy, which is a worse failure than the one being fixed.
  */
 describe('fetchGroupInfo - a refused base is a membership answer', () => {
+  // `messaging.service.ts` throws `ForbiddenException(string)` here, so this one IS the envelope.
   it('raises a typed refusal on 403, carrying the group', async () => {
     const api = makeApi(async () =>
       response('{"statusCode":403,"message":"User u is not a member of group g1"}', {

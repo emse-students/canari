@@ -65,7 +65,8 @@ describe('assertAnsweredByApi', () => {
 
 /**
  * WHO REFUSED, where the reading destroys something: Nest's envelope (`statusCode` equal to the
- * status), because an edge in front of the estate can answer in JSON too.
+ * status) or a coded refusal of the shared contract, because an edge in front of the estate can
+ * answer in JSON too.
  */
 describe('refusalOrigin', () => {
   const json = (body: unknown, status: number) => Response.json(body, { status });
@@ -76,12 +77,61 @@ describe('refusalOrigin', () => {
     );
   });
 
+  // `refusalBody(...)` thrown in an `HttpException` leaves as the object alone: no `statusCode`.
+  it.each([
+    ['NOT_A_MEMBER', 403],
+    ['MEMBERSHIP_NOT_ALLOWED', 403],
+    ['DEVICE_REVOKED', 403],
+    ['USER_BLOCKED', 403],
+    ['WELCOME_TARGET_NOT_MEMBER', 403],
+  ])(
+    "reads the coded refusal %s (the delivery service's refusalBody) as the gateway's",
+    async (code, status) => {
+      await expect(refusalOrigin(json({ code, message: 'm' }, status))).resolves.toBe('gateway');
+    }
+  );
+
+  it("reads a code the shared contract does not know as the edge's, and a non-string one too", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await expect(refusalOrigin(json({ code: 'ACCESS_DENIED', message: 'm' }, 403))).resolves.toBe(
+      'edge'
+    );
+    await expect(refusalOrigin(json({ code: 'not_a_member' }, 403))).resolves.toBe('edge');
+    await expect(refusalOrigin(json({ code: 403 }, 403))).resolves.toBe('edge');
+    await expect(refusalOrigin(json(['NOT_A_MEMBER'], 403))).resolves.toBe('edge');
+    await expect(refusalOrigin(json(null, 403))).resolves.toBe('edge');
+    debug.mockRestore();
+  });
+
+  it("reads a CDN's JSON error (type, title, status, detail, error_code) as the edge's", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const cdn = {
+      type: 'about:blank',
+      title: 'Blocked',
+      status: 403,
+      detail: 'd',
+      error_code: 1020,
+    };
+    await expect(refusalOrigin(json(cdn, 403))).resolves.toBe('edge');
+    debug.mockRestore();
+  });
+
+  // The gateway's own error pages imitate the envelope for 413/429/5xx: read as the gateway's, which
+  // is why no destructive reader acts on those statuses (the readers' own tests hold that half).
+  it('reads an envelope-imitating 5xx as the gateway origin it claims', async () => {
+    await expect(
+      refusalOrigin(json({ statusCode: 502, message: 'Bad Gateway' }, 502))
+    ).resolves.toBe('gateway');
+  });
+
   it("reads a JSON-speaking edge (a WAF or CDN block) as the edge's", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     await expect(
       refusalOrigin(json({ status: 403, title: 'Access denied', errors: [] }, 403))
     ).resolves.toBe('edge');
     // An envelope whose code is not the status it came with was not written for this answer.
     await expect(refusalOrigin(json({ statusCode: 401 }, 403))).resolves.toBe('edge');
+    debug.mockRestore();
   });
 
   it("reads HTML, and a JSON type that does not parse, as the edge's", async () => {

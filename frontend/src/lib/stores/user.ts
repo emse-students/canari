@@ -119,7 +119,7 @@ export class UserProfileFetchError extends Error {
   constructor(
     readonly status: number,
     /**
-     * WHO ANSWERED (`refusalOrigin`, Nest's error envelope). A 404 is an account's absence only when core-service's JSON
+     * WHO ANSWERED (`refusalOrigin`: Nest's error envelope or a contract refusal code). A 404 is an account's absence only when core-service's JSON
      * says it; an edge's or a portal's "Not Found" page says nothing about the account. A status
      * synthesized from a parsed answer (the batch's absence) is the gateway's by construction.
      */

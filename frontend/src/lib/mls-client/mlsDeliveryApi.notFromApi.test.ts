@@ -7,6 +7,7 @@ import {
 } from './ackRetry';
 import { isDefinitiveCommitRefusal } from './commitSubmission';
 import { NotFromApiError } from '$lib/utils/apiJson';
+import { classifyExitFailure } from '$lib/utils/chat/pendingGroupExits';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
@@ -135,6 +136,25 @@ describe("a delete for everyone is done only on the delivery service's answer", 
     await expect(api.deleteGroupOnServer('g1')).rejects.toBeInstanceOf(NotFromApiError);
   });
 
+  // A replayed delete-for-everyone by a member removed meanwhile is answered the coded
+  // `NOT_A_MEMBER` (no `statusCode`): the service's answer, so the owed delete is forgotten.
+  it("the service's coded 403 is its answer; an unknown code is not", async () => {
+    const { api } = makeApi(
+      () =>
+        Response.json(
+          { code: 'NOT_A_MEMBER', message: 'Caller is not a member of this group' },
+          { status: 403 }
+        ),
+      () => Response.json({ code: 'NOT_A_MEMBER_X', message: 'm' }, { status: 403 })
+    );
+    const coded = await api.deleteGroupOnServer('g1').catch((e: unknown) => e);
+    expect((coded as GroupExitRefusedError).origin).toBe('gateway');
+    expect(classifyExitFailure(coded)).toBe('already-gone');
+    const unknown = await api.deleteGroupOnServer('g1').catch((e: unknown) => e);
+    expect((unknown as GroupExitRefusedError).origin).toBe('edge');
+    expect(classifyExitFailure(unknown)).toBe('refused');
+  });
+
   it("the service's JSON 200 is done", async () => {
     const { api } = makeApi(() => Response.json({ status: 'deleted' }));
     await expect(api.deleteGroupOnServer('g1')).resolves.toBeUndefined();
@@ -156,13 +176,49 @@ describe("a leave and a dismiss are done only on the delivery service's answer",
           status: 403,
           headers: { 'content-type': 'text/html' },
         }),
-      () => Response.json({ statusCode: 403, message: 'Forbidden' }, { status: 403 })
+      // The REAL refusal of a removed member's leave: `assertCallerMayMutateMembership` throws
+      // `refusalBody(MEMBERSHIP_NOT_ALLOWED, ...)`, serialised WITHOUT Nest's `statusCode`.
+      () =>
+        Response.json(
+          {
+            code: 'MEMBERSHIP_NOT_ALLOWED',
+            message: 'Caller is not authorized to modify this group membership',
+          },
+          { status: 403 }
+        )
     );
     const edge = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
     expect(edge).toBeInstanceOf(GroupExitRefusedError);
     expect((edge as GroupExitRefusedError).origin).toBe('edge');
+    expect(classifyExitFailure(edge)).toBe('refused');
     const gateway = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
     expect((gateway as GroupExitRefusedError).origin).toBe('gateway');
+    // End to end: the owed leave is forgotten on the service's own coded 403, not replayed forever.
+    expect(classifyExitFailure(gateway)).toBe('already-gone');
+  });
+
+  it("a JSON 403 that is neither Nest's envelope nor a contract code keeps the owed leave", async () => {
+    const { api } = makeApi(
+      () => Response.json({ code: 'ACCESS_DENIED', message: 'blocked' }, { status: 403 }),
+      () =>
+        Response.json(
+          { type: 'about:blank', title: 'Forbidden', status: 403, detail: 'x', error_code: 1020 },
+          { status: 403 }
+        )
+    );
+    for (let i = 0; i < 2; i++) {
+      const failure = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
+      expect((failure as GroupExitRefusedError).origin).toBe('edge');
+      expect(classifyExitFailure(failure)).toBe('refused');
+    }
+  });
+
+  it('an envelope-imitating 503 keeps the owed leave: the status says nothing about the exit', async () => {
+    const { api } = makeApi(() =>
+      Response.json({ statusCode: 503, message: 'Service Unavailable' }, { status: 503 })
+    );
+    const failure = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
+    expect(classifyExitFailure(failure)).toBe('refused');
   });
 
   it("the service's JSON 200 is a leave done", async () => {
