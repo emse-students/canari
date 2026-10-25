@@ -73,6 +73,7 @@ import {
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
+  isSessionEndedByDeviceRevocation,
   signOutGeneration,
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
@@ -697,11 +698,26 @@ export async function releaseDeletedAccountImpl(
 }
 
 /**
+ * The revoked-device wipe in progress, if any - so a second discoverer of the same revocation JOINS
+ * it instead of starting another (see {@link wipeRevokedDevice}).
+ */
+let revokedDeviceWipe: Promise<void> | null = null;
+
+/**
  * Returns a revoked device to a fresh install, whatever discovered the revocation.
  *
- * ONE CONSEQUENCE FOR ONE FACT. Three places learn that this device is revoked - the PIN check at
- * login, a `device_revoked` frame on a live session, and a vault or biometric login asking the
- * server - and the wipe must not differ between them. It did: the frame path skipped the MLS
+ * ONE CONSEQUENCE FOR ONE FACT. Four places learn that this device is revoked - the PIN check at
+ * login, a `device_revoked` frame on a live session, a vault or biometric login asking the server,
+ * and the session-expired reaction when the refresh refusal says the session died BY this
+ * revocation (`isSessionEndedByDeviceRevocation`, the only one left once the revocation has ended
+ * the session) - and the wipe must not differ between them.
+ *
+ * ONE RUN, WHATEVER THE ORDER OF ARRIVAL. The frame and the refusal are two discoverers of one
+ * revocation and usually arrive together: the frame's own check is what meets the refusal. A call
+ * while a wipe runs joins it, so the order never matters and nothing is erased twice in parallel. It
+ * is deterministic, not a timing hope: the refusal starts the wipe synchronously inside the refresh
+ * that rejects, and the check that rejection answers resumes on microtasks - before the wipe, which
+ * waits on storage, can have finished. It did: the frame path skipped the MLS
  * teardown that the login path performs first, and it is the frame path that runs while the
  * service is live and could still write a key back.
  *
@@ -717,6 +733,21 @@ export async function releaseDeletedAccountImpl(
  * it runs BEFORE the first delete rather than alongside it.
  */
 export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  if (revokedDeviceWipe) {
+    cb.log('[SECURITY] Revoked-device reset already running - joined, not run twice.');
+    return revokedDeviceWipe;
+  }
+  cb.log('[SECURITY] Revoked-device reset starting.');
+  revokedDeviceWipe = runRevokedDeviceWipe(ctx, cb);
+  try {
+    await revokedDeviceWipe;
+  } finally {
+    revokedDeviceWipe = null;
+  }
+}
+
+/** The ordered steps of {@link wipeRevokedDevice}; the order is the mechanism. */
+async function runRevokedDeviceWipe(ctx: SessionContext, cb: ChatSessionCallbacks) {
   // BEFORE THE FIRST STEP, BECAUSE THE FIRST STEP IS WHAT OPENS THE DOOR. `tearDownLiveSession`
   // sets `isLoggedIn` false, and that is one of the three flags `loginImpl` reads to decide nobody
   // owns the flow - so the wipe was itself the event that let a login start and undo it. Measured on
@@ -740,6 +771,90 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
   } finally {
     ctx.setWipingRevokedDevice(false);
   }
+}
+
+/**
+ * Answers a `device_revoked` frame on a live session: confirms the revocation with the server, then
+ * runs the ONE revocation reset and hands the user to the session-expired seam.
+ *
+ * Its own function, not a closure inside `loginImpl`, so the ordering against the session-expired
+ * reaction (`settleSessionEndByRevocationImpl`) can be driven by a test: frame first or refusal first,
+ * the device must end in the same single reset (DEV-2, 2026-10-25).
+ */
+export async function answerDeviceRevokedFrame(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  mlsService: Pick<IMlsService, 'resolveDeviceId' | 'isDeviceRevoked'>
+): Promise<void> {
+  // GATED ON A SERVER FACT, NEVER ON THE FRAME. The frame says "you were deleted"; erasing a
+  // device on the strength of a message is exactly the destructive-control shape that has to
+  // be confirmed first. `isDeviceRevoked` answers false when it cannot reach the server, so a
+  // transport failure can never destroy anything - a status code is an answer, a transport
+  // failure is not. The revocation ENDS this device's session, so the check usually meets a
+  // dead credential: the refresh refusal then SAYS it died by this revocation, which is the
+  // answer `true` - and the session-expired reaction has already begun the same wipe, which
+  // the call below joins (DEV-2, 2026-10-25).
+  const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+  const revoked = await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
+  if (!revoked) {
+    cb.log('[SECURITY] device_revoked frame received but the server disagrees - ignored.');
+    return;
+  }
+  cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
+  await wipeRevokedDevice(ctx, cb);
+  // A REVOCATION IS NOT A FAILED LOGIN ATTEMPT, AND THE SEAM DECIDES WHAT THE USER SEES.
+  // `onLoginFailed` means "the credential you just offered was refused, stay in the modal and
+  // try again" - which is right at the two login-path call sites in `loginImpl`, where a person is
+  // standing at the gate. Here there is no gate and nothing to retry: the wipe one line up has
+  // just returned this device to a fresh install, so there is no PIN, no device id and no
+  // session left for a modal to act on. The live callbacks bind `onLoginFailed` to the
+  // saved-PIN handler, so this call REOPENED THE PIN PROMPT on top of /chat and the app then
+  // sat there - measured on prod 2026-08-29: no sidebar, no session, no navigation, until the
+  // prompt's own attempt drew a 401 and the session-expired path finally did the redirect.
+  //
+  // `onSessionExpired` is the seam written for exactly this - an authentication loss rather
+  // than a retryable error - and it is the one callback the background service wires
+  // unconditionally: it clears the auth and goes to /login. Nothing is lost by the change,
+  // because the message it replaces was displayed in a modal the app abandoned two seconds
+  // later anyway.
+  cb.onSessionExpired?.();
+}
+
+/**
+ * The session-expired reaction's half of a revocation: when the refresh refusal said the session
+ * died BECAUSE ITS OWNER REVOKED THIS DEVICE (`isSessionEndedByDeviceRevocation`), runs the ONE
+ * revocation reset - joined if the `device_revoked` frame already began it - and answers `true`.
+ * Any other dead session answers `false` and resets nothing: an expired or signed-out session keeps
+ * its stores, by the user's decision.
+ *
+ * WHY HERE AND NOT ONLY IN THE FRAME HANDLER: the revocation ends this device's session, so once it
+ * has, the refusal is the only fact left that says why - the frame's own check is asked with the dead
+ * credential, and a device that was offline during the revocation (DEV-3) gets no frame at all. The
+ * cause is read from the latch, never from the caller, so the order of arrival never matters.
+ *
+ * @param account The account whose credential was refused - the saved user when no login has named
+ *   one to the session yet (a cold start). Empty: nothing on this device to reset, said once.
+ * @throws Whatever the reset throws - the caller accuses it; a revoked device whose stores remain is
+ *   never a silent outcome.
+ */
+export async function settleSessionEndByRevocationImpl(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  account: string
+): Promise<boolean> {
+  if (!isSessionEndedByDeviceRevocation()) return false;
+  if (!account) {
+    cb.log(
+      '[SECURITY] Session ended by this device revocation, but no account is known on this device - nothing to reset.'
+    );
+    return false;
+  }
+  if (ctx.getUserId() !== account) ctx.setUserId(account);
+  cb.log(
+    '[SECURITY] This device was revoked by its owner (the server said so when its session ended) - resetting it.'
+  );
+  await wipeRevokedDevice(ctx, cb);
+  return true;
 }
 
 /**
@@ -2115,37 +2230,13 @@ export async function loginImpl(
     }
 
     mlsService.onDeviceRevoked(() => {
-      void (async () => {
-        // GATED ON A SERVER FACT, NEVER ON THE FRAME. The frame says "you were deleted"; erasing a
-        // device on the strength of a message is exactly the destructive-control shape that has to
-        // be confirmed first. `isDeviceRevoked` answers false when it cannot reach the server, so a
-        // transport failure can never destroy anything - a status code is an answer, a transport
-        // failure is not.
-        const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
-        const revoked = await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
-        if (!revoked) {
-          cb.log('[SECURITY] device_revoked frame received but the server disagrees - ignored.');
-          return;
-        }
-        cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
-        await wipeRevokedDevice(ctx, cb);
-        // A REVOCATION IS NOT A FAILED LOGIN ATTEMPT, AND THE SEAM DECIDES WHAT THE USER SEES.
-        // `onLoginFailed` means "the credential you just offered was refused, stay in the modal and
-        // try again" - which is right at the two login-path call sites above, where a person is
-        // standing at the gate. Here there is no gate and nothing to retry: the wipe one line up has
-        // just returned this device to a fresh install, so there is no PIN, no device id and no
-        // session left for a modal to act on. The live callbacks bind `onLoginFailed` to the
-        // saved-PIN handler, so this call REOPENED THE PIN PROMPT on top of /chat and the app then
-        // sat there - measured on prod 2026-08-29: no sidebar, no session, no navigation, until the
-        // prompt's own attempt drew a 401 and the session-expired path finally did the redirect.
-        //
-        // `onSessionExpired` is the seam written for exactly this - an authentication loss rather
-        // than a retryable error - and it is the one callback the background service wires
-        // unconditionally: it clears the auth and goes to /login. Nothing is lost by the change,
-        // because the message it replaces was displayed in a modal the app abandoned two seconds
-        // later anyway.
-        cb.onSessionExpired?.();
-      })();
+      answerDeviceRevokedFrame(ctx, cb, mlsService).catch((e: unknown) => {
+        // ACCUSED, never swallowed: the stores of a disowned device may remain.
+        console.error('[SECURITY] The device_revoked frame could not be answered:', e);
+        cb.log(
+          `[SECURITY] The device_revoked frame could not be answered - local data may remain: ${e}`
+        );
+      });
     });
 
     // A DEVICE ASKING FOR A BASE REFRESH IS A DEVICE THAT CANNOT GET IN AT ALL, so this is answered

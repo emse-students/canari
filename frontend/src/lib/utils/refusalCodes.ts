@@ -56,6 +56,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A Welcome whose target the roster does not name is a typed `WelcomeTargetNotMemberError`, and
   // the settlement that sent it stops owing it; no screen words it.
   'WELCOME_TARGET_NOT_MEMBER',
+  // A Welcome to a device no key package names (revoked, or never registered) is terminal for that
+  // Welcome; the sender's own commit answer already said the device was not admitted.
+  'WELCOME_TARGET_UNKNOWN',
 ];
 
 /** Every code {@link describeRefusalCode} words. */

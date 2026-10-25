@@ -29,6 +29,7 @@ import {
   loginImpl,
   prefetchPinSaltImpl,
   endSessionImpl,
+  settleSessionEndByRevocationImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
@@ -461,6 +462,16 @@ export function useChatSession() {
     /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
     endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       endSessionImpl(ctx, cb),
+    /**
+     * The session-expired reaction's half of a revocation: when the refresh refusal said the session
+     * died because its owner revoked this device, returns the device to a fresh install (the one
+     * revocation reset, joined if the frame already began it) and answers `true`; any other dead
+     * session answers `false` and keeps its stores. `account` is the refused credential's account.
+     */
+    settleSessionEndByRevocation: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      account: string
+    ) => settleSessionEndByRevocationImpl(ctx, cb, account),
     /** Pauses WebSocket and clears background timers when the app is backgrounded. */
     pauseConnection: () => pauseConnectionImpl(ctx),
     /** Resumes WebSocket after app comes back to foreground. */

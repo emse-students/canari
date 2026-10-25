@@ -6,6 +6,7 @@ import { AdminerAccessService } from './adminer-access.service';
 import { AuthSessionsService } from './auth-sessions.service';
 import { SessionPushEndService } from './session-push-end.service';
 import { AuthSession } from './entities/auth-session.entity';
+import { DeviceRevokedSession } from './entities/device-revoked-session.entity';
 import { RestoreChallengeSpent, RestoreCredential } from './restore/restore-credential.entity';
 import { RestoreCredentialsService } from './restore/restore-credentials.service';
 import { UsersModule } from '../users/users.module';
@@ -14,7 +15,12 @@ import { AccountErasureModule } from '../account-erasure/account-erasure.module'
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AuthSession, RestoreCredential, RestoreChallengeSpent]),
+    TypeOrmModule.forFeature([
+      AuthSession,
+      DeviceRevokedSession,
+      RestoreCredential,
+      RestoreChallengeSpent,
+    ]),
     UsersModule,
     PlatformModule,
     AccountErasureModule,

@@ -92,6 +92,23 @@ export async function refusalOrigin(res: Response): Promise<ResponseOrigin> {
   return 'edge';
 }
 
+/**
+ * The `code` field of a refusal's JSON body, or `null` when the body is not JSON, not an object, or
+ * carries no string code. Read from a CLONE, like {@link refusalOrigin}, so the caller can still read
+ * the original. Call it only on a refusal {@link refusalOrigin} attributed to the gateway: a code is a
+ * typed answer of our own services, never a word an edge chose.
+ */
+export async function refusalBodyCode(res: Response): Promise<string | null> {
+  try {
+    const body: unknown = JSON.parse(await res.clone().text());
+    const code = body && typeof body === 'object' ? (body as { code?: unknown }).code : undefined;
+    return typeof code === 'string' ? code : null;
+  } catch (e) {
+    console.debug(`[HTTP] a ${res.status} refusal body did not parse - it carries no code:`, e);
+    return null;
+  }
+}
+
 /** The `error` the delivery service names a seat still awaiting a member's admission with. */
 export const AWAITING_ADMISSION_ERROR = 'awaiting_admission';
 

@@ -308,6 +308,26 @@ describe('AuthController sessions', () => {
       expect(out.cookies['canari_refresh']).toBeUndefined();
     });
 
+    // The device answers THIS refusal with a full local reset, so the cause travels as a code - and
+    // inside Nest's envelope, so a client older than the code reads the 401 it always read.
+    it("refuses a session its owner's device revocation ended with the typed DEVICE_REVOKED_BY_OWNER", async () => {
+      sessions.rotate.mockResolvedValue({ status: 'device-revoked' });
+
+      const req = makeReq({
+        cookies: {
+          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'x' }),
+        },
+      });
+      const out = makeRes();
+
+      const refusal = await controller.refreshToken(req, out.res).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(UnauthorizedException);
+      expect((refusal as UnauthorizedException).getResponse()).toEqual(
+        expect.objectContaining({ statusCode: 401, code: 'DEVICE_REVOKED_BY_OWNER' })
+      );
+      expect(out.cleared).toContain('canari_refresh');
+    });
+
     it('refuses a token whose session no longer exists', async () => {
       sessions.rotate.mockResolvedValue({ status: 'unknown' });
 

@@ -621,6 +621,14 @@
    * than leave a "Session expired" message stuck in the PIN modal - which strands the user
    * with no clear action - close the modal, clear the auth state, and redirect straight to
    * the login page so they can sign in again.
+   *
+   * ONE DEAD SESSION IS ANSWERED DIFFERENTLY: one the server ended BECAUSE ITS OWNER REVOKED THIS
+   * DEVICE (`isSessionEndedByDeviceRevocation`, latched from the refresh refusal's code). That device
+   * is returned to a fresh install - the same reset the `device_revoked` frame runs, joined if it is
+   * already running - before the redirect. Read from the latch, not from whoever called: the
+   * notifier, a login that met the dead session, and a late handler's replay all land here, and the
+   * reset must not depend on which came first. Measured on DEV-2 (2026-10-25): the frame's check met
+   * the dead session, read "not revoked", and this generic sign-out kept every local store.
    */
   async function handleSessionExpired() {
     // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
@@ -667,6 +675,18 @@
         hash: string;
       } | null
     );
+    // A session the server ended BECAUSE ITS OWNER REVOKED THIS DEVICE resets the device first. The
+    // account is the refused credential's: on a cold start no login has named it to the session yet.
+    try {
+      await globalSession.settleSessionEndByRevocation(
+        sessionCb(),
+        globalSession.userId || currentUserId() || ''
+      );
+    } catch (e) {
+      // ACCUSED, never swallowed: the stores of a disowned device may remain.
+      console.error('[SECURITY] The revoked-device reset FAILED - local data may remain:', e);
+      appendLog(`[SECURITY] The revoked-device reset FAILED - local data may remain: ${e}`);
+    }
     appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
     await clearAuth().catch(() => {});
     void goto(resolve(internalPath(loginPath)), { replaceState: true });

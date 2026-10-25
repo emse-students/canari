@@ -52,7 +52,7 @@ import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
-import { refusalOrigin } from '$lib/utils/apiJson';
+import { refusalBodyCode, refusalOrigin } from '$lib/utils/apiJson';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -234,6 +234,27 @@ export class SessionExpiredError extends Error {
 }
 
 /**
+ * The refresh endpoint said WHY the session is dead: its OWNER REVOKED THIS DEVICE
+ * (`DEVICE_REVOKED_BY_OWNER` on the 401, core-service `device_revoked_sessions`).
+ *
+ * A {@link SessionExpiredError}, so every consumer that stops on a dead session still stops - and a
+ * distinct type, because this one dead session is answered with a full local reset rather than a
+ * sign-out that keeps the stores (`wipeRevokedDevice`). It is the device's ONLY way to learn its
+ * revocation once the revocation has ended its session: the revocation check is asked with an access
+ * token that died with that session, so it can only be answered here (DEV-2, 2026-10-25).
+ */
+export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
+  constructor() {
+    super();
+    this.message = 'This device was revoked by its owner - its session has ended';
+    this.name = 'SessionEndedByDeviceRevocationError';
+  }
+}
+
+/** The refusal code core-service gives a refresh whose session a device revocation ended. */
+const DEVICE_REVOKED_BY_OWNER = 'DEVICE_REVOKED_BY_OWNER';
+
+/**
  * A refresh refused or dropped because the USER is signing out (see `_signOutGeneration`).
  *
  * NOT a {@link SessionExpiredError}, deliberately, and not a subtype of it: that type says "the
@@ -301,6 +322,13 @@ let _sessionExpiredNotified = false;
 let _refreshCredentialProvenDead = false;
 
 /**
+ * Latched with {@link _refreshCredentialProvenDead} when the server said the session died BECAUSE
+ * this device was revoked by its owner, and cleared with it. Read by whoever must choose between a
+ * sign-out that keeps the stores and the full reset ({@link isSessionEndedByDeviceRevocation}).
+ */
+let _sessionEndedByDeviceRevocation = false;
+
+/**
  * True once the SERVER has proven this client's refresh credential dead, and no new one has arrived.
  *
  * Exported so a caller can decline work the answer makes pointless BEFORE starting it, rather than
@@ -315,6 +343,19 @@ let _refreshCredentialProvenDead = false;
  */
 export function isRefreshCredentialProvenDead(): boolean {
   return _refreshCredentialProvenDead;
+}
+
+/**
+ * True once the SERVER has said this client's session was ended by its owner revoking this device,
+ * and no new credential has arrived since.
+ *
+ * THE DISCRIMINATOR, CARRIED TO WHERE THE DECISION IS MADE: the session-expired reaction reads it to
+ * choose the full reset over the sign-out that keeps every store. Read from the latch rather than
+ * passed through the notification, so it does not matter which path reaches that reaction first - the
+ * notifier, a login that met the dead session, or a late handler registration replaying the verdict.
+ */
+export function isSessionEndedByDeviceRevocation(): boolean {
+  return _sessionEndedByDeviceRevocation;
 }
 
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
@@ -343,6 +384,7 @@ export function setSignOutHandler(fn: (() => void) | null): void {
 /** Records that a live refresh credential exists again, voiding both verdicts above. */
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
+  _sessionEndedByDeviceRevocation = false;
   _sessionExpiredNotified = false;
 }
 
@@ -377,7 +419,11 @@ export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void
 function notifySessionExpired(): void {
   if (_sessionExpiredNotified || !currentUserId()) return;
   _sessionExpiredNotified = true;
-  awarn('session dead → logout');
+  awarn(
+    _sessionEndedByDeviceRevocation
+      ? 'session dead: this device was revoked by its owner → reset'
+      : 'session dead → logout'
+  );
   if (_sessionExpiredHandler) {
     _sessionExpiredHandler();
     return;
@@ -954,9 +1000,13 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
   // The server already answered this question about this exact cookie. Repeating the request is a
   // round trip whose result is known, and 119 of them is what one iPhone sent in 45 minutes.
   if (_refreshCredentialProvenDead) {
-    alog('refresh✗latched (cookie already proven dead - not asking again)');
+    alog(
+      `refresh✗latched (cookie already proven dead${_sessionEndedByDeviceRevocation ? ' by this device revocation' : ''} - not asking again)`
+    );
     notifySessionExpired();
-    throw new SessionExpiredError();
+    throw _sessionEndedByDeviceRevocation
+      ? new SessionEndedByDeviceRevocationError()
+      : new SessionExpiredError();
   }
   // A STANDING IDENTITY SPLIT ANSWERS THIS TOO: the credential is alive but belongs to somebody
   // else than the local state, and asking again would rotate it for the same verdict. Only a
@@ -1110,11 +1160,15 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     // verdict on the network path, never on the credential, so it is transient like a 5xx. Read
     // from Nest's error envelope, not the header alone: an edge can answer in JSON too.
     if ((res.status === 401 || res.status === 403) && (await refusalOrigin(res)) === 'gateway') {
-      // The proof, latched: only a new credential can change this answer.
+      // The proof, latched: only a new credential can change this answer. WHY it is dead is latched
+      // with it, from the refusal's CODE - the one cause the device answers with a full reset.
+      const byRevocation = (await refusalBodyCode(res)) === DEVICE_REVOKED_BY_OWNER;
       _refreshCredentialProvenDead = true;
+      _sessionEndedByDeviceRevocation = byRevocation;
       noteSessionAnswered(null);
+      // AFTER both latches: the reaction reads the cause from them.
       notifySessionExpired();
-      throw new SessionExpiredError();
+      throw byRevocation ? new SessionEndedByDeviceRevocationError() : new SessionExpiredError();
     }
     throw new RefreshFailedError(res.status);
   }

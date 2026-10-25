@@ -425,6 +425,61 @@ retry. A retirement (`reason=retired`) ends none - the id
 was the caller's own install's. Not covered, stated: a session bound to NO device, or to a different
 id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
 
+## A refresh refused because the device was revoked says so (2026-10-25)
+
+**Ending the device's sessions destroyed the only fact the device could still learn its revocation
+from.** Measured on the rig (DEV-2, `1.4.1-alpha.4`): the `device_revoked` frame arrived; the frame's
+own check, `GET /api/mls/devices/:u/:d/revoked`, was asked with the access token the revocation had
+just killed (the verifier reads the session, above), its renewal was refused, and the client read
+that as "unreachable - NOT revoked" and logged `the server disagrees`. The device left only through
+the generic expiry sign-out, which keeps every local store by design. A device offline during the
+revocation (DEV-3) got no frame at all, and the same sign-out. Both came with the server-side session
+ending of the same release; `v1.4.0` and older do not end the device's sessions, so their check is
+answered and the frame wipes.
+
+**The cause is carried to where the device decides, from where it is known.** `endDeviceSessions`
+writes one `device_revoked_sessions` row per session it deletes (core-service migration 017), in the
+same transaction. A refresh whose session row is missing reads it by `sid` and is refused
+`401 { statusCode, code: 'DEVICE_REVOKED_BY_OWNER' }` - Nest's envelope kept, so an older client reads
+the 401 it always read. Every other ending (logout, the panel's session revocation, "sign out the
+others", a replay, expiry) stays the plain 401: the record answers ONE question, "did an owner's
+DEVICE revocation end this session".
+
+**Kept exactly as long as it can be asked.** A refresh token naming the session expires at most
+`SESSION_TTL_SECONDS` after its last rotation, which came before `endedAt`; past `endedAt + TTL +
+CREDENTIAL_SKEW_SECONDS` it fails to verify before the session is looked up, so the hourly session
+sweep deletes the record then - a proof, not a guess. Erased with the account.
+
+**The client** (`stores/auth.ts`) types the refusal at its throw as
+`SessionEndedByDeviceRevocationError` (a `SessionExpiredError`, so every consumer that stops on a
+dead session still stops) and latches the cause beside the dead-credential verdict
+(`isSessionEndedByDeviceRevocation`); a new credential clears both. Three things read it, and they
+converge on ONE reset ([auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it)):
+
+- the session-expired reaction (`handleSessionExpired` -> `settleSessionEndByRevocationImpl`) reads
+  the LATCH, not its caller, and runs `wipeRevokedDevice` before the sign-out - so the order of
+  arrival never matters, and the offline return (no frame) is covered by the same line;
+- the frame's check (`isDeviceRevoked`) answers `true` on that typed refusal, `false` on any other
+  dead session or a transport failure;
+- `wipeRevokedDevice` is single-flight: a second discoverer joins the run in progress. Deterministic:
+  the refusal starts the wipe synchronously inside the refresh that rejects, and the check it answers
+  resumes on microtasks, before a wipe that waits on storage can finish.
+
+**What a rig row must observe** on the revoked device: `[A] session dead: this device was revoked by
+its owner → reset`, `[SECURITY] Revoked-device reset starting.`, `[RESET] done - nothing of this
+device remains`, and on the live variant also `revocation check: the server ended this session
+BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
+`the server disagrees`.
+
+**What it does not cover, stated.** A device offline for longer than the refresh token's life gets
+the token-does-not-verify refusal and the plain sign-out; its next sign-in asks `isDeviceRevoked` with
+a fresh session and is wiped there. A device whose session was bound to no device id, or whose
+sessions the revocation could not end (the delete's `503`), is not refused by the record either; the
+same next-sign-in gate covers it. Tests: `auth-sessions.service.spec.ts`, `auth.controller.spec.ts`,
+`session-push-end.integration.spec.ts`, `auth.deviceRevoked.test.ts`,
+`BaseMlsService.revokedFrame.test.ts`, `session/revokedDeviceReset.test.ts` (both orderings, the
+offline return, a transport failure, a plain expiry).
+
 ## A session that ends takes its device's push registration with it (2026-10-22)
 
 **After any sign-out, the device stops being a push destination for the account that left - on
