@@ -1888,23 +1888,62 @@ describe('ChannelService security hardening', () => {
     });
   });
 
+  /**
+   * The one UPDATE `setNotificationLevel` makes, recorded: its key, its level and the row it names.
+   * It answers `affected` rows, so a case can make the membership gone between read and write.
+   */
+  function notifLevelUpdate(memberRepo: Record<string, unknown>, affected = 1) {
+    const seen: { params: Record<string, unknown>; set?: Record<string, unknown> } = { params: {} };
+    const builder: Record<string, unknown> = {
+      update: jest.fn(() => builder),
+      set: jest.fn((s: Record<string, unknown>) => {
+        seen.set = s;
+        return builder;
+      }),
+      where: jest.fn((_sql: string, p: Record<string, unknown>) => {
+        Object.assign(seen.params, p);
+        return builder;
+      }),
+      setParameters: jest.fn((p: Record<string, unknown>) => {
+        Object.assign(seen.params, p);
+        return builder;
+      }),
+      execute: jest.fn(() => Promise.resolve({ affected })),
+    };
+    memberRepo.createQueryBuilder = jest.fn(() => builder);
+    return seen;
+  }
+
   it('setNotificationLevel persists the level and rejects non-members', async () => {
     const { service, channelRepo, memberRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+    const seen = notifLevelUpdate(memberRepo);
 
-    const member = { workspaceId: 'ws1', userId: 'u1', notifLevels: {} as Record<string, string> };
-    memberRepo.findOne.mockResolvedValueOnce(member);
+    memberRepo.findOne.mockResolvedValueOnce({ id: 'm1', workspaceId: 'ws1', userId: 'u1' });
     await expect(service.setNotificationLevel('ch1', 'u1', 'none')).resolves.toEqual({
       channelId: 'ch1',
       level: 'none',
     });
-    expect(member.notifLevels).toEqual({ ch1: 'none' });
-    expect(memberRepo.save).toHaveBeenCalledWith(member);
+    // One key merged into the stored map, on the row read - never a save of that row.
+    expect(seen.params).toEqual({ memberId: 'm1', channelKey: 'ch1', level: 'none' });
+    expect(memberRepo.save).not.toHaveBeenCalled();
 
     memberRepo.findOne.mockResolvedValueOnce(null);
     await expect(service.setNotificationLevel('ch1', 'uX', 'all')).rejects.toBeInstanceOf(
       ForbiddenException
     );
+  });
+
+  it('setNotificationLevel refuses a membership gone between its read and its write', async () => {
+    const { service, channelRepo, memberRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+    notifLevelUpdate(memberRepo, 0);
+    memberRepo.findOne.mockResolvedValueOnce({ id: 'm1', workspaceId: 'ws1', userId: 'u1' });
+
+    await expect(service.setNotificationLevel('ch1', 'u1', 'none')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(memberRepo.save).not.toHaveBeenCalled();
   });
 
   it('notifyChannelRecipients honours per-channel level and mentions, skipping the sender', async () => {
@@ -2133,24 +2172,20 @@ describe('ChannelService security hardening', () => {
       workspaceId: 'ws1',
       isPrivate: false,
     });
-    const member: {
-      workspaceId: string;
-      userId: string;
-      roleIds: string[];
-      notifLevels?: Record<string, string>;
-    } = {
+    memberRepo.findOne.mockResolvedValue({
+      id: 'm1',
       workspaceId: 'ws1',
       userId: 'u1',
       roleIds: [],
-    };
-    memberRepo.findOne.mockResolvedValue(member);
+    });
+    const seen = notifLevelUpdate(memberRepo);
 
     await service.setNotificationLevel('__proto__', 'u1', 'none');
 
-    // The stored key is the canonical channel.id, never the raw '__proto__' param.
-    expect(member.notifLevels).toEqual({ ch1: 'none' });
-    expect(Object.prototype.hasOwnProperty.call(member.notifLevels, '__proto__')).toBe(false);
-    expect(memberRepo.save).toHaveBeenCalledWith(member);
+    // The stored key is the canonical channel.id, never the raw '__proto__' param - and it is a
+    // bound parameter of the SQL, never an object property name.
+    expect(seen.params.channelKey).toBe('ch1');
+    expect(Object.values(seen.params)).not.toContain('__proto__');
   });
 
   /** Wires the repos so `getWorkspaceBySlug('team')` resolves against one workspace. */
@@ -2455,12 +2490,25 @@ describe('ChannelService security hardening', () => {
    * defect disappears into the arrangement.
    */
   function seedMemberTable(
-    memberRepo: { findOne: jest.Mock; find: jest.Mock; delete: jest.Mock },
-    rows: Array<{ workspaceId: string; userId: string; roleIds: string[] }>
+    memberRepo: { findOne: jest.Mock; find: jest.Mock; delete: jest.Mock; update: jest.Mock },
+    seeded: Array<{ workspaceId: string; userId: string; roleIds: string[] }>
   ) {
+    // Each row carries an id, as a real one does: a member write is keyed by the row it read.
+    const rows: Array<{ id: string; workspaceId: string; userId: string; roleIds: string[] }> =
+      seeded.map((r) => ({ id: `m-${r.workspaceId}-${r.userId}`, ...r }));
     const matches = (row: (typeof rows)[number], where: Partial<(typeof rows)[number]>) =>
+      (where.id === undefined || row.id === where.id) &&
       (where.workspaceId === undefined || row.workspaceId === where.workspaceId) &&
       (where.userId === undefined || row.userId === where.userId);
+
+    // An UPDATE changes the rows it matches and inserts none; `affected` says how many it found.
+    memberRepo.update.mockImplementation(
+      (where: Partial<(typeof rows)[number]>, patch: Partial<(typeof rows)[number]>) => {
+        const hit = rows.filter((r) => matches(r, where));
+        for (const r of hit) Object.assign(r, patch);
+        return Promise.resolve({ affected: hit.length });
+      }
+    );
 
     memberRepo.findOne.mockImplementation(({ where }: { where: Partial<(typeof rows)[number]> }) =>
       Promise.resolve(rows.find((r) => matches(r, where)) ?? null)
@@ -2945,8 +2993,8 @@ describe('ChannelService security hardening', () => {
       { userId: 'boss', roleIds: ['r-admin'] },
       { userId: 'mod', roleIds: ['r-mod'] },
     ]);
-    const save = repos.memberRepo.save.getMockImplementation();
-    repos.memberRepo.save.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
+    const update = repos.memberRepo.update.getMockImplementation();
+    repos.memberRepo.update.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
 
     // The old version deleted the row first and swallowed this: the community stayed without an
     // admin and the retry, finding no membership, never looked at it again.
@@ -2955,7 +3003,7 @@ describe('ChannelService security hardening', () => {
     );
     expect(rows.map((r) => r.userId)).toContain('boss');
 
-    repos.memberRepo.save.mockImplementation(save!);
+    repos.memberRepo.update.mockImplementation(update!);
     await repos.service.removeAccountFromWorkspaces('boss');
     expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
     expect(rows.map((r) => r.userId)).not.toContain('boss');
@@ -2971,13 +3019,13 @@ describe('ChannelService security hardening', () => {
       return repos;
     };
     const blip = mk();
-    blip.memberRepo.save.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
+    blip.memberRepo.update.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
     await expect(blip.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
       status: 503,
     });
 
     const refused = mk();
-    refused.memberRepo.save.mockImplementationOnce(() =>
+    refused.memberRepo.update.mockImplementationOnce(() =>
       Promise.reject(new ForbiddenException('refused'))
     );
     await expect(refused.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
@@ -2986,7 +3034,7 @@ describe('ChannelService security hardening', () => {
 
     // A programming error is deterministic: permanent, never a quiet 503.
     const defect = mk();
-    defect.memberRepo.save.mockImplementationOnce(() =>
+    defect.memberRepo.update.mockImplementationOnce(() =>
       Promise.reject(new TypeError('x is undefined'))
     );
     await expect(defect.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({

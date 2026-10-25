@@ -1370,6 +1370,20 @@ whole with `409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the vis
 allowlist and the write policy are left as the other edit wrote them, and a departure the first
 evictions began is settled `cancelled` like any abandoned one.
 
+### A member write updates columns, never saves the row it read (2026-10-25)
+
+**A member write must never insert a row.** A TypeORM `save` of an entity read earlier inserts it
+again, every column included, when the row was deleted in between. So a write to an existing
+membership (`channel_members`, `association_members`) is ONE column-scoped `UPDATE` keyed by the
+row's `id`, and `affected !== 1` means the membership is gone: the call is refused (`403`/`404`) and
+nothing is written. `setNotificationLevel` merges its one key in SQL (`notifLevels || jsonb_build_object`),
+so two devices setting two salons keep both. `updateWorkspaceMemberRole` and the association
+`updateMemberRole` write only the columns they change. The successor an account erasure promotes is
+chosen again under `withCommunityRemovalLock`, from rows read `FOR UPDATE`, since every removal
+deletes through that lock. Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
+`association-member-write-gone.integration.spec.ts`, each committing a removal between the read and
+the write. `save` stays for a row the call itself creates.
+
 ### An access rewrite names the revision it edited (2026-10-25)
 
 **The lock only protected the server's own read, never the client's.** The settings panel reads a

@@ -57,7 +57,7 @@ describe('role changes bounded by the actor', () => {
       { userId: 'u-mgr', roleIds: ['r-mgr'] },
       { userId: 'u-mod', roleIds: ['r-mod'] },
       { userId: 'u-member', roleIds: ['r-member'] },
-    ].map((m) => ({ ...m, workspaceId: WS })) as ChannelMember[];
+    ].map((m) => ({ ...m, id: `m-${m.userId}`, workspaceId: WS })) as ChannelMember[];
     const copy = (r: ChannelRole | undefined) =>
       r ? ({ ...r, permissions: [...r.permissions] } as ChannelRole) : null;
 
@@ -96,6 +96,12 @@ describe('role changes bounded by the actor', () => {
       ),
       find: jest.fn(() => Promise.resolve(members)),
       save: jest.fn((m: unknown) => Promise.resolve(m)),
+      // A role assignment is one column update of the row read; it changes the stored row.
+      update: jest.fn((where: { id: string }, patch: Partial<ChannelMember>) => {
+        const hit = members.filter((m) => m.id === where.id);
+        for (const m of hit) Object.assign(m, patch);
+        return Promise.resolve({ affected: hit.length });
+      }),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const service = new ChannelService(
@@ -137,7 +143,7 @@ describe('role changes bounded by the actor', () => {
       expect(
         await outcome(service.updateWorkspaceMemberRole(WS, 'u-member', 'Administrateur', 'u-mgr'))
       ).toBe(BOUND);
-      expect(memberRepo.save).not.toHaveBeenCalled();
+      expect(memberRepo.update).not.toHaveBeenCalled();
     });
 
     it('refuses a role manager promoting THEMSELVES', async () => {
@@ -145,7 +151,7 @@ describe('role changes bounded by the actor', () => {
       expect(
         await outcome(service.updateWorkspaceMemberRole(WS, 'u-mgr', 'Administrateur', 'u-mgr'))
       ).toBe(BOUND);
-      expect(memberRepo.save).not.toHaveBeenCalled();
+      expect(memberRepo.update).not.toHaveBeenCalled();
     });
 
     it('refuses changing a member whose role grants more than the actor holds', async () => {
@@ -154,7 +160,7 @@ describe('role changes bounded by the actor', () => {
       expect(await outcome(service.updateWorkspaceMemberRole(WS, 'u-mod', 'Membre', 'u-mgr'))).toBe(
         BOUND
       );
-      expect(memberRepo.save).not.toHaveBeenCalled();
+      expect(memberRepo.update).not.toHaveBeenCalled();
     });
 
     it('lets a role manager assign a role within their permissions', async () => {

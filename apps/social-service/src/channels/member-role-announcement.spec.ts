@@ -59,6 +59,7 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
     const memberRepo = {
       findOne: jest.fn((opts: { where: { userId: string } }) =>
         Promise.resolve({
+          id: `m-${opts.where.userId}`,
           workspaceId: WORKSPACE,
           userId: opts.where.userId,
           roleIds: [opts.where.userId === ACTOR ? ADMIN_ROLE.id : MEMBER_ROLE.id],
@@ -70,6 +71,8 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
         { userId: ACTOR, roleIds: [ADMIN_ROLE.id] },
         { userId: 'u-other-admin', roleIds: [ADMIN_ROLE.id] },
       ]),
+      // The role is written as one column update of the row read, never a save of it.
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn((m: Record<string, unknown>) => Promise.resolve(m)),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
@@ -159,8 +162,10 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
     await expect(
       service.updateWorkspaceMemberRole(WORKSPACE, TARGET, 'member', ACTOR)
     ).resolves.toEqual({ success: true });
-    expect(memberRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: TARGET, roleIds: [MEMBER_ROLE.id] })
+    expect(memberRepo.update).toHaveBeenCalledWith(
+      { id: `m-${TARGET}` },
+      { roleIds: [MEMBER_ROLE.id] }
     );
+    expect(memberRepo.save).not.toHaveBeenCalled();
   });
 });

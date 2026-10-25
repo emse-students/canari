@@ -1008,9 +1008,24 @@ export class AssociationsService {
     if (hadManageMembers && willLoseManageMembers && !opts?.bypassLastAdmin) {
       await this.assertNotLastAdminDemotion(associationId);
     }
-    if (role !== undefined) membership.role = role;
-    if (permissions !== undefined) membership.permissions = permissions;
-    return this.memberRepo.save(membership);
+    // ONE column update of the row judged above, never a save of it: a member write must never
+    // insert a row, and a save inserts the membership again when it was deleted since the read.
+    // 0 rows updated means the membership is gone, and is answered as such.
+    const changes: Partial<Pick<AssociationMember, 'role' | 'permissions'>> = {};
+    if (role !== undefined) changes.role = role;
+    if (permissions !== undefined) changes.permissions = permissions;
+    if (Object.keys(changes).length === 0) return membership;
+    const updated = await this.memberRepo.update({ id: membership.id }, changes);
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `updateMemberRole: membership gone since its read association=${associationId} target=${targetUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new NotFoundException('Member not found');
+    }
+    this.logger.debug(
+      `updateMemberRole: association=${associationId} target=${targetUserId.slice(0, 8)} fields=${Object.keys(changes).join(',')}`
+    );
+    return { ...membership, ...changes };
   }
 
   /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */
