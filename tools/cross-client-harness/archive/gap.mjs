@@ -237,14 +237,20 @@ const ACTIONS = {
       onReturn: async () => (f = await armFault(W2, [{ ...PENDING_PULL, fault: 'rewrite once', transform: injectRows(replay) }])),
     });
     await f.awaitFired(0, 1, 30_000).catch(() => {});
-    const duplicateLine = await awaitLine(W2, `[MLS] Duplicate delivery for ${c.group.id.slice(0, 8)}`, 20_000);
+    // EITHER CLASSIFICATION IS THE ANSWER: the MLS layer's duplicate, or the queue's repeat of an
+    // injected id it already took in (`linesAbout`), which comes first and names no group.
+    const replayIds = replay.map((r) => r.id);
+    const duplicateLine = await awaitLine(W2, `[MLS] Duplicate delivery for ${c.group.id.slice(0, 8)}`, 20_000, (l) =>
+      replayIds.some((rid) => l.includes(`[QUEUE] delivery ${String(rid).slice(0, 8)}... arrived twice`))
+    );
     const rep = await f.disarm();
     records.W2.push(...rep.records);
     const epochAfter = serverView(c.group.id).activeEpoch;
     await openGroup(W2, c.group.name, { navigate: false, label: id });
     const shown = { [markA]: await shownCount(W2, markA), [markB]: await shownCount(W2, markB) };
-    const lines = linesAbout(consoleLines(W2), c.group.id);
-    const injected = rep.records.flatMap((r) => r.injected ?? []).length;
+    const injectedIds = rep.records.flatMap((r) => r.injected ?? []);
+    const lines = linesAbout(consoleLines(W2), c.group.id, injectedIds);
+    const injected = injectedIds.length;
     return {
       premise,
       records,

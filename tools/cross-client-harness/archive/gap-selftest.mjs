@@ -120,6 +120,12 @@ ok('classified a duplicate, nothing else, epoch still -> all hold', allOk(g2()))
 ok('read as an epoch gap fails', !allOk(g2({ lines: linesAbout([`[MLS] Duplicate delivery for ${S}… x`, `[GAP] ${S}… x`], G) })));
 ok('a re-add fails', !allOk(g2({ lines: linesAbout([`[MLS] Duplicate delivery for ${S}… x`, `[MLS] Decryption error for ${S}… (wrong-epoch): x → re-add`], G) })));
 ok('the replay shown again fails', !allOk(g2({ shown: { a: 2, b: 1 } })));
+// THE QUEUE ANSWERS FIRST for a row already taken in, and its line names no group (2026-10-25).
+const QREP = (id) => `[QUEUE] delivery ${id.slice(0, 8)}... arrived twice - the pull listed a row this device had already acknowledged; not decrypting it again, acknowledging it once more`;
+const qdup = linesAbout([QREP('cca6907d-d72c-49f7-a658-e38236608c2a')], G, ['cca6907d-d72c-49f7-a658-e38236608c2a']);
+ok('a queue-level repeat of an INJECTED id is the classification', qdup.duplicate.length === 1 && allOk(g2({ lines: qdup })));
+ok('control: a queue repeat of an id that was NOT injected is not', linesAbout([QREP('deadbeef-0000-0000-0000-000000000000')], G, ['cca6907d-d72c-49f7-a658-e38236608c2a']).duplicate.length === 0);
+ok('control: with no injected ids a queue repeat counts for nothing', linesAbout([QREP('cca6907d-d72c-49f7-a658-e38236608c2a')], G).duplicate.length === 0);
 ok('an epoch that moved fails', !allOk(g2({ epochAfter: 8 })));
 ok('nothing injected fails', !allOk(g2({ injected: 0 })));
 

@@ -126,16 +126,30 @@ export function startAfter(createdAt) {
   };
 }
 
-/** The lines W2's console wrote about `groupId`, sorted by what a GAP row asks of them. */
-export function linesAbout(lines, groupId) {
+/**
+ * The lines W2's console wrote about `groupId`, sorted by what a GAP row asks of them.
+ *
+ * `injectedIds` are the queue ids GAP-2 delivered again. A repeat of a row this device already took
+ * in is stopped at the QUEUE (`BaseMlsService.admitDelivery`: `[QUEUE] delivery <id>... arrived
+ * twice - not decrypting it again`) before the MLS layer could call it a duplicate, and that line
+ * names no group - so it is matched by the injected id, and counts as the classification
+ * (2026-10-25, alpha.3: the MLS line never came because the queue had already answered).
+ *
+ * @param {Array<string|{text: string}>} lines
+ * @param {string} groupId
+ * @param {string[]} [injectedIds]
+ */
+export function linesAbout(lines, groupId, injectedIds = []) {
   const short = String(groupId).slice(0, 8);
-  const about = (lines ?? []).map((l) => (typeof l === 'string' ? l : l.text)).filter((t) => t.includes(short));
+  const texts = (lines ?? []).map((l) => (typeof l === 'string' ? l : l.text));
+  const about = texts.filter((t) => t.includes(short));
+  const queueRepeat = texts.filter((t) => injectedIds.some((id) => t.includes(`[QUEUE] delivery ${String(id).slice(0, 8)}... arrived twice`)));
   return {
     gap: about.filter((t) => t.includes(`[GAP] ${short}`)),
     rung2: about.filter((t) => t.includes('forget + welcome_request')),
     lost: about.filter((t) => t.includes(`[MLS] LOST frame for ${short}`)),
     generationGap: about.filter((t) => t.includes(`[MLS] LOST frame for ${short}`) && t.includes('generation too far ahead')),
-    duplicate: about.filter((t) => t.includes(`[MLS] Duplicate delivery for ${short}`)),
+    duplicate: [...about.filter((t) => t.includes(`[MLS] Duplicate delivery for ${short}`)), ...queueRepeat],
     reAdd: about.filter((t) => t.includes(`[MLS] Decryption error for ${short}`)),
   };
 }

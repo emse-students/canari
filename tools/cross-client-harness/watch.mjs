@@ -1369,12 +1369,14 @@ export function consoleEntries(cx) {
  * The bound is the point. An ABSENCE is only a finding against a window a reader can argue with,
  * which is the same rule the campaign applies to a message that did not arrive.
  *
+ * @param {((line: string) => boolean)|null} [alsoMatch] a second answer that ends the wait too - for a
+ *   question two layers may answer, one of which writes a line `needle` cannot name (GAP-2)
  * @returns the first matching line, or null once the window closes - both are assertable
  */
-export async function awaitLine(cx, needle, timeoutMs = 15000) {
+export async function awaitLine(cx, needle, timeoutMs = 15000, alsoMatch = null) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const hit = consoleLines(cx).find((l) => l.includes(needle));
+    const hit = consoleLines(cx).find((l) => l.includes(needle) || (alsoMatch !== null && alsoMatch(l)));
     if (hit) return hit;
     if (Date.now() > deadline) return null;
     await new Promise((r) => setTimeout(r, 500));
