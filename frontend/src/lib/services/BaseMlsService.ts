@@ -3817,7 +3817,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.setGroupImage(groupId, mediaId);
   }
 
-  async deleteGroupOnServer(groupId: string): Promise<boolean> {
+  async deleteGroupOnServer(groupId: string): Promise<void> {
     return this.delivery.deleteGroupOnServer(groupId);
   }
 

@@ -97,6 +97,43 @@ lacks them, and they land in other members' timelines marked unverified. The rul
 property of the row ("device-local": never described, never relayed), carried at the write rather
 than guessed from the sender. Found by reading; the relay count in the field is unmeasured.
 
+## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
+
+The web send now reads a non-JSON 2xx as no answer
+([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)); the
+Android background senders do not. `sendQueuedMessagePush` (`CanariFirebaseMessagingService.kt`)
+returns `code == 200 || code == 201` and never reads the body, so the drain records the id in
+`sentIds` and `appendOutboxSent` drops it: a notification reply or an `OutboxRetryWorker` send on a
+captive portal is lost for good, exactly the web defect. `BackgroundWelcomeAnswer.kt` does the same
+with `httpCode in 200..299`. The iOS NSE only reads, so it is unaffected. The real exposure is narrower
+over HTTPS (a portal cannot answer for the server without a certificate error, which is a transport
+failure), but the rig reproduces it over plain HTTP. Fix: the content-type check before counting a
+send. Owed: one device reading on the Mi 9T behind a portal.
+
+## P2/P3 - Writes that trust a 2xx without reading anything (review of #2428, 2026-10-25)
+
+#2428 covered the places that PARSE a 2xx. About 140 write sites read no body at all, so a portal's
+`200` is believed. Ranked:
+
+- **P3** `renameGroup` / `setGroupImage`, and the notification-preference PATCH/PUTs
+  (`notifications/preferencesApi.ts`): the change is lost silently and shows again on reload.
+- **P3** `registerMember` swallows every outcome (it is due to leave the Add paths anyway, see the
+  entry on it below).
+
+The plan is the shared guard (`assertAnsweredByApi`, `utils/apiJson.ts`) applied per site with its
+test. `dismissGroup` and `removeMemberFromServer` already carry it (#2428). A blanket sweep inside `apiFetch` is not the plan: some routes answer
+non-JSON on purpose (media, files).
+
+## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
+
+`trackedFetch` calls `tracked.answered` on the portal's `200` before any reader sees the body, and
+every other `apiFetch` (a presence poll, the version probe) does the same. So the store never leaves
+"reachable", and when the portal ends there is no transition for the reconnect resume to fire on: a
+kept send goes on its backoff ladder, up to 60 s later. It is not a local fix. Reporting
+`tracked.failed` on the send alone would flip the store, and the next poll answered by the same
+portal would flip it back and fire a resume into the portal. The fix needs `trackedFetch` to know
+which routes speak JSON, the version probe included.
+
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
 When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the

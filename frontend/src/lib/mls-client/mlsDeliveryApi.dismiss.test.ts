@@ -16,7 +16,7 @@ function makeApi(fetchImpl: MlsDeliveryFetch): MlsDeliveryApi {
 
 describe('dismissGroup / undismissGroup', () => {
   it('resolve when the server answers 2xx', async () => {
-    const api = makeApi(async () => new Response('{"status":"dismissed"}', { status: 201 }));
+    const api = makeApi(async () => Response.json({ status: 'dismissed' }, { status: 201 }));
     await expect(api.dismissGroup('g1')).resolves.toBeUndefined();
     await expect(api.undismissGroup('g1')).resolves.toBeUndefined();
   });

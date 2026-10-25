@@ -28,6 +28,7 @@ import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
 import { messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
+import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -704,8 +705,9 @@ export async function mergeDirectConversationDuplicates(
       if (mlsService) {
         try {
           await mlsService.deleteGroupOnServer(duplicate.id);
-        } catch {
+        } catch (e) {
           // Non-blocking: cleaned up at the next server GC
+          logBestEffortGroupDeleteFailure(duplicate.id, e, 'merged duplicate 1:1');
         }
       }
       log(`Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id}`);

@@ -282,6 +282,7 @@ export interface ChannelMessageRow {
 
 import { apiFetch } from '$lib/utils/apiFetch';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { readApiJson } from '$lib/utils/apiJson';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -449,7 +450,8 @@ export class ChannelService {
   async getDistributionGroup(scope: DistributionScope): Promise<DistributionGroupDto> {
     const res = await this.fetchWithAuth(this.distributionGroupUrl(scope));
     await this.handleError(res);
-    const dto = (await res.json()) as DistributionGroupDto;
+    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`, a transport failure).
+    const dto = (await readApiJson(res, 'GET distribution group')) as DistributionGroupDto;
     // Defaulted to the base, not to 0: a server build that predates the field must read as "nothing
     // known to be stale", where 0 would declare every published base ahead of its group.
     return {
@@ -481,7 +483,8 @@ export class ChannelService {
       body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch, deviceId }),
     });
     await this.handleError(res);
-    return res.json() as Promise<{ stored: boolean }>;
+    // A portal's 2xx published nothing: `NotFromApiError`, never a `{ stored }` verdict.
+    return (await readApiJson(res, 'POST distribution group-info')) as { stored: boolean };
   }
 
   /**

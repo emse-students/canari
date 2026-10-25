@@ -1305,8 +1305,11 @@ export interface IMlsService {
   renameGroup(groupId: string, name: string): Promise<void>;
   /** Sets (or clears, with mediaId=null) the group's avatar on the delivery service. */
   setGroupImage(groupId: string, mediaId: string | null): Promise<void>;
-  /** Deletes a group and all its messages from the delivery service. */
-  deleteGroupOnServer(groupId: string): Promise<boolean>;
+  /**
+   * Deletes a group and all its messages from the delivery service. Resolves only on the delivery
+   * service's own JSON 2xx; every other answer throws, a 404 included (the route never sends one).
+   */
+  deleteGroupOnServer(groupId: string): Promise<void>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /**

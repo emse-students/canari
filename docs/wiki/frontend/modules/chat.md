@@ -1311,6 +1311,93 @@ cause `too-large`. No banner and no eviction: the group is unchanged. Only 413 i
 5xx still backs off. The cause of the 413 (the edge limit) is NOT fixed by this: see the P1 in
 [backlog](../../backlog.md). Pinned by `outbox.test.ts`.
 
+### A 2xx a captive portal answered is no answer (2026-10-25)
+
+Under a captive portal every request is answered `200 text/html` without reaching the server. The
+send read that as "accepted, its answer unreadable": the outbox dropped the entry, the sender saw a
+sent bubble, and the copy stayed undated, so no history answer ever carried it either - a message
+lost for good (cross-client rig, `1.4.1-alpha.3`, 2 of 2). **Who answered is now read before
+what was answered**, in ONE helper (`utils/apiJson.ts`, `readApiJson` / `assertAnsweredByApi`):
+
+| A 2xx with... | Read as |
+| --- | --- |
+| no JSON content type (a portal's HTML, an empty `204`) | `NotFromApiError`, the body never read |
+| a JSON type, a body that does not parse (empty, truncated) | `NotFromApiError`, the parse error as its cause |
+| the API's JSON of an unexpected shape | the API's answer - the caller reads what it needs |
+| the send's JSON without `receivedAt` (a server predating it) | accepted, undated - the legacy reading, kept |
+
+`NotFromApiError` is a `TransportFailureError`, so `isTransportFailure` reads it and every caller
+already does the right thing: the send throws `DeliveryUnreachableError`, the entry stays `pending`
+and goes again on the outbox's backoff ladder (up to 60 s after the portal ends - connectivity never
+left "reachable", see [backlog](../../backlog.md)), and receivers deduplicate on the inner messageId.
+The same reading covers the commit gate (kept and resubmitted, never a refusal), `GET` and `POST
+/group-info` (never "no base", never `stored: false`), the key-group base on social-service, the
+Welcome, both key-package publishes, the ACK (ids kept, then persisted), the pending pull (a non-JSON
+or unparseable page fails at once instead of halving nine times), the push registration (not
+counted, so it registers again), the media `complete` and the payments onboarding.
+
+**A PURGE IS NEVER READ FROM A NON-ANSWER.** `getGroupServerStatus` answered `absent` - which purges
+the local conversation and its MLS state - for any 2xx body that did not parse, so a portal's page
+erased a conversation. `absent` now comes only from the delivery service's JSON. The server spells
+a missing row `{ found: false }`, and "nothing stored" on `GET /group-info` `{ groupInfo: null }`,
+because a handler's bare `null` leaves Nest as an empty, untyped `200` that a portal can send too.
+Every older client already reads both objects as before. An empty untyped `200` is now `error`
+(doubt, nothing purged). So is a **404**: the handler never sends one, so a 404 is an edge, a portal
+or a misrouted deploy, and a route-level 404 would have purged EVERY group at once. `absent` is an
+allowlist of one answer. Only the 404 is logged as an accusation; any other non-2xx or a portal's
+`200` is the same answer for every group of a sweep, so `getGroupServerStatus` keeps it at debug and
+`discoverMissingGroups` says it ONCE: `[DISCOVERY] <n> group(s) kept - server status unanswered,
+nothing purged: <groups>`.
+
+The same review of status-only arms changed four more places, each to the rule "a status decides
+only when the API said it":
+- The 403 behind `NotAGroupMemberError` (`fetchGroupInfo`, `getGroupMembers`) counts only with the
+  gateway's JSON. A caller retires the conversation on it, and an edge's HTML 403 (a WAF ban page)
+  says nothing about membership.
+- `deleteGroupOnServer` no longer reads a 404 as "already gone". The route never sends one, so a
+  delete for everyone was reported done with nothing deleted. A non-API 2xx is now no answer.
+- An owed exit (`classifyExitFailure`) is forgotten only on the delivery service's own 403, carried
+  as `GroupExitRefusedError.origin`. A 404 never forgets it (neither exit route sends one), and an
+  edge's 403 or 404 keeps the row. `removeMemberFromServer` and `dismissGroup` read a non-API 2xx as
+  no answer too, so a portal cannot clear an owed leave.
+- A profile 404 (`isAbsentUserError`, which sends the session to the login page) counts only from
+  core-service.
+- The refresh's 401/403 latches the cookie dead and signs out only when core-service sent it. An
+  edge's 403 is transient, like a 5xx.
+
+The discriminator is the
+content type `responseOrigin` already used for an edge refusal, plus the parse - facts the
+response carries, never a guess from its words. **Where the reading DESTROYS something** (the
+refresh's sign-out, the membership 403, the profile 404, the exit 403) the header is not enough: the
+estate sits behind an edge that can answer an API client in JSON too. There `refusalOrigin` reads
+one of the two shapes our services write: Nest's error envelope (`statusCode` equal to the HTTP
+status, which every `HttpException` built from a string and every guard refusal carries because no
+service installs an exception filter), or a coded refusal `{ code, message }` (`refusalBody`),
+which Nest sends WITHOUT `statusCode` and which is believed only when `code` belongs to the shared
+contract (`isContractRefusalCode`, `utils/refusalCodes.ts`). The membership refusals a removed
+member meets (`NOT_A_MEMBER`, `MEMBERSHIP_NOT_ALLOWED`) are coded: an envelope-only first draft read
+them as the edge's, so a removed member kept the conversation and an owed leave replayed for ever.
+Any other JSON body (a CDN's `{ type, title, status, detail, error_code }`, an unknown code) is the
+edge's, except the delivery service's 409 `{ error: 'awaiting_admission' }` to a pending member,
+recognised (`isAwaitingAdmissionBody`) so its label is true although nothing destroys on it. The
+gateway's own error pages (nginx) imitate the envelope for 413/429/5xx and for a 404 under
+`/api/media/public/live/`; no destructive reader acts on those statuses or on that route. A refused
+exit also carries the service's `code` (`GroupExitRefusedError.code`), which changes no outcome and
+names the answer in the drain's log (`KEY_DISTRIBUTION_GROUP` has its own line). A best-effort
+server delete nothing retries (a failed creation's orphan, a merged duplicate) logs its failure
+through `logBestEffortGroupDeleteFailure`. `getGroupServerStatus` reads `absent` from `{ found:
+false }` alone; any other JSON without an id is `error`. The remaining header-only readers (the send's edge refusal, media, live, resumable upload)
+only choose between retrying and reporting, so a misread there costs a retry, not a state. The log line an operator reads is
+`[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept
+for a retry: NotFromApiError: POST /api/mls/send (group <group>) answered 200 with text/html... -
+not the API, read as no answer`.
+
+**Not covered**, each in [backlog](../../backlog.md): a 2xx a caller believes WITHOUT reading
+anything (`renameGroup`, most `apiFetch` writes), the Android background
+senders, and connectivity's reading of a portal as "reachable". Pinned by `apiJson.test.ts`,
+`mlsDeliveryApi.notFromApi.test.ts`, `mlsDeliveryApi.groupStatus.test.ts`,
+`ChannelService.notFromApi.test.ts`, `outbox.test.ts` and the two chat-delivery controller specs.
+
 `enqueue` logs too: it is the first trace of a message on this device, and without it a send that
 never reached the queue cannot be told apart from one the queue accepted and lost. Correlating a
 loss needs `[OUTBOX]` from the sender and `[QUEUE]` from the recipient at the same moment.
@@ -2742,8 +2829,8 @@ Three properties, and none of them is a timer:
 - **Idempotence from the row**, not from a guard. The primary key is the `groupId`, so deciding twice
   cannot queue two calls, and the newer decision (a `leave` after a `delete`) is the one that
   survives.
-- **Termination from a PROOF.** The row is cleared when the server answers - a success, or a 403/404
-  saying it is already done - and never on an attempt count or an elapsed time. A server that is
+- **Termination from a PROOF.** The row is cleared when the server answers - a success, or the
+  delivery service's 403 saying it is already done - and never on an attempt count or an elapsed time. A server that is
   reachable and REFUSES (a 500) keeps the row and logs at a level that accuses, because that is a
   server bug and dropping the row would hide it.
 - **The trigger is an EVENT**: `connectivity.onReconnect`, plus exactly one pass at startup, for an
@@ -2754,8 +2841,10 @@ Three properties, and none of them is a timer:
 **One classifier, or the defect comes back with its halves swapped.** The drain and
 `exitGroupAndCleanup` both have to read a failure, and if they disagreed about a 403 the composable
 would keep a row the drain would clear, or worse. `classifyExitFailure` in
-`utils/chat/pendingGroupExits.ts` is the only reading of it: `'already-gone'` for 403/404,
-`'refused'` for any other status, `'unreachable'` only when `isTransportFailure` - the same predicate
+`utils/chat/pendingGroupExits.ts` is the only reading of it: `'already-gone'` for the delivery
+service's own 403 (Nest's envelope or a contract refusal code, never an edge's page, never a 404 - neither route sends one, see
+[the 2xx a portal answered](#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)), `'refused'`
+for any other status, `'unreachable'` only when `isTransportFailure` - the same predicate
 `apiFetch` uses to decide the server is unreachable - says so. Note what that means for a
 PROGRAMMING error thrown inside the call: it classifies as `refused`, not `unreachable`. That is the
 choice we want, because a bug must not be able to keep a row for ever while blaming the link.

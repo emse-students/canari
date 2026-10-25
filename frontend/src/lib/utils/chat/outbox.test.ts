@@ -56,6 +56,7 @@ import {
 } from './outbox';
 import {
   DeliveryUnreachableError,
+  MlsDeliveryApi,
   ExclusionsRefusedError,
   GroupDeletedError,
   SenderNotActiveError,
@@ -4859,5 +4860,95 @@ describe('5xx terminal state - review of #2076 (follower Retry, the hold, the de
     expect(sent).toEqual(['t2']);
     expect(storage._map.has('r1')).toBe(true);
     outbox.dispose();
+  });
+});
+
+describe('a 2xx a captive portal answered is no answer (cross-client rig, 1.4.1-alpha.3)', () => {
+  /** What a portal answers ANY request with: a login page, `200 text/html`. */
+  const portal = () =>
+    new Response('<html><body>Sign in to use this network</body></html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+
+  /**
+   * The outbox over the REAL send path (`postApplicationMessage`), its `fetch` answering in turn
+   * from `answers`. `received` is what reached the "server": a frame only counts when the delivery
+   * service itself answered, keyed by the inner messageId every receiver deduplicates on.
+   */
+  function wired(answers: Array<() => Response>) {
+    const received: string[] = [];
+    const fetchImpl = vi.fn(async () => answers.shift()!());
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const mlsService = makeMls();
+    mlsService.sendMessage = vi.fn(
+      async (groupId: string, _proto: Uint8Array, id: string): Promise<SentFrame> => {
+        const receivedAt = await api.postApplicationMessage(groupId, 'AAAA');
+        received.push(id);
+        return { sealed: new Uint8Array(), authorProof: new Uint8Array(), receivedAt };
+      }
+    );
+    return { mlsService, received, fetchImpl };
+  }
+
+  it('keeps the entry pending on a portal 200, and the retry after the portal delivers it exactly once', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const { mlsService, received, fetchImpl } = wired([
+      portal,
+      () => Response.json({ status: 'sent', queued: 1, sent: 1, receivedAt: 1_700_000_000_123 }),
+    ]);
+    const logs: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, log: (line: string) => logs.push(line) })
+    );
+
+    await outbox.flush();
+
+    // Not sent, not dropped: the request never reached the server.
+    expect(received).toEqual([]);
+    expect(storage._map.has('m1')).toBe(true);
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+    expect(logs.some((l) => l.includes('sent, the server answered no receive time'))).toBe(false);
+
+    // The portal ends. In production the kept entry goes on its backoff ladder (connectivity never
+    // left "reachable", backlog P3); a reconnect transition stands in for that retry here.
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(received).toEqual(['m1']);
+    expect(storage._map.size).toBe(0);
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    expect(conversations.get('g1')!.messages[0].serverTimestamp).toBe(1_700_000_000_123);
+
+    // And nothing is ever sent for it again.
+    await outbox.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('still counts as sent the JSON answer of a server predating `receivedAt` - the copy stays undated', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const { mlsService, received } = wired([
+      () => Response.json({ status: 'sent', queued: 1, sent: 1 }),
+    ]);
+    const logs: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, log: (line: string) => logs.push(line) })
+    );
+
+    await outbox.flush();
+
+    expect(received).toEqual(['m1']);
+    expect(storage._map.size).toBe(0);
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    expect(conversations.get('g1')!.messages[0].serverTimestamp).toBeUndefined();
+    expect(logs.some((l) => l.includes('sent, the server answered no receive time'))).toBe(true);
   });
 });

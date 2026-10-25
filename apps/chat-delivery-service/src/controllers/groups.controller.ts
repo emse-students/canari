@@ -209,7 +209,11 @@ export class GroupsController {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
     if (!g) {
       this.logger.log(`[GET_GROUP] groupId=${groupId} found=false`);
-      return null;
+      // ABSENCE IS SPELT AS JSON, because the client PURGES on it. A bare `null` leaves Nest as an
+      // empty, untyped 200 - which a captive portal can answer too - so the client could only read
+      // "absent" from the absence of an answer. An object with no `groupId` is what every client,
+      // old or new, already reads as absent.
+      return { found: false };
     }
     const base = await this.groupInfoRepo.findOne({
       select: { groupId: true, baseEpoch: true },

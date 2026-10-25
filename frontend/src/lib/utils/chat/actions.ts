@@ -956,6 +956,10 @@ export async function discoverMissingGroups(params: {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
     }
 
+    // ONE LINE PER SWEEP for the groups whose status went unanswered: a down service, a gateway
+    // error or a captive portal answers every group alike, and a line per group was that one fact
+    // repeated (`getGroupServerStatus` keeps the per-group status at debug).
+    const unansweredStatus: string[] = [];
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
 
@@ -1056,9 +1060,18 @@ export async function discoverMissingGroups(params: {
           continue;
         }
         // keep
+        if (serverStatus.kind === 'unknown' && convo.lifecycle !== 'removed') {
+          unansweredStatus.push(label.slice(0, 8));
+          continue;
+        }
         log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
         continue;
       }
+    }
+    if (unansweredStatus.length > 0) {
+      log(
+        `[DISCOVERY] ${unansweredStatus.length} group(s) kept - server status unanswered, nothing purged: ${unansweredStatus.join(', ')}`
+      );
     }
   }
 

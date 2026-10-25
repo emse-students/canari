@@ -59,6 +59,24 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
 /** Every code {@link describeRefusalCode} words. */
 export const WORDED_REFUSAL_CODES: readonly string[] = Object.keys(REFUSAL_WORDING);
 
+/** Every code of the shared contract: worded here, or answered by a typed flow. */
+const CONTRACT_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  ...WORDED_REFUSAL_CODES,
+  ...TYPED_ELSEWHERE_CODES,
+]);
+
+/**
+ * Whether `code` is a refusal code of the shared server contract (worded or typed elsewhere). The
+ * drift test keeps this set equal to the server registries, so a body carrying one of these was
+ * written by our own services (`refusalBody`), never by an edge, a CDN or a portal - which is what
+ * `refusalOrigin` (`apiJson.ts`) needs to believe a coded refusal that lacks Nest's envelope.
+ *
+ * @param code Any value read off a refusal body.
+ */
+export function isContractRefusalCode(code: unknown): boolean {
+  return typeof code === 'string' && CONTRACT_REFUSAL_CODES.has(code);
+}
+
 /**
  * The localized sentence for a refusal code, or `null` when the code is absent or unknown.
  *

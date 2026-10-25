@@ -1,3 +1,5 @@
+import { assertAnsweredByApi } from '$lib/utils/apiJson';
+
 const PENDING_ACK_STORAGE_KEY = 'canari_pending_message_acks';
 const ACK_BACKOFF_MS = [500, 2000, 5000] as const;
 
@@ -96,6 +98,9 @@ export async function ackMessagesWithRetry(
         clearTimeout(abandon);
       }
       if (res.ok) {
+        // A portal's `200` acknowledged nothing: `NotFromApiError` lands in the catch below as a
+        // failed attempt, so the ids are retried and then persisted, never forgotten.
+        assertAnsweredByApi(res, 'POST /api/mls/messages/ack');
         persistPendingAcks(null);
         log?.(`[ACK] ${messageIds.length} message(s) acknowledged`);
         return;

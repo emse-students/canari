@@ -259,6 +259,7 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
         return Promise.resolve({
           ok: true,
           status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
           body: new ReadableStream<Uint8Array>({
             start(controller) {
               const parts = first ? slices : ['[]'];

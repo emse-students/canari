@@ -38,11 +38,9 @@ describe('startPushService - rotation de token FCM', () => {
     // The service asks the OS, not the user agent, so this is what decides the platform now.
     osPlatformStub.mockReturnValue('android');
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ pushSecret: 'secret' }),
-      text: async () => '',
-    });
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(async () => Response.json({ pushSecret: 'secret' }));
   });
 
   it('1er appel enregistre, ré-appel inchangé skip, ré-appel après rotation ré-enregistre', async () => {

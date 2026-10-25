@@ -129,7 +129,11 @@ export class MessagingController {
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
-    return this.messagingService.getGroupInfo(groupId, authUserId);
+    // "Nothing stored" is answered as JSON, never as a bare `null`: Nest sends a handler's `null` as
+    // an EMPTY body with no content type, which the client cannot tell from a captive portal's empty
+    // 2xx - so it read "no base" as an unparseable answer. `{ groupInfo: null }` is what every client,
+    // old or new, already reads as "no base".
+    return (await this.messagingService.getGroupInfo(groupId, authUserId)) ?? { groupInfo: null };
   }
 
   /**

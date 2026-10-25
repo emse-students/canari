@@ -9,7 +9,7 @@ function counting(body: string) {
   const urls: string[] = [];
   const fetchImpl: MlsDeliveryFetch = async (input) => {
     urls.push(String(input));
-    return new Response(body, { status: 200 });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const api = new MlsDeliveryApi({
     historyUrl: 'https://test.local',

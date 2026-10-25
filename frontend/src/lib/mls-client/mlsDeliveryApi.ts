@@ -10,6 +10,12 @@ import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
+import {
+  assertAnsweredByApi,
+  isAwaitingAdmissionBody,
+  readApiJson,
+  refusalOrigin,
+} from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError } from '$lib/stores/auth';
@@ -323,13 +329,7 @@ export async function awaitingAdmissionFrom(
   if (res.status !== 409) return null;
   try {
     const body: unknown = await res.clone().json();
-    if (
-      body &&
-      typeof body === 'object' &&
-      (body as { error?: unknown }).error === 'awaiting_admission'
-    ) {
-      return new AwaitingAdmissionError(groupId);
-    }
+    if (isAwaitingAdmissionBody(res.status, body)) return new AwaitingAdmissionError(groupId);
   } catch {
     // Not JSON: an edge page, not the delivery service's answer - the caller's own branch reads it.
     console.debug(
@@ -643,11 +643,40 @@ export class GroupExitRefusedError extends Error {
   constructor(
     readonly groupId: string,
     readonly status: number,
-    readonly operation: 'delete' | 'leave'
+    readonly operation: 'delete' | 'leave',
+    /**
+     * WHO ANSWERED (`refusalOrigin`: Nest's error envelope or a contract refusal code). `classifyExitFailure` forgets an owed
+     * exit on a 403 only when the delivery service sent it; an edge's or a portal's page says
+     * nothing about the group.
+     */
+    readonly origin: ResponseOrigin,
+    /**
+     * The refusal's contract `code` when the delivery service sent one (`KEY_DISTRIBUTION_GROUP`,
+     * `NOT_A_MEMBER`, ...), else null. Never read off an edge's body. It changes no outcome - the
+     * status and the origin decide that - and names the answer in the drain's log.
+     */
+    readonly code: string | null = null
   ) {
-    super(`Group ${operation} refused for ${groupId}: ${status}`);
+    super(
+      `Group ${operation} refused for ${groupId}: ${status} (${origin}${code ? `, ${code}` : ''})`
+    );
     this.name = 'GroupExitRefusedError';
   }
+}
+
+/**
+ * The {@link GroupExitRefusedError} of a refused exit response: its status, WHO answered
+ * (`refusalOrigin`) and, from the delivery service only, its contract code.
+ */
+async function groupExitRefusal(
+  groupId: string,
+  res: Response,
+  operation: 'delete' | 'leave'
+): Promise<GroupExitRefusedError> {
+  const origin = await refusalOrigin(res);
+  const code =
+    origin === 'gateway' ? (await refusalFromResponse(res, `group ${operation}`)).code : null;
+  return new GroupExitRefusedError(groupId, res.status, operation, origin, code);
 }
 
 /**
@@ -1290,6 +1319,8 @@ export class MlsDeliveryApi {
         }
         throw await refusalFromResponse(response, 'Failed to publish KeyPackage');
       }
+      // A portal's 2xx registered nothing: no answer, never a registration.
+      assertAnsweredByApi(response, 'POST /api/mls/register-device');
     });
   }
 
@@ -1320,6 +1351,8 @@ export class MlsDeliveryApi {
       if (!response.ok) {
         throw await refusalFromResponse(response, 'Failed to publish key packages');
       }
+      // A portal's 2xx published nothing: no answer, so the pool is asked about again.
+      assertAnsweredByApi(response, 'POST /api/mls/register-device/prekeys');
     });
   }
 
@@ -1478,7 +1511,16 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
-    return res.json();
+    // A 2xx that is not the gate's JSON is NO ANSWER (`NotFromApiError`, a transport failure): a
+    // portal's page must never be read as a verdict, and the caller already keeps the stage and
+    // resubmits the same bytes on a transport failure until the gate itself answers.
+    return (await readApiJson(res, `POST /api/mls/commit (group ${groupId.slice(0, 8)})`)) as {
+      accepted: boolean;
+      reason?: string;
+      currentEpoch?: number;
+      newEpoch?: number;
+      duplicate?: boolean;
+    };
   }
 
   /**
@@ -1531,14 +1573,23 @@ export class MlsDeliveryApi {
       `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
       { headers: await this.auth() }
     );
-    if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    // ORIGIN FIRST: only the delivery service's JSON 403 says "not a member" (a caller retires the
+    // conversation on it); an edge's HTML 403 (a WAF ban page) says nothing about membership.
+    if (res.status === 403 && (await refusalOrigin(res)) === 'gateway') {
+      throw new NotAGroupMemberError(groupId);
+    }
     const awaiting = await awaitingAdmissionFrom(res, groupId);
     if (awaiting) throw awaiting;
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
-    const data = await res.json();
-    // The server returns null (no body content) when nothing is stored.
+    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`), never "no base". The server
+    // spells "nothing stored" `{ groupInfo: null }` - a bare `null` used to leave it as an empty,
+    // untyped body that no reader can tell from a portal's.
+    const data = (await readApiJson(
+      res,
+      `GET /api/mls/group-info (group ${groupId.slice(0, 8)})`
+    )) as { groupInfo?: unknown; baseEpoch: number; activeEpoch?: unknown } | null;
     if (!data || typeof data.groupInfo !== 'string') return null;
     // `activeEpoch` defaults to the base, never to 0: an older server that does not send it must
     // read as "nothing known to be stale", where 0 would call every published base stale.
@@ -1574,7 +1625,12 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo store HTTP error');
     }
-    const data = await res.json().catch(() => null);
+    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`), never `stored: false`: the
+    // monotonic rule did not decline anything, the request never reached it.
+    const data = (await readApiJson(
+      res,
+      `POST /api/mls/group-info (group ${groupId.slice(0, 8)})`
+    )) as { stored?: unknown } | null;
     return { stored: data?.stored === true };
   }
 
@@ -1886,18 +1942,32 @@ export class MlsDeliveryApi {
       // breaking a run of 5xx - a sentence could not be read back.
       throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
     }
-    // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
-    // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
-    // server predating the field, or an unreadable body, answers `null`: the frame WAS accepted, so
-    // that is not a failure of the send, and the copy is placed by the rule for undated messages.
-    const answered = (await res.json().catch((e: unknown) => {
+    // WHO ANSWERED decides whether the frame was accepted, never the status alone. A captive portal
+    // answers this POST `200 text/html` without the request ever reaching the server, and reading
+    // that as "accepted, answer unreadable" dropped the outbox entry of a message nobody received
+    // (cross-client rig, `1.4.1-alpha.3`). A 2xx that is not the delivery service's JSON is NO
+    // ANSWER (`NotFromApiError`, typed at the throw in `readApiJson`), and so is a body lost after
+    // the head: the outbox keeps the entry and retries it on its backoff ladder like any transport
+    // failure, and the receivers deduplicate on the inner messageId should the first one have
+    // landed after all.
+    let answered: unknown;
+    try {
+      answered = await readApiJson(res, `POST /api/mls/send (group ${groupId.slice(0, 8)})`);
+    } catch (e) {
       console.warn(
-        `[DELIVERY] send to ${groupId.slice(0, 8)} accepted, its answer unreadable - the copy stays undated:`,
+        `[DELIVERY] send to ${groupId.slice(0, 8)} answered ${res.status} with no answer of the delivery service - not accepted, kept for a retry:`,
         e
       );
-      return null;
-    })) as { receivedAt?: unknown } | null;
-    const receivedAt = answered?.receivedAt;
+      throw new DeliveryUnreachableError(e);
+    }
+    // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
+    // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
+    // server predating the field answers its JSON WITHOUT it: `null`, the frame WAS accepted, and the
+    // copy is placed by the rule for undated messages (legacy-compatibility).
+    const receivedAt =
+      answered !== null && typeof answered === 'object'
+        ? (answered as { receivedAt?: unknown }).receivedAt
+        : undefined;
     return typeof receivedAt === 'number' && Number.isFinite(receivedAt) && receivedAt > 0
       ? receivedAt
       : null;
@@ -2057,15 +2127,24 @@ export class MlsDeliveryApi {
     if (!res.ok) throw await refusalFromResponse(res, 'setGroupImage failed');
   }
 
-  /** Soft-deletes `groupId` on the server. Returns `false` if already absent (404). */
-  async deleteGroupOnServer(groupId: string): Promise<boolean> {
+  /**
+   * Soft-deletes `groupId` on the server - a "delete for everyone".
+   *
+   * DONE ONLY ON THE DELIVERY SERVICE'S OWN ANSWER. The route never answers 404 (deleting an absent
+   * group tombstones nothing and still answers `{ status: 'deleted' }`), so a 404 used to read as
+   * "already gone" came only from an edge, a portal or a misrouted deploy - and the delete was then
+   * reported done with nothing deleted. Any non-2xx is `GroupExitRefusedError`, held by the caller;
+   * a 2xx that is not the API's JSON is `NotFromApiError`, a transport failure.
+   */
+  async deleteGroupOnServer(groupId: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
       headers: await this.auth(),
     });
-    if (res.status === 404) return false;
-    if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'delete');
-    return true;
+    if (!res.ok) {
+      throw await groupExitRefusal(groupId, res, 'delete');
+    }
+    assertAnsweredByApi(res, `DELETE /api/mls/groups (group ${groupId.slice(0, 8)})`);
   }
 
   /** Removes `userId` from the server-side member list of `groupId`. */
@@ -2074,10 +2153,15 @@ export class MlsDeliveryApi {
       method: 'DELETE',
       headers: await this.auth(),
     });
-    // A 404 (no such group) and a 403 (not a member of it) are both the server ANSWERING that this
-    // user is already out - which is what a leave asks for - and they reach the caller as a status it
-    // can act on rather than as a sentence it would have to read.
-    if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'leave');
+    // A 403 from the delivery service (not a member of it) is the server ANSWERING that this user is
+    // already out - which is what a leave asks for - and it reaches the caller as a status and an
+    // origin it can act on rather than as a sentence it would have to read.
+    if (!res.ok) {
+      throw await groupExitRefusal(groupId, res, 'leave');
+    }
+    // The route answers `{ status: 'removed' }`: a portal's 200 removed nobody, and the drain must
+    // not clear the owed leave on it (`NotFromApiError`, a transport failure, keeps the row).
+    assertAnsweredByApi(res, `DELETE /api/mls/groups/members (group ${groupId.slice(0, 8)})`);
   }
 
   /**
@@ -2112,7 +2196,10 @@ export class MlsDeliveryApi {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
       headers: await this.auth(),
     });
-    if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    // ORIGIN FIRST, as on `fetchGroupInfo`: an edge's 403 is no membership answer.
+    if (res.status === 403 && (await refusalOrigin(res)) === 'gateway') {
+      throw new NotAGroupMemberError(groupId);
+    }
     const awaiting = await awaitingAdmissionFrom(res, groupId);
     if (awaiting) throw awaiting;
     if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
@@ -2312,12 +2399,20 @@ export class MlsDeliveryApi {
    * public readers ({@link getGroupMeta}, {@link getGroupServerStatus}) parse it differently but ask
    * the same question, and each used to send its own request (14 calls for 7 groups, HAR 2026-10-05).
    */
-  private readGroupRow(groupId: string): Promise<{ ok: boolean; status: number; text: string }> {
+  private readGroupRow(
+    groupId: string
+  ): Promise<{ ok: boolean; status: number; text: string; fromApi: boolean }> {
     return this.joinInFlight(`group:${groupId}`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
         headers: await this.auth(),
       });
-      return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' };
+      return {
+        ok: res.ok,
+        status: res.status,
+        text: res.ok ? await res.text() : '',
+        // WHO ANSWERED, read from the head (`responseOrigin`): a portal's page is not a group row.
+        fromApi: responseOrigin(res) === 'gateway',
+      };
     });
   }
 
@@ -2339,41 +2434,75 @@ export class MlsDeliveryApi {
   /**
    * Server status of a group, distinguishing a CONFIRMED absence from network uncertainty -
    * something `getGroupMeta` (which returns `null` for both) cannot do. `GET /api/mls/groups/:id`
-   * queries `dm_groups` WITHOUT a membership check and returns `null` (body) if the row does not
-   * exist, hence:
-   *  - `'absent'` : the server replied and the `dm_groups` row does not exist -> group really gone
-   *    (never created / hard-purged). The only case where discovery may auto-delete the conversation.
-   *  - `'error'`  : HTTP/network failure -> status unknown, delete NOTHING.
+   * queries `dm_groups` WITHOUT a membership check and answers `{ found: false }` if the row does
+   * not exist, hence:
+   *  - `'absent'` : the delivery service's own JSON says the `dm_groups` row does not exist -> group
+   *    really gone (never created / hard-purged). The only case where discovery may auto-delete the
+   *    conversation, so it is read from an ALLOWLIST of one answer.
+   *  - `'error'`  : anything else - a network failure, any non-2xx (a 404 included: the handler never
+   *    sends one, so it is an edge, a portal or a misrouted deploy, and a route-level 404 would
+   *    otherwise purge EVERY group at once), a 2xx that is not the API's JSON -> delete NOTHING.
    *  - `GroupMeta`: the row exists (live group, `deletedAt` tombstone, or exclusion) -> keep the
    *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
-    let res: { ok: boolean; status: number; text: string };
+    let res: { ok: boolean; status: number; text: string; fromApi: boolean };
     try {
       res = await this.readGroupRow(groupId);
     } catch {
       return 'error';
     }
-    // 404 = no dm_groups row -> confirmed absent (never created or hard-purged).
-    if (res.status === 404) return 'absent';
-    // Other non-2xx (401/5xx/…) = real doubt -> never purge on error.
-    if (!res.ok) return 'error';
-    // The `GET mls/groups/:id` handler returns the group object, or `null` when not found.
-    // NestJS serializes that `null` as an EMPTY body (200) -> `res.json()` would throw. An empty
-    // or "null" 2xx body from THIS endpoint therefore unambiguously means "group absent" (not a
-    // network error). This distinction lets discovery purge a deleted group instead of keeping
-    // it indefinitely as "uncertain status". [[lifecycle]]
-    const trimmed = res.text.trim();
-    if (trimmed === '' || trimmed === 'null') return 'absent';
+    // ANY non-2xx is doubt, a 404 included - see the doc comment: never purge on it. Only the 404
+    // ACCUSES: the handler never sends one, so it names a misrouted deploy or an edge in the way.
+    // Every other status (a 5xx, a gateway's 502, a WAF) is the same answer for every group of the
+    // sweep, so it is a debug line here and ONE line per sweep in `discoverMissingGroups`.
+    if (!res.ok) {
+      if (res.status === 404) {
+        console.warn(
+          `[MLS] group ${groupId.slice(0, 8)} status answered 404, which the delivery service never sends - an edge or a misrouted deploy; unknown, nothing purged`
+        );
+      } else {
+        console.debug(
+          `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} - unknown, nothing purged`
+        );
+      }
+      return 'error';
+    }
+    // 'absent' PURGES the local conversation and its MLS state, so it is read only from the
+    // delivery service's own JSON: the handler answers `{ found: false }` (an object with no id)
+    // for a missing row. A 2xx that is not that JSON - a captive portal's page, an empty untyped
+    // body (also what a server older than that answer sends for its bare `null`), a body that does
+    // not parse - is NO ANSWER, and doubt never purges. [[lifecycle]]
+    if (!res.fromApi) {
+      // A portal answers every group alike: debug here, one line per sweep at the caller.
+      console.debug(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} without the delivery service's JSON - unknown, nothing purged`
+      );
+      return 'error';
+    }
     let g: unknown;
     try {
-      g = JSON.parse(trimmed);
-    } catch {
-      return 'absent';
+      g = JSON.parse(res.text);
+    } catch (e) {
+      console.warn(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} with an unparseable body (${String(e)}) - unknown, nothing purged`
+      );
+      return 'error';
     }
-    if (!g || typeof g !== 'object') return 'absent';
-    const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;
-    if (typeof id !== 'string' || !id) return 'absent';
+    // ONLY the handler's explicit `{ found: false }` is an absence: any other shape without an id
+    // (a bare `null`, an array, an object of another shape) is a body nobody documented, and doubt
+    // never purges.
+    if (g && typeof g === 'object' && (g as { found?: unknown }).found === false) return 'absent';
+    const id =
+      g && typeof g === 'object'
+        ? ((g as { id?: unknown; groupId?: unknown }).groupId ?? (g as { id?: unknown }).id)
+        : undefined;
+    if (typeof id !== 'string' || !id) {
+      console.warn(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} with JSON that is neither a group nor { found: false } - unknown, nothing purged`
+      );
+      return 'error';
+    }
     return {
       groupId: id,
       name:
@@ -2440,6 +2569,8 @@ export class MlsDeliveryApi {
       }
     );
     if (!res.ok) throw await refusalFromResponse(res, 'dismissGroup refused');
+    // The route answers `{ status: 'dismissed' }`: a portal's 200 recorded nothing.
+    assertAnsweredByApi(res, 'POST /api/mls/users/dismissed-groups');
   }
 
   /**

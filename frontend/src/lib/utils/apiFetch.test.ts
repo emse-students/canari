@@ -25,7 +25,11 @@ let targetStatus = 200;
 const fetchMock = vi.fn(async (url: string) => {
   if (String(url).includes('/api/auth/refresh')) {
     if (refreshStatus === 0) throw new TypeError('Failed to fetch');
-    if (refreshStatus !== 200) return new Response('', { status: refreshStatus });
+    if (refreshStatus !== 200)
+      return new Response(JSON.stringify({ statusCode: refreshStatus, message: 'refused' }), {
+        status: refreshStatus,
+        headers: { 'content-type': 'application/json' },
+      });
     const claims = btoa(
       JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 })
     );

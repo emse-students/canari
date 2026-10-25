@@ -81,7 +81,7 @@ describe('an ACK attempt that never answers', () => {
       vi.fn(
         (_url: string, _init: RequestInit) =>
           new Promise<Response>((resolve) => {
-            setTimeout(() => resolve({ ok: true } as Response), 5_000);
+            setTimeout(() => resolve(Response.json({ status: 'deleted', count: 1 })), 5_000);
           })
       )
     );

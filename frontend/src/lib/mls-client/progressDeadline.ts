@@ -1,3 +1,5 @@
+import { assertAnsweredByApi, NotFromApiError } from '$lib/utils/apiJson';
+
 /**
  * A request abandoned because NOTHING arrived for a while - never because it took a while.
  *
@@ -120,6 +122,9 @@ export async function fetchJsonUnderProgressDeadline<T>(
       await res.body?.cancel().catch(() => {});
       return { ok: false, status: res.status };
     }
+    // WHO ANSWERED, from the head: a 2xx that is not the API's JSON (a captive portal's page) is no
+    // answer - `NotFromApiError`, a transport failure - and never a body to parse and halve on.
+    assertAnsweredByApi(res, url);
     if (!res.body) {
       // Per the fetch spec only a null-body status (204, 304, ...) answers without one, and this
       // helper is for endpoints that always answer with JSON. Saying so beats a `SyntaxError`
@@ -147,11 +152,15 @@ export async function fetchJsonUnderProgressDeadline<T>(
       merged.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return {
-      ok: true,
-      status: res.status,
-      body: JSON.parse(new TextDecoder().decode(merged)) as T,
-    };
+    let body: T;
+    try {
+      body = JSON.parse(new TextDecoder().decode(merged)) as T;
+    } catch (e) {
+      // A JSON type whose COMPLETE body does not parse is not the API's answer either - the same
+      // reading `readApiJson` makes, typed the same way, so the pull never halves against it.
+      throw new NotFromApiError(url, res.status, res.headers.get('content-type'), e);
+    }
+    return { ok: true, status: res.status, body };
   } catch (e) {
     // The abort this function raised is indistinguishable from any other at the catch site, so the
     // classification is made HERE, where the reason is known, and travels as a type.

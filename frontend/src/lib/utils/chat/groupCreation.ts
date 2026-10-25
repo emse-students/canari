@@ -14,6 +14,7 @@ import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibili
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
+import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { holdsGroupState } from './groupUsability';
 import {
   CommitOutcomeUnknownError,
@@ -303,8 +304,9 @@ export async function createNewGroup(
     if (groupId) {
       try {
         await mlsService.deleteGroupOnServer(groupId);
-      } catch {
+      } catch (cleanupError) {
         // Non-blocking
+        logBestEffortGroupDeleteFailure(groupId, cleanupError, 'failed group creation');
       }
     }
     return { ok: false, reason: creationRefusal(e) };
