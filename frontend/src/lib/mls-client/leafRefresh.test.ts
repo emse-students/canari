@@ -37,6 +37,8 @@ let lines: string[];
 let refreshOwnLeaf: Mock<(groupId: string) => Promise<void>>;
 let checkpoint: Mock<() => Promise<boolean>>;
 let attempts: Map<string, number>;
+let noLeafReports: Map<string, number>;
+let warnings: string[];
 let epoch: number;
 /** The current leaf's key, as `own_leaf_encryption_key` reads it; a merged refresh replaces it. */
 let leafKey: string;
@@ -66,8 +68,10 @@ function deps(over: Partial<LeafRefreshDeps> = {}): LeafRefreshDeps {
     refreshOwnLeaf,
     checkpoint,
     attemptedAtEpoch: attempts,
+    noOwnLeafReportedAtEpoch: noLeafReports,
     now: () => NOW,
     log: (m) => lines.push(m),
+    warn: (m) => warnings.push(m),
     ...over,
   };
 }
@@ -78,6 +82,8 @@ beforeEach(() => {
   epoch = 7;
   leafKey = 'k-7';
   attempts = new Map();
+  noLeafReports = new Map();
+  warnings = [];
   checkpoint = vi.fn().mockResolvedValue(true);
   refreshOwnLeaf = vi.fn(async (groupId: string) => {
     // What `runCommitTransaction` does on the accepted path: the epoch moves, the leaf is a new one,
@@ -402,6 +408,56 @@ describe('refreshLeafIfDue', () => {
     );
     expect(outcome).toBe('inactive');
     expect(refreshOwnLeaf).not.toHaveBeenCalled();
+  });
+
+  it('an active group whose tree holds no leaf of ours is a defect, said ONCE per epoch - not inactive', async () => {
+    const d = deps({ ownLeafKey: async () => null });
+    expect(await refreshLeafIfDue(d, G)).toBe('no-own-leaf');
+    expect(await refreshLeafIfDue(d, G)).toBe('no-own-leaf');
+    expect(await refreshLeafIfDue(d, G)).toBe('no-own-leaf');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('NO leaf of this device');
+    expect(lines).toEqual([]);
+    expect(readLeafRefreshLedger(U, D)[G]).toBeUndefined();
+
+    epoch = 8;
+    expect(await refreshLeafIfDue(d, G)).toBe('no-own-leaf');
+    expect(warnings).toHaveLength(2);
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+  });
+
+  it('a leaf back in the tree clears the report, so a later loss of it is said again', async () => {
+    let key: string | null = null;
+    const d = deps({ ownLeafKey: async () => key });
+    await refreshLeafIfDue(d, G);
+    key = 'k-7';
+    expect(await refreshLeafIfDue(d, G)).toBe('first-sight');
+    key = null;
+    await refreshLeafIfDue(d, G);
+    expect(warnings).toHaveLength(2);
+  });
+
+  it('an own commit merging while the decision awaits keeps ITS entry - no observation of the leaf it replaced', async () => {
+    // The decision runs outside the MLS lock. It reads the leaf, then awaits the admission date; an
+    // own commit (a Remove someone asked for) merges in between and dates its new leaf. Writing the
+    // observation of the leaf read first would overwrite that entry with a leaf already gone, and
+    // the next send would log a false "FORMER leaf" first sight.
+    const d = deps({
+      ownLeafMintedAt: async () => {
+        epoch = 8;
+        leafKey = 'k-8';
+        noteOwnLeafRefreshed(U, D, G, 8, 'k-8', NOW);
+        return null;
+      },
+    });
+
+    expect(await refreshLeafIfDue(d, G)).toBe('leaf-moved');
+    expect(readLeafRefreshLedger(U, D)[G]).toEqual({ at: NOW, epoch: 8, leaf: 'k-8' });
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+
+    lines = [];
+    expect(await refreshLeafIfDue(deps(), G)).toBe('not-due');
+    expect(lines.join(' | ')).not.toContain('FORMER leaf');
   });
 
   it('records nothing when the commit is refused, and does not retry at the same epoch', async () => {
