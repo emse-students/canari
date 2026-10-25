@@ -96,16 +96,42 @@ export function raiseJoinRequest(ask: JoinApprovalRequest): void {
   );
 }
 
+/** What one entry IS, for a sweep: its ask's identity, or - from a server older than it - its key. */
+function tokenOf(key: string, entry: JoinRequest): string {
+  return entry.askId ?? `key:${key}`;
+}
+
+/**
+ * The asks on screen when a pending-invitation sweep STARTED - the only ones its result may take
+ * away ({@link settleSweptJoinRequests}). Taken by the caller before the sweep reads anything.
+ */
+export interface JoinRequestSweep {
+  /** A snapshot, read once by the settle - not reactive state. */
+  readonly shown: readonly string[];
+}
+
+/** Marks the start of a sweep: the asks on screen now, by identity. */
+export function beginJoinRequestSweep(): JoinRequestSweep {
+  return { shown: [...requests].map(([key, entry]) => tokenOf(key, entry)) };
+}
+
 /**
  * Replaces the asks with what one COMPLETED pending-invitation sweep raised: the server's `pending`
  * rows are the durable state, so an ask the sweep did not raise again has been answered or has
  * gone. A sweep that did not complete settles nothing.
+ *
+ * ONLY AN ASK THAT WAS ON SCREEN WHEN THE SWEEP STARTED can be taken away by it (`sweep`, by identity
+ * - never a clock): an ask announced while the sweep was reading may postdate every row it read, so
+ * the sweep's silence about it says nothing.
  */
-export function settleSweptJoinRequests(raised: readonly JoinApprovalRequest[]): void {
+export function settleSweptJoinRequests(
+  sweep: JoinRequestSweep,
+  raised: readonly JoinApprovalRequest[]
+): void {
   const keep = raised.map((ask) => keyOf(ask.groupId, ask.requesterUserId));
   // Deleting the entry being visited is safe while iterating a Map.
-  for (const key of requests.keys()) {
-    if (!keep.includes(key)) requests.delete(key);
+  for (const [key, entry] of requests) {
+    if (!keep.includes(key) && sweep.shown.includes(tokenOf(key, entry))) requests.delete(key);
   }
   for (const ask of raised) raiseJoinRequest(ask);
 }

@@ -183,6 +183,7 @@ import type { JoinApprovalRequest } from '$lib/utils/chat/actions';
 import {
   raiseJoinRequest,
   settleJoinRequest,
+  beginJoinRequestSweep,
   settleSweptJoinRequests,
 } from '$lib/utils/chat/joinRequests.svelte';
 import {
@@ -485,6 +486,8 @@ export async function processDeviceInvitationsLocally(
     // A new person's pending device is never added by the sweep; it raises a member's approval. The
     // sweep reads the server's durable rows, so what a completed one raised replaces what is shown.
     const raised: JoinApprovalRequest[] = [];
+    // Before the sweep reads anything: an ask announced while it reads is not its to take away.
+    const sweep = beginJoinRequestSweep();
     const swept = await processPendingInvitations({
       mlsService: ctx.ensureMls(),
       storage: ctx.getStorage(),
@@ -495,7 +498,7 @@ export async function processDeviceInvitationsLocally(
       log: cb.log,
       onJoinApprovalRequested: (request) => raised.push(request),
     });
-    if (swept) settleSweptJoinRequests(raised);
+    if (swept) settleSweptJoinRequests(sweep, raised);
   } finally {
     ctx.setIsSyncing(false);
   }

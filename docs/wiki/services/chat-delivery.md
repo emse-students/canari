@@ -1023,8 +1023,11 @@ stranded=N` on the log when any seat is pending with all three false. Client sid
 device row of every ADMITTED seat (`ADMITTED_SEAT`, so an awaiting seat never hears another's ask),
 minus the asker. Each device gets ONE Redis script (`publishIfAddressable` with `JOIN_ASK_CAPABILITY`,
 `services/addressing.ts`) that checks the presence key (`devicePresenceKey`, the one implementation,
-shared with `messaging.service.ts`) and that every live session declared `join-ask-1`, and publishes in
-the same call; all devices go concurrently. A device with a session that did not declare it - a build
+shared with `messaging.service.ts`) and that every live session declared `join-ask-1` - read from the
+gateway's twin hash `addressing:join-ask:*` (`JOIN_ASK_PUBLISH_LUA`), never from the history value,
+which stays what every shipped chat-delivery compares whole - and publishes in the same call; all
+devices go concurrently. Announcements still running when the replica is retired are finished before
+it exits (`drainOnSigterm`'s `beforeExit`). A device with a session that did not declare it - a build
 older than these frames - gets nothing, so it never logs a frame no handler took. Each frame goes out
 on the generic control path (`chat:messages`, `isWelcomeRequest: true`, `proto` = the JSON frame,
 `requiresCapability: 'join-ask-1'`), which the gateway delivers only to sessions holding it.

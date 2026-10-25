@@ -2643,6 +2643,10 @@ export class MessagingService {
         throw e;
       }
       group.activeEpoch = baseEpoch + 1;
+      // The transaction committed: the asks it answered ARE answered, whatever the steps below do.
+      // Taken now, so a throw in the fan-out cannot lose the announcement; sent once the lock below
+      // is released, never while it is held.
+      acceptedAsks = admittedAsks;
       if (admitted.length > 0) {
         this.logger.log(
           `[COMMIT][${traceId}] ADMITS group=${groupId} atEpoch=${group.activeEpoch} ` +
@@ -2714,28 +2718,30 @@ export class MessagingService {
       }
 
       this.logger.log(`[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`);
-      // Announced once the lock below is released, never while it is held.
-      acceptedAsks = admittedAsks;
 
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
-      // Atomic release via Lua: avoids the GET->DEL race.
-      const released = await this.redis.eval(
-        `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
-        1,
-        lockKey,
-        deviceId
-      );
-      if (released === 1) {
-        this.logger.log(`[COMMIT][${traceId}] Lock released for group=${groupId}`);
-      } else {
-        this.logger.warn(
-          `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`
+      try {
+        // Atomic release via Lua: avoids the GET->DEL race.
+        const released = await this.redis.eval(
+          `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+          1,
+          lockKey,
+          deviceId
         );
+        if (released === 1) {
+          this.logger.log(`[COMMIT][${traceId}] Lock released for group=${groupId}`);
+        } else {
+          this.logger.warn(
+            `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`
+          );
+        }
+      } finally {
+        // The lock is released (or its release failed, and it expires): the asks a COMMITTED
+        // transaction answered go out now - even when a later step threw - started and not awaited,
+        // so neither the next commit nor this answer waits on them.
+        this.announceAdmitted(groupId, acceptedAsks, committer);
       }
-      // The lock is free: the asks this accepted commit answered go out now, started and not
-      // awaited, so neither the next commit nor this answer waits on them.
-      this.announceAdmitted(groupId, acceptedAsks, committer);
     }
   }
 

@@ -303,10 +303,11 @@ async fn handle_socket(
     declared: crate::addressing::SessionCaps,
 ) {
     tracing::info!(
-        "New WebSocket connection: User={}, Device={}, caps={}",
+        "New WebSocket connection: User={}, Device={}, addressed_history={}, join_ask={}",
         user_id,
         device_id,
-        declared.value()
+        declared.addressed_history,
+        declared.join_ask
     );
 
     let (mut ws_sender, mut receiver) = socket.split();

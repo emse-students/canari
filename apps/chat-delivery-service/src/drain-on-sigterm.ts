@@ -27,8 +27,8 @@ type SignalSource = Pick<NodeJS.EventEmitter, 'once'>;
  * @param server the HTTP server the application listens with (`app.getHttpServer()`).
  * @param exit how the process leaves once drained - `process.exit` in production.
  * @param signals where SIGTERM arrives - `process` in production.
- * @param beforeExit work the process still owes after its last request was answered (the salon
- *   fan-outs that run AFTER an answer); awaited, then the process exits. A failure is logged and
+ * @param beforeExit work the process still owes after its last request was answered (the join-ask
+ *   announcements started AFTER an answer); awaited, then the process exits. A failure is logged and
  *   does not stop the exit.
  */
 export function drainOnSigterm(

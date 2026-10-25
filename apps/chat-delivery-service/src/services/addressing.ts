@@ -53,6 +53,16 @@ export function addressingSessionsKey(userId: string, deviceId: string): string 
   return `addressing:sessions:${userId}:${deviceId}`;
 }
 
+/**
+ * The twin of {@link addressingSessionsKey}: the same fields, valued {@link JOIN_ASK_CAPABILITY} or
+ * `-`, written by the gateway in the same script. A separate hash so the sessions hash's values stay
+ * byte-identical to what every shipped chat-delivery compares whole - in either deploy direction, no
+ * reader meets a value it does not know.
+ */
+export function joinAskSessionsKey(userId: string, deviceId: string): string {
+  return `addressing:join-ask:${userId}:${deviceId}`;
+}
+
 /** Whether a `caps=` value (comma-separated) declares {@link ADDRESSED_HISTORY_CAPABILITY}. */
 export function declaresAddressedHistory(caps: string | undefined | null): boolean {
   return (
@@ -70,19 +80,35 @@ export function declaresAddressedHistory(caps: string | undefined | null): boole
  * so a session the gateway records after this ran is one the frame was already published before -
  * and the gateway's edge filter keeps it from that session anyway.
  *
- * A session's value is a comma-separated LIST of what it declared (or `-`), so the capability is
- * looked for among its items, never compared with the whole value.
+ * UNCHANGED SINCE IT SHIPPED, and it compares each value WHOLE: the gateway keeps the sessions hash's
+ * values to {@link ADDRESSED_HISTORY_CAPABILITY} or `-` for that reason, and records any later
+ * capability in a hash of its own ({@link JOIN_ASK_PUBLISH_LUA}).
  */
 export const ADDRESSABLE_PUBLISH_LUA = `
 if redis.call('GET', KEYS[1]) ~= ARGV[4] then return 0 end
 local declared = redis.call('HVALS', KEYS[2])
 if #declared == 0 then return 0 end
 for _, value in ipairs(declared) do
-  local holds = false
-  for cap in string.gmatch(value, '[^,]+') do
-    if cap == ARGV[3] then holds = true end
-  end
-  if not holds then return 0 end
+  if value ~= ARGV[3] then return 0 end
+end
+if ARGV[1] ~= '' then redis.call('PUBLISH', ARGV[1], ARGV[2]) end
+return 1
+`;
+
+/**
+ * The same check-and-publish for {@link JOIN_ASK_CAPABILITY}, read from the twin hash.
+ *
+ * KEYS: the presence key, the sessions hash, the join-ask hash. ARGV: as
+ * {@link ADDRESSABLE_PUBLISH_LUA}. EVERY session of the sessions hash must have its twin field valued
+ * the capability: a session an older gateway recorded has no twin, so it counts as not declaring -
+ * the device gets no frame rather than a session that cannot route it.
+ */
+export const JOIN_ASK_PUBLISH_LUA = `
+if redis.call('GET', KEYS[1]) ~= ARGV[4] then return 0 end
+local sessions = redis.call('HKEYS', KEYS[2])
+if #sessions == 0 then return 0 end
+for _, field in ipairs(sessions) do
+  if redis.call('HGET', KEYS[3], field) ~= ARGV[3] then return 0 end
 end
 if ARGV[1] ~= '' then redis.call('PUBLISH', ARGV[1], ARGV[2]) end
 return 1
@@ -104,15 +130,23 @@ export async function publishIfAddressable(
   publish?: { channel: string; payload: string },
   capability: SessionCapability = ADDRESSED_HISTORY_CAPABILITY
 ): Promise<boolean> {
-  const answer = await redis.eval(
-    ADDRESSABLE_PUBLISH_LUA,
-    2,
-    devicePresenceKey(userId, deviceId),
-    addressingSessionsKey(userId, deviceId),
-    publish?.channel ?? '',
-    publish?.payload ?? '',
-    capability,
-    PRESENCE_SESSIONS
-  );
+  const args = [publish?.channel ?? '', publish?.payload ?? '', capability, PRESENCE_SESSIONS];
+  const answer =
+    capability === JOIN_ASK_CAPABILITY
+      ? await redis.eval(
+          JOIN_ASK_PUBLISH_LUA,
+          3,
+          devicePresenceKey(userId, deviceId),
+          addressingSessionsKey(userId, deviceId),
+          joinAskSessionsKey(userId, deviceId),
+          ...args
+        )
+      : await redis.eval(
+          ADDRESSABLE_PUBLISH_LUA,
+          2,
+          devicePresenceKey(userId, deviceId),
+          addressingSessionsKey(userId, deviceId),
+          ...args
+        );
   return Number(answer) === 1;
 }

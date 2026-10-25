@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   answerJoinRequest,
+  beginJoinRequestSweep,
   canAnswerJoinRequests,
   pendingJoinRequests,
   raiseJoinRequest,
@@ -54,9 +55,30 @@ describe('joinRequests - a sweep settles what it no longer raises', () => {
     raiseJoinRequest(ask('carol', 'c1'));
     raiseJoinRequest(ask('dave', 'd1'));
 
-    settleSweptJoinRequests([ask('dave', 'd1')]);
+    settleSweptJoinRequests(beginJoinRequestSweep(), [ask('dave', 'd1')]);
 
     expect(pendingJoinRequests().map((r) => r.userId)).toEqual(['dave']);
+  });
+
+  it('keeps an ask announced while the sweep was reading - its rows may predate it', () => {
+    raiseJoinRequest({ ...ask('carol', 'c1'), askId: 'a-carol' });
+    const sweep = beginJoinRequestSweep();
+    // Announced live after the sweep started reading the server's rows.
+    raiseJoinRequest({ ...ask('dave', 'd1'), askId: 'a-dave' });
+
+    settleSweptJoinRequests(sweep, []);
+
+    expect(pendingJoinRequests().map((r) => r.askId)).toEqual(['a-dave']);
+  });
+
+  it("keeps a person's NEWER ask that replaced the one on screen while the sweep read", () => {
+    raiseJoinRequest({ ...ask('carol', 'c1'), askId: 'a1' });
+    const sweep = beginJoinRequestSweep();
+    raiseJoinRequest({ ...ask('carol', 'c2'), askId: 'a2' });
+
+    settleSweptJoinRequests(sweep, []);
+
+    expect(pendingJoinRequests().map((r) => r.askId)).toEqual(['a2']);
   });
 });
 
@@ -165,7 +187,7 @@ describe('joinRequests - settling on the outcome another member made', () => {
     settleJoinRequest({ groupId: 'g1', userId: 'carol', askId: 'a1', outcome: 'admitted' });
 
     raiseJoinRequest(withId('carol', 'c1', 'a1'));
-    settleSweptJoinRequests([withId('carol', 'c1', 'a1')]);
+    settleSweptJoinRequests(beginJoinRequestSweep(), [withId('carol', 'c1', 'a1')]);
 
     expect(pendingJoinRequests()).toEqual([]);
   });

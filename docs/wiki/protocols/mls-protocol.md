@@ -1106,7 +1106,10 @@ seat awaits. The client settles BY IDENTITY and remembers every settled one for 
 an announcement - is not raised however late it lands, a settlement of an older identity leaves the
 person's newer ask on screen, and an Add or Decline tapped on an ask already settled runs nothing
 (an answer the server settled WHILE it ran reports nothing left, not a failure). No order of arrival
-is assumed; the earlier `joinRequestClock` (a count of settlements) assumed one and is gone.
+is assumed; the earlier `joinRequestClock` (a count of settlements) assumed one and is gone. The
+other direction holds the same way: a completed sweep removes only asks that were ON SCREEN WHEN IT
+STARTED (`beginJoinRequestSweep`, by identity), so an ask announced while it was reading - which its
+rows may predate - is not wiped by its silence.
 
 **Only a client that routes these frames receives them.** A build older than them would log every
 one as reaching no handler, so the socket declares `join-ask-1` (`caps=addressed-history-1,join-ask-1`,

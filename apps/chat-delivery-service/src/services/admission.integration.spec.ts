@@ -23,7 +23,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client } from 'pg';
-import { DataSource, LessThan } from 'typeorm';
+import { DataSource } from 'typeorm';
 import type Redis from 'ioredis';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -44,10 +44,9 @@ import { MembersController } from '../controllers/members.controller';
 import { InternalController } from '../controllers/internal.controller';
 import { CallsService } from './calls.service';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
-import { expireUnansweredAsks, seatKey } from '../utils/group-membership';
-import { STALE_PENDING_INVITATION_MS } from '../retention.constants';
-import { ADDRESSABLE_PUBLISH_LUA } from './addressing';
-import { announceExpiredAsks, joinAskAnnouncementsSettled } from '../utils/join-ask-announce';
+import { AppController } from '../app.controller';
+import { JOIN_ASK_PUBLISH_LUA } from './addressing';
+import { joinAskAnnouncementsSettled } from '../utils/join-ask-announce';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -106,6 +105,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     set: async () => 'OK',
     eval: async (..._args: unknown[]) => 1,
     hdel: async () => 0,
+    hset: async () => 1,
     hgetall: async () => ({}),
     mget: async (...keys: string[]) => keys.flat().map(() => null),
     // Every member device is online, so a welcome_request is forwarded rather than stored.
@@ -188,25 +188,27 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     return Number(row.n);
   };
   /**
-   * The stale-pending purge as `AppController.cleanupStalePendingInvitations` runs it: the asks
-   * nobody answered expire whole, and only the other stale rows lose their device row alone.
+   * The stale-pending purge - THE cron itself, `AppController.cleanupStalePendingInvitations`, not a
+   * copy of it: the asks nobody answered expire whole (and are announced), and only the other stale
+   * rows lose their device row alone.
    */
-  const purgeStalePending = async () => {
-    const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);
-    const stale = await ds.getRepository(DeviceGroupMembership).find({
-      where: { status: 'pending', pendingSince: LessThan(expiry) },
-    });
-    const { awaiting: asks, expired } = await expireUnansweredAsks(ds.manager, stale, expiry);
-    announceExpiredAsks(ds.manager, redis as unknown as Redis, expired);
-    for (const row of stale) {
-      if (asks.has(seatKey(row.groupId, row.userId))) continue;
-      await ds.getRepository(DeviceGroupMembership).delete({
-        userId: row.userId,
-        deviceId: row.deviceId,
-        groupId: row.groupId,
-      });
-    }
-  };
+  const purgeStalePending = () =>
+    (
+      new AppController(
+        ds.getRepository(QueuedMessage),
+        ds.getRepository(KeyPackage),
+        ds.getRepository(OneTimeKeyPackage),
+        ds.getRepository(Group),
+        ds.getRepository(GroupMember),
+        ds.getRepository(DeviceGroupMembership),
+        ds.getRepository(RevokedDevice),
+        ds.getRepository(PushToken),
+        ds.getRepository(MlsGroupInfo),
+        ds.getRepository(MlsCommitLog),
+        redis as unknown as Redis,
+        service
+      ) as unknown as { cleanupStalePendingInvitations(): Promise<void> }
+    ).cleanupStalePendingInvitations();
   const acceptLink = async () => {
     const invite = await ds
       .getRepository(GroupInvite)
@@ -818,10 +820,8 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     /** A seat that itself awaits a member: it answers nothing, so it is asked nothing. */
     const ASKER_2 = { userId: 'asker-2', deviceId: 'dev-a2' };
     const offline = new Set([`user:online:${OTHER_OFFLINE.userId}:${OTHER_OFFLINE.deviceId}`]);
-    /** What each online device's sessions declared, as the gateway records it; default both. */
-    const declared = new Map([
-      [`user:online:${OTHER_OLD.userId}:${OTHER_OLD.deviceId}`, 'addressed-history-1'],
-    ]);
+    /** The online devices whose sessions did NOT declare join-ask (no twin field in the gateway's hash). */
+    const withoutJoinAsk = new Set([`user:online:${OTHER_OLD.userId}:${OTHER_OLD.deviceId}`]);
     let frames: Array<{
       to: string;
       type: string;
@@ -865,15 +865,16 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
 
     beforeEach(async () => {
       frames = [];
-      // The check-and-publish script, as Redis would run it on this device's presence and sessions.
+      // The join-ask check-and-publish script, as Redis would run it on this device's presence and
+      // its sessions' twin fields (the script itself is run against a real Redis in
+      // addressing.redis.spec.ts).
       jest
         .spyOn(redis, 'eval')
         .mockImplementation(async (script: unknown, _keys: unknown, ...args: unknown[]) => {
-          if (script !== ADDRESSABLE_PUBLISH_LUA) return 1;
-          const [presenceKey, , channel, payload, capability] = args as string[];
-          if (offline.has(presenceKey)) return 0;
-          const caps = (declared.get(presenceKey) ?? 'addressed-history-1,join-ask-1').split(',');
-          if (!caps.includes(capability)) return 0;
+          if (script !== JOIN_ASK_PUBLISH_LUA) return 1;
+          const [presenceKey, , , channel, payload, capability] = args as string[];
+          if (capability !== 'join-ask-1') return 0;
+          if (offline.has(presenceKey) || withoutJoinAsk.has(presenceKey)) return 0;
           if (channel) {
             const env = JSON.parse(payload) as {
               recipientId: string;
@@ -1003,6 +1004,50 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
 
       expect(await framesOf('group.join_ask.settled')).toEqual(
         toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'withdrawn' })
+      );
+    });
+
+    it("settles a member's removal of somebody else's awaiting seat as declined, never withdrawn", async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+
+      await members().removeGroupMember(GROUP, JOINER.userId, MEMBER.userId);
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'declined' })
+      );
+    });
+
+    it('settles an admission through the Welcome door (an old client: a bare commit, then a Welcome)', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
+      expect(await framesOf('group.join_ask.settled')).toEqual([]);
+
+      await service.sendWelcome(MEMBER.userId, {
+        groupId: GROUP,
+        targetUserId: JOINER.userId,
+        targetDeviceId: JOINER.deviceId,
+        senderUserId: MEMBER.userId,
+        welcomePayload: 'V0VMQ09NRQ==',
+      });
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
+      );
+    });
+
+    it('never tells the asker about their own ask, even with an active device once admitted', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      // A second device of the joiner that holds the group already: once the Add lifts the seat it
+      // is an ACTIVE device of an ADMITTED seat, so only the exclusion keeps the asker out.
+      await activeDevice({ userId: JOINER.userId, deviceId: 'dev-j-active' });
+
+      await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
       );
     });
   });
