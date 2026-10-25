@@ -235,6 +235,12 @@ describe('InternalController.deleteUserData', () => {
     expect(ERASURE_ROW_STATEMENTS.filter((s) => /\bproposals\b/.test(s.sql))).toEqual([]);
   });
 
+  it('raises the access revision of every salon whose allowlist it drops the name from', () => {
+    // An access write like any other: a settings panel still showing the name must be refused.
+    const drop = ERASURE_ROW_STATEMENTS.find((s) => s.label === 'channel_allowed_users');
+    expect(drop?.sql).toMatch(/"accessRevision"\s*=\s*"accessRevision"\s*\+\s*1/);
+  });
+
   it('locks its associations before any other statement of the transaction (the remove order)', async () => {
     const { controller, queries } = make();
     await controller.deleteUserData('erased', SECRET);

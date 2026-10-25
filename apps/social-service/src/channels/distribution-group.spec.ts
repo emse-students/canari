@@ -1149,7 +1149,8 @@ describe('ChannelService - the community distribution group', () => {
       arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]);
       global.fetch = answerWith({ groupId: 'g-new', created: true }) as unknown as typeof fetch;
 
-      await repos.service.updateChannelAccess(CHANNEL, USER, true, [USER]);
+      // The toggle's request: a public salon's panel holds no list; the flipper is granted.
+      await repos.service.updateChannelAccess(CHANNEL, USER, true, []);
 
       const posts = (global.fetch as jest.Mock).mock.calls.filter(
         ([url, init]: [unknown, RequestInit]) =>

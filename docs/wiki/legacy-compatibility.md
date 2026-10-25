@@ -520,6 +520,28 @@ over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---deci
 and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
 `LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
 
+### 2027-04-25 - a salon access rewrite with no `baseAccessRevision`
+
+**Site:** `ChannelService.updateChannelAccess` (`ignoredDrops`) in
+[`apps/social-service/src/channels/channel.service.ts`](../../apps/social-service/src/channels/channel.service.ts),
+and the optional `baseAccessRevision` of `UpdateChannelAccessDto`.
+**Shim:** since 2026-10-25 the settings panel sends the access revision it edited, and a stale one is
+refused `409 CHANNEL_ACCESS_CHANGED` ([social-service](services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
+An older client sends none, and its list is the one it read when the tab opened, so it proves
+nothing but the name it appended. `baselessAllowList` reads the request as the one gesture of the
+`v0.18.29` panel (every client the `1.0.3` floor admits) it can be: on a salon that stays private,
+Add grants its LAST element only and a write-policy save grants nothing, and nobody is ever dropped
+(that panel removes through the per-member `DELETE`, unchanged); a request that flips the visibility
+WITH a write policy, or goes private WITH a list, read the other visibility and is refused `409`.
+**What it does not cover:** a stale TOGGLE - a panel that read private, while another admin made the
+salon public and private again, can still flip it; the toggle carries nothing that tells.
+**Why a date and not the floor alone:** the panel ships inside the phone apps, which update when their
+store decides; six months, as for the push wording above.
+**On removal** (the date, or earlier once `minClientVersion` is a build carrying the base): make
+`baseAccessRevision` required (a `400` without it) and delete `baselessAllowList`. Its warn line,
+`baseless rewrite (client older than the access revision)`, measures the traffic first.
+**Cost of keeping it:** an old client cannot remove anyone through a PATCH - which it never did.
+
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 
 **Site:** `PushContent.legacyTitle` / `legacyBody` in

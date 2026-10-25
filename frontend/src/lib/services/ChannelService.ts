@@ -186,6 +186,19 @@ export type ChannelNotificationLevel = 'all' | 'mentions' | 'none';
 /** Who may post in a channel: everyone, admins + moderators, or admins only. */
 export type ChannelWritePolicy = 'everyone' | 'admins_moderators' | 'admins';
 
+/**
+ * A salon's access as the settings panel edits it. `accessRevision` is the server's count of
+ * access writes: the panel sends the one it holds with every rewrite, so a list read before
+ * somebody else's grant cannot be saved over it.
+ */
+export interface ChannelAccessState {
+  channelId: string;
+  isPrivate: boolean;
+  allowedUsers: string[];
+  writePolicy: ChannelWritePolicy;
+  accessRevision: number;
+}
+
 /** Server-visible poll state (no labels) carried on a channel message. */
 export interface ChannelPollMeta {
   optionIds: string[];
@@ -706,7 +719,11 @@ export class ChannelService {
     return res.json();
   }
 
-  async removeMemberFromChannel(channelId: string, userId: string) {
+  /** Takes one member off a private salon; answers the salon's access as the removal left it. */
+  async removeMemberFromChannel(
+    channelId: string,
+    userId: string
+  ): Promise<ChannelAccessState & { success: boolean }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/${cid}/members/${encodeURIComponent(userId)}`,
@@ -1010,26 +1027,27 @@ export class ChannelService {
     return res.json();
   }
 
-  async getChannelAccess(channelId: string): Promise<{
-    channelId: string;
-    isPrivate: boolean;
-    allowedUsers: string[];
-    writePolicy: ChannelWritePolicy;
-  }> {
+  async getChannelAccess(channelId: string): Promise<ChannelAccessState> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`);
     await this.handleError(res);
     return res.json();
   }
 
+  /**
+   * Rewrites a salon's access AT `baseAccessRevision`, the revision the caller's list was read at.
+   * A salon that moved since answers `409 CHANNEL_ACCESS_CHANGED` and nothing is saved: the list
+   * sent would otherwise drop whoever was granted after it was read.
+   */
   async updateChannelAccess(
     channelId: string,
+    baseAccessRevision: number,
     isPrivate: boolean,
     allowedUserIds: string[],
     writePolicy?: ChannelWritePolicy
-  ): Promise<{ ok: boolean; writePolicy?: ChannelWritePolicy }> {
+  ): Promise<ChannelAccessState & { ok: boolean }> {
     const cid = this.normalizeChannelId(channelId);
-    const body: Record<string, unknown> = { isPrivate, allowedUserIds };
+    const body: Record<string, unknown> = { isPrivate, allowedUserIds, baseAccessRevision };
     if (writePolicy) {
       body.writePolicy = writePolicy;
     }

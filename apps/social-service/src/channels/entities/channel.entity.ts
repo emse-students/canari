@@ -51,6 +51,21 @@ export class Channel {
   writePolicy: 'everyone' | 'admins_moderators' | 'admins';
 
   /**
+   * The revision of this salon's ACCESS - `isPrivate`, `allowedUsers` and `writePolicy` - raised by
+   * one on every write of any of the three, by every writer (an access rewrite, a grant, a roster
+   * strip, an account erasure's name drop).
+   *
+   * WHY A NUMBER AND NOT THE LIST. The settings panel rewrites the whole list it holds, and the list
+   * it holds is the one it read when it opened; a grant committed since then was absent from it, and
+   * diffing the two read the newcomer as a removal - cut from the key distribution, answered 200. The
+   * panel now sends the revision it edited (`baseAccessRevision`) and a rewrite of a revision that is
+   * no longer current is refused with `409 CHANNEL_ACCESS_CHANGED`. See
+   * docs/wiki/services/social-service.md, "An access rewrite names the revision it edited".
+   */
+  @Column({ type: 'int', default: 0 })
+  accessRevision: number;
+
+  /**
    * `dm_groups.id` of this salon's OWN Graine key-distribution group, set only when it is private.
    *
    * A private salon's seeds are sealed to the people who may open it, and nobody else - which is

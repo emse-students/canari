@@ -53,6 +53,7 @@ describe('ChannelService.updateChannelAccess - announcing the new decision', () 
       allowedUsers: [] as string[],
       writePolicy: 'everyone' as string,
       distributionGroupId: null as string | null,
+      accessRevision: 0,
     };
     const channelRepo = {
       findOne: jest.fn().mockResolvedValue(channel),
@@ -169,7 +170,7 @@ describe('ChannelService.updateChannelAccess - announcing the new decision', () 
   it('addresses a salon it has just made private to its roster alone', async () => {
     const { service, redis } = makeService();
 
-    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN], 'everyone');
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN], 'everyone', 0);
 
     const sent = announcements(redis);
     expect(sent.length).toBe(1);
@@ -383,6 +384,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
       allowedUsers: [...start.allowedUsers],
       writePolicy: 'everyone' as string,
       distributionGroupId: start.isPrivate ? 'g-1' : (null as string | null),
+      accessRevision: 0,
     };
     const channelRepo = {
       findOne: jest.fn().mockResolvedValue(channel),
@@ -505,7 +507,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
       return Promise.resolve(c);
     });
 
-    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN]);
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN], undefined, 0);
 
     // One departure: the save is its roster write, and the second eviction settles departure 3.
     expect(order).toEqual(['evict', 'save', 'settle']);
@@ -514,7 +516,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
   it('announces a private salon to the member a roster edit just added, and to nobody else', async () => {
     const { service, redis } = makeService({ isPrivate: true, allowedUsers: [ADMIN] });
 
-    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER]);
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER], undefined, 0);
 
     const sent = joins(redis);
     expect(sent.length).toBe(1);
@@ -534,7 +536,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
   it('announces to the WHOLE roster when a public salon becomes private', async () => {
     const { service, redis } = makeService({ isPrivate: false, allowedUsers: [] });
 
-    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER]);
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER], undefined, 0);
 
     const sent = joins(redis);
     expect(sent.length).toBe(1);
@@ -595,7 +597,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
   it('carries no inviter, so nothing is written into the transcript', async () => {
     const { service, redis } = makeService({ isPrivate: false, allowedUsers: [] });
 
-    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER]);
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER], undefined, 0);
 
     const sent = joins(redis);
     expect(sent[0].data.invitedBy).toBeUndefined();

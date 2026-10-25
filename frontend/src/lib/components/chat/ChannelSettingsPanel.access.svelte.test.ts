@@ -65,6 +65,9 @@ const workspaces = [
   },
 ];
 
+/** The access revision every salon is read at, unless a test moves it. */
+const REVISION = 7;
+
 const mounted: (() => void)[] = [];
 
 beforeEach(() => {
@@ -75,9 +78,27 @@ beforeEach(() => {
       isPrivate: id !== 'public-salon',
       allowedUsers: id === 'salon-b' ? ['other'] : id === 'public-salon' ? [] : ['owner'],
       writePolicy: 'everyone',
+      accessRevision: REVISION,
     })
   );
-  service.updateChannelAccess.mockResolvedValue({ ok: true });
+  // The server's answer to a write at `base`: its own edit, one revision on.
+  service.updateChannelAccess.mockImplementation(
+    (
+      channelId: string,
+      base: number,
+      isPrivate: boolean,
+      allowedUsers: string[],
+      writePolicy?: string
+    ) =>
+      Promise.resolve({
+        ok: true,
+        channelId,
+        isPrivate,
+        allowedUsers: isPrivate ? allowedUsers : [],
+        writePolicy: writePolicy ?? 'everyone',
+        accessRevision: base + 1,
+      })
+  );
   service.listMembers.mockResolvedValue([
     { id: '1', userId: 'owner', role: 'admin', joinedAt: '' },
     { id: '2', userId: 'peer', role: 'member', joinedAt: '' },
@@ -150,7 +171,10 @@ describe('ChannelSettingsPanel - access tab', () => {
     await settle();
 
     // No write policy sent: that control saves itself, independently, see below.
-    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner', 'peer']);
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', REVISION, true, [
+      'owner',
+      'peer',
+    ]);
     // The field is cleared, not left showing a pick that was already taken.
     expect(input.value).toBe('');
     // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grant is
@@ -199,7 +223,10 @@ describe('ChannelSettingsPanel - access tab', () => {
     buttonByText(m.common_add_button()).click();
     await settle();
 
-    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner', 'peer']);
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', REVISION, true, [
+      'owner',
+      'peer',
+    ]);
     expect(document.querySelector('[role=alert]')?.textContent).toBe(
       m.chat_community_removal_exceeds_actor_error()
     );
@@ -215,7 +242,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
     await settle();
 
-    expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', true, []);
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', REVISION, true, []);
     expect(document.querySelector('[role=alert]')?.textContent?.trim()).toBe(
       m.chat_community_removal_exceeds_actor_error()
     );
@@ -241,7 +268,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     expect(showConfirmMock).toHaveBeenCalledWith(m.chat_channel_make_private_confirm(), {
       danger: false,
     });
-    expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', true, []);
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', REVISION, true, []);
     expect(document.getElementById('channel-access-autocomplete')).not.toBeNull();
   });
 
@@ -271,7 +298,158 @@ describe('ChannelSettingsPanel - access tab', () => {
     await settle();
 
     expect(showConfirmMock).not.toHaveBeenCalled();
-    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner'], 'admins');
+    expect(service.updateChannelAccess).toHaveBeenCalledWith(
+      'salon-a',
+      REVISION,
+      true,
+      ['owner'],
+      'admins'
+    );
+  });
+});
+
+/**
+ * THE LIST THIS PANEL HOLDS IS THE ONE IT READ. Reproduced on dev 2026-10-25: panel A showed two
+ * allowed members, B granted W4, A (still showing two) granted W5 - A's PATCH answered 200 and W4 was
+ * cut from the salon's key distribution, with nothing said on either screen. Every write now names
+ * the revision it was made at; a stale one is refused, read again, and named.
+ */
+describe('ChannelSettingsPanel - the revision every access write is based on', () => {
+  /** Picks "Peer" in the autocomplete and presses "Add". */
+  async function addPeer() {
+    const input = document.getElementById('channel-access-autocomplete') as HTMLInputElement;
+    input.value = 'Peer';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(350);
+    await settle();
+    document
+      .querySelector('[role=option]')!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await settle();
+    buttonByText(m.common_add_button()).click();
+    await settle();
+  }
+
+  /** Opens the write-policy Picker and picks the option labelled `label`. */
+  async function pickWritePolicy(label: string) {
+    (document.querySelector('button[aria-haspopup="listbox"]') as HTMLButtonElement).click();
+    flushSync();
+    await tick();
+    (
+      [...document.querySelectorAll('[role="option"]')].find(
+        (o) => (o.textContent ?? '').trim() === label
+      ) as HTMLButtonElement
+    ).click();
+    await settle();
+  }
+
+  it("follows its own write's revision, so the next gesture needs no reload", async () => {
+    await mountOnAccessTab('salon-a');
+    await addPeer();
+    await pickWritePolicy(m.chat_channel_write_admins());
+
+    expect(service.updateChannelAccess).toHaveBeenLastCalledWith(
+      'salon-a',
+      REVISION + 1,
+      true,
+      ['owner', 'peer'],
+      'admins'
+    );
+    // Read once, on open: the answers carried everything the panel needed.
+    expect(service.getChannelAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the access again on a stale-revision refusal, and names it', async () => {
+    await mountOnAccessTab('salon-a');
+    // Meanwhile another admin granted 'w4': the server is at REVISION + 1, this panel at REVISION.
+    service.getChannelAccess.mockResolvedValue({
+      channelId: 'salon-a',
+      isPrivate: true,
+      allowedUsers: ['owner', 'w4'],
+      writePolicy: 'everyone',
+      accessRevision: REVISION + 1,
+    });
+    service.updateChannelAccess.mockRejectedValueOnce(
+      new ApiRefusalError(409, 'CHANNEL_ACCESS_CHANGED', 'changed')
+    );
+
+    await addPeer();
+
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', REVISION, true, [
+      'owner',
+      'peer',
+    ]);
+    expect(service.getChannelAccess).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(
+      m.chat_channel_access_changed_error()
+    );
+    // Nobody is admitted on a refused grant.
+    expect(admitSalonGrantee).not.toHaveBeenCalled();
+
+    // The admin tries again: on the list as it now stands, at the revision it now has.
+    await addPeer();
+    expect(service.updateChannelAccess).toHaveBeenLastCalledWith('salon-a', REVISION + 1, true, [
+      'owner',
+      'w4',
+      'peer',
+    ]);
+  });
+
+  it('sends one access write at a time, so its own two gestures cannot refuse each other', async () => {
+    await mountOnAccessTab('salon-a');
+    let release: () => void = () => {};
+    service.updateChannelAccess.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              ok: true,
+              channelId: 'salon-a',
+              isPrivate: true,
+              allowedUsers: ['owner', 'peer'],
+              writePolicy: 'everyone',
+              accessRevision: REVISION + 1,
+            });
+        })
+    );
+    await addPeer();
+    // The Add is still in flight: a write-policy pick now would share its base.
+    await pickWritePolicy(m.chat_channel_write_admins());
+    expect(service.updateChannelAccess).toHaveBeenCalledTimes(1);
+
+    release();
+    await settle();
+    // THE PICKER IS REOPENED ONLY ONCE ITS OUTRO HAS PLAYED OUT. Reopened mid-outro, the intro aborts
+    // the outro's animation through a path `adoptTransitionAnimations` does not cover, and happy-dom
+    // rejects a `finished` promise nothing owns - an unhandled AbortError that failed CI on a green
+    // suite (#2445). The product never waits on that promise; only the test reopened mid-outro.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    await pickWritePolicy(m.chat_channel_write_admins());
+    expect(service.updateChannelAccess).toHaveBeenCalledTimes(2);
+    expect(service.updateChannelAccess).toHaveBeenLastCalledWith(
+      'salon-a',
+      REVISION + 1,
+      true,
+      ['owner', 'peer'],
+      'admins'
+    );
+  });
+
+  it('reads the access again when its write landed on top of another one', async () => {
+    await mountOnAccessTab('salon-a');
+    // Saved, but two revisions on: somebody else wrote between this panel's read and its save.
+    service.updateChannelAccess.mockResolvedValueOnce({
+      ok: true,
+      channelId: 'salon-a',
+      isPrivate: true,
+      allowedUsers: ['owner'],
+      writePolicy: 'admins',
+      accessRevision: REVISION + 2,
+    });
+    await pickWritePolicy(m.chat_channel_write_admins());
+
+    expect(service.getChannelAccess).toHaveBeenCalledTimes(2);
   });
 });
 

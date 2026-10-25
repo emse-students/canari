@@ -1364,11 +1364,57 @@ live").
 
 **The salon row is re-read `FOR UPDATE` in that transaction.** A roster write (`stripFromChannels`)
 removes the user from the locked row, never from the copy read before the lock, so an add granted in
-between is kept. An access-list rewrite compares the locked row with the copy its removals and first
-evictions were computed from; if the visibility or the allowlist changed, it is refused whole with
-`409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the visibility, the allowlist and the
-write policy are left as the other edit wrote them, and a departure the first evictions began is
-settled `cancelled` like any abandoned one. A public salon made private gets its distribution group
+between is kept. An access-list rewrite compares the locked row's `accessRevision` with the one its
+removals and first evictions were computed from; if any access write landed since, it is refused
+whole with `409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the visibility, the
+allowlist and the write policy are left as the other edit wrote them, and a departure the first
+evictions began is settled `cancelled` like any abandoned one.
+
+### An access rewrite names the revision it edited (2026-10-25)
+
+**The lock only protected the server's own read, never the client's.** The settings panel reads a
+salon's access once, when its tab opens, and every gesture there (a grant, the visibility toggle, the
+write policy) PATCHes the WHOLE list it holds. With no base in the request, `updateChannelAccess`
+diffed that list against its own fresh read, so anyone granted after the panel loaded fell in
+`dropped`: cut from the salon's key distribution and its list, answered 200, nothing on either
+screen. Reproduced on `1.4.1-alpha.3`: panel A showed two allowed, B granted W4, A granted W5 - W4 was
+cut (`reason=access_updated`, a `departed` row). The `FOR UPDATE` comparison could not see it: the
+grant had committed before the rewrite's read.
+
+**`channels."accessRevision"`** (migration 111, `int NOT NULL DEFAULT 0`) is raised by one on every
+write of `isPrivate`, `allowedUsers` or `writePolicy`, by EVERY writer: the rewrite itself, a grant
+(`grantPrivateChannelAccess` - an admin's join, an invitation into a private salon), a roster strip
+(`stripFromChannels` - a per-member removal, leaving a salon, a community departure or kick), and the
+account erasure's name drop. A writer that changes nothing (a strip of a user not listed) leaves it.
+
+- `GET /:channelId/access`, a successful `PATCH` and the per-member `DELETE /:channelId/members/:userId`
+  all answer the same shape, `channelAccessState`: `isPrivate`, `allowedUsers`, `writePolicy`,
+  `accessRevision`.
+- `PATCH /:channelId/access` takes `baseAccessRevision`. A base other than the row's is refused
+  `409 CHANNEL_ACCESS_CHANGED` BEFORE anything is minted or evicted, and again under the row lock;
+  the body carries `current`, the access as it stands. Two rewrites at the same base: exactly one
+  saves, the other is refused (pinned against PostgreSQL in `removal-bound.integration.spec.ts`,
+  together with the reproduced sequence above).
+- **The panel follows the revision.** Every gesture sends the one it holds. After a success it adopts
+  the answer when the answer is exactly `base + 1` (its own edit and nothing else), and reads the
+  access again otherwise; on `CHANNEL_ACCESS_CHANGED` it reads the access again and THEN names the
+  refusal, so the admin decides on the real list. Consecutive gestures need no reload.
+- **A request with no base (a client older than the revision) is read as the one gesture it can
+  be** (`baselessAllowList`). Every client the `1.0.3` floor admits runs the panel of `v0.18.29`:
+  Add sends the list it read plus its pick LAST, no write policy; the toggle sends the list and the
+  other visibility, empty when going private; the write policy sends the list, the visibility it
+  read and the policy. So a salon that stays private gains at most that last name (none on a policy
+  save) and loses nobody - an absence is not a removal, and a name present may have been revoked
+  since; and a request flipping the visibility WITH a write policy, or going private WITH a list,
+  is a panel that read the other visibility and is refused `409`. The shim and its removal are in
+  [legacy-compatibility](../legacy-compatibility.md).
+- **The per-member `DELETE` answers the row it locked, whole**: `stripFromChannels` copies the
+  visibility and write policy with the list and revision, so a panel adopting it at `base + 1` never
+  pairs that revision with a visibility read before the lock.
+- **The panel makes one access write at a time**: two of its own in flight would share a base, and
+  the second would be refused by the first.
+- **Rollback:** an image older than migration 111 writes no revision, so after rolling back and
+  forward a panel opened before the rollback can save over a write the old image made. A public salon made private gets its distribution group
 before the lock; when the change is then refused, the group is left, not retired: its id stays on the
 row, inert while the salon is public, reused by the next flip (the mint is idempotent), and possibly
 the group of a concurrent flip that did commit.

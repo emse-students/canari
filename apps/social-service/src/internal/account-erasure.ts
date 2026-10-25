@@ -587,11 +587,14 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // a community the account had already left - a name no key group can act on, because a salon's
   // group entitles only members of its community (`isDistributionGroupEntitled`) and that earlier
   // departure already cut its seats. So there is no key distribution to cut, only the name to drop.
+  // It is an access write all the same, so it raises `accessRevision` like every other one: a
+  // settings panel still showing the name must not rewrite the list as if it had not changed.
   {
     label: 'channel_allowed_users',
     sql: `UPDATE channels
              SET "allowedUsers" = array_to_string(
-                   array_remove(string_to_array("allowedUsers", ','), lower($1)), ',')
+                   array_remove(string_to_array("allowedUsers", ','), lower($1)), ','),
+                 "accessRevision" = "accessRevision" + 1
            WHERE lower($1) = ANY(string_to_array("allowedUsers", ','))`,
   },
   // Its mention on OTHER people's posts: the column (comma-joined, ids compared lower-cased) ...
