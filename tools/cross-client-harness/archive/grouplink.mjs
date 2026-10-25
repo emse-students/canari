@@ -35,6 +35,9 @@ const ROW_OF = (userId) => `(function () {
 /** The banner's title (`join_request_title`), the one place an ask shows outside the conversation. */
 const BANNER = `document.body.innerText.indexOf('Demande pour rejoindre une conversation') !== -1`;
 
+/** The value of the panel's input holding a group link, or null while none does. */
+const LINK_INPUT = `(function () { var i = [].slice.call(document.querySelectorAll('input')).filter(function (x) { return /\\/g\\/join\\//.test(x.value || ''); })[0]; return i ? i.value : null; })()`;
+
 /**
  * Mints the open group's invitation link from its panel, and returns it.
  *
@@ -45,11 +48,11 @@ export async function mintGroupLink(cx, name) {
   assertCampaignOwned({ kind: 'group', name }, 'mintGroupLink');
   await openGroupSettings(cx);
   await realClick(cx, 'text=Générer un lien');
-  await until(cx, `/\\/g\\/join\\//.test(document.body.innerHTML)`, 20_000);
-  const url = await evaluate(
-    cx,
-    `(function () { var i = [].slice.call(document.querySelectorAll('input')).filter(function (x) { return /\\/g\\/join\\//.test(x.value || ''); })[0]; return i ? i.value : null; })()`
-  );
+  // THE LINK IS AN INPUT'S `value` PROPERTY, NEVER AN ATTRIBUTE: Svelte sets `value={shareLink}` as
+  // the property, so `innerHTML` never carries it. The wait read `innerHTML` and timed out on a panel
+  // already showing the link and "Lien copié" (ADM-1, 2026-10-25) - it waits on what it then reads.
+  await until(cx, `${LINK_INPUT} !== null`, 20_000);
+  const url = await evaluate(cx, LINK_INPUT);
   const prefix = `${SITE}/g/join/`;
   if (typeof url !== 'string' || !url.startsWith(prefix) || !/^[A-Za-z0-9_-]{8,}$/.test(url.slice(prefix.length))) {
     throw new Error(`mintGroupLink: the panel's link is not shaped ${prefix}<token> (length ${typeof url === 'string' ? url.length : 'none'})`);
