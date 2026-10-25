@@ -11,6 +11,7 @@
 import {
   CC5_PREMISE,
   CC_ROWS,
+  RACE_HOLD_MS,
   RACE_REFUSALS,
   doubleRemoveOwn,
   lockRaceLoser,
@@ -21,6 +22,8 @@ import {
   refreshRaceOwn,
   refusalCodes,
 } from '../ccrows.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ADD_LOCK_REFUSED_NARRATION } from '../watch.mjs';
 
 let failures = 0;
@@ -142,6 +145,14 @@ ok('the refresh never landed (ledger still backdated) fails', !allOk(f({ ledgerA
 ok('a ledger rewritten as an OBSERVATION is not a refresh', !allOk(f({ ledgerAfter: { at: 9_000, epoch: 5, observed: true } })));
 ok('the Add lost fails', !allOk(f({ view: { ...v4, roster: v4.roster.filter((x) => x.userId !== U4) } })));
 ok('an epoch that moved more than the accepts fails', !allOk(f({ view: { ...v4, activeEpoch: 7 } })));
+
+// A HOLD LONGER THAN THE PRODUCT'S WRITE DEADLINE MEASURES THE DEADLINE, NOT THE RACE - read from the
+// frontend's own table, so a deadline that shrinks fails here rather than on a live CC-1.
+console.log('the race hold stays under the commit POST deadline');
+const deadlineSrc = readFileSync(join(import.meta.dir, '../../../frontend/src/lib/utils/requestDeadline.ts'), 'utf8');
+const writeMs = Number(/^\s*write:\s*([\d_]+),/m.exec(deadlineSrc)?.[1]?.replaceAll('_', ''));
+ok(`the write deadline is read from requestDeadline.ts (${writeMs} ms)`, Number.isFinite(writeMs) && writeMs > 0);
+ok(`RACE_HOLD_MS (${RACE_HOLD_MS}) leaves at least 5 s under it`, RACE_HOLD_MS <= writeMs - 5_000);
 
 if (failures) {
   console.error(`\n${failures} CC assertion(s) failed`);

@@ -17,6 +17,7 @@
  */
 import { subjectFor } from './accounts.mjs';
 import { assertCampaignOwned, ledger, recordCreated } from './campaign.mjs';
+import { RACE_HOLD_MS } from './ccrows.mjs';
 import { client, evaluate, until } from './chat.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, redis, srvLines } from './estate.mjs';
@@ -266,11 +267,12 @@ export const COMMIT_POST = { match: '/api/mls/commit', method: 'POST' };
  *
  * @param {object} seats from {@link openSeats}
  * @param {Record<string, () => Promise<unknown>>} actions device -> the gesture, started here
- * @param {{heldWithinMs?: number}} [opt] how long every seat is given to reach its POST
+ * @param {{heldWithinMs?: number}} [opt] how long every seat is given to reach its POST - under the
+ *   product's write deadline ({@link RACE_HOLD_MS})
  * @returns {Promise<{releasedAt: string|null, outcomes: Record<string, {ok: boolean, value?: unknown, error?: string}>,
  *   vacuous: {device: string, rule: number, fault: string}[], records: Record<string, object[]>}>}
  */
-export async function raceCommits(seats, actions, { heldWithinMs = 45_000 } = {}) {
+export async function raceCommits(seats, actions, { heldWithinMs = RACE_HOLD_MS } = {}) {
   const devices = Object.keys(actions);
   const faults = {};
   for (const d of devices) faults[d] = await armFault(seats.seat[d].cx, [{ ...COMMIT_POST, fault: 'hold once' }]);
