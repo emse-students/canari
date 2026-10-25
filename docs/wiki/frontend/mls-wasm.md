@@ -58,7 +58,7 @@ frontend/src/lib/mls-client/   # TypeScript wrapper layer
 │   # Transport, scheduling, tabs
 ├── mlsDeliveryApi.ts       # High-level API calls (groups, messages, invitations)
 ├── mlsDeliveryHttp.ts      # Low-level fetch helpers (keepalive POST, URL utils)
-├── mlsPerGroupScheduler.ts # Round-robin MLS ops under per-group mutex
+├── mlsPerGroupScheduler.ts # Round-robin drain under the ONE MLS mutex, lent by a commit across its request
 ├── tabLeader.ts            # BroadcastChannel-based single-tab leader election
 ├── tabMessageSync.ts       # Keeping other tabs' stores in step
 │

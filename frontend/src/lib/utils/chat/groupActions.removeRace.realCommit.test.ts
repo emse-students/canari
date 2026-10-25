@@ -18,6 +18,7 @@ import { MemberRemovalNotCommittedError } from './memberRemovalError';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { recordingStage } from '../../../test/recordingStage';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /**
  * THE SAME RACES AS `groupActions.removeRace.test.ts`, THROUGH THE REAL COMMIT PATH: the real
@@ -72,6 +73,7 @@ function realCommitService() {
     deviceId: 'da',
     pendingSubmission: recorder.pendingSubmission,
     delivery: { submitCommit, fetchCommitsSince: stub.fetchCommitsSince },
+    ...plainCommitLock,
     // THE LOCK: a commit of another member that reached this device is applied under it FIRST.
     runUnderMlsLock: async <T>(fn: () => Promise<T>) => {
       if (winner.pending) {

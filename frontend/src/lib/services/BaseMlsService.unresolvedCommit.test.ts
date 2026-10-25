@@ -46,6 +46,7 @@ import {
   type ReplanVerdict,
 } from '$lib/mls-client/owedInvitations';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /**
  * A SUBMISSION WHOSE ANSWER WAS LOST IS RESUBMITTED, NEVER GUESSED - AND IT IS KEPT IN THE MLS STATE.
@@ -170,6 +171,7 @@ function ctx(
       acquireAddLock: vi.fn().mockResolvedValue({ acquired: true, token: 'tok' }),
       releaseAddLock: vi.fn().mockResolvedValue(true),
     },
+    ...plainCommitLock,
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
     getEpoch: vi.fn(() => 5),
@@ -1055,8 +1057,9 @@ describe('sendMessage - a group whose last commit is unresolved', () => {
 /**
  * A SUBMIT THAT NEVER ANSWERS MAY NOT HOLD THE MLS LOCK.
  *
- * Every commit is submitted inside the GLOBAL MLS lock, which also guards the incoming processing of
- * every group. A POST hung on a half-open connection or a captive portal froze decryption in every
+ * Every commit is submitted inside the GLOBAL MLS lock, which guards every exclusive MLS section (and,
+ * until DUP-6, the incoming processing of every group - the drain now borrows it while the request is
+ * on the network). A POST hung on a half-open connection or a captive portal froze decryption in every
  * conversation for as long as the engine tolerated - and the periodic leaf refresh made an unasked
  * commit ordinary. The submission now lives under the `write` head deadline; its expiry is NO
  * ANSWER, so the stage is resubmitted, KEPT as unknown, and settled by a later resubmission.
@@ -1098,7 +1101,9 @@ describe('runCommitTransaction - a commit gate that never answers', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
-    // Another group's incoming frame waits for the same lock.
+    // An EXCLUSIVE section waits for the whole commit - a drained frame of another group no longer
+    // does, it borrows the mutex while the request is on the network
+    // (`BaseMlsService.crossGroupDrain.test.ts`); what is pinned here is that the hold ENDS.
     let otherAt: number | null = null;
     const startedAt = Date.now();
     const other = scheduler.runUnderMlsLock(async () => {

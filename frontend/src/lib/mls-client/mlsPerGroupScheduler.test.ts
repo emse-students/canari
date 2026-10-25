@@ -1,4 +1,8 @@
-import { MlsPerGroupScheduler, type MlsQueuedMessage } from './mlsPerGroupScheduler';
+import {
+  MLS_QUEUE_ORPHAN_KEY,
+  MlsPerGroupScheduler,
+  type MlsQueuedMessage,
+} from './mlsPerGroupScheduler';
 import { flushMacrotask } from '../../test/flush';
 
 function msg(
@@ -546,6 +550,405 @@ describe('MlsPerGroupScheduler', () => {
       ).rejects.toThrow('handler exploded');
 
       expect(scheduler.isGroupIdle('group-a')).toBe(true);
+    });
+  });
+
+  /**
+   * DUP-6 (2026-10-25): A COMMIT WAITING ON THE NETWORK HELD EVERY OTHER CONVERSATION'S FRAMES.
+   *
+   * The commit holds the mutex from stage to merge and its request may wait two write deadlines. It
+   * now LENDS the mutex while the request is pending, to the drain only, one frame at a time, for any
+   * group but its own - and takes it back before it merges. Every assertion is an ORDER: the network
+   * answer is a promise the test opens by hand.
+   */
+  describe('a commit lending the mutex across its network round trip', () => {
+    /** A promise the test opens by hand. */
+    const gate = (): { promise: Promise<void>; open: () => void } => {
+      let open!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { promise, open };
+    };
+
+    let log: ReturnType<typeof vi.spyOn>;
+    let complaint: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+    afterEach(() => {
+      log.mockRestore();
+      complaint.mockRestore();
+    });
+
+    /** A commit of `groupId` that stages, sends a request answered by `answer`, then merges. */
+    const commitOf = (
+      scheduler: MlsPerGroupScheduler,
+      groupId: string,
+      order: string[],
+      answer: Promise<void>,
+      staged: Promise<void> = Promise.resolve()
+    ) => {
+      const lent = gate();
+      const done = scheduler.runCommitUnderMlsLock(groupId, async () => {
+        await staged;
+        order.push(`stage ${groupId}`);
+        await scheduler.lendMlsLockWhile(groupId, async () => {
+          lent.open();
+          await answer;
+        });
+        order.push(`merge ${groupId}`);
+      });
+      return { done, lent: lent.promise };
+    };
+
+    it("applies another group's frame while the request is pending, and its own group's after the merge", async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      scheduler.enqueue(msg('group-b', 'b'));
+      scheduler.enqueue(msg('group-a', 'a'));
+      // RETURNS while the answer is still held: B was applied, A's frame waits for its commit.
+      await scheduler.drain(async (m) => {
+        order.push(`frame ${m.groupId}`);
+      });
+      expect(order).toEqual(['stage group-a', 'frame group-b']);
+      expect(scheduler.getPendingCount()).toBe(1);
+      expect(scheduler.hasRunnableWork()).toBe(false);
+
+      answer.open();
+      await commit.done;
+      expect(scheduler.hasRunnableWork()).toBe(true);
+      await scheduler.drain(async (m) => {
+        order.push(`frame ${m.groupId}`);
+      });
+      expect(order).toEqual(['stage group-a', 'frame group-b', 'merge group-a', 'frame group-a']);
+    });
+
+    it('hands the loan to a frame that was already waiting on the commit when the request left', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const staged = gate();
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise, staged.promise);
+
+      scheduler.enqueue(msg('group-b', 'b'));
+      const drained = scheduler.drain(async (m) => {
+        order.push(`frame ${m.groupId}`);
+      });
+      await flushMacrotask();
+      // The stage is exclusive: nothing is lent before the request leaves.
+      expect(order).toEqual([]);
+
+      staged.open();
+      await drained;
+      expect(order).toEqual(['stage group-a', 'frame group-b']);
+      answer.open();
+      await commit.done;
+      expect(order).toEqual(['stage group-a', 'frame group-b', 'merge group-a']);
+    });
+
+    it('takes the mutex back only once the frame being applied under the loan has finished', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      const inFrame = gate();
+      const frameMayEnd = gate();
+      scheduler.enqueue(msg('group-b', 'b'));
+      const drained = scheduler.drain(async () => {
+        order.push('frame start');
+        inFrame.open();
+        await frameMayEnd.promise;
+        order.push('frame end');
+      });
+      await inFrame.promise;
+      answer.open();
+      await flushMacrotask();
+      // The answer is in, the merge is not: the borrower still holds the client.
+      expect(order).toEqual(['stage group-a', 'frame start']);
+
+      frameMayEnd.open();
+      await Promise.all([drained, commit.done]);
+      expect(order).toEqual(['stage group-a', 'frame start', 'frame end', 'merge group-a']);
+    });
+
+    it('never lends to an exclusive acquirer: a catch-up, a Welcome or a settlement waits for the whole commit', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      const exclusive = scheduler.runUnderMlsLock(async () => {
+        order.push('exclusive');
+      });
+      await flushMacrotask();
+      expect(order).toEqual(['stage group-a']);
+
+      answer.open();
+      await Promise.all([commit.done, exclusive]);
+      expect(order).toEqual(['stage group-a', 'merge group-a', 'exclusive']);
+    });
+
+    it('holds back unaddressed frames and Welcomes, and still applies the rest', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      scheduler.enqueue(msg('group-c', 'w', { isWelcome: true }));
+      scheduler.enqueue({ ...msg('group-x', 'o'), groupId: undefined });
+      scheduler.enqueue(msg('group-b', 'b'));
+      await scheduler.drain(async (m) => {
+        order.push(`${m.isWelcome ? 'welcome' : 'frame'} ${m.groupId ?? 'unaddressed'}`);
+      });
+      expect(order).toEqual(['stage group-a', 'frame group-b']);
+      expect(scheduler.getPendingCount()).toBe(2);
+
+      answer.open();
+      await commit.done;
+      await scheduler.drain(async (m) => {
+        order.push(`${m.isWelcome ? 'welcome' : 'frame'} ${m.groupId ?? 'unaddressed'}`);
+        if (m.isWelcome && m.groupId) scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome complete');
+      });
+      expect(order.slice(3).sort()).toEqual(['frame unaddressed', 'welcome group-c']);
+    });
+
+    it('refuses a loan asked by anyone but the commit holding the mutex for that group, before the work starts', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const work = vi.fn(async () => undefined);
+
+      await expect(scheduler.lendMlsLockWhile('group-a', work)).rejects.toThrow(/loan refused/);
+      await scheduler.runCommitUnderMlsLock('group-b', async () => {
+        await expect(scheduler.lendMlsLockWhile('group-a', work)).rejects.toThrow(/loan refused/);
+      });
+      await scheduler.runUnderMlsLock(async () => {
+        await expect(scheduler.lendMlsLockWhile('group-a', work)).rejects.toThrow(/loan refused/);
+      });
+      expect(work).not.toHaveBeenCalled();
+      expect(scheduler.committingGroupId).toBeNull();
+    });
+
+    /**
+     * THE RACE THE PICK CANNOT SEE: an exclusive holder X has the mutex and commit A is queued
+     * behind it, so `committingGroup` is still null when the drain picks A's frame (or an unaddressed
+     * one) and queues it for the mutex. When X releases and A is granted, that frame must neither
+     * borrow A's loan (it would apply another member's commit in A with A's stage in flight) nor
+     * hold the drain - and B's frame behind it - for the whole commit.
+     */
+    it.each([
+      ['its own group', 'group-a'],
+      ['no group', undefined],
+    ])(
+      'puts back a frame of %s picked before the commit was granted, and applies the rest under the loan',
+      async (_what, groupId) => {
+        const scheduler = new MlsPerGroupScheduler('web');
+        const order: string[] = [];
+        const releaseX = await scheduler.acquireMlsLock();
+        const answer = gate();
+        const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+
+        scheduler.enqueue({ ...msg('group-a', 'h'), groupId });
+        const process = async (m: MlsQueuedMessage) => {
+          order.push(`frame ${m.groupId ?? 'unaddressed'}`);
+        };
+        const drained = scheduler.drain(process);
+        await flushMacrotask();
+        // Picked, and waiting for the mutex behind commit A.
+        expect(scheduler.getPendingCount()).toBe(0);
+        scheduler.enqueue(msg('group-b', 'b'));
+
+        releaseX();
+        await commit.lent;
+        await drained;
+        // B was applied under the loan; the held-back frame is back in its bucket, not applied.
+        expect(order).toEqual(['stage group-a', 'frame group-b']);
+        expect(scheduler.getPendingCount()).toBe(1);
+
+        answer.open();
+        await commit.done;
+        await scheduler.drain(process);
+        expect(order).toEqual([
+          'stage group-a',
+          'frame group-b',
+          'merge group-a',
+          `frame ${groupId ?? 'unaddressed'}`,
+        ]);
+      }
+    );
+
+    it('puts a bounced frame back at the FRONT of its tier, so its group keeps its order', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const releaseX = await scheduler.acquireMlsLock();
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+
+      scheduler.enqueue(msg('group-a', '1'));
+      scheduler.enqueue(msg('group-a', '2'));
+      const process = async (m: MlsQueuedMessage) => {
+        order.push(`frame a${String.fromCharCode(m.ciphertext[0])}`);
+      };
+      const drained = scheduler.drain(process);
+      await flushMacrotask();
+      releaseX();
+      await commit.lent;
+      await drained;
+      expect(order).toEqual(['stage group-a']);
+
+      answer.open();
+      await commit.done;
+      await scheduler.drain(process);
+      expect(order).toEqual(['stage group-a', 'merge group-a', 'frame a1', 'frame a2']);
+    });
+
+    it('puts a bounced control frame back in the CONTROL tier (tauri), ahead of the Welcome', async () => {
+      const scheduler = new MlsPerGroupScheduler('tauri');
+      const order: string[] = [];
+      const releaseX = await scheduler.acquireMlsLock();
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+
+      scheduler.enqueue(msg('group-a', 'm'));
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', 'r', { type: 'group_reset' }));
+      const process = async (m: MlsQueuedMessage) => {
+        order.push(m.type ?? (m.isWelcome ? 'welcome' : 'frame'));
+        if (m.isWelcome && m.groupId) scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome complete');
+      };
+      // Picks the control frame first, which then waits behind commit A and is bounced.
+      const drained = scheduler.drain(process);
+      await flushMacrotask();
+      releaseX();
+      await commit.lent;
+      await drained;
+      expect(order).toEqual(['stage group-a']);
+
+      answer.open();
+      await commit.done;
+      await scheduler.drain(process);
+      expect(order).toEqual(['stage group-a', 'merge group-a', 'group_reset', 'welcome', 'frame']);
+    });
+
+    it('admits no borrower between the reclaim and the merge, while the loan is closing', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      const releaseB = await scheduler.acquireMlsLockForFrame('group-b');
+      expect(releaseB).not.toBeNull();
+      answer.open();
+      await flushMacrotask();
+      // The answer is in; the commit waits in the reclaim for B.
+      expect(order).toEqual(['stage group-a']);
+
+      // B's release wakes the reclaim; C asks in the same synchronous step, before the commit has
+      // resumed to drop the loan - `borrowed` is false here, only `closing` refuses it.
+      releaseB!();
+      const c = scheduler.acquireMlsLockForFrame('group-c').then((release) => {
+        order.push('frame group-c');
+        release?.();
+      });
+      await Promise.all([commit.done, c]);
+      expect(order).toEqual(['stage group-a', 'merge group-a', 'frame group-c']);
+    });
+
+    it('answers an acquisition for the committing group or no group at once, without the mutex', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      await expect(scheduler.acquireMlsLockForFrame('group-a')).resolves.toBeNull();
+      await expect(scheduler.acquireMlsLockForFrame(MLS_QUEUE_ORPHAN_KEY)).resolves.toBeNull();
+      // The loan is still free for a frame of another group.
+      const releaseB = await scheduler.acquireMlsLockForFrame('group-b');
+      expect(releaseB).not.toBeNull();
+      releaseB!();
+      answer.open();
+      await commit.done;
+      expect(order).toEqual(['stage group-a', 'merge group-a']);
+    });
+
+    it('lends to one borrower at a time', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      const releaseB = await scheduler.acquireMlsLockForFrame('group-b');
+      const c = scheduler.acquireMlsLockForFrame('group-c').then((release) => {
+        order.push('frame group-c');
+        return release;
+      });
+      await flushMacrotask();
+      expect(order).toEqual(['stage group-a']);
+
+      releaseB!();
+      const releaseC = await c;
+      expect(order).toEqual(['stage group-a', 'frame group-c']);
+      releaseC!();
+      answer.open();
+      await commit.done;
+    });
+
+    it('reports a reclaim that does not return, and does not cut it', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        const scheduler = new MlsPerGroupScheduler('web');
+        const order: string[] = [];
+        const answer = gate();
+        const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+        await commit.lent;
+
+        const releaseB = await scheduler.acquireMlsLockForFrame('group-b');
+        answer.open();
+        await flushMacrotask();
+        vi.advanceTimersByTime(60_000);
+        expect(complaint).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /STUCK in the reclaim of the MLS mutex lent by the commit of group-a/
+          )
+        );
+        expect(order).toEqual(['stage group-a']);
+
+        releaseB!();
+        await commit.done;
+        expect(order).toEqual(['stage group-a', 'merge group-a']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('counts for the drain overlay only the frames the drain can apply', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+      await commit.lent;
+
+      scheduler.enqueue(msg('group-a', 'a'));
+      scheduler.enqueue({ ...msg('group-x', 'o'), groupId: undefined });
+      scheduler.enqueue(msg('group-c', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-b', 'b'));
+      const onDrainStart = vi.fn();
+      await scheduler.drain(async () => undefined, { onDrainStart });
+      expect(onDrainStart).toHaveBeenCalledWith(1);
+
+      answer.open();
+      await commit.done;
     });
   });
 });

@@ -25,6 +25,7 @@ import {
   refusedBacklogMark,
   resetUnackedFrames,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /**
  * The WRITE-side entrance to the recovery ladder: a commit the server refuses because our base
@@ -56,6 +57,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       submitCommit: vi.fn(),
       fetchCommitsSince: vi.fn(),
     },
+    ...plainCommitLock,
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn(async () => state.epoch),
     getEpoch: vi.fn(() => state.epoch),

@@ -17,6 +17,7 @@ import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { recordingStage } from '../../test/recordingStage';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /** Any intent: the refresh only hands it on to its stage. */
 const INTENT = new Uint8Array([9]);
@@ -56,6 +57,7 @@ function commitCtx(accepted: boolean) {
           accepted ? { accepted: true } : { accepted: false, reason: 'concurrent_commit' }
         ),
     },
+    ...plainCommitLock,
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),

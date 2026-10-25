@@ -21,6 +21,7 @@ import {
 } from '$lib/mls-client/mlsDeliveryApi';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /**
  * AN ADD WHOSE COMMIT IS ANSWERED 401 IS MERGED ONCE, NEVER LOST, AND NEVER A LOGOUT BY ITSELF.
@@ -66,6 +67,7 @@ function ctx(fetchImpl: ReturnType<typeof vi.fn>, refreshToken: ReturnType<typeo
     deviceId: D,
     state,
     delivery,
+    ...plainCommitLock,
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
     getEpoch: vi.fn(() => 5),

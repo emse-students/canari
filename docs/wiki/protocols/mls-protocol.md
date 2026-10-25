@@ -1393,7 +1393,8 @@ and kept as unknown; never a logout (`BaseMlsService.commit401.test.ts`). One ca
 renewal still running when the submission's deadline aborts it ends as a `RequestDeadlineError`.
 
 **No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
-awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
+awaited INSIDE the global MLS lock, which guarded the incoming processing of every group too until
+DUP-6 ([below](#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)), so a
 POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
 the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
 deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
@@ -1406,6 +1407,99 @@ resubmission, the first request, its resubmission - each deadline also stretched
 time), read before each request and again after the checkpoint that precedes the first. A request it
 does not let start leaves the outcome unknown, or - for a first request - is never sent, its stage
 cleared and the commit refused (`lock_budget_spent`).
+
+#### A commit waiting on the network lends the MLS lock to other groups' frames
+
+**Found by rig row DUP-6 on 1.4.1-alpha.4 (2026-10-25), reproduced twice.** An Add in group A was
+posted and got no answer for two `write` deadlines (~62 s). A frame for group B arrived at once and
+opened its drain (`Disk writes deferred (bulk ingest depth=1)`), then waited the whole minute for the
+mutex: it was decrypted, displayed and ACKed in the millisecond the resubmission gave up, and the
+server's push fallback (`still unACKed after 10 s`) had duplicated it through FCM meanwhile. The cause
+was the drain's `acquireMlsLock` (`mlsPerGroupScheduler.ts`) waiting on `runCommitTransaction`'s
+`runUnderMlsLock`, held across `submitRecorded`.
+
+**The commit now LENDS the mutex while a request of it is on the network**
+(`MlsPerGroupScheduler.lendMlsLockWhile`, called by `submitRecorded`, so the first request, every
+resubmission and a settlement's request all lend). The rules, each enforced by the scheduler rather than
+by its callers:
+
+- **Only the commit holding the mutex for that group lends** (`runCommitUnderMlsLock(groupId)` names
+  the group as the mutex is granted, synchronously); any other loan is refused before the request
+  starts.
+- **Only the drain borrows, one frame at a time, never for the committing group nor for an
+  unaddressed frame** (`acquireMlsLockForFrame`). Every other acquirer - a catch-up that swaps the whole
+  client, a Welcome, a settlement, another commit, a key-package worker - stays exclusive of the commit
+  exactly as before.
+- **While a commit holds the mutex the drain holds back what would have to wait for it anyway**: the
+  committing group's frames (another member's commit applied there would clear our stage in flight),
+  unaddressed frames, and a Welcome with the frames queued behind it in its group (the Welcome handler
+  takes the mutex exclusively). They stay in their buckets, still pending - so `isIdle` and
+  `isGroupIdle` do not change meaning - and the commit's end resumes them
+  (`BaseMlsService.resumeFramesHeldByCommit`). The drain's restart guard reads `hasRunnableWork`, not
+  the pending count, so a held-back frame never makes it spin.
+- **A frame picked BEFORE the commit was granted does not hold the drain for the whole commit.** The
+  pick runs before the mutex wait, so with an exclusive holder X ahead and commit A queued behind it,
+  the drain can pick a frame of A (or an unaddressed one) while nothing names A yet, and queue it for
+  the mutex behind A. As A is granted, every queued frame it holds back is BOUNCED - its acquisition
+  resolves without the mutex - and the drain puts it back at the front of its tier and goes on with
+  B's frames under the loan. One predicate (`isFrameHeldBack`) decides the pick, the bounce and,
+  through them, the loan: a frame of A never waits while A holds, so it can never borrow A's loan and
+  apply another member's commit with A's stage in flight. The put-back frame keeps its place WITHIN
+  its tier (the front, where it was picked). The order across tiers is the tiers' own. In `web` mode a
+  Welcome shares the `messages` tier, so the frame goes back ahead of it. In `tauri` mode the tiers
+  are `control`, `welcome` and `messages`, picked in that order. A Welcome for A that arrives while a
+  `messages` frame of A is bounced therefore runs before that frame, which is the precedence a
+  Welcome already has over every queued frame of its group in that mode.
+- **The mutex is taken back before the merge or the clear**: the reclaim waits for the frame being
+  applied under the loan and admits no new borrower - `closing` is what refuses one in the window
+  between the borrower's release and the commit dropping the loan, where `borrowed` is already false.
+
+**The invariant a borrower must keep, or the two deadlock for good:** a borrower never awaits anything
+the commit's caller holds outside the mutex, nor anything that needs the commit to finish - A's send
+barrier, a send of A, a lock or a promise A's caller keeps. A waits in the reclaim for the borrower and
+the borrower would wait for A. The drain's frames keep it because the pipeline awaits no send (below);
+any new await in the frame path is to be read against it. The reclaim wait goes through the drain's
+hang reporter: `[QUEUE] STUCK in the reclaim of the MLS mutex lent by the commit of <group>` every
+minute it lasts, and nothing is cut.
+
+**A slow borrower spends A's lock-hold budget - a behaviour change.** The reclaim waits for the
+borrower, and `COMMIT_LOCK_HOLD_BUDGET_MS` keeps running: a borrowed frame that awaits the network
+inline (the rung-1 replay of a commit, for one) can leave too little budget for A's resubmission, so
+`mayStartCommitRequest` refuses it and the outcome is kept as unknown (`CommitOutcomeUnknownError`, the
+stage kept, settled later) where before the PR it would have been resubmitted at once. Nothing is lost
+- the unknown path is the one a second deadline already took - but the rig should watch for the line
+`the commit of <group> has its answer - waiting for the frame applied under its loan` followed by an
+unknown outcome: that pair is this cost, measured.
+
+**What is left: a Welcome picked before the commit was granted.** Its handler runs a network preamble
+unlocked (`getGroupMeta`, the recovery checks) and then takes the mutex EXCLUSIVELY. A commit granted
+during that preamble makes the Welcome - and the drain inside it - wait for the whole commit, the old
+stall, for one Welcome. It is not bounced, because the handler is half-way through and cannot be put
+back; and it does not borrow, because installing a group (a drop of its evicted state, `processWelcome`,
+a persist, the replay) is not a frame of another group and the loan's safety argument does not cover
+it. Closing it means a handler that can stop before its locked section and requeue the Welcome, in
+`setupMessageHandler.ts`.
+
+**The drain overlay counts what the drain can apply** (`getRunnableCount`), not what is pending: a
+frame a commit holds back is not this drain's work.
+
+**Why the state stays consistent.** The stage and its record are on disk before the first request
+leaves (`checkpointStageBeforeSend`, unchanged, before any loan). A borrower decrypts in group B only,
+so it can neither merge nor clear A's stage; a checkpoint written during the loan (the drain's own, at
+its end) holds A's stage AND B's ratchet, the same state a crash before the merge already had to
+settle. A frame of B is applied exactly once - the drain still applies one frame at a time and the
+loan admits one borrower. The epoch-send barrier keeps its lock order: a borrower can see A's barrier
+raised but never waits on it, because the pipeline awaits no send (the history answers run after the
+mailbox drained), which it already could not, a send being able to settle a commit under the mutex
+the drain holds ([mls-desync-prevention](mls-desync-prevention.md)).
+
+**What is NOT lent:** the stage, the checkpoint before the first request, the merge, the clear, a
+refused commit's catch-up (`catchUpOnRefusedCommit`, network AND MLS writes) and every other
+network wait taken under the mutex outside a commit - a frame waits for those as before. Pinned by
+`mlsPerGroupScheduler.test.ts` ("a commit lending the mutex across its network round trip") and
+`BaseMlsService.crossGroupDrain.test.ts` (the real transaction and drain: B decrypted and ACKed while
+A's answer is held; A's own frame applied only after its merge; a kept-unknown commit settled after
+three loans).
 
 **The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
 first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
