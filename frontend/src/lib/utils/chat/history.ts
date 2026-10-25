@@ -393,7 +393,9 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
  * ## The window that REMAINS, stated rather than papered over
  *
  * A kill between the checkpoint returning and this call still leaves the ratchet one step ahead. That
- * window is now microseconds instead of a whole archive walk, and it is the SAME window
+ * window is not microseconds: this call writes `localStorage`, which the browser commits to disk
+ * seconds later, so a process killed in that delay keeps the ratchet and loses the marks (KILL-2,
+ * 2026-10-25, `docs/wiki/backlog.md`). It is the SAME window
  * `commitPersisted` accepts for the send ledger, for the same reason: **the two orderings are not
  * symmetric.** A ledger ahead of a ratchet SKIPS a frame whose generation was never spent - a message
  * lost for good. A ratchet ahead of a ledger re-accuses a frame that was in fact read - noise and a

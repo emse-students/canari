@@ -161,6 +161,28 @@ impl MlsManager {
             LeafNodeSource::Update | LeafNodeSource::Commit(_) => None,
         })
     }
+
+    /// The HPKE encryption key of this device's leaf in `group_id`, or `None` when the tree holds no
+    /// leaf of ours. It NAMES THE LEAF: a commit of this device replaces it (every member commit
+    /// carries a path, and an external join brings a new leaf), and nothing another member does
+    /// changes it. The caller's refresh ledger records it beside each date, so a date written for a
+    /// former leaf - a ledger write an unclean exit lost after the merge reached disk - is never read
+    /// as the age of the current one.
+    pub fn own_leaf_encryption_key(&self, group_id: &str) -> Result<Option<Vec<u8>>, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        let Some(leaf) = group.own_leaf_node() else {
+            log::warn!("[LEAF_REFRESH] {group_id}: no own leaf in the tree - no key to name it by");
+            return Ok(None);
+        };
+        // Its TLS encoding: the only public spelling openmls gives the key, and a stable one.
+        leaf.encryption_key()
+            .tls_serialize_detached()
+            .map(Some)
+            .map_err(|e| MlsError::OpenMls(format!("own leaf key encode error: {e:?}")))
+    }
 }
 
 /// Parses an `MlsMessageOut`-framed GroupInfo, unverified; anything else is `InvalidData`.

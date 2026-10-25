@@ -38,6 +38,8 @@ let refreshOwnLeaf: Mock<(groupId: string) => Promise<void>>;
 let checkpoint: Mock<() => Promise<boolean>>;
 let attempts: Map<string, number>;
 let epoch: number;
+/** The current leaf's key, as `own_leaf_encryption_key` reads it; a merged refresh replaces it. */
+let leafKey: string;
 
 /** A leaf admitted eight days ago, as `own_leaf_minted_at` reads it. */
 const OLD_MINT = (NOW - 8 * DAY) / 1000;
@@ -47,7 +49,7 @@ const OLD_MINT = (NOW - 8 * DAY) / 1000;
  * its first refresh is owed now - the state of every leaf one interval after this build shipped.
  */
 function dueAdmitted(over: Partial<LeafRefreshDeps> = {}): LeafRefreshDeps {
-  noteLeafObserved(U, D, G, 1, OLD_MINT, NOW - LEAF_REFRESH_INTERVAL_MS);
+  noteLeafObserved(U, D, G, 1, leafKey, NOW - LEAF_REFRESH_INTERVAL_MS);
   return deps({ ownLeafMintedAt: async () => OLD_MINT, ...over });
 }
 
@@ -60,6 +62,7 @@ function deps(over: Partial<LeafRefreshDeps> = {}): LeafRefreshDeps {
     isGroupActive: async () => true,
     getEpoch: () => epoch,
     ownLeafMintedAt: async () => null,
+    ownLeafKey: async () => leafKey,
     refreshOwnLeaf,
     checkpoint,
     attemptedAtEpoch: attempts,
@@ -73,28 +76,38 @@ beforeEach(() => {
   localStorage.clear();
   lines = [];
   epoch = 7;
+  leafKey = 'k-7';
   attempts = new Map();
   checkpoint = vi.fn().mockResolvedValue(true);
   refreshOwnLeaf = vi.fn(async (groupId: string) => {
-    // What `runCommitTransaction` does on the accepted path: the epoch moves and the ledger is told.
+    // What `runCommitTransaction` does on the accepted path: the epoch moves, the leaf is a new one,
+    // and the ledger is told which.
     epoch += 1;
-    noteOwnLeafRefreshed(U, D, groupId, epoch, NOW);
+    leafKey = `k-${epoch}`;
+    noteOwnLeafRefreshed(U, D, groupId, epoch, leafKey, NOW);
   });
 });
 
 describe('decideLeafRefresh - how old the leaf is, read from the tree first', () => {
   const OFFSET = 2 * DAY;
+  /** The leaf every case reads, as `own_leaf_encryption_key` names it. */
+  const LEAF = 'k-current';
   const decide = (mintedAtSec: number | null, record: LeafRefreshRecord | undefined) =>
-    decideLeafRefresh({ mintedAtSec, record, nowMs: NOW, offsetMs: OFFSET });
-  const observed = (at: number, mintedAtSec: number | null): LeafRefreshRecord => ({
+    decideLeafRefresh({ mintedAtSec, leaf: LEAF, record, nowMs: NOW, offsetMs: OFFSET });
+  const observed = (at: number, leaf: string | null = LEAF): LeafRefreshRecord => ({
     at,
     epoch: 3,
     observed: true,
-    mintedAtSec,
+    ...(leaf === null ? {} : { leaf }),
+  });
+  const refreshed = (at: number, leaf: string | null = LEAF): LeafRefreshRecord => ({
+    at,
+    epoch: 3,
+    ...(leaf === null ? {} : { leaf }),
   });
 
   it('dates an admitted leaf by its KeyPackage once it has been observed', () => {
-    expect(decide(OLD_MINT, observed(NOW - 3 * DAY, OLD_MINT))).toEqual({
+    expect(decide(OLD_MINT, observed(NOW - 3 * DAY))).toEqual({
       due: true,
       basis: 'admission',
       sinceMs: NOW - 8 * DAY,
@@ -106,13 +119,13 @@ describe('decideLeafRefresh - how old the leaf is, read from the tree first', ()
     // Day one: the leaf is 60 days old, but it was only seen now - its first refresh waits for
     // its offset, which is what spreads the seats of one group over the week.
     const ancient = (NOW - 60 * DAY) / 1000;
-    expect(decide(ancient, observed(NOW - DAY, ancient))).toMatchObject({
+    expect(decide(ancient, observed(NOW - DAY))).toMatchObject({
       due: false,
       dueAtMs: NOW + DAY,
     });
     // A young leaf: its own seven days decide, whatever the observation says.
     const young = (NOW - 2 * DAY) / 1000;
-    expect(decide(young, observed(NOW - 2 * DAY, young))).toMatchObject({
+    expect(decide(young, observed(NOW - 2 * DAY))).toMatchObject({
       due: false,
       dueAtMs: NOW + 5 * DAY,
     });
@@ -121,14 +134,15 @@ describe('decideLeafRefresh - how old the leaf is, read from the tree first', ()
   it('reads an admitted leaf with no observation OF IT as a first sight, whatever else is there', () => {
     // A ledger REFRESH is written only after OUR OWN commit, which leaves a commit-sourced leaf: a
     // leaf still dated by a KeyPackage is a NEWER incarnation (a Welcome after a forget). An
-    // observation of another incarnation describes a leaf that no longer exists either.
+    // observation of another leaf describes a leaf that no longer exists either.
     for (const record of [
       undefined,
-      { at: NOW - DAY, epoch: 3 },
-      observed(NOW - 3 * DAY, OLD_MINT - 1),
+      refreshed(NOW - DAY),
+      refreshed(NOW - DAY, 'k-former'),
+      observed(NOW - 3 * DAY, 'k-former'),
       observed(NOW - 3 * DAY, null),
     ]) {
-      expect(decide(OLD_MINT, record)).toEqual({
+      expect(decide(OLD_MINT, record)).toMatchObject({
         due: false,
         basis: 'first-sight',
         sinceMs: NOW,
@@ -137,23 +151,41 @@ describe('decideLeafRefresh - how old the leaf is, read from the tree first', ()
     }
   });
 
+  it('reads an entry only for the leaf it names - a former leaf, or none, is a first sight', () => {
+    // The entry is written AFTER the merge, into a store an unclean exit can lose while the merge
+    // survives: the entry the disk kept then names the leaf the merge replaced.
+    for (const record of [
+      refreshed(NOW - 8 * DAY, 'k-former'),
+      refreshed(NOW - 8 * DAY, null),
+      observed(NOW - 8 * DAY, 'k-former'),
+    ]) {
+      expect(decide(null, record)).toEqual({
+        due: false,
+        basis: 'first-sight',
+        sinceMs: NOW,
+        dueAtMs: null,
+        formerLeaf: true,
+      });
+    }
+  });
+
   it('dates a refreshed leaf by the ledger, seven days after the refresh, with no offset', () => {
-    expect(decide(null, { at: NOW - 6 * DAY, epoch: 3 })).toEqual({
+    expect(decide(null, refreshed(NOW - 6 * DAY))).toEqual({
       due: false,
       basis: 'ledger',
       sinceMs: NOW - 6 * DAY,
       dueAtMs: NOW + DAY,
     });
-    expect(decide(null, { at: NOW - 7 * DAY, epoch: 3 }).due).toBe(true);
+    expect(decide(null, refreshed(NOW - 7 * DAY)).due).toBe(true);
   });
 
   it('owes an observed commit-sourced leaf at the observation plus the offset', () => {
-    expect(decide(null, observed(NOW - DAY, null))).toMatchObject({
+    expect(decide(null, observed(NOW - DAY))).toMatchObject({
       due: false,
       basis: 'observed',
       dueAtMs: NOW + DAY,
     });
-    expect(decide(null, observed(NOW - 2 * DAY, null)).due).toBe(true);
+    expect(decide(null, observed(NOW - 2 * DAY)).due).toBe(true);
   });
 
   it('is never due on first sight of a leaf it has no date for', () => {
@@ -169,13 +201,13 @@ describe('decideLeafRefresh - how old the leaf is, read from the tree first', ()
   it('does not believe a ledger date in the future - the leaf is observed again', () => {
     // Written by a clock that was ahead: believed, it would postpone the refresh by however far
     // ahead that clock was, instead of by at most one interval.
-    expect(decide(null, { at: NOW + 300 * DAY, epoch: 3 }).basis).toBe('first-sight');
-    expect(decide(OLD_MINT, observed(NOW + DAY, OLD_MINT)).basis).toBe('first-sight');
+    expect(decide(null, refreshed(NOW + 300 * DAY)).basis).toBe('first-sight');
+    expect(decide(OLD_MINT, observed(NOW + DAY)).basis).toBe('first-sight');
   });
 
   it('is not due when the clock went backwards past the admission', () => {
     const future = (NOW + DAY) / 1000;
-    expect(decide(future, observed(NOW - 7 * DAY, future)).due).toBe(false);
+    expect(decide(future, observed(NOW - 7 * DAY)).due).toBe(false);
   });
 
   it('uses a seven-day interval', () => {
@@ -216,10 +248,16 @@ describe('leafRefreshOffsetMs - the first refresh spread, deterministically', ()
     const perDay = Array.from({ length: 8 }, () => 0);
     for (let seat = 0; seat < 109; seat++) {
       const offsetMs = leafRefreshOffsetMs(`device-${seat}`, 'group-109');
-      const record: LeafRefreshRecord = { at: NOW, epoch: 1, observed: true, mintedAtSec: minted };
+      const record: LeafRefreshRecord = { at: NOW, epoch: 1, observed: true, leaf: 'k' };
       const day = [1, 2, 3, 4, 5, 6, 7, 8].find(
         (d) =>
-          decideLeafRefresh({ mintedAtSec: minted, record, nowMs: NOW + d * DAY, offsetMs }).due
+          decideLeafRefresh({
+            mintedAtSec: minted,
+            leaf: 'k',
+            record,
+            nowMs: NOW + d * DAY,
+            offsetMs,
+          }).due
       );
       perDay[(day ?? 0) - 1]++;
     }
@@ -231,15 +269,15 @@ describe('leafRefreshOffsetMs - the first refresh spread, deterministically', ()
 
 describe('the ledger - one map per account AND device', () => {
   it('keeps devices and accounts apart', () => {
-    noteOwnLeafRefreshed(U, D, G, 4, NOW);
-    expect(readLeafRefreshLedger(U, D)[G]).toEqual({ at: NOW, epoch: 4 });
+    noteOwnLeafRefreshed(U, D, G, 4, 'k-4', NOW);
+    expect(readLeafRefreshLedger(U, D)[G]).toEqual({ at: NOW, epoch: 4, leaf: 'k-4' });
     expect(readLeafRefreshLedger(U, 'other-device')).toEqual({});
     expect(readLeafRefreshLedger('user-b', D)).toEqual({});
   });
 
   it('is bounded: the oldest entries go first', () => {
     for (let i = 0; i < LEAF_REFRESH_LEDGER_MAX_GROUPS + 3; i++) {
-      noteOwnLeafRefreshed(U, D, `g-${i}`, 1, NOW + i);
+      noteOwnLeafRefreshed(U, D, `g-${i}`, 1, 'k-1', NOW + i);
     }
     const ledger = readLeafRefreshLedger(U, D);
     expect(Object.keys(ledger)).toHaveLength(LEAF_REFRESH_LEDGER_MAX_GROUPS);
@@ -265,15 +303,48 @@ describe('refreshLeafIfDue', () => {
     // Awaited, not scheduled: the server holds the new epoch, and the secrets of our new leaf exist
     // only in memory until this lands.
     expect(checkpoint).toHaveBeenCalledTimes(1);
-    expect(readLeafRefreshLedger(U, D)[G]).toEqual({ at: NOW, epoch: 8 });
+    expect(readLeafRefreshLedger(U, D)[G]).toEqual({ at: NOW, epoch: 8, leaf: 'k-8' });
     expect(lines.join(' | ')).toContain('[LEAF_REFRESH]');
   });
 
   it('does nothing for a young leaf', async () => {
-    noteOwnLeafRefreshed(U, D, G, 7, NOW - 2 * DAY);
+    noteOwnLeafRefreshed(U, D, G, 7, leafKey, NOW - 2 * DAY);
     expect(await refreshLeafIfDue(deps(), G)).toBe('not-due');
     expect(refreshOwnLeaf).not.toHaveBeenCalled();
     expect(lines).toEqual([]);
+  });
+
+  it('a date written for a FORMER leaf is not the age of this one - a lost ledger write commits nothing', async () => {
+    // KILL-2, 1.4.1-alpha.4 (2026-10-25): a refresh merged and its checkpoint reached IndexedDB, and
+    // the browser was killed before Chrome committed `localStorage` (a write lands there ~5 s after
+    // it is made, measured). The relaunch read the entry the disk kept - eight days old, written for
+    // the leaf that refresh REPLACED - and refreshed again at its first send: a second commit for a
+    // leaf one minute old. The entry names its leaf; this one names a former leaf.
+    localStorage.setItem(
+      `mls_leaf_refresh:${U}:${D}`,
+      JSON.stringify({ [G]: { at: NOW - 8 * DAY, epoch: 7, leaf: 'k-former' } })
+    );
+    epoch = 8;
+    const d = deps({ ownLeafKey: async () => 'k-current' });
+
+    expect(await refreshLeafIfDue(d, G)).toBe('first-sight');
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+    expect(readLeafRefreshLedger(U, D)[G]).toEqual({
+      at: NOW,
+      epoch: 8,
+      observed: true,
+      leaf: 'k-current',
+    });
+    expect(lines.join(' | ')).toContain('FORMER leaf');
+  });
+
+  it('an entry naming no leaf (written before leaves were named) describes none', async () => {
+    localStorage.setItem(
+      `mls_leaf_refresh:${U}:${D}`,
+      JSON.stringify({ [G]: { at: NOW - 8 * DAY, epoch: 7 } })
+    );
+    expect(await refreshLeafIfDue(deps(), G)).toBe('first-sight');
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
   });
 
   it('records a first sight instead of committing', async () => {
@@ -283,7 +354,7 @@ describe('refreshLeafIfDue', () => {
       at: NOW,
       epoch: 7,
       observed: true,
-      mintedAtSec: null,
+      leaf: 'k-7',
     });
   });
 
@@ -296,7 +367,7 @@ describe('refreshLeafIfDue', () => {
     const d = deps({ ownLeafMintedAt: async () => minted, now: () => clock });
 
     expect(await refreshLeafIfDue(d, G)).toBe('first-sight');
-    expect(readLeafRefreshLedger(U, D)[G]).toMatchObject({ observed: true, mintedAtSec: minted });
+    expect(readLeafRefreshLedger(U, D)[G]).toMatchObject({ observed: true, leaf: 'k-7' });
 
     clock = NOW + offset - 1;
     expect(await refreshLeafIfDue(d, G)).toBe('not-due');
