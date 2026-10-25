@@ -1,3 +1,5 @@
+import { assertAnsweredByApi } from '$lib/utils/apiJson';
+
 /**
  * A request abandoned because NOTHING arrived for a while - never because it took a while.
  *
@@ -120,6 +122,9 @@ export async function fetchJsonUnderProgressDeadline<T>(
       await res.body?.cancel().catch(() => {});
       return { ok: false, status: res.status };
     }
+    // WHO ANSWERED, from the head: a 2xx that is not the API's JSON (a captive portal's page) is no
+    // answer - `NotFromApiError`, a transport failure - and never a body to parse and halve on.
+    assertAnsweredByApi(res, url);
     if (!res.body) {
       // Per the fetch spec only a null-body status (204, 304, ...) answers without one, and this
       // helper is for endpoints that always answer with JSON. Saying so beats a `SyntaxError`

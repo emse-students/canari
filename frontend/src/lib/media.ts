@@ -199,6 +199,7 @@ import {
 import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
 import { sendRenewingOn401 } from '$lib/utils/renewOn401';
 import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import { readApiJson } from '$lib/utils/apiJson';
 import {
   assertWithinRequestBudget,
   GATEWAY_MAX_BODY_BYTES,
@@ -724,7 +725,12 @@ export class MediaService {
             sessionLost: res.status === 404,
           });
         }
-        const { mediaId } = await res.json();
+        // A portal's 2xx assembled nothing: `NotFromApiError`, a transport failure, asked again
+        // below like any other lost answer (the server's complete is idempotent).
+        const { mediaId } = (await readApiJson(
+          res,
+          `POST /api/media/upload/chunk/${uploadId}/complete`
+        )) as { mediaId: string };
         return mediaId;
       } catch (err) {
         if (err instanceof UploadAbortedError || attempt >= COMPLETE_ATTEMPTS) throw err;

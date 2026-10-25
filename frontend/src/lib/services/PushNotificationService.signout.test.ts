@@ -53,11 +53,9 @@ beforeEach(() => {
   );
   osPlatformStub.mockReturnValue('android');
   tauriRuntimeStub.mockReturnValue(true);
-  globalThis.fetch = vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ pushSecret: 'secret-1' }),
-    text: async () => '',
-  });
+  globalThis.fetch = vi
+    .fn()
+    .mockImplementation(async () => Response.json({ pushSecret: 'secret-1' }));
 });
 
 describe('a sign-out on the device', () => {

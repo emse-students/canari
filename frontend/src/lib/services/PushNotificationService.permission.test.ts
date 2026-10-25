@@ -78,11 +78,9 @@ describe('startPushService and the notification permission rationale', () => {
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-perm');
       return Promise.resolve(undefined);
     });
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ pushSecret: 'secret' }),
-      text: async () => '',
-    });
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(async () => Response.json({ pushSecret: 'secret' }));
   });
 
   /**

@@ -10,6 +10,7 @@ import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
+import { assertAnsweredByApi, readApiJson } from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError } from '$lib/stores/auth';
@@ -1290,6 +1291,8 @@ export class MlsDeliveryApi {
         }
         throw await refusalFromResponse(response, 'Failed to publish KeyPackage');
       }
+      // A portal's 2xx registered nothing: no answer, never a registration.
+      assertAnsweredByApi(response, 'POST /api/mls/register-device');
     });
   }
 
@@ -1320,6 +1323,8 @@ export class MlsDeliveryApi {
       if (!response.ok) {
         throw await refusalFromResponse(response, 'Failed to publish key packages');
       }
+      // A portal's 2xx published nothing: no answer, so the pool is asked about again.
+      assertAnsweredByApi(response, 'POST /api/mls/register-device/prekeys');
     });
   }
 
@@ -1478,7 +1483,16 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
-    return res.json();
+    // A 2xx that is not the gate's JSON is NO ANSWER (`NotFromApiError`, a transport failure): a
+    // portal's page must never be read as a verdict, and the caller already keeps the stage and
+    // resubmits the same bytes on a transport failure until the gate itself answers.
+    return (await readApiJson(res, `POST /api/mls/commit (group ${groupId.slice(0, 8)})`)) as {
+      accepted: boolean;
+      reason?: string;
+      currentEpoch?: number;
+      newEpoch?: number;
+      duplicate?: boolean;
+    };
   }
 
   /**
@@ -1574,7 +1588,12 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo store HTTP error');
     }
-    const data = await res.json().catch(() => null);
+    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`), never `stored: false`: the
+    // monotonic rule did not decline anything, the request never reached it.
+    const data = (await readApiJson(
+      res,
+      `POST /api/mls/group-info (group ${groupId.slice(0, 8)})`
+    )) as { stored?: unknown } | null;
     return { stored: data?.stored === true };
   }
 
@@ -1886,18 +1905,32 @@ export class MlsDeliveryApi {
       // breaking a run of 5xx - a sentence could not be read back.
       throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
     }
-    // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
-    // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
-    // server predating the field, or an unreadable body, answers `null`: the frame WAS accepted, so
-    // that is not a failure of the send, and the copy is placed by the rule for undated messages.
-    const answered = (await res.json().catch((e: unknown) => {
+    // WHO ANSWERED decides whether the frame was accepted, never the status alone. A captive portal
+    // answers this POST `200 text/html` without the request ever reaching the server, and reading
+    // that as "accepted, answer unreadable" dropped the outbox entry of a message nobody received
+    // (cross-client rig, `1.4.1-alpha.3`). A 2xx that is not the delivery service's JSON is NO
+    // ANSWER (`NotFromApiError`, typed at the throw in `readApiJson`), and so is a body lost after
+    // the head: the outbox keeps the entry and retries it like any transport failure, and the
+    // receivers deduplicate on the inner messageId should the first one have landed after all.
+    let answered: unknown;
+    try {
+      answered = await readApiJson(res, `POST /api/mls/send (group ${groupId.slice(0, 8)})`);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
       console.warn(
-        `[DELIVERY] send to ${groupId.slice(0, 8)} accepted, its answer unreadable - the copy stays undated:`,
+        `[DELIVERY] send to ${groupId.slice(0, 8)} answered ${res.status} with no answer of the delivery service - not accepted, kept for a retry:`,
         e
       );
-      return null;
-    })) as { receivedAt?: unknown } | null;
-    const receivedAt = answered?.receivedAt;
+      throw new DeliveryUnreachableError(e);
+    }
+    // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
+    // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
+    // server predating the field answers its JSON WITHOUT it: `null`, the frame WAS accepted, and the
+    // copy is placed by the rule for undated messages (legacy-compatibility).
+    const receivedAt =
+      answered !== null && typeof answered === 'object'
+        ? (answered as { receivedAt?: unknown }).receivedAt
+        : undefined;
     return typeof receivedAt === 'number' && Number.isFinite(receivedAt) && receivedAt > 0
       ? receivedAt
       : null;

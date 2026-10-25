@@ -33,9 +33,22 @@ describe('fetchJsonUnderProgressDeadline', () => {
       },
     });
 
-  /** Only `ok`, `status` and `body` are read, so a real `Response` would add nothing but a mock. */
-  const responding = (init: { ok?: boolean; status?: number; body: ReadableStream | null }) =>
-    ({ ok: init.ok ?? true, status: init.status ?? 200, body: init.body }) as unknown as Response;
+  /**
+   * Only `ok`, `status`, `headers` and `body` are read, so a real `Response` would add nothing but a
+   * mock. The content type is the API's unless a case says otherwise: who answered is read from it.
+   */
+  const responding = (init: {
+    ok?: boolean;
+    status?: number;
+    body: ReadableStream | null;
+    contentType?: string;
+  }) =>
+    ({
+      ok: init.ok ?? true,
+      status: init.status ?? 200,
+      headers: new Headers({ 'content-type': init.contentType ?? 'application/json' }),
+      body: init.body,
+    }) as unknown as Response;
 
   const run = <T>(fetchImpl: unknown, stallMs: number) =>
     fetchJsonUnderProgressDeadline<T>(

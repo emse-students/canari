@@ -42,7 +42,7 @@ describe('startPushService - one registration at a time', () => {
     const answered = new Promise<void>((resolve) => (answer = resolve));
     globalThis.fetch = vi.fn(async () => {
       await answered;
-      return { ok: true, json: async () => ({ pushSecret: 'the-one' }), text: async () => '' };
+      return Response.json({ pushSecret: 'the-one' });
     }) as unknown as typeof fetch;
 
     const first = startPushService('https://api', 'jwt', 'dev-ios');

@@ -9,6 +9,7 @@ import {
 } from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
@@ -2404,7 +2405,11 @@ export async function startLydiaOnboarding(
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
   });
-  const body = await res.json().catch(() => ({}));
+  // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
+  // an onboarding with no url. A refusal's body stays optional - it may carry a message, or nothing.
+  const body = res.ok
+    ? await readApiJson(res, 'POST /api/payments/onboarding')
+    : await res.json().catch(() => ({}));
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
   if (!res.ok || (body as { ok?: boolean }).ok === false) {

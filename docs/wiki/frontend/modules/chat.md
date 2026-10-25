@@ -1298,6 +1298,38 @@ cause `too-large`. No banner and no eviction: the group is unchanged. Only 413 i
 5xx still backs off. The cause of the 413 (the edge limit) is NOT fixed by this: see the P1 in
 [backlog](../../backlog.md). Pinned by `outbox.test.ts`.
 
+### A 2xx a captive portal answered is no answer (2026-10-25)
+
+Under a captive portal every request is answered `200 text/html` without reaching the server. The
+send read that as "accepted, its answer unreadable": the outbox dropped the entry, the sender saw a
+sent bubble, and the copy stayed undated, so no history answer ever carried it either - a message
+lost for good (cross-client rig, `1.4.1-alpha.3`, 2 of 2). **Who answered is now read before
+what was answered**, in ONE helper (`utils/apiJson.ts`, `readApiJson` / `assertAnsweredByApi`):
+
+| A 2xx with... | Read as |
+| --- | --- |
+| no JSON content type (a portal's HTML, an empty `204`) | `NotFromApiError`, the body never read |
+| a JSON type, a body that does not parse (empty, truncated) | `NotFromApiError`, the parse error as its cause |
+| the API's JSON of an unexpected shape | the API's answer - the caller reads what it needs |
+| the send's JSON without `receivedAt` (a server predating it) | accepted, undated - the legacy reading, kept |
+
+`NotFromApiError` is a `TransportFailureError`, so `isTransportFailure` reads it and every caller
+already does the right thing: the send throws `DeliveryUnreachableError`, the entry stays `pending`
+and goes again on the reconnect resume, and receivers deduplicate on the inner messageId. The same
+reading covers the commit gate (kept and resubmitted, never a refusal), `POST /group-info` (never
+`stored: false`), the Welcome, both key-package publishes, the ACK (ids kept, then persisted), the
+pending pull (fails at once instead of halving nine times), the push registration (not counted, so
+it registers again), the media `complete` and the payments onboarding. The discriminator is the
+content type `responseOrigin` already used for an edge refusal, plus the parse - facts the
+response carries, never a guess from its words. The log line an operator reads is
+`[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept
+for a retry: NotFromApiError: POST /api/mls/send (group <group>) answered 200 with text/html... -
+not the API, read as no answer`.
+
+**Not covered**: a 2xx a caller believes WITHOUT reading anything (`renameGroup`, most `apiFetch`
+writes) still reads a portal's `200` as done; the native background sender (Kotlin, Swift) is
+untouched. Pinned by `apiJson.test.ts`, `mlsDeliveryApi.notFromApi.test.ts` and `outbox.test.ts`.
+
 `enqueue` logs too: it is the first trace of a message on this device, and without it a send that
 never reached the queue cannot be told apart from one the queue accepted and lost. Correlating a
 loss needs `[OUTBOX]` from the sender and `[QUEUE]` from the recipient at the same moment.
