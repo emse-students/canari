@@ -1750,6 +1750,115 @@ leaves are refreshed by its own Adds and Removes meanwhile; what refreshing them
 refresh that does not tighten the caps, or caps counted from the redistribution) is in
 [backlog](../backlog.md).
 
+### A joiner whose first frame beats its Welcome waits for it (DUP-2, 2026-10-25)
+
+**The server is right to send it the frame, and the server-side fix was rejected for that reason.** A
+commit that admits a device records its seat `pending` with `admittedAtEpoch`
+(`ValidateCommitBody.admits`), and from then on the fan-out queues it every frame sealed at or after
+that epoch ([chat-delivery](../services/chat-delivery.md)). Those frames are exactly the ones the
+Welcome's epoch can open - a member's Remove at the Add's epoch is the next commit the joiner MUST
+apply. "Do not fan a commit to a device whose Welcome the server has not seen" would therefore cut the
+joiner off its own next epoch, or need a second queue the Welcome releases; the frame already waits
+in the server queue, unacknowledged, which is that queue. When the adder's answer is lost, its
+Welcome is owed state on the adder (above) and goes out only once the late resubmission settles; a
+member committing in between reaches the joiner first.
+
+**What the joiner does with it.** The frame names a group it holds no state for
+(`handleUnknownGroup`): it is buffered, left unacknowledged in the server queue, and the one recovery
+seam `requestReAdd` runs once to read the device's membership row. `[PIPELINE] Recovery attempt
+finished for <g>` is that run settling - the line `startRecovery` writes whatever the seam decided.
+Until DUP-2 the seam read "owed" (a Welcome queued, or a member holding the add lock) and then sent a
+`welcome_request` anyway: every member was asked to do the Add's work again, the adder's lock turned
+them away (`Lock busy`), and a member finding the lock free would have REPLACED the leaf the Add had
+just written - a second commit and a second Welcome. Now the row is read as two facts
+(`readWelcomeOwedFromRow`), and neither asks a member:
+
+- `welcome-queued`: the Welcome is in this device's OWN mailbox, so the mailbox is pulled
+  (`fetchPendingMessages`).
+- `add-in-flight`: some member holds the group's add lock - per group, so not necessarily an Add of
+  this device - and the device waits for it to settle.
+
+A pending row that carries neither fact did not answer: every deployed server writes both since
+2026-09-03, so it reads as unreadable (`null`), the pass is skipped and the line accuses. It used to
+be a reading of its own, `pending-unqualified`, waited on as owed; nothing produced it, and it is
+deleted. Only the leader tab pulls the mailbox for `welcome-queued`; a follower's pass returns.
+
+The not-ready marker keeps the group on the sync watchdog's cadence, each pass re-reads the row, and
+once no fact holds the reading is `unhonoured-seat` and the self-service join is the device's own
+(`recovery.test.ts`, "the wait ENDS on the facts"). A seat from a link (`awaiting-admission`) still
+asks a member: there, the ask IS the admission request. The Graine key-group join waits on the same
+readings (`isWelcomeOwed`).
+
+**A Welcome this device has just spent is not a Welcome on its way.** When a Welcome fails to install
+(`NoMatchingKeyPackage`, `GroupAlreadyExists`), the handler starts the recovery before it returns
+`true`, so before the drain acknowledges that Welcome: the row can still list it as queued. The
+handler says so (`requestReAdd(..., { welcomeHandled: true })`) and the reading looks past the queued
+Welcome, so the repair runs at once instead of waiting a cadence for the Welcome it just spent. The
+log says the Welcome was read past, not that none was queued.
+
+**It reads past EVERY queued Welcome of the group, and the guard is where the join acts, not in the
+reading** (review of #2466). The row is a boolean: it cannot say whether the Welcome it lists is the
+spent one or a second one a member sent with a fresh KeyPackage. Two orders are possible, and both
+are safe:
+
+- **The drain applies the second Welcome first.** The recovery reaches `externalJoin`, which reads the
+  group again UNDER the MLS lock the Welcome took, finds it held, builds nothing and answers
+  `{ joined: true, alreadyHeld: true }`; the recovery drops its bookkeeping and leaves the rest to
+  the Welcome path. The engine refuses the same case by type before building
+  (`MlsError::GroupAlreadyHeld`, `GROUP_ALREADY_HELD:`), and the TS side reads that refusal as joined
+  and accuses the held-groups list that missed it. Before this, the "already present locally" guard
+  sat AFTER OpenMLS's `ExternalCommitBuilder::finalize`, which had already written the built group
+  into the live group's storage rows: memory kept the live group, the next save and load resurrected
+  the external join's one, and the refusal read as `build_failed` asked a member to re-add a healthy
+  leaf (`tests/external_join.rs`, `an_external_join_for_a_group_already_held_leaves_the_live_group_untouched`;
+  `BaseMlsService.externalJoin.test.ts`, "stands down ... while it waited for the lock").
+- **The external commit lands first.** It carries the same signature key as the leaf the second
+  Welcome's Add wrote, and replaces that leaf in one commit (the admitted-seat case below); the late
+  Welcome then meets a group already held and is ignored as a redelivery. If Welcome #2 is ignored
+  (and ACKed) while our commit is built but not yet submitted, and the server then REJECTS that
+  commit, the group is dropped (an external commit cannot be cleared) and the join retries from a
+  fresh base, which already carries #2's leaf for our key: the next commit replaces it the same way,
+  so the race converges on one leaf without the Welcome.
+
+**Whichever way the group was already held, the recovery promotes the roster seat to `active` -
+when `isGroupActive` proves our leaf is in the tree it holds.** The engine's typed refusal can be
+reached with NO Welcome at all - the engine held the group and the service's list missed it (native,
+after a PIN recovery) - and then nothing else ends the `pending` row, which every member is served as
+a work item to Add a leaf already in the tree. The proof is the client's to carry: the server's
+self-report (`POST mls/invitations/status` -> `activateDeviceMembership`, authority `report` ->
+`promoteReportedSeat`) promotes any existing seat that is not kicked and whose owner is not awaiting
+admission, and cannot read the tree; an evicted group stays held, so holding is not the proof. After
+a Welcome the promotion is a second write of the same value: the UPDATE matches the active row again,
+logs one `[INVITATION_STATUS]` line and re-adds an existing Redis route, and emits no event. A refusal naming a DIFFERENT group than the one
+asked for is not joined: the served base is unusable for this group and the join reads `build_failed`.
+
+The other design - waiting for the spent Welcome's ACK before reading the row - was not taken: it
+needs a per-delivery acknowledgement barrier through the drain, to buy what the lock already
+guarantees at the one step that can do harm.
+
+**When the Welcome lands, the buffer replays** and the frames left behind as `unknown-group` are
+re-fetched. That re-fetch pulls every row the server still holds for the group, including a frame
+live delivery read a moment earlier and has not acknowledged yet - a second read the client gives
+itself, which is a defect of its own, open in
+[backlog](../backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25).
+What is fixed is what that second read was CALLED. MLS refuses it with `SecretReuseError`, which it
+can only reach after opening the frame's sender data under this device's copy of the epoch - so the
+frame is neither from a fork nor damaged. `messaging.rs` classifies it from the error's TYPE
+(`is_spent_generation`) before the fork judgement: one `debug` line, no fork verdict, and the same
+`SecretReuse` error to every caller, whose frame ledger then says `Duplicate delivery ... silent
+ACK`. Until then it logged `[FORK] not a fork ... the frame itself is damaged` at WARN and a
+same-epoch ERROR that `logging.rs` demoted by its marker; the demotion is deleted with the line it
+hid. A frame whose bytes really are damaged keeps its WARN (`tests/spent_generation_is_not_damage.rs`).
+
+**An admitted seat with neither fact joins by itself, and that is safe.** An Add the server accepted
+whose adder holds no lock and has queued no Welcome leaves a seat with `admittedAtEpoch` (on the
+`getDeviceMemberships` row, typed on `DeviceMembershipRow` and named in the recovery's line) that reads
+`unhonoured-seat`. The external commit carries the same signature key as the leaf the Add wrote, and
+OpenMLS removes that leaf in the same commit - one leaf for the key, the routine rejoin of an active
+device (`tests/external_join.rs`, `an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`).
+Whether any adder path reaches that state, and what its late Welcome then meets, is a verification
+in [backlog](../backlog.md#p3---verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own-leaf-dup-2-review-2026-10-25).
+
 ### An Add enrols its people with the accepted commit (2026-10-25)
 
 **Found by the 1.4.1 dev campaign** (rows DUP-2, DUP-4, DUP-5, DUP-6, OFF-1, OFF-2, read from both

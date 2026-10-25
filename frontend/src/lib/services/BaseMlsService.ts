@@ -6726,9 +6726,16 @@ export abstract class BaseMlsService implements IMlsService {
         // moment ONLY this device - can export the GroupInfo for the epoch its own commit produces.
         // That base then travels inside the submission below and is stored with the epoch advance,
         // which is what stops an external joiner from locking the NEXT one out (COMM-22).
-        let joined: { groupId: string; commit: Uint8Array; nextBase: string };
+        let joined: { groupId: string; commit: Uint8Array; nextBase: string } | 'already-held';
         try {
           joined = await this.runUnderMlsLock(async () => {
+            // THE GROUP IS READ AGAIN UNDER THE LOCK, BECAUSE A WELCOME INSTALLS IT UNDER THE SAME
+            // LOCK. Everything above ran outside it - a recovery started by one failed Welcome reaches
+            // here after a second Welcome for the group may have been applied by the drain - and an
+            // external commit built over a held group was refused only AFTER OpenMLS had written it
+            // into the live group's storage rows, then read as a failed build that asked a member to
+            // re-add a healthy leaf (review of #2466). Held now means joined: nothing to build.
+            if (holdsGroupState(this, groupId)) return 'already-held' as const;
             const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
             // The same atomic read as every other publisher, under the lock this section already holds.
             const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
@@ -6746,9 +6753,35 @@ export abstract class BaseMlsService implements IMlsService {
             return { ...built, nextBase: base };
           });
         } catch (e) {
-          // Build failed (e.g. the group is already held locally) -> fall back.
+          // THE ENGINE'S OWN REFUSAL OF A HELD GROUP (`MlsError::GroupAlreadyHeld`, a token this
+          // repository defines) is the same answer as the read above, from the side that cannot be
+          // wrong - so it is joined, and the line ACCUSES: reaching it means this service's list of
+          // held groups missed one the engine holds, and the read above trusted that list.
+          //
+          // ONLY FOR THE GROUP ASKED FOR. The refusal names the group the served GroupInfo is for,
+          // and a base naming ANOTHER group the engine holds says nothing about this one: that is a
+          // base this join cannot use, so it fails the build like any other unusable base.
+          const held = /GROUP_ALREADY_HELD: (\S+)/.exec(String(e))?.[1];
+          if (held === groupId) {
+            console.error(
+              `[MLS] externalJoin ${short}... refused by the engine: the group is already held, but this service's list of held groups did not say so - joined, nothing built`
+            );
+            return { joined: true, alreadyHeld: true };
+          }
+          if (held !== undefined) {
+            console.error(
+              `[MLS] externalJoin ${short}... the served base is for another group (${held.slice(0, 8)}...), one this device holds - not joined`
+            );
+            return { joined: false, reason: 'build_failed' };
+          }
           console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
           return { joined: false, reason: 'build_failed' };
+        }
+        if (joined === 'already-held') {
+          console.log(
+            `[MLS] externalJoin ${short}... the group is already held (a Welcome installed it first) - joined, nothing built`
+          );
+          return { joined: true, alreadyHeld: true };
         }
 
         // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external

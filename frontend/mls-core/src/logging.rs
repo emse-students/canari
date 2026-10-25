@@ -34,12 +34,12 @@ use log::Level;
 /// Crate prefix whose own narration this crate already re-reports with context.
 const UPSTREAM_NARRATOR: &str = "openmls";
 
-/// The level `record` should be PRINTED at, given the level it was emitted at, its `target`
-/// (the emitting module path) and its formatted `message`.
+/// The level `record` should be PRINTED at, given the level it was emitted at and its `target`
+/// (the emitting module path). The text is not read: a rule keyed on another crate's prose drifts.
 ///
 /// Never raises a level and never drops a line: the most it does is demote a duplicate to
 /// [`Level::Debug`], where it stays available to anyone reading the full console.
-pub fn console_level(emitted: Level, target: &str, message: &str) -> Level {
+pub fn console_level(emitted: Level, target: &str) -> Level {
     if emitted != Level::Error {
         return emitted;
     }
@@ -47,14 +47,9 @@ pub fn console_level(emitted: Level, target: &str, message: &str) -> Level {
     if target.starts_with(UPSTREAM_NARRATOR) {
         return Level::Debug;
     }
-    // OURS, AND A DIFFERENT QUESTION. A spent generation is expected after a reload - the send
-    // ratchet is restored from a ledger kept outside the snapshot - and `messaging.rs` says in as
-    // many words why `SecretReuseError` is deliberately NOT classified away at the throw: every
-    // caller must still receive it as `DecryptErrorKind::SecretReuse` and acknowledge the frame.
-    // Only the console severity is at stake here, and it must not be folded into the rule above:
-    // that one declines to repeat a foreign line, this one demotes a line we chose to write.
-    if message.contains("SecretReuseError") {
-        return Level::Debug;
-    }
+    // A spent generation (`SecretReuseError`) used to be demoted here by its marker, a line this
+    // crate chose to write at ERROR and then hid. It is classified at the throw now
+    // (`messaging.rs`, `is_spent_generation`) and logged at `debug` there, so nothing of ours carries
+    // that marker at ERROR any more and the rule is gone with it (#2466).
     emitted
 }

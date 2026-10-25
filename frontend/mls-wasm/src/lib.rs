@@ -29,7 +29,7 @@ impl log::Log for WebLogger {
             // level and text arrive. So the decision is made here, once, by `mls_core::logging`
             // (which carries the reasoning and the tests) - and `wasm_bindings_log` on the other
             // side prints what Rust decided instead of keeping a second, drifting copy of it.
-            let level = mls_core::logging::console_level(record.level(), record.target(), &message);
+            let level = mls_core::logging::console_level(record.level(), record.target());
             js_log(&level.to_string(), &message);
         }
     }

@@ -45,6 +45,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       storeGroupInfo: vi.fn().mockResolvedValue(undefined),
     },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
+    // The groups this device holds, read by `externalJoin` under the lock. Empty: a joiner.
+    getLocalGroups: vi.fn((): string[] => []),
     // The REAL routing method, not a stand-in: `externalJoin` no longer reaches the delivery client
     // directly, and a stub reproducing that hop here would keep passing after the real one broke.
     groupInfoChannel: (
@@ -314,10 +316,73 @@ describe('BaseMlsService.externalJoin', () => {
       baseEpoch: 5,
       activeEpoch: 5,
     });
-    ctx.joinByExternalCommit.mockRejectedValue(new Error('already present locally'));
+    ctx.joinByExternalCommit.mockRejectedValue(new Error('join_by_external_commit: InvalidData'));
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'build_failed' });
     expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE TWO-WELCOME INTERLEAVING (review of #2466). A recovery started by one failed Welcome reaches
+   * the join after the drain applied a SECOND Welcome for the group, under the lock the join waits
+   * for. Building over the held group wrote OpenMLS's external-join group into the live group's
+   * storage rows, and the refusal that followed was read as `build_failed` - which asks a member to
+   * re-add a device whose leaf is healthy. Held when the lock is taken means joined, nothing built.
+   */
+  it('stands down, building nothing, when a Welcome installed the group while it waited for the lock', async () => {
+    const held: string[] = [];
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn(() => held),
+      // The drain holds the lock first and applies the second Welcome; the join runs after it.
+      runUnderMlsLock: async <T>(fn: () => Promise<T>) => {
+        held.push('g');
+        return fn();
+      },
+    });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true, alreadyHeld: true });
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(ctx.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  it("reads the engine's typed refusal of a held group as joined, and accuses the list that missed it", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.joinByExternalCommit.mockRejectedValue(new Error('GROUP_ALREADY_HELD: g'));
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true, alreadyHeld: true });
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('did not say so'));
+    error.mockRestore();
+  });
+
+  it('never reads a refusal naming ANOTHER held group as joined for this one', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.joinByExternalCommit.mockRejectedValue(new Error('GROUP_ALREADY_HELD: other-group'));
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'build_failed' });
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the served base is for another group')
+    );
+    error.mockRestore();
   });
 
   it('gives up after exhausting the bound on a persistently busy commit lock', async () => {

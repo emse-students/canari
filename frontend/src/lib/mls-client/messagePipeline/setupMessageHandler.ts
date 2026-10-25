@@ -15,6 +15,7 @@ import {
   cancelReAdd,
   reAddIsInFlight,
   resetReAddCooldowns,
+  type ReAddOptions,
 } from '$lib/utils/chat/recovery';
 import {
   markEpochGap,
@@ -176,9 +177,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const pendingBuffer = new Map<string, { msgs: PendingMsg[] }>();
 
   // Shared callback for all out-of-sync cases.
-  const onOutOfSync = async (groupId: string) => {
+  const onOutOfSync = async (groupId: string, opts?: ReAddOptions) => {
     log(`[PIPELINE] Out-of-sync for ${groupId.slice(0, 8)}… - requestReAdd`);
-    await requestReAdd(groupId, deps);
+    // Passed only when there is something to say: a caller that knows nothing more than the group
+    // makes the same call it always made.
+    await (opts ? requestReAdd(groupId, deps, opts) : requestReAdd(groupId, deps));
   };
 
   /**
@@ -194,8 +197,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
    * a Welcome, an external join - lands long after this frame has been answered. The callback's job
    * is to decide ACK or no-ACK, not to see the repair through.
    */
-  const startRecovery = (groupId: string): void => {
-    void onOutOfSync(groupId).then(
+  const startRecovery = (groupId: string, opts?: ReAddOptions): void => {
+    void onOutOfSync(groupId, opts).then(
       () => log(`[PIPELINE] Recovery attempt finished for ${groupId.slice(0, 8)}…`),
       (e) =>
         log(
@@ -332,7 +335,7 @@ interface WelcomeArgs {
   statePersister: ReturnType<typeof createMlsStatePersister>;
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
-  startRecovery: (groupId: string) => void;
+  startRecovery: (groupId: string, opts?: ReAddOptions) => void;
 }
 
 /**
@@ -857,23 +860,30 @@ async function handleWelcome({
   if (deferredRecovery) {
     const rec = deferredRecovery;
     if (rec.kind === 'nomatch') {
-      // First detection: republish fresh key material so a fallback welcome_request re-add can
-      // succeed (republishKeyMaterial debounces internally); subsequent failures skip it.
+      // First detection: republish fresh key material so whichever door `requestReAdd` picks - a
+      // member's re-add or this device's external commit - meets a package it can honour
+      // (republishKeyMaterial debounces internally); subsequent failures skip it.
       if (rec.failures === 1) {
         log(
-          `[WELCOME] NoMatchingKeyPackage pour ${rec.target.slice(0, 8)}… - republish + self-heal (externalJoin/welcome_request)`
+          `[WELCOME] NoMatchingKeyPackage for ${rec.target.slice(0, 8)}… - republish, then requestReAdd (the membership row picks the door)`
         );
         await mlsService.republishKeyMaterial(deps.deviceKey()).catch(() => {});
       } else {
         log(
-          `[WELCOME] NoMatchingKeyPackage #${rec.failures} pour ${rec.target.slice(0, 8)}… - self-heal (externalJoin/welcome_request)`
+          `[WELCOME] NoMatchingKeyPackage #${rec.failures} for ${rec.target.slice(0, 8)}… - requestReAdd (the membership row picks the door)`
         );
       }
       // Reset the counter past the budget so a later desync can republish afresh.
       if (rec.failures > MAX_NOMATCH_KP_RETRIES) noMatchKpFailures.delete(rec.target);
     }
     // Not awaited: this also runs inside the inbound drain (see `startRecovery`).
-    startRecovery(rec.target);
+    //
+    // `welcomeHandled`, AND IT IS NOT OPTIONAL. This recovery starts BEFORE the handler returns
+    // `true` below, so before the drain ACKs the Welcome it just failed on: the server may still list
+    // it as queued, and the membership row would read `welcome-queued` - a wait for the very Welcome
+    // this device has spent, a whole watchdog cadence instead of the repair at once (review of
+    // #2466). The fact is known here, so it is carried to where the reading is made.
+    startRecovery(rec.target, { welcomeHandled: true });
   }
 
   return true; // Always ACKed

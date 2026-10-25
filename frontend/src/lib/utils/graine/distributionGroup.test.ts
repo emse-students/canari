@@ -933,7 +933,9 @@ describe('a seat for a device that holds nothing - the admitter Welcome may be t
     const mls = makeMls({
       getDeviceMemberships: vi
         .fn()
-        .mockResolvedValue([{ groupId: 'g-1', status: 'pending', welcomeQueued: true }]),
+        .mockResolvedValue([
+          { groupId: 'g-1', status: 'pending', welcomeQueued: true, addInFlight: false },
+        ]),
     });
 
     expect(await run(mls, seated(), (m) => lines.push(m))).toBe(false);

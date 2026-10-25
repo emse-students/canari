@@ -30,8 +30,9 @@ impl MlsManager {
     /// returned commit for server epoch validation, then calls `merge_pending_commit_for` on accept.
     /// An external commit CANNOT be cleared, so on reject the caller must `forget_group` and rebuild
     /// from a fresher GroupInfo (self-service retry - this is what replaces the CAS/successor dance).
-    /// Returns `(group_id, commit_bytes)`. Refuses to clobber a group already held locally (a
-    /// concurrent Welcome may have landed first); rung-2 callers `forget_group` before calling.
+    /// Returns `(group_id, commit_bytes)`. Refuses a group already held locally (a concurrent
+    /// Welcome may have landed first) with [`MlsError::GroupAlreadyHeld`], BEFORE anything is built;
+    /// rung-2 callers `forget_group` before calling.
     pub fn join_by_external_commit(
         &mut self,
         group_info_bytes: &[u8],
@@ -45,6 +46,21 @@ impl MlsManager {
             },
             Err(_) => return Err(MlsError::InvalidData),
         };
+
+        // A GROUP ALREADY HELD IS REFUSED BEFORE ANYTHING IS BUILT, and the order is the whole fix.
+        // `ExternalCommitBuilder::finalize` writes the joined group into the provider's storage
+        // under the group id - the SAME rows the live group is persisted in - so a guard placed
+        // after it (where this one used to sit) left the in-memory group intact and its durable
+        // rows overwritten: the next save carried the external join's group, and the next load
+        // resurrected it in place of the live one. Reached when a Welcome installs the group while
+        // a recovery for it is already on its way to this call (review of #2466). The id is read
+        // off the GroupInfo, unverified - which is enough to REFUSE: a wrong id refuses a join
+        // that would have failed verification anyway, and touches nothing.
+        let target_id =
+            String::from_utf8_lossy(verifiable_group_info.group_id().as_slice()).to_string();
+        if self.groups.contains_key(&target_id) {
+            return Err(MlsError::GroupAlreadyHeld(target_id));
+        }
 
         let group_config = MlsGroupJoinConfig::builder()
             .use_ratchet_tree_extension(true)
@@ -106,14 +122,6 @@ impl MlsManager {
         let (commit_msg_out, _welcome, _group_info) = commit_message_bundle.into_contents();
 
         let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
-
-        // Guard: never overwrite a live group we already hold (concurrent Welcome).
-        if self.groups.contains_key(&group_id) {
-            return Err(MlsError::OpenMls(format!(
-                "join_by_external_commit: group {} already present locally",
-                group_id
-            )));
-        }
 
         let commit = commit_msg_out
             .tls_serialize_detached()

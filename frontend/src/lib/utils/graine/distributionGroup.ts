@@ -12,7 +12,11 @@ import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repai
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { readWelcomeOwedFromRow, type WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
+import {
+  isWelcomeOwed,
+  readWelcomeOwedFromRow,
+  type WelcomeOwedReading,
+} from '$lib/utils/chat/welcomeOwed';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -304,9 +308,11 @@ async function joinDistributionGroup(
     const reading = await readWelcomeOwedForThisDevice(mlsService, ref.groupId, scope, log);
     if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
       log(
-        reading === 'owed'
-          ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (queued, or an add in flight) - not joining by external commit, the admitter's Welcome is the door`
-          : `[GRAINE] ${scopeLabel(scope)}: this device has a seat but whether a Welcome is owed could not be read - joining nothing this pass, so two doors are never opened at once`
+        reading === null
+          ? `[GRAINE] ${scopeLabel(scope)}: this device has a seat but whether a Welcome is owed could not be read - joining nothing this pass, so two doors are never opened at once`
+          : isWelcomeOwed(reading)
+            ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (${reading}) - not joining by external commit, the admitter's Welcome is the door`
+            : `[GRAINE] ${scopeLabel(scope)}: this device's seat waits for a member's admission - not joining by external commit, a member's Add is the door`
       );
       return false;
     }
@@ -376,8 +382,9 @@ async function republishStaleBase(
 /**
  * Reads whether an admitter owes this device a Welcome into `groupId`.
  *
- * `null` when the question could not be put - no session wired, or the read threw - and the caller
- * then opens NEITHER door this pass: guessing is exactly the move that writes a leaf twice.
+ * `null` when the question could not be put - no session wired, the read threw, or the row did not
+ * answer it - and the caller then opens NEITHER door this pass: guessing is exactly the move that
+ * writes a leaf twice.
  */
 async function readWelcomeOwedForThisDevice(
   mlsService: IMlsService,
@@ -392,7 +399,14 @@ async function readWelcomeOwedForThisDevice(
   const { userId } = requireGraineRuntime('read whether a Welcome is owed');
   try {
     const rows = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
-    return readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
+    const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
+    if (reading === null) {
+      // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
+      console.error(
+        `[GRAINE] ${scopeLabel(scope)}: this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
+      );
+    }
+    return reading;
   } catch (e) {
     log(
       `[GRAINE] ${scopeLabel(scope)}: could not read this device's membership rows: ${String(e)}`

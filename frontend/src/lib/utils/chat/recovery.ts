@@ -13,6 +13,7 @@ import { retireConversation } from './conversations';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -294,6 +295,25 @@ async function stopRecovering(groupId: string, reason: string, deps: RecoveryDep
   });
 }
 
+/** What the caller of {@link requestReAdd} already knows, and the seam cannot read. */
+export interface ReAddOptions {
+  /**
+   * This device has just HANDLED a Welcome for the group and could not join from it
+   * (`NoMatchingKeyPackage`, `GroupAlreadyExists`). The handler returns - and the drain ACKs that
+   * Welcome - only after this recovery has started, so the server can still list it as queued; a
+   * queued Welcome is then not evidence that one is coming, and is read past
+   * (`readWelcomeOwedFromRow`'s `ignoreQueuedWelcome`). Without it the device waited a whole
+   * cadence for the Welcome it had just spent.
+   *
+   * IT READS PAST EVERY QUEUED WELCOME OF THE GROUP, NOT ONLY THE SPENT ONE - the row is a boolean
+   * and cannot tell them apart - and that is safe because the door it opens is guarded where it
+   * acts: a second Welcome the drain applies first makes `externalJoin` stand down under the MLS
+   * lock (`alreadyHeld`), and an external commit that lands first replaces the leaf the second
+   * Welcome's Add wrote for the same key (review of #2466).
+   */
+  welcomeHandled?: boolean;
+}
+
 /**
  * Recovers `groupId` when the local MLS state is absent or out of sync. Single recovery ACTION seam,
  * self-throttled via {@link RECOVERY_TIMEOUT_MS}; the SYNC_WATCHDOG drives the cadence, reactive
@@ -306,7 +326,8 @@ async function stopRecovering(groupId: string, reason: string, deps: RecoveryDep
  *  3. Group CONFIRMED ABSENT server-side -> purge the local phantom, stop.
  *  4. Group already in local WASM -> nothing to recover (caller must forgetGroup first if forked).
  *  5. Group tombstoned (`deletedAt`) -> mark the conversation removed, stop.
- *  6. A member ALREADY OWES us a Welcome (membership still `pending`) -> ask one, stop. The
+ *  6. A member ALREADY OWES us a Welcome (`pending`, with a Welcome queued or an add in flight) ->
+ *     wait for it, ask nobody, stop; a link's seat awaiting admission -> ask a member, stop. The
  *     external join below is not ours to make while an Add is in flight for our own leaf.
  *  7. Try the self-service external-commit join (Phase 4).
  *  8. The server REFUSED it as a non-member (`NotAGroupMemberError`) -> mark the conversation
@@ -315,7 +336,11 @@ async function stopRecovering(groupId: string, reason: string, deps: RecoveryDep
  *  9. Any other failure -> fall back to a single welcome_request (a reachable member re-adds us).
  *     The watchdog re-invokes on its cadence.
  */
-export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise<void> {
+export async function requestReAdd(
+  groupId: string,
+  deps: RecoveryDeps,
+  opts: ReAddOptions = {}
+): Promise<void> {
   // Idempotence: an already-dead conversation does not restart a network recovery.
   const known = findByGroupId(deps.conversations, groupId)?.[1];
   if (known?.lifecycle === 'removed') return;
@@ -492,9 +517,9 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   //
   // AND A LINK'S SEAT IS AN ASK (`awaiting-admission`): a new person enters by a member's Add, so
   // the self-service door is shut for them - the server refuses the base and the commit. Told here,
-  // before anything is tried, the device asks a member and waits, as for `owed`; the member it
+  // before anything is tried, the device asks a member and waits; the member it
   // reaches is shown "X asks to join" (`handleWelcomeRequest`).
-  const reading = await readWelcomeOwed(groupId, deps);
+  const reading = await readWelcomeOwed(groupId, deps, opts);
   if (reading === null) {
     // The discriminator could not be read, so neither path is known to be ours. The watchdog owns
     // the cadence and re-invokes; guessing here is the exact move this block exists to stop.
@@ -507,8 +532,52 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
     return;
   }
-  if (reading === 'owed') {
-    await askAMemberToReAddUs(groupId, deps, 'invited, Welcome owed by a member');
+  // A WELCOME THAT IS COMING IS WAITED FOR, NEVER ASKED FOR AGAIN (DUP-2, 2026-10-25).
+  //
+  // Two readings say somebody else's Welcome is the door. A `welcome_request` on top of any of
+  // them asked every member to redo work already under way: a member finding the add lock held
+  // logged `Lock busy` and stood down, and a member finding it free would have REPLACED this
+  // device's leaf - a second commit, a second Welcome, the first one invalidated. Measured on DUP-2:
+  // a joiner whose first frame was a member's commit (the server routes an admitted device every
+  // frame of its epoch, and must) asked for a re-add five seconds before the adder delivered the
+  // Welcome it owed.
+  //
+  // So the device waits, on the facts and not a clock: the not-ready marker above keeps the group on
+  // the SYNC_WATCHDOG's cadence, every pass re-reads the row, and once no fact holds the reading is
+  // `unhonoured-seat` and the self-service door below is this device's. The frames that arrived
+  // first stay buffered and in the server queue, and the Welcome handler replays them. The Graine
+  // key-group join has waited on the same readings since 2026-09-27 (`ensureDistributionGroupFor`).
+  if (reading === 'welcome-queued') {
+    // THE WELCOME IS IN THIS DEVICE'S OWN MAILBOX, so the mailbox is where to look. A pull reads it
+    // now rather than whenever the next push or reconnect happens to.
+    //
+    // ONLY THE LEADER TAB PULLS: the mailbox is drained where the ratchet lives, and a pull asked
+    // from a follower is refused as a caller that forgot to ask (`fetchPendingMessages`). A follower
+    // has nothing to do here - the leader's own recovery reads the same row.
+    if (getTabLeadership() === 'follower') {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... a Welcome is queued for this device - a follower tab does not pull, the leader drains it`
+      );
+      return;
+    }
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... a Welcome is queued for this device - pulling the mailbox, no member asked`
+    );
+    void deps.mlsService
+      .fetchPendingMessages()
+      .catch((e: unknown) =>
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... mailbox pull for the queued Welcome failed: ${String(e).slice(0, 120)}`
+        )
+      );
+    return;
+  }
+  if (reading === 'add-in-flight') {
+    // SOME member holding this group's add lock - the lock is per group, so the Add may be for
+    // another device; the next pass after its release reads which.
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... a member holds the add lock - waiting for it to settle, no member asked`
+    );
     return;
   }
 
@@ -595,6 +664,51 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   deps.log(
     `[READD] ${groupId.slice(0, 8)}... externalJoin -> ${outcome.joined ? 'joined' : outcome.reason}`
   );
+  if (outcome.joined && outcome.alreadyHeld) {
+    // THE GROUP WAS ALREADY HELD WHEN THE JOIN TOOK THE MLS LOCK, and nothing was built (review of
+    // #2466). Usually a Welcome installed it while this recovery was on its way; or the engine held
+    // it all along and this service's list missed it (the engine's typed refusal - a stale list
+    // after a PIN recovery on native), in which case NO Welcome ran and nothing else will touch the
+    // roster seat.
+    //
+    // SO THE SEAT IS PROMOTED HERE, whichever it was - the deterministic end of the row - but ONLY
+    // ON PROOF THAT OUR LEAF IS IN THE TREE WE HOLD. The server cannot check that: a self-report
+    // promotes any existing seat that is not kicked and not awaiting admission (`promoteReportedSeat`),
+    // so the proof is ours to carry. Holding the state is not it - an evicted group stays held
+    // (`isGroupActive`) - and a held, active group is: `active` is then the truth, and a `pending`
+    // row left behind is served to every member as a work item, so the next one online would Add a
+    // leaf already in the tree and its duplicate-leaf repair would kick the live one (the reason the
+    // external-join branch below promotes). After a Welcome it is a second write of the same value:
+    // the server's UPDATE matches again, logs one line and re-adds an existing route, and emits
+    // nothing. Logged rather than thrown, as below.
+    ownKeyPackageLogged.delete(groupId);
+    clearGroupNotReady(deps.userId, groupId);
+    cancelReAdd(groupId);
+    const inTree = await deps.mlsService.isGroupActive(groupId).catch((e: unknown) => {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... held, but whether our leaf is in its tree could not be read: ${String(e).slice(0, 120)}`
+      );
+      return false;
+    });
+    if (!inTree) {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... the group was already held when the join took the lock - nothing built; our leaf is not proven in its tree, so the roster seat is left as it is`
+      );
+      return;
+    }
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... the group was already held when the join took the lock - nothing built, roster seat promoted, recovery done`
+    );
+    await deps.mlsService
+      .updateInvitationStatus(deps.mlsService.getDeviceId(), deps.userId, groupId, 'active')
+      .catch((e) =>
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... held, but the roster seat is still pending: ` +
+            `${String(e).slice(0, 120)} - a member may try to Add a leaf already in the tree`
+        )
+      );
+    return;
+  }
   if (outcome.joined) {
     ownKeyPackageLogged.delete(groupId);
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
@@ -742,9 +856,9 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
  * Answers "does a member already owe this device a Welcome for `groupId`, RIGHT NOW?" from the
  * server's own per-device membership row and the two facts the row cannot carry.
  *
- * THREE ANSWERS, AND THE THIRD IS NOT A "NO". `true` an Add is in flight for our leaf, `false`
- * nobody owes us anything that exists, `null` the question could not be asked. Collapsing `null`
- * into `false` is precisely the mistake this seam exists to stop making: it would send the invited
+ * `null` IS NOT A "NO": it says the question could not be answered - the request failed, or the row
+ * did not carry the facts. Collapsing `null` into "nobody owes us" is precisely the mistake this
+ * seam exists to stop making: it would send the invited
  * population back down the external-join path on exactly the network conditions where losing the
  * race is likeliest. `getDeviceMemberships` rejects rather than answering `[]` so that this function
  * can tell the two apart at all.
@@ -770,18 +884,19 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
  * Together they are true for every `pending` row somebody is actually working on, and false only for
  * a roster seat nothing follows.
  *
- * **A SERVER THAT DOES NOT SAY IS NOT A SERVER SAYING NO.** Both fields are optional, and a row from
- * a server that carries neither falls back to the old reading - `pending` means owed. A native client
- * ships its own frontend (`frontendDist`), so an APK older than this change talks to a server that
- * has it and vice versa; treating a missing field as `false` would hand the whole invited population
- * the external join, which is the race, not the fix.
+ * **A ROW THAT DOES NOT SAY IS NOT A ROW SAYING NO.** Every deployed server writes both facts on a
+ * pending row since 2026-09-03, so a row missing either is an anomaly: it reads `null`, the pass is
+ * skipped as if the request had failed, and the line accuses. Treating a missing field as `false`
+ * would hand the invited population the external join, which is the race, not the fix.
  *
  * @returns the reading ({@link WelcomeOwedReading}) - `awaiting-admission` included, the invitation
- *   link's seat that only a member's Add answers - or `null` when the memberships could not be read.
+ *   link's seat that only a member's Add answers - or `null` when the memberships could not be read
+ *   or this device's pending row did not answer.
  */
 async function readWelcomeOwed(
   groupId: string,
-  deps: RecoveryDeps
+  deps: RecoveryDeps,
+  opts: ReAddOptions = {}
 ): Promise<WelcomeOwedReading | null> {
   try {
     const rows = await deps.mlsService.getDeviceMemberships(
@@ -790,8 +905,17 @@ async function readWelcomeOwed(
     );
     // THE READING IS SHARED with the Graine key-group join (`readWelcomeOwedFromRow`), which since
     // 2026-09-27 has the same two doors - an admitter's Welcome, or the device's own external
-    // commit. A server that carries neither field reads `owed`: the row's status is all there is.
-    const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
+    // commit.
+    const row = rows.find((r) => r.groupId === groupId);
+    const readPast = opts.welcomeHandled === true;
+    const reading = readWelcomeOwedFromRow(row, { ignoreQueuedWelcome: readPast });
+    if (reading === null) {
+      // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
+      console.error(
+        `[READD] ${groupId.slice(0, 8)}... this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
+      );
+      return null;
+    }
     if (reading === 'awaiting-admission') {
       deps.log(
         `[READD] ${groupId.slice(0, 8)}... invitation-link seat awaiting a member's admission - ` +
@@ -804,9 +928,22 @@ async function readWelcomeOwed(
       // means this device was given a seat nobody ever honoured, and the next lines are the
       // self-service join that used to be unreachable. If it is common, the inviter is dropping
       // devices - which is the P2 next door, not this seam.
+      //
+      // UNLESS A QUEUED WELCOME WAS READ PAST ON PURPOSE: the caller has just spent one, and the
+      // row cannot say whether the Welcome it lists is that one or another. That is not a stranded
+      // seat, and saying "NO queued Welcome" of it would be false; the join below is safe either
+      // way (`readWelcomeOwedFromRow`). And a seat a commit ADMITTED (`admittedAtEpoch`) is named,
+      // because its leaf is already in the tree and the external commit replaces it.
+      const admitted =
+        row?.admittedAtEpoch !== undefined && row.admittedAtEpoch !== null
+          ? ` (a commit admitted this seat at epoch ${row.admittedAtEpoch}; the external commit replaces that leaf)`
+          : '';
       deps.log(
-        `[READD] ${groupId.slice(0, 8)}... roster seat with NO queued Welcome and NO add in flight` +
-          ` - nobody owes us anything; serving ourselves`
+        readPast && row?.welcomeQueued === true
+          ? `[READD] ${groupId.slice(0, 8)}... the row still lists a queued Welcome, read past: this device has just spent one for the group` +
+              ` - serving ourselves${admitted}`
+          : `[READD] ${groupId.slice(0, 8)}... roster seat with NO queued Welcome and NO add in flight` +
+              ` - nobody owes us anything; serving ourselves${admitted}`
       );
     }
     return reading;
@@ -822,10 +959,10 @@ async function readWelcomeOwed(
  * Asks a reachable member to re-add this device by Welcome, and says WHY it was asked.
  *
  * The single seam for the only remaining way into a group this device cannot join by itself, shared
- * by the two callers that reach it for opposite reasons - one because a member already owes us the
- * Welcome, one because the external join was refused. `context` is what keeps the log honest: the
- * same request sent for those two reasons means different things, and reading "fallback" on the path
- * that is the PRIMARY one would misdescribe a healthy join as a degraded one.
+ * by the two callers that reach it for opposite reasons - one because a link's seat waits for a
+ * member's admission, one because the external join was refused. `context` is what keeps the log
+ * honest: the same request sent for those two reasons means different things. A Welcome a member
+ * already OWES us is never asked for here - it is waited for (`requestReAdd`, DUP-2).
  */
 async function askAMemberToReAddUs(
   groupId: string,
