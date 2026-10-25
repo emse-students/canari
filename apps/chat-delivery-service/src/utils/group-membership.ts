@@ -242,12 +242,17 @@ function requireId(value: unknown, field: string): string {
  * device is owed.
  *
  * @param manager pass the transaction's manager, so the rows and the queue go together.
+ * @param rows `'not-active'` ends only rows that are not `active` (a member ending another user's
+ *        pending invitation); the queue is deleted all the same, so a caller that refuses an
+ *        active row it finds left behind throws and lets the transaction's rollback restore it.
+ *        The statement order is unchanged either way.
  * @returns how many device rows and queued rows were deleted, for the caller's log line.
  */
 export async function endDeviceMemberships(
   manager: EntityManager,
   scope: DepartureScope,
-  queue: 'welcomes' | 'all'
+  queue: 'welcomes' | 'all',
+  rows: 'any' | 'not-active' = 'any'
 ): Promise<{ memberships: number; queued: number }> {
   // A DELETE IS ONLY AS NARROW AS ITS FILTER, so every column the caller names must be a real id.
   // An absent `userId`, or a named `deviceId`/`groupId` that is empty, undefined or null, is a
@@ -268,7 +273,7 @@ export async function endDeviceMemberships(
   });
   const memberships = await manager
     .getRepository(DeviceGroupMembership)
-    .delete({ userId, ...narrowing });
+    .delete({ userId, ...narrowing, ...(rows === 'not-active' ? { status: Not('active') } : {}) });
   return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
 }
 

@@ -1219,8 +1219,11 @@ top: rename, photo and delete-for-everyone refuse a key-distribution group to EV
 `KEY_DISTRIBUTION_GROUP`, after the membership check, so a stranger still reads `NOT_A_MEMBER`) -
 its lifecycle is the internal `mls/distribution-groups` routes'; and a member ending ANOTHER user's
 device row may end only a row that is not `active` (the pending invitation the group cannot honour),
-the status read under a row lock in the deleting transaction - an active one is the 403
-`MEMBERSHIP_NOT_ALLOWED`. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+and never one in a key-distribution group. The condition rides the delete itself (`status <> 'active'`),
+after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
+locking the device row first would invert it and can deadlock; a row left behind is active and is the
+403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 

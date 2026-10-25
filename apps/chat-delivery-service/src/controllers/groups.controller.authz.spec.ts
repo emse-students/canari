@@ -32,11 +32,16 @@ type GroupRow = {
   deletedAt?: Date | null;
 };
 
-/** One `where` clause against an in-memory row, `IsNull()` included (the tombstone filter). */
+/**
+ * One `where` clause against an in-memory row, with the two operators the routes use: `IsNull()`
+ * (the tombstone filter) and `Not(x)` (a delete that spares active rows).
+ */
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([k, v]) =>
-    v instanceof FindOperator && v.type === 'isNull' ? row[k] == null : row[k] === v
-  );
+  return Object.entries(where).every(([k, v]) => {
+    if (v instanceof FindOperator && v.type === 'isNull') return row[k] == null;
+    if (v instanceof FindOperator && v.type === 'not') return row[k] !== v.value;
+    return row[k] === v;
+  });
 }
 
 /** The three tables the check reads, as plain arrays a test edits. */
@@ -253,23 +258,28 @@ describe('the device-membership deletions enforce who may end a row', () => {
   let transaction: jest.Mock;
   /** The device rows the transaction deleted, read off the same in-memory table. */
   let deleted: DeviceRow[];
-  /** Whether the transaction's status read took a row lock. */
-  let lockedRead: unknown;
+  /**
+   * Every statement the transaction ran, in order: `delete <table>` or `read <table>` (`+lock` when
+   * it took a row lock). The order is the deadlock rule of `utils/seat-eviction.ts`.
+   */
+  let statements: string[];
 
   beforeEach(() => {
     t = makeTables();
     deleted = [];
-    lockedRead = undefined;
+    statements = [];
+    const table = (entity: unknown) => (entity === DeviceGroupMembership ? 'devices' : 'queue');
     transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
       cb({
         getRepository: (entity: unknown) => ({
           findOne: jest.fn(
             async ({ where, lock }: { where: Record<string, unknown>; lock?: unknown }) => {
-              lockedRead = lock;
+              statements.push(`read ${table(entity)}${lock ? '+lock' : ''}`);
               return t.tables.devices.find((r) => matches(r, where)) ?? null;
             }
           ),
           delete: jest.fn(async (where: Record<string, unknown>) => {
+            statements.push(`delete ${table(entity)}`);
             if (entity !== DeviceGroupMembership) return { affected: 0 };
             const gone = t.tables.devices.filter((r) => matches(r, where));
             deleted.push(...gone);
@@ -323,7 +333,33 @@ describe('the device-membership deletions enforce who may end a row', () => {
       invitations.deleteDeviceMembership(STRANGER, 'd-1', GROUP, MEMBER)
     ).resolves.toMatchObject({ status: 'deleted', affected: 1 });
     expect(deleted).toEqual([expect.objectContaining({ userId: STRANGER, status: 'pending' })]);
-    expect(lockedRead).toEqual({ mode: 'pessimistic_write' });
+  });
+
+  it('keeps the one delete order - queue, then device rows - and locks no device row first', async () => {
+    // Locking the device row before the queue inverts the order every other departure takes, and
+    // two such transactions deadlock (`utils/seat-eviction.ts`).
+    t.tables.devices = [{ groupId: GROUP, userId: WAITING, deviceId: 'd-2', status: 'active' }];
+
+    await invitations.deleteDeviceMembership(WAITING, 'd-2', GROUP, MEMBER).catch(() => undefined);
+
+    expect(statements).toEqual(['delete queue', 'delete devices', 'read devices']);
+  });
+
+  it("refuses another user's row in a key-distribution group, whatever its status", async () => {
+    t.tables.groups = [{ id: GROUP, distributionWorkspaceId: 'ws-1' }];
+    t.tables.devices = [
+      { groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' },
+      { groupId: GROUP, userId: STRANGER, deviceId: 'd-9', status: 'pending' },
+    ];
+
+    const refusal = await invitations
+      .deleteDeviceMembership(STRANGER, 'd-9', GROUP, MEMBER)
+      .catch((e: unknown) => e);
+
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: 'KEY_DISTRIBUTION_GROUP',
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it("refuses an admitted member ending another member's ACTIVE device row, and ends nothing", async () => {

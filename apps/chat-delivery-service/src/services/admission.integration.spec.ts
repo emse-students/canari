@@ -770,6 +770,35 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     );
   });
 
+  it("a member's pending list never names a key-distribution group's rows", async () => {
+    const KEY_GROUP = '00000000-0000-4000-8000-0000000000a9';
+    await q(
+      `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "distributionWorkspaceId")
+       VALUES ($1, true, 1, '00000000-0000-4000-8000-0000000000aa')`,
+      [KEY_GROUP]
+    );
+    try {
+      // The member's device is in the key group, and another device - one with a key package, so
+      // nothing but the group's kind can exclude it - holds a pending row there.
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'active'), ($4, $5, $3, 'pending')`,
+        [MEMBER.userId, MEMBER.deviceId, KEY_GROUP, JOINER.userId, JOINER.deviceId]
+      );
+
+      const rows = await invitations().getPendingInvitations(
+        MEMBER.userId,
+        MEMBER.deviceId,
+        MEMBER.userId
+      );
+
+      expect(rows.filter((r) => r.groupId === KEY_GROUP)).toEqual([]);
+    } finally {
+      await q(`DELETE FROM dm_device_group_memberships WHERE "groupId" = $1`, [KEY_GROUP]);
+      await q(`DELETE FROM dm_groups WHERE id = $1`, [KEY_GROUP]);
+    }
+  });
+
   /**
    * (6) A WAITING DEVICE ASKS ON EVERY RECOVERY CADENCE FOR UP TO 14 DAYS (review of #2358, P2-3):
    * every relay is still made, and its lines are said at the 1st, 10th, 100th... ask of that device.

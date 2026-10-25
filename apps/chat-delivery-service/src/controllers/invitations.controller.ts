@@ -40,6 +40,7 @@ import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import {
   assertCallerActsOnGroup,
+  isKeyDistributionGroup,
   refuseAwaitingSeat,
   callerSeatStanding,
   endDeviceMemberships,
@@ -296,11 +297,31 @@ export class InvitationsController {
       return [];
     }
 
+    // 1b. Only CONVERSATIONS invite by Add. A key-distribution group's devices enter by external
+    // commit and its roster is the community's, so its pending rows are no invitation a member
+    // honours - and the client, which never lists that group among its conversations, would read
+    // them as rows of a group gone from the server and end every one.
+    const conversations = await this.groupRepo.find({
+      where: {
+        id: In(myGroupIds),
+        distributionWorkspaceId: IsNull(),
+        distributionChannelId: IsNull(),
+      },
+      select: { id: true },
+    });
+    const conversationIds = conversations.map((g) => g.id);
+    if (conversationIds.length === 0) {
+      this.logger.log(
+        `[PENDING][${traceId}] DONE groups=${myGroupIds.length} conversations=0 invitations=0`
+      );
+      return [];
+    }
+
     // 2. Find all pending memberships in those groups.
     // Uses In() to generate a single WHERE groupId IN (...) AND status = 'pending' predicate
     // instead of N OR clauses (one per group), which is far more efficient in PostgreSQL.
     const pending = await this.deviceGroupRepo.find({
-      where: { groupId: In(myGroupIds), status: 'pending' as const },
+      where: { groupId: In(conversationIds), status: 'pending' as const },
     });
 
     if (pending.length === 0) {
@@ -674,9 +695,15 @@ export class InvitationsController {
    *
    * **ANOTHER USER'S ROW IS ENDED ONLY WHILE IT IS NOT `active`**: the one use of that door is a
    * pending invitation the group cannot honour, and an active row is a device IN the conversation,
-   * whose departure is its owner's (or a commit's) to make. The status is read under a row lock in
-   * the transaction that deletes it, so a row cannot turn active between the check and the delete.
-   * An active row is the 403 `MEMBERSHIP_NOT_ALLOWED`; an absent one ends nothing (`affected: 0`).
+   * whose departure is its owner's (or a commit's) to make. The delete itself carries the condition
+   * (`status <> 'active'`), so a row cannot turn active between a check and the delete; a row the
+   * delete left behind is active, and is the 403 `MEMBERSHIP_NOT_ALLOWED` - the throw rolls back the
+   * Welcomes the same transaction dropped. An absent row ends nothing (`affected: 0`). The statements
+   * keep the one delete order of `utils/seat-eviction.ts` (queue, then device rows): taking the
+   * device row's lock first would invert it against every other departure and can deadlock.
+   *
+   * Another user's row in a KEY-DISTRIBUTION group is never ended here (403
+   * `KEY_DISTRIBUTION_GROUP`): its devices enter and leave through the distribution-groups routes.
    */
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/device-memberships/:userId/:deviceId/:groupId')
@@ -693,37 +720,48 @@ export class InvitationsController {
     const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
     const forAnotherUser = caller !== safeUserId && headerGlobalAdmin !== 'true';
     if (forAnotherUser) {
-      await assertCallerActsOnGroup(
+      const group = await assertCallerActsOnGroup(
         { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
         this.logger,
         'DEL_MEMBERSHIP',
         safeGroupId,
         caller
       );
+      if (isKeyDistributionGroup(group)) {
+        this.logger.warn(
+          `[DEL_MEMBERSHIP] REFUSED key-distribution group=${safeGroupId} caller=${cutUserId(caller)} target=${cutUserId(safeUserId)}:${cutDeviceId(safeDeviceId)} (403 KEY_DISTRIBUTION_GROUP)`
+        );
+        throw new ForbiddenException(
+          refusalBody(
+            RefusalCode.KEY_DISTRIBUTION_GROUP,
+            "A key-distribution group's device rows are managed through its community."
+          )
+        );
+      }
     }
 
     // The row and the Welcomes still queued for it, in ONE transaction ({@link endDeviceMemberships}).
     const scope = { userId: safeUserId, deviceId: safeDeviceId, groupId: safeGroupId };
     const ended = await this.deviceGroupRepo.manager.transaction(async (manager) => {
-      if (forAnotherUser) {
-        const row = await manager.getRepository(DeviceGroupMembership).findOne({
-          where: scope,
-          select: { id: true, status: true },
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (row?.status === 'active') {
-          this.logger.warn(
-            `[DEL_MEMBERSHIP] REFUSED group=${safeGroupId} caller=${cutUserId(caller)} target=${cutUserId(safeUserId)}:${cutDeviceId(safeDeviceId)} - an active row is ended by its owner only (403 MEMBERSHIP_NOT_ALLOWED)`
-          );
-          throw new ForbiddenException(
-            refusalBody(
-              RefusalCode.MEMBERSHIP_NOT_ALLOWED,
-              "Cannot end another user's active device membership"
-            )
-          );
-        }
+      if (!forAnotherUser) return endDeviceMemberships(manager, scope, 'welcomes');
+      const done = await endDeviceMemberships(manager, scope, 'welcomes', 'not-active');
+      if (done.memberships > 0) return done;
+      const left = await manager.getRepository(DeviceGroupMembership).findOne({
+        where: scope,
+        select: { id: true, status: true },
+      });
+      if (left) {
+        this.logger.warn(
+          `[DEL_MEMBERSHIP] REFUSED group=${safeGroupId} caller=${cutUserId(caller)} target=${cutUserId(safeUserId)}:${cutDeviceId(safeDeviceId)} status=${left.status} - an active row is ended by its owner only (403 MEMBERSHIP_NOT_ALLOWED)`
+        );
+        throw new ForbiddenException(
+          refusalBody(
+            RefusalCode.MEMBERSHIP_NOT_ALLOWED,
+            "Cannot end another user's active device membership"
+          )
+        );
       }
-      return endDeviceMemberships(manager, scope, 'welcomes');
+      return done;
     });
 
     // Keep Redis message routing in sync with membership deletion.

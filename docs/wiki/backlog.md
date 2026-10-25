@@ -32,6 +32,13 @@ half, the shipped half is a pointer, never a retelling.
 What the audit left open is in the private operations notes until each item is fixed; the rule is
 in [durable-rules](durable-rules.md).
 
+## P3 - A group creation that fails before its creator is registered leaves an orphan group row (2026-10-25)
+
+When creation fails between the remote group's creation and the creator's registration, the
+client's cleanup `DELETE mls/groups/:id` is now answered 403 `NOT_A_MEMBER` (the creator holds no
+seat yet), so the empty row stays. Owed: a server-side path that ends a group nobody ever joined
+(the creator's own bootstrap, or the orphan sweep), with a spec.
+
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
 `assertCallerActsOnGroup` (`utils/group-membership.ts`) and the private member checks of
