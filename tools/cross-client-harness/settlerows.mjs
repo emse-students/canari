@@ -276,7 +276,9 @@ export function decryptsDuringHold({ shownAt, heldFrom, heldUntil }) {
 export const AUTH_LINES = {
   renewing: /\[AUTH\] 401 on POST \/api\/mls\/commit - renewing the token and sending the same request once more$/,
   renewedMeanwhile: /\[AUTH\] POST \/api\/mls\/commit: the token was renewed meanwhile - sent again with it$/,
-  okAfterRenewal: /\[AUTH\] 200 on POST \/api\/mls\/commit after the token renewal$/,
+  // 201 is the commit gate ACCEPTING (alpha.4 TOK-1 answered 201: a 200-only needle failed the row and
+  // left the line unexplained); 200 is its DUPLICATE answer. Any other status is not a success here.
+  okAfterRenewal: /\[AUTH\] 20[01] on POST \/api\/mls\/commit after the token renewal$/,
   renewalFailed: /\[AUTH\] token renewal failed after a 401 on POST \/api\/mls\/commit - .+ - the request did nothing: DeliveryRenewalFailedError$/,
   renewalAbandoned: /\[AUTH\] token renewal abandoned at the request deadline after a 401 on POST \/api\/mls\/commit - /,
   refusedRenewedOnce: /\[AUTH\] 401 on .+ with a token already refused once renewed - not renewed again: DeliveryRefusedRenewedTokenError$/,
@@ -307,7 +309,7 @@ const noWarnBut = (auth, allowed = []) => {
 
 /**
  * TOK-1, POSITIVELY: ONE 401 in front of the commit, ONE renewal, the same request sent ONCE more and
- * answered 200 - not merely "no logout", which a commit dropped in silence would also show.
+ * answered 201 (or 200, a duplicate) - not merely "no logout", which a commit dropped in silence would also show.
  *
  * @param {{auth: ReturnType<typeof authLines>, fired401: number, commitPosts: number}} p
  */
@@ -316,7 +318,7 @@ export function renewedOnceOwn({ auth, fired401, commitPosts }) {
     { what: `exactly one 401 was put in front of the commit POST (${fired401})`, ok: fired401 === 1 },
     { what: `W1 announced one renewal (${auth.renewing.length})`, ok: auth.renewing.length === 1 },
     { what: `the same request went out once more: two commit POSTs in all (${commitPosts})`, ok: commitPosts === 2 },
-    { what: `it was answered 200 after the renewal (${auth.okAfterRenewal.length})`, ok: auth.okAfterRenewal.length === 1 },
+    { what: `it was answered 201/200 after the renewal (${auth.okAfterRenewal.length})`, ok: auth.okAfterRenewal.length === 1 },
     noWarnBut(auth),
   ];
 }

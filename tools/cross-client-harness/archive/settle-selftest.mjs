@@ -191,7 +191,9 @@ const A = {
 const al = authLines(Object.values(A));
 ok('each [AUTH] shape lands in exactly its own key', Object.values(al).every((v) => v.length === 1) && al.renewalFailed[0] === A.failed && al.renewalAbandoned[0] === A.abandoned && al.refusedRenewedAgain[0] === A.refusedAgain);
 ok('control: a 401 on ANOTHER request is not the commit renewal', authLines([A.renewing.replace('/api/mls/commit', '/api/mls/messages/ack')]).renewing.length === 0);
-ok('control: a reworded success is not matched', authLines([A.ok200.replace('200', '201')]).okAfterRenewal.length === 0);
+ok('the 201 the commit gate answers on ACCEPT is the success (alpha.4 TOK-1)', authLines([A.ok200.replace('200', '201')]).okAfterRenewal.length === 1);
+ok('control: a 409 after the renewal is not a success', authLines([A.ok200.replace('200', '409')]).okAfterRenewal.length === 0);
+ok('control: a reworded success is not matched', authLines([A.ok200.replace('after the token renewal', 'after renewal')]).okAfterRenewal.length === 0);
 
 console.log('TOK-1 judge');
 const one = (over = {}) => renewedOnceOwn({ auth: authLines([A.renewing, A.ok200]), fired401: 1, commitPosts: 2, ...over });
