@@ -524,9 +524,14 @@ profile edit (inside its audit transaction, so a row gone rolls the audit back).
   (`ACCOUNT_ERASURE_PENDING`/`_BLOCKED`, read again on `UserRowGoneError`) and is never re-created.
 - **A role change ends the sessions that carried it.** The admin flag travels in each access token
   (`/api/auth/verify` hands it on as `X-Global-Admin`), so removing it ends every session of the
-  person (`revokeOthers(id, null)`): each token authenticates nothing from that moment, and the next
-  sign-in mints tokens from the row as it stands. Nobody writes their own flag, either way. The
-  session store is its own `SessionsModule`, imported by the auth and the user routes alike.
+  person (`revokeOthers(id, null)`): each token is answered anonymous at `/api/auth/verify` from that
+  moment (the three self-verifying families are on [sessions](../sessions.md)), and the next sign-in
+  mints tokens from the row as it stands. The revoke runs on EVERY removal, a removal of a flag
+  already off included, so a retry after a failure between the update and the revoke still ends the
+  sessions. A sign-in reads the flag AFTER its session exists (`isUserAdmin`) and signs that value,
+  never the row it read before: a role change committed in between is either read there or ends
+  that session too. Nobody writes their own flag, either way. The session store is its own
+  `SessionsModule`, imported by the auth and the user routes alike.
 - **An administrator's `create` is an insert**, `ON CONFLICT DO NOTHING`: an id that has a row is a
   `409` (`UserIdTakenError`), as is one whose erasure is running; a save would overwrite the row.
 - **`save` stays for a row the call itself creates** (the first sign-in, a session, a block).

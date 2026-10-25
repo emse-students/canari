@@ -312,8 +312,12 @@ export class UsersService implements OnModuleInit {
       .getMany();
   }
 
-  /** Returns whether the given user has global admin privileges. */
-  private async isUserAdmin(userId: string): Promise<boolean> {
+  /**
+   * Whether the given user has global admin privileges, read from the row NOW (one column). The
+   * sign-in reads it this way after opening its session, so the token it mints never carries a flag
+   * read before a concurrent change.
+   */
+  async isUserAdmin(userId: string): Promise<boolean> {
     if (!userId) return false;
     const row = await this.userRepository
       .createQueryBuilder('user')

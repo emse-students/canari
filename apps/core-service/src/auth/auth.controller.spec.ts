@@ -127,6 +127,7 @@ describe('AuthController sessions', () => {
 
     const users = {
       findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+      isUserAdmin: jest.fn().mockResolvedValue(false),
     };
     const platform = {
       getConfig: jest.fn().mockResolvedValue({}),
@@ -543,9 +544,14 @@ describe('AuthController sessions', () => {
         before: 'none',
         after: 'none',
       },
-      users = {
+      users: {
+        findOrCreateFromOidc: jest.Mock;
+        claimLegacyCotisations: jest.Mock;
+        isUserAdmin?: jest.Mock;
+      } = {
         findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
         claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn().mockResolvedValue(false),
       }
     ): AuthController {
       process.env.AUTHENTIK_BASE_URL = 'https://auth.example';
@@ -679,6 +685,34 @@ describe('AuthController sessions', () => {
       });
       expect(cookies).toEqual({});
       warn.mockRestore();
+    });
+
+    /**
+     * A role change that commits between the upsert's read of the row and the session's creation:
+     * the token is signed from the flag as it stands once the session exists, never from that read.
+     */
+    it('signs the admin flag read after the session exists, not the one the upsert read', async () => {
+      authentikAnswers('h.idtoken.s');
+      let adminNow = true;
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: true }),
+        claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn(async () => adminNow),
+      };
+      // The change commits while the session is being opened.
+      sessions.create.mockImplementationOnce(async () => {
+        adminNow = false;
+        return { sessionId: 'sid-new', tokenId: 'jti-new', expiresAt: new Date(Date.now() + 1000) };
+      });
+      const body = await callbackController(undefined, users).oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { admin?: boolean };
+      expect(access.admin).toBe(false);
+      expect(body.user.admin).toBe(false);
+      expect(users.isUserAdmin).toHaveBeenCalledWith('user-1');
     });
 
     /**

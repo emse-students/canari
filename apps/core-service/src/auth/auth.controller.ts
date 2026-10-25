@@ -678,7 +678,16 @@ export class AuthController {
     // The session first: the access token names it (`sid`), so what it registers is bound to this
     // login.
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
-    const access_token = this.signAccessToken(user.id, !!user.admin, session.sessionId);
+    // The admin flag is read AFTER the session exists, never taken from the row read before it: a
+    // role change that commits after that earlier read either lands before this read (and is read
+    // here) or after the session exists (and the sessions it ends include this one).
+    const admin = await this.usersService.isUserAdmin(user.id);
+    if (admin !== !!user.admin) {
+      this.logger.log(
+        `[AUTH] admin flag changed during the sign-in user=${user.id.slice(0, 8)} admin=${admin}`
+      );
+    }
+    const access_token = this.signAccessToken(user.id, admin, session.sessionId);
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
     // The race the check before the mint cannot close: a `DELETE /users/me` that committed after it.
@@ -708,7 +717,7 @@ export class AuthController {
         lastName: user.lastName || '',
         promo: user.promo ?? null,
         bio: user.bio ?? null,
-        admin: !!user.admin,
+        admin,
       },
     };
   }

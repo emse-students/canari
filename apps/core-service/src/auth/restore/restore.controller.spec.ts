@@ -126,7 +126,10 @@ describe('AuthController restore routes', () => {
       isAccessBlockedByMaintenance: jest.fn().mockReturnValue(false),
     };
     controller = new AuthController(
-      { findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }) } as never,
+      {
+        findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+        isUserAdmin: jest.fn().mockResolvedValue(false),
+      } as never,
       platform as never,
       sessions as never,
       { enabled: false } as never,

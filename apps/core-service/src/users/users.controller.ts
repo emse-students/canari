@@ -545,11 +545,13 @@ export class UsersController {
             )
           : refusalBody(
               RefusalCode.ADMIN_SELF_CHANGE,
-              'An administrator cannot change their own administrator right; another administrator must do it.'
+              'Un administrateur ne peut pas modifier ses propres droits ; un autre administrateur doit le faire.'
             )
       );
     }
     await this.usersService.setAdmin(targetId, body.admin);
+    // EVERY removal ends the sessions, a removal of a flag already off included: a retry after a
+    // failure between the update and this line still ends them.
     if (!body.admin) {
       const ended = await this.sessions.revokeOthers(targetId, null);
       this.logger.log(
