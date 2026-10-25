@@ -55,26 +55,26 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
    "personnel never see a student's personal post"
    ([profiles-and-access](profiles-and-access.md#d34-d36---who-is-who)) no longer holds for a
    personnel the student accepted. Read grants (WP7) stay out of the personal branch.
+5. **The opening reaches ONLY accepted followers** (user, 2026-10-25, answering the lead's open
+   question). The Tout feed stays filtered by spaces for non-followers, so what widens is exactly
+   what the author approved, one person at a time.
 
 ### Open questions for the user, each with the lead's recommendation
 
-- **Q1 - Does the opening reach ONLY accepted followers, or also the Tout feed of non-followers?**
-  Recommended: ONLY accepted followers. Non-followers keep today's space gating, so the opening is
-  exactly what the author approved, one person at a time.
-- **Q2 - What does "private" hide from a non-follower who shares a space?** Today they see the
+- **Q1 - What does "private" hide from a non-follower who shares a space?** Today they see the
   student's personal posts in Tout. Recommended: "private" governs who may FOLLOW (the acceptance),
   and space visibility stays as it is; narrowing it to followers only (the Instagram model) would
   make a student's posts vanish for their own promo, a change nobody asked for.
-- **Q3 - Does a member's repost of an ENTITY post widen that entity's audience?** Recommended: no.
+- **Q2 - Does a member's repost of an ENTITY post widen that entity's audience?** Recommended: no.
   An association's audience is its admins' choice (D38 needs their acceptance), so a member's
   repost places the post in Suivis only for followers who already see it. A repost of a PERSONAL
   post with the author's consent does widen it to the reposter's accepted followers, which is what
   the consent is for.
-- **Q4 - Minors.** The terms admit members aged 15 and over. Private-by-default for students is the
+- **Q3 - Minors.** The terms admit members aged 15 and over. Private-by-default for students is the
   protection; confirm that no age-based rule is wanted beyond it (no stored age was assumed here,
   and none should be added for this).
-- **Q5 - Search and suggestions.** Recommended: a private account stays findable by name and can be
-  asked; its posts reach only accepted followers (plus the space rule, per Q2).
+- **Q4 - Search and suggestions.** Recommended: a private account stays findable by name and can be
+  asked; its posts reach only accepted followers (plus the space rule, per Q1).
 
 ### The work packages, in order, each with its starting point and its proof
 
