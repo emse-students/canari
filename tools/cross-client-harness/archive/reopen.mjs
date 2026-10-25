@@ -76,6 +76,10 @@ export async function killSeat(seat, how) {
     const { targetInfo } = await seat.cx.send('Target.getTargetInfo');
     const b = await browserOf(port);
     try {
+      // A TAB CLOSED, NOT A BROWSER QUIT: closing a window's last tab quits Chrome, and the revival
+      // then had no browser to open a tab in (KILL-5, 2026-10-25: "Unable to connect" on the port).
+      // A blank tab keeps the browser alive, as the user's other tabs do; the revival closes it.
+      await b.send('Target.createTarget', { url: 'about:blank', newWindow: false });
       await b.send('Target.closeTarget', { targetId: targetInfo.targetId });
     } finally {
       b.close();
@@ -122,6 +126,10 @@ export async function reviveSeat(seat, how, label) {
     const b = await browserOf(target.port);
     try {
       await b.send('Target.createTarget', { url: `${SITE}/chat`, newWindow: false });
+      // The blank tab `killSeat` left to keep the browser alive: one per kill, so twenty runs would leave twenty.
+      for (const t of await listTargets(target.port).catch(() => [])) {
+        if (t.type === 'page' && t.url === 'about:blank') await b.send('Target.closeTarget', { targetId: t.id });
+      }
     } finally {
       b.close();
     }
