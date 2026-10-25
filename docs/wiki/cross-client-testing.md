@@ -46,120 +46,120 @@ No row verdict depends on it; it stays here until it is explained.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| FLOOR-1 | DM send both ways, then a reload, on the new build | W1 W2 - U | `pending` |
-| FLOOR-2 | Create a fresh group the row mints (`FLOOR2-<mark>`), add three users' devices in one bulk Add | W1 W2 W4 W5 - U | `pending` |
-| FLOOR-3 | The same group seen from A1 and I1 | +A1 +I1 - B | `pending` |
+| FLOOR-1 | DM send both ways, then a reload, on the new build | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 78445e1ca5a7 |
+| FLOOR-2 | Create a fresh group the row mints (`FLOOR2-<mark>`), add three users' devices in one bulk Add | W1 W2 W4 W5 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 78445e1ca5a7 |
+| FLOOR-3 | The same group seen from A1 and I1 | +A1 +I1 - B | `pending` - not run on 1.4.1: class B, it needs A1 and the iPhone (I1), and I1 is signed out and reads no rows; the plan runs it by hand on the bench |
 
 ## CC - concurrent commits
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| CC-1 | Two members Add two different users at the SAME epoch, released together | W1 W2 + targets - U | `pending` |
-| CC-2 | A member Adds while another Removes someone, same epoch | W1 W2 W4 - U | `pending` |
-| CC-3 | Two members Remove the SAME member at once | W1 W2 W4 - U | `pending` |
-| CC-4 | A leaf refresh (unasked commit) races a member's Add | W1 W2 - U | `pending` |
+| CC-1 | Two members Add two different users at the SAME epoch, released together | W1 W2 + targets - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig b090278c8e5e |
+| CC-2 | A member Adds while another Removes someone, same epoch | W1 W2 W4 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 9df8542cf69f |
+| CC-3 | Two members Remove the SAME member at once | W1 W2 W4 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 9df8542cf69f |
+| CC-4 | A leaf refresh (unasked commit) races a member's Add | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 9df8542cf69f |
 | CC-5 | Burst: four devices each commit within 200 ms, ten rounds | W1 W2 W4 W5 - U | `pending` - BLOCKED-ON-ACCOUNT: needs a fifth campaign account |
 
 ## DUP - duplicate and retried commits (the settlement)
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| DUP-1 | The commit lands and its ANSWER is lost | W1 W2 - U | `pending` |
-| DUP-2 | DUP-1, and another member commits before our resubmission - a Remove; an intervening ADD during a held resubmission is covered by CC-1, not DUP-2 | W1 W2 W4 W5 - U | `PASS-DIRTY` (product) on `1.4.1-alpha.4` - every assertion held and the server was clean; the joiner received the next commit before its late Welcome - it now waits for it ([mls-protocol](protocols/mls-protocol.md#a-joiner-whose-first-frame-beats-its-welcome-waits-for-it-dup-2-2026-10-25)); the re-fetch after it re-reads a frame ([backlog](backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25)) |
+| DUP-1 | The commit lands and its ANSWER is lost | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
+| DUP-2 | DUP-1, and another member commits before our resubmission - a Remove; an intervening ADD during a held resubmission is covered by CC-1, not DUP-2 | W1 W2 W4 W5 - U | `PASS-DIRTY` (product) on `1.4.1-alpha.4` - every assertion held and the server was clean; the joiner received the next commit before its late Welcome - it now waits for it ([mls-protocol](protocols/mls-protocol.md#a-joiner-whose-first-frame-beats-its-welcome-waits-for-it-dup-2-2026-10-25)); the re-fetch after it re-reads a frame ([backlog](backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25)); predates rig c0eb44e1900d. Replayed on alpha.5 |
 | DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | - | `SKIPPED` - not played on the bench (Q2): unit coverage stands in |
-| DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | W1 W2 - U | `pending` |
-| DUP-5 | The commit is answered `503` | W1 W2 - U | `pending` |
-| DUP-6 | The commit request never answers (30 s `write` deadline) | W1 W2 - U | `pending` |
-| DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | W1 invites W4 (the third account) - U | `pending` |
+| DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
+| DUP-5 | The commit is answered `503` | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
+| DUP-6 | The commit request never answers (30 s `write` deadline) | W1 W2 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: the commit that never answers was not settled; fixed for alpha.5; predates rig c0eb44e1900d. Replayed on alpha.5 |
+| DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | W1 invites W4 (the third account) - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 5201308783f9. Replayed on alpha.5 |
 
 ## OFF - offline during a commit
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| OFF-1 | Cut after the stage's checkpoint, before the POST leaves | W1 W2 - U | `pending` |
-| OFF-2 | Cut after the POST reached the server | W1 W2 - U | `pending` |
-| OFF-3 | The committer stays offline while the others advance three epochs | W1 W2 W4 - U | assertions `PASS` on `1.4.1-alpha.4`, recorded as a DEFECT, not a clean pass: the cut committer's add lock was freed by its 30 s TTL, not by a release, so the other member's Add waited on a clock ([backlog](backlog.md#p2---a-cut-holders-add-lock-ends-only-by-its-ttl-and-a-refused-waiter-sleeps-to-it-design-after-the-stable-off-3-2026-10-25)) |
+| OFF-1 | Cut after the stage's checkpoint, before the POST leaves | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig e07108480c74 |
+| OFF-2 | Cut after the POST reached the server | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig e07108480c74 |
+| OFF-3 | The committer stays offline while the others advance three epochs | W1 W2 W4 - U | `PASS` (assertions) on `1.4.1-alpha.4` (dev.f49f499), recorded as a DEFECT, not a clean pass: the cut committer's add lock was freed by its 30 s TTL, not by a release, so the other member's Add waited on a clock ([backlog](backlog.md#p2---a-cut-holders-add-lock-ends-only-by-its-ttl-and-a-refused-waiter-sleeps-to-it-design-after-the-stable-off-3-2026-10-25)); predates rig 43f538b922fc |
 | OFF-4 | A RECEIVER offline across ten commits and a hundred messages | W1 W2 - U | `pending` - BLOCKED-ON-ACCOUNT: needs a fifth campaign account |
-| OFF-5 | The phone loses both radios in the middle of an Add it is making | +A1 - B | `pending` - BLOCKED-ON-RIG: the row holds A1's commit POST, and the Tauri apps send every first-party API call through `tauri-plugin-http`, below the WebView, where CDP `Fetch` cannot hold it (measured on A1 on 1.4.1-alpha.3, 2026-10-25); every row that faults the commit on A1 or the iPhone is blocked the same way. A radio cut timed around the commit would be a race. What would lift it: a fault point inside the app's routed fetch, in a bench build only (proposal, not built) |
+| OFF-5 | The phone loses both radios in the middle of an Add it is making | +A1 - B | `ERROR` on `1.4.1-alpha.3`, the row threw before it could decide; BLOCKED-ON-RIG: BLOCKED-ON-RIG: the row holds A1's commit POST, and the Tauri apps send every first-party API call through `tauri-plugin-http`, below the WebView, where CDP `Fetch` cannot hold it (measured on A1 on 1.4.1-alpha.3, 2026-10-25); every row that faults the commit on A1 or the iPhone is blocked the same way. A radio cut timed around the commit would be a race. What would lift it: a fault point inside the app's routed fetch, in a bench build only (proposal, not built) |
 
 ## KILL - the process dies mid-commit
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| KILL-1 | Close the web tab at a random point between the stage and the answer, 20 runs | W1 W2 - U | `pending` |
-| KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `FAIL` on `1.4.1-alpha.4`, two PRODUCT findings: (A) while its first commit's answer was held, W1 built a second leaf refresh on top of it, and refreshed again after the revive - two commits no run armed; (B) a clean reload re-walked a control frame whose generation was already spent and reported it `unreadable for good (secret-reuse)`. The row's "2 accepts, the epoch moved 1" was also a RIG miscount (the epoch was read before the window opened), fixed: commits are now sorted by the epoch they name, a stray one fails the run, and each run keeps its dying and revived console. Replayed on alpha.5 |
-| KILL-3 | Swipe A1 away during a commit it is making, 10 runs | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 |
-| KILL-4 | `am kill` during the checkpoint itself | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 (its window is measured on a held commit) |
-| KILL-5 | Kill between the merge of an Add and its Welcome send (`owed_welcome`) | W1 + W3 - U | `pending` |
+| KILL-1 | Close the web tab at a random point between the stage and the answer, 20 runs | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 4a3ba86fbc3f |
+| KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `FAIL` on `1.4.1-alpha.4`, two PRODUCT findings: (A) while its first commit's answer was held, W1 built a second leaf refresh on top of it, and refreshed again after the revive - two commits no run armed; (B) a clean reload re-walked a control frame whose generation was already spent and reported it `unreadable for good (secret-reuse)`. The row's "2 accepts, the epoch moved 1" was also a RIG miscount (the epoch was read before the window opened), fixed: commits are now sorted by the epoch they name, a stray one fails the run, and each run keeps its dying and revived console; predates rig 4a3ba86fbc3f. Replayed on alpha.5 |
+| KILL-3 | Swipe A1 away during a commit it is making, 10 runs | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 (the commit POST on A1 cannot be held); class B on A1; scheduled for the alpha.5 replay |
+| KILL-4 | `am kill` during the checkpoint itself | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 (its window is measured on a held commit); class B on A1 |
+| KILL-5 | Kill between the merge of an Add and its Welcome send (`owed_welcome`) | W1 + W3 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 4a3ba86fbc3f |
 
 ## GAP - epoch gaps and frame order
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| GAP-1 | Application frames of epoch N+2 arrive before the commits N+1, N+2 | W1 W2 W4 - U | `pending` |
-| GAP-2 | A frame from a PAST epoch (own and others') | W1 W2 - U | `pending` |
-| GAP-3 | 2000+ frames in one epoch while one member is frozen (old HEAL-W3) | W1 W2 - U | `pending` |
+| GAP-1 | Application frames of epoch N+2 arrive before the commits N+1, N+2 | W1 W2 W4 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig feccf5cc962c |
+| GAP-2 | A frame from a PAST epoch (own and others') | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig feccf5cc962c |
+| GAP-3 | 2000+ frames in one epoch while one member is frozen (old HEAL-W3) | W1 W2 - U | `pending` - not yet played: it sends 2100 messages first (about forty minutes), so it runs alone, not in the GAP phase |
 | GAP-4 | A key-group frame stored ONCE, read by every seat (#2260): a community with five seats, two of them offline | W1 W2 W4 W5 +A1 - U+B | `SKIPPED` - not played on this build: the shared-payload writer stays OFF for 1.4.1 |
 
 ## RM - removal while a commit is in flight, and the removal bound
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| RM-1 | W1 removes W2 while W2's own Add is in flight | W1 W2 W4 - U | `pending` |
-| RM-2 | Remove a member while they send ten messages | W1 W2 - U | `pending` |
-| RM-3 | The remover dies after the roster delete and before the Remove commit lands | W1 W2 W4 - U | `pending` |
-| RM-4 | Two admins rewrite one salon's access list at once: each grants a different member | W1 W2 (both admins) - U | `pending` |
-| RM-4b | Two admins each revoke a different member of one private salon | W1 W2 (both admins) - U | `pending` |
-| RM-5 | A community kick races an invitation into a private salon for the same user | W1 W2 W4 - U | `pending` |
-| RM-6 | A member holding only `channel.manage` makes a salon private while leaving off an admin | W1 W2 - U | `pending` |
-| RM-7 | A role demotion of the actor races their removal of someone | W1 W2 W4 - U | `pending` |
-| RM-8 | Leave a group while offline (#2259) | W1 W2 - U | `pending` |
+| RM-1 | W1 removes W2 while W2's own Add is in flight | W1 W2 W4 - U | `pending` - no runner written yet; not yet scheduled |
+| RM-2 | Remove a member while they send ten messages | W1 W2 - U | `pending` - no runner written yet; not yet scheduled |
+| RM-3 | The remover dies after the roster delete and before the Remove commit lands | W1 W2 W4 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 4a3ba86fbc3f |
+| RM-4 | Two admins rewrite one salon's access list at once: each grants a different member | W1 W2 (both admins) - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig f7b403e938e2. Replayed on alpha.5 |
+| RM-4b | Two admins each revoke a different member of one private salon | W1 W2 (both admins) - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig f7b403e938e2. Replayed on alpha.5 |
+| RM-5 | A community kick races an invitation into a private salon for the same user | W1 W2 W4 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: a salon grant landed after the member had been removed; predates rig f7b403e938e2. Replayed on alpha.5 |
+| RM-6 | A member holding only `channel.manage` makes a salon private while leaving off an admin | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 14aeebbcc529. Replayed on alpha.5 |
+| RM-7 | A role demotion of the actor races their removal of someone | W1 W2 W4 - U | `pending` - no runner written yet; not yet scheduled |
+| RM-8 | Leave a group while offline (#2259) | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 43f538b922fc |
 
 ## ADM - group-link admission, new and old clients
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| ADM-1 | A new person follows the group link (new clients everywhere) | W1 W2 + W4 joiner - U | `pending` |
-| ADM-2 | A member Declines | as ADM-1 - U | `pending` |
-| ADM-3 | Two members answer at once: one Adds, one Declines | W1 W2 + W4 - U | `pending` |
-| ADM-4 | : the waiting seat calls every member route from its own page (roster, members, enrol someone, mint a link, vouch, history, exclusions, call initiate/ring) | W4 waiting - U | `pending` |
-| ADM-5 | OLD joiner: A1 on the `v1.4.0` APK follows a link created on new clients | +A1 (old) W1 W2 - B | `pending` |
-| ADM-6 | OLD member: A1 on `v1.4.0` is a member when a NEW joiner follows the link | +A1 (old) W1 + W4 - B | `pending` |
-| ADM-7 | An external join by a non-member, from an old client, at the base | +A1 (old) - B | `pending` |
-| ADM-8 | The link in a 1:1 conversation and in a key group | W1 W2 - U | `pending` |
+| ADM-1 | A new person follows the group link (new clients everywhere) | W1 W2 + W4 joiner - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 8c4342d254d1. Replayed on alpha.5 |
+| ADM-2 | A member Declines | as ADM-1 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: a stale re-add retry after a Decline re-lists the conversation; fix in review; predates rig 8c4342d254d1. Replayed on alpha.5 |
+| ADM-3 | Two members answer at once: one Adds, one Declines | W1 W2 + W4 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 8c4342d254d1. Replayed on alpha.5 |
+| ADM-4 | : the waiting seat calls every member route from its own page (roster, members, enrol someone, mint a link, vouch, history, exclusions, call initiate/ring) | W4 waiting - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 8c4342d254d1. Replayed on alpha.5 |
+| ADM-5 | OLD joiner: A1 on the `v1.4.0` APK follows a link created on new clients | +A1 (old) W1 W2 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
+| ADM-6 | OLD member: A1 on `v1.4.0` is a member when a NEW joiner follows the link | +A1 (old) W1 + W4 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
+| ADM-7 | An external join by a non-member, from an old client, at the base | +A1 (old) - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
+| ADM-8 | The link in a 1:1 conversation and in a key group | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 51c079881cca |
 
 ## DEV - device add, revoke, and the background Welcome
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| DEV-1 | A new device of an existing member (W3 owner) | W1 W2 + W3 new - U, PIN | `pending` |
-| DEV-2 | Revoke W3 from W1 | W1 W2 W3 - U | `pending` |
-| DEV-3 | Revoke W3 while it is OFFLINE, then bring it back | W1 W2 W3 - U | `pending` |
-| DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | W1 W2 + W3 W6 new - U, PIN | `pending` |
-| DEV-5 | The same device id presents a NEW signature key (a copied profile re-keyed) | W1 + W3 copy - U | `pending` - blocked on Q5 |
-| DEV-6 | A revoked device does not erase its owner's arrival (#2254) | W1 W3 W6 - U, PIN | `pending` |
-| DEV-7 | , its three variants: cold process, app opened inside the round trip, phone stale | +A1 killed, W1 W3 - B | `pending` |
+| DEV-1 | A new device of an existing member (W3 owner) | W1 W2 + W3 new - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 5201308783f9 |
+| DEV-2 | Revoke W3 from W1 | W1 W2 W3 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: a 401 on the device's own revoked check is read as "unreachable", so the revoke reset never runs; predates rig 5201308783f9. Replayed on alpha.5 |
+| DEV-3 | Revoke W3 while it is OFFLINE, then bring it back | W1 W2 W3 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: the same 401 read as "unreachable" (the revoke reset never runs), and a 500 on a Welcome to a revoked device; predates rig 5201308783f9. Replayed on alpha.5 |
+| DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | W1 W2 + W3 W6 new - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 5201308783f9 |
+| DEV-5 | The same device id presents a NEW signature key (a copied profile re-keyed) | W1 + W3 copy - U | `pending` - not a runner row: attached to CORRUPT-8 and played later, blocked on Q5 |
+| DEV-6 | A revoked device does not erase its owner's arrival (#2254) | W1 W3 W6 - U, PIN | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - rig race: the first invariant pass was judged during a commit in flight (#2498); predates rig 5201308783f9. Replayed on alpha.5 |
+| DEV-7 | , its three variants: cold process, app opened inside the round trip, phone stale | +A1 killed, W1 W3 - B | `pending` - hand row, class B: A1 is swiped away by hand (variants cold, opened, stale) |
 
 ## BIG - a large group
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| BIG-1 | `campaign-big`: four users, twelve devices (W1-W8 + A1 + I1), created with one bulk Add | all - B | `pending` |
-| BIG-2 | 30 rapid messages from three senders while two commits land in the middle | all - B | `pending` |
-| BIG-3 | A community of twelve seats: a removal, then a new user | all - B | `pending` |
+| BIG-1 | `campaign-big`: four users, twelve devices (W1-W8 + A1 + I1), created with one bulk Add | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
+| BIG-2 | 30 rapid messages from three senders while two commits land in the middle | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
+| BIG-3 | A community of twelve seats: a removal, then a new user | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 
 ## TOK - a token expiring in the middle of an operation
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TOK-1 | The commit POST is answered `401` once | W1 W2 - U | `pending` |
-| TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `pending` |
-| TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `pending` |
+| TOK-1 | The commit POST is answered `401` once | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
+| TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig e07108480c74. Replayed on alpha.5 |
+| TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `pending` - clock-only row: waits 61 min past the 1 h access token with the socket open, run alone and unattended; not yet scheduled |
 
 ## NET - a flaky network
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| NET-1 | A slow lossy link (800 ms, 50 kB/s) while a four-device Add runs | W1 W2 W4 W5 - U | `pending` |
-| NET-2 | The socket flaps every 10 s for five minutes while commits and messages flow | W1 W2 - U | `pending` |
-| NET-3 | A captive portal: every API call answered `200 text/html` | W1 W2 - U | `pending` |
+| NET-1 | A slow lossy link (800 ms, 50 kB/s) while a four-device Add runs | W1 W2 W4 W5 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 43f538b922fc |
+| NET-2 | The socket flaps every 10 s for five minutes while commits and messages flow | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 43f538b922fc |
+| NET-3 | A captive portal: every API call answered `200 text/html` | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 43f538b922fc |
