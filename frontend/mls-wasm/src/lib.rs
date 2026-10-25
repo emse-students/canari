@@ -1043,10 +1043,11 @@ impl WasmMlsClient {
         out
     }
 
-    /// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+    /// `recipient` was answered for `welcome` in `group_id` (`MlsManager::welcome_delivered`).
     #[wasm_bindgen]
-    pub fn welcome_delivered(&mut self, group_id: String, recipient: String) {
-        self.manager.welcome_delivered(&group_id, &recipient);
+    pub fn welcome_delivered(&mut self, group_id: String, recipient: String, welcome: Vec<u8>) {
+        self.manager
+            .welcome_delivered(&group_id, &recipient, &welcome);
     }
 
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).

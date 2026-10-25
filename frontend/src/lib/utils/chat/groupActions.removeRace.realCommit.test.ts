@@ -99,6 +99,7 @@ function realCommitService() {
       [
         'removeMember',
         'runCommitTransaction',
+        'mergeAccepted',
         'settleUnresolvedLocked',
         'checkpointStageBeforeSend',
         'submitRecorded',

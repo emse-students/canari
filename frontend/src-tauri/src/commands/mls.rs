@@ -1070,11 +1070,12 @@ pub(crate) fn welcomes_dus(state: tauri::State<AppState>) -> Result<Vec<WelcomeD
         .collect())
 }
 
-/// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+/// `recipient` was answered for `welcome` in `group_id` (`MlsManager::welcome_delivered`).
 #[tauri::command]
 pub(crate) fn welcome_remis(
     group_id: String,
     recipient: String,
+    welcome: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
     let mut lock = state
@@ -1082,7 +1083,7 @@ pub(crate) fn welcome_remis(
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-    manager.welcome_delivered(&group_id, &recipient);
+    manager.welcome_delivered(&group_id, &recipient, &welcome);
     Ok(())
 }
 

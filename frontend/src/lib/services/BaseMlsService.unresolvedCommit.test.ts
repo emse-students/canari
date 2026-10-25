@@ -4,9 +4,10 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 const persistMlsStructuralCheckpoint = vi.hoisted(() => vi.fn());
+const scheduleOutboundMlsPersist = vi.hoisted(() => vi.fn());
 vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   persistMlsStructuralCheckpoint: (...a: unknown[]) => persistMlsStructuralCheckpoint(...a),
-  scheduleOutboundMlsPersist: vi.fn(),
+  scheduleOutboundMlsPersist: () => scheduleOutboundMlsPersist(),
 }));
 
 import { BaseMlsService } from './BaseMlsService';
@@ -102,8 +103,15 @@ function recordOf(
   };
 }
 
-/** group id -> the Welcome a settled Add still owes (`mls-core/src/owed_welcome.rs`). */
-type OwedState = Map<string, OwedWelcome>;
+/**
+ * group id -> the Welcomes its Adds still owe, one entry per Add, with the crate's rules
+ * (`mls-core/src/owed_welcome.rs`): a later Add supersedes a recipient an earlier entry names, and a
+ * delivery clears the entry carrying the delivered bytes only.
+ */
+type OwedState = Map<string, OwedWelcome[]>;
+
+const sameBytes = (a: Uint8Array, b: Uint8Array) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
 
 function primitives(state: PendingState, owed: OwedState = new Map()) {
   return {
@@ -111,20 +119,29 @@ function primitives(state: PendingState, owed: OwedState = new Map()) {
     mergePendingCommitOwingWelcome: vi.fn(async (g: string, recipients: string[]) => {
       const read = state.get(g);
       if (read?.status !== 'recorded' || !read.record.welcome) throw new Error('InvalidData');
-      owed.set(g, {
+      const entries = (owed.get(g) ?? [])
+        .map((w) => ({ ...w, recipients: w.recipients.filter((r) => !recipients.includes(r)) }))
+        .filter((w) => w.recipients.length > 0);
+      entries.push({
         groupId: g,
         welcome: read.record.welcome,
         ratchetTree: new Uint8Array([7]),
         recipients,
       });
+      owed.set(g, entries);
       state.delete(g);
     }),
-    owedWelcomes: vi.fn(async () => [...owed.values()].map((w) => ({ ...w }))),
-    welcomeDelivered: vi.fn(async (g: string, r: string) => {
-      const w = owed.get(g);
-      if (!w) return;
-      w.recipients = w.recipients.filter((x) => x !== r);
-      if (w.recipients.length === 0) owed.delete(g);
+    owedWelcomes: vi.fn(async () =>
+      [...owed.values()].flat().map((w) => ({ ...w, recipients: [...w.recipients] }))
+    ),
+    welcomeDelivered: vi.fn(async (g: string, r: string, welcome: Uint8Array) => {
+      const entries = owed.get(g);
+      const entry = entries?.find((w) => sameBytes(w.welcome, welcome) && w.recipients.includes(r));
+      if (!entries || !entry) return;
+      entry.recipients = entry.recipients.filter((x) => x !== r);
+      const left = entries.filter((w) => w.recipients.length > 0);
+      if (left.length === 0) owed.delete(g);
+      else owed.set(g, left);
     }),
     pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? { status: 'none' }),
     groupsWithPendingCommit: vi.fn(async () => [...state.keys()]),
@@ -148,6 +165,8 @@ function ctx(
     state,
     delivery: {
       submitCommit,
+      // The one request a Welcome is; `sendWelcome` itself is the real seam that consumes what is owed.
+      sendWelcome: vi.fn().mockResolvedValue(undefined),
       acquireAddLock: vi.fn().mockResolvedValue({ acquired: true, token: 'tok' }),
       releaseAddLock: vi.fn().mockResolvedValue(true),
     },
@@ -155,7 +174,7 @@ function ctx(
     freshEpoch: vi.fn().mockResolvedValue(5),
     getEpoch: vi.fn(() => 5),
     exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([7])),
-    sendWelcome: vi.fn().mockResolvedValue(undefined),
+    welcomeSendsInFlight: new Map(),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
     unresolvedGroups: null,
     // The lost-invitation drain (`owedInvitations.ts`): no re-planner unless a case registers one.
@@ -182,7 +201,11 @@ function ctx(
     'awaitCommitCheckpoint',
     'checkpointStageBeforeSend',
     'mergeSettled',
+    'mergeAccepted',
+    'consumeOwedWelcome',
     'deliverOwedWelcomes',
+    'sendWelcome',
+    'sendWelcomeConsuming',
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',
     'settleUnresolvedCommitFromLog',
@@ -205,6 +228,7 @@ function ctx(
     owed: OwedState;
     delivery: {
       submitCommit: ReturnType<typeof vi.fn>;
+      sendWelcome: ReturnType<typeof vi.fn>;
       acquireAddLock: (
         g: string
       ) => Promise<
@@ -566,7 +590,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       excludeDeviceIds: ['user-b:dev-b'],
     })) as { welcome?: Uint8Array };
     expect(out.welcome).toEqual(new Uint8Array([3]));
-    expect(c.sendWelcome).not.toHaveBeenCalled();
+    expect(c.delivery.sendWelcome).not.toHaveBeenCalled();
     // The admits travel with the commit, derived from the intent the stage recorded.
     expect(c.delivery.submitCommit.mock.calls[0][5]).toEqual([
       { userId: 'user-b', deviceId: 'dev-b' },
@@ -688,7 +712,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     ]);
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
     // The tree the joiner needs is the one of the epoch the Add created, captured by the merge.
-    expect(c.sendWelcome.mock.calls).toEqual([
+    expect(c.delivery.sendWelcome.mock.calls).toEqual([
       [new Uint8Array([3]), 'u-b', G, 'd-b1', new Uint8Array([7])],
       [new Uint8Array([3]), 'u-b', G, 'd-b2', new Uint8Array([7])],
     ]);
@@ -703,7 +727,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     const merged = c.mergePendingCommitOwingWelcome.mock.invocationCallOrder[0];
     // [0] is the checkpoint before the resubmission; [1] is the one after the merge.
     const durable = persistMlsStructuralCheckpoint.mock.invocationCallOrder[1];
-    const sent = c.sendWelcome.mock.invocationCallOrder[0];
+    const sent = c.delivery.sendWelcome.mock.invocationCallOrder[0];
     const cleared = c.welcomeDelivered.mock.invocationCallOrder[0];
     expect(merged).toBeLessThan(durable);
     expect(durable).toBeLessThan(sent);
@@ -715,12 +739,14 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     const owed: OwedState = new Map([
       [
         G,
-        {
-          groupId: G,
-          welcome: new Uint8Array([3]),
-          ratchetTree: new Uint8Array([7]),
-          recipients: ['u-b:d-b2'],
-        },
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['u-b:d-b2'],
+          },
+        ],
       ],
     ]);
     const c = ctx(submitting(), { owed });
@@ -728,7 +754,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     expect(c.delivery.submitCommit).not.toHaveBeenCalled();
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
     expect(c.mergePendingCommitOwingWelcome).not.toHaveBeenCalled();
-    expect(c.sendWelcome.mock.calls).toEqual([
+    expect(c.delivery.sendWelcome.mock.calls).toEqual([
       [new Uint8Array([3]), 'u-b', G, 'd-b2', new Uint8Array([7])],
     ]);
     expect(owed.size).toBe(0);
@@ -738,13 +764,13 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     const c = ctx(submitting({ accepted: true, duplicate: true }), {
       state: kept({ excludeDeviceIds: ['u-b:d-b'] }, { welcome: new Uint8Array([3]) }),
     });
-    c.sendWelcome.mockRejectedValueOnce(lost());
+    c.delivery.sendWelcome.mockRejectedValueOnce(lost());
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await c.settleUnresolvedCommits();
-    expect(c.owed.get(G)?.recipients).toEqual(['u-b:d-b']);
+    expect(c.owed.get(G)?.[0].recipients).toEqual(['u-b:d-b']);
     error.mockRestore();
     await c.settleUnresolvedCommits();
-    expect(c.sendWelcome).toHaveBeenCalledTimes(2);
+    expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(2);
     expect(c.owed.size).toBe(0);
   });
 
@@ -753,19 +779,23 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     const c = ctx(submitting({ accepted: true, duplicate: true }), {
       state: kept({ excludeDeviceIds: ['u-b:d-b1', 'u-b:d-b2'] }, { welcome: new Uint8Array([3]) }),
     });
-    c.sendWelcome
+    c.delivery.sendWelcome
       .mockRejectedValueOnce(new WelcomeTargetNotMemberError(G, 'u-b', 'd-b1'))
       .mockRejectedValueOnce(lost());
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await c.settleUnresolvedCommits();
     // The terminal refusal is cleared; the transport failure beside it stays owed.
-    expect(c.owed.get(G)?.recipients).toEqual(['u-b:d-b2']);
+    expect(c.owed.get(G)?.[0].recipients).toEqual(['u-b:d-b2']);
     expect(
       error.mock.calls.some(([line]) => String(line).includes('terminal, no longer owed'))
     ).toBe(true);
     error.mockRestore();
     await c.settleUnresolvedCommits();
-    expect(c.sendWelcome.mock.calls.map((call) => call[3])).toEqual(['d-b1', 'd-b2', 'd-b2']);
+    expect(c.delivery.sendWelcome.mock.calls.map((call) => call[3])).toEqual([
+      'd-b1',
+      'd-b2',
+      'd-b2',
+    ]);
     expect(c.owed.size).toBe(0);
   });
 
@@ -776,7 +806,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     await c.settleUnresolvedCommits();
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
     expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 7);
-    expect(c.sendWelcome).not.toHaveBeenCalled();
+    expect(c.delivery.sendWelcome).not.toHaveBeenCalled();
     expect(c.state.size).toBe(0);
   });
 
@@ -864,7 +894,7 @@ describe('settleUnresolvedCommits - a stage a background engine wrote', () => {
       undefined
     );
     expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(gid, ['carol:dev-c']);
-    expect(c.sendWelcome.mock.calls).toEqual([
+    expect(c.delivery.sendWelcome.mock.calls).toEqual([
       [new Uint8Array([3]), 'carol', gid, 'dev-c', new Uint8Array([7])],
     ]);
     expect(state.size).toBe(0);
@@ -907,7 +937,7 @@ describe('settleUnresolvedCommitFromLog - the log decided at the base epoch', ()
     });
     expect(await c.settleUnresolvedCommitFromLog(G, OURS)).toBe('merged');
     expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledTimes(1);
-    expect(c.sendWelcome).toHaveBeenCalledTimes(1);
+    expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(1);
   });
 
   it("clears when the row at the base epoch is another device's commit", async () => {
@@ -1589,5 +1619,186 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
       c as unknown as { setOwedInvitationReplanner(r: unknown, t: unknown): void }
     ).setOwedInvitationReplanner(async () => 'concluded', tell);
     expect(tell).toHaveBeenCalledExactlyOnceWith(G);
+  });
+});
+
+describe("runCommitTransaction - an accepted Add's Welcome is owed in the state, not in the caller's hands", () => {
+  /** The page reloads: a new session over the same state - nothing in memory survives. */
+  const reloaded = (c: ReturnType<typeof ctx>, submit = submitting()) =>
+    ctx(submit, { state: c.state, owed: c.owed });
+  const addOf = (c: ReturnType<typeof ctx>) =>
+    c.runCommitTransaction(G, stagerOf(c, { welcome: new Uint8Array([3]) }), {
+      excludeDeviceIds: ['u-b:d-b'],
+      exportTree: true,
+    }) as Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  const callerSends = (
+    c: ReturnType<typeof ctx>,
+    r: { welcome?: Uint8Array; ratchetTree?: Uint8Array }
+  ) =>
+    (c as unknown as { sendWelcome: (...a: unknown[]) => Promise<void> }).sendWelcome(
+      r.welcome,
+      'u-b',
+      G,
+      'd-b',
+      r.ratchetTree
+    );
+
+  it('DUP-7: accepted only through the duplicate answer, its Welcome send failed, then a reload - the next connection delivers it', async () => {
+    const c = ctx(submitting(lost(), { accepted: true, duplicate: true }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await addOf(c);
+    expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(G, ['u-b:d-b']);
+    c.delivery.sendWelcome.mockRejectedValueOnce(lost());
+    await expect(callerSends(c, result)).rejects.toBeInstanceOf(TransportFailureError);
+    warn.mockRestore();
+
+    const after = reloaded(c);
+    await after.settleUnresolvedCommits();
+    expect(after.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(after.delivery.sendWelcome.mock.calls).toEqual([
+      [new Uint8Array([3]), 'u-b', G, 'd-b', new Uint8Array([7])],
+    ]);
+    expect(after.owed.size).toBe(0);
+  });
+
+  it('a Welcome the caller delivered is owed no longer: the next connection sends nothing', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    const result = await addOf(c);
+    await callerSends(c, result);
+    expect(c.owed.size).toBe(0);
+    const after = reloaded(c);
+    await after.settleUnresolvedCommits();
+    expect(after.delivery.sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('a Welcome refused WELCOME_TARGET_NOT_MEMBER on the caller is owed no longer either', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    const result = await addOf(c);
+    c.delivery.sendWelcome.mockRejectedValueOnce(new WelcomeTargetNotMemberError(G, 'u-b', 'd-b'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(callerSends(c, result)).rejects.toBeInstanceOf(WelcomeTargetNotMemberError);
+    error.mockRestore();
+    expect(c.owed.size).toBe(0);
+  });
+
+  it('sends the Welcome ONCE when the connection drain meets the caller sending it', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    const result = await addOf(c);
+    let answer!: () => void;
+    c.delivery.sendWelcome.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          answer = r;
+        })
+    );
+    const caller = callerSends(c, result);
+    const drain = c.settleUnresolvedCommits();
+    await vi.waitFor(() => expect(c.owedWelcomes).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    answer();
+    await Promise.all([caller, drain]);
+    expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(1);
+    expect(c.owed.size).toBe(0);
+  });
+
+  it.each([
+    ['delivered', undefined],
+    ['refused for good', new WelcomeTargetNotMemberError(G, 'u-b', 'd-b')],
+  ] as const)(
+    'an older Welcome %s AFTER a re-admission merged a newer one never clears the newer one',
+    async (_n, refusal) => {
+      const c = ctx(submitting({ accepted: true }, { accepted: true }));
+      const first = await addOf(c);
+      let answer!: (e?: Error) => void;
+      c.delivery.sendWelcome.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            answer = (e) => (e ? reject(e) : resolve());
+          })
+      );
+      const w1 = callerSends(c, first);
+      // The same device admitted again while W1 is in flight: W2 owed, W1's entry superseded.
+      await c.runCommitTransaction(G, stagerOf(c, { welcome: new Uint8Array([4]) }), {
+        excludeDeviceIds: ['u-b:d-b'],
+        exportTree: true,
+      });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      answer(refusal);
+      if (refusal) await expect(w1).rejects.toBe(refusal);
+      else await w1;
+      error.mockRestore();
+      expect(c.owed.get(G)).toEqual([
+        expect.objectContaining({ welcome: new Uint8Array([4]), recipients: ['u-b:d-b'] }),
+      ]);
+    }
+  );
+
+  it('a consumed Welcome is handed to the next checkpoint', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    const result = await addOf(c);
+    scheduleOutboundMlsPersist.mockClear();
+    await callerSends(c, result);
+    expect(c.owed.size).toBe(0);
+    expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
+  });
+
+  it('the connection drain schedules ONE persist for a whole pass, however many it clears', async () => {
+    const owed: OwedState = new Map([
+      [
+        G,
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['u-b:d-b1', 'u-b:d-b2', 'u-c:d-c'],
+          },
+        ],
+      ],
+    ]);
+    const c = ctx(submitting(), { owed });
+    c.delivery.sendWelcome.mockRejectedValueOnce(new WelcomeTargetNotMemberError(G, 'u-b', 'd-b1'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scheduleOutboundMlsPersist.mockClear();
+    await c.settleUnresolvedCommits();
+    error.mockRestore();
+    expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(3);
+    expect(owed.size).toBe(0);
+    expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops an owed recipient that names no device WITHOUT claiming a server refusal', async () => {
+    const owed: OwedState = new Map([
+      [
+        G,
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['not-a-device'],
+          },
+        ],
+      ],
+    ]);
+    const c = ctx(submitting(), { owed });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scheduleOutboundMlsPersist.mockClear();
+    await c.settleUnresolvedCommits();
+    const lines = error.mock.calls.map(([l]) => String(l));
+    error.mockRestore();
+    expect(c.delivery.sendWelcome).not.toHaveBeenCalled();
+    expect(owed.size).toBe(0);
+    expect(lines.some((l) => l.includes('names no device'))).toBe(true);
+    expect(lines.some((l) => l.includes('REFUSED'))).toBe(false);
+    expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
+  });
+
+  it('merges a commit that admits nobody plainly - it owes no Welcome', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    await run(c);
+    expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.mergePendingCommitOwingWelcome).not.toHaveBeenCalled();
+    expect(c.owed.size).toBe(0);
   });
 });

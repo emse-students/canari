@@ -301,6 +301,51 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
     await expect(refusalOf(welcome())).resolves.toBeNull();
   });
 
+  /** The invitee's queued Welcome rows. */
+  const queuedWelcomes = async (): Promise<number> => {
+    const [row]: { n: string }[] = await q(
+      `SELECT COUNT(*) AS n FROM queued_message
+       WHERE "groupId" = $1 AND "recipientId" = $2 AND "deviceId" = $3 AND "isWelcome" = true`,
+      [GROUP, INVITEE.userId, INVITEE.deviceId]
+    );
+    return Number(row.n);
+  };
+  const deliverWelcome = () =>
+    (service as unknown as { deliverWelcome: jest.Mock }).deliverWelcome as jest.Mock;
+
+  it('the same Welcome sent again - its first answer lost - is stored once and its one row delivered again (DUP-7)', async () => {
+    await addCommit(1);
+    deliverWelcome().mockClear();
+    await expect(welcome()).resolves.toEqual({ status: 'queued' });
+    // The client re-sends the owed Welcome it never read an answer for: the same bytes.
+    await expect(welcome()).resolves.toEqual({ status: 'queued' });
+    expect(await queuedWelcomes()).toBe(1);
+    // ...and the ONE row is delivered again: the first request may have died between its store
+    // and its delivery, and only the re-send is left to arm the live publish and the push.
+    expect(deliverWelcome()).toHaveBeenCalledTimes(2);
+    const [[first], [again]] = deliverWelcome().mock.calls as [[{ id: string }], [{ id: string }]];
+    expect(again.id).toBe(first.id);
+  });
+
+  it('two copies of the same Welcome racing are stored once', async () => {
+    await addCommit(1);
+    await Promise.all([welcome(), welcome(), welcome()]);
+    expect(await queuedWelcomes()).toBe(1);
+  });
+
+  it('a DIFFERENT Welcome to the same device is stored beside the first - only a copy is collapsed', async () => {
+    await addCommit(1);
+    await welcome();
+    await service.sendWelcome(INVITER.userId, {
+      groupId: GROUP,
+      targetUserId: INVITEE.userId,
+      targetDeviceId: INVITEE.deviceId,
+      senderUserId: INVITER.userId,
+      welcomePayload: 'b3RoZXI=',
+    });
+    expect(await queuedWelcomes()).toBe(2);
+  });
+
   it('a block between the inviter and the invitee enrols nobody, writes no device row, and the Welcome is refused by its code', async () => {
     await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [
       INVITEE.userId,

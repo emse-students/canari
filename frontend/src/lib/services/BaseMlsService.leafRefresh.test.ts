@@ -70,6 +70,7 @@ function commitCtx(accepted: boolean) {
         'settleUnresolvedLocked',
         'checkpointStageBeforeSend',
         'submitRecorded',
+        'mergeAccepted',
         'resubmitUnresolved',
       ].map((name) => [
         name,

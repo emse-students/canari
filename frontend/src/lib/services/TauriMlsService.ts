@@ -1505,8 +1505,12 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.welcomeDelivered}. */
-  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
-    await invoke('welcome_remis', { groupId, recipient });
+  protected async welcomeDelivered(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array
+  ): Promise<void> {
+    await invoke('welcome_remis', { groupId, recipient, welcome: Array.from(welcome) });
   }
 
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */

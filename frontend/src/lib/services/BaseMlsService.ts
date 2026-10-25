@@ -149,6 +149,7 @@ import {
   checkpointWroteNothing,
   fromBase64,
   MlsStateWriteRefusedError,
+  sameBytes,
   toBase64,
   type MlsStateWriteLatch,
 } from '$lib/utils/hex';
@@ -2907,6 +2908,14 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Delivers a Welcome message to the target user/device, and records it once delivered: every
    * path that welcomes a device goes through here, so `welcomeSentAt` is true for all of them.
+   *
+   * **AND IT IS WHERE AN OWED WELCOME IS CONSUMED.** Every accepted Add is merged owing its Welcome
+   * (`mergeAccepted`); the server's answer to this send - stored, or refused for good - is what ends
+   * the obligation ({@link consumeOwedWelcome}), whoever sent it: the Add's caller, or the connection
+   * drain ({@link deliverOwedWelcomes}).
+   *
+   * ONE REQUEST AT A TIME PER WELCOME: a send of the same bytes to the same device already in flight
+   * (the caller's, met by the drain) is awaited, never repeated.
    */
   async sendWelcome(
     welcomeBytes: Uint8Array,
@@ -2915,14 +2924,114 @@ export abstract class BaseMlsService implements IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    await this.delivery.sendWelcome(
+    await this.sendWelcomeConsuming(
       welcomeBytes,
       targetUserId,
       groupId,
       targetDeviceId,
-      ratchetTreeBytes
+      ratchetTreeBytes,
+      true
     );
-    if (targetDeviceId) recordWelcomeSent(groupId, targetDeviceId);
+  }
+
+  /**
+   * {@link sendWelcome}, with the checkpoint of what it consumed left to the caller when
+   * `persistEach` is false: the connection drain clears many recipients in one pass and schedules
+   * ONE persist after it ({@link deliverOwedWelcomes}), since a checkpoint costs seconds on a phone.
+   */
+  private async sendWelcomeConsuming(
+    welcomeBytes: Uint8Array,
+    targetUserId: string,
+    groupId: string,
+    targetDeviceId: string | undefined,
+    ratchetTreeBytes: Uint8Array | undefined,
+    persistEach: boolean
+  ): Promise<void> {
+    const recipient = targetDeviceId ? `${targetUserId}:${targetDeviceId}` : null;
+    if (!recipient) {
+      await this.delivery.sendWelcome(
+        welcomeBytes,
+        targetUserId,
+        groupId,
+        undefined,
+        ratchetTreeBytes
+      );
+      return;
+    }
+    const key = `${groupId}|${recipient}`;
+    const inFlight = this.welcomeSendsInFlight.get(key);
+    if (inFlight && sameBytes(inFlight.welcome, welcomeBytes)) {
+      console.log(
+        `[WELCOME] ${groupId.slice(0, 8)}... the Welcome to ${targetDeviceId} is already being sent - awaiting that request`
+      );
+      return inFlight.done;
+    }
+    const done = (async () => {
+      try {
+        await this.delivery.sendWelcome(
+          welcomeBytes,
+          targetUserId,
+          groupId,
+          targetDeviceId,
+          ratchetTreeBytes
+        );
+      } catch (e) {
+        if (e instanceof WelcomeTargetNotMemberError) {
+          await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'refused', persistEach);
+        }
+        throw e;
+      }
+      recordWelcomeSent(groupId, targetDeviceId!);
+      await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'delivered', persistEach);
+    })();
+    const entry = { welcome: welcomeBytes, done };
+    this.welcomeSendsInFlight.set(key, entry);
+    try {
+      await done;
+    } finally {
+      if (this.welcomeSendsInFlight.get(key) === entry) this.welcomeSendsInFlight.delete(key);
+    }
+  }
+
+  /** The Welcome sends in flight, by `groupId|userId:deviceId` - see {@link sendWelcome}. */
+  private welcomeSendsInFlight = new Map<string, { welcome: Uint8Array; done: Promise<void> }>();
+
+  /**
+   * The server ANSWERED a Welcome to `recipient` in `groupId`: whatever the state owed it there is
+   * owed no longer for `welcome` (a no-op when nothing was), and - with `persist` - the change is
+   * handed to the next checkpoint. `refused` is the terminal `WELCOME_TARGET_NOT_MEMBER`:
+   * the server enrols an Add's people with the commit it accepts, or refuses them for good, so
+   * resending the same bytes cannot change the answer - said at the level that accuses, since an
+   * accepted Add whose person is off the roster is the visible end of something upstream. A clear
+   * that fails leaves the recipient owed: the next connection sends the same bytes again, which the
+   * server stores once.
+   */
+  private async consumeOwedWelcome(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array,
+    answer: 'delivered' | 'refused',
+    persist: boolean
+  ): Promise<void> {
+    const short = groupId.slice(0, 8);
+    if (answer === 'refused') {
+      console.error(
+        `[WELCOME] ${short}... Welcome REFUSED for ${recipient.slice(0, 8)}...: the roster does not ` +
+          'name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray ' +
+          'sweep collects it'
+      );
+    }
+    try {
+      // The entry carrying THESE bytes only: an older Welcome answered late never clears a newer one.
+      await this.welcomeDelivered(groupId, recipient, welcome);
+      // To disk with the next checkpoint, like any state change outside a commit.
+      if (persist) scheduleOutboundMlsPersist();
+    } catch (e) {
+      console.error(
+        `[WELCOME] ${short}... the owed Welcome to ${recipient.slice(0, 8)}... could not be cleared ` +
+          `(${answer}) - it stays owed and the next connection sends it again: ${String(e).slice(0, 120)}`
+      );
+    }
   }
 
   getDeviceId(): string {
@@ -4800,7 +4909,11 @@ export abstract class BaseMlsService implements IMlsService {
                 'accepted - its first answer was lost; merging'
             );
           }
-          await this.mergePendingCommit(groupId);
+          // AN ADD IS MERGED OWING ITS WELCOME, IN THE SAME PLATFORM CALL (`owed_welcome.rs`). The
+          // caller sends it after this returns, and that send consumes the obligation
+          // ({@link sendWelcome}); held only in the caller's hands, a reload before the send lost it
+          // with the merge already on disk, and only the invitee's own repair let it in (DUP-7).
+          await this.mergeAccepted(submission);
           // EVERY OWN COMMIT REPLACES THIS DEVICE'S LEAF - openmls puts a path in each member commit
           // it builds (`mls-core/tests/self_update.rs`) - so an Add or a Remove is a refresh too,
           // and the periodic one is not owed again for an interval. Written here, the one seam they
@@ -4944,8 +5057,12 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void>;
   /** Every Welcome the state still owes (`mls-core/src/owed_welcome.rs`). */
   protected abstract owedWelcomes(): Promise<OwedWelcome[]>;
-  /** `recipient` was sent `groupId`'s owed Welcome. */
-  protected abstract welcomeDelivered(groupId: string, recipient: string): Promise<void>;
+  /** `recipient` was answered for `welcome` in `groupId`: the entry carrying those bytes owes it no longer. */
+  protected abstract welcomeDelivered(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array
+  ): Promise<void>;
   /** Every group whose state holds a staged commit not yet merged or cleared. */
   protected abstract groupsWithPendingCommit(): Promise<string[]>;
 
@@ -5287,6 +5404,27 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Merges `submission`'s staged commit, which the gate accepted - an Add OWING ITS WELCOME to the
+   * devices it admits, in the same platform call (`mls-core/src/owed_welcome.rs`), anything else
+   * plainly - and returns those recipients (none for a commit that is not an Add). The ONE merge of
+   * an accepted commit, for the transaction that got the accept and the settlement that learnt it
+   * later alike: whichever state reaches disk, it holds either the stage and its record (a
+   * settlement re-derives the Add) or the merge and its owed Welcome (the connection drain sends
+   * it), never the merge alone.
+   */
+  private async mergeAccepted(submission: CommitSubmission): Promise<string[]> {
+    const recipients = submission.welcome
+      ? (submission.admits ?? []).map((a) => `${a.userId}:${a.deviceId}`)
+      : [];
+    if (recipients.length > 0) {
+      await this.mergePendingCommitOwingWelcome(submission.groupId, recipients);
+    } else {
+      await this.mergePendingCommit(submission.groupId);
+    }
+    return recipients;
+  }
+
+  /**
    * Merges a kept commit the gate has now accepted, dates the leaf, and - for an Add - delivers its
    * Welcome to the devices it admits: the Welcome is a separate request made after the accept, and
    * the call that staged the Add is long gone.
@@ -5302,11 +5440,7 @@ export abstract class BaseMlsService implements IMlsService {
   private async mergeSettled(submission: CommitSubmission): Promise<void> {
     const { groupId, baseEpoch } = submission;
     const short = groupId.slice(0, 8);
-    const recipients = submission.welcome
-      ? (submission.admits ?? []).map((a) => `${a.userId}:${a.deviceId}`)
-      : [];
-    if (recipients.length > 0) await this.mergePendingCommitOwingWelcome(groupId, recipients);
-    else await this.mergePendingCommit(groupId);
+    const recipients = await this.mergeAccepted(submission);
     noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
     console.log(`[COMMIT] ${short}... the kept commit from epoch ${baseEpoch}: accepted - merged`);
     if (recipients.length === 0) return;
@@ -5317,66 +5451,67 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Sends every Welcome the state still owes - `groupId`'s only, when given - and clears each
-   * recipient once its send returned. A send that fails is said and stays owed, for the next
-   * settlement (the next connection) to send again; the joiner's own welcome request is the other
-   * repair. The clears reach disk with the next checkpoint: one lost clears means one more copy of a
-   * Welcome, which the joiner ignores.
+   * Sends every Welcome the state still owes - `groupId`'s only, when given - through
+   * {@link sendWelcome}, which clears each recipient once the server answered. A send that fails is
+   * said and stays owed, for the next connection to send again. The clears reach disk with the next
+   * checkpoint: a lost clear means one more copy of the same bytes, which the server stores once
+   * (`MessagingService.sendWelcome`) and the joiner takes as a redelivery.
    */
   private async deliverOwedWelcomes(groupId?: string): Promise<void> {
     const owed = (await this.owedWelcomes()).filter((w) => !groupId || w.groupId === groupId);
-    let cleared = 0;
-    let dropped = 0;
+    // ONE persist for the whole pass, scheduled after it: each clear is a state change, and a
+    // checkpoint per recipient would cost seconds each on a phone.
+    let changed = false;
     for (const w of owed) {
       const short = w.groupId.slice(0, 8);
+      // A tree the merge could not export is recorded empty (`owed_welcome.rs`): sent without one.
+      const ratchetTree = w.ratchetTree.length > 0 ? w.ratchetTree : undefined;
       for (const recipient of w.recipients) {
         const device = parseDeviceIdentity(recipient);
         if (!device) {
           // Written by this client from `userId:deviceId` admits; unreachable, and said if reached.
+          // Nothing was sent, so no server answer is claimed: dropped as a defect of the record.
           console.error(
-            `[COMMIT] ${short}... owed Welcome names no device (${recipient}) - dropped`
+            `[COMMIT] ${short}... owed Welcome names no device (${recipient}) - a defect of the record, dropped unsent`
           );
-          await this.welcomeDelivered(w.groupId, recipient);
+          try {
+            await this.welcomeDelivered(w.groupId, recipient, w.welcome);
+            changed = true;
+          } catch (e) {
+            console.error(
+              `[COMMIT] ${short}... the unaddressable owed Welcome could not be dropped: ${String(e).slice(0, 120)}`
+            );
+          }
           continue;
         }
         try {
-          await this.sendWelcome(
+          // Clears the recipient once the server answered (`consumeOwedWelcome`), unpersisted.
+          await this.sendWelcomeConsuming(
             w.welcome,
             device.userId,
             w.groupId,
             device.deviceId,
-            w.ratchetTree
+            ratchetTree,
+            false
           );
-          await this.welcomeDelivered(w.groupId, recipient);
-          cleared += 1;
+          changed = true;
           console.log(
-            `[COMMIT] ${short}... Welcome of the settled Add delivered to ${device.deviceId}`
+            `[COMMIT] ${short}... owed Welcome of an Add delivered to ${device.deviceId}`
           );
         } catch (e) {
-          // A REFUSAL THAT CANNOT CHANGE IS NOT OWED AGAIN. The server enrols an Add's people with
-          // the commit it accepts, or refuses them for good (departed since the Add was built, a
-          // block), so a target the roster still does not name will not be named by resending these
-          // bytes - and resending them at every connection was the defect. Dropped from the state,
-          // said at the level that accuses: an accepted Add whose person is off the roster is the
-          // visible end of something upstream (`WelcomeTargetNotMemberError`).
+          // Terminal: already dropped from the state, and said why.
           if (e instanceof WelcomeTargetNotMemberError) {
-            await this.welcomeDelivered(w.groupId, recipient);
-            dropped += 1;
-            console.error(
-              `[COMMIT] ${short}... Welcome of the settled Add REFUSED for ${device.deviceId}: the ` +
-                `roster does not name ${device.userId.slice(0, 8)} - terminal, no longer owed; the ` +
-                'leaf it admitted has no seat and the stray sweep collects it'
-            );
+            changed = true;
             continue;
           }
           console.error(
-            `[COMMIT] ${short}... Welcome of the settled Add NOT delivered to ${device.deviceId} - ` +
-              `still owed, sent again at the next settlement: ${String(e).slice(0, 120)}`
+            `[COMMIT] ${short}... owed Welcome of an Add NOT delivered to ${device.deviceId} - ` +
+              `still owed, sent again at the next connection: ${String(e).slice(0, 120)}`
           );
         }
       }
     }
-    if (cleared > 0 || dropped > 0) scheduleOutboundMlsPersist();
+    if (changed) scheduleOutboundMlsPersist();
   }
 
   /**

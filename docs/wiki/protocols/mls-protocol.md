@@ -1521,6 +1521,40 @@ owed for the next connection. A joiner handed a copy of a Welcome for a group it
 redelivery before the core sees it (`setupMessageHandler`); the core itself refuses such a copy
 (its key package is spent) and leaves the group untouched (`mls-core/tests/owed_welcome.rs`).
 
+**EVERY accepted Add is merged owing its Welcome, not only a settled one (DUP-7, 2026-10-25).** The
+transaction that READ the accept (`runCommitTransaction`, a first answer or a `duplicate` to its own
+resubmission) used to merge plainly and hand the Welcome to its caller: the obligation lived in the
+caller's hands alone, so a send that failed and a reload after the merge reached disk lost it, and
+only the invitee's own `[READD]` external join let it in. Both paths now go through ONE merge
+(`BaseMlsService.mergeAccepted`): whichever state reaches disk holds either the stage and its record
+(a settlement re-derives the Add) or the merge and its owed Welcome (the connection drain,
+`deliverOwedWelcomes`, sends it) - never the merge alone. The caller still sends the Welcome it was
+handed, and **`sendWelcome` is where the obligation is consumed**: the server's answer - stored, or
+the terminal `WELCOME_TARGET_NOT_MEMBER` - clears that recipient FROM THE ENTRY CARRYING THOSE BYTES
+(`welcome_delivered` matches the Welcome, never the device alone), whoever sent it, and hands the
+change to the next checkpoint. So the connection drain now competes with a live Add's own send; that
+is correct because a send of the same bytes to the same device already in flight is awaited, never
+repeated, and the server stores a copy once (below). A group can owe the Welcomes of SEVERAL Adds,
+so a group's record is a list, one entry per Add; a device admitted again is owed only the newer
+Welcome, and an older Welcome answered late clears nothing (a record of one bare entry, written by
+an older build, still reads - [legacy-compatibility](../legacy-compatibility.md)). The merge records
+the obligation even when the ratchet tree cannot be exported afterwards: the entry carries an empty
+tree, said at error level, and the Welcome goes without one, which a joiner opens from the tree the
+Welcome itself carries (`a_welcome_opens_without_an_external_ratchet_tree`) - never a merged Add
+owing nothing. The connection drain clears every recipient of its pass and schedules ONE persist
+after it; a recipient that names no device is a defect of the record, dropped unsent and said as
+one, never reported as a server refusal.
+
+**The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
+and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
+serialises every store of a Welcome for that device in that group, for a row still queued with that
+payload, and answers `queued` without storing again (`[WELCOME] DUPLICATE`); it hands THAT row to
+the delivery again, since the first request may have died between its store and its delivery and
+the re-send is then the only thing left to arm the live publish and the push - the same row, so
+nothing new is queued, and a device that already joined from it takes the copy as a redelivery. A copy
+arriving after the joiner consumed the first meets a device holding the group, which takes it as a
+redelivery. Pinned by `add-enrolment.integration.spec.ts`.
+
 **What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
 365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,
 `COMMIT_LOG_MAX_PER_GROUP` in `messaging.service.ts`), so the window is a commit left unresolved for a

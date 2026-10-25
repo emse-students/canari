@@ -3922,6 +3922,39 @@ export class MessagingService {
     return false;
   }
 
+  /**
+   * The Welcome row already queued for `target` in `groupId` with exactly `payload`, or `null` -
+   * read under a lock that serialises every store of a Welcome for that device in that group, so two
+   * copies of the same bytes cannot both find none. `m` MUST be transactional.
+   *
+   * WHY: a client sends the Welcome an accepted Add owes, and sends it AGAIN when no answer came
+   * back (the obligation is durable client state, cleared only by an answer). The first request may
+   * have been stored and only its answer lost; the copy is then the same bytes, and storing it again
+   * would hand the joiner a second Welcome. Only a row still queued is found: one the joiner already
+   * consumed is gone, and a later copy reaches a device that holds the group, which takes it as a
+   * redelivery (`setupMessageHandler`).
+   */
+  private async findQueuedWelcome(
+    m: EntityManager,
+    groupId: string,
+    target: WelcomeSeat,
+    payload: string | undefined
+  ): Promise<QueuedMessage | null> {
+    if (!payload) return null;
+    await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `welcome-store:${groupId}:${target.userId}:${target.deviceId}`,
+    ]);
+    return m.getRepository(QueuedMessage).findOne({
+      where: {
+        groupId,
+        recipientId: target.userId,
+        deviceId: target.deviceId,
+        isWelcome: true,
+        proto: payload,
+      },
+    });
+  }
+
   /** {@link lockWelcomeSeat}'s first half: whether the target still holds its seat, logged when not. */
   private async seatStandsFor(
     m: EntityManager,
@@ -4264,14 +4297,34 @@ export class MessagingService {
     // Same seam as the send: a Welcome for a group that ended between the target lookup and this
     // write is worse than an undeliverable message - the device that receives it asks for a group
     // nobody can hand it, on every reconnection. See {@link enqueueForLiveGroup}.
-    await this.enqueueForLiveGroup([queuedWelcome], safeGroupId, 'WELCOME', traceId, undefined, {
-      welcome: {
-        userId: deviceInfo.userId,
-        deviceId: targetDeviceId,
-        keyGroup: distributionScopeOf(group) !== null,
-        claim: deviceInfo.claim,
-      },
-    });
+    const [stored] = await this.enqueueForLiveGroup(
+      [queuedWelcome],
+      safeGroupId,
+      'WELCOME',
+      traceId,
+      undefined,
+      {
+        welcome: {
+          userId: deviceInfo.userId,
+          deviceId: targetDeviceId,
+          keyGroup: distributionScopeOf(group) !== null,
+          claim: deviceInfo.claim,
+        },
+      }
+    );
+    if (stored && stored !== queuedWelcome) {
+      // A RE-SEND OF THE SAME BYTES, already queued: nothing is stored a second time. The queued
+      // row is handed to the delivery again - the same row, so nothing new is queued, and a device
+      // that already joined from it takes the copy as a redelivery (`setupMessageHandler`) - because
+      // the first request may have died between its store and its delivery, and a re-send is the
+      // only thing left to arm the live publish and the push.
+      this.logger.log(
+        `[WELCOME][${traceId}] DUPLICATE id=${stored.id} recipient=${deviceInfo.userId}:${targetDeviceId} ` +
+          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
+      );
+      await this.deliverWelcome(stored, traceId);
+      return { status: 'queued' };
+    }
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
@@ -5326,6 +5379,12 @@ export class MessagingService {
           error: 'welcome_target_not_member',
           message: 'this Welcome is not accepted',
         });
+      }
+      // THE SAME WELCOME STORED TWICE IS STORED ONCE ({@link findQueuedWelcome}): a client re-sends
+      // an owed Welcome whose first answer it never read, and the copy already queued is the answer.
+      if (welcome && rows.length === 1) {
+        const queued = await this.findQueuedWelcome(manager, groupId, welcome, rows[0].proto);
+        if (queued) return [queued];
       }
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];

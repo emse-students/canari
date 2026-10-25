@@ -264,6 +264,19 @@ state-composition line ends `N legacy bare leaves` (`MlsManager::legacy_bare_lea
 when that reads 0 on the bench phones and on the rig's clients, and no build older than 61ac71d7c9 can
 still commit into a group. Then the bare arm goes from both readers, and a bare identity names nobody.
 
+### No date yet - an owed Welcome stored as ONE bare entry per group (2026-10-25)
+
+**Site (client, native and WASM alike):** `decode_entries` in `frontend/mls-core/src/owed_welcome.rs`.
+**Shim:** since DUP-7 (2026-10-25) a group's owed-Welcome record is a CBOR LIST, one entry per Add,
+because every accepted Add now owes its Welcome and a second Add must not erase the first. A build
+before it wrote one bare entry; the reader takes that shape as a list of one. Every write is the list.
+An older build reading a list fails to decode it, says so at error level and drops it at its next
+save - its invitee then joins by its own repair, as before this change.
+**Removal condition:** `minClientVersion` is at or above the first stable carrying DUP-7 on both
+stores, and 30 days have passed: a bare entry exists only in a state an older build left with a
+Welcome unsent, and the first connection after the upgrade sends it and rewrites the record. After
+removal such a record fails to decode and is dropped, costing at most one invitee's self-repair.
+
 ### No date yet - the add-lock released by OWNER alone, with no token (2026-10-25)
 
 **Site (server):** `releaseAddLock` in `apps/chat-delivery-service/src/utils/add-lock.ts`
