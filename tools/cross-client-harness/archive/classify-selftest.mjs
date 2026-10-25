@@ -1352,14 +1352,32 @@ const FORGIVE_CASES = [
       ['debug', '[2026-10-22T02:13:21.939Z] [CHAT_VIEW] channel_ messages 3 (hasNewMessage=true, response=repin-entry)'],
     ],
     PAGE_BOOT_NARRATION,
-    { clean: true, unmatched: 5 },
+    { clean: true, unmatched: 8 },
+  ],
+  [
+    // Read on the first live FLOOR draw on dev (2026-10-25), after the invariant's reload.
+    'the device notices, the trust consumer and the legacy seal format are boot narration',
+    [
+      ['log', '[02:42:30.317] [DEVICE_NOTICE] 2 unseen new-device alert(s) restored'],
+      ['debug', '[02:42:30.317] [TRUST] device-event consumer registered'],
+      ['log', '[02:42:30.637] [MLS] web checkpoint seal format: legacy (WASM ChaCha20)'],
+    ],
+    PAGE_BOOT_NARRATION,
+    { clean: true, unmatched: 14 },
+  ],
+  [
+    // CONTROL: a seal format other than the one this build writes is a reading, not narration.
+    'another checkpoint seal format is not forgiven',
+    [['log', '[02:42:30.637] [MLS] web checkpoint seal format: v2 (WebCrypto AES-GCM)']],
+    PAGE_BOOT_NARRATION,
+    { clean: false, unmatched: 17 },
   ],
   [
     // CONTROL: the same stray-tree sweep with a refusal in it is a finding, not the boot narrating.
     'a stray-tree sweep that was refused is not forgiven',
     [['log', '[04:13:20.877] [STRAY] compared 1 tree(s): 1 roster(s) in one read, 1 refused, 0 not answered (nobody removed in them)']],
     PAGE_BOOT_NARRATION,
-    { clean: false, unmatched: 14 },
+    { clean: false, unmatched: 17 },
   ],
   [
     'a console error beside a forgiven line still breaks clean',

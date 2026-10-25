@@ -25,7 +25,14 @@ import { createGroup } from './groupnav.mjs';
 import { serverView } from './invariant.mjs';
 import { forgivingProvoked, rowGroupName } from './rowkit.mjs';
 import { ESTATE } from './site.mjs';
-import { ignoringExpectedLog, ignoringExpectedRefusal, ignoringOfflineCut, report, watch } from './watch.mjs';
+import {
+  PAGE_BOOT_NARRATION,
+  ignoringExpectedLog,
+  ignoringExpectedRefusal,
+  ignoringOfflineCut,
+  report,
+  watch,
+} from './watch.mjs';
 
 if (ESTATE !== 'local' && ESTATE !== 'dev') throw new Error(`mlsrow.mjs drives the local or the dev estate only, not '${ESTATE}'`);
 
@@ -82,6 +89,11 @@ export async function observersOf(seats, { refusals = {}, logs = {}, provoked = 
   const out = {};
   for (const [device, s] of Object.entries(seats.seat)) {
     let rep = await report(s.w);
+    // EVERY MLS ROW RELOADS ITS WEB SEATS (the invariant's second pass, R8), and a reloaded page
+    // narrates its boot (`PAGE_BOOT_NARRATION`). Read off the window's OWN navigations rather than
+    // asked of each runner: a seat whose window saw no document replaced gets no forgiveness, so a
+    // page that booted unasked is still a finding. Met on the first live FLOOR draw (2026-10-25).
+    if ((rep.documentsReplaced ?? 0) > 0) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
     if (offline.includes(device)) rep = ignoringOfflineCut(rep);
     if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);
     if (refusals[device]?.length) rep = ignoringExpectedRefusal(rep, refusals[device]);

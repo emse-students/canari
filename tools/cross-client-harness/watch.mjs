@@ -2125,6 +2125,13 @@ export const PAGE_BOOT_NARRATION = [
   /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
   /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
   /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
+  // THREE MORE, read on the first live FLOOR draw on dev (1.4.1-alpha.3, 2026-10-25): the device
+  // notices kept across the reload, the trust consumer taking over device events, and the at-rest
+  // format the session's first checkpoint is sealed in (`legacy` until the blob-header writer may
+  // follow its reader - the format is the reading, so it is pinned by name and any other is dirt).
+  /^\[DEVICE_NOTICE\] \d+ unseen new-device alert\(s\) restored$/,
+  /^\[TRUST\] device-event consumer registered$/,
+  /^\[MLS\] web checkpoint seal format: legacy \(WASM ChaCha20\)$/,
 ];
 
 /**

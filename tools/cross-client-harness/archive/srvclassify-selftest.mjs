@@ -190,6 +190,13 @@ const BENIGN_CASES = [
   `${NEST}[InvitationsController] [PENDING][pending-0a1b2c3d] No active membership for 00000000-0000-4000-8000-000000000001:web-a-b`,
   // The precomposed spelling is the one Canari deliberately does not serve, so its 404 stays benign.
   '[404] GET /apple-touch-icon-precomposed.png',
+  // Dev's DEBUG narration, read on the first live FLOOR draw (2026-10-25).
+  '[Nest] 1  - 10/25/2026, 12:42:19 AM   DEBUG [InternalController] [PRESENCE_AUDIENCE] viewer=f7a9bb80 asked=3 shared=3',
+  '[Nest] 1  - 10/25/2026, 12:42:19 AM   DEBUG [InternalPresenceController] [PRESENCE_AUDIENCE] viewer=223bc34e asked=1 shared=1',
+  '[Nest] 1  - 10/25/2026, 12:42:30 AM   DEBUG [LiveSegmentsService] [LIVE_GC] 0 live folder(s) in the store',
+  '[Nest] 1  - 10/25/2026, 12:42:30 AM   DEBUG [HttpLiveSegmentStore] [LIVE] listing the live folders of the store',
+  '[Nest] 1  - 10/25/2026, 12:42:30 AM   DEBUG [ChannelService] [UNREAD] user=f7a9bb80 salons=2 unread=0 muted=0',
+  '[Nest] 1  - 10/25/2026, 12:42:30 AM   DEBUG [GroupMembership] [GROUP_ENROL] group=8c9fea93 user=c71e1a5b admitted 812 ms before enrolment - arrival recorded on the interval',
 ];
 for (const l of BENIGN_CASES) {
   const ok = matches(BENIGN_RULES, l) && !matches(NOTABLE_RULES, l);

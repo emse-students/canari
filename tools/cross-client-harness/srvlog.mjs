@@ -550,6 +550,20 @@ const BENIGN = [
   // and stay unclassified, because each says the segmented reader asked for something the server
   // could not give as a part.
   /\[MediaService\] media [0-9a-f-]{36}: bytes \d+-\d+\/\d+ served as a part$/,
+  // DEV LOGS AT DEBUG, AND FIVE DEBUG LINES OF 1.4.x WERE IN NO LIST - read on the first live FLOOR
+  // draw on dev (2026-10-25), every one a decision logged as the standard asks, none with an
+  // alternative path. Each pins its happy shape only; its failing siblings are other prose and stay
+  // unclassified: `[PRESENCE_AUDIENCE] refused: ...` (WARN) and `... has no conversation`, `[LIVE_GC]
+  // ... not deleted` / `... is not a live folder` (WARN).
+  // - the gateway asking which presences a viewer may see (both services answer it);
+  /\[Internal(?:Presence)?Controller\] \[PRESENCE_AUDIENCE\] viewer=[0-9a-f]{8} asked=\d+ shared=\d+$/,
+  // - the live-segment sweep counting its folders, and the store listing them for it;
+  /\[LiveSegmentsService\] \[LIVE_GC\] \d+ live folder\(s\) in the store$/,
+  /\[HttpLiveSegmentStore\] \[LIVE\] listing the live folders of the store$/,
+  // - a member's salon unread counts, read at every boot (the client's `[UNREAD]` twin);
+  /\[ChannelService\] \[UNREAD\] user=[0-9a-f]{8} salons=\d+ unread=\d+ muted=\d+$/,
+  // - an Add's arrival dated at the device's admission, which precedes the roster row on every Add.
+  /\[GroupMembership\] \[GROUP_ENROL\] group=[0-9a-f]{8} user=[0-9a-f]{8} admitted \d+ ms before enrolment - arrival recorded on the interval$/,
 ];
 
 /**
