@@ -773,6 +773,8 @@ const comm = [
   ['the standing of a new community creator', `${NEST}[ChannelService] [WORKSPACE] creator standing workspace=00000000-0000-4000-8000-000000000001 manage=true moderate=true manageChannels=true`, 'notable'],
   ['a role granted to a member', `${NEST}[ChannelService] [WORKSPACE] role set workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb role="Administrateur" by=aaaaaaaa`, 'notable'],
   ['control: a role set but not announced is a failure, not narration', `${NEST}[ChannelService] [WORKSPACE] role set but not announced workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb: boom`, 'unexplained'],
+  ['a departure begun by its first eviction', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=1`, 'notable'],
+  ['control: a cut that named no departure stays visible', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=none`, 'unexplained'],
   ['the admission a key group commit asked for', `${NEST}[MessagingService] [COMMIT][commit-16f0f945] ADMITS_ASKED group=00000000-0000-4000-8000-000000000002 channel=00000000-0000-4000-8000-000000000003 people=1 entitled=1`, 'notable'],
   // THE POLL TRIPLET. Two are content; the third ends the thing and turns every further vote into a
   // 403, which is the whole subject of COMM-15.

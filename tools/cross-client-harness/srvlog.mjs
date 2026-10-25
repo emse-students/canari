@@ -1026,6 +1026,9 @@ const NOTABLE = [
   // `but not announced` twin is a failure and stays unmatched.
   /\[ChannelService\] \[WORKSPACE\] creator standing workspace=\S+ manage=(?:true|false) moderate=(?:true|false) manageChannels=(?:true|false)$/,
   /\[ChannelService\] \[WORKSPACE\] role set workspace=\S+ target=[0-9a-f]{8} role="[^"]+" by=[0-9a-f]{8}$/,
+  // A DEPARTURE'S FIRST EVICTION, naming the departure it begins (RM-4b, 2026-10-25): one per person
+  // leaving a scope. Its unnamed twin (`first eviction named NO departure`) is a warn and unmatched.
+  /\[ChannelService\] \[KEY_DISTRIBUTION\] key distribution cut scope=(?:channel|workspace):\S+ user=[0-9a-f]{8} reason=\S+ memberships=\d+ routes=\d+ queued=\d+ departure=\d+$/,
   // A POLL BEING ENDED, which is destructive in the small: it forces the deadline, unpins the
   // message and makes every further vote a 403. Its `created` and `vote` siblings are BENIGN because
   // they are content; this one is an authority acting on somebody else's message - `closePoll` takes

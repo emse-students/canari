@@ -143,6 +143,8 @@ for (const line of [
   '[channelSettings.loadChannelAccess] channel_0fb4ddf1…',
   '[channelSettings.addAllowedUser] {"channelId":"channel_0fb4ddf1…","userId":"223bc34e…"}',
   '[RoutePreload] {"pathname":"/posts","first":true}',
+  'Removed from channel 0fb4ddf1…',
+  '[channelSettings.afterAccessWrite another write landed] {"channelId":"channel_0fb4ddf1…","base":3,"revision":5}',
 ]) ok(`narration: ${line.slice(0, 60)}`, said(line));
 ok('control: another community\'s join is not the row\'s', !said('Joined channel 99999999…'));
 ok('control: another key group\'s Welcome is not the row\'s', !said('[WELCOME] 99999999... is a KEY-DISTRIBUTION group (server row) - installing it as a seed carrier'));
