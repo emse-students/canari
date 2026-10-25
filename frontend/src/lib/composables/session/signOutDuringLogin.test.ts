@@ -85,7 +85,7 @@ vi.mock('$lib/utils/chat/connection', async (importOriginal) => {
     getIsTabLeader: () => true,
     // What the real one does on a leader tab, minus the token import: the socket opens beside the load.
     startGatewayHandshake: (deps: { mlsService: IMlsService }) =>
-      deps.mlsService.connect('access-token').then(
+      deps.mlsService.connect('access-token', deps.mlsService.socketFence()).then(
         () => null,
         (e: unknown) => e as Error
       ),
@@ -118,6 +118,7 @@ function fakeClient(held: { init?: Held; resolveDeviceId?: Held } = {}) {
       state.socketOpen = true;
     }),
     gatewaySocketSettled: vi.fn(async () => {}),
+    socketFence: () => 0,
     pauseSocket: vi.fn(() => {
       state.socketOpen = false;
     }),

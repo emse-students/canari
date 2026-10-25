@@ -79,7 +79,7 @@ describe('TauriMlsService - the native socket across a rotation and a pause', ()
     const { svc, internals } = makeService();
     const old = nativeSocket();
     NativeWebSocket.connect.mockResolvedValueOnce(old);
-    await svc.connect('token');
+    await svc.connect('token', svc.socketFence());
     expect(deviceIdOf(NativeWebSocket.connect.mock.calls[0][0])).toBe('tauri-u-old');
 
     let arrive!: (ws: unknown) => void;
@@ -101,11 +101,40 @@ describe('TauriMlsService - the native socket across a rotation and a pause', ()
     expect(svc.isWsOpen()).toBe(false);
   });
 
+  it('a pause then a resume while the old socket is still releasing: the late open clobbers nothing', async () => {
+    const { svc, internals } = makeService();
+    const first = nativeSocket();
+    let released!: () => void;
+    first.disconnect.mockReturnValue(new Promise<void>((r) => (released = r)));
+    NativeWebSocket.connect.mockResolvedValueOnce(first);
+    await svc.connect('token', svc.socketFence());
+
+    // Open A starts: it lets go of `first` and waits for its native release.
+    const a = svc.connect('token', svc.socketFence());
+    await flush();
+    svc.pauseSocket();
+    await expect(a).rejects.toBeInstanceOf(GatewayOpenAbandonedError);
+
+    // The resume, B, opens while A is still parked on the release.
+    const second = nativeSocket();
+    NativeWebSocket.connect.mockResolvedValueOnce(second);
+    await svc.connect('token', svc.socketFence());
+    expect(internals.ws).toBe(second);
+
+    // A wakes up: it must touch nothing, and open nothing.
+    released();
+    await flush();
+    expect(internals.ws).toBe(second);
+    expect(svc.isWsOpen()).toBe(true);
+    expect(NativeWebSocket.connect).toHaveBeenCalledTimes(2);
+    expect(second.disconnect).not.toHaveBeenCalled();
+  });
+
   it('a revoked KeyPackage round paused mid-reopen publishes under the new id and leaves no socket', async () => {
     const { svc, internals } = makeService();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     NativeWebSocket.connect.mockResolvedValueOnce(nativeSocket());
-    await svc.connect('token');
+    await svc.connect('token', svc.socketFence());
     let calls = 0;
     internals.generateKeyPackageImpl = vi.fn(async () => {
       calls += 1;

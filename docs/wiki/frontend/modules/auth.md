@@ -171,31 +171,37 @@ but the socket was deaf to the device it belonged to.
 
 **The fix is at the rotation, one implementation for web and Tauri (`BaseMlsService`):**
 
-- `connect` is concrete on the base class and QUEUES every open; the platform half is
-  `openGatewaySocket(open)`, handed the id recorded for that socket and the token its caller fetched
-  - so the web open has no await before `new WebSocket`, and a refused refresh is the caller's
-  `SessionExpiredError`, never an unauthenticated open. Two opens in flight together used to let the
-  first one's 15 s deadline close the second socket.
-- `rotateDeviceIdentity`, once the new id is on disk, queues a reopen: behind any open in flight, and
-  it replaces the socket only if one is open under another id - sending `disconnect` on the old one
-  first, as a pause does. Without a socket it opens nothing - the next open reads the new id.
-- **A pause FENCES the queue.** `pauseSocket` (backgrounding, a sign-out releasing a login) advances a
-  generation that every queued step and every platform open re-reads after each await (the token
-  fetch, the release of the previous native socket, the native connect); a step or an open that
-  started before it assigns no socket, and a native socket arriving for an abandoned open is
-  released. An open still CONNECTING is settled at once as `GatewayOpenAbandonedError` through a kept
-  handle, so the queue never waits on the 15 s deadline. `openGatewayConnection` reads that error as
-  no failure: nothing accused, nothing scheduled - the resume opens the next socket.
+- `connect` is concrete on the base class and QUEUES every open. The platform half is
+  `openGatewaySocket(open)`, handed the id recorded for that socket and the token its caller
+  fetched, so the web open has no await before `new WebSocket` and a refused refresh is the
+  caller's `SessionExpiredError`, never an unauthenticated open. Two opens in flight together used
+  to let the first one's 15 s deadline close the second socket.
+- `rotateDeviceIdentity`, once the new id is on disk, queues a reopen: behind any open in flight,
+  and it replaces the socket only if one is open under another id - re-read after the reopen's own
+  token fetch - sending `disconnect` on the old one first, as a pause does. Without a socket it
+  opens nothing; the next open reads the new id.
+- **A pause FENCES the queue.** `pauseSocket` (backgrounding, a sign-out releasing a login) moves a
+  generation. Every caller of `connect` reads it (`socketFence()`) BEFORE its token fetch - the
+  await a backgrounded phone parks a reconnect in - and `connect` refuses a fence a pause has
+  passed. Every queued step and platform open re-reads it after each await (the token fetch, the
+  release of the previous native socket, the native connect) and touches no shared field once it
+  is stale; the native open lets go of the previous socket's fields BEFORE its await, never after,
+  so a late open cannot clobber a later one. An open still CONNECTING is settled at once as
+  `GatewayOpenAbandonedError` through a kept handle, so the queue never waits on the 15 s deadline.
+- `openGatewayConnection` reads that error as no failure: it logs no error and schedules nothing
+  itself. On the reconnect path the ladder's own retry is then refused by the pause flag, with its
+  line (`scheduleReconnectImpl`); the resume opens the next socket.
 - `openGatewayConnection` waits for `gatewaySocketSettled()` before the post-connect half, so the
   pending fetch and the KeyPackage round run on the socket that will carry this device. A failed
-  reopen fails the connection like any open; on the login path, which has no ladder and whose
-  disconnect handler is registered only after the settle, the reconnect is scheduled there and then.
-  A reopen failing after the session is up is reported on the disconnect seam.
-- The revoked-KeyPackage round waits for the reopen before it republishes - the publication is what
-  makes the new id addressable - and then reads the new id's pending queue once.
+  reopen fails the connection like any open. On the login path, which has no ladder and whose
+  disconnect handler is registered only after the settle, the reconnect is scheduled there and
+  then; a reopen failing after the session is up is reported on the disconnect seam.
+- The revoked-KeyPackage round waits for the reopen before it republishes - the publication is
+  what makes the new id addressable - and then reads the new id's pending queue once.
 - An abandoned id is deleted only once no socket of this document carries it
   (`deleteAbandonedDevice`); otherwise it stays recorded for the next published round, in one line.
-- A login stopped by a sign-out releases its socket after the queued reopen too, not at the handshake.
+- A login stopped by a sign-out releases its socket after the queued reopen too, not at the
+  handshake.
 
 **The overlap is kept.** A login that does not rotate pays nothing; one that rotates pays a second
 handshake. Behaviour is in `BaseMlsService.socketRotation.test.ts`,

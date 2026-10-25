@@ -879,8 +879,12 @@ export interface IMlsService {
    * Opens a WebSocket connection to the chat gateway under this device's current id, queued behind
    * any open in flight. The caller fetches the token, so a refused refresh is the caller's
    * `SessionExpiredError` and never an unauthenticated open (Tauri, proxies and ITP need it in the URL).
+   * `fence` is {@link socketFence}, read BEFORE that token fetch: a pause landing during the fetch
+   * makes the open settle as `GatewayOpenAbandonedError`, opening nothing.
    */
-  connect(token: string): Promise<void>;
+  connect(token: string, fence: number): Promise<void>;
+  /** The socket fence a caller of {@link connect} reads before its token fetch; moved by every pause. */
+  socketFence(): number;
   /**
    * Resolves once every socket open queued so far has run - including the reopen a device identity
    * rotation queues - and rejects with the last one's own failure. The post-connect half of a

@@ -94,7 +94,7 @@ function makeService() {
 
 /** Opens the first socket, under the old id. */
 async function openUnderOldId(svc: WebMlsService): Promise<FakeSocket> {
-  const first = svc.connect('token');
+  const first = svc.connect('token', svc.socketFence());
   FakeSocket.all[0].open();
   await first;
   return FakeSocket.all[0];
@@ -155,7 +155,7 @@ describe('the gateway socket across a device identity rotation', () => {
   it('replaces a socket that was still OPENING under the old id when the rotation landed', async () => {
     const { svc, internals } = makeService();
     // The login's handshake: started, its URL already built under the old id, not yet open.
-    const handshake = svc.connect('token');
+    const handshake = svc.connect('token', svc.socketFence());
     expect(FakeSocket.all[0].deviceId).toBe('web-u-old');
 
     await internals.rotateDeviceIdentity('key', 'credential mismatch');
@@ -188,7 +188,7 @@ describe('the gateway socket across a device identity rotation', () => {
     expect(FakeSocket.all).toHaveLength(0);
     expect(deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old');
 
-    const later = svc.connect('token');
+    const later = svc.connect('token', svc.socketFence());
     FakeSocket.all[0].open();
     await later;
     expect(FakeSocket.all[0].deviceId).toBe('web-u-new');
@@ -224,7 +224,7 @@ describe('the gateway socket across a device identity rotation', () => {
     expect(FakeSocket.all).toHaveLength(1);
   });
 
-  it('logs a failed reopen with no disconnect handler yet - the waiting connection fails with it', async () => {
+  it('a failed reopen with no disconnect handler yet leaves the report to the waiting connection', async () => {
     const { svc, internals } = makeService();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await openUnderOldId(svc);
@@ -236,9 +236,69 @@ describe('the gateway socket across a device identity rotation', () => {
 
     await expect(settled).rejects.toThrow(/WebSocket connection failed/);
     await flush();
-    expect(error).toHaveBeenCalledWith(
+    // One report, by `openGatewayConnection`: the reopen itself says it at debug only.
+    expect(error).not.toHaveBeenCalledWith(expect.stringContaining('rotated id FAILED'));
+    expect(console.debug).toHaveBeenCalledWith(
       expect.stringContaining('before any disconnect handler was registered')
     );
+  });
+
+  it('does not reopen when the socket closed during the reopen token fetch', async () => {
+    const { svc, internals } = makeService();
+    const old = await openUnderOldId(svc);
+    let releaseToken!: (t: string) => void;
+    getToken.mockReturnValueOnce(new Promise<string>((r) => (releaseToken = r)));
+
+    await internals.rotateDeviceIdentity('key', 'saved state lost');
+    await flush();
+    old.readyState = 3;
+    releaseToken('late-token');
+    await svc.gatewaySocketSettled();
+
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('refuses a connect whose fence a pause passed during its token fetch', async () => {
+    const { svc } = makeService();
+    // The reconnect path: the fence is read, the token fetch parks, the app is backgrounded.
+    const fence = svc.socketFence();
+    svc.pauseSocket();
+
+    await expect(svc.connect('token', fence)).rejects.toBeInstanceOf(GatewayOpenAbandonedError);
+    expect(FakeSocket.all).toHaveLength(0);
+
+    // The resume reads a fresh fence and opens.
+    const resume = svc.connect('token', svc.socketFence());
+    FakeSocket.all[0].open();
+    await resume;
+    expect(svc.isWsOpen()).toBe(true);
+  });
+
+  it('settles a platform open that throws synchronously through the queue, leaving no handle', async () => {
+    const { svc } = makeService();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'WebSocket',
+      class {
+        static readonly OPEN = 1;
+        constructor() {
+          throw new SyntaxError('invalid url');
+        }
+      }
+    );
+    const log = vi.mocked(console.log);
+
+    await expect(svc.connect('token', svc.socketFence())).rejects.toBeInstanceOf(SyntaxError);
+    await svc.gatewaySocketSettled().catch(() => {});
+    log.mockClear();
+    svc.pauseSocket();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('open still in flight'));
+
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const next = svc.connect('token', svc.socketFence());
+    FakeSocket.all[0].open();
+    await next;
+    expect(svc.isWsOpen()).toBe(true);
   });
 
   describe('a pause fences the queue', () => {
@@ -282,14 +342,14 @@ describe('the gateway socket across a device identity rotation', () => {
 
     it('drops a reopen queued before the pause, and the resume opens under the new id', async () => {
       const { svc, internals } = makeService();
-      const handshake = svc.connect('token');
+      const handshake = svc.connect('token', svc.socketFence());
       await internals.rotateDeviceIdentity('key', 'saved state lost');
       svc.pauseSocket();
       await expect(handshake).rejects.toBeInstanceOf(GatewayOpenAbandonedError);
       await svc.gatewaySocketSettled();
       expect(FakeSocket.all).toHaveLength(1);
 
-      const resume = svc.connect('token');
+      const resume = svc.connect('token', svc.socketFence());
       FakeSocket.all[1].open();
       await resume;
       expect(FakeSocket.all[1].deviceId).toBe('web-u-new');
@@ -373,8 +433,8 @@ describe('the gateway socket across a device identity rotation', () => {
     vi.useFakeTimers();
     const { svc } = makeService();
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const first = svc.connect('token');
-    const second = svc.connect('token');
+    const first = svc.connect('token', svc.socketFence());
+    const second = svc.connect('token', svc.socketFence());
     // The second waits: one socket, the first one's.
     expect(FakeSocket.all).toHaveLength(1);
 

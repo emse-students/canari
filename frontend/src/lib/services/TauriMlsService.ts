@@ -289,18 +289,23 @@ export class TauriMlsService extends BaseMlsService {
   protected override async openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
     const { deviceId, token } = open;
     // Unlisten + disconnect before reconnecting so the Close event doesn't trigger disconnectCallback.
+    // EVERY SHARED FIELD IS LET GO BEFORE THE AWAIT, never after it: once this open yields, a pause
+    // and a resume may have handed `ws` and `wsUnlisten` to a LATER open, and a write here would
+    // clobber that one's live socket. After each await this open touches only its own locals until
+    // the fence says it is still current.
     this.clearHeartbeat();
-    if (this.ws) {
+    const previous = this.ws;
+    if (previous) {
+      this.wsUnlisten?.();
+      this.wsUnlisten = null;
+      this.ws = null;
       try {
-        this.wsUnlisten?.();
-        this.wsUnlisten = null;
-        await this.ws.disconnect();
+        await previous.disconnect();
       } catch (e) {
         console.log(
           `[WS] the previous native socket was already gone: ${sanitizeForLog(String(e))}`
         );
       }
-      this.ws = null;
     }
     if (!open.isCurrent()) {
       throw new GatewayOpenAbandonedError('paused while the previous socket was released');
@@ -382,6 +387,11 @@ export class TauriMlsService extends BaseMlsService {
       }
 
       if (msg.type === 'Close') {
+        // Only THIS socket's close releases the shared fields: a later open may own them now.
+        if (this.ws !== socket) {
+          console.log('[WS] a close arrived for a native socket already replaced - ignored');
+          return;
+        }
         this.ws = null;
         this.clearHeartbeat();
         const closeData = msg.data as { code: number; reason: string } | null;

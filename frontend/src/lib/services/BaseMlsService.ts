@@ -977,19 +977,34 @@ export abstract class BaseMlsService implements IMlsService {
    * open that starts reads the outcome of the one before it. With nothing pending the open runs
    * synchronously, exactly as it did before the queue existed.
    *
-   * A `connect` called before a {@link pauseSocket} and still queued when it lands is fenced off: it
+   * THE FENCE IS TAKEN BY THE CALLER, BEFORE ITS TOKEN FETCH ({@link socketFence}): that await is
+   * where a backgrounded phone parks a reconnect, and a pause landing in it must not be followed by
+   * a socket. A `connect` whose fence a pause has passed - before the call or while it was queued -
    * settles as {@link GatewayOpenAbandonedError} without opening anything.
    */
-  connect(token: string): Promise<void> {
-    const generation = this.socketGeneration;
+  connect(token: string, fence: number): Promise<void> {
+    if (fence !== this.socketGeneration) {
+      console.log(
+        '[WS] a connect whose token was fetched across a pause is dropped - the resume opens the socket'
+      );
+      return Promise.reject(new GatewayOpenAbandonedError('paused during its token fetch'));
+    }
     return this.enqueueSocketStep(() => {
-      if (this.socketGeneration !== generation) {
+      if (this.socketGeneration !== fence) {
         console.log('[WS] a connect queued before a pause is dropped - the pause owns the socket');
         return Promise.reject(new GatewayOpenAbandonedError('paused before it started'));
       }
       this.socketPaused = false;
-      return this.openSocketUnderCurrentId(token, generation);
+      return this.openSocketUnderCurrentId(token, fence);
     });
+  }
+
+  /**
+   * The fence a caller of {@link connect} takes BEFORE fetching its token, and hands back with it.
+   * Every {@link pauseSocket} moves it, so a token fetched across a pause opens nothing.
+   */
+  socketFence(): number {
+    return this.socketGeneration;
   }
 
   /**
@@ -1025,7 +1040,15 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   private enqueueSocketStep(step: () => Promise<void>): Promise<void> {
-    const run = this.socketStepsPending === 0 ? step() : this.socketFlight.then(step, step);
+    // A step that throws synchronously still settles THROUGH the queue, as a rejection.
+    const runNow = (): Promise<void> => {
+      try {
+        return step();
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    };
+    const run = this.socketStepsPending === 0 ? runNow() : this.socketFlight.then(runNow, runNow);
     this.socketStepsPending++;
     const settled = (): void => {
       this.socketStepsPending--;
@@ -1053,12 +1076,19 @@ export abstract class BaseMlsService implements IMlsService {
       };
     });
     this.abandonPendingOpen = abandon;
-    const open = this.openGatewaySocket({
-      deviceId,
-      token,
-      isCurrent: () => this.socketGeneration === generation,
-      onAbandon: (cleanup) => cleanups.push(cleanup),
-    });
+    let open: Promise<void>;
+    try {
+      open = this.openGatewaySocket({
+        deviceId,
+        token,
+        isCurrent: () => this.socketGeneration === generation,
+        onAbandon: (cleanup) => cleanups.push(cleanup),
+      });
+    } catch (e) {
+      // A platform open that throws before returning its promise leaves no handle behind.
+      this.abandonPendingOpen = null;
+      return Promise.reject(e);
+    }
     return Promise.race([open, abandoned]).finally(() => {
       if (this.abandonPendingOpen === abandon) this.abandonPendingOpen = null;
     });
@@ -1110,6 +1140,13 @@ export abstract class BaseMlsService implements IMlsService {
         );
         return;
       }
+      // The socket may have closed, or been reopened, while the token was fetched.
+      if (!this.isWsOpen() || this.socketDeviceId === this.deviceId) {
+        console.log(
+          `[WS] identity rotated -> ${sanitizeForLog(this.deviceId)}: the socket changed during the token fetch (open=${String(this.isWsOpen())}) - no reopen, the next open carries the new id`
+        );
+        return;
+      }
       console.warn(
         `[WS] identity rotated: the gateway socket carries the abandoned id ${sanitizeForLog(
           this.socketDeviceId ?? '-'
@@ -1131,8 +1168,9 @@ export abstract class BaseMlsService implements IMlsService {
         this.disconnectCallback();
         return;
       }
-      console.error(
-        `[WS] reopening the gateway socket under the rotated id FAILED, before any disconnect handler was registered - the connection waiting on it fails with it: ${sanitizeForLog(String(e))}`
+      // Not a second error line: the connection waiting on it (`openGatewayConnection`) reports it.
+      console.debug(
+        `[WS] reopen under the rotated id failed before any disconnect handler was registered - reported by the connection that waits on it: ${sanitizeForLog(String(e))}`
       );
     });
   }

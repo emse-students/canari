@@ -418,7 +418,7 @@ export class WebMlsService extends BaseMlsService {
    * fence being read and `new WebSocket`. The deadline and the half-open socket are registered with
    * `open.onAbandon`, so a pause settles this open at once instead of leaving it to the deadline.
    */
-  protected override openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
+  protected override async openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
     const { deviceId, token } = open;
     this.clearHeartbeat();
     // Close existing socket before creating a new one

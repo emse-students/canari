@@ -40,6 +40,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
   const mlsService = {
     connect,
     gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+    socketFence: () => 0,
     onDisconnect: vi.fn(),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     sendDisconnect: vi.fn(),
@@ -73,7 +74,7 @@ describe('a handshake started before anything awaits it', () => {
     const started = startGatewayHandshake(deps);
 
     await expect(started).resolves.toBeNull();
-    expect(connect).toHaveBeenCalledWith('jwt-access-token');
+    expect(connect).toHaveBeenCalledWith('jwt-access-token', 0);
   });
 
   it('settles to the error instead of rejecting, because nobody is listening yet', async () => {
@@ -219,12 +220,34 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 
+  it('reads the socket fence BEFORE the token fetch on the reconnect path', async () => {
+    // A backgrounded phone parks this await; the pause that lands in it moves the fence, and the
+    // connect handed the OLD fence opens nothing (`BaseMlsService.socketRotation.test.ts`).
+    let generation = 4;
+    let releaseToken!: (t: string) => void;
+    getTokenMock.mockReturnValueOnce(new Promise<string>((r) => (releaseToken = r)));
+    const connect = vi
+      .fn()
+      .mockRejectedValue(new GatewayOpenAbandonedError('paused during its token fetch'));
+    const { deps, mlsService } = makeDeps(connect);
+    (mlsService as unknown as { socketFence: () => number }).socketFence = () => generation;
+
+    const opened = openGatewayConnection(deps);
+    await new Promise((r) => setTimeout(r, 0));
+    generation = 5;
+    releaseToken('jwt-late');
+
+    await expect(opened).resolves.toBe(false);
+    expect(connect).toHaveBeenCalledWith('jwt-late', 4);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+  });
+
   it('opens one itself when handed nothing, which is what the reconnect path does', async () => {
     const connect = vi.fn().mockResolvedValue(undefined);
     const { deps } = makeDeps(connect);
 
     await expect(openGatewayConnection(deps)).resolves.toBe(true);
 
-    expect(connect).toHaveBeenCalledWith('jwt-access-token');
+    expect(connect).toHaveBeenCalledWith('jwt-access-token', 0);
   });
 });

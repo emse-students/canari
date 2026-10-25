@@ -116,10 +116,12 @@ export function startGatewayHandshake(
     return null;
   }
   deps.log('Connecting to Gateway…');
+  // The fence is read BEFORE the token fetch, which is the await a pause can land in.
+  const fence = deps.mlsService.socketFence();
   return (async () => {
     const { getToken } = await import('$lib/stores/auth');
     const token = await getToken();
-    await deps.mlsService.connect(token);
+    await deps.mlsService.connect(token, fence);
   })().then(
     () => null,
     (e: unknown) => (e instanceof Error ? e : new Error(String(e)))
@@ -155,9 +157,12 @@ export async function openGatewayConnection(
       if (failure) throw failure;
     } else {
       log('Connecting to Gateway…');
+      // Read BEFORE the token fetch: a backgrounded phone parks this await, and the pause that lands
+      // in it must not be followed by a socket (`IMlsService.connect`).
+      const fence = mlsService.socketFence();
       const { getToken } = await import('$lib/stores/auth');
       const token = await getToken();
-      await mlsService.connect(token);
+      await mlsService.connect(token, fence);
     }
     // THE SOCKET THAT OPENED MAY NOT BE THE ONE THAT STAYS. The login's handshake runs beside the MLS
     // state load, and that load can rotate the device identity; the rotation queues a reopen under
