@@ -45,7 +45,7 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/race.mjs` | CC-1..5, RM-1, RM-2, RM-7 | two (or four) actions held by `fault.mjs` `hold` and released together | CC-1..4 built as `archive/cc.mjs` ([#2395](https://github.com/emse-students/canari/pull/2395)); RM owed |
 | `archive/settle.mjs` | DUP-1..6, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | built ([#2396](https://github.com/emse-students/canari/pull/2396)); DUP-3 records `SKIPPED`; DUP-7 moved to `devrows.mjs` (a new device) |
 | `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | owed |
-| `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | owed |
+| `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | built ([#2397](https://github.com/emse-students/canari/pull/2397)); GAP-4 records `SKIPPED` |
 | `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | owed |
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | owed |
 | `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | owed |
@@ -101,9 +101,9 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| GAP-1 | `hold` W2's history fetch while the socket delivers N+2 frames | `fault.mjs` `hold` | the history route's exact path for the rule | no | U | 30 min |
-| GAP-2 | replay a captured past-epoch frame (own and another's) | - | a **response-rewrite** fault mode (capture a frame, deliver it later) | no | U | 20 min |
-| GAP-3 | 2000+ frames while W2 is frozen | - | a **freeze** atom (`Debugger.pause` over CDP) and a fast sender | no | U | 45 min |
+| GAP-1 | W2 cut; its return's pull loses the commit rows (`rewrite`); rung 1's `GET /api/mls/commits/` held (`hold-answer`) while W1 sends live | `fault.mjs` `rewrite`, `net.mjs` | - | no | U | 30 min |
+| GAP-2 | a frame of each captured from a pull, three epochs on put in front of W2's pull | `fault.mjs` `rewrite` | - | no | U | 20 min |
+| GAP-3 | 2100 frames while W2 is cut; its first pull starts after the 2050th | `fault.mjs` `rewrite-url` | no freeze atom: a frozen page that receives every frame in order never exceeds the forward distance | no | U | 45 min |
 | GAP-4 | **not played on this build** (the shared-payload writer stays OFF) | - | records `SKIPPED` with the reason | no | - | - |
 
 ### RM - removal (`race.mjs` 1, 2, 7; `kill.mjs` 3; `salon.mjs` 4-6; `offline.mjs` 8)

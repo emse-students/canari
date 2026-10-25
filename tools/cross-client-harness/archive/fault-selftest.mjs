@@ -149,6 +149,54 @@ const quiet = () => {};
   await f.disarm();
 }
 
+// ── rewrite and rewrite-url: the GAP rows' tools ───────────────────────────────────────────────────
+{
+  ok('a rewrite without its transform is refused', throws(() => compileRules([{ match: '/m', fault: 'rewrite' }])));
+  ok('a rewrite-url without its url function is refused', throws(() => compileRules([{ match: '/m', fault: 'rewrite-url' }])));
+  ok('a transform on a mode that never calls it is refused', throws(() => compileRules([{ match: '/m', fault: 'hold', transform: (t) => t }])));
+  ok('rewrite acts after the server, rewrite-url before it', parseFault('rewrite').stage === 'Response' && parseFault('rewrite-url').stage === 'Request');
+
+  // A connection whose getResponseBody answers with a JSON page, base64-encoded as Chrome may send it.
+  const page = JSON.stringify([{ id: 'c1', isCommit: true }, { id: 'a1', isCommit: false }]);
+  const cx = fakeCx();
+  const realSend = cx.send;
+  cx.send = async (method, params) => {
+    if (method === 'Fetch.getResponseBody') {
+      cx.sent.push({ method, params });
+      return params.requestId === 'broken' ? Promise.reject(new Error('No resource with given identifier')) : { body: Buffer.from(page).toString('base64'), base64Encoded: true };
+    }
+    return realSend(method, params);
+  };
+  const f = await armFault(
+    cx,
+    [
+      { match: '/api/mls/messages/', method: 'GET', fault: 'rewrite x2', transform: (t) => JSON.stringify(JSON.parse(t).filter((r) => !r.isCommit)) },
+      { match: '/api/mls/messages/', method: 'GET', fault: 'rewrite-url once', url: (u) => `${u}&after=X` },
+    ],
+    { log: quiet },
+  );
+  cx.pause({ requestId: 'p1', request: { url: 'https://h/api/mls/messages/u/d?limit=500', method: 'GET' }, responseStatusCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Content-Length', value: '99' }] });
+  await tick();
+  await tick();
+  const fill = cx.sent.find((s) => s.method === 'Fetch.fulfillRequest' && s.params.requestId === 'p1');
+  const body = fill ? JSON.parse(Buffer.from(fill.params.body, 'base64').toString('utf8')) : null;
+  ok('rewrite answers with the transformed body', body?.length === 1 && body[0].id === 'a1');
+  ok('... under the REAL status, with the stale length dropped', fill?.params.responseCode === 200 && fill.params.responseHeaders.length === 1 && fill.params.responseHeaders[0].name === 'Content-Type');
+  ok('... and records that it changed something', f.records[0].changed === true && f.records[0].bytesAfter < f.records[0].bytesBefore);
+  cx.pause({ requestId: 'broken', request: { url: 'https://h/api/mls/messages/u/d', method: 'GET' }, responseStatusCode: 200 });
+  await tick();
+  await tick();
+  ok('an unreadable body sends the real answer on, and says so', cx.sent.some((s) => s.method === 'Fetch.continueRequest' && s.params.requestId === 'broken') && /unreadable/.test(f.records[1].rewriteError ?? ''));
+  cx.pause({ requestId: 'u1', request: { url: 'https://h/api/mls/messages/u/d?limit=500', method: 'GET' } });
+  await tick();
+  const cont = cx.sent.find((s) => s.method === 'Fetch.continueRequest' && s.params.requestId === 'u1');
+  ok('rewrite-url continues the request at the new url', cont?.params.url === 'https://h/api/mls/messages/u/d?limit=500&after=X' && f.records[2].changed === true);
+  cx.pause({ requestId: 'u2', request: { url: 'https://h/api/mls/messages/u/d?limit=500', method: 'GET' } });
+  await tick();
+  ok('its once spent, the next request goes on untouched', cx.sent.find((s) => s.params?.requestId === 'u2')?.params.url === undefined);
+  await f.disarm();
+}
+
 console.log(
   failures
     ? `[fault] ${failures} FAILURE(S) - the fault atom decides wrongly or leaves a request paused`

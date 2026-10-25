@@ -485,6 +485,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/floor-selftest.mjs
 	@bun tools/cross-client-harness/archive/cc-selftest.mjs
 	@bun tools/cross-client-harness/archive/settle-selftest.mjs
+	@bun tools/cross-client-harness/archive/gap-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh
