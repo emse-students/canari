@@ -210,8 +210,12 @@ the same `system` sender, under a DETERMINISTIC id (`contactLineId(group, event)
 that both wrote it never trade it. But the device's OWNER never writes it (`owner-alert`, no line),
 nor does a device minted after the event - so the digest diff can push a contact's line to exactly
 those devices, unverified. The DEV-1 judge reads the owner's pane at 0 lines within the row, which
-bounds the window, not the relay. The fresh device logged unverified-authorship relays on DEV-1 and
-DEV-2; which rows they were is not read. The same "device-local" property closes both.
+bounds the window, not the relay. **The fresh device RECEIVED them.** On DEV-1, W3's `[AUTHORSHIP] N
+restored message(s) ... relayed by <user> carry no author proof` lines name W2's account as the relayer
+of exactly 1 unverified row in the group the row had just created. That is the one line DEV-1's judge
+counts there, the line about W3 itself. Each contact relays 3 to 5 such rows per standing conversation,
+in step with the owner devices minted before. This was read from relay counts by relayer, not row by
+row. The same "device-local" property closes both.
 
 ## P3 - A revoked device signs out twice: the wipe's `clearAuth`, then the session-expired path's (DEV-2, `1.4.1-alpha.3`, 2026-10-25)
 
