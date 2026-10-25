@@ -44,6 +44,7 @@ import {
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
+import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
 import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
@@ -244,6 +245,34 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       }
 
       if (!groupId) return true; // ACK without group - control frame
+
+      // ── A frame THIS DEVICE sent ─────────────────────────────────────────
+      // BEFORE every branch below, because none of them can do anything with it: MLS never hands a
+      // member its own frame back, commits included. At the current epoch it says so
+      // (`CannotDecryptOwnMessage`), but at a PAST one the epoch check refuses it first, and the
+      // pipeline read that refusal as a frame this device LOST - a `LOST frame` line blaming a
+      // re-join that never happened, and a reconcile asked of the group for nothing (campaign GAP-2).
+      // The envelope already names the sender, so the answer is read from it rather than learnt by
+      // handing MLS a frame it is certain to refuse.
+      //
+      // AT WARN, BECAUSE NOTHING SHOULD REACH IT. The fan-out excludes the sending device
+      // (`isSender` in chat-delivery's `sendMessage`), so a frame here was addressed back to the
+      // device that wrote it. Two suspects, and the line names both: a rig injecting the frame
+      // (GAP-2 does, deliberately), or the sender exclusion missing - `isSender` compares
+      // `body.senderId` with the membership row's `userId` case-SENSITIVELY, while the send route
+      // accepts a `senderId` that matches the caller only case-insensitively. That mismatch is
+      // UNMEASURED: no production line has shown it, and this one is what would.
+      if (
+        isFrameFromThisDevice(
+          { userId: senderNorm, deviceId: deliveryMeta?.senderDeviceId },
+          { userId: deps.userId, deviceId: mlsService.getDeviceId() }
+        )
+      ) {
+        console.warn(
+          `[MLS] Own frame for ${groupId.slice(0, 8)}… delivered back to this device (${deliveryMeta?.channel ?? 'unknown channel'}, queue ${deliveryMeta?.queuedMessageId ?? 'none'}) - ACKed, not offered to MLS; the fan-out excludes the sending device, so either a rig injected it or the sender exclusion missed (senderId case vs the membership userId)`
+        );
+        return true;
+      }
 
       // ── A community's Graine key-distribution group ───────────────────────
       // BEFORE both branches below, and that order is the point. This group carries channel seeds

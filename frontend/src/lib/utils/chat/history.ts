@@ -29,6 +29,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
+import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
@@ -1045,12 +1046,18 @@ export async function replayConversationHistory(params: {
          *
          * The USER is not the discriminator and never could be: this account's other device wrote
          * frames that are both decryptable and wanted. The device is, and the server now carries
-         * it (`sender_device_id`).
+         * it (`sender_device_id`). The user is checked too, but only so that a device id another
+         * account happens to carry is never taken for ours (`isFrameFromThisDevice`).
          *
          * The row is marked seen so later replays answer from the cheap check above, and the
          * cursor moves past it - a frame we sent is a frame we have, by definition.
          */
-        if (msg.sender_device_id && msg.sender_device_id === myDeviceId) {
+        if (
+          isFrameFromThisDevice(
+            { userId: msg.sender_id, deviceId: msg.sender_device_id },
+            { userId, deviceId: myDeviceId }
+          )
+        ) {
           ownFramesSkipped++;
           seenCipherHashes.add(rowKey);
           markSeenUpdated();
