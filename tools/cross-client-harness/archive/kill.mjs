@@ -14,11 +14,12 @@
  * membership to spend. The kill waits on the commit request being HELD (`fault.mjs`), so it lands on
  * the side of the server the run chose - never on whichever side the timing favoured.
  */
+import { evaluate } from '../cdp.mjs';
 import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL_BLOCKED, KILL_ROWS, WINDOWS, delayOf, killRunsOwn, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL_BLOCKED, KILL_ROWS, WINDOWS, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
   COMMIT_POST,
@@ -139,6 +140,19 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   return run;
 }
 
+/** What W1's open member panel shows: its count line and the user ids it offers to remove. */
+const PANEL = String.raw`JSON.stringify({ members: (document.body.innerText.match(/MEMBRES\s*\(\d+\)/i) || [''])[0], buttons: [].slice.call(document.querySelectorAll('[data-remove-member]')).map(function (e) { return e.getAttribute('data-remove-member'); }) })`;
+
+/** Reads the panel until it offers every one of `userIds`, or the abort; the last reading either way. */
+async function awaitPanelLists(cx, userIds, abortMs = 20_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const panel = JSON.parse(await evaluate(cx, PANEL));
+    if (!panelMissing(panel, userIds).length || Date.now() - t0 > abortMs) return panel;
+    await sleep(500);
+  }
+}
+
 /**
  * Opens the group on a REVIVED seat once its sidebar lists it: a fresh document draws its conversation
  * list after the unlock, and `openGroup` looked before it had (KILL-5, 2026-10-25: "no sidebar row",
@@ -214,6 +228,16 @@ const ACTIONS = {
     const W1 = seats.seat.W1;
     const W4user = c.user[spec.subject];
     await openGroupSettings(W1.cx);
+    // THE PANEL IS THE PREMISE: the removal is a click on the subject's row, so a panel that does not
+    // list every invitee the setup's ONE bulk Add admitted asks nothing about the kill (2026-10-25: the
+    // panel read only `active` device rows and left out a newcomer whose Welcome was not yet opened,
+    // #2433). Waited for as an event - every remove button present - and INVALID with the panel's text.
+    const invitees = spec.setup.map((d) => c.user[d]);
+    const panel = await awaitPanelLists(W1.cx, invitees);
+    const missing = panelMissing(panel, invitees);
+    if (missing.length) {
+      return { premise: [`W1's panel does not list ${missing.map((u) => u.slice(0, 8)).join(', ')}: ${panel.members || 'no member count'}, remove buttons for ${panel.buttons.map((u) => u.slice(0, 8)).join(', ') || 'nobody'}`], detail: { panel } };
+    }
     const f = await armFault(W1.cx, [{ match: `/api/mls/groups/${c.group.id}/members/`, method: 'DELETE', fault: 'hold-answer once' }]);
     const g = outcome(removeMember(W1.cx, W4user, c.group.name, { label: id }));
     try {

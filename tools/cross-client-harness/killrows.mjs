@@ -161,6 +161,18 @@ export function welcomeOnceOwn({ accepts, welcome, listed, caughtUpMs, heldWelco
 }
 
 /**
+ * The invitees W1's member panel does NOT offer to remove - RM-3's premise, read before the click.
+ * Ids compared case-insensitively: the panel carries the server's id, the rig the account's.
+ *
+ * @param {{buttons: string[]}} panel what the panel shows (`data-remove-member` values)
+ * @param {string[]} userIds every invitee of the setup's one bulk Add
+ */
+export function panelMissing(panel, userIds) {
+  const shown = new Set((panel?.buttons ?? []).map((u) => String(u).toLowerCase()));
+  return userIds.filter((u) => !shown.has(String(u).toLowerCase()));
+}
+
+/**
  * RM-3: the premise (the roster delete landed, the Remove commit did not) and the measurement (how
  * long until W4's last active seat went).
  */
