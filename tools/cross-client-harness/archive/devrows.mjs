@@ -306,7 +306,7 @@ const ACTIONS = {
     await send(seats.seat.W1.cx, `${id} at the owner's arrival [${mark}]`);
     const first = await mintOn('W3');
     if (!first.enrolled) return { premise: [`W3 did not enrol: ${first.refused ?? 'not enrolled'}`], detail: { first } };
-    await seatActiveWithin(c.group.id, first.deviceId, 120_000);
+    const firstSeatedMs = await seatActiveWithin(c.group.id, first.deviceId, 120_000);
     const panel = revokeFrom('W1', first.deviceId);
     const goneMs = await seatGoneWithin(c.group.id, first.deviceId, 120_000);
     const second = await mintOn('W6');
@@ -316,8 +316,8 @@ const ACTIONS = {
       members: ['W1', 'W6'],
       revoked: ['W3'],
       minted: { W3: first, W6: second },
-      detail: { first, second, panel, goneMs },
-      judge: () => originalArrivalOwn({ revoked: panel.ok && goneMs !== null, listed: read.listed, earlyShown: read.shown }),
+      detail: { first, second, panel, goneMs, firstSeatedMs },
+      judge: () => originalArrivalOwn({ firstSeatedMs, revoked: panel.ok && goneMs !== null, listed: read.listed, earlyShown: read.shown }),
     };
   },
 

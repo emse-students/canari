@@ -14,11 +14,13 @@
  */
 import { execFileSync } from 'node:child_process';
 import {
+  ADMISSION_ENDINGS,
   ADMIT_ROWS,
   OLD_REF,
   admittedOwn,
   baseWithheldRepeats,
   declinedOwn,
+  gateRefusals,
   memberRoutes,
   noAskOwn,
   oldBuildOwn,
@@ -28,6 +30,7 @@ import {
   raceOwn,
   rateLimitedOwn,
   reinviteOwn,
+  routeEnrolments,
   seatState,
   staleAddOwn,
 } from '../admitrows.mjs';
@@ -35,13 +38,14 @@ import { apiAt, apiGet, apiPost, evaluate, goto, send } from '../chat.mjs';
 import { psql, srvLines } from '../estate.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
-import { checkInvariant, receivedOn } from '../invariant.mjs';
+import { awaitSettled, checkInvariant, receivedOn } from '../invariant.mjs';
 import {
   COMMIT_POST,
   assertRowOwns,
   awaitListed,
   awaitServer,
   closeSeats,
+  commitLines,
   deviceIdOf,
   displayNameOf,
   mintRowGroup,
@@ -54,8 +58,9 @@ import {
 } from '../mlsrow.mjs';
 import { clientBuild, errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
+import { commitSequence } from '../settlerows.mjs';
 import { SITE } from '../site.mjs';
-import { ADMISSION_JOINER_NARRATION, ADMISSION_MEMBER_NARRATION, GROUP_CREATION_NARRATION, consoleLines } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, admissionJoinerNarration, admissionMemberNarration, consoleLines } from '../watch.mjs';
 import { addMembers } from './addmember.mjs';
 import { answerAsk, awaitAsk, awaitAskGone, followGroupLink, mintGroupLink } from './grouplink.mjs';
 
@@ -70,6 +75,14 @@ const since = new Date().toISOString();
 let seats = null;
 const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Polls `predicate` once a second until it holds; rejects at the abort, which is never a verdict. */
+async function until(predicate, what, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`${what}: not within ${timeoutMs} ms`);
+    await sleep(1_000);
+  }
+}
 const outcome = (p) =>
   p.then(
     (value) => ({ ok: true, value }),
@@ -222,27 +235,37 @@ const ACTIONS = {
     // THE DECLINE LANDS AND SETTLES WHILE THE ADD IS HELD: that order is the whole row.
     await answerWhereShown(asks, decline, c.user[spec.joiner], 'decline');
     const declined = await seatReaches(c, c.user[spec.joiner], 'absent', 60_000);
-    const declinedAt = now();
     await fa.release();
-    const trail = [];
-    for (let i = 0; i < 30; i++) {
-      trail.push(seatState(serverView(c.group.id), c.user[spec.joiner]).state);
-      await sleep(1_000);
-    }
+    // THE RELEASED COMMIT IS DECIDED FIRST, then the group settles BY ROUNDS (`awaitSettled`): the
+    // joiner's state is sampled on every round, so "never admitted" covers the whole settlement and
+    // no clock decides it. The held commit is the only one since the row began, so any decision on
+    // the group is its decision.
+    const decided = await outcome(until(() => commitSequence(commitLines(c.group.id, c.startSince)).length > 0, "the released commit's decision", 45_000));
+    const joinerUser = c.user[spec.joiner];
+    const settled = await awaitSettled(
+      c.members.map((d) => seats.seat[d]),
+      c.group.id,
+      60_000,
+      () => ({ joiner: seatState(serverView(c.group.id), joinerUser).state })
+    );
+    const trail = settled.rounds.map((r) => r.joiner);
     const records = await fa.disarm();
-    const after = seatState(serverView(c.group.id), c.user[spec.joiner]);
+    const after = seatState(serverView(c.group.id), joinerUser);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 5_000)) !== null;
-    const joiner = c.user[spec.joiner].toLowerCase();
-    const gateRefused = srvLines('chat-delivery-service', c.startSince).filter(
-      (l) => l.includes('NOT_ENROLLED') && l.includes(`group=${c.group.id}`) && l.includes(`user=${joiner.slice(0, 8)}`)
-    ).length;
-    const routeEnrolled = srvLines('chat-delivery-service', declinedAt).filter(
-      (l) => /\[ADD_MEMBER\]\[add-member-[0-9a-f]+\] DONE /.test(l) && l.includes(`group=${c.group.id}`) && l.toLowerCase().includes(`user=${joiner}`)
-    ).length;
+    const lines = srvLines('chat-delivery-service', c.startSince);
+    const gateRefused = gateRefusals(lines, c.group.id, joinerUser);
+    const routeEnrolled = routeEnrolments(lines, c.group.id, joinerUser);
+    // AN ADMITTED SAMPLE IS A FINDING SETTLED OR NOT; a group that never settled with none is unjudged.
+    const unjudged = !decided.ok
+      ? [`the released commit was never decided: ${decided.error}`]
+      : !settled.settled && !trail.includes('admitted')
+        ? [`the group never settled after the release (${settled.ms} ms, ${settled.rounds.length} round(s))`]
+        : [];
     return {
       members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
       records: { [approve]: records.records },
-      detail: { asks, declinedAt, trail },
+      unjudged,
+      detail: { asks, trail, settleMs: settled.ms, settled: settled.settled, rounds: settled.rounds.length },
       judge: () => staleAddOwn({ held, declined, trail, after, listed, gateRefused, routeEnrolled }),
     };
   },
@@ -464,6 +487,7 @@ async function play() {
     own: [...pre, ...act.judge()],
     invariant,
     records: act.records ?? {},
+    unjudged: act.unjudged ?? [],
     detail: { group: group.id, name: group.name, fromEpoch, linkLength: link ? link.length : null, ...act.detail, ...(spec.note ? { note: spec.note } : {}) },
   };
 }
@@ -471,14 +495,17 @@ async function play() {
 try {
   seats = await openSeats(spec.devices, id);
   const out = await play();
-  const { verdict, failures } = composeVerdict({ own: out.own ?? [], invariant: out.invariant ?? null, premise: out.premise ?? [] });
+  const { verdict, failures } = composeVerdict({ own: out.own ?? [], invariant: out.invariant ?? null, premise: out.premise ?? [], unjudged: out.unjudged ?? [] });
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
   // THE ASK IS EVERY MEMBER'S SUBJECT AND THE WAIT IS THE JOINER'S: each device is given the
-  // narration of its own part, and nothing of the other's.
+  // narration of its own part, about this row's group and the endings this row plays
+  // (`ADMISSION_ENDINGS`) - and a row that raises no ask (ADM-7, ADM-8) is given none.
   const logs = {};
+  const ends = ADMISSION_ENDINGS[id];
+  const group = out.detail?.group;
   for (const d of spec.devices) {
-    logs[d] = d === spec.joiner ? [...ADMISSION_JOINER_NARRATION] : [...ADMISSION_MEMBER_NARRATION];
+    logs[d] = !ends || !group ? [] : d === spec.joiner ? admissionJoinerNarration(group, ends) : admissionMemberNarration(group, ends);
     if (d === spec.owner) logs[d].push(...GROUP_CREATION_NARRATION);
   }
   const observers = await observersOf(seats, { logs, refusals: rowRefusals, provoked: out.records ?? {} });

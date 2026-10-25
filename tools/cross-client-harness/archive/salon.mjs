@@ -44,7 +44,7 @@ import { closeSeats, displayNameOf, observersOf, openSeats, userOf } from '../ml
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName } from '../rowkit.mjs';
 import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, statusesIn } from '../salonrows.mjs';
-import { atLevels } from '../watch.mjs';
+import { PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION, atLevels } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const id = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -402,7 +402,7 @@ try {
   // ... and the manager's panel narrates that same refusal, by its code and at `debug` only: any other
   // code, or the same words at `warn`, stays dirt (alpha.4 rerun, 2026-10-25).
   if (id === 'RM-6') {
-    logs[spec.manager] = [...narration, atLevels(['debug'], /\[channelSettings\.handleTogglePrivacy failed\] ChannelApiError: \{"code":"REMOVAL_EXCEEDS_ACTOR",/)];
+    logs[spec.manager] = [...narration, ...PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION];
   }
   // RM-6's 403 IS ITS SUBJECT: the manager's flip refused on the salon's own access path, nothing wider.
   const refusals = id === 'RM-6' && out.detail?.channelId ? { [spec.manager]: [{ path: new RegExp(`^/api/channels/${out.detail.channelId}/access$`), status: [403] }] } : {};

@@ -1054,7 +1054,10 @@ check(
     ['a minted device before it is seated', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-4', 'ADM-1'],
     ['a stale Add refused at the gate', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10', 'ADM-1'],
     ['a re-invited joiner declined then admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-9', 'ADM-8'],
-    ['a Decline answered already-admitted',L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
+    ['... not in a row that never mints and seats one (DEV-7)', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-6', 'DEV-7'],
+    ["ADM-4's closing Decline answered already-admitted is not its own", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-4'],
+    ["the base withheld is not ADM-6's (its joiner never asks)", L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-10', 'ADM-6'],
+    ['a Decline answered already-admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
     ['a Decline refused to a non-member', W('MembersController', `[JOIN_DECLINE] REJECT group=${G} caller=none target=bbbbbbbb - not an admitted member, or their own ask`), 'ADM-4', 'ADM-2'],
     ["KILL-1's own burst in the hourly commit rate (alpha.4)", L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 10 commit(s) in 1 group(s); per group p50=10 p90=10 max=10; busiest single committer per group p50=10 p90=10 max=10; 1 group(s) at >= 8 by one device'), 'KILL-1', 'DUP-1'],
     ["a member's Add admitted the joiner", L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=admits - a member's Add answered their invitation-link ask`), 'ADM-1', 'FLOOR-2'],
@@ -1099,8 +1102,13 @@ check(
     ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
     ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
     ['TWO busy groups in the hourly commit rate: not one row\'s burst', L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 30 commit(s) in 2 group(s); per group p50=15 p90=15 max=15; busiest single committer per group p50=15 p90=15 max=15; 2 group(s) at >= 8 by one device'), 'KILL-1'],
+    ["a Decline answered not-awaiting is no row's", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=not-awaiting`), 'ADM-3'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
+
+  // A MINTED DEVICE LINE WITH ONE GROUP BEING ADDED is not the all-pending starting state: no row rule
+  // claims it, so it falls to the general classifier (stranded is not 0) and stays dirt in DEV-4 too.
+  check('R6 unclaimed   a minted device line with one group being added (in DEV-4)', verdictIn(L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=true)'), 'DEV-4'), 'unclaimed');
 
   // NEVER JUDGED PER ROW: an ERROR line gates as it always did, in the row of its family too.
   check('R6 [ADMISSION] at ERROR is never a row line', verdictIn(E('MessagingService', `[ADMISSION] group=${G} user=aaaaaaaa holds 1 active device(s) under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`), 'ADM-1'), 'unclaimed');

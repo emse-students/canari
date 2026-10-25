@@ -107,8 +107,51 @@ export const ADMIT_ROWS = {
   },
 };
 
+/**
+ * HOW EACH ROW'S ASK ENDS, which decides the narration its devices may print (`watch.mjs`
+ * `admissionMemberNarration` / `admissionJoinerNarration`). A row absent from this table raises no ask
+ * at all: ADM-8's point is that none is raised, and ADM-7's outsider is refused before one. ADM-3
+ * races the two answers and either may win.
+ */
+export const ADMISSION_ENDINGS = {
+  'ADM-1': { admitted: true },
+  'ADM-2': { declined: true },
+  'ADM-3': { admitted: true, declined: true },
+  'ADM-4': { declined: true },
+  'ADM-5': { admitted: true },
+  'ADM-6': { admitted: true },
+  'ADM-9': { admitted: true, declined: true },
+  'ADM-10': { declined: true },
+};
+
 /** Whether an `apiCall` answer is the waiting seat's refusal. */
 export const isAwaitingRefusal = (r) => r?.status === 409 && /awaiting_admission/.test(String(r?.body ?? ''));
+
+/**
+ * ADM-10's first door: the commit gate's refusal of an Add whose person left since its base. Only
+ * `reason=departed_since_base` counts. Another `NOT_ENROLLED` is a different refusal, and it would
+ * pass the row on a gate that never weighed the Decline. The gate names the user by an 8-hex prefix.
+ */
+export function gateRefusals(lines, group, user) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  return (lines ?? []).filter((l) => {
+    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=(\S+) user=([0-9a-f]+) reason=(\S+)/.exec(l);
+    return m !== null && m[1] === group && m[2] === prefix && m[3] === 'departed_since_base';
+  }).length;
+}
+
+/**
+ * ADM-10's second door: the member-add route's enrolments of `user` in `group`. The joiner is never
+ * admitted in ADM-10, so any one of them since the row began is the defect. The count is read from
+ * the row's start, never from the rig's clock at the Decline, which may disagree with the server's.
+ */
+export function routeEnrolments(lines, group, user) {
+  const full = String(user).toLowerCase();
+  return (lines ?? []).filter((l) => {
+    const m = /\[ADD_MEMBER\]\[add-member-[0-9a-f]+\] DONE group=(\S+) user=(\S+)/.exec(l);
+    return m !== null && m[1] === group && m[2].toLowerCase() === full;
+  }).length;
+}
 
 /**
  * Every member route ADM-4 calls from the waiting seat's page (plan: roster, members, enrol someone,

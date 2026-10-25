@@ -1147,12 +1147,13 @@ const ROW_RULES = [
   // The external-join base withheld from a waiting seat. A CURRENT client is told before it asks
   // (`device-memberships`), so only the OLD joiner of ADM-5 meets it on its own - but every waiting
   // row asks it ITSELF, from the joiner's page (`archive/admit.mjs` `baseAs` in `followAndWait`), to
-  // assert the 409, so the line is the row's own in each of them (ADM-1 and ADM-3, alpha.4).
+  // assert the 409, so the line is the row's own in each of them (ADM-1 and ADM-3, alpha.4). Only the
+  // rows that call `baseAs`, then: ADM-6's joiner is a NEW client that is told first and never asks.
   {
     name: 'external-join base withheld',
     tag: /\[GROUP_INFO\] .*base withheld/,
     shape: new RegExp(String.raw`\[GROUP_INFO\] group=\S+ user=\S+ awaits a member's admission - base withheld \(${THROTTLED}\)$`),
-    rows: ADM_JOIN,
+    rows: ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-9', 'ADM-10'],
   },
   // A waiting seat's ask relayed to a member (the ordinary START has no `ask=` and stays BENIGN).
   {
@@ -1164,13 +1165,22 @@ const ROW_RULES = [
     rows: ADM_JOIN,
   },
   // A member's Decline, and its four answers (`AwaitingSeatWithdrawal`).
+  // A Decline of a WAITING seat answers `withdrawn`, and every declining row but ADM-3 declines one:
+  // ADM-2 and ADM-9 the ask itself, ADM-4 its closing Decline (`archive/admit.mjs`), ADM-10 while the
+  // Add is held. Any other answer in them is the finding.
   {
     name: 'decline answered',
     tag: /\[JOIN_DECLINE\]/,
-    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=(withdrawn|already-admitted|not-awaiting|gone)$/,
-    // ADM-4 declines too: its closing Decline puts the group back as it began (`archive/admit.mjs`);
-    // ADM-9 declines the first ask and ADM-10 settles a Decline under a held Add.
-    rows: ['ADM-2', 'ADM-3', 'ADM-4', 'ADM-9', 'ADM-10'],
+    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=withdrawn$/,
+    rows: ['ADM-2', 'ADM-4', 'ADM-9', 'ADM-10'],
+  },
+  // ADM-3 RACES the Decline against an Add, so either may land first: `already-admitted` is the Add
+  // winning. `not-awaiting` and `gone` are answers no row plays, and stay dirt everywhere.
+  {
+    name: 'decline answered in a race',
+    tag: /\[JOIN_DECLINE\]/,
+    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=(withdrawn|already-admitted)$/,
+    rows: ['ADM-3'],
   },
   // THE ASK TOLD TO THE MEMBERS AND ITS SETTLEMENT (`join-ask-announce.ts`): every waiting row
   // raises one and settles it. `NOT announced` and a throw past the guard are other spellings and
@@ -1192,12 +1202,18 @@ const ROW_RULES = [
   // A FRESHLY MINTED DEVICE'S FIRST MEMBERSHIP READ (`invitations.controller.ts`): every group its
   // owner is in is pending and nobody is adding it yet - the starting state of an enrolment, before
   // the owner's other devices seat it. The BENIGN `stranded=0` rule keeps its reason; this shape is
-  // only the all-pending, nobody-adding answer, and only in the rows that mint.
+  // only the all-pending, nobody-adding answer. It is forgiven only in the rows that mint AND assert
+  // the minted device seated, so a device that stays at this line fails its row:
+  // - DEV-1 (`deviceAddedOwn` seatedMs);
+  // - DEV-2 and DEV-3 (a premise: "never seated, nothing to revoke");
+  // - DEV-4 (`raceEnrolOwn` seated);
+  // - DEV-6 (`originalArrivalOwn` firstSeatedMs).
+  // DEV-3's alpha.4 window holds two of these lines.
   {
     name: 'a minted device before it is seated',
     tag: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=(\S+?:pending\(welcome=false,adding=false\),?)+$/,
     shape: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=(\S+?:pending\(welcome=false,adding=false\),?)+$/,
-    rows: ['DEV-*'],
+    rows: ['DEV-1', 'DEV-2', 'DEV-3', 'DEV-4', 'DEV-6'],
   },
   {
     name: 'decline refused to a non-member',

@@ -13,6 +13,7 @@ import {
   admittedOwn,
   baseWithheldRepeats,
   declinedOwn,
+  gateRefusals,
   isAwaitingRefusal,
   isPowerOfTen,
   memberRoutes,
@@ -24,6 +25,7 @@ import {
   raceOwn,
   rateLimitedOwn,
   reinviteOwn,
+  routeEnrolments,
   seatState,
   staleAddOwn,
 } from '../admitrows.mjs';
@@ -146,6 +148,14 @@ ok('the member-add route enrolling after the Decline fails (alpha.4)', failing(a
 ok('no gate refusal fails', failing(a10({ gateRefused: 0 })) === 1);
 ok('one admitted sample fails', failing(a10({ trail: ['absent', 'admitted', 'absent'] })) === 1);
 ok('the commit never held fails', failing(a10({ held: { ok: false, error: 'timeout' } })) === 1);
+const JU = 'bbbbbbbb' + 'c'.repeat(56);
+const gate = (reason, user = 'bbbbbbbb', group = G) => `WARN [MessagingService] [ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${group} user=${user} reason=${reason} baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`;
+ok('gateRefusals: departed_since_base about the joiner in the group counts', gateRefusals([gate('departed_since_base')], G, JU) === 1);
+ok('gateRefusals: another NOT_ENROLLED reason does not', gateRefusals([gate('never_invited')], G, JU) === 0);
+ok('gateRefusals: another user or another group does not', gateRefusals([gate('departed_since_base', 'dddddddd'), gate('departed_since_base', 'bbbbbbbb', 'other-group')], G, JU) === 0);
+const done = (user = JU, group = G) => `LOG [MembersController] [ADD_MEMBER][add-member-c3adcdfe] DONE group=${group} user=${user} devices=6`;
+ok('routeEnrolments: a DONE about the joiner in the group counts, case-folded', routeEnrolments([done(JU.toUpperCase())], G, JU) === 1);
+ok('routeEnrolments: a DONE about another user or group does not', routeEnrolments([done('e'.repeat(64)), done(JU, 'other-group')], G, JU) === 0);
 ok('ADM-10 orders two different members', ADMIT_ROWS['ADM-10'].stale.approve !== ADMIT_ROWS['ADM-10'].stale.decline);
 
 if (failures) {
