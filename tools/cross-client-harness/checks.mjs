@@ -602,8 +602,8 @@ export const SCRATCH_SCRIPTS = {
  * reason pointing at the cable instead of at the declaration one file away.
  *
  * THREE ANSWERS, AND THE MIDDLE ONE IS THE POINT.
- *   A file belonging to no phase gets the two browsers, and `phase: null` says so - the caller owes
- *     its operator that note, because a silent default is indistinguishable from a declaration.
+ *   A file belonging to no phase gets the two browsers, and `phase: null` says so - and `run.mjs`
+ *     REFUSES it through {@link fileRefusal}: a note was not enough (FLOOR-2, 2026-10-25).
  *   A file in a phase gets that phase's `needs`, which is the UNION over its scripts.
  *   ...UNLESS the phase narrowed its phone requirement with `PHONE_SCRIPTS` and this invocation is
  *     not one of the named ones, in which case A1 is dropped. A preflight that refuses a run it has
@@ -711,6 +711,31 @@ export function devicesFor(file, args = []) {
   if (!isNamed(narrowed)) keep.delete('A1');
   if (!isNamed(SCRATCH_SCRIPTS[name])) keep.delete('W3');
   return { devices: [...keep], phase: name };
+}
+
+/**
+ * Why `run.mjs --file <file>` must not start, or null when it may.
+ *
+ * A FILE NO PHASE DECLARES HAS NO KNOWN DEVICES, AND A PREFLIGHT THAT GUESSES THEM IS NOT A PREFLIGHT.
+ * `devicesFor` answers such a file with W1 and W2 and `phase: null`, and until 2026-10-25 `run.mjs`
+ * printed a note and ran it. That note was read by nobody: a chain spelt the name as a PATH,
+ * `archive/floor.mjs`, which matches no `scripts` entry, so fourteen rows (FLOOR, ADM, DEV, DUP-7,
+ * KILL, RM) were preflighted with W1 and W2 alone. FLOOR-2 then recorded VACUOUS because W5, never
+ * preflighted, sat on a page without the conversation list - its Welcome had landed.
+ *
+ * So both spellings are refused, and each refusal names what lifts it: a path is rewritten as the
+ * name `scripts` uses, and an undeclared script is declared in a phase, where `checks-selftest`
+ * holds its `needs` to what the script drives.
+ */
+export function fileRefusal(file, args = []) {
+  if (/[\\/]/.test(file)) {
+    const name = file.split(/[\\/]/).pop();
+    return `--file takes a script NAME as PHASES spells it, not a path: "${file}" matches no phase, so its preflight would guess W1 and W2. Write --file ${name}`;
+  }
+  if (devicesFor(file, args).phase === null) {
+    return `${file} belongs to no phase in checks.mjs, so no preflight knows which devices it drives - declare it in a phase (its scripts and needs) before running it through run.mjs`;
+  }
+  return null;
 }
 
 /**

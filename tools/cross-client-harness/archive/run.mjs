@@ -33,7 +33,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { PHASES, devicesFor } from '../checks.mjs';
+import { PHASES, devicesFor, fileRefusal } from '../checks.mjs';
 import { awaitQuiet, readEstateBuild } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
 import { ESTATE, srvLines, verifyTarget } from '../estate.mjs';
@@ -777,14 +777,11 @@ if (flag('file')) {
         `--file ${f.split(' ')[0]} ${f.split(' ').slice(1).join(' ')}`
     );
   }
-  const chosen = devicesFor(f, forwarded);
-  // A NAME BELONGING TO NO PHASE SAYS SO. Falling back to the pair is the honest answer, but a silent
-  // fallback is indistinguishable from a phase that really does need only two browsers - which is why
-  // `devicesFor` returns the phase it resolved rather than only the devices.
-  if (chosen.phase === null) {
-    console.log(`  note ${f} belongs to no phase in checks.mjs - preflighting W1 W2 by default`);
-  }
-  for (const d of chosen.devices) devices.add(d);
+  // A NAME BELONGING TO NO PHASE IS REFUSED, AND SO IS A PATH. Both used to print a note and preflight
+  // W1 and W2; the note went unread while fourteen rows ran that way (`fileRefusal`, 2026-10-25).
+  const refusal = fileRefusal(f, forwarded);
+  if (refusal) throw new Error(refusal);
+  for (const d of devicesFor(f, forwarded).devices) devices.add(d);
 } else {
   const wanted = flag('all') ? Object.keys(PHASES).filter((p) => PHASES[p].scripts.length) : named;
   for (const name of wanted) {

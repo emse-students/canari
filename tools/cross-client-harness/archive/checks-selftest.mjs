@@ -32,7 +32,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, scriptPath } from "../checks.mjs";
+import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, fileRefusal, scriptPath } from "../checks.mjs";
 import { codeOnly } from "../srcscan.mjs";
 
 /** The harness root, one level above this self-test. */
@@ -304,6 +304,39 @@ for (const c of cases) {
     problems.push(
       `devicesFor(${label}) -> ${got.devices.join(" ")}; both browsers are always owed.`,
     );
+  }
+}
+
+// ------------------------------------------------------------------- fileRefusal, by case
+//
+// `devicesFor` still ANSWERS a file in no phase (W1 W2, `phase: null`); what `run.mjs --file` does
+// with that answer is `fileRefusal`, and it must refuse. A path is the spelling that reached a chain
+// on 2026-10-25 and preflighted fourteen rows with two browsers - FLOOR-2 went VACUOUS on an
+// unpreflighted W5. `big.mjs` is a real script in no phase: the control that a refusal is not only
+// for names that do not exist.
+const refusalCases = [
+  { file: "archive/floor.mjs", args: ["--row", "2"], refused: /not a path.*--file floor\.mjs/ },
+  { file: "archive\\floor.mjs", args: ["--row", "2"], refused: /not a path.*--file floor\.mjs/ },
+  { file: "nosuchscript.mjs", args: [], refused: /belongs to no phase/ },
+  { file: "big.mjs", args: [], refused: /belongs to no phase/ },
+  { file: "floor.mjs", args: ["--row", "2"], refused: null },
+  { file: "devrows.mjs", args: ["--row", "DUP-7"], refused: null },
+  { file: "del.mjs", args: ["--only", "7", "--destructive"], refused: null },
+];
+for (const c of refusalCases) {
+  const got = fileRefusal(c.file, c.args);
+  const label = [c.file, ...c.args].join(" ");
+  if (c.refused === null && got !== null) problems.push(`fileRefusal(${label}) refused a declared script: ${got}`);
+  if (c.refused !== null && (got === null || !c.refused.test(got))) {
+    problems.push(`fileRefusal(${label}) -> ${JSON.stringify(got)}; expected a refusal matching ${c.refused}.`);
+  }
+}
+// EVERY SCRIPT A PHASE NAMES MUST PASS - a refusal that bit a declared row would teach a bypass.
+for (const [name, phase] of Object.entries(PHASES)) {
+  for (const s of phase.scripts) {
+    const [file, ...rest] = s.split(" ");
+    const got = fileRefusal(file, rest);
+    if (got !== null) problems.push(`fileRefusal refuses ${s} of phase ${name}: ${got}`);
   }
 }
 
