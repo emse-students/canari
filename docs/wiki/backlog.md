@@ -109,6 +109,28 @@ Three paths are left, none built:
   that has none. The drain needs the handler's verdict ("installed a conversation"), not "did not
   throw". Found by reading (review of #2408).
 
+## P3 - A guard answers 5xx for its own faults, and an authorization refusal is a 403 (review of #2420, 2026-10-25)
+
+Server side, separate from the client's 401 rule ([sessions](sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
+- **The delivery services' `HeaderAuthGuard` answers 401 for faults of its OWN** - the internal shared
+  secret unset, an internal signature refused. Those say nothing about the user's bearer, yet a client
+  can only read a 401 as one, so the delivery API had to stop treating a 401 on a renewed token as a
+  dead session. They should be 5xx: a server fault, which every client already reads as "retry later".
+- **Social-service answers 401 for AUTHORIZATION refusals inside handlers** (its posts service and
+  controller). A 401 says "who are you"; "you may not" is a 403. Until it changes, a client's resend
+  after a renewal there is wasted, and the premise "a 401 is the guard's answer about the bearer" holds
+  on `/api/mls` only.
+
+## P3 - Two edges of the pending pull, left by the review of #2420 (2026-10-25)
+
+- **Any non-2xx page reads as a drained mailbox.** `pullPendingMessagesJson` stops on `!page.ok` and
+  returns what it has, so a 5xx or a 403 ends the pull as if the queue were empty, and nothing says it
+  did not drain. Predates #2420.
+- **The resend after a 401 is not halved on a stall.** The pull applies the 401 rule outside its
+  page-halving ladder (so a slow renewal never halves a page); the resend it then makes has its own
+  stall timer, but a stall there is thrown rather than asked again smaller. Rare (a 401 followed by an
+  oversized page); the next pull asks again ([sessions](sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
+
 ## P3 - Two edges left by the gateway-socket rotation fix (review of #2407, 2026-10-25)
 
 - **A follower tab that rotates the device id while the leader's socket carries it.** Tabs of one

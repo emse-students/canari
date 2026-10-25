@@ -134,6 +134,7 @@ import {
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
+import { productionDeliveryApi } from '$lib/mls-client/productionDeliveryApi';
 import {
   GatewayOpenAbandonedError,
   type GatewaySocketOpen,
@@ -662,11 +663,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.baseUrl = urls.baseUrl;
     this.historyUrl = urls.historyUrl;
     this.messageScheduler = new MlsPerGroupScheduler(platform);
-    this.delivery = new MlsDeliveryApi({
-      historyUrl: this.historyUrl,
-      getToken,
-      ...(fetchImpl ? { fetchImpl } : {}),
-    });
+    this.delivery = productionDeliveryApi(this.historyUrl, fetchImpl);
     // Where a disagreement between a frame's envelope and its verified sender is READ: the console
     // of a client is collected nowhere, so the measurement is only a measurement once the server
     // logs it (`[SENDER_MISMATCH]`, channel-encryption section 21).

@@ -12,6 +12,7 @@ import {
 import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { SessionExpiredError } from '$lib/stores/auth';
 import backgroundWelcomeIntent from './test/fixtures/background-welcome-intent.json';
 
 describe('isDefinitiveCommitRefusal - did the gate answer, and refuse?', () => {
@@ -19,6 +20,8 @@ describe('isDefinitiveCommitRefusal - did the gate answer, and refuse?', () => {
     ['a 400 (malformed)', new ApiRefusalError(400, null, 'x'), true],
     ['a 403 (committer not allowed)', new ApiRefusalError(403, null, 'x'), true],
     ['a 429 (rate limited)', new ApiRefusalError(429, null, 'x'), true],
+    // The auth guard's 401 to the request AND to its resend with a renewed token (`renewOn401.ts`).
+    ['a 401 proven against a renewed token', new SessionExpiredError(), true],
     // The advance may have committed before the failure that produced these.
     ['a 500', new ApiRefusalError(500, null, 'x'), false],
     ['a 502 from the edge', new ApiRefusalError(502, null, 'x'), false],
@@ -34,6 +37,7 @@ describe('refusesOnlyThisRequest - a 4xx a resubmission keeps as unknown', () =>
     ['a 401 (session expired)', new ApiRefusalError(401, null, 'x'), true],
     ['a 403 (auth guard)', new ApiRefusalError(403, null, 'x'), true],
     ['a 429 (rate limited)', new ApiRefusalError(429, null, 'x'), true],
+    ['a 401 proven against a renewed token', new SessionExpiredError(), true],
     // These answer the bytes themselves, whichever request carried them.
     ['a 400 (malformed)', new ApiRefusalError(400, null, 'x'), false],
     ['a 410 (group gone)', new ApiRefusalError(410, null, 'x'), false],

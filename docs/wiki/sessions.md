@@ -527,10 +527,64 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
   to whatever the client sent, so the head of the list is attacker-controlled.
 - **An upload that meets a 401 refreshes and retries ONCE; it never ends the session.** The media
   upload takes a token its caller read BEFORE a long encryption, so a 401 is usually a stale copy.
-  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) renews through the
-  single-flight `refresh()` and resends; only a 401 on the FRESH token throws `SessionExpiredError`,
-  and a failed refresh is rethrown as it came. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h
-  from a web client, each followed by logout and sign-in. The salon branch's stale `ctx.authToken`
-  copy (#1472) and the post forms (#1477) fixed WHO hands the token; this fixes the token expiring
-  between the hand-over and the request, for every caller including reels and avatars. Test:
-  `media.uploadRefreshRetry.test.ts`.
+  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) obeys the one rule
+  below. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h from a web client, each followed by
+  logout and sign-in. The salon branch's stale `ctx.authToken` copy (#1472) and the post forms (#1477)
+  fixed WHO hands the token; this fixes the token expiring between the hand-over and the request, for
+  every caller including reels and avatars. Test: `media.uploadRefreshRetry.test.ts`.
+
+## A 401 renews the token and sends the same request once - one rule, every caller
+
+ONE implementation, `frontend/src/lib/utils/renewOn401.ts`. On a 401 to a request that carried a
+bearer: use the token in memory if another caller already renewed it (the single flight only joins a
+refresh while it is PENDING), else renew through `refresh()`; send the SAME request once more; release
+each unread 401 body (`plugin-http` holds the connection until then). The renewal is BOUNDED by the
+request it serves - it is raced against the caller's signal, so a deadline (`trackedFetch`) ends the
+request at the deadline, as a `RequestDeadlineError`, while a renewal error that settles in time
+reaches the caller as itself. What the renewal threw is rethrown as it came - a dead cookie
+(`SessionExpiredError`), a refresh answered 5xx (`RefreshFailedError`), a refresh that reached nobody
+(a transport failure, never a logout) - unless the caller types it (`renewalFailed`): the MLS delivery
+API turns the two that say only "no new token now" (`RefreshFailedError`, a transport failure) into
+`DeliveryRenewalFailedError`, a 401 refusal, because the server DID answer and the request did nothing.
+Read as "no answer", a commit used to be resubmitted into the same 401 and kept as unknown.
+
+Two more guards, both decided on durable state, never a clock:
+- **A renewed token the guard refused is never renewed again** (`RefusedRenewedToken`, the latest one
+  latched per delivery API, replaced by any other token). A later 401 on that same token answers
+  `DeliveryRefusedRenewedTokenError` at once: a guard refusing every renewed token would otherwise rotate
+  the session once per request.
+- **A request is never resent as another account.** When the refused token and the one to resend with
+  both decode to a `sub` and the two differ (a sign-in to another account landed in between), the
+  request is not sent again: `TokenAccountChangedError`, typed, not a logout.
+
+**What a 401 on the RENEWED token means is the caller's to say, because it depends on whose guard
+answered.** `apiFetch` and the media upload answer `SessionExpiredError`: core's guard IS the session
+authority. The MLS delivery API answers `DeliveryRefusedRenewedTokenError` (an `ApiRefusalError`, status
+401) - a failed request, NEVER a logout. `refresh()` has just proven the session alive, and the delivery
+guard also answers 401 for its own faults (an internal shared secret unset, an internal signature
+refused). A logout there would have reached the login's catch (`sessionAuth.ts`, which forgets the user
+and clears the restore key on `SessionExpiredError`) through the unguarded delivery steps of
+`syncConnectionAfterWsOpen` - the KeyPackage publication itself catches its failure.
+
+**The premise that makes the resend safe is a fact of today's servers, not of HTTP.** On `/api/mls/*`
+every 401 comes from the guard, before any handler. Social-service also answers 401 from INSIDE
+handlers (authorization refusals in its posts routes), where a resend is useless rather than unsafe; a
+handler-level 401 added under `/api/mls` would turn a commit's resend into a second submission (the gate
+would still answer it `duplicate`). Both server-side corrections are a P3 in
+[backlog](backlog.md#p3---a-guard-answers-5xx-for-its-own-faults-and-an-authorization-refusal-is-a-403-review-of-2420-2026-10-25).
+
+`MlsDeliveryApi` builds its own headers on an injected `fetch` (Tauri passes `plugin-http`) and takes
+the rule as a `fetch` decorator, `renewingOn401`, applied once in its constructor
+(`productionDeliveryApi`, the one construction that ships, pinned by its test). It covers every route
+of that class through the injected `fetch`, except the pending pull, which applies the rule itself
+(`resendAfter401`) OUTSIDE its page-halving ladder: a slow renewal is not a silent page, and a failed
+one is thrown as itself rather than halved. Outside the rule: the delivery keepalive POST
+(`deliveryKeepalivePost`, `null` on any failure) and the ACK queue (`ackMessagesWithRetry`, its own
+ladder); and every request that still sends a raw bearer without either wrapper -
+`ChatBackgroundService`, the fetches of `sessionAuth.ts`, `PushNotificationService`, `mediaBlobCache`,
+`segmentedMediaReader`, `mediaTouch`, and the direct fetches of the associations and forms modules.
+
+The MLS delivery API had no rule until 2026-10-25: a commit answered 401 ended an Add with the group at
+its old epoch (TOK-1; what the commit gate makes of each outcome is in
+[mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
+`mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.
