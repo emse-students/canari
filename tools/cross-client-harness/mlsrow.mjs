@@ -23,9 +23,9 @@ import { psql, srvLines } from './estate.mjs';
 import { armFault } from './fault.mjs';
 import { createGroup } from './groupnav.mjs';
 import { serverView } from './invariant.mjs';
-import { rowGroupName } from './rowkit.mjs';
+import { forgivingProvoked, rowGroupName } from './rowkit.mjs';
 import { ESTATE } from './site.mjs';
-import { ignoringExpectedLog, ignoringExpectedRefusal, report, watch } from './watch.mjs';
+import { ignoringExpectedLog, ignoringExpectedRefusal, ignoringOfflineCut, report, watch } from './watch.mjs';
 
 if (ESTATE !== 'local' && ESTATE !== 'dev') throw new Error(`mlsrow.mjs drives the local or the dev estate only, not '${ESTATE}'`);
 
@@ -66,13 +66,18 @@ export const watchersOf = (seats) => Object.fromEntries(Object.entries(seats.sea
  * AFTER the invariant - `report()` drains the events the invariant reads.
  *
  * @param {object} seats from {@link openSeats}
- * @param {{refusals?: Record<string, {path: RegExp, status: number[]}[]>, logs?: Record<string, (string|RegExp)[]>}} [forgive]
- *   per device: the refusals and the narration THIS row provokes there, and nothing wider
+ * @param {{refusals?: Record<string, {path: RegExp, status: number[]}[]>, logs?: Record<string, (string|RegExp)[]>,
+ *   provoked?: Record<string, object[]>, offline?: string[]}} [forgive]
+ *   per device: the refusals and the narration THIS row provokes there, the records of the faults it
+ *   armed there (`rowkit.mjs` `forgivingProvoked`, one line each), and the devices it cut on purpose
+ *   (`ignoringOfflineCut`) - and nothing wider
  */
-export async function observersOf(seats, { refusals = {}, logs = {} } = {}) {
+export async function observersOf(seats, { refusals = {}, logs = {}, provoked = {}, offline = [] } = {}) {
   const out = {};
   for (const [device, s] of Object.entries(seats.seat)) {
     let rep = await report(s.w);
+    if (offline.includes(device)) rep = ignoringOfflineCut(rep);
+    if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);
     if (refusals[device]?.length) rep = ignoringExpectedRefusal(rep, refusals[device]);
     if (logs[device]?.length) rep = ignoringExpectedLog(rep, logs[device]);
     out[device] = { ...rep, cx: s.cx };
@@ -293,6 +298,22 @@ export async function armLeafRefresh(cx, userId, deviceId, groupId, { ageDays = 
     `(function () { var l = JSON.parse(localStorage.getItem(${JSON.stringify(key)})); l[${JSON.stringify(groupId)}].at = ${at}; localStorage.setItem(${JSON.stringify(key)}, JSON.stringify(l)); return true; })()`
   );
   return { before, after: await leafLedgerEntry(cx, userId, deviceId, groupId) };
+}
+
+/**
+ * Waits until a client's OWN MLS state holds `groupId` at `epoch` or later (`window.__canariMlsEpochs`),
+ * and returns the elapsed ms - or null at the bound. A row that needs a member to commit ON TOP of
+ * another commit (DUP-2) waits for this, so a refusal it then sees is the product's and not a member
+ * that had simply not received the commit yet.
+ */
+export async function awaitClientEpoch(cx, groupId, epoch, timeoutMs = 20_000) {
+  const started = Date.now();
+  for (;;) {
+    const at = Number(await evaluate(cx, `(function () { try { var e = window.__canariMlsEpochs && window.__canariMlsEpochs(); return e && e[${JSON.stringify(groupId)}] !== undefined ? e[${JSON.stringify(groupId)}] : -1; } catch (x) { return -1; } })()`));
+    if (at >= epoch) return Date.now() - started;
+    if (Date.now() - started > timeoutMs) return null;
+    await new Promise((r) => setTimeout(r, 300));
+  }
 }
 
 export { serverView };

@@ -458,6 +458,26 @@ export const PHASES = {
     scripts: ['cc.mjs --row 1', 'cc.mjs --row 2', 'cc.mjs --row 3', 'cc.mjs --row 4'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // THE SETTLEMENT (DUP, OFF-1/-2, TOK-1/-2), browsers only. DUP-3 records SKIPPED with the plan's
+  // reason (Q2). TOK-3 is NOT here: it waits 61 min with the socket open, so it is run alone and
+  // unattended - `bun archive/settle.mjs --row TOK-3`. DUP-7 needs a new device and is not a
+  // settle.mjs row (`settlerows.mjs` `DUP7_ELSEWHERE`).
+  SETTLE: {
+    title: '1.4.1 - commit settlement: a lost, refused or late answer',
+    scripts: [
+      'settle.mjs --row DUP-1',
+      'settle.mjs --row DUP-2',
+      'settle.mjs --row DUP-3',
+      'settle.mjs --row DUP-4',
+      'settle.mjs --row DUP-5',
+      'settle.mjs --row DUP-6',
+      'settle.mjs --row OFF-1',
+      'settle.mjs --row OFF-2',
+      'settle.mjs --row TOK-1',
+      'settle.mjs --row TOK-2',
+    ],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**

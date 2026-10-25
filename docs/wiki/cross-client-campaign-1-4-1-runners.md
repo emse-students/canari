@@ -43,12 +43,12 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | --- | --- | --- | --- |
 | `archive/floor.mjs` | FLOOR-1..3 | plain sends and one bulk Add | built ([#2393](https://github.com/emse-students/canari/pull/2393)) |
 | `archive/race.mjs` | CC-1..5, RM-1, RM-2, RM-7 | two (or four) actions held by `fault.mjs` `hold` and released together | CC-1..4 built as `archive/cc.mjs` ([#2395](https://github.com/emse-students/canari/pull/2395)); RM owed |
-| `archive/settle.mjs` | DUP-1, -2, -4..-7, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | owed |
+| `archive/settle.mjs` | DUP-1..6, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | built ([#2396](https://github.com/emse-students/canari/pull/2396)); DUP-3 records `SKIPPED`; DUP-7 moved to `devrows.mjs` (a new device) |
 | `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | owed |
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | owed |
 | `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | owed |
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | owed |
-| `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7 | a device minted, revoked or woken | owed |
+| `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | owed |
 | `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | owed |
 | `archive/big.mjs` | BIG-1..3 | everything at twelve devices | owed |
 
@@ -164,7 +164,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | TOK-3 | wait 61 min with the socket open, then a commit and a reconnect | - | nothing but the clock; unattended | no | U | 75 min |
 | NET-1 | 800 ms, 50 kB/s during a four-device Add | `net.mjs` `throttleUpload` (upload only) | a full `emulateNetworkConditions` helper (latency + both directions) | no | U | 20 min |
 | NET-2 | `cutHard()` every 10 s for five minutes while commits and messages flow | `net.mjs` | the flap loop | no | U | 20 min |
-| NET-3 | every `/api/*` answered `200 text/html` | `fault.mjs` | a **status + body** fault mode | no | U | 20 min |
+| NET-3 | every `/api/*` answered `200 text/html` | `fault.mjs` `status 200` with a string `body` (since #2396) | - | no | U | 20 min |
 
 ## 4. What cannot be automated, and how it is recorded instead
 

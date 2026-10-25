@@ -10,7 +10,7 @@
  *
  *   bun archive/fault-selftest.mjs
  */
-import { armFault, claimRule, compileRules, parseFault, ruleMatches, toUrlPattern } from '../fault.mjs';
+import { armFault, claimRule, compileRules, fulfilBody, parseFault, ruleMatches, toUrlPattern } from '../fault.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -128,6 +128,25 @@ const quiet = () => {};
   await f.disarm();
   ok('disarm releases what is still held rather than leaving it paused', cx.sent.some((s) => s.method === 'Fetch.continueRequest' && s.params.requestId === 'b'));
   ok('awaitFired rejects, naming the fact, when it never happens', await f.awaitFired(0, 5, 20).then(() => false, (e) => /rule #0 firing 5/.test(e.message)));
+}
+
+// ── a status answer can carry the body the client classifies by (DUP-4's 409) ───────────────────
+{
+  ok('a body on a mode that sends none is refused', throws(() => compileRules([{ match: '/c', fault: 'lose-answer once', body: { code: 'X' } }])));
+  ok('no body is an empty one, with no header', fulfilBody(undefined).body === '' && fulfilBody(undefined).responseHeaders.length === 0);
+  const seat = { code: 'SEAT_CLAIM_OVERTAKEN', message: 'this commit is not accepted' };
+  const enc = fulfilBody(seat);
+  ok('an object is sent as base64 JSON', JSON.parse(Buffer.from(enc.body, 'base64').toString('utf8')).code === 'SEAT_CLAIM_OVERTAKEN');
+  ok('with a JSON content type', (enc.responseHeaders.find((h) => h.name === 'Content-Type')?.value ?? '').startsWith('application/json'));
+  ok('a string is sent as text', fulfilBody('nope').responseHeaders[0].value.startsWith('text/plain'));
+  const cx = fakeCx();
+  const f = await armFault(cx, [{ match: '/c', fault: 'status 409 once', body: seat }], { log: quiet });
+  cx.pause({ requestId: 'z', request: { url: 'https://h/c', method: 'POST' }, responseStatusCode: 201 });
+  await tick();
+  const sent = cx.sent.find((s) => s.method === 'Fetch.fulfillRequest' && s.params.requestId === 'z');
+  ok('status 409 fulfils with the body and its header', sent?.params.responseCode === 409 && sent.params.body === enc.body && sent.params.responseHeaders.length === 1);
+  ok('and records the body it gave', JSON.parse(f.records[0].gaveBody).code === 'SEAT_CLAIM_OVERTAKEN');
+  await f.disarm();
 }
 
 console.log(

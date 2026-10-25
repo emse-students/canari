@@ -15,7 +15,7 @@
  * | mode            | stage    | the server ran it? | what the page sees                           |
  * | --------------- | -------- | ------------------ | -------------------------------------------- |
  * | `lose-answer`   | response | YES                | a transport failure (`failRequest`)          |
- * | `status N`      | response | YES                | status N, empty body, the real answer dropped |
+ * | `status N`      | response | YES                | status N and the rule's `body` (empty if none); the real answer dropped |
  * | `status-unsent N` | request | NO                | status N; the server never saw the request   |
  * | `delay MS`      | response | YES                | the real answer, MS later                    |
  * | `hold`          | request  | NOT YET            | nothing, until `release()` sends it / `fail()` |
@@ -104,17 +104,42 @@ export function ruleMatches(rule, { url, method }) {
 }
 
 /**
- * Normalises the rules a caller hands in: `{ match, method?, fault: '<spec>' }`.
+ * Normalises the rules a caller hands in: `{ match, method?, fault: '<spec>', body? }`.
  *
- * @param {Array<{match: string|RegExp, method?: string, fault: string}>} rules
+ * `body` is what a `status` / `status-unsent` answer CARRIES. A refusal the client classifies by
+ * its body - `409 SEAT_CLAIM_OVERTAKEN` is a typed `ApiRefusalError` only because of its `code`
+ * (DUP-4) - cannot be provoked by a status alone. An object is sent as JSON; a string as text/plain.
+ * Any other mode with a body is refused: a body nobody sends is a rule that lies about what it does.
+ *
+ * @param {Array<{match: string|RegExp, method?: string, fault: string, body?: string|object}>} rules
  */
 export function compileRules(rules) {
   if (!Array.isArray(rules) || rules.length === 0) throw new Error('armFault: no rule given');
   return rules.map((r, index) => {
     if (!(typeof r.match === 'string' && r.match !== '') && !(r.match instanceof RegExp))
       throw new Error(`armFault: rule ${index} has no 'match'`);
-    return { index, match: r.match, method: r.method ?? null, ...parseFault(r.fault), spec: r.fault, fired: 0 };
+    const parsed = parseFault(r.fault);
+    if (r.body !== undefined && MODES[parsed.mode].arg !== 'status')
+      throw new Error(`armFault: rule ${index} gives a body to '${parsed.mode}', which sends none`);
+    return { index, match: r.match, method: r.method ?? null, ...parsed, body: fulfilBody(r.body), spec: r.fault, fired: 0 };
   });
+}
+
+/**
+ * The `Fetch.fulfillRequest` headers and base64 body for a rule's `body` - CDP takes the body
+ * base64-encoded, and a JSON body without its content type is not parsed as JSON by the client.
+ *
+ * @param {string | object | undefined} body
+ * @returns {{ responseHeaders: Array<{name: string, value: string}>, body: string }}
+ */
+export function fulfilBody(body) {
+  if (body === undefined) return { responseHeaders: [], body: '' };
+  const json = typeof body !== 'string';
+  const text = json ? JSON.stringify(body) : body;
+  return {
+    responseHeaders: [{ name: 'Content-Type', value: json ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8' }],
+    body: Buffer.from(text, 'utf8').toString('base64'),
+  };
 }
 
 /**
@@ -193,7 +218,8 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
       case 'status':
       case 'status-unsent':
         record.gave = rule.status;
-        void answer('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: rule.status, responseHeaders: [], body: '' }, record);
+        if (rule.body.body) record.gaveBody = Buffer.from(rule.body.body, 'base64').toString('utf8');
+        void answer('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: rule.status, ...rule.body }, record);
         break;
       case 'delay': {
         const t = setTimeout(() => void answer('Fetch.continueRequest', { requestId: p.requestId }, record), rule.ms);
