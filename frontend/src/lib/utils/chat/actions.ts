@@ -65,6 +65,7 @@ import {
   recordRefusedDevice,
   reportRefusedDeviceSkipped,
 } from '$lib/mls-client/refusedDevices';
+import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
 
 /**
  * A device asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to bring
@@ -74,6 +75,11 @@ export interface JoinApprovalRequest {
   groupId: string;
   requesterUserId: string;
   requesterDeviceId: string;
+  /**
+   * The ask's identity, the id of the seat its link wrote, as the server row or frame raising it
+   * named it (`askId`): an ask the server settled is never raised again (`joinRequests.svelte.ts`).
+   */
+  askId?: string;
 }
 
 /**
@@ -259,14 +265,14 @@ function askAMemberToAdmit(
   tag: string,
   log: (message: string) => void,
   onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
-): void {
+): boolean {
   const short = request.groupId.slice(0, 8);
   if (isAsk !== true) {
     log(
       `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
         `their seat is not an invitation-link ask (a member's invite in flight, or a seat older than the rule)`
     );
-    return;
+    return false;
   }
   const convo = conversations.get(request.groupId);
   const kind = convo ? (convo.conversationType ?? 'group') : null;
@@ -275,12 +281,78 @@ function askAMemberToAdmit(
       `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
         `${kind === null ? 'no conversation row is loaded for it' : `a ${kind} conversation`} takes no join ask`
     );
-    return;
+    return false;
   }
   log(
     `${tag} ${request.requesterUserId} has no leaf in ${short}... - a new person is not added automatically, a member's approval is asked`
   );
   onJoinApprovalRequested?.(request);
+  return true;
+}
+
+/** An ask as the server announces it to every online admitted member (`group.join_ask`). */
+export interface AnnouncedJoinAsk {
+  groupId: string;
+  /** The ask's identity, the id of the seat its link wrote. */
+  askId: string;
+  requesterUserId: string;
+  requesterDeviceIds: string[];
+}
+
+/**
+ * Raises the ask the server ANNOUNCED to every online admitted member (`group.join_ask`), so a member
+ * sees it live rather than at its next pending-invitation sweep - any admitted member may answer.
+ *
+ * The announcement is the server's word that the seat is an invitation-link ask, as the `pending`
+ * rows and the roster are ({@link askAMemberToAdmit}'s `isAsk`). What it cannot say is whether the
+ * person already holds a leaf, which is read from THIS device's tree - a person a member already
+ * added is not asked about. It adds nobody: this is the human-visible ask, and only a member's Add
+ * brings the person in. One entry per (group, person) in the store, so the elected member's
+ * `welcome_request` and the sweep raising the same ask make one entry; and an ask the server already
+ * settled (`askId`) is not raised however late this lands.
+ */
+export async function raiseAnnouncedJoinAsk(params: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  conversations: ReadonlyMap<string, Conversation>;
+  ask: AnnouncedJoinAsk;
+  log: (msg: string) => void;
+  onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+}): Promise<void> {
+  const { mlsService, conversations, ask, log, onJoinApprovalRequested } = params;
+  const admission = await automaticAdmission({
+    mlsService,
+    groupId: ask.groupId,
+    userId: ask.requesterUserId,
+    tag: '[JOIN_ASK]',
+    log,
+  });
+  if (admission === 'unreadable') return;
+  if (admission === 'member-device') {
+    log(
+      `[JOIN_ASK] ${ask.requesterUserId} already holds a leaf in ${ask.groupId.slice(0, 8)}... - a member's Add came first, nothing to ask`
+    );
+    return;
+  }
+  const [first, ...others] = ask.requesterDeviceIds;
+  if (first === undefined) {
+    log(`[JOIN_ASK] the ask of ${ask.requesterUserId} names no device - nothing to raise`);
+    return;
+  }
+  const request = { groupId: ask.groupId, requesterUserId: ask.requesterUserId, askId: ask.askId };
+  const asked = askAMemberToAdmit(
+    conversations,
+    { ...request, requesterDeviceId: first },
+    true,
+    '[JOIN_ASK]',
+    log,
+    onJoinApprovalRequested
+  );
+  // The person's other devices join the same entry; the decision above was the person's, not theirs.
+  if (asked) {
+    for (const deviceId of others) {
+      onJoinApprovalRequested?.({ ...request, requesterDeviceId: deviceId });
+    }
+  }
 }
 
 /**
@@ -570,7 +642,12 @@ export async function processPendingInvitations(params: {
         if (admission === 'newcomer') {
           askAMemberToAdmit(
             conversations,
-            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            {
+              groupId,
+              requesterUserId: inv.userId,
+              requesterDeviceId: inv.deviceId,
+              ...(inv.askId ? { askId: inv.askId } : {}),
+            },
             inv.awaitingAdmission,
             '[PENDING]',
             log,
@@ -992,6 +1069,29 @@ export async function discoverMissingGroups(params: {
       }
 
       if (!serverGroupIds.has(convo.id)) {
+        // A NEVER-ADMITTED CONVERSATION THE SERVER NO LONGER LISTS was an ask that ended without an
+        // admission - a member declined it, or it expired. This device was never in it, so there is
+        // no past to keep and no exclusion to explain: the row goes. Only on a list that may be
+        // believed, the guard every destructive reading of absence takes (`groupSweep.ts`).
+        if (isNeverAdmitted(convo)) {
+          if (!snapshot.absenceIsEvidence) {
+            log(
+              `[DISCOVERY] never-admitted "${convo.id}" absent from the list, kept - ${snapshot.unusableReason}`
+            );
+            continue;
+          }
+          log(
+            `[DISCOVERY] never-admitted "${convo.id}" is no longer listed - the ask was declined or expired - removing`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            deleteConversation,
+            log,
+          });
+          continue;
+        }
         // Fate decision centralised in `decideAbsentGroupFate` (single source shared with
         // other reconcilers). We only query the server for genuinely undecided cases: a conv
         // already `deletedRemotely` short-circuits without a network call.
@@ -1117,6 +1217,21 @@ export async function discoverMissingGroups(params: {
       owedExits,
       log,
     });
+  }
+
+  // Whether each row is an invitation-link ask no member has answered, as the list says of THIS
+  // device's seat: the sidebar reads it as waiting rather than established, and the sweep above
+  // removes such a row once the list stops naming it.
+  for (const key of syncAdmissionFlags(conversations, activeServerGroups)) {
+    const state = conversations.get(key)?.awaitingAdmission
+      ? 'awaits a member admission'
+      : 'no longer awaits a member';
+    log(`[DISCOVERY] "${key}" ${state}`);
+    if (saveConversation) {
+      await saveConversation(key).catch((e) =>
+        log(`[WARN] Admission state persistence failed for ${key}: ${String(e)}`)
+      );
+    }
   }
 
   // ── Seed the group AVATAR from the server (source of truth) ───────────
@@ -1401,10 +1516,16 @@ export async function handleWelcomeRequest(params: {
   });
   if (admission === 'unreadable') return;
   if (admission === 'newcomer') {
+    const seat = userMembers.find((m) => m.userId === requesterUserId);
     askAMemberToAdmit(
       conversations,
-      { groupId, requesterUserId, requesterDeviceId },
-      userMembers.find((m) => m.userId === requesterUserId)?.awaitingAdmission,
+      {
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        ...(seat?.askId ? { askId: seat.askId } : {}),
+      },
+      seat?.awaitingAdmission,
       '[WELCOME_REQ]',
       log,
       onJoinApprovalRequested

@@ -53,6 +53,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { cutUserId } from '../utils/log-repeat';
+import { announceJoinAskSettled } from '../utils/join-ask-announce';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
@@ -588,7 +589,7 @@ export class MembersController {
     await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
     const rows = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
-      select: { userId: true, awaitingAdmission: true },
+      select: { id: true, userId: true, awaitingAdmission: true },
     });
     const userIds = [...new Set(rows.map((r) => r.userId))];
     const nameMap = await resolveUserDisplayNamesBatch(this.dataSource.manager, userIds);
@@ -596,8 +597,10 @@ export class MembersController {
     return rows.map((r) => ({
       userId: r.userId,
       displayName: nameMap.get(r.userId) ?? null,
-      // An invitation link's ask no member has answered: the one roster row a member is asked about.
+      // An invitation link's ask no member has answered: the one roster row a member is asked about,
+      // with its identity - the seat's id - which every member's screen settles the ask by.
       awaitingAdmission: r.awaitingAdmission === true,
+      askId: r.awaitingAdmission === true ? r.id : null,
     }));
   }
 
@@ -819,10 +822,16 @@ export class MembersController {
     // for each other on the roster row instead of deadlocking. A Welcome store re-checks the seat
     // under the seat lock (`validateCommit`, `sendWelcome`), so a store racing this removal either
     // commits first and is deleted here, or finds no seat.
-    const { devices, ended, generation } = await withSeatLock(
+    const { devices, ended, generation, endedAsk } = await withSeatLock(
       this.dataSource.manager,
       safeGroupId,
       async (manager) => {
+        // A seat still awaiting a member is an open ASK: its removal ends it, and every member's
+        // screen must learn so. Read under the seat lock, before the row goes.
+        const seat = await manager.getRepository(GroupMember).findOne({
+          where: { groupId: safeGroupId, userId: safeUserId },
+          select: { id: true, awaitingAdmission: true },
+        });
         await bumpSeatGeneration(manager, safeGroupId);
         const closed = await endGroupMembership(manager, safeGroupId, safeUserId);
         const gone = await endDeviceMemberships(
@@ -831,9 +840,26 @@ export class MembersController {
           'welcomes'
         );
         const gen = await recordSeatEviction(manager, safeGroupId, safeUserId, false);
-        return { devices: gone, ended: closed, generation: gen };
+        return {
+          devices: gone,
+          ended: closed,
+          generation: gen,
+          endedAsk: seat?.awaitingAdmission === true && closed.deleted > 0 ? seat.id : null,
+        };
       }
     );
+    if (endedAsk !== null) {
+      // The person withdrew their own ask, or a member removed it: committed, so it leaves every
+      // online member's screen now. Started, not awaited.
+      announceJoinAskSettled(
+        this.dataSource.manager,
+        this.redis,
+        safeGroupId,
+        [{ userId: safeUserId, askId: endedAsk }],
+        caller === safeUserId ? 'withdrawn' : 'declined',
+        caller ?? ''
+      );
+    }
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
@@ -903,12 +929,24 @@ export class MembersController {
         refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller may not answer this ask')
       );
     }
-    const outcome = await withSeatLock(this.dataSource.manager, safeGroupId, (m) =>
+    const { outcome, askId } = await withSeatLock(this.dataSource.manager, safeGroupId, (m) =>
       withdrawAwaitingSeat(m, safeGroupId, safeUserId, 'declined')
     );
     this.logger.log(
       `[JOIN_DECLINE] group=${safeGroupId} caller=${caller} target=${safeUserId} outcome=${outcome}`
     );
+    // Committed: every other online member's ask settles on it now, not at its next sweep - started,
+    // not awaited, so this answer does not wait on it.
+    if (outcome === 'withdrawn' && askId !== null) {
+      announceJoinAskSettled(
+        this.dataSource.manager,
+        this.redis,
+        safeGroupId,
+        [{ userId: safeUserId, askId }],
+        'declined',
+        caller
+      );
+    }
     return { outcome };
   }
 

@@ -24,6 +24,7 @@ import Redis from 'ioredis';
 import {
   ADDRESSED_HISTORY_CAPABILITY,
   declaresAddressedHistory,
+  devicePresenceKey,
   publishIfAddressable,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
@@ -72,6 +73,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
@@ -1252,11 +1254,6 @@ export class MessagingService {
     await this.sendFcmForQueued(queued, `${traceId}-def`, groupId, senderId, silent);
   }
 
-  /** The presence key for one DEVICE. The gateway writes it on connect and lets it expire. */
-  private presenceKey(userId: string, deviceId: string): string {
-    return `user:online:${userId}:${deviceId}`;
-  }
-
   /**
    * Refuses an addressed CONVERSATION frame unless every device it reaches applies rule 5 of
    * docs/wiki/protocols/history-answer-addressing.md - refuse any addressed frame that is not a
@@ -1795,7 +1792,7 @@ export class MessagingService {
       if (!online.has(k)) {
         online.set(
           k,
-          !!(await this.redis.exists(this.presenceKey(queued.recipientId, queued.deviceId)))
+          !!(await this.redis.exists(devicePresenceKey(queued.recipientId, queued.deviceId)))
         );
       }
     }
@@ -2235,6 +2232,8 @@ export class MessagingService {
       };
     }
 
+    /** The asks this commit answered, set only once it is accepted - announced after the release. */
+    let acceptedAsks: AnsweredAsk[] = [];
     try {
       const group = await this.groupRepo.findOne({ where: { id: groupId } });
       if (!group) {
@@ -2334,8 +2333,11 @@ export class MessagingService {
       // the committer, which `submitCommit` is already built for - it rolls the staged commit back
       // on a reject - against a loss that no later call can repair.
       let queuedWelcome: QueuedMessage | null = null;
+      /** The invitation-link asks this commit answered, announced once it has committed. */
+      let admittedAsks: AnsweredAsk[] = [];
       try {
         await this.groupRepo.manager.transaction(async (m) => {
+          admittedAsks = [];
           // THE ADMITS WRITE SEATS, SO THEY TAKE THE SEAT LOCK - first, before any row, so this
           // transaction and an eviction always take their locks in the same order. In a key group
           // each admitted person was asked of social-service before any lock, against a claim
@@ -2506,7 +2508,7 @@ export class MessagingService {
           // Welcome it carries, so the person is a member from this epoch on. Written with the
           // advance, so the flag never outlives the leaf nor goes before it; a roster write, so
           // before any device row like the enrolment. A key group has no roster rows: nothing matches.
-          await this.liftAwaitingAdmission(
+          admittedAsks = await this.liftAwaitingAdmission(
             m,
             groupId,
             [...admitted.map((a) => a.userId), ...(welcome ? [welcome.userId] : [])],
@@ -2643,6 +2645,10 @@ export class MessagingService {
         throw e;
       }
       group.activeEpoch = baseEpoch + 1;
+      // The transaction committed: the asks it answered ARE answered, whatever the steps below do.
+      // Taken now, so a throw in the fan-out cannot lose the announcement; sent once the lock below
+      // is released, never while it is held.
+      acceptedAsks = admittedAsks;
       if (admitted.length > 0) {
         this.logger.log(
           `[COMMIT][${traceId}] ADMITS group=${groupId} atEpoch=${group.activeEpoch} ` +
@@ -2717,19 +2723,26 @@ export class MessagingService {
 
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
-      // Atomic release via Lua: avoids the GET->DEL race.
-      const released = await this.redis.eval(
-        `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
-        1,
-        lockKey,
-        deviceId
-      );
-      if (released === 1) {
-        this.logger.log(`[COMMIT][${traceId}] Lock released for group=${groupId}`);
-      } else {
-        this.logger.warn(
-          `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`
+      try {
+        // Atomic release via Lua: avoids the GET->DEL race.
+        const released = await this.redis.eval(
+          `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+          1,
+          lockKey,
+          deviceId
         );
+        if (released === 1) {
+          this.logger.log(`[COMMIT][${traceId}] Lock released for group=${groupId}`);
+        } else {
+          this.logger.warn(
+            `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`
+          );
+        }
+      } finally {
+        // The lock is released (or its release failed, and it expires): the asks a COMMITTED
+        // transaction answered go out now - even when a later step threw - started and not awaited,
+        // so neither the next commit nor this answer waits on them.
+        this.announceAdmitted(groupId, acceptedAsks, committer);
       }
     }
   }
@@ -3777,6 +3790,11 @@ export class MessagingService {
    * THE WELCOME IS WHAT EVERY ADD SHIPS, so it lifts the flag for a member whose client predates
    * `admits` (it Adds from the `pending` row and sends the Welcome apart): without it, that joiner
    * turned `active` under a flag nothing would ever clear, and every commit of theirs was refused.
+   *
+   * @returns the asks this lift answered - the person and the seat's id, the ask's identity - for
+   *   the caller to announce once its transaction has committed ({@link announceJoinAskSettled}),
+   *   never from inside it. Who still awaited is read first, in this same transaction, which holds
+   *   the seat lock a Decline takes - so the read and the guarded update see the same flags.
    */
   private async liftAwaitingAdmission(
     m: EntityManager,
@@ -3785,19 +3803,39 @@ export class MessagingService {
     traceId: string,
     tag: string,
     door: 'admits' | 'welcome'
-  ): Promise<void> {
-    if (userIds.length === 0) return;
-    const lifted = await m
-      .getRepository(GroupMember)
-      .update(
-        { groupId, userId: In([...new Set(userIds)]), awaitingAdmission: true },
-        { awaitingAdmission: false }
-      );
-    if ((lifted.affected ?? 0) > 0) {
-      this.logger.log(
-        `[${tag}][${traceId}] ADMITTED group=${groupId} users=${lifted.affected} door=${door} - a member's Add answered their invitation-link ask`
-      );
-    }
+  ): Promise<AnsweredAsk[]> {
+    if (userIds.length === 0) return [];
+    const people = [...new Set(userIds)];
+    const repo = m.getRepository(GroupMember);
+    const flagged = await repo.find({
+      where: { groupId, userId: In(people), awaitingAdmission: true },
+      select: { id: true, userId: true },
+    });
+    if (flagged.length === 0) return [];
+    await repo.update(
+      { groupId, id: In(flagged.map((s) => s.id)), awaitingAdmission: true },
+      { awaitingAdmission: false }
+    );
+    this.logger.log(
+      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=${door} - a member's Add answered their invitation-link ask`
+    );
+    return flagged.map((s) => ({ userId: s.userId, askId: s.id }));
+  }
+
+  /**
+   * Announces, AFTER the transaction that lifted them committed, the asks a member's Add answered -
+   * so every other member's screen settles on `admitted` live. Started, never awaited, never thrown
+   * ({@link announceJoinAskSettled}).
+   */
+  private announceAdmitted(groupId: string, admitted: readonly AnsweredAsk[], actor: string): void {
+    announceJoinAskSettled(
+      this.groupRepo.manager,
+      this.redis,
+      groupId,
+      admitted,
+      'admitted',
+      actor
+    );
   }
 
   /** `userId`'s roster seat in `groupId`, or `null` - the one read of `dm_group_members` here. */
@@ -4009,7 +4047,9 @@ export class MessagingService {
    * until its next foreground pull.
    */
   private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<void> {
-    const isOnline = await this.redis.exists(this.presenceKey(queued.recipientId, queued.deviceId));
+    const isOnline = await this.redis.exists(
+      devicePresenceKey(queued.recipientId, queued.deviceId)
+    );
     await this.deliverQueuedFrame(queued, {
       tag: 'WELCOME',
       traceId,
@@ -4849,7 +4889,7 @@ export class MessagingService {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) continue;
-      const isOnline = await this.redis.exists(this.presenceKey(memberUserId, memberDeviceId));
+      const isOnline = await this.redis.exists(devicePresenceKey(memberUserId, memberDeviceId));
       if (isOnline && excluded.has(member.toLowerCase())) {
         excludedOnline++;
         continue;
@@ -4989,7 +5029,7 @@ export class MessagingService {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) continue;
-      if (!(await this.redis.exists(this.presenceKey(memberUserId, memberDeviceId)))) continue;
+      if (!(await this.redis.exists(devicePresenceKey(memberUserId, memberDeviceId)))) continue;
       await this.redis.publish(
         'chat:messages',
         JSON.stringify({
@@ -5074,7 +5114,7 @@ export class MessagingService {
         );
         continue;
       }
-      const onlineKey = this.presenceKey(memberUserId, memberDeviceId);
+      const onlineKey = devicePresenceKey(memberUserId, memberDeviceId);
       const isOnline = await this.redis.exists(onlineKey);
       say(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
       if (isOnline) {
@@ -5233,7 +5273,10 @@ export class MessagingService {
   ): Promise<QueuedMessage[]> {
     const { seats, welcome } = opts;
     if (!groupId) return this.queuedMessageRepo.save(rows);
-    return this.queuedMessageRepo.manager.transaction(async (manager) => {
+    /** The invitation-link ask a stored Welcome answered, announced once the store committed. */
+    let admittedAsks: AnsweredAsk[] = [];
+    const stored = await this.queuedMessageRepo.manager.transaction(async (manager) => {
+      admittedAsks = [];
       // THE SEAT LOCK, SHARED, BEFORE THE GROUP ROW - the order every seat writer takes them in. The
       // recipients were read with no lock, so an eviction may have deleted a seat and its queued
       // frames since; holding the lock shared, no eviction runs until these rows are written, and the
@@ -5302,7 +5345,7 @@ export class MessagingService {
         await this.ensurePendingSeat(manager, groupId, welcome);
         // A Welcome stored by an admitted member admits its target ({@link liftAwaitingAdmission}).
         if (!welcome.keyGroup) {
-          await this.liftAwaitingAdmission(
+          admittedAsks = await this.liftAwaitingAdmission(
             manager,
             groupId,
             [welcome.userId],
@@ -5314,6 +5357,8 @@ export class MessagingService {
       }
       return saved;
     });
+    if (welcome) this.announceAdmitted(groupId, admittedAsks, rows[0]?.senderId ?? '');
+    return stored;
   }
 
   /**

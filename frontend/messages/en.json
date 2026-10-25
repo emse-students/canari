@@ -1358,6 +1358,7 @@
   "chat_dm_settings_label": "Chat settings",
   "chat_settings_title": "Settings",
   "chat_e2e_established_preview": "E2E channel established.",
+  "chat_awaiting_admission_preview": "Waiting for a member to add you.",
   "chat_unread_messages_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

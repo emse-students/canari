@@ -539,6 +539,7 @@ export class IndexedDbStorage implements IStorage {
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
       readWatermarks: parseReadWatermarks(r.readWatermarks),
       historyFloor: parseHistoryFloor(r.historyFloor),
+      awaitingAdmission: r.awaitingAdmission === true,
     };
   }
 

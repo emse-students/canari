@@ -222,6 +222,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onChannelMessageDeleted: deps.onChannelMessageDeleted,
       log,
       onOutOfSync,
+      onJoinAsk: deps.onJoinAsk,
+      onJoinAskSettled: deps.onJoinAskSettled,
     });
   };
 

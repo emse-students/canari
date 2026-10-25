@@ -174,9 +174,18 @@ import { appendLog } from '$lib/utils/sessionLog';
 import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
-import { handleHistoryRequest, processPendingInvitations } from '$lib/utils/chat/actions';
+import {
+  handleHistoryRequest,
+  processPendingInvitations,
+  raiseAnnouncedJoinAsk,
+} from '$lib/utils/chat/actions';
 import type { JoinApprovalRequest } from '$lib/utils/chat/actions';
-import { raiseJoinRequest, settleSweptJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
+import {
+  raiseJoinRequest,
+  settleJoinRequest,
+  beginJoinRequestSweep,
+  settleSweptJoinRequests,
+} from '$lib/utils/chat/joinRequests.svelte';
 import {
   drainDeferredWelcomeRequests,
   serveWelcomeRequest,
@@ -477,6 +486,8 @@ export async function processDeviceInvitationsLocally(
     // A new person's pending device is never added by the sweep; it raises a member's approval. The
     // sweep reads the server's durable rows, so what a completed one raised replaces what is shown.
     const raised: JoinApprovalRequest[] = [];
+    // Before the sweep reads anything: an ask announced while it reads is not its to take away.
+    const sweep = beginJoinRequestSweep();
     const swept = await processPendingInvitations({
       mlsService: ctx.ensureMls(),
       storage: ctx.getStorage(),
@@ -487,7 +498,7 @@ export async function processDeviceInvitationsLocally(
       log: cb.log,
       onJoinApprovalRequested: (request) => raised.push(request),
     });
-    if (swept) settleSweptJoinRequests(raised);
+    if (swept) settleSweptJoinRequests(sweep, raised);
   } finally {
     ctx.setIsSyncing(false);
   }
@@ -1778,6 +1789,21 @@ export async function loginImpl(
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,
       onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onChannelMessageDeleted: cb.onChannelMessageDeleted,
+      // The ask every online admitted member is told of, and its outcome, whoever answered it.
+      onJoinAsk: (ask) => {
+        void raiseAnnouncedJoinAsk({
+          mlsService,
+          conversations: cb.conversations,
+          ask,
+          log: cb.log,
+          onJoinApprovalRequested: raiseJoinRequest,
+        }).catch((e: unknown) =>
+          cb.log(
+            `[JOIN_ASK] the announced ask of ${ask.requesterUserId} in ${ask.groupId.slice(0, 8)}... was not raised: ${String(e).slice(0, 120)}`
+          )
+        );
+      },
+      onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
       onCallSignal: (senderId: string, groupId: string, callMsg) => {
         void handleCallSignalForChat(
@@ -2015,7 +2041,8 @@ export async function loginImpl(
       for (const [key, c] of cb.conversations.entries()) {
         if (isChannelConversationId(c.id)) continue;
         if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
-          cb.conversations.set(key, { ...c, lifecycle: 'pending' });
+          // Admitted once, so never read as a never-admitted ask again.
+          cb.conversations.set(key, { ...c, lifecycle: 'pending', awaitingAdmission: false });
           missingKeys.push(key);
         } else if (c.lifecycle === 'pending' && localMlsGroups.has(c.id)) {
           cb.conversations.set(key, { ...c, lifecycle: 'active' });

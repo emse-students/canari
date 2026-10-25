@@ -64,7 +64,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   const txReads: string[] = [];
   // The target's roster seat as the store's transaction re-reads it, under a lock.
   const txSeat = jest.fn();
-  // The lift of `awaitingAdmission` the store makes for the Welcome's target.
+  // Who still awaits as the lift reads it, then the lift of `awaitingAdmission` itself.
+  const txAsks = jest.fn();
   const txLift = jest.fn();
   type EvictionRow = { generation: number; owedDeparture: number | null };
   /** A key-group target's `dm_seat_evictions` row when its claim is taken, before the store. */
@@ -102,9 +103,13 @@ describe('MessagingService - sendWelcome does not touch membership status or the
               txReads.push('seat');
               return txSeat(q);
             }),
-            // The store lifts the invitation-link ask its Welcome answers.
-            update: jest.fn(async (where: unknown, set: unknown) => {
+            // The store lifts the invitation-link ask its Welcome answers: who awaits, then the lift.
+            find: jest.fn(async (q: unknown) => {
               txReads.push('lift');
+              return txAsks(q);
+            }),
+            update: jest.fn(async (where: unknown, set: unknown) => {
+              txReads.push('lift-write');
               return txLift(where, set);
             }),
           };
@@ -187,6 +192,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     jest.clearAllMocks();
     txReads.length = 0;
     txSeat.mockResolvedValue({ id: 'm-u2' });
+    txAsks.mockResolvedValue([]);
     txLift.mockResolvedValue({ affected: 0 });
     claimRow = null;
     txEvictionRow = null;
@@ -279,18 +285,18 @@ describe('MessagingService - sendWelcome does not touch membership status or the
    * and this is the one door that still sees its Add.
    */
   it("lifts the target's invitation-link ask, guarded on the flag, in the store's transaction", async () => {
-    txLift.mockResolvedValueOnce({ affected: 1 });
+    txAsks.mockResolvedValueOnce([{ id: 'm-u2', userId: 'u2' }]);
 
     await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
 
     expect(txLift).toHaveBeenCalledTimes(1);
     const [where, set] = txLift.mock.calls[0] as [
-      { groupId: string; userId: { value: string[] }; awaitingAdmission: boolean },
+      { groupId: string; id: { value: string[] }; awaitingAdmission: boolean },
       unknown,
     ];
     expect(where.groupId).toBe('g1');
     expect(where.awaitingAdmission).toBe(true);
-    expect(where.userId.value).toEqual(['u2']);
+    expect(where.id.value).toEqual(['m-u2']);
     expect(set).toEqual({ awaitingAdmission: false });
   });
 

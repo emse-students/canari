@@ -102,6 +102,7 @@ export function toConversationMeta(
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     imageMediaId: convo.imageMediaId ?? null,
+    awaitingAdmission: convo.awaitingAdmission === true,
   };
 }
 
@@ -259,7 +260,8 @@ export async function markAwaitingReAdmission(params: {
   const { conversations, key, saveConversation } = params;
   const convo = conversations.get(key);
   if (!convo || convo.lifecycle !== 'active') return false;
-  conversations.set(key, { ...convo, lifecycle: 'pending' });
+  // A row that was active was admitted: it is never read as a never-admitted ask again.
+  conversations.set(key, { ...convo, lifecycle: 'pending', awaitingAdmission: false });
   await saveConversation?.(key).catch(() => {});
   return true;
 }
@@ -438,6 +440,8 @@ export interface ConversationRowSpec {
   readWatermarks?: Conversation['readWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
+  /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
+  awaitingAdmission?: Conversation['awaitingAdmission'];
 }
 
 /**
@@ -476,6 +480,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const readWatermarks = spec.readWatermarks ?? existing?.readWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
+  const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
   const directPeerId = identity.directPeerId ?? existing?.directPeerId;
 
   return {
@@ -493,6 +498,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(readWatermarks !== undefined ? { readWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
   };
 }
 
@@ -827,6 +833,7 @@ export function restoredConversationRow(
     readWatermarks: meta.readWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    awaitingAdmission: meta.awaitingAdmission,
   });
 }
 

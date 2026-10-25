@@ -16,6 +16,7 @@
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { m } from '$lib/paraglide/messages';
 
   interface ConvItem {
@@ -83,6 +84,7 @@
         name: conv.name,
         lifecycle: conv.lifecycle,
         updatedAt: conversationRecency(conv) || (baseline?.meta.updatedAt ?? 0),
+        awaitingAdmission: conv.awaitingAdmission === true,
       },
       contactId: pres.contactId,
       displayName: pres.displayName,
@@ -261,6 +263,7 @@
             conversationType={item.conversationType}
             lastMessage={item.lastMessageContent}
             isReady={item.isReady}
+            awaitingAdmission={isNeverAdmitted(item.meta)}
             isSelected={false}
             unreadCount={item.unreadCount}
             imageMediaId={item.imageMediaId}

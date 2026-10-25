@@ -81,7 +81,10 @@ describe('MembersController - lock order of an add and a removal', () => {
       'dm_device_group_memberships',
       'dm_device_group_memberships',
     ]);
+    // The removal first reads whether the seat was an open invitation-link ask (to announce its
+    // end): a plain SELECT, no row lock, so the write order below it is unchanged.
     expect(removeOrder).toEqual([
+      'dm_group_members',
       'dm_group_members',
       'dm_group_membership_intervals',
       'queued_message',

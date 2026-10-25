@@ -20,6 +20,7 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
   import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
   import {
@@ -766,6 +767,7 @@
                 : undefined}
               isReady={convo.lifecycle === 'active'}
               isRemoved={convo.lifecycle === 'removed'}
+              awaitingAdmission={isNeverAdmitted(convo)}
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
               imageMediaId={convo.imageMediaId}

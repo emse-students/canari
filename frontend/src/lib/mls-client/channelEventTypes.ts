@@ -23,8 +23,11 @@
  * pinning it green.
  */
 
-/** Families of server frame the channel-event handler owns, matched by prefix. */
-const CHANNEL_EVENT_PREFIXES = ['channel.', 'workspace.'] as const;
+/**
+ * Families of server frame the channel-event handler owns, matched by prefix. `group.` carries a
+ * group conversation's invitation-link asks (`group.join_ask`, `group.join_ask.settled`).
+ */
+const CHANNEL_EVENT_PREFIXES = ['channel.', 'workspace.', 'group.'] as const;
 
 /**
  * Whether `type` is a frame `handleChannelEvent` is responsible for.

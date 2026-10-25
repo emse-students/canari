@@ -516,6 +516,21 @@ admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.i
 pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
 admitted seat`) - [calls](frontend/modules/calls.md).
 
+## P3 - A joiner's device with no device row is never marked awaiting admission (review of #2442)
+
+The groups list marks a never-admitted conversation per DEVICE seat (`deviceMembership.awaitingAdmission`).
+A joiner's second device that holds no device row in the group when it reads the list is never marked,
+so its row reads as an ordinary `pending` conversation rather than "waiting for a member". Owed: decide
+whether the flag is the user seat's (any device of an awaiting user) and test the second-device case -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+## P3 - A restored backup keeps a conversation's `awaitingAdmission: true` (review of #2442)
+
+`Conversation.awaitingAdmission` is stored on the row (IndexedDB / SQLite v15), so a backup taken while
+an ask was open restores the flag after the person was admitted. Owed: confirm that the first groups
+list after a restore clears it (`syncAdmissionFlags`), with a test, or clear it on restore -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
 ## P3 - The Android background answer refuses a newcomer and tells nobody (review of #2358)
 
 `prepare_welcome_background_with_key` refuses a `welcome_request` from a user absent from the tree

@@ -236,6 +236,13 @@ export interface Conversation {
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */
   imageMediaId?: string | null;
   /**
+   * This account's seat is an invitation-link ask no member has answered yet, as the server's
+   * conversation list last said - see `ConversationMeta.awaitingAdmission`. Read as a NEVER-ADMITTED
+   * conversation only while the row is `pending` (`isNeverAdmitted`, `admissionState.ts`): a row
+   * that was ever active was admitted.
+   */
+  awaitingAdmission?: boolean;
+  /**
    * Unix-ms timestamp of the most recent message in this conversation.
    * Updated on every addMessageToChat / batchAddMessages call so the sidebar
    * can sort correctly even when `messages[]` is still empty (startup stubs).

@@ -268,6 +268,30 @@ of whose hash is the capability ([history-answer-addressing](../protocols/histor
 rule 6). The pub/sub loop forwards the row's `addressed` flag, and hands an addressed frame only to the
 local sessions that declared - every one withheld is logged at error.
 
+**A second capability gets its own hash, never a new spelling of the first (2026-10-25,
+`SessionCaps`).** `caps=` is comma-separated; `addressed-history-1` and `join-ask-1` (a build that
+routes the invitation-link ask frames) are each recorded in THEIR OWN hash, under the same session
+field and in the same script: `addressing:sessions:*` keeps exactly `addressed-history-1` or `-`, and
+`addressing:join-ask:*` holds `join-ask-1` or `-`. `WRITE_SESSION` refuses any other value, and
+`LEAVE_SESSION` removes the field from both. chat-delivery's join-ask script requires every field of
+the sessions hash to have its twin valued `join-ask-1`, so a session an older gateway recorded (no
+twin) counts as not declaring it. A control frame naming `requiresCapability` is delivered only to the
+local sessions holding it (`required_capability`, `deliverable_sessions`); an unknown name drops the
+frame at error.
+
+*Why apart - the first build of #2442 wrote the list `addressed-history-1,join-ask-1` into the one
+field, and every SHIPPED chat-delivery compares that value WHOLE.* Kept apart, no reader ever meets a
+value it does not know, so the deploy is safe BY CONSTRUCTION rather than by the order containers are
+replaced:
+
+- **Forward, either order.** An old chat-delivery beside this gateway reads the history hash it always
+  read, byte-identical (`addressing.redis.spec.ts` runs the shipped script on the new shape); an old
+  gateway beside the new chat-delivery writes no twin, so its devices simply get no ask frame.
+- **Rollback.** An older gateway records history as before and no twin; the twins this one wrote
+  expire with their TTL and are read only through a sessions-hash field, so a stale twin opens nothing.
+- **Mixed sessions** (one tab on an older build): history is decided exactly as before, and no ask
+  frame is published to the device while one session lacks `join-ask-1`.
+
 ### The key is per DEVICE, the event is per CONNECTION
 
 Two tabs of one browser share a `deviceId`, so they share one presence key while holding two
