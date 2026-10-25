@@ -53,8 +53,9 @@ export const GROUP_DEBRIS = [
   /^SBX[A-Z0-9]{1,8}-[0-9a-z]+$/,
   // A 1.4.1 ROW'S OWN GROUP, minted by `mlsrow.mjs` `mintRowGroup` as `rowGroupName(rowId)`
   // (`rowkit.mjs`): the row group's prefix, its number, the mark's tail - `FLOOR2-<tail>`. The
-  // prefixes are `ROW_GROUPS`, enumerated, never `[A-Z]+`.
-  /^(FLOOR|CC|DUP|OFF|KILL|GAP|RM|ADM|DEV|BIG|TOK|NET)\d+-[0-9a-z]+$/,
+  // prefixes are `ROW_GROUPS`, enumerated, never `[A-Z]+`; the one optional lower-case letter is a
+  // sibling row's (`RM-4b` -> `RM4b-<tail>`, `rowStem`).
+  /^(FLOOR|CC|DUP|OFF|KILL|GAP|RM|ADM|DEV|BIG|TOK|NET)\d+[a-z]?-[0-9a-z]+$/,
 ];
 
 /** True when `name` is a group a runner minted, and therefore a group a sweep may delete. */
@@ -64,11 +65,12 @@ export const isGroupDebris = (name) => GROUP_DEBRIS.some((r) => r.test(name));
  * THE COMMUNITIES A RUNNER MINTS, by the same rule: enumerated from the runners, never relaxed.
  *
  * - `C<n>[ <arm>] COMM<n>-<mark>`: the COMM checks (COMM-12 names its arm between the two).
- * - `RM<n>-<mark tail>`: the 1.4.1 salon runner (`archive/salon.mjs`), which mints its community as
- *   `rowGroupName(rowId)`. RM ONLY: no other row prefix mints a community a sweep may take, and
- *   `cleanup.mjs` reported seven of them as "0 match a check's venue" on 2026-10-25.
+ * - `RM<n>[<letter>]-<mark tail>`: the 1.4.1 salon runner (`archive/salon.mjs`), which mints its
+ *   community as `rowGroupName(rowId)` - `RM4b-<tail>` for RM-4b. RM ONLY: no other row prefix mints
+ *   a community a sweep may take, and `cleanup.mjs` reported seven of them as "0 match a check's
+ *   venue" on 2026-10-25.
  */
-export const COMMUNITY_DEBRIS = [/^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/, /^RM\d+-[0-9a-z]+$/];
+export const COMMUNITY_DEBRIS = [/^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/, /^RM\d+[a-z]?-[0-9a-z]+$/];
 
 /** True when `name` is a community a runner minted, and therefore one a sweep may delete. */
 export const isCommunityDebris = (name) => COMMUNITY_DEBRIS.some((r) => r.test(name));

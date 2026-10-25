@@ -526,7 +526,7 @@ export const PHASES = {
   // link, and deletes it once its verdict is on disk.
   SALON: {
     title: '1.4.1 - a salon access list: two admins at once, a kick against a grant, and a removal beyond the actor',
-    scripts: ['salon.mjs --row RM-4', 'salon.mjs --row RM-5', 'salon.mjs --row RM-6'],
+    scripts: ['salon.mjs --row RM-4', 'salon.mjs --row RM-4b', 'salon.mjs --row RM-5', 'salon.mjs --row RM-6'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
 };

@@ -7,7 +7,7 @@
  *
  *   bun archive/salon-selftest.mjs
  */
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, salonEntitlement, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, statusesIn } from '../salonrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -24,8 +24,10 @@ const U5 = '55555555-0000-0000-0000-000000000005';
 
 // ── the table ───────────────────────────────────────────────────────────────────────────────────
 ok('every row acts from W1', Object.values(SALON_ROWS).every((r) => r.devices.includes('W1')));
-ok('RM-4 races two admins, each dropping a member of the row', Object.keys(SALON_ROWS['RM-4'].race).length === 2 && Object.values(SALON_ROWS['RM-4'].race).every((d) => SALON_ROWS['RM-4'].allow.includes(d)));
-ok('RM-4 has the two admins drop DIFFERENT members', new Set(Object.values(SALON_ROWS['RM-4'].race)).size === 2);
+ok('RM-4 races two admins, each granting a member NOT yet on the list', SALON_ROWS['RM-4'].gesture === 'grant' && Object.keys(SALON_ROWS['RM-4'].race).length === 2 && Object.values(SALON_ROWS['RM-4'].race).every((d) => !SALON_ROWS['RM-4'].allow.includes(d)));
+ok('RM-4b races two admins, each revoking a member ON the list', SALON_ROWS['RM-4b'].gesture === 'revoke' && Object.keys(SALON_ROWS['RM-4b'].race).length === 2 && Object.values(SALON_ROWS['RM-4b'].race).every((d) => SALON_ROWS['RM-4b'].allow.includes(d)));
+ok('RM-4 and RM-4b each target DIFFERENT members', ['RM-4', 'RM-4b'].every((r) => new Set(Object.values(SALON_ROWS[r].race)).size === 2));
+ok('every racing seat is a row device', ['RM-4', 'RM-4b'].every((r) => [...Object.keys(SALON_ROWS[r].race), ...Object.values(SALON_ROWS[r].race)].every((d) => SALON_ROWS[r].devices.includes(d))));
 ok('RM-5 runs five cycles on a member it may kick', SALON_ROWS['RM-5'].cycles === 5 && SALON_ROWS['RM-5'].devices.includes(SALON_ROWS['RM-5'].subject));
 ok('RM-6 starts from a public salon', SALON_ROWS['RM-6'].salon === 'public');
 ok('every named refusal has a message key', Object.values(NAMED).every((k) => k.startsWith('chat_')));
@@ -43,30 +45,55 @@ ok('statusesIn with no method keeps every answer to the url', JSON.stringify(sta
 ok('statusesIn of nothing is nothing', statusesIn(undefined, '/x').length === 0);
 
 // ── RM-4 ────────────────────────────────────────────────────────────────────────────────────────
-const before = [U1, U2, U4, U5];
-const droppedBy = { W1: U4, W2: U5 };
-const intended = intendedLists(before, droppedBy);
-ok('intendedLists drops each admin its own target', intended.W1.length === 3 && !intended.W1.includes(U4) && intended.W2.includes(U4) && !intended.W2.includes(U5));
+const targetOf = { W1: U4, W2: U5 };
+const granted = intendedLists([U1, U2], targetOf, 'grant');
+ok('intendedLists(grant) adds each admin its own target', granted.W1.length === 3 && granted.W1.includes(U4) && !granted.W1.includes(U5) && granted.W2.includes(U5));
+const revoked = intendedLists([U1, U2, U4, U5], targetOf, 'revoke');
+ok('intendedLists(revoke) drops each admin its own target', revoked.W1.length === 3 && !revoked.W1.includes(U4) && revoked.W2.includes(U4) && !revoked.W2.includes(U5));
+let threw = false;
+try {
+  intendedLists([U1], targetOf, 'swap');
+} catch {
+  threw = true;
+}
+ok('intendedLists refuses a gesture it does not know', threw);
 const race = {
   held: { W1: true, W2: true },
   status: { W1: 200, W2: 409 },
   named: { W1: false, W2: true },
-  intended,
-  droppedBy,
-  allowed: [U1, U2, U5],
-  seated: { [U4]: false, [U5]: true },
-  departed: { [U4]: 1, [U5]: 0 },
+  intended: granted,
+  targetOf,
+  allowed: [U1, U2, U4],
+  seated: { [U4]: true, [U5]: false },
 };
-ok('RM-4: one won whole, the other refused and told, its target spared passes', allOk(accessRaceOwn(race)));
-ok('RM-4: the mirror outcome passes too', allOk(accessRaceOwn({ ...race, status: { W1: 409, W2: 200 }, named: { W1: true, W2: false }, allowed: [U1, U2, U4], seated: { [U4]: true, [U5]: false }, departed: { [U4]: 0, [U5]: 1 } })));
+ok('RM-4: one grant won whole, the other refused and told, its grantee kept out passes', allOk(accessRaceOwn(race)));
+ok('RM-4: the mirror outcome passes too', allOk(accessRaceOwn({ ...race, status: { W1: 409, W2: 200 }, named: { W1: true, W2: false }, allowed: [U1, U2, U5], seated: { [U4]: false, [U5]: true } })));
 ok('RM-4: a request never held fails - the race did not happen', failing(accessRaceOwn({ ...race, held: { W1: true, W2: false } })) === 1);
 ok('RM-4: both answered 200 fails - nothing refused the stale rewrite', failing(accessRaceOwn({ ...race, status: { W1: 200, W2: 200 } })) === 1);
+ok('RM-4: two 200s that dropped a grantee NAME the lost update', accessRaceOwn({ ...race, status: { W1: 200, W2: 200 }, allowed: [U1, U2, U5] }).some((a) => !a.ok && a.what.includes("W1's grantee DROPPED")));
+ok('RM-4: two 200s that kept both grantees name no lost update', !accessRaceOwn({ ...race, status: { W1: 200, W2: 200 }, allowed: [U1, U2, U4, U5] }).some((a) => a.what.includes('DROPPED')));
 ok('RM-4: both refused fails', failing(accessRaceOwn({ ...race, status: { W1: 409, W2: 409 } })) === 1);
 ok("RM-4: the loser's panel silent fails", failing(accessRaceOwn({ ...race, named: { W1: false, W2: false } })) === 1);
-ok('RM-4: a merged allowlist fails - neither edit stood whole', failing(accessRaceOwn({ ...race, allowed: [U1, U2] })) === 2);
-ok("RM-4: the loser's target cut off anyway fails", failing(accessRaceOwn({ ...race, seated: { [U4]: false, [U5]: false } })) === 1);
-ok("RM-4: a departure recorded for the loser's target fails", failing(accessRaceOwn({ ...race, departed: { [U4]: 1, [U5]: 1 } })) === 1);
-ok("RM-4: the winner's target still seated fails", failing(accessRaceOwn({ ...race, seated: { [U4]: true, [U5]: true } })) === 1);
+ok("RM-4: the loser's grantee let in anyway fails - the list is not the winner's and the grantee is on it", failing(accessRaceOwn({ ...race, allowed: [U1, U2, U4, U5] })) === 2);
+ok("RM-4: the loser's grantee seated fails", failing(accessRaceOwn({ ...race, seated: { [U4]: true, [U5]: true } })) === 1);
+ok("RM-4: the winner's grantee never seated fails", failing(accessRaceOwn({ ...race, seated: { [U4]: false, [U5]: false } })) === 1);
+
+// ── RM-4b ───────────────────────────────────────────────────────────────────────────────────────
+const revokes = {
+  held: { W1: true, W2: true },
+  status: { W1: 200, W2: 200 },
+  expected: [U1, U2],
+  targetOf,
+  allowed: [U1, U2],
+  seated: { [U4]: false, [U5]: false },
+  departed: { [U4]: 1, [U5]: 1 },
+};
+ok('RM-4b: both revokes stood, both cut, both departed passes', allOk(revokeRaceOwn(revokes)));
+ok('RM-4b: a DELETE never held fails', failing(revokeRaceOwn({ ...revokes, held: { W1: false, W2: true } })) === 1);
+ok('RM-4b: a 409 fails - no revoke of a different member may refuse another', failing(revokeRaceOwn({ ...revokes, status: { W1: 200, W2: 409 } })) === 1);
+ok("RM-4b: a target still on the list fails", failing(revokeRaceOwn({ ...revokes, allowed: [U1, U2, U5] })) === 1);
+ok('RM-4b: a target still seated fails', failing(revokeRaceOwn({ ...revokes, seated: { [U4]: false, [U5]: true } })) === 1);
+ok('RM-4b: a target with no departure recorded fails', failing(revokeRaceOwn({ ...revokes, departed: { [U4]: 1, [U5]: 0 } })) === 1);
 
 // ── RM-5 ────────────────────────────────────────────────────────────────────────────────────────
 const kicked = { held: true, kick: 200, grant: 409, member: false, allowed: false, seated: false, supersededNamed: false };

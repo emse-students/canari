@@ -323,23 +323,25 @@ for (const w of debris) {
 }
 
 // Re-read rather than trust the gestures: the dialog reports success from the screen, and what the
-// campaign needs is the table saying they are gone.
-const left = psql(`SELECT name FROM channel_workspaces`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter((l) => isCommunityDebris(l));
+// campaign needs is the table saying they are gone. ONLY THIS RUN'S TARGETS are counted: a candidate
+// `--only` did not name was left on purpose (printed above as LEFT), and counting it here printed
+// "groups -2/0 swept" and would fail a sweep that did everything it was asked (2026-10-25).
+const namesIn = (sql) =>
+  psql(sql)
+    .split('\n')
+    .map((l) => l.trim());
+const stillThere = (present, targets) => targets.filter((n) => present.includes(n));
+
+const left = stillThere(
+  namesIn(`SELECT name FROM channel_workspaces`),
+  debris.map((w) => w.name)
+);
 
 const salonsLeft = shared
-  ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`)
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => SALON_DEBRIS.test(l))
+  ? stillThere(namesIn(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`), salonDebris)
   : [];
 
-const groupsLeft = psql(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter(isGroupDebris);
+const groupsLeft = stillThere(namesIn(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`), groupDebris);
 
 console.log(
   `[cleanup] communities ${debris.length - left.length}/${debris.length} swept, ${left.length} left`
@@ -352,8 +354,8 @@ console.log(
   `[cleanup] salons ${salonDebris.length - salonsLeft.length}/${salonDebris.length} swept, ` +
     `${salonsLeft.length} left`
 );
-for (const name of [...left, ...salonsLeft]) console.log(`  still there: ${name}`);
+for (const name of [...left, ...salonsLeft, ...groupsLeft]) console.log(`  still there: ${name}`);
 for (const f of failed) console.log(`  failure: ${f}`);
 
 w1.close();
-process.exit(left.length === 0 && salonsLeft.length === 0 ? 0 : 1);
+process.exit(left.length === 0 && salonsLeft.length === 0 && groupsLeft.length === 0 ? 0 : 1);
