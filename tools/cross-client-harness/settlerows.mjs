@@ -32,11 +32,12 @@ export const SETTLE_ROWS = {
   },
   'DUP-2': {
     devices: ['W1', 'W2', 'W4', 'W5'],
-    setup: ['W4'],
+    setup: ['W4', 'W5'],
     subject: 'W2',
-    intervening: { by: 'W4', add: 'W5' },
+    intervening: { by: 'W4', remove: 'W5' },
     what: 'DUP-1, and W4 commits between the lost answer and the resubmission: still duplicate, past base + 1',
-    note: "W4's commit is an Add of W5: W4 must be a member to commit, and an Add is the one commit it can make (a refresh needs a leaf W4's own commit dated)",
+    note:
+      "W4's commit is a Remove of W5, never an Add: W1's Add holds the group's add lock while its resubmission is held, so a second Add is refused at the lock ('Add-lock busy', alpha.4 2026-10-25) - that case is CC-1's. A Remove takes no add lock (CC-2), so the row now covers a Remove beside a held Add",
   },
   'DUP-4': {
     devices: ['W1', 'W2'],
@@ -163,11 +164,12 @@ export const resubmissionLine = (groupId, fromEpoch, verdict) =>
  * @param {object} p.view `serverView` after the invariant
  * @param {ReturnType<typeof commitSequence>} p.seq the gate's decisions since the commit was started
  * @param {string[]} p.joined users that must be on the roster with an active seat
+ * @param {string[]} [p.removed] users the row removed, that must be off the roster with no active seat
  * @param {number} [p.accepts] commits that must be accepted (1; DUP-2 has W4's as well)
  * @param {number} [p.minDuplicates] the resubmissions that must have been answered `duplicate`
  * @param {number} [p.maxDuplicates] ... and at most (OFF-1: 0, its first request never left)
  */
-export function settledOnce({ fromEpoch, view, seq, joined, accepts = 1, minDuplicates = 1, maxDuplicates = Infinity }) {
+export function settledOnce({ fromEpoch, view, seq, joined, removed = [], accepts = 1, minDuplicates = 1, maxDuplicates = Infinity }) {
   const out = [];
   const acc = seq.filter((d) => d.kind === 'ACCEPT');
   const dup = count(seq, 'DUPLICATE');
@@ -184,6 +186,10 @@ export function settledOnce({ fromEpoch, view, seq, joined, accepts = 1, minDupl
   out.push({ what: `the commit log holds ${accepts} row(s) since ${fromEpoch} (${moved.join(',') || 'none'})`, ok: moved.length === accepts });
   for (const u of joined) {
     out.push({ what: `${u.slice(0, 8)} joined: on the roster, admitted, with an active seat (the Welcome went out once merged)`, ok: onRoster(view, u) && activeSeats(view, u).length > 0 });
+  }
+  // A USER THE ROW REMOVED (DUP-2's W5): off the roster and holding no active seat - a Remove merged once.
+  for (const u of removed) {
+    out.push({ what: `${u.slice(0, 8)} removed: off the roster, no active seat`, ok: !onRoster(view, u) && activeSeats(view, u).length === 0 });
   }
   return out;
 }
