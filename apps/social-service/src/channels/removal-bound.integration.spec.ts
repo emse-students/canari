@@ -470,7 +470,7 @@ maybe('a removal against PostgreSQL', () => {
    * the salons its target held - none - and its roster write committed; the access-list rewrite that
    * names the same person had read its row before, so it parks on the community's removal lock and
    * then finds the revision unmoved (the kick cut no salon). Saving it would leave a non-member on
-   * the allowlist, restored the day they rejoin by link. Refused whole, typed, nothing written.
+   * the allowlist. Refused whole, typed, nothing written.
    */
   it('refuses a grant whose grantee was kicked while it waited on the removal lock', async () => {
     await member('kicked-mid-grant', BASE_ROLE);
