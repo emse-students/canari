@@ -70,6 +70,34 @@ database (the data was intact on disk and came back on a clean restart, so the p
 nothing). The fix is to classify a storage failure at boot as its own type where it is thrown, so
 the gate can name it; whether it earns a distinct message is decided with the fix.
 
+## P2 - A join ask reaches only the elected member live (ADM-1, 2026-10-25; fix before 1.4.1)
+
+The user decided that ANY member admits a new person
+([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)). In practice only one
+member's device is told live. When a person follows a group link, the delivery service forwards
+their `welcome_request` to ONE elected candidate device. Every other member raises the ask only from
+`processPendingInvitations`, which runs on connection and when a group becomes ready. So an online
+member with the conversation open sees nothing until it next reconnects. Read on `1.4.1-alpha.3`:
+- the joiner accepted the link and the request was forwarded to the other member alone;
+- the owner's sweeps ran 30 s before (no ask) and 2.5 min after, only because a page reload
+  triggered the second one;
+- the owner never showed the ask in between, and could not be the one to answer.
+
+"Any member may accept" holds only after a reconnect. ADM-1/2/3/4/8 replay on the build with the fix.
+
+## P2 - A joiner who was never admitted keeps the conversation, captioned as an established channel (ADM-2, 2026-10-25; fix before 1.4.1)
+
+A person who follows a group link gets a sidebar row for the conversation, captioned
+*"Canal E2E établi."*, while still waiting for a member. The row stays after a member's Decline:
+- the server withdrew the seat and stopped listing the group for that user, the roster row went,
+  and no exclusion was written;
+- the joiner never read a message sent after the Decline.
+
+Yet the conversation stayed in the joiner's list with the same caption. So did one whose ask was
+never answered. The client never prunes a conversation the server no longer lists when this device
+was never admitted. The caption also claims an end-to-end channel that does not exist, both while
+waiting and after the Decline. Read on `1.4.1-alpha.3` (ADM-2: everything else in the Decline held).
+
 ## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
 
 `processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
