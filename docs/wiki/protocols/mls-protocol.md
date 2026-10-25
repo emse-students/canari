@@ -1444,7 +1444,12 @@ by its callers:
   resolves without the mutex - and the drain puts it back at the front of its tier and goes on with
   B's frames under the loan. One predicate (`isFrameHeldBack`) decides the pick, the bounce and,
   through them, the loan: a frame of A never waits while A holds, so it can never borrow A's loan and
-  apply another member's commit with A's stage in flight.
+  apply another member's commit with A's stage in flight. The put-back frame keeps its place WITHIN
+  its tier (the front, where it was picked). The order across tiers is the tiers' own. In `web` mode a
+  Welcome shares the `messages` tier, so the frame goes back ahead of it. In `tauri` mode the tiers
+  are `control`, `welcome` and `messages`, picked in that order. A Welcome for A that arrives while a
+  `messages` frame of A is bounced therefore runs before that frame, which is the precedence a
+  Welcome already has over every queued frame of its group in that mode.
 - **The mutex is taken back before the merge or the clear**: the reclaim waits for the frame being
   applied under the loan and admits no new borrower - `closing` is what refuses one in the window
   between the borrower's release and the commit dropping the loan, where `borrowed` is already false.

@@ -785,6 +785,59 @@ describe('MlsPerGroupScheduler', () => {
       }
     );
 
+    it('puts a bounced frame back at the FRONT of its tier, so its group keeps its order', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const order: string[] = [];
+      const releaseX = await scheduler.acquireMlsLock();
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+
+      scheduler.enqueue(msg('group-a', '1'));
+      scheduler.enqueue(msg('group-a', '2'));
+      const process = async (m: MlsQueuedMessage) => {
+        order.push(`frame a${String.fromCharCode(m.ciphertext[0])}`);
+      };
+      const drained = scheduler.drain(process);
+      await flushMacrotask();
+      releaseX();
+      await commit.lent;
+      await drained;
+      expect(order).toEqual(['stage group-a']);
+
+      answer.open();
+      await commit.done;
+      await scheduler.drain(process);
+      expect(order).toEqual(['stage group-a', 'merge group-a', 'frame a1', 'frame a2']);
+    });
+
+    it('puts a bounced control frame back in the CONTROL tier (tauri), ahead of the Welcome', async () => {
+      const scheduler = new MlsPerGroupScheduler('tauri');
+      const order: string[] = [];
+      const releaseX = await scheduler.acquireMlsLock();
+      const answer = gate();
+      const commit = commitOf(scheduler, 'group-a', order, answer.promise);
+
+      scheduler.enqueue(msg('group-a', 'm'));
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', 'r', { type: 'group_reset' }));
+      const process = async (m: MlsQueuedMessage) => {
+        order.push(m.type ?? (m.isWelcome ? 'welcome' : 'frame'));
+        if (m.isWelcome && m.groupId) scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome complete');
+      };
+      // Picks the control frame first, which then waits behind commit A and is bounced.
+      const drained = scheduler.drain(process);
+      await flushMacrotask();
+      releaseX();
+      await commit.lent;
+      await drained;
+      expect(order).toEqual(['stage group-a']);
+
+      answer.open();
+      await commit.done;
+      await scheduler.drain(process);
+      expect(order).toEqual(['stage group-a', 'merge group-a', 'group_reset', 'welcome', 'frame']);
+    });
+
     it('admits no borrower between the reclaim and the merge, while the loan is closing', async () => {
       const scheduler = new MlsPerGroupScheduler('web');
       const order: string[] = [];

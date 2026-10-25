@@ -884,9 +884,14 @@ export class MlsPerGroupScheduler {
   }
 
   /**
-   * Returns a picked frame to the FRONT of the tier it was picked from, so its group's order is
-   * what it was: it was that tier's first frame, and nothing is inserted ahead of a frame in its
-   * own tier while the drain holds it except a Welcome, which the frame preceded.
+   * Returns a picked frame to the FRONT of the tier it was picked from, so its order within that
+   * tier is what it was: it was the tier's first frame. Order ACROSS tiers is the tiers' own
+   * precedence, unchanged by the bounce. In `web` mode a Welcome is unshifted into the same
+   * `messages` tier, and the put-back frame goes back ahead of it, as it arrived. In `tauri` mode a
+   * Welcome lands in the `welcome` tier, which is picked before `messages`. So a Welcome for the
+   * committing group that arrives while one of that group's frames is bounced runs BEFORE that
+   * frame, not after it. That is the precedence a Welcome already has over every queued frame of
+   * its group in that mode. The bounce does not create it.
    */
   private putBack(picked: PickedFrame): void {
     this.getBucket(picked.key)[picked.tier].unshift(picked.msg);
