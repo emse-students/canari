@@ -783,14 +783,21 @@ phone state the reading would have had with the pending commits drained first. A
 same newcomer ended `ALREADY_MEMBER` on the phone, a duplicate that is expected. **Not fixed here:** the
 fix is native and MLS, its own work package with an adversarial review.
 
-## P3 - the group settings panel keeps listing `Membres (1)` after an add the commit admitted (seen 2026-10-22, web, dev)
+## P2 - the group settings panel keeps listing `Membres (1)` after an add the commit admitted (seen 2026-10-22 and 2026-10-25, web, dev)
 
 Adding one member from `Gestion du groupe` > `Ajouter` > `Envoyer l'invitation`: the console showed
 `add_members_bulk ... (1 key packages)`, `[COMMIT] ... admits 1 device(s) at epoch 1`, `[SYNC] Welcome -> ...
 OK` and `Members added (1/1 delivered)`, yet the panel still read `Membres (1)` with only the creator, for
 at least 30 s and after reopening it. A second add of the same person then failed with
 `ALREADY_MEMBER` (the commit had indeed landed). The panel's member list does not refresh from the
-commit it just made. **Not chased: seen once, no second observation, cause unread.**
+commit it just made.
+
+**SEEN AGAIN 2026-10-25 (RM-3, `1.4.1-alpha.3`, dev.9335201), AND IT BLOCKED A REMOVAL - re-graded P2:
+a member cannot remove someone the panel does not show.** One bulk Add of two people (`admits 2
+device(s) at epoch 2`, `Members added (2/2 delivered)`); the server held all three on the roster with
+active seats, yet minutes later the open panel read `MEMBRES (2)` with a `data-remove-member` button
+for one invitee only. A NEW document of the same seat listed both. So the stale list is state held by
+the page and is not re-read from the commit. Being fixed on `fix/member-panel-lists-admitted-members`.
 
 ## The encryption PIN unlock on the iPhone: READ 2026-10-22, it answers - the "hang" was the rig's tap, and one P3 is left
 

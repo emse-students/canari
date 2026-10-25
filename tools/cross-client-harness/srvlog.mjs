@@ -73,7 +73,15 @@ const BENIGN = [
   // WHAT WOULD BE THE REAL SIGNAL IS A RATE, NOT A LINE: the same group failing to be acquired for
   // longer than the 30 s TTL means the holder died mid-Add. No single line can say that, so nothing
   // here pretends to - it is what the queue-depth report and `[COMMIT]` in NOTABLE are for.
-  /\[ADD_LOCK\] group=\S+ owner=\S+ acquired=false ttl=\d+s/,
+  //
+  // TWO SHAPES (#2426): the server before the lock token wrote `ttl=30s`; with it, a refusal carries
+  // the key's remaining life, `retryAfterMs=<n> via=<door>`. Both are the same routine refusal.
+  /\[ADD_LOCK\] group=\S+ owner=\S+ acquired=false (ttl=\d+s|retryAfterMs=\d+)/,
+  // AN OWED RELEASE (#2426): a page that died mid-Add left its acquisition marked, and its next page
+  // releases it BEFORE acquiring - by which time the TTL has long expired, so `released=false` is the
+  // expected answer. The client says so in the body and the server appends ` owed=true` at the END
+  // of the line; the slow-Add half below stays NOTABLE. Anchored, so a malformed flag is unexplained.
+  /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false by=token via=(jwt|push) owed=true\s*$/,
   // A membership read. It answers a question; it changes nothing.
   /\[MembersController\] \[GET_USER_MEMBERS\] group=\S+ count=\d+/,
   // Presence, which every connected client refreshes continuously. CASE-INSENSITIVE because the
@@ -603,7 +611,12 @@ const NOTABLE = [
   // expired mid-Add, or another device overwrote it. Either way an Add ran longer than the window
   // sized for the worst-case mobile path, which is the shape a stuck or very slow commit takes.
   // Shown, never fatal: one is a slow phone, a run of them on one group is the thing to chase.
-  /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false/,
+  //
+  // NOT AN OWED RELEASE: that one ends ` owed=true` (#2426) and is BENIGN above - the line the client
+  // marks when a page died mid-Add and its successor releases the expired acquisition. This rule is
+  // the line WITHOUT the flag: the pre-token shape, or `by=<token|owner-legacy> via=<door>`. Anchored
+  // at the end, so `owed=1` or `owed=yes` matches neither and lands unexplained.
+  /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false( by=(token|owner-legacy) via=(jwt|push))?\s*$/,
   // TWO THINGS A BOOT DOES THAT ITS ROUTE TABLE DOES NOT, and they are the reason the banner above
   // was demoted to BENIGN rather than the whole boot being waved through.
   //
