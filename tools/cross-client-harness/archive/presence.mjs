@@ -39,11 +39,21 @@ const wanted = flag('ports', null)
   .map((p) => Number(p.trim()))
   .filter(Boolean);
 
-/** The device id, read from where the app actually keeps it rather than from a constructed name. */
+/**
+ * The device id OF THE SIGNED-IN ACCOUNT, read from where the app keeps it.
+ *
+ * KEYED BY `canari_saved_user`, NEVER BY THE FIRST `mls_device_id_*` ENTRY. A profile keeps one entry
+ * per account that has ever been signed in on it, and nothing removes the others: on 2026-10-25 W2
+ * (peer) still held the third account's entry from 2026-10-21, listed first, so the preflight asked
+ * the gateway about the THIRD account's dead id and reported a connected W2 `OFFLINE`. No saved user
+ * is no identity, reported as such - not the first id that happens to be there.
+ */
 const WHO = `(function () {
-  var k = Object.keys(localStorage).filter(function (n) { return n.indexOf('mls_device_id_') === 0; })[0];
-  if (!k) return 'null';
-  return JSON.stringify({ user: k.slice('mls_device_id_'.length), device: localStorage.getItem(k) });
+  var user = localStorage.getItem('canari_saved_user');
+  if (!user) return 'null';
+  var device = localStorage.getItem('mls_device_id_' + user);
+  if (!device) return 'null';
+  return JSON.stringify({ user: user, device: device });
 })()`;
 
 /** Who a client is, straight from its own storage. `null` when it holds no identity at all. */
