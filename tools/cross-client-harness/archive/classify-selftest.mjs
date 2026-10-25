@@ -343,6 +343,11 @@ const CASES = [
     '[01:40:12] [MLS] Message for absent conversation b6a425af… - retry after restore',
     'notable',
   ],
+  // The boot re-fetch #2408 added (GAP-1, 2026-10-25), a keyed site with two reasons joined, and a
+  // trigger nobody wrote, which stays dirt.
+  ['log', '[04:15:13] [QUEUE] conversation rows seeded: re-fetching for 1 group(s) left behind as absent-conversation [13c295e1]', 'notable'],
+  ['log', '[04:15:13] [QUEUE] conversation 13c295e1… now exists: re-fetching for 1 group(s) left behind as absent-conversation + behind-refused-backlog [13c295e1]', 'notable'],
+  ['log', '[04:15:13] [QUEUE] something else happened: re-fetching for 1 group(s) left behind as absent-conversation [13c295e1]', 'unexplained'],
   // Both trigger/reason pairs, which are the whole of `UnackedReason` and its only two call sites.
   [
     'log',
