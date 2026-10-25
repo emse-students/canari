@@ -39,6 +39,9 @@ import {
   raceEnrolOwn,
   reenrolledDevice,
   revokedOwn,
+  addAcrossReloadPremise,
+  commitLinesBy,
+  dup7Narration,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 import { recordCreated } from '../campaign.mjs';
@@ -370,15 +373,23 @@ const ACTIONS = {
     };
   },
 
-  /** DUP-7: W1's Add of W3 loses its answer; its Welcome send is held, failed, and W1 reloads. */
+  /** DUP-7: W1 invites W4; the Add loses its answer, its Welcome send is held, failed, and W1 reloads. */
   async 'DUP-7'(c) {
     const W1 = seats.seat.W1;
+    const W4 = seats.seat.W4;
     const inGroup = `"groupId":"${c.group.id}"`;
     const f = await armFault(W1.cx, [
       { ...COMMIT_POST, bodyIncludes: inGroup, fault: 'lose-answer once' },
       { match: '/api/mls/welcome', method: 'POST', bodyIncludes: inGroup, fault: 'hold once' },
     ]);
-    const mintP = mintOn('W3');
+    // THE PRODUCT'S INVITE PATH, from the group W1 has open: the picker, the pick, the button.
+    let invited = true;
+    try {
+      await addMembers(W1.cx, [displayNameOf(c.user.W4)]);
+    } catch (e) {
+      invited = false;
+      console.log(`[${rowId}] W1's invite of W4 did not go through the picker: ${String(e?.message ?? e).slice(0, 160)}`);
+    }
     let heldWelcome = false;
     let reloaded = false;
     try {
@@ -393,18 +404,23 @@ const ACTIONS = {
       await reloadAndWait(W1.cx);
       reloaded = (await unlockClient(W1.cx, W1.target.port, W1.target.account, { match: APP_TAB })).verdict === 'unlocked';
     }
-    const minted = await mintP;
-    const records = { W1: (await f.disarm()).records };
-    const listed = minted.deviceId ? (await awaitListed(seats.seat.W3.cx, c.group.name, 120_000)) !== null : false;
+    const disarmed = await f.disarm();
+    const records = { W1: disarmed.records };
+    const unmet = [...(invited ? [] : ["W1's invite of W4 never went through the picker"]), ...addAcrossReloadPremise({ vacuous: disarmed.vacuous })];
+    if (unmet.length) return { premise: unmet, members: ['W1', 'W2'], records, detail: { invited, vacuous: disarmed.vacuous } };
+    const listed = (await awaitListed(W4.cx, c.group.name, 120_000)) !== null;
     // A SECOND COPY, IF ONE COMES, comes from the reloaded W1's settlement: given the same bound.
     await sleep(15_000);
-    const welcome = welcomeLines(consoleLines(seats.seat.W3.cx), c.group.id);
-    const seq = commitSequence(commitLines(c.group.id, c.startSince));
+    const welcome = welcomeLines(consoleLines(W4.cx), c.group.id);
+    // HOW W4 GOT IN WHEN NO WELCOME CAME (alpha.3, 2026-10-25): its own repair, an external join. Recorded,
+    // never counted as the Welcome the row asks about - a heal is the evidence the primary path failed.
+    const selfRejoined = consoleLines(W4.cx).some((l) => l.includes(`[READD] ${c.group.id.slice(0, 8)}... rejoined via external commit`));
+    const seq = commitSequence(commitLinesBy(commitLines(c.group.id, c.startSince), c.user.W1));
     return {
-      members: ['W1', 'W2', 'W3'],
-      minted: { W3: minted },
+      members: ['W1', 'W2', 'W4'],
       records,
-      detail: { minted, heldWelcome, reloaded, welcome, decisions: seq },
+      narration: dup7Narration(c.group.id),
+      detail: { invited, heldWelcome, reloaded, welcome, decisions: seq, selfRejoined },
       judge: () => welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }),
     };
   },
@@ -417,7 +433,10 @@ async function play() {
   const user = Object.fromEntries([...spec.devices, ...spec.mint].map((d) => [d, userOf(seats, d)]));
   const cx = (d) => seats.seat[d].cx;
   const owner = 'W1';
-  const peers = spec.devices.filter((d) => d !== owner && user[d] !== user[owner]);
+  // A seat the ROW adds (`addedInRow`, DUP-7's invitee) is left out of the setup entirely.
+  const inRow = new Set(spec.addedInRow ?? []);
+  const setUp = spec.devices.filter((d) => !inRow.has(d));
+  const peers = setUp.filter((d) => d !== owner && user[d] !== user[owner]);
   const group = await mintRowGroup(cx(owner), id, user[owner]);
   assertRowOwns({ kind: 'group', id: group.id, name: group.name }, id);
   await openGroup(cx(owner), group.name, { navigate: false, label: rowId });
@@ -426,9 +445,9 @@ async function play() {
     await closeOverlays(cx(owner));
   }
   const premise = [];
-  for (const d of spec.devices.filter((d) => d !== owner)) if ((await awaitListed(cx(d), group.name, 90_000)) === null) premise.push(`${d} never listed ${group.name}`);
+  for (const d of setUp.filter((d) => d !== owner)) if ((await awaitListed(cx(d), group.name, 90_000)) === null) premise.push(`${d} never listed ${group.name}`);
   if (premise.length) return { premise, detail: { group: group.id } };
-  for (const d of spec.devices) await openGroup(cx(d), group.name, { navigate: false, label: rowId });
+  for (const d of setUp) await openGroup(cx(d), group.name, { navigate: false, label: rowId });
 
   const fromEpoch = serverView(group.id).activeEpoch;
   const c = { user, group, startSince: now() };
@@ -466,7 +485,7 @@ try {
   // DEV-1 and the premise of every other DEV row, so both seats name their device-notice narration.
   const minting = spec.mint.length > 0;
   const logs = {
-    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : [])],
+    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : []), ...(act.narration ?? [])],
     ...(minting && spec.devices.includes('W2') ? { W2: CONTACT_DEVICE_NOTICE_NARRATION } : {}),
   };
   const refusals = {};

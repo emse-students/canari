@@ -465,7 +465,7 @@ export const PHASES = {
   },
   // THE SETTLEMENT (DUP, OFF-1/-2, TOK-1/-2), browsers only. DUP-3 records SKIPPED with the plan's
   // reason (Q2). TOK-3 is NOT here: it waits 61 min with the socket open, so it is run alone and
-  // unattended - `bun archive/settle.mjs --row TOK-3`. DUP-7 needs a new device and is not a
+  // unattended - `bun archive/settle.mjs --row TOK-3`. DUP-7 is a devrows.mjs row (an invite with its answer lost) and is not a
   // settle.mjs row (`settlerows.mjs` `DUP7_ELSEWHERE`).
   SETTLE: {
     title: '1.4.1 - commit settlement: a lost, refused or late answer',
@@ -514,13 +514,14 @@ export const PHASES = {
     scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
-  // A NEW DEVICE OF THE OWNER (DEV-1..4, DEV-6, DUP-7), browsers only: every row mints on W3 (and W6),
+  // A NEW DEVICE OF THE OWNER (DEV-1..4, DEV-6), browsers only: every row mints on W3 (and W6); DUP-7
+  // rides here and invites W4 instead (an Add that really happens on 1.4.1),
   // so the phase is LAST in its session (plan section 5, step 6). DEV-7 needs A1 swiped away, run by
   // hand: `bun archive/devrows.mjs --row DEV-7 --variant cold|opened|stale`. DEV-5 is CORRUPT-8's.
   DEVICES: {
     title: '1.4.1 - a new device of the owner: seated, revoked online and offline, two at once, and its Welcome once',
     scripts: ['devrows.mjs --row DEV-1', 'devrows.mjs --row DEV-2', 'devrows.mjs --row DEV-3', 'devrows.mjs --row DEV-4', 'devrows.mjs --row DEV-6', 'devrows.mjs --row DUP-7'],
-    needs: ['W1', 'W2', 'W3', 'W6'],
+    needs: ['W1', 'W2', 'W3', 'W4', 'W6'],
   },
   // THE REMOVAL BOUND ON A SALON (RM-4..6), browsers only: each row mints its own community, joined by
   // link, and deletes it once its verdict is on disk.

@@ -70,7 +70,7 @@ No row verdict depends on it; it stays here until it is explained.
 | DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | W1 W2 - U | `pending` |
 | DUP-5 | The commit is answered `503` | W1 W2 - U | `pending` |
 | DUP-6 | The commit request never answers (30 s `write` deadline) | W1 W2 - U | `pending` |
-| DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | W1 + new device W3 - U | `pending` |
+| DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | W1 invites W4 (the third account) - U | `pending` |
 
 ## OFF - offline during a commit
 

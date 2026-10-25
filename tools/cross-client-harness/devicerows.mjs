@@ -56,10 +56,15 @@ export const DEV_ROWS = {
       "A1 is SWIPED away (killed, not force-stopped: a force-stopped app receives no push), then W1's and W2's tabs are closed, so A1 is the only member device left to answer. " +
       "`stale` moves the group once (a leaf refresh by W1) between the swipe and the closing. The lines are the backlog's own (Hardware reading owed: one background Welcome on the Mi 9T)",
   },
+  // AN ADD THAT REALLY HAPPENS (coordinator, 2026-10-25): on 1.4.1 the owner's own new device seats
+  // itself by external join, so the first design's "W1 Adds W3" never ran. A member inviting another
+  // PERSON is an Add on every build: W4 (the third account) is left out of the setup and invited by
+  // W1 inside the row, through the product's invite path.
   'DUP-7': {
-    devices: ['W1', 'W2'],
-    mint: ['W3'],
-    what: "W1's automatic Add of W3 is accepted only through a resubmission (answer lost), and W1 reloads between the merge and the Welcome send: W3 receives ONE Welcome",
+    devices: ['W1', 'W2', 'W4'],
+    mint: [],
+    addedInRow: ['W4'],
+    what: "W1 invites W4: the Add is accepted only through a resubmission (answer lost), and W1 reloads between the merge and the Welcome send: W4 receives ONE Welcome",
   },
 };
 
@@ -249,6 +254,59 @@ export function bgWelcomeOwn(variant, { phone, webview = [], server, newcomerRea
 }
 
 /** DUP-7: the Add settled by resubmission, the Welcome held across a reload, and ONE join. */
+/**
+ * DUP-7'S PREMISE: W1 must have COMMITTED the Add of W3 (fault rule #0, its commit answer lost).
+ *
+ * Read on alpha.3 (2026-10-25), on the first design: the owner's new device joined the group by its
+ * OWN external commit, W1 posted no commit at all, so rule #0 never fired and neither did the held
+ * Welcome. Judged, that was three failed assertions about a path that never ran - a FAIL naming a
+ * defect nobody met. The row now invites another person, which is an Add on every build; this stays
+ * the first line of defence: a rule that never fired is the row not happening, so it is a premise.
+ *
+ * @param {{ vacuous: number[] }} p the fault rules that never fired (`fault.mjs` `disarm()`)
+ * @returns {string[]} the unmet premises, `[]` when W1's Add was committed
+ */
+export function addAcrossReloadPremise({ vacuous }) {
+  return (vacuous ?? []).includes(0)
+    ? ["W1 never posted a commit for the group: its Add was never committed, so the lost-answer Add and the held Welcome this row measures did not happen"]
+    : [];
+}
+
+/**
+ * The server's `[COMMIT][trace]` lines of the commits ONE account's devices posted: a trace is kept
+ * when its `START` line names a device of `userId`. DUP-7 judges W1's Add alone - on alpha.3 the
+ * invitee's own later external commit (its self-repair) was counted as a second accept of the Add.
+ *
+ * @param {string[]} lines chat-delivery lines
+ * @param {string} userId the poster's account
+ */
+export function commitLinesBy(lines, userId) {
+  const mine = new Set();
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[([^\]]+)\] START .*\bdevice=(\S+)/.exec(l);
+    if (m && m[2].includes(`-${userId}-`)) mine.add(m[1]);
+  }
+  return (lines ?? []).filter((l) => {
+    const t = /\[COMMIT\]\[([^\]]+)\]/.exec(l)?.[1];
+    return t !== undefined && mine.has(t);
+  });
+}
+
+/**
+ * W1'S NARRATION OF THE WELCOME THE ROW KILLS, alpha.4 2026-10-25: the held send is failed by the
+ * row (`TransportFailureError`), the client says no member addition is announced yet, and the reloaded
+ * page delivers the owed Welcome (#2452). Scoped to the row's group where the line names one; any
+ * other Welcome failure - a refusal, another error - stays dirt.
+ */
+export function dup7Narration(groupId) {
+  const short = String(groupId).slice(0, 8);
+  return [
+    /^\[SYNC\] Welcome failed -> \S+: TransportFailureError: request got no answer: TypeError: Failed to fetch$/,
+    /^\[WARN\] No Welcome delivered: no member addition will be announced until delivery succeeds\.$/,
+    new RegExp(`^\\[COMMIT\\] ${short}\\.\\.\\. owed Welcome of an Add delivered to \\S+$`),
+  ];
+}
+
 export function welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }) {
   const accepts = seq.filter((d) => d.kind === 'ACCEPT').length;
   const duplicates = seq.filter((d) => d.kind === 'DUPLICATE').length;
