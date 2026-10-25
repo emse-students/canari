@@ -160,6 +160,7 @@ export function compileRules(rules) {
       if (parsed.mode === mode && typeof r[fn] !== 'function') throw new Error(`armFault: rule ${index} '${mode}' needs a '${fn}' function`);
       if (parsed.mode !== mode && r[fn] !== undefined) throw new Error(`armFault: rule ${index} gives '${fn}' to '${parsed.mode}', which never calls it`);
     }
+    if (r.when !== undefined && typeof r.when !== 'function') throw new Error(`armFault: rule ${index} 'when' must be a function`);
     return {
       index,
       match: r.match,
@@ -169,6 +170,7 @@ export function compileRules(rules) {
       body: fulfilBody(r.body, r.contentType),
       transform: r.transform ?? null,
       url: r.url ?? null,
+      when: r.when ?? null,
       spec: r.fault,
       fired: 0,
     };
@@ -202,7 +204,9 @@ export function fulfilBody(body, contentType) {
  * @param {{ url: string, method: string, stage: 'Request'|'Response' }} req
  */
 export function claimRule(compiled, req) {
-  const rule = compiled.find((r) => r.stage === req.stage && r.fired < r.times && ruleMatches(r, req));
+  // A GATED rule (`when`) claims nothing while its gate is shut: NET-3's portal exists from the start
+  // and goes up only once the commit is held, so the Add's own pre-checks are not answered by it.
+  const rule = compiled.find((r) => r.stage === req.stage && r.fired < r.times && (!r.when || r.when()) && ruleMatches(r, req));
   if (rule) rule.fired += 1;
   return rule ?? null;
 }
@@ -364,16 +368,18 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
       waiters.add(check);
     });
 
-  const settleHeld = async (method, which) => {
+  const settleHeld = async (method, which, reply = null) => {
     const all = held.splice(0);
     const take = which === undefined ? all : all.filter((r) => which(r));
     held.push(...all.filter((r) => !take.includes(r)));
     await Promise.all(
-      take.map((r) =>
-        method === 'release'
-          ? answer('Fetch.continueRequest', { requestId: r.requestId }, r)
-          : answer('Fetch.failRequest', { requestId: r.requestId, errorReason: 'ConnectionReset' }, r),
-      ),
+      take.map((r) => {
+        if (method === 'release') return answer('Fetch.continueRequest', { requestId: r.requestId }, r);
+        if (method === 'fail') return answer('Fetch.failRequest', { requestId: r.requestId, errorReason: 'ConnectionReset' }, r);
+        r.gave = reply.status;
+        const { responseHeaders, body } = fulfilBody(reply.body, reply.contentType);
+        return answer('Fetch.fulfillRequest', { requestId: r.requestId, responseCode: reply.status, responseHeaders, body }, r);
+      }),
     );
     return take.length;
   };
@@ -397,6 +403,12 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
     release: (which) => settleHeld('release', which),
     /** Fails the held requests as a transport failure. */
     fail: (which) => settleHeld('fail', which),
+    /**
+     * Answers the held requests with `{status, body, contentType}` - a held `hold` (Request stage)
+     * then never reaches the server, as `status-unsent` would have answered it. Recorded like one
+     * (`gave`), so `rowkit.mjs` `provokedFailures` forgives exactly that answer.
+     */
+    answerHeld: (reply, which) => settleHeld('fulfil', which, reply),
     /** Per-rule counts, and the rules that never fired - a VACUOUS fault. */
     report,
     /**

@@ -297,26 +297,43 @@ const ACTIONS = {
   /** NET-3: every /api/ call of W1's answered 200 text/html for `portalMs`, while W1 Adds W4 and sends. */
   async 'NET-3'(c) {
     const W1 = c.cx('W1');
-    const rules = [{ match: '/api/', fault: 'status-unsent 200', body: PORTAL_HTML, contentType: 'text/html; charset=utf-8' }];
+    const portal = { status: 200, body: PORTAL_HTML, contentType: 'text/html; charset=utf-8' };
+    // THE PORTAL GOES UP ONLY ONCE THE COMMIT IS HELD. Armed with the picks (2026-10-25, alpha.3), a
+    // portal on every /api/ call answered the Add's own pre-checks (block status, members) first: the
+    // client skipped the invitee, no commit was ever made, and the row judged a commit that did not
+    // exist. So the commit is HELD, the portal is opened, and the held commit gets the portal's page.
+    let portalUp = false;
+    const rules = [
+      { ...COMMIT_POST, fault: 'hold once' },
+      { match: '/api/', fault: 'status-unsent 200', body: portal.body, contentType: portal.contentType, when: () => portalUp },
+    ];
     const mark = rowMessageMark(id, 'P');
     let f = null;
     let portalEnds = 0;
     let loggedOutDuring = false;
     let gesture = null;
     let sendOutcome = null;
+    let commitAnswered = 0;
     let rep = { records: [] };
     try {
-      // THE PORTAL GOES UP AFTER THE PICKS: the picker's user search is /api/ too, and an Add never
-      // made would test nothing.
-      gesture = await outcome(
+      const g = outcome(
         addMembers(W1, [c.name(spec.subject)], {
           beforeSubmit: async () => {
             f = await armFault(W1, rules);
-            portalEnds = Date.now() + spec.portalMs;
           },
         })
       );
-      if (!f) return { premise: [`the Add never reached its submission (${gesture.error ?? 'no error'})`], records: {}, offline: [], detail: { gesture } };
+      // The fault exists once the picks are made; until then only the gesture can say anything.
+      let settled = false;
+      void g.then(() => (settled = true));
+      const armedBy = Date.now() + 60_000;
+      while (!f && !settled && Date.now() < armedBy) await new Promise((r) => setTimeout(r, 250));
+      if (!f) return { premise: [`the Add never reached its submission (${(await g).error ?? 'no error'})`], records: {}, offline: [], detail: { gesture: await g } };
+      await awaitHeldOrSay(f, g, 45_000);
+      portalUp = true;
+      portalEnds = Date.now() + spec.portalMs;
+      commitAnswered = await f.answerHeld(portal);
+      gesture = await g;
       await closeOverlays(W1);
       sendOutcome = await outcome(send(W1, `${id} under the portal [${mark}]`));
       loggedOutDuring = await loggedOut(W1);
@@ -340,7 +357,8 @@ const ACTIONS = {
       members: joined ? spec.devices : spec.devices.filter((d) => d !== spec.subject),
       joiners: joined ? [spec.subject] : [],
       narration: { W1: settleNarration(c.group.id) },
-      detail: { gesture, sendOutcome, portalMs: spec.portalMs, answered: rep.records.length, noAnswer, clearedLine },
+      premise: commitAnswered === 1 ? [] : [`the held commit was not answered by the portal (${commitAnswered})`],
+      detail: { gesture, sendOutcome, portalMs: spec.portalMs, answered: rep.records.length, commitAnswered, noAnswer, clearedLine },
       judge: () => portalOwn({ loggedOutDuring, loggedOutAfter, noAnswer, clearedLine, joined, messageShown }),
     };
   },

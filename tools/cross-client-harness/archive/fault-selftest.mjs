@@ -64,6 +64,12 @@ ok('compileRules keeps bodyIncludes', compileRules([{ match: '/x', bodyIncludes:
   const b = claimRule(rules, { url: 'http://h/c', method: 'POST', stage: 'Response' });
   ok('the first request takes the once', a?.index === 0);
   ok('the second is NOT faulted', b === null);
+  let gateOpen = false;
+  const gated = compileRules([{ match: '/api/', fault: 'status-unsent 200', body: '<html>', contentType: 'text/html', when: () => gateOpen }]);
+  ok('a GATED rule claims nothing while its gate is shut', claimRule(gated, { url: 'http://h/api/x', method: 'GET', stage: 'Request' }) === null && gated[0].fired === 0);
+  gateOpen = true;
+  ok('... and claims once it opens', claimRule(gated, { url: 'http://h/api/x', method: 'GET', stage: 'Request' }) === gated[0]);
+  ok("a 'when' that is not a function is refused", throws(() => compileRules([{ match: '/x', fault: 'hold', when: true }])));
   ok('a request at the other stage is never claimed', claimRule(compileRules([{ match: '/c', fault: 'hold' }]), { url: 'http://h/c', method: 'POST', stage: 'Response' }) === null);
 }
 
