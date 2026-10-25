@@ -632,7 +632,7 @@ try {
   console.log(`[${id}] assertions: ${verdict}`);
   const observers = await observersOf(seats, {
     // W1 made the row's Add; a seat whose own gesture the row made (DUP-2's W4 Remove) names its narration.
-    logs: { ...(out.narrationBy ?? {}), W1: [...GROUP_CREATION_NARRATION, ...(out.narration ?? [])] },
+    logs: { ...out.narrationBy, W1: [...GROUP_CREATION_NARRATION, ...(out.narration ?? [])] },
     provoked: { W1: out.records ?? [] },
     offline: out.offline ? ['W1'] : [],
   });
