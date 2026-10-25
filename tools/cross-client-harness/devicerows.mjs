@@ -176,6 +176,37 @@ export function revokedOwn({ seatGoneMs, toldMs, listedAfter }) {
   ];
 }
 
+/**
+ * The device id the web client is using, read from the one entry that carries it: a page expression
+ * answering `{ userId, deviceId }` as JSON, or `'null'`. Shared by the mint (`newdevice.mjs`) and the
+ * DEV-3 return read below.
+ */
+export const DEVICE_ID_NOW = `(function () {
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (k.indexOf('mls_device_id_') === 0) return JSON.stringify({ userId: k.slice('mls_device_id_'.length), deviceId: localStorage.getItem(k) });
+  }
+  return 'null';
+})()`;
+
+/**
+ * THE DEVICE A REVOKED SEAT RE-ENROLLED AS ON ITS RETURN, or `null` - the debris DEV-3 may record.
+ *
+ * Found on alpha.3 (2026-10-25): a device revoked while cut off came back and enrolled a fresh id of
+ * the owner, which no rig primitive had created, so the campaign ledger rightly refused to purge it.
+ * The proof that the RIG caused it is the seat's own storage: the id is read from the origin the row
+ * minted and then revoked, and it must belong to the SAME account as the minted id and differ from it.
+ * Anything else - no id, the minted id itself, another account's id - is not this row's debris, and a
+ * device the seat does not name is never recorded, however new it looks on the server.
+ *
+ * @param {{ mintedId: string | null, now: { userId: string, deviceId: string } | null, ownerId: string | null }} p
+ */
+export function reenrolledDevice({ mintedId, now, ownerId }) {
+  if (!mintedId || !now?.deviceId || !ownerId) return null;
+  if (now.userId !== ownerId || now.deviceId === mintedId) return null;
+  return now.deviceId.includes(`-${ownerId}-`) ? now.deviceId : null;
+}
+
 /** DEV-3: the seat went while the device was away; on return it holds nothing. */
 export function offlineRevokeOwn({ seatGoneMs, toldMs, listedAfter, cutHeld }) {
   return [

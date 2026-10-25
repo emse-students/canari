@@ -47,6 +47,7 @@ import {
 import { APP_TAB, client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
 import { recordCreated } from "./campaign.mjs";
+import { DEVICE_ID_NOW } from "./devicerows.mjs";
 import { PORTS } from "./names.mjs";
 import { ORIGIN } from "./site.mjs";
 import { recordObserved } from "./results.mjs";
@@ -164,14 +165,6 @@ const CENSUS_OF_ORIGIN = `(async function () {
 
 const readOrigin = async (cx) => JSON.parse(await evaluate(cx, CENSUS_OF_ORIGIN));
 
-/** The device id the web client is using, read from the one entry that carries it. */
-const DEVICE_ID_NOW = `(function () {
-  for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i);
-    if (k.indexOf('mls_device_id_') === 0) return JSON.stringify({ userId: k.slice('mls_device_id_'.length), deviceId: localStorage.getItem(k) });
-  }
-  return 'null';
-})()`;
 
 /**
  * Makes `device` a device the server has never seen, and RETURNS THE MOMENT THAT DEVICE IS LIVE.

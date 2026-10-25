@@ -21,6 +21,7 @@ import {
   offlineRevokeOwn,
   originalArrivalOwn,
   raceEnrolOwn,
+  reenrolledDevice,
   revokedOwn,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
@@ -96,6 +97,17 @@ ok('DEV-2: a revoked device still listing the group fails', failing(revokedOwn({
 ok('DEV-3: cut throughout passes', allOk(offlineRevokeOwn({ ...revoked, cutHeld: true })));
 ok('DEV-3: a cut that did not hold fails - the row did not happen', failing(offlineRevokeOwn({ ...revoked, cutHeld: false })) === 1);
 ok('DEV-3: speaks of the RETURNING device', offlineRevokeOwn({ ...revoked, cutHeld: true }).some((a) => a.what.includes('returning device')));
+
+// THE RE-ENROLMENT DEBRIS: only a fresh id of the SAME account, named by the revoked seat's own storage.
+const OWNER = 'aaaa1111';
+const MINTED = `web-${OWNER}-mvnp0001-aaaa`;
+const FRESH = `web-${OWNER}-mvnp0002-bbbb`;
+ok('re-enrol: a fresh id of the owner on the revoked seat is the row\'s debris', reenrolledDevice({ mintedId: MINTED, now: { userId: OWNER, deviceId: FRESH }, ownerId: OWNER }) === FRESH);
+ok('re-enrol: the minted id itself is not debris (the seat never rotated)', reenrolledDevice({ mintedId: MINTED, now: { userId: OWNER, deviceId: MINTED }, ownerId: OWNER }) === null);
+ok('re-enrol: a wiped seat (no id) records nothing', reenrolledDevice({ mintedId: MINTED, now: null, ownerId: OWNER }) === null);
+ok('re-enrol: CONTROL - another account\'s device is never recorded', reenrolledDevice({ mintedId: MINTED, now: { userId: 'bbbb2222', deviceId: 'web-bbbb2222-mvnp0003-cccc' }, ownerId: OWNER }) === null);
+ok('re-enrol: CONTROL - an id that does not carry the owner is never recorded', reenrolledDevice({ mintedId: MINTED, now: { userId: OWNER, deviceId: 'web-cccc3333-mvnp0004-dddd' }, ownerId: OWNER }) === null);
+ok('re-enrol: an unknown owner records nothing', reenrolledDevice({ mintedId: MINTED, now: { userId: OWNER, deviceId: FRESH }, ownerId: null }) === null);
 
 // ── DEV-4 ───────────────────────────────────────────────────────────────────────────────────────
 const race = { minted: [{ device: 'W3', enrolled: true }, { device: 'W6', enrolled: true }], seated: { W3: 3_000, W6: 5_000 }, ownerCaughtUpMs: 800 };
