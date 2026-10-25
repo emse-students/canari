@@ -30,6 +30,7 @@ import {
   openCommunity,
   openInviteLink,
   acceptInviteLink,
+  PERMISSION_GRID_DRAWN,
   permissionGrid,
   removeCommunityMember,
   revokeChannelAccess,
@@ -153,7 +154,7 @@ async function moderatorOnlyManagesChannels(cx) {
   // THE GRID IS WAITED FOR, never read on the click: `clearOverlays` closes the side panel, so the
   // tab opens it fresh and the table renders after the click returns - read at once, it answered no
   // roles at all (RM-6, 2026-10-25: "no moderator column in the grid ()").
-  await until(cx, `document.querySelectorAll('table thead th').length > 1`, 15_000);
+  await until(cx, PERMISSION_GRID_DRAWN, 15_000);
   for (let pass = 0; pass < 4; pass++) {
     const grid = await permissionGrid(cx);
     const col = (grid.roles ?? []).findIndex(isModerator);
