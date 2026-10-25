@@ -69,8 +69,8 @@ import {
   settleNarration,
   settledOnce,
 } from '../settlerows.mjs';
-import { GROUP_CREATION_NARRATION, awaitLine, consoleLines } from '../watch.mjs';
-import { addMembers } from './addmember.mjs';
+import { GROUP_CREATION_NARRATION, REMOVE_NARRATION, awaitLine, consoleLines } from '../watch.mjs';
+import { addMembers, removeMember } from './addmember.mjs';
 import { armCut, cutHard } from './net.mjs';
 
 const argv = process.argv.slice(2);
@@ -162,7 +162,12 @@ const ACTIONS = {
 
   /**
    * DUP-2: the first request goes through (held, released), its answer is lost, and the resubmission
-   * is HELD before the server while W4 - at the new epoch - commits an Add of W5; then released.
+   * is HELD before the server while W4 - at the new epoch - commits a REMOVE of W5; then released.
+   *
+   * A REMOVE, NOT AN ADD (2026-10-25, alpha.4): W1's Add keeps the group's add lock while its
+   * resubmission is held, so W4's Add was refused at the lock ('Add-lock busy') and the row could
+   * never reach its question. An intervening Add during a held Add is CC-1's subject; a Remove takes
+   * no add lock (CC-2), so this row asks its question with a Remove beside the held Add.
    */
   async 'DUP-2'(c) {
     const rules = [
@@ -187,11 +192,11 @@ const ACTIONS = {
     if (!premise.length) {
       await closeOverlays(c.cx('W4'));
       await openGroup(c.cx('W4'), c.group.name, { navigate: false, label: id });
-      w4 = await outcome(addMembers(c.cx('W4'), [c.name(spec.intervening.add)]));
+      w4 = await outcome(removeMember(c.cx('W4'), c.user[spec.intervening.remove], c.group.name, { label: id }));
       moved = await awaitServer(c.group.id, (v) => v.activeEpoch >= c.fromEpoch + 2, 20_000);
       // THE HELD RESUBMISSION HAS A DEADLINE OF ITS OWN (the 30 s write deadline): W4's commit must
       // have landed inside it, or the row measured an abandoned request instead.
-      if (!moved.settled) premise.push(`W4's Add of W5 did not land within 20 s of the hold`);
+      if (!moved.settled) premise.push(`W4's Remove of W5 did not land within 20 s of the hold`);
     }
     const heldMs = Date.now() - heldAt;
     await f.release();
@@ -202,15 +207,24 @@ const ACTIONS = {
       premise,
       records: rep.records,
       vacuous: vacuousOf(rules, rep),
-      joiners: [spec.subject, spec.intervening.add],
+      joiners: [spec.subject],
+      removed: [spec.intervening.remove],
+      narrationBy: { [spec.intervening.by]: REMOVE_NARRATION },
       detail: { gesture, w4Gesture: w4, heldMs, clientSettled: settled },
       judge: (view, seq) => [
         firedAtLeast('hold', byRule(rep.records, 0), 2),
         firedAtLeast('lose-answer', byRule(rep.records, 1), 1),
-        { what: `W4's Add of W5 completed${w4.ok ? '' : ` (${w4.error})`}`, ok: w4.ok },
+        { what: `W4's Remove of W5 completed${w4.ok ? '' : ` (${w4.error})`}`, ok: w4.ok },
         { what: `W1 said its resubmission was accepted (${settled ?? 'no line in 30 s'})`, ok: !!settled },
         ...interveningOrder({ fromEpoch: c.fromEpoch, seq }),
-        ...settledOnce({ fromEpoch: c.fromEpoch, view, seq, accepts: 2, joined: [c.user[spec.subject], c.user[spec.intervening.add]] }),
+        ...settledOnce({
+          fromEpoch: c.fromEpoch,
+          view,
+          seq,
+          accepts: 2,
+          joined: [c.user[spec.subject]],
+          removed: [c.user[spec.intervening.remove]],
+        }),
       ],
     };
   },
@@ -582,7 +596,8 @@ async function play() {
   const invariant = await checkInvariant({
     group: group.id,
     targets: seats.targets,
-    members: (act.members ?? spec.devices).filter((d) => !unlisted.includes(d)),
+    // A SEAT THE ROW REMOVED holds no group to send to: it is out of the members, judged by the roster.
+    members: (act.members ?? spec.devices).filter((d) => !unlisted.includes(d) && !(act.removed ?? []).includes(d)),
     conversation: group.name,
     fromEpoch,
     since,
@@ -599,6 +614,7 @@ async function play() {
     records: act.records,
     offline: act.offline,
     narration: [...settleNarration(group.id), ...(act.narration ?? [])],
+    narrationBy: act.narrationBy ?? {},
     detail: { group: group.id, name: group.name, side: side?.id ?? null, fromEpoch, decisions: seq, faultRecords: act.records, ...act.detail, ...(unlisted.length ? { unlisted } : {}), ...(spec.note ? { note: spec.note } : {}) },
   };
 }
@@ -615,7 +631,8 @@ try {
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
   const observers = await observersOf(seats, {
-    logs: { W1: [...GROUP_CREATION_NARRATION, ...(out.narration ?? [])] },
+    // W1 made the row's Add; a seat whose own gesture the row made (DUP-2's W4 Remove) names its narration.
+    logs: { ...out.narrationBy, W1: [...GROUP_CREATION_NARRATION, ...(out.narration ?? [])] },
     provoked: { W1: out.records ?? [] },
     offline: out.offline ? ['W1'] : [],
   });

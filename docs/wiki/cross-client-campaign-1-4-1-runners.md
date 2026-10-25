@@ -81,7 +81,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
 | DUP-1 | `lose-answer once` on the commit POST; `[COMMIT] DUPLICATE` on the resubmission; one commit-log row | `fault.mjs`, `commitLines` | - | no | U | 20 min |
-| DUP-2 | DUP-1, then W4 commits (an Add), then the resubmission | as DUP-1 | ordering W4's commit between the lost answer and the retry: `hold` the retry | no | U | 30 min |
+| DUP-2 | DUP-1, then W4 commits (a Remove of W5 - an Add is refused at the add lock, CC-1), then the resubmission | as DUP-1 | ordering W4's commit between the lost answer and the retry: `hold` the retry | no | U | 30 min |
 | DUP-3 | **not played** (Q2): unit coverage stands in | - | the runner records `SKIPPED` with the reason, so the board shows it decided, not forgotten | no | - | - |
 | DUP-4 | `lose-answer once`, then `status 409 once` on the resubmission | `fault.mjs` two rules | confirm rule precedence (first unspent match) in `fault-selftest` | no | U | 20 min |
 | DUP-5 | `status 503 once`; sends blocked in that group only, settled at the next gateway connection | `fault.mjs`, `net.mjs` `cutHard` to force the reconnection | invariant 4 counts a fault-PROVOKED 5xx as dirt: `checkInvariant` needs the armed rules' records to forgive exactly those | no | U | 20 min |

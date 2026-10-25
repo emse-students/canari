@@ -60,7 +60,7 @@ signed out, and nothing signs it in until the owner decides; every `+I1` row sta
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | DUP-1 | The commit lands and its ANSWER is lost | W1 W2 - U | `pending` |
-| DUP-2 | DUP-1, and another member commits before our resubmission | W1 W2 W4 - U | `pending` |
+| DUP-2 | DUP-1, and another member commits before our resubmission - a Remove; an intervening ADD during a held resubmission is covered by CC-1, not DUP-2 | W1 W2 W4 W5 - U | `pending` |
 | DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | - | `SKIPPED` - not played on the bench (Q2): unit coverage stands in |
 | DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | W1 W2 - U | `pending` |
 | DUP-5 | The commit is answered `503` | W1 W2 - U | `pending` |

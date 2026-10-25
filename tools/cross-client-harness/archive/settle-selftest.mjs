@@ -48,10 +48,12 @@ const MISMATCH = (t, b, a) => nest(`[COMMIT][commit-${t}] REJECT epoch_mismatch 
 // ── the table ────────────────────────────────────────────────────────────────────────────────────
 console.log('the table');
 const rows = Object.entries(SETTLE_ROWS);
-ok('every seat a row names is opened', rows.every(([, r]) => ['W1', r.subject, ...r.setup, ...(r.intervening ? [r.intervening.by, r.intervening.add] : [])].every((d) => r.devices.includes(d))));
+ok('every seat a row names is opened', rows.every(([, r]) => ['W1', r.subject, ...r.setup, ...(r.intervening ? [r.intervening.by, r.intervening.add ?? r.intervening.remove] : [])].every((d) => r.devices.includes(d))));
 ok('W1 is always the committer, never its own subject', rows.every(([, r]) => r.devices[0] === 'W1' && r.subject !== 'W1'));
 ok('a subject is never already in the group', rows.every(([, r]) => !r.setup.includes(r.subject)));
 ok('DUP-2 commits on top with a member of the setup', SETTLE_ROWS['DUP-2'].setup.includes(SETTLE_ROWS['DUP-2'].intervening.by));
+// AN INTERVENING ADD IS REFUSED AT THE ADD LOCK WHILE W1's ADD IS HELD (alpha.4) - that case is CC-1's.
+ok('DUP-2 intervenes with a Remove of a setup member, never an Add', !SETTLE_ROWS['DUP-2'].intervening.add && SETTLE_ROWS['DUP-2'].setup.includes(SETTLE_ROWS['DUP-2'].intervening.remove));
 ok('DUP-5 has W2 in BOTH groups, so a blocked send has a reader', SETTLE_ROWS['DUP-5'].setup.includes('W2') && SETTLE_ROWS['DUP-5'].side);
 ok('DUP-6 has a side group for the decrypts', SETTLE_ROWS['DUP-6'].side === true);
 ok('every cut row is a row that needs the gateway back', ['DUP-5', 'OFF-1', 'OFF-2', 'TOK-3'].every((k) => SETTLE_ROWS[k].cut) && !SETTLE_ROWS['DUP-1'].cut);
@@ -92,7 +94,11 @@ ok("W4's accept, THEN W1's duplicate -> holds", allOk(interveningOrder({ fromEpo
 ok("W1's duplicate BEFORE W4's commit (no intervening) fails", !allOk(interveningOrder({ fromEpoch: 3, seq: commitSequence([ACCEPT('a', 4), DUP('a', 3), ACCEPT('w4', 5)]) })));
 ok("W4's commit never landed fails", !allOk(interveningOrder({ fromEpoch: 3, seq: commitSequence([ACCEPT('a', 4), DUP('a', 3)]) })));
 const v2 = view({ activeEpoch: 5, commitEpochs: [0, 1, 2, 3, 4], roster: [...view().roster, { userId: 'u5', awaitingAdmission: false }], seats: [...view().seats, { userId: 'u5', deviceId: 'd5', status: 'active', kicked: false }] });
-ok('DUP-2 core: two accepts, a duplicate, both joiners in -> all hold', allOk(settledOnce({ fromEpoch: 3, view: v2, seq: commitSequence([ACCEPT('a', 4), ACCEPT('w4', 5), DUP('a', 3)]), accepts: 2, joined: [U2, 'u5'] })));
+const v2r = view({ activeEpoch: 5, commitEpochs: [0, 1, 2, 3, 4] });
+const dup2 = (over = {}) => settledOnce({ fromEpoch: 3, view: v2r, seq: commitSequence([ACCEPT('a', 4), ACCEPT('w4', 5), DUP('a', 3)]), accepts: 2, joined: [U2], removed: ['u5'], ...over });
+ok('DUP-2 core: two accepts, a duplicate, the subject in and W5 removed -> all hold', allOk(dup2()));
+ok('DUP-2: the removed user still on the roster fails', !allOk(dup2({ view: v2 })));
+ok('DUP-2: a removed user keeping an active seat fails', !allOk(dup2({ view: view({ ...v2r, seats: [...v2r.seats, { userId: 'u5', deviceId: 'd5', status: 'active', kicked: false }] }) })));
 
 // ── the later windows ──────────────────────────────────────────────────────────────────────────────
 console.log('decided after / nothing before');
