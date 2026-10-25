@@ -30,10 +30,10 @@ import {
   openCommunity,
   openInviteLink,
   acceptInviteLink,
+  PERMISSION_GRID_DRAWN,
   permissionGrid,
   removeCommunityMember,
   revokeChannelAccess,
-  saveChannelAccess,
   setChannelPrivate,
   setMemberRole,
 } from '../comm.mjs';
@@ -153,7 +153,7 @@ async function moderatorOnlyManagesChannels(cx) {
   // THE GRID IS WAITED FOR, never read on the click: `clearOverlays` closes the side panel, so the
   // tab opens it fresh and the table renders after the click returns - read at once, it answered no
   // roles at all (RM-6, 2026-10-25: "no moderator column in the grid ()").
-  await until(cx, `document.querySelectorAll('table thead th').length > 1`, 15_000);
+  await until(cx, PERMISSION_GRID_DRAWN, 15_000);
   for (let pass = 0; pass < 4; pass++) {
     const grid = await permissionGrid(cx);
     const col = (grid.roles ?? []).findIndex(isModerator);
@@ -318,9 +318,9 @@ const ACTIONS = {
     const access = `/api/channels/${c.channelId}/access`;
     await openChannel(M, c.community, c.salon);
     await openChannelAccess(M);
-    await setChannelPrivate(M, true);
+    // THE TOGGLE IS THE WRITE (#1171): no save follows it, and its answer is the row's subject.
     const before = statusCount(M, access, 'PATCH');
-    const save = await outcome(saveChannelAccess(M));
+    const save = await outcome(setChannelPrivate(M, true));
     const status = await statusAfter(M, access, 'PATCH', before);
     const named = await drawn(M, NAMED.REMOVAL_EXCEEDS_ACTOR);
     await clearOverlays(M);
@@ -399,7 +399,9 @@ try {
   const scope = out.detail?.workspaceId ? { workspaceId: out.detail.workspaceId, ...communityChannels(out.detail.workspaceId) } : null;
   const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds))] : [])] : [];
   const logs = Object.fromEntries(spec.devices.map((d) => [d, narration]));
-  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs });
+  // RM-6's 403 IS ITS SUBJECT: the manager's flip refused on the salon's own access path, nothing wider.
+  const refusals = id === 'RM-6' && out.detail?.channelId ? { [spec.manager]: [{ path: new RegExp(`^/api/channels/${out.detail.channelId}/access$`), status: [403] }] } : {};
+  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs, refusals });
   await finishObserved(
     id,
     verdict,

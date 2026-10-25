@@ -67,6 +67,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       return null;
     }),
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([1])),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
@@ -87,6 +89,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         'checkpointStageBeforeSend',
         'submitRecorded',
         'mergeAccepted',
+        'noteOwnLeafReplaced',
         'resubmitUnresolved',
       ].map((name) => [
         name,

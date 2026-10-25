@@ -55,6 +55,7 @@ import {
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
   toBase64,
+  toHex,
   fromBase64,
   tagMlsSnapshot,
   propagateMlsSnapshotVersion,
@@ -1393,6 +1394,12 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
   protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
     return this.client.own_leaf_minted_at(groupId) ?? null;
+  }
+
+  /** WASM client wrapper - this device's leaf key as hex, `null` with no own leaf. */
+  protected async ownLeafKey(groupId: string): Promise<string | null> {
+    const key = this.client.own_leaf_encryption_key(groupId);
+    return key ? toHex(key) : null;
   }
 
   /** WASM client wrapper - whether this device's context is the one the served base describes. */

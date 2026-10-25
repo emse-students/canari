@@ -948,6 +948,23 @@ pub(crate) fn date_feuille(
         .map_err(|e| e.to_string())
 }
 
+/// The HPKE encryption key of this device's leaf in `group_id`, which names the leaf, or `None`
+/// when the tree holds none (`MlsManager::own_leaf_encryption_key`).
+#[tauri::command]
+pub(crate) fn cle_feuille(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<Vec<u8>>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .own_leaf_encryption_key(&group_id)
+        .map_err(|e| e.to_string())
+}
+
 /// Whether this device's current context in `group_id` is the one the served base `group_info`
 /// describes (`MlsManager::own_context_matches_base`) - the fork gate of the periodic refresh.
 #[tauri::command]

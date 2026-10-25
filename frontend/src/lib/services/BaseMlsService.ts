@@ -4601,6 +4601,9 @@ export abstract class BaseMlsService implements IMlsService {
   /** When this device's leaf in `groupId` was minted (Unix seconds), `null` once a commit replaced
    *  it. See `MlsManager::own_leaf_minted_at` and `leafRefresh.ts`. */
   protected abstract ownLeafMintedAt(groupId: string): Promise<number | null>;
+  /** This device's leaf key in `groupId` as hex - what names the leaf for the refresh ledger -
+   *  or `null` when the tree holds no leaf of ours. See `MlsManager::own_leaf_encryption_key`. */
+  protected abstract ownLeafKey(groupId: string): Promise<string | null>;
   /** Whether this device's current context in `groupId` (epoch, tree hash, confirmed transcript
    *  hash) is the one the served base `groupInfo` describes. See
    *  `MlsManager::own_context_matches_base`. */
@@ -4950,11 +4953,6 @@ export abstract class BaseMlsService implements IMlsService {
           // ({@link sendWelcome}); held only in the caller's hands, a reload before the send lost it
           // with the merge already on disk, and only the invitee's own repair let it in (DUP-7).
           await this.mergeAccepted(submission);
-          // EVERY OWN COMMIT REPLACES THIS DEVICE'S LEAF - openmls puts a path in each member commit
-          // it builds (`mls-core/tests/self_update.rs`) - so an Add or a Remove is a refresh too,
-          // and the periodic one is not owed again for an interval. Written here, the one seam they
-          // all pass.
-          noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
           const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
           return {
             welcome: staged.welcome,
@@ -5466,7 +5464,39 @@ export abstract class BaseMlsService implements IMlsService {
     } else {
       await this.mergePendingCommit(submission.groupId);
     }
+    // EVERY OWN COMMIT REPLACES THIS DEVICE'S LEAF - openmls puts a path in each member commit it
+    // builds (`mls-core/tests/self_update.rs`) - so an Add or a Remove is a refresh too, and the
+    // periodic one is not owed again for an interval. Dated HERE, the one merge both the transaction
+    // and a settlement go through.
+    await this.noteOwnLeafReplaced(submission.groupId, submission.baseEpoch + 1);
     return recipients;
+  }
+
+  /**
+   * Dates this device's leaf in `groupId` in the refresh ledger, after a merge of its own commit
+   * created `epoch` - naming the leaf by the key the merge gave it (`leafRefresh.ts`).
+   *
+   * The ONE writer of a refresh, reached by {@link mergeAccepted} and by an accepted external join.
+   * A key that cannot be read leaves the entry of the former leaf, which the next send reads as a
+   * first sight - no commit - and it is said.
+   */
+  private async noteOwnLeafReplaced(groupId: string, epoch: number): Promise<void> {
+    let leaf: string | null;
+    try {
+      leaf = await this.ownLeafKey(groupId);
+    } catch (e) {
+      console.warn(
+        `[LEAF_REFRESH] ${groupId.slice(0, 8)}... the leaf our commit made at epoch ${epoch} could not be read - not dated, the next send observes it: ${String(e).slice(0, 120)}`
+      );
+      return;
+    }
+    if (leaf === null) {
+      console.warn(
+        `[LEAF_REFRESH] ${groupId.slice(0, 8)}... our commit merged at epoch ${epoch} and the tree holds no leaf of ours - nothing to date`
+      );
+      return;
+    }
+    noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, epoch, leaf);
   }
 
   /**
@@ -5486,7 +5516,6 @@ export abstract class BaseMlsService implements IMlsService {
     const { groupId, baseEpoch } = submission;
     const short = groupId.slice(0, 8);
     const recipients = await this.mergeAccepted(submission);
-    noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
     console.log(`[COMMIT] ${short}... the kept commit from epoch ${baseEpoch}: accepted - merged`);
     if (recipients.length === 0) return;
     // ON DISK BEFORE THE FIRST SEND: from here a reload finds the Add merged and its Welcome owed,
@@ -6852,7 +6881,7 @@ export abstract class BaseMlsService implements IMlsService {
           await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
           // The external commit's path IS this device's new leaf, so the group's periodic refresh is
           // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
-          noteOwnLeafRefreshed(this.userId, this.deviceId, joined.groupId, gi.baseEpoch + 1);
+          await this.noteOwnLeafReplaced(joined.groupId, gi.baseEpoch + 1);
           // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
           // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
           // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
@@ -7375,6 +7404,8 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** The epoch at which a refresh of each group last failed this session (`leafRefresh.ts`). */
   private readonly leafRefreshAttempts = new Map<string, number>();
+  /** The epoch each active group was last reported holding no leaf of ours at (`leafRefresh.ts`). */
+  private readonly leafRefreshNoOwnLeafReports = new Map<string, number>();
   /** One refresh decision in flight per group: two sends in a row must not stage two commits. */
   private readonly leafRefreshInFlight = new Map<string, Promise<unknown>>();
 
@@ -7397,11 +7428,14 @@ export abstract class BaseMlsService implements IMlsService {
         isGroupActive: (g) => this.isGroupActive(g),
         getEpoch: (g) => this.getEpoch(g),
         ownLeafMintedAt: (g) => this.ownLeafMintedAt(g),
+        ownLeafKey: (g) => this.ownLeafKey(g),
         refreshOwnLeaf: (g) => this.refreshOwnLeaf(g),
         checkpoint: () => persistMlsStructuralCheckpoint({ mlsService: this }),
         attemptedAtEpoch: this.leafRefreshAttempts,
+        noOwnLeafReportedAtEpoch: this.leafRefreshNoOwnLeafReports,
         now: () => Date.now(),
         log: (message) => console.log(message),
+        warn: (message) => console.warn(message),
       },
       groupId
     )

@@ -1684,16 +1684,46 @@ single-flight per group. It refreshes only when the leaf is DUE:
 | Leaf age basis | Source | Due when |
 |---|---|---|
 | Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`), and an observation OF THAT LEAF in the ledger | the later of: older than the interval, and the observation plus the offset |
-| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch}}`), written after EVERY accepted own commit and external join | older than the interval |
-| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, mintedAtSec: null}` | the observation plus the offset |
-| No entry, an entry of another incarnation, or one dated in the future | first sight: an observation is recorded | never on first sight |
+| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch, leaf}}`), written after EVERY merge of an own commit (`mergeAccepted`) and external join, by ONE writer (`noteOwnLeafReplaced`) | older than the interval |
+| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, leaf}` | the observation plus the offset |
+| No entry, an entry naming ANOTHER leaf (or none), or one dated in the future | first sight: an observation is recorded | never on first sight |
+
+**Every entry names the leaf it dates** (`leaf`: the leaf's HPKE key, `own_leaf_encryption_key`,
+read after the merge), and an entry is read only for the leaf it names. The ledger is in
+`localStorage`, which Chrome commits to the profile LAZILY: a write made 2 s or 4.5 s before a hard
+kill of the browser was lost, one made 7 s before survived, and an IndexedDB write made with it
+survived in every case (measured 2026-10-25 on a fresh profile; Chromium also rate-limits those
+commits, so the window can be longer on a busy page). The merge it follows is in the MLS state, on
+disk as soon as its checkpoint completes. KILL-2 on `1.4.1-alpha.4` killed the browser in that gap
+twice in ten runs: the merge survived, the entry did not, and the relaunch read the entry the disk
+kept - armed due, written for the leaf the merge had REPLACED - so its first send refreshed a leaf
+seconds old (two extra commits on the server, each accepted at the next epoch: no fork, one commit
+too many). Naming the leaf lets the state itself say which entry describes it, whatever reached disk;
+an entry of a former leaf reads as a first sight, the direction that costs no commit. Pinned by
+`leafRefresh.test.ts` ("a date written for a FORMER leaf ...") and
+`mls-core/tests/self_update.rs::the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it`
+and `::the_own_leaf_key_moves_on_an_add_a_remove_and_an_external_join` (every own commit moves
+the key, so every merge's entry names a new leaf).
+
+**The upgrade costs one first sight per group per device, by design.** Entries written before #2489
+name no leaf, so the first send after the upgrade reads each one as a first sight: the leaf is
+observed again and its schedule restarts at that observation plus the offset - up to about seven
+extra days before its next refresh, once, in the direction that costs no commit.
+
+**The observation is written for the leaf in the state when it is written.** The decision runs
+outside the MLS lock, and an own commit can merge while it awaits; that merge dates its own leaf, and
+an observation of the leaf read before it would overwrite the entry with a leaf already gone (a
+false "FORMER leaf" line at the next send). So the leaf is read again just before the write, with no
+await between them, and a leaf that moved writes nothing (`leaf-moved`). An ACTIVE group whose tree
+holds no leaf of this device is not an inactive group: it is a defect, reported as `no-own-leaf` at
+warn level once per group and epoch, never once per send. Pinned by `leafRefresh.test.ts`.
 
 **The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
 leaf is older than the interval, so a decision on age alone makes every seat refresh at its first
 send: ~1600 commits in the first week, back to back in the 109-seat group, where a slow device
 keeps only two past epochs (`max_past_epochs`) and loses the frames sealed in the epochs it
 skipped. So a leaf this device holds no refresh of its own for is first OBSERVED - a ledger entry
-written at its first send, naming the leaf by `own_leaf_minted_at`, never due then - and its first
+written at its first send, naming the leaf by its key, never due then - and its first
 refresh is owed at the observation plus an offset in `[0, 7 d)` derived from `(deviceId, groupId)`
 alone (`leafRefreshOffsetMs`: FNV-1a with MurmurHash3's finaliser, `utils/hash32.ts`, the hash
 `historyRangeOf` already used). No clock and no random draw per run choose the day: a reload, a
