@@ -27,6 +27,13 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P1 - A device revocation edge, tracked privately until it is fixed (DEV-3, `1.4.1-alpha.3`, 2026-10-25)
+
+DEV-3 (the owner revokes a device while it is cut off) FAILED: on its return the device was not
+reset. This repository is public and the defect is unfixed, so its mechanism, the server timeline and
+the row log are in the private operations notes. A fix agent owns it. DEV-3 is replayed on the build
+that carries the fix.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
