@@ -283,7 +283,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).toHaveBeenCalledTimes(1);
       expect(groupUpdate).toHaveBeenCalledWith(
         { id: 'group-1', activeEpoch: 5 },
-        { activeEpoch: 6 }
+        { activeEpoch: 6, epochSeatGeneration: 0 }
       );
       // Commit stored keyed by the epoch it advances FROM.
       expect(commitInsertBuilder.values).toHaveBeenCalledWith({
@@ -344,7 +344,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).toHaveBeenCalledTimes(1);
       expect(groupUpdate).toHaveBeenCalledWith(
         { id: 'group-1', activeEpoch: 5 },
-        { activeEpoch: 6 }
+        { activeEpoch: 6, epochSeatGeneration: 0 }
       );
     });
 
@@ -372,7 +372,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(res.accepted).toBe(true);
       expect(groupUpdate).toHaveBeenCalledWith(
         { id: 'group-1', activeEpoch: 5 },
-        { activeEpoch: 6 }
+        { activeEpoch: 6, epochSeatGeneration: 0 }
       );
       expect(txInsertBuilder.values).not.toHaveBeenCalled();
       expect(txUpdateBuilder.set).not.toHaveBeenCalled();
@@ -2076,7 +2076,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         );
         expect(groupUpdate).toHaveBeenCalledWith(
           { id: 'group-1', activeEpoch: 5 },
-          { activeEpoch: 6 }
+          { activeEpoch: 6, epochSeatGeneration: 0 }
         );
         // Delivered FROM the stored row - its id is what lets the device ACK it - as a silent,
         // pushable Welcome, after the members have the commit.

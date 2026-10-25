@@ -577,9 +577,9 @@ export class UserBlockedError extends Error {
  * (`403 WELCOME_TARGET_NOT_MEMBER`, `POST /api/mls/welcome`).
  *
  * TERMINAL FOR THAT WELCOME, and typed so a sender can stop on it: the server enrols the person an Add
- * admits in the same transaction that accepts the commit, so a target still off the roster was
- * removed since, is separated from the sender by a block, or was admitted by a commit no member
- * enrolled them for. Sending the same bytes again changes none of these; an Add that would is a new
+ * admits in the same transaction that accepts the commit, so a target still off the roster departed
+ * after the Add was built, is separated from the sender by a block, or was admitted by a commit the
+ * server did not enrol them for (a committer without a seat, a server older than the enrolment). Sending the same bytes again changes none of these; an Add that would is a new
  * commit with a Welcome of its own. Until 2026-10-25 this was an untyped `Error`, and the settlement
  * of a lost-answer Add re-sent its refused Welcome at every connection, for ever.
  */

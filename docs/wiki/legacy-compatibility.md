@@ -243,9 +243,17 @@ returned - `processBulkAddition` and `performDirectAdd` in `frontend/src/lib/uti
 the pending-invitation and `welcome_request` Adds in `frontend/src/lib/utils/chat/actions.ts`.
 **Shim (2026-10-25):** the commit gate enrols the people an Add admits IN THE TRANSACTION THAT
 ACCEPTS IT (`enrolAdmittedPeople`, [mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)),
-so the call after the accept is a no-op against a current server. It stays for a store build live
-before production deploys, whose server does not enrol: dropping it there would lose the enrolment
-of every Add, not only of the settled ones.
+so against a current server the call after the accept writes nothing - but it is NOT quite a no-op:
+the route still answers `403 USER_BLOCKED` for a blocked person (`UserBlockedError`, which the
+caller reads), and it still enrols a person the commit refused as `departed_since_base` when the
+Add was answered directly (the one re-invite the gate cannot tell from a stale Add). It stays for a
+store build live before production deploys, whose server does not enrol: dropping it there would
+lose the enrolment of every Add, not only of the settled ones.
+**Transitional loss, accepted:** an Add the PRE-DEPLOY server accepted with its answer lost, and
+settled after the deploy as a `duplicate`, is never enrolled - the duplicate is answered before any
+transaction, and the enrolment ran with an advance that predates it. Its Welcome is refused
+`WELCOME_TARGET_NOT_MEMBER`, cleared as terminal by a current client (an older client keeps
+re-sending it, as before), and the stray sweep collects the leaf; the person needs a new Add.
 **Removal condition:** every estate's chat-delivery-service enrols with the commit (dev and
 production both deployed past the 2026-10-25 change, no rollback below it planned); then the
 post-accept `registerMember` calls go. A server version, not a client floor. The CREATOR's own

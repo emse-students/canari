@@ -204,6 +204,8 @@ describe('endGroupMembership', () => {
     const deletes: Array<{ entity: unknown; where: unknown }> = [];
     const updates: Array<{ entity: unknown; where: Record<string, unknown>; set: unknown }> = [];
     const manager = {
+      // The generation the removal's caller just moved the group to, under the seat lock.
+      query: async () => [{ seatGeneration: '4' }],
       getRepository: (entity: unknown) => ({
         delete: (where: unknown) => {
           deletes.push({ entity, where });
@@ -227,9 +229,11 @@ describe('endGroupMembership', () => {
     // Only the OPEN interval is closed; a closed one keeps the instant it was closed at.
     expect(updates[0].where.leftAt).toBeDefined();
     // This process's clock - the one `queued_message.createdAt` is written with - never a client's.
-    const set = updates[0].set as { leftAt: Date };
+    const set = updates[0].set as { leftAt: Date; leftAtSeatGeneration: number | null };
     expect(set.leftAt).toBeInstanceOf(Date);
     expect(set.leftAt.getTime()).toBeGreaterThanOrEqual(before);
+    // ...and the seat generation it closed at: the counter a stale Add is ordered by, never a clock.
+    expect(set.leftAtSeatGeneration).toBe(4);
   });
 });
 
@@ -316,6 +320,8 @@ describe('openMissingIntervals', () => {
           for (const release of releases) release();
         }
       },
+      // The group's seat generation the removal stamps on the interval it closes.
+      query: async () => [{ seatGeneration: 1 }],
       getRepository: (entity: unknown) => ({
         delete: async ({ userId }: { userId: string }) => {
           await shareLocks.get(userId); // DELETE waits for a FOR SHARE holder

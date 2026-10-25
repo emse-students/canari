@@ -284,9 +284,18 @@ export async function endGroupMembership(
   userId: string
 ): Promise<{ deleted: number; closed: number }> {
   const del = await manager.getRepository(GroupMember).delete({ groupId, userId });
-  const upd = await manager
-    .getRepository(GroupMembershipInterval)
-    .update({ groupId, userId, leftAt: IsNull() }, { leftAt: new Date() });
+  // THE GENERATION THIS REMOVAL MOVED THE GROUP TO (its caller bumped it first, under the seat lock):
+  // the counter an Add built before this departure is ordered by (`Group.epochSeatGeneration`).
+  const [row] = (await manager.query(`SELECT "seatGeneration" FROM dm_groups WHERE id = $1`, [
+    groupId,
+  ])) as Array<{ seatGeneration: number | string }>;
+  const upd = await manager.getRepository(GroupMembershipInterval).update(
+    { groupId, userId, leftAt: IsNull() },
+    {
+      leftAt: new Date(),
+      leftAtSeatGeneration: row ? Number(row.seatGeneration) : null,
+    }
+  );
   return { deleted: del.affected ?? 0, closed: upd.affected ?? 0 };
 }
 

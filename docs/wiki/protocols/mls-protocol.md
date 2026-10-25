@@ -1261,41 +1261,6 @@ owed for the next connection. A joiner handed a copy of a Welcome for a group it
 redelivery before the core sees it (`setupMessageHandler`); the core itself refuses such a copy
 (its key package is spent) and leaves the group untouched (`mls-core/tests/owed_welcome.rs`).
 
-#### An Add enrols its people with the accepted commit (2026-10-25)
-
-**Found by the 1.4.1 dev campaign** (rows DUP-2, DUP-4, DUP-5, DUP-6, OFF-1, OFF-2, read from both
-ends): the roster row of an invitee (`dm_group_members`) was written by the inviter's `registerMember`,
-a separate call each Add path made AFTER it read the gate's accept. The settlement above never made
-it. So an Add whose answer was lost - settled by a resubmission answered `duplicate`, or held offline
-and sent on return, where the FIRST arrival was accepted and still nobody enrolled - merged, sent its
-Welcome, and every copy was refused `welcome_target_not_member`. The invitee held a leaf with no seat:
-its own repair (`[READD]` -> external join) found no membership row and retired the conversation, and
-the inviter's next stray sweep took the leaf back out (`removeStrayLeaves`, which was right to: the
-roster is the authority, and it did not name the person).
-
-**The enrolment is now part of the accepted commit** (`enrolAdmittedPeople`, `messaging.service.ts`):
-in the transaction that advances the epoch and writes the log row, every person the commit `admits` a
-device of and the roster does not name is enrolled through `ensureGroupMember` - the route's own
-writer. Whichever request lands - the first, a resubmission, an outbox replay - the advance and the
-seat commit together, and a resubmission answered `duplicate` finds exactly the state the first accept
-left. Nothing for the client to remember, no pending-enrolment record, no clock. The bar is the
-route's: the committer holds an admitted seat, a person a block stands between is not enrolled
-(logged `NOT_ENROLLED reason=blocked`), a seat already there is left as it is, a key group has no
-roster here. Every Add path already called `registerMember` for each person it admitted, so this
-grants nothing a client could not already do; the client calls stay as a no-op for a server that
-predates this ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25)).
-Judged against PostgreSQL in `add-enrolment.integration.spec.ts`.
-
-**A refused Welcome is no longer owed for ever.** `POST /api/mls/welcome` answers a target off the
-roster `403 WELCOME_TARGET_NOT_MEMBER` (the `error` field kept for older clients), typed client-side
-as `WelcomeTargetNotMemberError`. With the enrolment bound to the accept, that refusal cannot change by
-resending: the target was removed since, a block stands, or the commit was accepted by a server that
-did not enrol. So `deliverOwedWelcomes` clears that recipient at `console.error` and keeps every
-other failure owed; until then a settlement re-sent the refused bytes at every connection. The leaf it
-admitted has no seat, and the stray sweep collects it - the sweep reads the tree first and the roster
-after, and with the seat written in the advance, a leaf an accepted Add put in the tree is never
-without its seat by the time any member holds that tree.
-
 **What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
 365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,
 `COMMIT_LOG_MAX_PER_GROUP` in `messaging.service.ts`), so the window is a commit left unresolved for a
@@ -1396,6 +1361,62 @@ rate the departure-only rule was written to bring down returns through the caps.
 leaves are refreshed by its own Adds and Removes meanwhile; what refreshing them would need (a
 refresh that does not tighten the caps, or caps counted from the redistribution) is in
 [backlog](../backlog.md).
+
+### An Add enrols its people with the accepted commit (2026-10-25)
+
+**Found by the 1.4.1 dev campaign** (rows DUP-2, DUP-4, DUP-5, DUP-6, OFF-1, OFF-2, read from both
+ends): the roster row of an invitee (`dm_group_members`) was written by the inviter's `registerMember`,
+a separate call each Add path made AFTER it read the gate's accept. The settlement of an unresolved
+commit (above) never made it. So an Add whose answer was lost - settled by a resubmission answered
+`duplicate`, or held offline and sent on return, where the FIRST arrival was accepted and still nobody
+enrolled - merged, sent its Welcome, and every copy was refused `welcome_target_not_member`. The
+invitee held a leaf with no seat: its own repair (`[READD]` -> external join) found no membership row
+and retired the conversation, and the inviter's next stray sweep took the leaf back out
+(`removeStrayLeaves`, which was right to: the roster is the authority, and it did not name the person).
+
+**The enrolment is part of the accepted commit** (`enrolAdmittedPeople`, `messaging.service.ts`): in
+the transaction that advances the epoch and writes the log row, every person the commit `admits` a
+device of and the roster does not name is enrolled through `ensureGroupMember` - the route's own
+writer - BEFORE any device row, the one lock order of `utils/seat-eviction.ts`. Whichever request
+lands - the first, a resubmission, an outbox replay - the advance and the seat commit together, and a
+resubmission answered `duplicate` (answered before any transaction) finds exactly the state the first
+accept left. Nothing for the client to remember, no pending-enrolment record, no clock. Every Add
+path already called `registerMember` for each person it admitted, so this grants nothing a client
+could not already do. Judged against PostgreSQL in `add-enrolment.integration.spec.ts`.
+
+**Refused, and logged `NOT_ENROLLED reason=...`, with their admits dropped** (no device row, so no
+frame is queued for a device whose Welcome will be refused, and no stale row later dates an arrival):
+
+- everyone not on the roster when the committer holds no admitted seat itself (`committer_not_on_roster`);
+- a person a block stands between and the committer (`blocked`);
+- **a person who departed after the epoch the commit was built on began** (`departed_since_base`).
+  A removal holds against an Add built before it (owner's rule, 2026-10-14). A self-leave makes no
+  commit, and a removal's Remove commit can be lost, so an Add held in an outbox can still land at the
+  unchanged epoch after the departure; enrolling then would undo it. Ordered by a COUNTER, never a
+  clock: every removal moves the group's `seatGeneration` under the seat lock and stamps it on the
+  stretch it closes (`leftAtSeatGeneration`), and every advance records the generation its epoch
+  began at (`epochSeatGeneration`, migration 039). A stretch closed later than the base's generation
+  is a departure the Add could not have seen. **The cost is one-sided:** a re-invite built after a
+  self-leave at that same epoch is refused too - nothing distinguishes it from the stale Add - and is
+  enrolled by the client's own `registerMember` on a direct accept, or not at all if its answer was
+  also lost, until a new Add. Once any commit lands after the departure, a new Add enrols as usual.
+
+A seat already on the roster is left as it is (one awaiting a member's admission is lifted). A key
+group has no conversation roster: its people are social-service's entitlement, asked before the
+advance (`claimKeyGroupAdmits`), and nothing here applies to it.
+
+**A refused Welcome is no longer owed for ever.** `POST /api/mls/welcome` answers a target off the
+roster `403 WELCOME_TARGET_NOT_MEMBER` (the `error` field kept for older clients), typed client-side
+as `WelcomeTargetNotMemberError`. That refusal cannot change by resending: the target departed, a
+block stands, the committer held no seat, or the commit was accepted by a server that did not enrol.
+So `deliverOwedWelcomes` clears that recipient at `console.error` and keeps every other failure owed;
+until then a settlement re-sent the refused bytes at every connection.
+
+**And the leaf such a refused person holds is the stray sweep's.** The sweep reads the tree first and
+the roster after, and an accepted Add's person is enrolled in the advance unless refused above - so
+the leaves it finds without a seat are exactly the refused ones, which it is right to remove. What the
+older shape still leaves is in
+[legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
 
 ### A revoked device's leaf is removed from every conversation
 

@@ -68,6 +68,13 @@ export class Group {
   @Column({ type: 'integer', default: 0 })
   seatGeneration: number;
 
+  /** The `seatGeneration` the current `activeEpoch` began at - written by the advance that created
+   *  it, under the seat lock. A departure recorded at a LATER generation happened after every commit
+   *  that can still land at this epoch was built on it, so such a commit enrols nobody who departed
+   *  (`enrolAdmittedPeople`, migration 039). 0 for an epoch that began before the column existed. */
+  @Column({ type: 'integer', default: 0 })
+  epochSeatGeneration: number;
+
   /** Soft-delete timestamp. Null = active. Set on explicit deletion.
    *  The row is intentionally kept as a tombstone so devices can detect the transition. */
   @Column({ type: 'timestamp', nullable: true, default: null })

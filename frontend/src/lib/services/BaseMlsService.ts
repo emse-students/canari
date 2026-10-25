@@ -4976,10 +4976,11 @@ export abstract class BaseMlsService implements IMlsService {
           );
         } catch (e) {
           // A REFUSAL THAT CANNOT CHANGE IS NOT OWED AGAIN. The server enrols an Add's people with
-          // the commit it accepts, so a target the roster still does not name will not be named by
-          // resending these bytes - and resending them at every connection was the defect.
-          // Dropped from the state, said at the level that accuses: an accepted Add whose person is
-          // off the roster is the visible end of something upstream (`WelcomeTargetNotMemberError`).
+          // the commit it accepts, or refuses them for good (departed since the Add was built, a
+          // block), so a target the roster still does not name will not be named by resending these
+          // bytes - and resending them at every connection was the defect. Dropped from the state,
+          // said at the level that accuses: an accepted Add whose person is off the roster is the
+          // visible end of something upstream (`WelcomeTargetNotMemberError`).
           if (e instanceof WelcomeTargetNotMemberError) {
             await this.welcomeDelivered(w.groupId, recipient);
             dropped += 1;
