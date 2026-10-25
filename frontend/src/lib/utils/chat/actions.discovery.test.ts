@@ -7,6 +7,7 @@ import {
   purgeLocalConversationRecord,
   purgeOrphanGroup,
 } from './groupActions';
+import { enumerateNotReadyGroups, markGroupNotReady } from './notReadyRegistry';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -83,12 +84,42 @@ describe('purgeLocalConversationRecord', () => {
       conversations,
       contactKey: 'g1',
       groupId: 'g1',
+      userId: 'user-a',
       deleteConversation,
     });
 
     expect(conversations.has('g1')).toBe(false);
     expect(deleteConversation).toHaveBeenCalledWith('g1');
     expect(mlsService.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  it('drops the recovery marker with the row, so no re-add outlives the conversation (ADM-2)', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'g1',
+          name: 'Test',
+          messages: [],
+          lifecycle: 'pending',
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    localStorage.clear();
+    markGroupNotReady('user-a', 'g1');
+    markGroupNotReady('user-a', 'g2');
+
+    await purgeLocalConversationRecord({
+      conversations,
+      contactKey: 'g1',
+      groupId: 'g1',
+      userId: 'user-a',
+    });
+
+    // The watchdog enumerates this registry; the other group's marker is not this row's to drop.
+    expect(enumerateNotReadyGroups('user-a')).toEqual(['g2']);
   });
 });
 
