@@ -15,6 +15,18 @@
 import { commitsSince } from './rowkit.mjs';
 
 /**
+ * HOW LONG A RACE WAITS FOR EVERY SEAT'S COMMIT TO BE HELD, and it must stay BELOW THE PRODUCT'S OWN
+ * DEADLINE ON THAT POST: `requestDeadline.ts` aborts a `write` after 30 s and the client then
+ * resubmits the same bytes - the right behaviour, and not the one a race measures. At 45 s, CC-1's
+ * winner was held while the race waited for a lock loser that never builds a commit; its client
+ * aborted the held POST (`ERR_ABORTED`, then `Invalid InterceptionId` on release) and its un-held
+ * resubmission landed a minute before the "release" (alpha.4, 2026-10-25). Every racer that reaches
+ * its POST does so within seconds, so 20 s loses no race and never meets the deadline.
+ * `cc-selftest.mjs` reads the deadline from the frontend source and holds this under it.
+ */
+export const RACE_HOLD_MS = 20_000;
+
+/**
  * What each row needs. `setup` are the seats whose users the row's group holds before the race
  * (W1 creates it and adds the rest in one bulk Add); `race` is who does what at the same epoch;
  * `members` are the seats that must hold the group at the end (the invariant's members).
