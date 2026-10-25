@@ -127,6 +127,8 @@ No row verdict depends on it; it stays here until it is explained.
 | ADM-6 | OLD member: A1 on `v1.4.0` is a member when a NEW joiner follows the link | +A1 (old) W1 + W4 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
 | ADM-7 | An external join by a non-member, from an old client, at the base | +A1 (old) - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
 | ADM-8 | The link in a 1:1 conversation and in a key group | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 51c079881cca |
+| ADM-9 | Declined, then re-invited by a new link: the Add built after the Decline admits | W1 W2 + W4 joiner - U | `pending` - added for `1.4.1-alpha.5` |
+| ADM-10 | An Add held past a settled Decline: refused at the commit gate AND by the member-add route | W1 W2 + W4 - U | `pending` - added for `1.4.1-alpha.5` |
 
 ## DEV - device add, revoke, and the background Welcome
 
