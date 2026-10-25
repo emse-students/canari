@@ -399,6 +399,11 @@ try {
   const scope = out.detail?.workspaceId ? { workspaceId: out.detail.workspaceId, ...communityChannels(out.detail.workspaceId) } : null;
   const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds))] : [])] : [];
   const logs = Object.fromEntries(spec.devices.map((d) => [d, narration]));
+  // ... and the manager's panel narrates that same refusal, by its code and at `debug` only: any other
+  // code, or the same words at `warn`, stays dirt (alpha.4 rerun, 2026-10-25).
+  if (id === 'RM-6') {
+    logs[spec.manager] = [...narration, atLevels(['debug'], /\[channelSettings\.handleTogglePrivacy failed\] ChannelApiError: \{"code":"REMOVAL_EXCEEDS_ACTOR",/)];
+  }
   // RM-6's 403 IS ITS SUBJECT: the manager's flip refused on the salon's own access path, nothing wider.
   const refusals = id === 'RM-6' && out.detail?.channelId ? { [spec.manager]: [{ path: new RegExp(`^/api/channels/${out.detail.channelId}/access$`), status: [403] }] } : {};
   const observers = await observersOf(seats, { provoked: out.records ?? {}, logs, refusals });
