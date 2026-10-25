@@ -1144,9 +1144,11 @@ the deadline ends the request as a `RequestDeadlineError`, which is no answer. B
 token too is `DeliveryRefusedRenewedTokenError` - an `ApiRefusalError` with status 401, never a logout
 (the delivery guard also answers 401 for its own faults) - so it reads like any 401: a definitive
 refusal of a first request (nothing reached the gate: the stage is cleared, nothing resubmitted) and
-UNKNOWN on a resubmission. A renewal that got no answer is rethrown as the transport failure it is, so
-the commit takes the no-answer path above: resubmitted, then KEPT as unknown for the settle - never
-cleared, never a logout (`BaseMlsService.commit401.test.ts`).
+UNKNOWN on a resubmission. A renewal that FAILS after the 401 - a refresh answered 5xx, or one nobody
+answered - is `DeliveryRenewalFailedError`, the same 401 reading: the server answered, the bytes never
+reached the gate, so a first submission is cleared at once rather than resubmitted into the same 401
+and kept as unknown; never a logout (`BaseMlsService.commit401.test.ts`). One case stays unknown: a
+renewal still running when the submission's deadline aborts it ends as a `RequestDeadlineError`.
 
 **No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
 awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a

@@ -11,7 +11,8 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
-import { renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
+import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
+import { RefreshFailedError } from '$lib/stores/auth';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -622,6 +623,44 @@ export class DeliveryRefusedRenewedTokenError extends ApiRefusalError {
   }
 }
 
+/**
+ * The delivery service answered 401 and the RENEWAL that followed failed - a refresh answered 5xx
+ * (`RefreshFailedError`) or one nobody answered (a transport failure, kept in `renewalFailure`).
+ *
+ * Typed HERE, where it is known that the server ANSWERED: the 401 came from the guard before any
+ * handler, so the request did nothing. Rethrown as it came, a transport failure of the refresh read
+ * as "no answer to the commit" - false - and the commit was resubmitted into the same 401 and kept as
+ * unknown. An `ApiRefusalError` with status 401, so the commit gate's reading applies: a first
+ * submission refused this way never reached the gate (cleared), a resubmission says nothing of the
+ * earlier request (unknown). Not a logout either: no verdict on the session was given.
+ */
+export class DeliveryRenewalFailedError extends ApiRefusalError {
+  constructor(
+    where: string,
+    /** What the renewal threw, as it came - for the log, and for a caller asking why. */
+    readonly renewalFailure: unknown
+  ) {
+    super(
+      401,
+      null,
+      `${where} answered 401 and the token renewal failed (${String(renewalFailure).slice(0, 120)}) - the request did nothing`
+    );
+    this.name = 'DeliveryRenewalFailedError';
+  }
+}
+
+/**
+ * What a renewal failure after a delivery 401 becomes. An ALLOWLIST of the failures that say only
+ * "no new token now": a refresh answered 5xx and a refresh nobody answered. Every other one is a
+ * verdict the app routes on by its own type (a dead cookie, a sign-out under way, a split identity)
+ * and passes as it came.
+ */
+function deliveryRenewalFailed(error: unknown, where: string): unknown {
+  return error instanceof RefreshFailedError || isTransportFailure(error)
+    ? new DeliveryRenewalFailedError(where, error)
+    : error;
+}
+
 /** The 401 rule's answer for a renewed token the delivery service refuses too. */
 async function deliveryRefusedRenewed(
   answer: { status: number },
@@ -666,6 +705,8 @@ export class MlsDeliveryApi {
     tokenNow: () => Promise<string>;
     renew: () => Promise<string>;
     refusedRenewed: typeof deliveryRefusedRenewed;
+    renewalFailed: typeof deliveryRenewalFailed;
+    refusedTokens: RefusedRenewedToken;
   } | null;
   /** Key-package 404 reasons this build did not know and has already warned about (once each). */
   private readonly unknownKeyPackageReasonsWarned = new Set<string>();
@@ -686,6 +727,8 @@ export class MlsDeliveryApi {
           tokenNow: this.getToken,
           renew: opts.refreshToken,
           refusedRenewed: deliveryRefusedRenewed,
+          renewalFailed: deliveryRenewalFailed,
+          refusedTokens: new RefusedRenewedToken(),
         }
       : null;
     this.f = this.renewal ? renewingOn401(f, this.renewal) : f;

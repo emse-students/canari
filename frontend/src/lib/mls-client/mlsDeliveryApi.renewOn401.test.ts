@@ -10,9 +10,14 @@
  * failed request and NEVER a logout: the delivery guard also answers 401 for its own faults.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DeliveryRefusedRenewedTokenError, MlsDeliveryApi } from './mlsDeliveryApi';
+import {
+  DeliveryRefusedRenewedTokenError,
+  DeliveryRenewalFailedError,
+  MlsDeliveryApi,
+} from './mlsDeliveryApi';
+import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { SessionExpiredError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 const ACCEPTED = { accepted: true, newEpoch: 2 };
@@ -91,13 +96,61 @@ describe('submitCommit answered 401', () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 
-  it('rethrows a renewal that got NO ANSWER as a transport failure - never a session verdict', async () => {
+  // The server ANSWERED 401, so the request did nothing: the renewal's failure is typed as that,
+  // never as "no answer", and it keeps what the renewal threw.
+  it.each([
+    ['a refresh nobody answered', new TransportFailureError(new TypeError('Failed to fetch'))],
+    ['a refresh answered 502', new RefreshFailedError(502)],
+  ])(
+    'types %s after a 401 as a refusal of this request - never a session verdict',
+    async (_n, failure) => {
+      const f = vi.fn().mockImplementation(async () => answer(401));
+      const refresh = vi.fn().mockRejectedValue(failure);
+      const err = await submit(api(f, refresh)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DeliveryRenewalFailedError);
+      expect(err).toBeInstanceOf(ApiRefusalError);
+      expect((err as DeliveryRenewalFailedError).status).toBe(401);
+      expect((err as DeliveryRenewalFailedError).renewalFailure).toBe(failure);
+      expect(isTransportFailure(err)).toBe(false);
+      expect(err).not.toBeInstanceOf(SessionExpiredError);
+      expect(f).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('never renews again a renewed token the guard refused: N requests, ONE refresh', async () => {
+    let current = 'stale';
     const f = vi.fn().mockImplementation(async () => answer(401));
-    const refresh = vi
-      .fn()
-      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
-    const err = await submit(api(f, refresh)).catch((e: unknown) => e);
-    expect(isTransportFailure(err)).toBe(true);
+    const refresh = vi.fn(async () => {
+      current = 'fresh';
+      return current;
+    });
+    const a = new MlsDeliveryApi({
+      historyUrl: 'https://delivery.test',
+      getToken: async () => current,
+      refreshToken: refresh,
+      fetchImpl: f as unknown as typeof fetch,
+    });
+    a.userId = 'user-a';
+    a.deviceId = 'web-a';
+    for (let i = 0; i < 5; i++) {
+      await expect(submit(a)).rejects.toBeInstanceOf(DeliveryRefusedRenewedTokenError);
+    }
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // The first request and its resend, then ONE request each - no renewal, no resend.
+    expect(f).toHaveBeenCalledTimes(2 + 4);
+  });
+
+  it('never resends a request as ANOTHER account than the one it was refused for', async () => {
+    const jwt = (sub: string) => `h.${btoa(JSON.stringify({ sub })).replace(/=+$/, '')}.s`;
+    const f = vi.fn().mockImplementation(async () => answer(401));
+    const a = new MlsDeliveryApi({
+      historyUrl: 'https://delivery.test',
+      getToken: async () => jwt('alice'),
+      refreshToken: async () => jwt('bob'),
+      fetchImpl: f as unknown as typeof fetch,
+    });
+    const err = await submit(a).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TokenAccountChangedError);
     expect(err).not.toBeInstanceOf(SessionExpiredError);
     expect(f).toHaveBeenCalledTimes(1);
   });
@@ -198,7 +251,7 @@ describe('the pending pull answered 401', () => {
     }
   });
 
-  it('a renewal nobody answered is thrown as a transport failure, never halved', async () => {
+  it('a renewal nobody answered is thrown as a typed refusal of this page, never halved', async () => {
     const f = vi.fn().mockImplementation(async () => answer(401));
     const refresh = vi
       .fn()
@@ -206,7 +259,7 @@ describe('the pending pull answered 401', () => {
     const err = await api(f, refresh)
       .pullPendingMessagesJson()
       .catch((e: unknown) => e);
-    expect(isTransportFailure(err)).toBe(true);
+    expect(err).toBeInstanceOf(DeliveryRenewalFailedError);
     expect(f).toHaveBeenCalledTimes(1);
   });
 });

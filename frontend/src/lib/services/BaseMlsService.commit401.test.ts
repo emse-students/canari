@@ -14,8 +14,12 @@ import {
   CommitOutcomeUnknownError,
   type PendingSubmissionRead,
 } from '$lib/mls-client/commitSubmission';
-import { DeliveryRefusedRenewedTokenError, MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
-import { SessionExpiredError } from '$lib/stores/auth';
+import {
+  DeliveryRefusedRenewedTokenError,
+  DeliveryRenewalFailedError,
+  MlsDeliveryApi,
+} from '$lib/mls-client/mlsDeliveryApi';
+import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
@@ -183,27 +187,33 @@ describe('runCommitTransaction - a commit answered 401', () => {
     expect(c.unresolvedGroups.has(G)).toBe(true);
   });
 
-  it('TOK-2: a renewal that gets no answer keeps the stage as UNKNOWN - a transport failure, never a session verdict', async () => {
-    const f = vi.fn().mockImplementation(async () => answer(401));
-    const refresh = vi
-      .fn()
-      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
-    const c = ctx(f, refresh);
-    const err = await run(c).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
-    expect(isTransportFailure(err)).toBe(true);
-    expect(err).not.toBeInstanceOf(SessionExpiredError);
-    expect(c.mergePendingCommit).not.toHaveBeenCalled();
-    expect(c.clearPendingCommit).not.toHaveBeenCalled();
-    expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
-    expect(c.unresolvedGroups.has(G)).toBe(true);
-
-    // The link comes back: the settle resubmits the same bytes once, and the commit merges ONCE.
-    refresh.mockReset().mockResolvedValue('fresh');
-    f.mockReset().mockResolvedValueOnce(answer(401)).mockResolvedValueOnce(answer(200, ACCEPTED));
-    await c.settleUnresolvedCommits([G]);
-    expect(commitCalls(f)).toHaveLength(2);
-    expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
-    expect(c.clearPendingCommit).not.toHaveBeenCalled();
-  });
+  // The server ANSWERED 401 before the gate, so the bytes never reached it, whatever the renewal
+  // then did: the stage is cleared at once, never resubmitted into the same 401 and kept as unknown.
+  it.each([
+    [
+      'TOK-2: a renewal nobody answered',
+      new TransportFailureError(new TypeError('Failed to fetch')),
+    ],
+    ['a renewal answered 502', new RefreshFailedError(502)],
+  ])(
+    '%s after a 401 refuses the commit definitively - the stage cleared, no resubmission, no logout',
+    async (_n, failure) => {
+      const f = vi.fn().mockImplementation(async () => answer(401));
+      const refresh = vi.fn().mockRejectedValue(failure);
+      const c = ctx(f, refresh);
+      const err = await run(c).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DeliveryRenewalFailedError);
+      expect((err as DeliveryRenewalFailedError).renewalFailure).toBe(failure);
+      expect(err).not.toBeInstanceOf(SessionExpiredError);
+      expect(commitCalls(f)).toHaveLength(1);
+      expect(c.mergePendingCommit).not.toHaveBeenCalled();
+      expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+      expect(c.unresolvedGroups.has(G)).toBe(false);
+      expect(
+        vi
+          .mocked(console.warn)
+          .mock.calls.some((call) => String(call[0]).includes('no answer to the commit'))
+      ).toBe(false);
+    }
+  );
 });

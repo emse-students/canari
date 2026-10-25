@@ -541,9 +541,21 @@ refresh while it is PENDING), else renew through `refresh()`; send the SAME requ
 each unread 401 body (`plugin-http` holds the connection until then). The renewal is BOUNDED by the
 request it serves - it is raced against the caller's signal, so a deadline (`trackedFetch`) ends the
 request at the deadline, as a `RequestDeadlineError`, while a renewal error that settles in time
-reaches the caller as itself. Whatever the renewal threw is rethrown as it came: a dead cookie
+reaches the caller as itself. What the renewal threw is rethrown as it came - a dead cookie
 (`SessionExpiredError`), a refresh answered 5xx (`RefreshFailedError`), a refresh that reached nobody
-(a transport failure, never a logout).
+(a transport failure, never a logout) - unless the caller types it (`renewalFailed`): the MLS delivery
+API turns the two that say only "no new token now" (`RefreshFailedError`, a transport failure) into
+`DeliveryRenewalFailedError`, a 401 refusal, because the server DID answer and the request did nothing.
+Read as "no answer", a commit used to be resubmitted into the same 401 and kept as unknown.
+
+Two more guards, both decided on durable state, never a clock:
+- **A renewed token the guard refused is never renewed again** (`RefusedRenewedToken`, the latest one
+  latched per delivery API, replaced by any other token). A later 401 on that same token answers
+  `DeliveryRefusedRenewedTokenError` at once: a guard refusing every renewed token would otherwise rotate
+  the session once per request.
+- **A request is never resent as another account.** When the refused token and the one to resend with
+  both decode to a `sub` and the two differ (a sign-in to another account landed in between), the
+  request is not sent again: `TokenAccountChangedError`, typed, not a logout.
 
 **What a 401 on the RENEWED token means is the caller's to say, because it depends on whose guard
 answered.** `apiFetch` and the media upload answer `SessionExpiredError`: core's guard IS the session
