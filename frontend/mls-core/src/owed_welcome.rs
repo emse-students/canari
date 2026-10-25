@@ -92,8 +92,9 @@ impl MlsManager {
         self.merge_pending_commit_for(group_id)?;
         // THE MERGE HAS HAPPENED, SO THE OBLIGATION IS RECORDED WHATEVER THE EXPORT SAYS: an error
         // here would leave a merged Add owing nothing. A tree that cannot be exported is recorded
-        // empty and the Welcome goes without one - the joiner then needs its own repair, which is
-        // what nothing owed would have cost too, and it is said at the level that accuses.
+        // empty and the Welcome goes without one: a joiner opens it from the tree the Welcome itself
+        // carries (`tests/owed_welcome.rs`, `a_welcome_opens_without_an_external_ratchet_tree`).
+        // Said at the level that accuses all the same - the export is not expected to fail.
         let ratchet_tree = self.export_ratchet_tree_for(group_id).unwrap_or_else(|e| {
             log::error!(
                 "merge_pending_commit_owing_welcome: {group_id}: the ratchet tree of the merged Add could not be exported ({e}) - the Welcome is owed without it"

@@ -252,3 +252,33 @@ fn an_older_welcome_answered_late_never_clears_the_newer_one() {
     alice.welcome_delivered(gid, "bob:dev1", &w2.welcome);
     assert!(alice.owed_welcomes().is_empty());
 }
+
+/// The no-tree fallback (`merge_pending_commit_owing_welcome` records an empty tree when its export
+/// fails, and the client then sends the Welcome without one) holds only if a joiner can open a
+/// Welcome with NO external ratchet tree. This pins that it can.
+#[test]
+fn a_welcome_opens_without_an_external_ratchet_tree() {
+    let gid = "g-no-tree";
+    let mut alice = make_device("alice", "dev1");
+    let mut bob = make_device("bob", "dev1");
+    alice.create_group(gid.to_string()).expect("create");
+    let kp = bob.generate_key_package().expect("kp");
+    let (staged, _) = alice
+        .add_members_recorded(gid, &[&kp], &["bob:dev1"], Vec::new())
+        .expect("stage");
+    alice
+        .merge_pending_commit_owing_welcome(gid, vec!["bob:dev1".to_string()])
+        .expect("merge");
+
+    assert_eq!(
+        bob.process_welcome(&staged.welcome, None)
+            .expect("joins with no tree"),
+        gid
+    );
+    assert_eq!(
+        bob.get_epoch(gid).expect("epoch"),
+        alice.get_epoch(gid).expect("epoch")
+    );
+    let frame = alice.send_message(gid, b"hello").expect("send");
+    assert!(bob.process_incoming_message(gid, &frame).is_ok());
+}

@@ -205,6 +205,7 @@ function ctx(
     'consumeOwedWelcome',
     'deliverOwedWelcomes',
     'sendWelcome',
+    'sendWelcomeConsuming',
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',
     'settleUnresolvedCommitFromLog',
@@ -1738,6 +1739,58 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
     scheduleOutboundMlsPersist.mockClear();
     await callerSends(c, result);
     expect(c.owed.size).toBe(0);
+    expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
+  });
+
+  it('the connection drain schedules ONE persist for a whole pass, however many it clears', async () => {
+    const owed: OwedState = new Map([
+      [
+        G,
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['u-b:d-b1', 'u-b:d-b2', 'u-c:d-c'],
+          },
+        ],
+      ],
+    ]);
+    const c = ctx(submitting(), { owed });
+    c.delivery.sendWelcome.mockRejectedValueOnce(new WelcomeTargetNotMemberError(G, 'u-b', 'd-b1'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scheduleOutboundMlsPersist.mockClear();
+    await c.settleUnresolvedCommits();
+    error.mockRestore();
+    expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(3);
+    expect(owed.size).toBe(0);
+    expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops an owed recipient that names no device WITHOUT claiming a server refusal', async () => {
+    const owed: OwedState = new Map([
+      [
+        G,
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['not-a-device'],
+          },
+        ],
+      ],
+    ]);
+    const c = ctx(submitting(), { owed });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scheduleOutboundMlsPersist.mockClear();
+    await c.settleUnresolvedCommits();
+    const lines = error.mock.calls.map(([l]) => String(l));
+    error.mockRestore();
+    expect(c.delivery.sendWelcome).not.toHaveBeenCalled();
+    expect(owed.size).toBe(0);
+    expect(lines.some((l) => l.includes('names no device'))).toBe(true);
+    expect(lines.some((l) => l.includes('REFUSED'))).toBe(false);
     expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
   });
 

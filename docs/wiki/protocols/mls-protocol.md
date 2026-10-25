@@ -1487,7 +1487,11 @@ so a group's record is a list, one entry per Add; a device admitted again is owe
 Welcome, and an older Welcome answered late clears nothing (a record of one bare entry, written by
 an older build, still reads - [legacy-compatibility](../legacy-compatibility.md)). The merge records
 the obligation even when the ratchet tree cannot be exported afterwards: the entry carries an empty
-tree, said at error level, and the Welcome goes without one - never a merged Add owing nothing.
+tree, said at error level, and the Welcome goes without one, which a joiner opens from the tree the
+Welcome itself carries (`a_welcome_opens_without_an_external_ratchet_tree`) - never a merged Add
+owing nothing. The connection drain clears every recipient of its pass and schedules ONE persist
+after it; a recipient that names no device is a defect of the record, dropped unsent and said as
+one, never reported as a server refusal.
 
 **The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
 and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
