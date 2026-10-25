@@ -149,7 +149,7 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
-  it('skips the pass, and accuses, on a pending row that carries neither fact', async () => {
+  it('skips the pass, and accuses, on a pending row that lacks a fact', async () => {
     // Every deployed server writes both since 2026-09-03: a row without them did not answer, which is
     // "could not be read" - never a wait for a Welcome, never a licence to serve itself.
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -163,7 +163,7 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(deps.mlsService.fetchPendingMessages).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('carries neither welcomeQueued nor addInFlight')
+      expect.stringContaining('lacks welcomeQueued or addInFlight')
     );
     expect(deps.log).toHaveBeenCalledWith(
       expect.stringContaining('membership status unreadable - skipping this round')
@@ -343,9 +343,16 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps, { welcomeHandled: true });
 
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-    expect(deps.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    // The seat is promoted here whichever path made the group held: when the engine held it and
+    // this service's list missed it, no Welcome ran and nothing else would end the pending row.
+    expect(deps.mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'self-device',
+      'user-a',
+      'g1',
+      'active'
+    );
     expect(deps.log).toHaveBeenCalledWith(
-      expect.stringContaining('a Welcome installed the group before the join took the lock')
+      expect.stringContaining('the group was already held when the join took the lock')
     );
   });
 

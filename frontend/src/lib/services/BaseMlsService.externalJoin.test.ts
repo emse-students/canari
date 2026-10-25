@@ -367,6 +367,24 @@ describe('BaseMlsService.externalJoin', () => {
     error.mockRestore();
   });
 
+  it('never reads a refusal naming ANOTHER held group as joined for this one', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.joinByExternalCommit.mockRejectedValue(new Error('GROUP_ALREADY_HELD: other-group'));
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'build_failed' });
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the served base is for another group')
+    );
+    error.mockRestore();
+  });
+
   it('gives up after exhausting the bound on a persistently busy commit lock', async () => {
     const ctx = makeCtx();
     // `concurrent_commit` is the ONE refusal the bound exists for: the base genuinely may move by

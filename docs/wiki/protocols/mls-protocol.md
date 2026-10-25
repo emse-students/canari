@@ -1720,7 +1720,18 @@ are safe:
   `BaseMlsService.externalJoin.test.ts`, "stands down ... while it waited for the lock").
 - **The external commit lands first.** It carries the same signature key as the leaf the second
   Welcome's Add wrote, and replaces that leaf in one commit (the admitted-seat case below); the late
-  Welcome then meets a group already held and is ignored as a redelivery.
+  Welcome then meets a group already held and is ignored as a redelivery. If Welcome #2 is ignored
+  (and ACKed) while our commit is built but not yet submitted, and the server then REJECTS that
+  commit, the group is dropped (an external commit cannot be cleared) and the join retries from a
+  fresh base, which already carries #2's leaf for our key: the next commit replaces it the same way,
+  so the race converges on one leaf without the Welcome.
+
+**Whichever way the group was already held, the recovery promotes the roster seat to `active`.** The
+engine's typed refusal can be reached with NO Welcome at all - the engine held the group and the
+service's list missed it (native, after a PIN recovery) - and then nothing else ends the `pending`
+row, which every member is served as a work item to Add a leaf already in the tree. After a Welcome
+the promotion is a second write of the same value. A refusal naming a DIFFERENT group than the one
+asked for is not joined: the served base is unusable for this group and the join reads `build_failed`.
 
 The other design - waiting for the spent Welcome's ACK before reading the row - was not taken: it
 needs a per-delivery acknowledgement barrier through the drain, to buy what the lock already

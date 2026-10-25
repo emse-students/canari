@@ -665,16 +665,32 @@ export async function requestReAdd(
     `[READD] ${groupId.slice(0, 8)}... externalJoin -> ${outcome.joined ? 'joined' : outcome.reason}`
   );
   if (outcome.joined && outcome.alreadyHeld) {
-    // A WELCOME INSTALLED THE GROUP WHILE THIS RECOVERY WAS ON ITS WAY, and nothing was built: the
-    // join read the group as held under the MLS lock the Welcome took (review of #2466). The path
-    // that installed it owns everything after - the roster seat, the row, the history - so this
-    // seam only drops its own bookkeeping, exactly as it does on finding the group held up front.
+    // THE GROUP WAS ALREADY HELD WHEN THE JOIN TOOK THE MLS LOCK, and nothing was built (review of
+    // #2466). Usually a Welcome installed it while this recovery was on its way; or the engine held
+    // it all along and this service's list missed it (the engine's typed refusal - a stale list
+    // after a PIN recovery on native), in which case NO Welcome ran and nothing else will touch the
+    // roster seat.
+    //
+    // SO THE SEAT IS PROMOTED HERE, whichever it was - the deterministic end of the row. Our leaf is
+    // in the tree we hold, so `active` is the truth, and a `pending` row left behind is served to
+    // every member as a work item: the next one online would Add a leaf already in the tree and its
+    // duplicate-leaf repair would kick the live one (the same reason the external-join branch below
+    // promotes). After a Welcome it is a second write of the same value, which the server takes as
+    // a no-op. Logged rather than thrown, as below.
     ownKeyPackageLogged.delete(groupId);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId);
     deps.log(
-      `[READD] ${groupId.slice(0, 8)}... a Welcome installed the group before the join took the lock - nothing built, recovery done`
+      `[READD] ${groupId.slice(0, 8)}... the group was already held when the join took the lock - nothing built, roster seat promoted, recovery done`
     );
+    await deps.mlsService
+      .updateInvitationStatus(deps.mlsService.getDeviceId(), deps.userId, groupId, 'active')
+      .catch((e) =>
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... held, but the roster seat is still pending: ` +
+            `${String(e).slice(0, 120)} - a member may try to Add a leaf already in the tree`
+        )
+      );
     return;
   }
   if (outcome.joined) {
@@ -880,7 +896,7 @@ async function readWelcomeOwed(
     if (reading === null) {
       // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
       console.error(
-        `[READD] ${groupId.slice(0, 8)}... this device's pending row carries neither welcomeQueued nor addInFlight - the server did not answer the question it always answers`
+        `[READD] ${groupId.slice(0, 8)}... this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
       );
       return null;
     }

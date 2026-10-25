@@ -403,7 +403,7 @@ async function readWelcomeOwedForThisDevice(
     if (reading === null) {
       // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
       console.error(
-        `[GRAINE] ${scopeLabel(scope)}: this device's pending row carries neither welcomeQueued nor addInFlight - the server did not answer the question it always answers`
+        `[GRAINE] ${scopeLabel(scope)}: this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
       );
     }
     return reading;

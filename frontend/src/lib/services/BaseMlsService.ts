@@ -6712,11 +6712,22 @@ export abstract class BaseMlsService implements IMlsService {
           // repository defines) is the same answer as the read above, from the side that cannot be
           // wrong - so it is joined, and the line ACCUSES: reaching it means this service's list of
           // held groups missed one the engine holds, and the read above trusted that list.
-          if (String(e).includes('GROUP_ALREADY_HELD:')) {
+          //
+          // ONLY FOR THE GROUP ASKED FOR. The refusal names the group the served GroupInfo is for,
+          // and a base naming ANOTHER group the engine holds says nothing about this one: that is a
+          // base this join cannot use, so it fails the build like any other unusable base.
+          const held = /GROUP_ALREADY_HELD: (\S+)/.exec(String(e))?.[1];
+          if (held === groupId) {
             console.error(
               `[MLS] externalJoin ${short}... refused by the engine: the group is already held, but this service's list of held groups did not say so - joined, nothing built`
             );
             return { joined: true, alreadyHeld: true };
+          }
+          if (held !== undefined) {
+            console.error(
+              `[MLS] externalJoin ${short}... the served base is for another group (${held.slice(0, 8)}...), one this device holds - not joined`
+            );
+            return { joined: false, reason: 'build_failed' };
           }
           console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
           return { joined: false, reason: 'build_failed' };
