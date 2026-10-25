@@ -1,4 +1,5 @@
 import type { IMlsService } from './IMlsService';
+import { GatewayOpenAbandonedError } from './gatewaySocketOpen';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
@@ -144,6 +145,8 @@ export async function openGatewayConnection(
     return false;
   }
 
+  /** Set when the open succeeded and the reopen a rotation queued behind it is what failed. */
+  let reopenFailed = false;
   try {
     if (started) {
       // The failure is RE-THROWN rather than returned, so both routes reach the one catch below
@@ -160,7 +163,12 @@ export async function openGatewayConnection(
     // state load, and that load can rotate the device identity; the rotation queues a reopen under
     // the new id. Nothing below runs - not the pending fetch, not the KeyPackage round - until the
     // socket carries the id it will keep, and a failed reopen fails this connection like any open.
-    await mlsService.gatewaySocketSettled();
+    try {
+      await mlsService.gatewaySocketSettled();
+    } catch (settleErr) {
+      reopenFailed = true;
+      throw settleErr;
+    }
     setIsWsConnected(true);
     setReconnectAttempts(0);
     log('Connected to network!');
@@ -202,6 +210,13 @@ export async function openGatewayConnection(
       log('Gateway connection stopped - a sign-out is in progress.');
       throw wsErr;
     }
+    // A PAUSE ABANDONED THE OPEN (backgrounded, or this login released by a sign-out): nothing was
+    // refused, so nothing accuses and nothing is scheduled - the resume opens the next socket.
+    if (wsErr instanceof GatewayOpenAbandonedError) {
+      setIsWsConnected(false);
+      log(`Gateway connection abandoned - ${wsErr.reason}; the next resume opens it.`);
+      return false;
+    }
     const msg = String(wsErr);
     setIsWsConnected(false);
     log(`Gateway inaccessible: ${msg}`);
@@ -209,6 +224,14 @@ export async function openGatewayConnection(
     // Session expired is a permanent auth failure - re-throw so callers can
     // stop retrying instead of scheduling backoff reconnects.
     if (wsErr instanceof Error && wsErr.name === 'SessionExpiredError') throw wsErr;
+    // THE REOPEN AFTER A ROTATION FAILED ON A HANDED-IN HANDSHAKE - the login's. No disconnect
+    // handler was registered to hear it (that happens above, after the settle), and the login has
+    // no ladder of its own, so the reconnect is scheduled HERE rather than left to the watchdog. The
+    // reconnect path needs none: its own failure arms the next rung.
+    if (reopenFailed && started) {
+      log('[WS] the socket reopened under the rotated device id failed - reconnect scheduled.');
+      scheduleReconnect();
+    }
     return false;
   }
 }

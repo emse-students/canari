@@ -172,20 +172,35 @@ but the socket was deaf to the device it belonged to.
 **The fix is at the rotation, one implementation for web and Tauri (`BaseMlsService`):**
 
 - `connect` is concrete on the base class and QUEUES every open; the platform half is
-  `openGatewaySocket(deviceId, token)`, handed the id recorded for that socket. Two opens in flight
-  together used to let the first one's 15 s deadline close the second socket.
+  `openGatewaySocket(open)`, handed the id recorded for that socket and the token its caller fetched
+  - so the web open has no await before `new WebSocket`, and a refused refresh is the caller's
+  `SessionExpiredError`, never an unauthenticated open. Two opens in flight together used to let the
+  first one's 15 s deadline close the second socket.
 - `rotateDeviceIdentity`, once the new id is on disk, queues a reopen: behind any open in flight, and
-  it replaces the socket only if one is open under another id. Without a socket it opens nothing - the
-  next open reads the new id.
+  it replaces the socket only if one is open under another id - sending `disconnect` on the old one
+  first, as a pause does. Without a socket it opens nothing - the next open reads the new id.
+- **A pause FENCES the queue.** `pauseSocket` (backgrounding, a sign-out releasing a login) advances a
+  generation that every queued step and every platform open re-reads after each await (the token
+  fetch, the release of the previous native socket, the native connect); a step or an open that
+  started before it assigns no socket, and a native socket arriving for an abandoned open is
+  released. An open still CONNECTING is settled at once as `GatewayOpenAbandonedError` through a kept
+  handle, so the queue never waits on the 15 s deadline. `openGatewayConnection` reads that error as
+  no failure: nothing accused, nothing scheduled - the resume opens the next socket.
 - `openGatewayConnection` waits for `gatewaySocketSettled()` before the post-connect half, so the
-  pending fetch and the KeyPackage round run on the socket that will carry this device, and a failed
-  reopen fails the connection like any open (a `SessionExpiredError` stays one).
+  pending fetch and the KeyPackage round run on the socket that will carry this device. A failed
+  reopen fails the connection like any open; on the login path, which has no ladder and whose
+  disconnect handler is registered only after the settle, the reconnect is scheduled there and then.
+  A reopen failing after the session is up is reported on the disconnect seam.
+- The revoked-KeyPackage round waits for the reopen before it republishes - the publication is what
+  makes the new id addressable - and then reads the new id's pending queue once.
 - An abandoned id is deleted only once no socket of this document carries it
-  (`deleteAbandonedDevice`); otherwise it stays recorded for the next published round.
+  (`deleteAbandonedDevice`); otherwise it stays recorded for the next published round, in one line.
+- A login stopped by a sign-out releases its socket after the queued reopen too, not at the handshake.
 
 **The overlap is kept.** A login that does not rotate pays nothing; one that rotates pays a second
-handshake. The same reopen covers the rotation a revoked KeyPackage round triggers after the connect.
-Behaviour is in `BaseMlsService.socketRotation.test.ts` and `startGatewayHandshake.test.ts`.
+handshake. Behaviour is in `BaseMlsService.socketRotation.test.ts`,
+`TauriMlsService.socketRotation.test.ts`, `startGatewayHandshake.test.ts` and
+`signOutDuringLogin.test.ts`.
 
 The order is asserted by `session/startupOrder.test.ts`, deliberately a SOURCE test: the property is
 an order between two statements inside a function that takes a live MLS client, a storage backend, a

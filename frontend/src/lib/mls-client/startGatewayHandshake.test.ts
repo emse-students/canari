@@ -31,6 +31,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import { startGatewayHandshake, openGatewayConnection } from './initializeConnection';
 import type { ConnectionDeps } from './initializeConnection';
 import type { IMlsService } from './IMlsService';
+import { GatewayOpenAbandonedError } from './gatewaySocketOpen';
 
 /** Only the seams these two functions touch; everything else would be scenery. */
 const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
@@ -190,6 +191,32 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     await expect(openGatewayConnection(deps, startGatewayHandshake(deps))).resolves.toBe(false);
     expect(setIsWsConnected).toHaveBeenCalledWith(false);
     expect(mlsService.fetchPendingMessages).not.toHaveBeenCalled();
+    // No disconnect handler heard it (it is registered after the settle) and the login has no ladder
+    // of its own: the reconnect is scheduled here, not left to the watchdog.
+    expect(deps.scheduleReconnect).toHaveBeenCalledOnce();
+  });
+
+  it('schedules nothing for a reopen failure on the reconnect path - its own ladder retries', async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const { deps, mlsService } = makeDeps(connect);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (mlsService as unknown as { gatewaySocketSettled: () => Promise<void> }).gatewaySocketSettled =
+      vi.fn().mockRejectedValue(new Error('reopen refused'));
+
+    await expect(openGatewayConnection(deps)).resolves.toBe(false);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+  });
+
+  it('treats an open a pause abandoned as no failure: nothing accused, nothing scheduled', async () => {
+    const connect = vi.fn().mockRejectedValue(new GatewayOpenAbandonedError('paused'));
+    const { deps, setIsWsConnected } = makeDeps(connect);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleError.mockClear();
+
+    await expect(openGatewayConnection(deps, startGatewayHandshake(deps))).resolves.toBe(false);
+    expect(setIsWsConnected).toHaveBeenCalledWith(false);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it('opens one itself when handed nothing, which is what the reconnect path does', async () => {

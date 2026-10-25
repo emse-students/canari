@@ -875,8 +875,12 @@ export interface IMlsService {
   ): Promise<Uint8Array>;
 
   // Networking
-  /** Opens a WebSocket connection to the chat gateway. Token is used when the cookie is not forwarded (Tauri, proxy, ITP). Falls back to internal getToken() if omitted. */
-  connect(token?: string): Promise<void>;
+  /**
+   * Opens a WebSocket connection to the chat gateway under this device's current id, queued behind
+   * any open in flight. The caller fetches the token, so a refused refresh is the caller's
+   * `SessionExpiredError` and never an unauthenticated open (Tauri, proxies and ITP need it in the URL).
+   */
+  connect(token: string): Promise<void>;
   /**
    * Resolves once every socket open queued so far has run - including the reopen a device identity
    * rotation queues - and rejects with the last one's own failure. The post-connect half of a
@@ -1582,6 +1586,10 @@ export interface IMlsService {
    * on a Mi 9T, 2026-10-01: that reconnection pulled the incoming row a reply had just answered from
    * the shade, and its banner came back 2.5 s after the reply. A paused socket has no watchdog because
    * a paused socket does not exist; the next foreground transition opens a new one.
+   *
+   * IT ALSO FENCES THE SOCKET QUEUE: an open still in flight is settled at once as abandoned
+   * (`GatewayOpenAbandonedError`), and no step queued before the pause - the reopen a device identity
+   * rotation asks for included - assigns a socket after it. Only the next `connect` opens one.
    */
   pauseSocket(): void;
 
