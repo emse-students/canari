@@ -223,6 +223,12 @@ export function commitLines(group, since) {
   return srvLines('chat-delivery-service', since).filter((l) => /\[COMMIT\]/.test(l) && l.includes(`group=${group}`));
 }
 
+/** The delivery service's `[ADD_LOCK]` lines for one group since an instant - who asked, who got it. */
+export function lockLines(group, since) {
+  if (!UUID.test(group)) throw new Error(`lockLines: '${group}' is not a group id`);
+  return srvLines('chat-delivery-service', since).filter((l) => /\[ADD_LOCK\]/.test(l) && l.includes(`group=${group}`));
+}
+
 /** The commit POST, and only it: `GET /api/mls/commits/:groupId` shares the prefix, so the method is named. */
 export const COMMIT_POST = { match: '/api/mls/commit', method: 'POST' };
 

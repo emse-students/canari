@@ -25,7 +25,7 @@ import { send } from '../chat.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { addMembers, removeMember } from './addmember.mjs';
 import { checkInvariant } from '../invariant.mjs';
-import { CC_ROWS, doubleRemoveOwn, parseCommitLines, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
+import { CC_ROWS, doubleRemoveOwn, lockRaceLoser, lockRaceOwn, parseCommitLines, parseLockLines, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
 import {
   armLeafRefresh,
   assertRowOwns,
@@ -33,6 +33,7 @@ import {
   awaitServer,
   closeSeats,
   commitLines,
+  lockLines,
   deviceIdOf,
   displayNameOf,
   leafLedgerEntry,
@@ -46,7 +47,7 @@ import {
 } from '../mlsrow.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
-import { GROUP_CREATION_NARRATION } from '../watch.mjs';
+import { ADD_LOCK_REFUSED_NARRATION, GROUP_CREATION_NARRATION } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const n = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -121,16 +122,52 @@ async function play() {
   }
   const race = await raceCommits(seats, actions);
 
+  // CC-1 MEETS THE ADD LOCK, NOT THE COMMIT GATE (`lockRaceOwn`): the loser is named from the
+  // server's `[ADD_LOCK]` lines, its never-fired hold is the expected consequence rather than a
+  // vacuous fault, and its joiner is not awaited - the lock cancelled that Add. No contention
+  // measured means nothing was asked: INCONCLUSIVE, and the invariant is not run over it.
+  let lockLoser = null;
+  if (spec.lockRace) {
+    const racers = {};
+    for (const d of Object.keys(spec.race)) racers[d] = await deviceIdOf(cx(d), user[d]);
+    const locks = parseLockLines(lockLines(group.id, raceSince), group.id);
+    lockLoser = lockRaceLoser(locks, racers);
+    if (!lockLoser) {
+      return {
+        inconclusive: [`no racer was refused the add lock (${locks.map((l) => `${l.acquired ? 'got' : 'refused'}`).join(',') || 'no lock line'}) - the race did not contend`],
+        detail: { group: group.id, name: group.name, fromEpoch, releasedAt: race.releasedAt, locks: locks.map((l) => l.acquired) },
+      };
+    }
+    console.log(`[${id}] ${lockLoser} was refused the add lock - its Add is cancelled, as the product guards it`);
+  }
+  const loserJoiner = lockLoser ? spec.race[lockLoser].add : null;
+
   // A JOINER MUST LIST THE GROUP BEFORE THE INVARIANT CAN SEND TO IT; one that never does is the
   // row's finding (its Add was lost), judged by the roster below - the invariant then names it too.
-  const joiners = Object.values(spec.race).map((a) => a.add).filter(Boolean);
-  for (const d of joiners) await awaitListed(cx(d), group.name, 60_000);
+  const joiners = Object.values(spec.race).map((a) => a.add).filter((d) => d && d !== loserJoiner);
+  //
+  // AND IT IS LEFT OUT OF THE INVARIANT'S MEMBERS, as a non-member it is. The probe opens every
+  // member's conversation and THROWS on one that is not listed, which turned CC-4's lost Add into an
+  // ERROR with no verdict on the row's own question (2026-10-25: W2's Add refused `concurrent_commit`,
+  // never rebuilt). Excluded, the roster assertion fails and the row reads FAIL, with the evidence.
+  const unlisted = [];
+  for (const d of joiners) if ((await awaitListed(cx(d), group.name, 60_000)) === null) unlisted.push(d);
+  if (unlisted.length) console.log(`[${id}] ${unlisted.join(', ')} never listed ${group.name} - its Add is judged lost by the roster`);
   await awaitServer(group.id, (v) => v.activeEpoch > fromEpoch, 30_000);
+
+  // CC-4: A REFRESH THAT LOST IS ASKED AGAIN AT W1'S NEXT SEND, and that send must be the ROW'S, not
+  // the invariant's. Left to the invariant, the retry committed while the probe was reading epochs:
+  // every client read 3 a few ms before the commit landed and the server, read last, said 4 - a FAIL
+  // of the instrument (2026-10-25). So the row sends once more and waits for the second commit.
+  if (id === 'CC-4' && unlisted.length === 0) {
+    await send(cx('W1'), `${id} refresh retry [${rowMessageMark(id, 'R')}]`);
+    await awaitServer(group.id, (v) => v.activeEpoch >= fromEpoch + 2, 30_000);
+  }
 
   const invariant = await checkInvariant({
     group: group.id,
     targets: seats.targets,
-    members: spec.members,
+    members: spec.members.filter((d) => d !== loserJoiner && !unlisted.includes(d)),
     conversation: group.name,
     fromEpoch,
     since,
@@ -143,7 +180,10 @@ async function play() {
   const removedSeats = [...new Set(Object.values(spec.race).map((a) => a.remove).filter(Boolean))];
   let own;
   let ledgerAfter = null;
-  if (id === 'CC-3') own = doubleRemoveOwn({ fromEpoch, view, parsed, removed: user[removedSeats[0]], outcomes: race.outcomes });
+  if (lockLoser) {
+    const winner = Object.keys(spec.race).find((d) => d !== lockLoser);
+    own = lockRaceOwn({ fromEpoch, view, parsed, winnerAdded: user[spec.race[winner].add], loserAdded: user[loserJoiner], outcomes: race.outcomes, winner });
+  } else if (id === 'CC-3') own = doubleRemoveOwn({ fromEpoch, view, parsed, removed: user[removedSeats[0]], outcomes: race.outcomes });
   else if (id === 'CC-4') {
     ledgerAfter = await leafLedgerEntry(cx('W1'), user.W1, refresher, group.id);
     own = refreshRaceOwn({ fromEpoch, view, parsed, added: added[0], armed, ledgerAfter, outcomes: race.outcomes });
@@ -152,8 +192,11 @@ async function play() {
   return {
     own,
     invariant,
-    vacuousFaults: race.vacuous,
-    forgiveLogs: { W1: GROUP_CREATION_NARRATION },
+    // THE LOCK LOSER'S HOLD NEVER FIRES BY CONSTRUCTION - it built no commit - so it is not vacuous.
+    vacuousFaults: race.vacuous.filter((v) => v.device !== lockLoser),
+    forgiveLogs: lockLoser
+      ? { W1: GROUP_CREATION_NARRATION, [lockLoser]: [...(lockLoser === 'W1' ? GROUP_CREATION_NARRATION : []), ...ADD_LOCK_REFUSED_NARRATION] }
+      : { W1: GROUP_CREATION_NARRATION },
     detail: {
       group: group.id,
       name: group.name,
@@ -163,6 +206,8 @@ async function play() {
       refusalCodes: refusalCodes(parsed),
       faultRecords: race.records,
       outcomes: race.outcomes,
+      ...(lockLoser ? { lockLoser } : {}),
+      ...(unlisted.length ? { unlisted } : {}),
       ...(armed ? { armedAt: armed.at, ledgerAfter } : {}),
     },
   };
@@ -171,7 +216,11 @@ async function play() {
 try {
   seats = await openSeats(spec.devices, id);
   const out = await play();
-  const { verdict, failures } = composeVerdict({
+  // A lock race that did not contend proves nothing either way, and the invariant is NOT read on
+  // it: that is the verdict the coordinator fixed for CC-1 (2026-10-25), never a PASS by default.
+  const { verdict, failures } = out.inconclusive
+    ? { verdict: 'INCONCLUSIVE', failures: out.inconclusive }
+    : composeVerdict({
     own: out.own ?? [],
     invariant: out.invariant ?? null,
     vacuousFaults: out.vacuousFaults ?? [],

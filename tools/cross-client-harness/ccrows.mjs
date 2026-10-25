@@ -20,11 +20,14 @@ import { commitsSince } from './rowkit.mjs';
  * `members` are the seats that must hold the group at the end (the invariant's members).
  */
 export const CC_ROWS = {
+  // `members` is the end state when NEITHER Add is refused; CC-1's runner drops the loser's joiner
+  // (`lockRaceOwn`), whose Add the lock cancelled.
   'CC-1': {
     devices: ['W1', 'W2', 'W4', 'W5'],
     setup: ['W2'],
     race: { W1: { add: 'W4' }, W2: { add: 'W5' } },
     members: ['W1', 'W2', 'W4', 'W5'],
+    lockRace: true,
   },
   'CC-2': {
     devices: ['W1', 'W2', 'W4', 'W5'],
@@ -77,6 +80,70 @@ export function parseCommitLines(lines) {
   return { accepts, rejects, duplicates };
 }
 
+/**
+ * The `[ADD_LOCK]` decisions among server lines, in order: which device asked for a group's add lock
+ * and whether it got it (`locks.controller.ts`).
+ *
+ * @param {string[]} lines delivery-service lines
+ * @param {string} group the group id the lines must name
+ * @returns {{device: string, acquired: boolean}[]}
+ */
+export function parseLockLines(lines, group) {
+  const out = [];
+  for (const l of lines ?? []) {
+    const m = /\[ADD_LOCK\] group=(\S+) owner=[^:\s]+:(\S+) acquired=(true|false)\b/.exec(l);
+    if (m && m[1] === group) out.push({ device: m[2], acquired: m[3] === 'true' });
+  }
+  return out;
+}
+
+/**
+ * CC-1 (redefined 2026-10-25): TWO BULK ADDS AT ONCE MEET THE ADD LOCK, NOT THE COMMIT GATE.
+ *
+ * The Add takes the group's add lock BEFORE it builds a commit (`groupCreation.ts`), and a busy lock
+ * cancels it up front (`notAdded('add-lock-busy')`). So two concurrent Adds never reach the same
+ * epoch: the first holds the lock while its commit is held by the race, the second is refused at
+ * the LOCK and commits nothing. Measured on the first live draw: W2 `acquired=true`, W1
+ * `acquired=false` one ms later, and W1's hold never fired. The plan's question is unchanged - one
+ * winner, one typed refusal, no Add half-done - and this is where the product answers it.
+ *
+ * NOT ARMED IS NOT AN ANSWER: a draw in which no racer was refused the lock measured no contention,
+ * and {@link lockRaceLoser} returns null for it - the runner records INCONCLUSIVE.
+ *
+ * @param {{device: string, acquired: boolean}[]} locks `parseLockLines` since the release
+ * @param {Record<string, string>} racers seat -> its device id
+ * @returns {string|null} the seat refused the lock, when exactly one racer was and one was not
+ */
+export function lockRaceLoser(locks, racers) {
+  const seatOf = (device) => Object.keys(racers).find((s) => racers[s] === device) ?? null;
+  const refused = [...new Set(locks.filter((l) => !l.acquired).map((l) => seatOf(l.device)).filter(Boolean))];
+  const granted = [...new Set(locks.filter((l) => l.acquired).map((l) => seatOf(l.device)).filter(Boolean))];
+  if (refused.length !== 1 || granted.length < 1 || granted.includes(refused[0])) return null;
+  return refused[0];
+}
+
+/**
+ * CC-1's own judgement, once {@link lockRaceLoser} named a loser.
+ *
+ * @param {object} p
+ * @param {number} p.fromEpoch the server's epoch when the race was released
+ * @param {object} p.view the server's view after (`serverView`)
+ * @param {ReturnType<typeof parseCommitLines>} p.parsed the gate's decisions since the release
+ * @param {string} p.winnerAdded the user the lock holder added
+ * @param {string} p.loserAdded the user the refused Add named
+ * @param {object} p.outcomes `raceCommits` outcomes
+ * @param {string} p.winner the seat that held the lock
+ */
+export function lockRaceOwn({ fromEpoch, view, parsed, winnerAdded, loserAdded, outcomes, winner }) {
+  const out = gesturesEnded({ [winner]: outcomes?.[winner] ?? { ok: false, error: 'no outcome' } });
+  out.push({ what: `exactly ONE commit accepted since the release, the lock holder's (${parsed.accepts.length})`, ok: parsed.accepts.length === 1 });
+  out.push({ what: `no commit refused - the loser built none (${refusalCodes(parsed).join(',') || 'none'})`, ok: parsed.rejects.length === 0 });
+  out.push({ what: `the active epoch moved by exactly one (${fromEpoch} -> ${view.activeEpoch})`, ok: view.activeEpoch === fromEpoch + 1 });
+  out.push({ what: `${winnerAdded.slice(0, 8)} added: on the roster, admitted, with an active seat`, ok: onRoster(view, winnerAdded) && activeSeats(view, winnerAdded).length > 0 });
+  out.push({ what: `${loserAdded.slice(0, 8)} NOT added: off the roster, no seat (the refused Add left nothing half-done)`, ok: !onRoster(view, loserAdded) && activeSeats(view, loserAdded).length === 0 });
+  return out;
+}
+
 const lower = (s) => String(s).toLowerCase();
 /** Whether `user` is on the server's roster and admitted (not awaiting admission). */
 export const onRoster = (view, user) => (view.roster ?? []).some((r) => lower(r.userId) === lower(user) && r.awaitingAdmission !== true);
@@ -118,7 +185,7 @@ export const gesturesEnded = (outcomes) =>
   Object.entries(outcomes ?? {}).map(([d, o]) => ({ what: `${d}'s gesture completed${o.ok ? '' : ` (${o.error})`}`, ok: !!o.ok }));
 
 /**
- * CC-1 and CC-2: two commits at one epoch, one refused and REBUILT on the next.
+ * CC-2: two commits at one epoch, one refused and REBUILT on the next (CC-1 meets the add lock first - {@link lockRaceOwn}).
  *
  * @param {object} p
  * @param {number} p.fromEpoch the server's epoch when the race was released
@@ -160,7 +227,12 @@ export function doubleRemoveOwn({ fromEpoch, view, parsed, removed, outcomes }) 
 
 /**
  * CC-4: a due leaf refresh races a member's Add. Both land in some order (a refresh that loses is
- * asked again at the next send - the invariant's - and is not rebuilt in place), no Add is lost.
+ * asked again at the next send, and is not rebuilt in place), no Add is lost.
+ *
+ * THE RUNNER OWNS THAT NEXT SEND (2026-10-25). The first live draw left it to the invariant, whose
+ * own send then fired the deferred refresh WHILE the invariant was reading epochs - a mid-flight
+ * read, not a fork. `archive/cc.mjs` now sends a retry trigger itself and waits for the server's
+ * epoch to reach `fromEpoch + 2` before the invariant starts.
  *
  * @param {object} p
  * @param {{at: number}} p.armed the ledger entry as armed (backdated)

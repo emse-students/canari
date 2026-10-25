@@ -999,6 +999,11 @@ const NOTABLE = [
   // deciding it is out of sync (WP-FALSELOSS-2). It never breaks `clean` - a real diff is the
   // mechanism doing its job - but it is never routine either.
   /^\[HISTORY_REQ\] \S+\.\.\. diff with \S+: \d+ to send, \d+ to pull( \(identical stores\))?$/,
+  // THE 2b DECISION, PER ADDRESSED ANSWER (`historyEntitlement.ts`, 1.4.x): what an answer to one
+  // reader withheld and kept. Read on CC-2..4 (2026-10-25), every member answering a newcomer writes
+  // it. NOTABLE, not benign: `kept 0` to a long-standing member would be the finding, and the counts
+  // travel with any dirty row that needs them. The other spellings of the tag stay unclassified.
+  /^\[HISTORY_ENTITLEMENT\] [0-9a-f]{8}… - answer addressed to [0-9a-f]{8}, filtered on .+: withheld \d+, \d+ undated within \d+ min of one, \d+ undatable; kept \d+$/,
   // THE FOUR WAYS THE ANSWER ENDS WITHOUT SENDING ANYTHING, classified from the SITE and all at once.
   // `actions.ts` writes eight `[HISTORY_REQ]` spellings and exactly two of them had a rule - the two
   // above - so the campaign was meeting the other six one run at a time and paying a triage for each.
@@ -2265,6 +2270,16 @@ export const PAGE_BOOT_NARRATION = [
 export const GROUP_CREATION_NARRATION = [
   /^\[blocks\.isBlockedWith\]/,
   /^\[SYNC\] bulk\.addedDeviceIds: /,
+];
+
+/**
+ * AN ADD CANCELLED BECAUSE ANOTHER DEVICE HOLDS THE GROUP'S ADD LOCK (`groupCreation.ts`,
+ * `notAdded('add-lock-busy')`) - forgiven per row, on the seat that lost CC-1's lock race and
+ * nowhere else. Anywhere else an Add the lock cancelled is a lost gesture and stays dirt.
+ */
+export const ADD_LOCK_REFUSED_NARRATION = [
+  /^\[WARN\] Add-lock busy for \S+ - invite cancelled \(another device is in progress\)\.$/,
+  /^\[SYNC\] Add-lock busy for \S+, aborting to avoid concurrent commits$/,
 ];
 
 /**
