@@ -25,6 +25,7 @@ import { APP_TAB, evaluate, paneOccurrences, send } from '../chat.mjs';
 import { reloadAndWait } from '../cdp.mjs';
 import {
   BG_WELCOME,
+  DEVICE_ID_NOW,
   DEV_ROWS,
   appearances,
   bgAnswered,
@@ -36,9 +37,11 @@ import {
   offlineRevokeOwn,
   originalArrivalOwn,
   raceEnrolOwn,
+  reenrolledDevice,
   revokedOwn,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
+import { recordCreated } from '../campaign.mjs';
 import { srvLines } from '../estate.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
@@ -166,6 +169,19 @@ const seatGoneWithin = (groupId, deviceId, timeoutMs) => within(() => deviceSeat
 /** Whether the client's own console says it was revoked and reset (`healrevoke.mjs` `classifyWipe` reads the same lines). */
 const toldRevoked = (cx) => consoleLines(cx).some((l) => /\[SECURITY\] This device was revoked by its owner|\[RESET\] done|\[INIT\] Login failed \(device_revoked\)/.test(l));
 
+/**
+ * The `{ userId, deviceId }` a seat's storage names, or `null`. A read the page could not answer (it
+ * is mid-reload after a wipe) is `null` and logged: it records no debris, the safe direction.
+ */
+async function seatDeviceId(cx) {
+  try {
+    return JSON.parse(await evaluate(cx, DEVICE_ID_NOW));
+  } catch (e) {
+    console.log(`[${rowId}] the seat's device id could not be read (${String(e).slice(0, 120)}) - taken as none`);
+    return null;
+  }
+}
+
 /** How many times `text` is on screen right now. */
 const onScreen = (cx, text) => evaluate(cx, `(document.body.innerText.split(${JSON.stringify(text)}).length - 1)`).then(Number);
 
@@ -228,6 +244,9 @@ const ACTIONS = {
     if (!minted.enrolled) return { premise: [`W3 did not enrol: ${minted.refused ?? 'not enrolled'}`], detail: { minted } };
     const seatedMs = await seatActiveWithin(c.group.id, minted.deviceId, 120_000);
     if (seatedMs === null) return { premise: ['W3 was never seated in the group, so there is nothing to revoke'], detail: { minted } };
+    // WHOSE DEVICE THE SEAT IS, from its own storage before anything is revoked: the account the
+    // return read below is compared against (`reenrolledDevice`).
+    const enrolledAs = await seatDeviceId(W3.cx);
     let cut = null;
     if (spec.revoke === 'offline') cut = await cutHard(W3.cx);
     const revokedAt = now();
@@ -238,13 +257,27 @@ const ACTIONS = {
     if (cut) await cut.restore();
     const toldMs = await within(() => toldRevoked(W3.cx), 90_000);
     const listedAfter = (await awaitListed(W3.cx, c.group.name, 5_000)) !== null;
-    const own = spec.revoke === 'offline' ? offlineRevokeOwn({ seatGoneMs, toldMs, listedAfter, cutHeld }) : revokedOwn({ seatGoneMs, toldMs, listedAfter });
+    // A REVOKED SEAT THAT CAME BACK AS A NEW DEVICE (DEV-3 on alpha.3): the id its storage names now
+    // is this row's debris, recorded so the ledger lets a later purge remove it - and only that id.
+    const reenrolled = reenrolledDevice({
+      mintedId: minted.deviceId,
+      now: await seatDeviceId(W3.cx),
+      ownerId: enrolledAs?.userId ?? null,
+    });
+    if (reenrolled) {
+      recordCreated({ kind: 'device', id: reenrolled, by: 'devrows-reenrolled' });
+      console.log(`[${rowId}] the revoked seat re-enrolled as ${reenrolled.slice(-13)} - recorded as this row's debris`);
+    }
+    const own = [
+      ...(spec.revoke === 'offline' ? offlineRevokeOwn({ seatGoneMs, toldMs, listedAfter, cutHeld }) : revokedOwn({ seatGoneMs, toldMs, listedAfter })),
+      { what: `the revoked device did not re-enrol under a fresh id (${reenrolled ? `RE-ENROLLED as ${reenrolled.slice(-13)}` : 'none'})`, ok: !reenrolled },
+    ];
     return {
       members: ['W1', 'W2'],
       revoked: ['W3'],
       offline: cut ? ['W3'] : [],
       minted: { W3: minted },
-      detail: { minted, revokedAt, panel, seatedMs, socketsClosed: cut?.socketsClosed ?? null },
+      detail: { minted, revokedAt, panel, seatedMs, socketsClosed: cut?.socketsClosed ?? null, reenrolled },
       judge: () => [{ what: `the panel revoked W3 (${panel.ok ? 'ok' : `exit ${panel.exit}: ${panel.tail}`})`, ok: panel.ok }, ...own],
     };
   },
