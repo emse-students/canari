@@ -92,6 +92,9 @@ describe('ChannelService security hardening', () => {
       save: jest.fn(),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       delete: jest.fn(),
+      // An admission re-checks, under the removal lock, that the community still has members;
+      // one member by default, so only the test about an emptied community sees zero.
+      count: jest.fn(() => Promise.resolve(1)),
     };
     // The Graine history floor is the one read that goes through a query builder rather than a
     // `find`. Rows are pushed in by the test that needs them, so every other test sees the honest

@@ -550,9 +550,14 @@ export class ChannelService implements OnApplicationBootstrap {
    * demotion's) answer before anything is asked of another service; they cannot see an exit that
    * commits after them, and this one can.
    *
-   * The community's membership rows are read `FOR UPDATE` in id order (one lock order with every
-   * other locker of these rows). A removal that leaves nobody at all is allowed, as above; a
-   * demotion always leaves its target a member, so that escape is not its own.
+   * A PLAIN READ, NO ROW LOCK. The removal lock is what serialises every writer that can shrink
+   * the admin set, and under READ COMMITTED a statement run after taking it sees the previous
+   * holder's commit. A row lock here would add nothing but a lock order: this runs as a departure's
+   * guard, BEFORE that departure locks its salon rows, while a salon grant and a community's hard
+   * delete take salon rows first and member rows after - the two orders deadlock.
+   *
+   * A removal that leaves nobody at all is allowed, as above; a demotion always leaves its target a
+   * member, so that escape is not its own.
    *
    * @throws ConflictException `WORKSPACE_WOULD_HAVE_NO_ADMIN` (409) when `targetUserId` is now the
    *   only admin and other members would remain
@@ -563,32 +568,73 @@ export class ChannelService implements OnApplicationBootstrap {
     targetUserId: string,
     exit: 'left' | 'kicked' | 'demoted'
   ): Promise<void> {
-    const roles = await m.getRepository(ChannelRole).find({ where: { workspaceId } });
-    const adminRoleIds = new Set(
-      roles
-        .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
-        .map((r) => r.id)
-    );
-    const rows = await m.getRepository(ChannelMember).find({
-      where: { workspaceId },
-      order: { id: 'ASC' },
-      lock: { mode: 'pessimistic_write' },
-    });
-    const adminIds = rows
-      .filter((r) => (r.roleIds ?? []).some((id) => adminRoleIds.has(id)))
-      .map((r) => r.userId);
+    const { adminIds, memberIds } = await this.readGovernance(m, workspaceId);
     if (adminIds.length !== 1 || adminIds[0] !== targetUserId) return;
-    if (exit !== 'demoted' && rows.every((r) => r.userId === targetUserId)) return;
+    if (exit !== 'demoted' && memberIds.every((id) => id === targetUserId)) return;
 
     this.logger.warn(
       `[WORKSPACE] REFUSED under the removal lock - the exit would leave no admin exit=${exit} ` +
-        `workspace=${workspaceId} target=${targetUserId.slice(0, 8)} members=${rows.length} - ` +
+        `workspace=${workspaceId} target=${targetUserId.slice(0, 8)} members=${memberIds.length} - ` +
         `the admin set changed after the early check`
     );
     throw new ConflictException({
       code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
       message: 'The community would be left with no administrator.',
     });
+  }
+
+  /**
+   * Refuses an admission into a community nobody belongs to any more, asked inside the removal
+   * lock's transaction `m` so a last member's departure cannot commit between this and the insert.
+   * A community with no members is being deleted ({@link hardDeleteWorkspace}); admitting someone
+   * would leave members and no admin.
+   *
+   * @throws NotFoundException `WORKSPACE_HAS_NO_MEMBERS`
+   */
+  private async assertCommunityHasMembersLocked(
+    m: EntityManager,
+    workspaceId: string,
+    door: 'invite_link' | 'salon_invite'
+  ): Promise<void> {
+    const members = await m.getRepository(ChannelMember).count({ where: { workspaceId } });
+    if (members > 0) return;
+    this.logger.warn(
+      `[INVITE] REFUSED under the removal lock - workspace=${workspaceId} has no members left door=${door}`
+    );
+    throw new NotFoundException({
+      code: 'WORKSPACE_HAS_NO_MEMBERS',
+      message: 'This community no longer exists.',
+    });
+  }
+
+  /**
+   * The community's admins and members, read through `m` with no row lock (see
+   * {@link assertExitKeepsAnAdminLocked} for why). `permissionsOf` substitutes the permissions a
+   * role is ABOUT to have, so a role edit can ask what the admin set would become before writing it.
+   */
+  private async readGovernance(
+    m: EntityManager,
+    workspaceId: string,
+    permissionsOf?: { roleId: string; permissions: readonly string[] }
+  ): Promise<{ adminIds: string[]; memberIds: string[] }> {
+    const roles = await m.getRepository(ChannelRole).find({ where: { workspaceId } });
+    const adminRoleIds = new Set(
+      roles
+        .filter((r) =>
+          (permissionsOf && r.id === permissionsOf.roleId
+            ? permissionsOf.permissions
+            : r.permissions
+          ).includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+        )
+        .map((r) => r.id)
+    );
+    const rows = await m.getRepository(ChannelMember).find({ where: { workspaceId } });
+    return {
+      adminIds: rows
+        .filter((r) => (r.roleIds ?? []).some((id) => adminRoleIds.has(id)))
+        .map((r) => r.userId),
+      memberIds: rows.map((r) => r.userId),
+    };
   }
 
   /**
@@ -1291,7 +1337,21 @@ export class ChannelService implements OnApplicationBootstrap {
           workspaceId,
           deletedUserId
         );
-        if (!deleted) await this.removeFromWorkspace(workspaceId, deletedUserId, 'account_deleted');
+        if (!deleted) {
+          // The successor is promoted in the departure's own transaction, under the removal lock.
+          await this.removeFromWorkspace(
+            workspaceId,
+            deletedUserId,
+            'account_deleted',
+            async (m) => {
+              await this.promoteSuccessorAdmin(m, workspaceId, deletedUserId);
+            }
+          );
+          // Everyone else left while the account was being taken out: nobody to govern it.
+          if ((await this.getWorkspaceMemberIds(workspaceId)).length === 0) {
+            await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
+          }
+        }
       } catch (err) {
         failed.push(workspaceId);
         transient ||= isTransientFailure(err);
@@ -1367,33 +1427,23 @@ export class ChannelService implements OnApplicationBootstrap {
       return true;
     }
 
-    const adminIds = (await this.listWorkspaceAdminIds(workspaceId)).filter(
-      (id) => id !== leavingUserId
-    );
-    if (adminIds.length > 0) return false;
-
-    // THE PROMOTION IS DECIDED AGAIN UNDER THE REMOVAL LOCK, from rows read FOR UPDATE: every
-    // departure deletes through that lock, so the successor chosen there is a member when it is
-    // written, and nothing can change its row before the commit.
-    const outcome = await this.withCommunityRemovalLock(workspaceId, (m) =>
-      this.promoteSuccessorAdmin(m, workspaceId, leavingUserId)
-    );
-    if (outcome === 'no_members') {
-      await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
-      return true;
-    }
+    // THE PROMOTION IS NOT DECIDED HERE: it is the erasure's departure guard
+    // ({@link promoteSuccessorAdmin}), decided under the removal lock in the same transaction that
+    // deletes the account's row, so no other exit can commit between the decision and the delete.
     return false;
   }
 
   /**
-   * The promotion half of {@link repairOneWorkspaceAfterAccountDeletion}, run inside
-   * {@link withCommunityRemovalLock} on `m`: the community's membership rows are read FOR UPDATE,
-   * the leaving account excluded, and the successor is written as ONE column update of its row -
-   * never a save, which would insert a membership deleted since the read. Nothing here calls
-   * another service.
+   * The promotion half of an erasure's repair, run as its departure guard inside the community
+   * removal lock on `m`, before the account's row is deleted in the same transaction. The rows are
+   * read with no row lock (see {@link assertExitKeepsAnAdminLocked}: the removal lock serialises
+   * every departure, and a guard that locked member rows before the departure's salon rows would
+   * invert their order). The leaving account is excluded, and the successor is written as ONE
+   * column update of its row - never a save, which would insert a membership deleted since the read.
+   * Nothing here calls another service.
    *
-   * @returns `no_members` when nobody else is left (the caller deletes the community, outside the
-   *   lock), `governed` when another admin exists meanwhile, `no_admin_role` when no role can be
+   * @returns `no_members` when nobody else is left (the caller deletes the community after the
+   *   departure), `governed` when another admin exists, `no_admin_role` when no role can be
    *   granted, `promoted` otherwise.
    */
   private async promoteSuccessorAdmin(
@@ -1402,15 +1452,9 @@ export class ChannelService implements OnApplicationBootstrap {
     leavingUserId: string
   ): Promise<'no_members' | 'governed' | 'no_admin_role' | 'promoted'> {
     const memberRows = m.getRepository(ChannelMember);
-    // Locked in ONE order (by id): a community's hard delete removes these rows without the removal
-    // lock, and lockers that agree on an order cannot each hold a row the other waits on.
-    const members = (
-      await memberRows.find({
-        where: { workspaceId },
-        order: { id: 'ASC' },
-        lock: { mode: 'pessimistic_write' },
-      })
-    ).filter((r) => r.userId !== leavingUserId);
+    const members = (await memberRows.find({ where: { workspaceId } })).filter(
+      (r) => r.userId !== leavingUserId
+    );
     if (members.length === 0) {
       this.logger.log(
         `[WORKSPACE] successor search found nobody left workspace=${workspaceId} reason=account_deletion`
@@ -1456,9 +1500,10 @@ export class ChannelService implements OnApplicationBootstrap {
 
     const updated = await memberRows.update({ id: successor.id }, { roleIds: [adminRole.id] });
     if (updated.affected !== 1) {
-      // The row is held FOR UPDATE in this transaction, so this is a broken premise, not a race.
+      // Every departure deletes under the removal lock this transaction holds, so only a community
+      // being hard-deleted can take the row away: the departure is abandoned and retried.
       this.logger.error(
-        `[WORKSPACE] successor row NOT updated under its row lock workspace=${workspaceId} user=${successor.userId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+        `[WORKSPACE] successor row NOT updated under the removal lock workspace=${workspaceId} user=${successor.userId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
       );
       throw new Error(`successor membership not updated in workspace ${workspaceId}`);
     }
@@ -1710,7 +1755,12 @@ export class ChannelService implements OnApplicationBootstrap {
     // preview only; the bound is decided here. The conditional UPDATE takes the invite's row lock, so a concurrent
     // accept waits for this one and then re-evaluates the WHERE against the committed count - and
     // the member is written in the same transaction, so a refused claim leaves nobody behind.
+    //
+    // AND THE ADMISSION RUNS UNDER THE COMMUNITY REMOVAL LOCK, asking again that the community still
+    // has members: the read above cannot see a last member's departure committing after it.
     const claimed = await this.inviteRepo.manager.transaction(async (tx) => {
+      await tx.query(COMMUNITY_REMOVAL_LOCK_SQL, [ws.id]);
+      await this.assertCommunityHasMembersLocked(tx, ws.id, 'invite_link');
       const [won]: [{ id: string }[], number] = await tx.query(
         `UPDATE workspace_invites
             SET uses = uses + 1
@@ -3628,7 +3678,12 @@ export class ChannelService implements OnApplicationBootstrap {
         // member already in is not an admission to the community.
         admissionVoucher,
       });
-      await this.memberRepo.save(targetMember);
+      // Admitted under the removal lock, into a community that still has members.
+      const row = targetMember;
+      await this.withCommunityRemovalLock(channel.workspaceId, async (m) => {
+        await this.assertCommunityHasMembersLocked(m, channel.workspaceId, 'salon_invite');
+        await m.getRepository(ChannelMember).save(row);
+      });
       this.logger.log(
         `[INVITE] member added workspace=${channel.workspaceId} user=${input.targetUserId.slice(0, 8)} voucher=${admissionVoucher ? 'yes' : 'no'}`
       );
@@ -3946,12 +4001,13 @@ export class ChannelService implements OnApplicationBootstrap {
     //
     // A DEMOTION WRITES UNDER THE REMOVAL LOCK, like every other exit from the admin set, and asks
     // the last-admin postcondition again there: two exits that each passed the early check above
-    // cannot both commit.
-    const demotes = !role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
-    await this.withCommunityRemovalLock(workspaceId, async (m) => {
-      if (demotes) await this.assertExitKeepsAnAdminLocked(m, workspaceId, targetUserId, 'demoted');
-      const updated = await m
-        .getRepository(ChannelMember)
+    // cannot both commit. Only a target who IS an admin can leave the admin set, so every other
+    // role change writes without the lock; the conditioned UPDATE refuses a target re-roled since.
+    const demotes =
+      targetPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) &&
+      !role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
+    const writeRole = async (members: Repository<ChannelMember>) => {
+      const updated = await members
         .createQueryBuilder()
         .update(ChannelMember)
         .set({ roleIds: [role.id] })
@@ -3967,7 +4023,15 @@ export class ChannelService implements OnApplicationBootstrap {
           message: 'This member changed meanwhile, retry.',
         });
       }
-    });
+    };
+    if (demotes) {
+      await this.withCommunityRemovalLock(workspaceId, async (m) => {
+        await this.assertExitKeepsAnAdminLocked(m, workspaceId, targetUserId, 'demoted');
+        await writeRole(m.getRepository(ChannelMember));
+      });
+    } else {
+      await writeRole(this.memberRepo);
+    }
 
     this.logger.log(
       `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`
@@ -6105,7 +6169,17 @@ export class ChannelService implements OnApplicationBootstrap {
     // here waits, retries or compares versions, and two nodes behind the load balancer are as safe
     // as two requests on one. The critical section holds one SELECT and one UPDATE of a single row;
     // the authorisation above and the announcement below are deliberately outside it.
-    const saved = await this.roleRepo.manager.transaction(async (em) => {
+    //
+    // A REVOKE OF `workspace.manage` IS AN EXIT FROM THE ADMIN SET for every holder of the role at
+    // once, so it runs under the community removal lock like every other exit (the advisory lock
+    // first, then the role row - the order a kick takes them in) and refuses to leave a community
+    // with members and no admin.
+    const leavesAdminSet = !granted && key === CHANNEL_PERMISSIONS.MANAGE_WORKSPACE;
+    const inTransaction = <T>(work: (em: EntityManager) => Promise<T>): Promise<T> =>
+      leavesAdminSet
+        ? this.withCommunityRemovalLock(role.workspaceId, work)
+        : this.roleRepo.manager.transaction(work);
+    const saved = await inTransaction(async (em) => {
       const locked = await em.findOne(ChannelRole, {
         where: { id: roleId },
         lock: { mode: 'pessimistic_write' },
@@ -6126,9 +6200,24 @@ export class ChannelService implements OnApplicationBootstrap {
           actorUserId
         );
       }
-      locked.permissions = granted
-        ? [...new Set([...current, key])]
-        : current.filter((p) => p !== key);
+      const next = granted ? [...new Set([...current, key])] : current.filter((p) => p !== key);
+      if (leavesAdminSet && current.includes(key)) {
+        const { adminIds, memberIds } = await this.readGovernance(em, role.workspaceId, {
+          roleId,
+          permissions: next,
+        });
+        if (adminIds.length === 0 && memberIds.length > 0) {
+          this.logger.warn(
+            `[ROLE] REFUSED revoke of ${key} on role=${roleId} - the community would have no admin ` +
+              `workspace=${role.workspaceId} members=${memberIds.length} by=${actorUserId.slice(0, 8)}`
+          );
+          throw new ConflictException({
+            code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
+            message: 'The community would be left with no administrator.',
+          });
+        }
+      }
+      locked.permissions = next;
       return em.save(ChannelRole, locked);
     });
 

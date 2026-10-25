@@ -4,9 +4,12 @@
  *
  * Leaving, being kicked and being demoted each answer an early last-admin check, then write. Two
  * of them that both passed the early check must not both commit: each writes under the community
- * removal lock and asks the check again there, against the membership rows read `FOR UPDATE`. Each
- * case runs the second exit to its commit from inside the first one's early check (after its read
- * of the members), so the interleaving is deterministic - never a sleep.
+ * removal lock and asks the check again there, with a plain read the lock makes current. A revoke
+ * of `workspace.manage` on a role is asked the same question under the same lock; an erasure
+ * promotes its successor under it, in the transaction that deletes the account's row; and an
+ * admission asks there that the community still has members. Each race runs the second operation
+ * to its commit from inside the first one's early read of the members, so the interleaving is
+ * deterministic - never a sleep.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
@@ -211,6 +214,100 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBe(NO_ADMIN);
     expect(await adminsOf(ws, roles.admin)).toEqual(['a1']);
+  });
+
+  it('a revoke of workspace.manage that would leave no admin is refused, and the role keeps it', async () => {
+    const { ws, roles } = await community();
+    const outcome = await settle(
+      service.setRoleBasePermission(roles.admin, 'a1', 'workspace.manage', false)
+    );
+    expect(outcome).toBe(NO_ADMIN);
+    const [role] = await q(`SELECT permissions FROM channel_roles WHERE id = $1`, [roles.admin]);
+    expect(String((role as { permissions: string }).permissions)).toContain('workspace.manage');
+    expect(await adminsOf(ws, roles.admin)).toEqual(['a1', 'a2']);
+  });
+
+  it('a revoke of workspace.manage while another role still grants it is allowed', async () => {
+    const { ws, roles } = await community();
+    const steward = crypto.randomUUID();
+    await q(
+      `INSERT INTO channel_roles (id, "workspaceId", name, priority, permissions)
+       VALUES ($1, $2, 'Intendance', 50, 'workspace.manage')`,
+      [steward, ws]
+    );
+    await q(
+      `UPDATE channel_members SET "roleIds" = $1 WHERE "workspaceId" = $2 AND "userId" = 'm1'`,
+      [steward, ws]
+    );
+    expect(
+      await settle(service.setRoleBasePermission(roles.admin, 'a1', 'workspace.manage', false))
+    ).toBe('allowed');
+  });
+
+  it('an erasure whose other admin leaves meanwhile still promotes a successor', async () => {
+    // The other admin leaves to its commit from inside the erasure's first call to chat-delivery
+    // (its eviction): after anything decided before the departure, before the account's row goes.
+    // The erased account belongs to this community alone: an erasure leaves every community.
+    const { ws, roles } = await community();
+    const erased = `x-${ws.slice(0, 8)}`;
+    await q(
+      `UPDATE channel_members SET "userId" = $1 WHERE "workspaceId" = $2 AND "userId" = 'a1'`,
+      [erased, ws]
+    );
+    const answer = global.fetch;
+    let ran = false;
+    global.fetch = (async (...args: Parameters<typeof fetch>) => {
+      global.fetch = answer;
+      ran = true;
+      await service.leaveWorkspace(ws, 'a2');
+      return answer(...args);
+    }) as typeof fetch;
+    try {
+      await service.removeAccountFromWorkspaces(erased);
+    } finally {
+      global.fetch = answer;
+    }
+    expect(ran).toBe(true);
+    expect(await adminsOf(ws, roles.admin)).toEqual(['m1']);
+  });
+
+  it('an invite accepted while the last member leaves is refused', async () => {
+    const { ws } = await community();
+    await q(`DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" <> 'a1'`, [ws]);
+    const { token } = await service.createWorkspaceInvite(ws, 'a1');
+    // Reads #1 is the accept's preview; #2-#3 the leave's early check, #4 its count of who is left,
+    // held there so the leave's hard delete waits until the accept has answered.
+    let seen = 0;
+    let released!: () => void;
+    const gate = new Promise<void>((r) => (released = r));
+    let reachedCount!: () => void;
+    const leaveDeparted = new Promise<void>((r) => (reachedCount = r));
+    let leave: Promise<unknown> = Promise.resolve();
+    const original = members.find.bind(members) as (o: ReadOptions) => Promise<unknown>;
+    const spy = jest.spyOn(members, 'find').mockImplementation((async (o: ReadOptions) => {
+      const answer = await original(o);
+      const where = o?.where ?? {};
+      if (where.workspaceId !== ws || where.userId !== undefined) return answer;
+      seen += 1;
+      if (seen === 1) {
+        leave = service.leaveWorkspace(ws, 'a1');
+        await leaveDeparted;
+      } else if (seen === 4) {
+        reachedCount();
+        await gate;
+      }
+      return answer;
+    }) as never);
+    try {
+      const outcome = await settle(service.acceptWorkspaceInvite(token, 'n1'));
+      expect(outcome).toBe('WORKSPACE_HAS_NO_MEMBERS');
+      expect(await members.count({ where: { workspaceId: ws, userId: 'n1' } })).toBe(0);
+    } finally {
+      released();
+      await leave;
+      spy.mockRestore();
+    }
+    expect(await q(`SELECT 1 FROM channel_workspaces WHERE id = $1`, [ws])).toHaveLength(0);
   });
 
   it('one admin demoting the other while they stay admin is allowed', async () => {

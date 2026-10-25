@@ -1256,19 +1256,39 @@ this is what the code does.
 | `leaveWorkspace` | the leaver is not the sole admin while others remain | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
 | `kickFromWorkspace` | the TARGET's roles, which it never consulted before | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
 | `updateWorkspaceMemberRole` | the new role still carries `workspace.manage`, or another admin exists | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `acceptWorkspaceInvite` | the community still has at least one member | `WORKSPACE_HAS_NO_MEMBERS` |
+| `setRoleBasePermission` (revoking `workspace.manage`) | someone still holds a role carrying it, or the community has no members | `409 WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `acceptWorkspaceInvite`, `inviteToChannel` (a new member) | the community still has at least one member | `WORKSPACE_HAS_NO_MEMBERS` |
 | `internal DELETE users/:id` | cannot refuse - repairs instead, see below | - |
 
 **The check is asked twice: early, then under the lock where the write happens (2026-10-26).** The
 early answer (`400`) comes before anything is asked of another service, and it cannot see another
-exit from the admin set that commits after it - two demotions, or a demotion and a leave or a kick,
-could each pass it and together leave no admin. So all three exits write inside the community
-removal lock (`withCommunityRemovalLock`, or the roster write of the departure for a leave or a
-kick) and ask `assertExitKeepsAnAdminLocked` there, against the membership rows read `FOR UPDATE`
-in id order; the one that would break the invariant is refused `409 WORKSPACE_WOULD_HAVE_NO_ADMIN`,
-the same code the client already names, and writes nothing. Proven on PostgreSQL by
-`last-admin.integration.spec.ts`, which commits the second exit between the first one's early check
-and its write.
+exit from the admin set that commits after it. So every write that can shrink the admin set runs
+inside the community removal lock (`withCommunityRemovalLock`, or the departure's roster write) and
+asks again there; the one that would break the invariant is refused `409
+WORKSPACE_WOULD_HAVE_NO_ADMIN`, the code the client already names, and writes nothing. What holds,
+exactly:
+
+- **A leave, a kick and the demotion of an admin** ask `assertExitKeepsAnAdminLocked` under the
+  lock. A role change whose target holds no admin role does not shrink the set and takes no lock.
+- **A revoke of `workspace.manage` on a role** (`setRoleBasePermission`) takes the lock before the
+  role row, recomputes the admin set with the role's new permissions, and is refused when it would
+  be empty while the community has members. A grant, or a revoke of any other permission, takes no
+  lock.
+- **An account erasure** promotes its successor (`promoteSuccessorAdmin`) as the departure's guard,
+  in the transaction that deletes the account's row, so no exit commits between the choice and the
+  delete; it hard-deletes the community when nobody is left after the departure.
+- **An admission** (an invite link, a salon invitation that creates a membership) asks under the
+  lock that the community still has members, so nobody joins a community whose last member has
+  just left.
+
+**The reads under the lock take no row lock.** The removal lock serialises every writer above, and
+under READ COMMITTED a statement run after taking it sees the previous holder's commit. A row lock
+would add only a lock order: a departure's guard runs before the departure locks its salon rows, and
+a salon grant or a hard delete takes salon rows before member rows, so a member-row lock there would
+deadlock against them. Not covered: a role GRANT of `workspace.manage` racing an exit only adds an
+admin, so it cannot break the invariant. Proven on PostgreSQL by `last-admin.integration.spec.ts`,
+which commits the second operation between the first one's early read and its write - each race case
+fails on the code before the lock.
 
 `listWorkspaceAdminIds` is the single definition of "admin": a member holding a role whose
 permissions include `workspace.manage`. It is the permission that can grant every other one back,

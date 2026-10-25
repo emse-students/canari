@@ -1,5 +1,5 @@
-### Fixed - two concurrent exits from a community's admin set can no longer leave it with no admin
+### Fixed - a community can no longer be left with members and no admin by concurrent writes
 
-A demotion, a leave and a kick ask the last-admin check again under the community removal lock,
-where they write; the one that would leave no admin is refused `409 WORKSPACE_WOULD_HAVE_NO_ADMIN`
+Every write that can shrink the admin set (leave, kick, demotion, a revoke of `workspace.manage` on a
+role, an erasure's departure) and every admission re-checks under the community removal lock
 ([social-service](docs/wiki/services/social-service.md#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18)).
