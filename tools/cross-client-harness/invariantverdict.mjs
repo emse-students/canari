@@ -237,7 +237,7 @@ export function invariantVerdict(obs) {
         if (r.position !== undefined) positions.push(r.position);
       }
       if (positions.length > 1 && positions.some((p, i) => i > 0 && p <= positions[i - 1])) {
-        fail(3, `${c.device}: the post-event messages are out of order`);
+        fail(3, `${c.device}: the post-event messages are out of order (rendered at rows ${positions.join(', ')})`);
       }
     }
   }
