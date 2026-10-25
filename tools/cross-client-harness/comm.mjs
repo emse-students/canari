@@ -421,16 +421,16 @@ export async function inviteLink(cx) {
  *
  * THE PANEL'S LIFETIME BELONGS TO WHOEVER OPENED IT, and nothing used to force the close. The
  * gestures that act inside a panel - `revokeChannelAccess`, `setMemberRole`, `cyclePermissionCell` -
- * deliberately leave it up, because their callers usually have more to do in there; only `Save`
- * genuinely ends the interaction, which is why `saveChannelAccess` is the one that clears. So the
+ * deliberately leave it up, because their callers usually have more to do in there; since #1171 no
+ * gesture of the access panel ends the interaction (every control writes on its own). So the
  * obligation lands on the check, and five checks out of twelve had quietly dropped it.
  *
  * What that costs is not a warning. The panel is a `position: fixed` backdrop over the whole page,
  * so the NEXT gesture - a click on the composer, a click on a sidebar row - finds its element
  * present, visible, correctly sized and NOT ON TOP, and dies with `no stable element`. COMM-9/10 and
  * COMM-1 both failed that way on 2026-08-20, several steps downstream of the panel that was covering
- * them, and the same aftermath had already been paid for once at `saveChannelAccess` - where the fix
- * was applied to the single gesture that failed instead of to the class.
+ * them, and the same aftermath had already been paid for once at the panel's old Save gesture -
+ * where the fix was applied to the single gesture that failed instead of to the class.
  *
  * `finally`, so a body that throws still hands the screen back. A check that fails inside a panel is
  * a check whose own verdict is safe; leaving the panel up would take the rest of the RUN down with
@@ -574,7 +574,7 @@ export async function openChannelAccess(cx) {
  * panel renders `<UserName>` and never shows an id. A check that needs ids reads them from the
  * database - which is where COMM-8 reads them anyway, since what it asks is what a device was sent.
  *
- * IT REFUSES OFF A CLOSED PANEL, for the reason {@link saveChannelAccess} does and one worse:
+ * IT REFUSES OFF A CLOSED PANEL, because a read off a closed panel is worse than no read:
  * `{isPrivate: null, allowed: [], writePolicy: null}` is EXACTLY what a private salon whose panel
  * has been closed reports, and it is also a perfectly plausible reading, so it travels all the way
  * into a verdict. COMM-23/24 recorded it on every run and failed a switch that had worked - the
@@ -823,46 +823,6 @@ export async function confirmDialog(cx, confirmKey, { typeText = null } = {}) {
   }
 
   await realClick(cx, `text=${label}`);
-}
-
-/**
- * Saves the access panel and waits for the app's own confirmation that it landed.
- *
- * `common_saved_label` IS THE WITNESS, not the click: the save is a request, and a check that
- * returns as soon as the button was pressed is timing the harness rather than the app. The label is
- * transient, so it is waited for rather than asserted afterwards.
- */
-export async function saveChannelAccess(cx) {
-  // IT REFUSES OFF A CLOSED PANEL, BY NAME. This save is the LAST gesture inside an
-  // `openChannelAccess` - it commits and then clears the modal itself - so wrapping the grant it
-  // follows in `inPanel` closes the panel first and the click below finds nothing. What that used
-  // to produce was `no stable element for selector: text=Enregistrer`, which reads as a caption
-  // that moved or a button the app failed to render, and sends the next hour into the frontend.
-  // COMM-22 lost six cycles to it. The panel's lifetime belongs to whoever opened it (methodology
-  // rule 26) and a rule the harness writes only in prose is one the harness will break (rule 21),
-  // so the seam says so instead.
-  const up = await evaluate(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) >= 0`
-  );
-  if (!up) {
-    throw new Error(
-      'saveChannelAccess: the access panel is not open - a grant is saved INSIDE openChannelAccess, ' +
-        'never through inPanel (which closes it) and never after one'
-    );
-  }
-  await realClick(cx, control('common_save_button'));
-  await until(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('common_saved_label'))}) >= 0`,
-    15000
-  );
-  // THE GESTURE ENDS WITH THE SCREEN CLEAR, and that is not tidiness. The settings modal stays up
-  // after a save, so the composer underneath it is covered: COMM-9/10 saved the roster, tried to
-  // post, and died on `no stable element` for a composer that was plainly in the DOM - which is the
-  // exact aftermath `clearOverlays` was written for. A gesture that leaves a modal behind is a fault
-  // in the gesture, not in the check that comes next.
-  return clearOverlays(cx);
 }
 
 /** Who may write in a salon: option value -> the label the app draws, from its own messages. */
