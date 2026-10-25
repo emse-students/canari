@@ -1437,8 +1437,46 @@ by its callers:
   `isGroupIdle` do not change meaning - and the commit's end resumes them
   (`BaseMlsService.resumeFramesHeldByCommit`). The drain's restart guard reads `hasRunnableWork`, not
   the pending count, so a held-back frame never makes it spin.
+- **A frame picked BEFORE the commit was granted does not hold the drain for the whole commit.** The
+  pick runs before the mutex wait, so with an exclusive holder X ahead and commit A queued behind it,
+  the drain can pick a frame of A (or an unaddressed one) while nothing names A yet, and queue it for
+  the mutex behind A. As A is granted, every queued frame it holds back is BOUNCED - its acquisition
+  resolves without the mutex - and the drain puts it back at the front of its tier and goes on with
+  B's frames under the loan. One predicate (`isFrameHeldBack`) decides the pick, the bounce and,
+  through them, the loan: a frame of A never waits while A holds, so it can never borrow A's loan and
+  apply another member's commit with A's stage in flight.
 - **The mutex is taken back before the merge or the clear**: the reclaim waits for the frame being
-  applied under the loan and admits no new borrower.
+  applied under the loan and admits no new borrower - `closing` is what refuses one in the window
+  between the borrower's release and the commit dropping the loan, where `borrowed` is already false.
+
+**The invariant a borrower must keep, or the two deadlock for good:** a borrower never awaits anything
+the commit's caller holds outside the mutex, nor anything that needs the commit to finish - A's send
+barrier, a send of A, a lock or a promise A's caller keeps. A waits in the reclaim for the borrower and
+the borrower would wait for A. The drain's frames keep it because the pipeline awaits no send (below);
+any new await in the frame path is to be read against it. The reclaim wait goes through the drain's
+hang reporter: `[QUEUE] STUCK in the reclaim of the MLS mutex lent by the commit of <group>` every
+minute it lasts, and nothing is cut.
+
+**A slow borrower spends A's lock-hold budget - a behaviour change.** The reclaim waits for the
+borrower, and `COMMIT_LOCK_HOLD_BUDGET_MS` keeps running: a borrowed frame that awaits the network
+inline (the rung-1 replay of a commit, for one) can leave too little budget for A's resubmission, so
+`mayStartCommitRequest` refuses it and the outcome is kept as unknown (`CommitOutcomeUnknownError`, the
+stage kept, settled later) where before the PR it would have been resubmitted at once. Nothing is lost
+- the unknown path is the one a second deadline already took - but the rig should watch for the line
+`the commit of <group> has its answer - waiting for the frame applied under its loan` followed by an
+unknown outcome: that pair is this cost, measured.
+
+**What is left: a Welcome picked before the commit was granted.** Its handler runs a network preamble
+unlocked (`getGroupMeta`, the recovery checks) and then takes the mutex EXCLUSIVELY. A commit granted
+during that preamble makes the Welcome - and the drain inside it - wait for the whole commit, the old
+stall, for one Welcome. It is not bounced, because the handler is half-way through and cannot be put
+back; and it does not borrow, because installing a group (a drop of its evicted state, `processWelcome`,
+a persist, the replay) is not a frame of another group and the loan's safety argument does not cover
+it. Closing it means a handler that can stop before its locked section and requeue the Welcome, in
+`setupMessageHandler.ts`.
+
+**The drain overlay counts what the drain can apply** (`getRunnableCount`), not what is pending: a
+frame a commit holds back is not this drain's work.
 
 **Why the state stays consistent.** The stage and its record are on disk before the first request
 leaves (`checkpointStageBeforeSend`, unchanged, before any loan). A borrower decrypts in group B only,

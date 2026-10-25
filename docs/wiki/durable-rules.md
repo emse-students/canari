@@ -671,7 +671,7 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 - **A barrier that also ACTS must not be reachable before the thing that answers for its action.** [hr](protocols/history-reconciliation.md)
 - **`void` is not deferral** - a trigger raised from inside a region runs inside it. [hr](protocols/history-reconciliation.md)
 - **A global depth cannot name an owner, so the report must name the caller.** [hr](protocols/history-reconciliation.md)
-- **A LOCK HELD ACROSS A NETWORK WAIT HOLDS EVERY QUEUE THAT TAKES IT** - one group's unanswered commit held every other conversation's frames (and their ACKs) for a minute. Lend it across the wait to work that provably cannot touch what the holder will resume, never shorten the wait. [mls-protocol](protocols/mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)
+- **A LOCK HELD ACROSS A NETWORK WAIT HOLDS EVERY QUEUE THAT TAKES IT** - one group's unanswered commit held every other conversation's frames (and their ACKs) for a minute. Lend it across the wait to work that provably cannot touch what the holder will resume, never shorten the wait. **A loan adds an invariant: the borrower must never await what the lender's caller holds outside the lock, nor anything that needs the lender to finish** - the lender waits to reclaim, the borrower waits for the lender, for good; so the reclaim wait is reported like every other drain wait. [mls-protocol](protocols/mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)
 
 **Repair, and what makes it stop**
 

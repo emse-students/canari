@@ -1541,10 +1541,13 @@ export class MlsDeliveryApi {
     duplicate?: boolean;
   }> {
     // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
-    // leave), because every caller awaits this INSIDE THE GLOBAL MLS LOCK, which also guards the
-    // incoming processing of every group: a POST hung on a half-open connection or a captive portal
-    // froze decryption in every conversation for as long as the engine tolerated - and the periodic
-    // leaf refresh makes an unasked commit ordinary. The expiry is a `RequestDeadlineError`, a
+    // leave), because a commit transaction awaits this while it HOLDS THE MLS MUTEX, from its stage to
+    // its merge: everything exclusive of it - a catch-up, a Welcome, another commit, the committing
+    // group's own frames - waits for as long as this does, and the periodic leaf refresh makes an
+    // unasked commit ordinary. (The drain's frames of OTHER groups borrow the mutex meanwhile since
+    // DUP-6, `MlsPerGroupScheduler.lendMlsLockWhile`; an external join posts outside the mutex.)
+    // Unbounded, a POST hung on a half-open connection or a captive portal held all of that for as
+    // long as the engine tolerated. The expiry is a `RequestDeadlineError`, a
     // transport failure: NO ANSWER, never a refusal, because the gate may have accepted. The callers
     // already read it that way - `runCommitTransaction` resubmits the same bytes and KEEPS the stage
     // as unknown while no answer comes (`CommitOutcomeUnknownError`), and the next resubmission
