@@ -966,7 +966,11 @@ behind an Add that re-admitted the member would say "out" of someone still in, s
 is ahead the rung-1 replay applies it first - the whole confirmation (log read, replay, re-read) under
 the MLS lock, like the pipeline's rung 1, because the replay applies commits and may merge or clear a
 staged one, and only sends may mutate the client outside the mutex (`readConfirmedTree`,
-`confirmedTree.ts`, the one helper an Add's device filter uses too) - and a tree that cannot be brought there is
+`confirmedTree.ts`, the one helper an Add's device filter uses too; the lock is not re-entrant, so a
+caller must not hold it). Its replay keeps rung 1's books through the one helper the pipeline's gap
+healer and a refused commit's catch-up use too (`replayAndRecord`, `commitReplay.ts`): persisted when
+the epoch moved, un-marked in the epoch-gap registry on a heal, and never run past frames a refused
+backlog is still bringing (a held replay leaves the tree unconfirmed) - and a tree that cannot be brought there is
 `tree-unconfirmed` - surfaced, never "out". Every other ending throws `MemberRemovalNotCommittedError`
 and the person who asked is told by TYPE (`reportMemberRemovalFailure`): "removed, the key change
 finishes at the next connection", never "failed", because the record IS the removal and is not rolled

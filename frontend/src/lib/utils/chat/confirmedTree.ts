@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import { attemptCommitReplay } from './commitReplay';
+import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
+import { replayAndRecord } from './commitReplay';
 
 /**
  * A reading of a group's tree that a commit may be decided on:
@@ -18,9 +19,10 @@ export type TreeReading = { status: 'read'; identities: string[] } | { status: '
  * epoch the server has left - "out" of a member an Add re-admitted, "in" of a device a Remove took
  * out. A gesture deciding what to commit on it (skip a Remove, skip a device of an Add) decides on
  * the past. So when `decidedLocally` says the local reading is not decisive, the server's commit log
- * is asked: at its epoch the reading stands, ahead of it the existing rung-1 replay
- * ({@link attemptCommitReplay}) applies what is missing, and a tree still behind - or a log that
- * cannot be read - is `unconfirmed`, never an answer.
+ * is asked: at its epoch the reading stands, ahead of it the rung-1 replay applies what is missing
+ * WITH ITS BOOKKEEPING ({@link replayAndRecord}: persisted, the gap registry un-marked on a heal,
+ * held behind a refused backlog), and a tree still behind - a log that cannot be read, a replay
+ * held - is `unconfirmed`, never an answer.
  *
  * `decidedLocally` exists because one direction needs no confirmation: what a commit is about to
  * change is checked by the epoch gate anyway (a stale base is refused), so only the reading that
@@ -29,7 +31,8 @@ export type TreeReading = { status: 'read'; identities: string[] } | { status: '
  * **THE WHOLE CONFIRMATION RUNS UNDER THE MLS LOCK**, like the pipeline's rung 1: the replay applies
  * commits and may settle a staged one ({@link IMlsService.settleUnresolvedCommitFromLog} merges or
  * clears), and only sends may mutate the client outside the mutex. Nothing here takes the lock
- * itself, so the caller must not hold it.
+ * itself, so the caller MUST NOT HOLD IT: the lock is not re-entrant, and a call from inside it
+ * waits for itself for ever (pinned by `confirmedTree.test.ts` on the real scheduler).
  *
  * @param logTag - the caller's log prefix, e.g. `[REMOVE_MEMBER]`.
  */
@@ -51,7 +54,14 @@ export async function readConfirmedTree(
       console.log(
         `${logTag} ${short}… the tree is behind the server (epoch ${epoch} < ${activeEpoch}) - catching up before it is read`
       );
-      await attemptCommitReplay(mlsService, groupId, actingUserId, (msg) => console.log(msg));
+      const replay = await replayAndRecord(
+        mlsService,
+        groupId,
+        actingUserId,
+        (msg) => console.log(msg),
+        { persist: scheduleOutboundMlsPersist, refusedBacklog: 'hold' }
+      );
+      if (replay.heldBehindRefusedBacklog) return { status: 'unconfirmed' };
       const now = mlsService.getEpoch(groupId);
       if (now < activeEpoch) {
         console.warn(

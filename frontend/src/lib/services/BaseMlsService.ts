@@ -105,7 +105,7 @@ import {
   finishQueueDrainBench,
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
-import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
+import { attemptCommitReplay, replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { markEpochGap, clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
 import {
@@ -5063,14 +5063,15 @@ export abstract class BaseMlsService implements IMlsService {
     markEpochGap(groupId);
     let exhausted: string | undefined;
     try {
-      const replay = await attemptCommitReplay(this, groupId, this.userId, log);
-      // Applied commits moved the epoch whether or not the gap closed: a partial replay is as
-      // durable-worthy as a healed one.
-      if (replay.healed || replay.applied > 0) scheduleOutboundMlsPersist();
-      if (replay.healed) {
-        clearEpochGap(groupId);
-        return;
-      }
+      // Persisted on any applied commit, un-marked on a heal, held behind a refused backlog
+      // (`replayAndRecord`): the frames that backlog holds would not survive a replay past them,
+      // and they bring the missing commits themselves.
+      const replay = await replayAndRecord(this, groupId, this.userId, log, {
+        persist: scheduleOutboundMlsPersist,
+        refusedBacklog: 'hold',
+      });
+      if (replay.healed) return;
+      if (replay.heldBehindRefusedBacklog) return;
       // "Still behind" merges two futures: one where the next frame closes the gap, and one where
       // NOTHING ever does because the server has no commits to give. The escalation still belongs
       // to the watchdog - deliberately, see above - but the line must say which of the two this is,

@@ -1,6 +1,8 @@
 import { fromBase64 } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { noteFrameConsumed } from '$lib/utils/chat/history';
+import { clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { refusedBacklogIsQueued } from '$lib/mls-client/messagePipeline/unackedFrames';
 
 /** Outcome of a rung-1 commit replay attempt. */
 export interface CommitReplayResult {
@@ -121,4 +123,54 @@ export async function attemptCommitReplay(
     }`
   );
   return { healed, belowFloor: false, applied, activeEpoch };
+}
+
+/** What {@link replayAndRecord} did: a replay's result, or a replay it declined to run. */
+export type RecordedReplay = CommitReplayResult & {
+  /**
+   * True when no commit was replayed because frames of this group refused for lack of a
+   * conversation row are still queued ({@link refusedBacklogIsQueued}): the epochs are on their way
+   * in order, and a replay past them would make their application frames unreadable for good.
+   */
+  heldBehindRefusedBacklog?: true;
+};
+
+/**
+ * Rung 1 AND ITS BOOKKEEPING, the one way every caller outside the key-group catch-up replays: the
+ * message pipeline's gap healer, a refused commit's catch-up, and a gesture confirming its tree
+ * (`readConfirmedTree`). Each used to do its own share of the three duties below, and the third
+ * caller did none of them:
+ *
+ * - **Persist** when the epoch moved - a partial replay is as durable-worthy as a healed one, so
+ *   `persist` runs on `healed` OR any applied commit;
+ * - **Un-mark the gap on a heal** - a group left in the epoch-gap registry keeps its outbox frozen
+ *   and the sync watchdog heading for rung 2 on a group that has none;
+ * - **Hold behind a refused backlog** (`refusedBacklog: 'hold'`): when this group's earlier frames
+ *   were refused for lack of a row they are still queued, commits AND the application frames
+ *   between them, and replaying the commits alone jumps past those frames (`max_past_epochs` is 2):
+ *   47 of 150 lost on a Pixel 6a, prod 1.2.7, 2026-10-14. The pipeline passes `'judged-by-caller'`:
+ *   its own guard is narrower on purpose (a frame the backlog pull hands over must still reach the
+ *   ladder, or nothing would ever discharge it).
+ *
+ * Takes no lock: callers hold the MLS lock, as rung 1 always has.
+ *
+ * @param persist - the caller's persistence: the pipeline's immediate one, or the scheduled one.
+ */
+export async function replayAndRecord(
+  mlsService: IMlsService,
+  groupId: string,
+  userId: string,
+  log: (msg: string) => void,
+  opts: { persist: () => void; refusedBacklog: 'hold' | 'judged-by-caller' }
+): Promise<RecordedReplay> {
+  if (opts.refusedBacklog === 'hold' && refusedBacklogIsQueued(groupId)) {
+    log(
+      `[GAP] ${groupId.slice(0, 8)}… frames refused for lack of a row are still queued - no commit replay past them`
+    );
+    return { healed: false, belowFloor: false, applied: 0, heldBehindRefusedBacklog: true };
+  }
+  const replay = await attemptCommitReplay(mlsService, groupId, userId, log);
+  if (replay.healed || replay.applied > 0) opts.persist();
+  if (replay.healed) clearEpochGap(groupId);
+  return replay;
 }
