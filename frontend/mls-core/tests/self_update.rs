@@ -177,6 +177,50 @@ fn a_remove_commit_refreshes_the_committer_leaf_too() {
 }
 
 #[test]
+fn the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it() {
+    // The refresh ledger keys each date on this key, so a date written for a former leaf (a write an
+    // unclean exit lost after the merge reached disk) is never read as the age of the current one.
+    // That only holds if the key moves on OUR merged commits and on nothing else.
+    let gid = "g-refresh-key";
+    let (mut alice, mut bob) = alice_and_bob(gid);
+    let admitted = bob
+        .own_leaf_encryption_key(gid)
+        .expect("readable")
+        .expect("a member has a leaf");
+
+    let (commit, _base) = bob.stage_self_update(gid).expect("stage");
+    assert_eq!(
+        bob.own_leaf_encryption_key(gid).expect("readable").as_ref(),
+        Some(&admitted),
+        "a staged commit has not replaced the leaf yet"
+    );
+    bob.merge_pending_commit_for(gid).expect("merge");
+    let refreshed = bob
+        .own_leaf_encryption_key(gid)
+        .expect("readable")
+        .expect("still a member");
+    assert_ne!(refreshed, admitted, "the merged refresh replaced the leaf");
+    alice
+        .process_incoming_message(gid, &commit)
+        .expect("alice applies");
+
+    // Another member's commit - a path of hers - leaves our leaf as it was.
+    let (theirs, _base) = alice.stage_self_update(gid).expect("alice stages");
+    alice.merge_pending_commit_for(gid).expect("alice merges");
+    bob.process_incoming_message(gid, &theirs)
+        .expect("bob applies");
+    assert_eq!(
+        bob.own_leaf_encryption_key(gid).expect("readable").as_ref(),
+        Some(&refreshed),
+        "a peer's commit does not touch this device's leaf"
+    );
+    assert!(matches!(
+        bob.own_leaf_encryption_key("g-unknown"),
+        Err(MlsError::GroupNotFound(_))
+    ));
+}
+
+#[test]
 fn a_refused_self_update_clears_cleanly_and_can_be_staged_again() {
     let gid = "g-refresh-refused";
     let (_alice, mut bob) = alice_and_bob(gid);

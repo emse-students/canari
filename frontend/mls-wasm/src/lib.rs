@@ -954,6 +954,15 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// The HPKE encryption key of this device's leaf in `group_id`, which names the leaf, or
+    /// `undefined` when the tree holds none (`MlsManager::own_leaf_encryption_key`).
+    #[wasm_bindgen]
+    pub fn own_leaf_encryption_key(&self, group_id: String) -> Result<Option<Vec<u8>>, JsValue> {
+        self.manager
+            .own_leaf_encryption_key(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Whether this device's current context in `group_id` is the one the served base
     /// `group_info` describes - same epoch, tree hash and transcript hash
     /// (`MlsManager::own_context_matches_base`). Gates the periodic refresh against a fork.

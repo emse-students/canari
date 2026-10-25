@@ -44,7 +44,7 @@ import {
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken } from '$lib/stores/auth';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
@@ -1443,6 +1443,12 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
   protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
     return (await invoke<number | null>('date_feuille', { groupId })) ?? null;
+  }
+
+  /** Tauri-native `invoke` wrapper - this device's leaf key as hex, `null` with no own leaf. */
+  protected async ownLeafKey(groupId: string): Promise<string | null> {
+    const key = await invoke<number[] | null>('cle_feuille', { groupId });
+    return key ? toHex(new Uint8Array(key)) : null;
   }
 
   /** Tauri-native `invoke` wrapper - whether this device's context is the one the served base describes. */

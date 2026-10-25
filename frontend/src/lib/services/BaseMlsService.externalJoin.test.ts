@@ -72,6 +72,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       }
     ).exportBaseForPublication,
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
+    noteOwnLeafReplaced: (BaseMlsService.prototype as unknown as Record<string, unknown>)
+      .noteOwnLeafReplaced,
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
     ...keyPackageWaitFields(),
