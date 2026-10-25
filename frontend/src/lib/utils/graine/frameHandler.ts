@@ -606,12 +606,17 @@ async function answerSeedRequest(
       throw e;
     }
   }
-  console.info(
-    `[GRAINE] answered ${requester} with ${seeds.length} seed(s)` +
-      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '') +
-      (holdsNothing ? ' - holds nothing of the community' : '') +
-      ` in ${pages.length} page(s)`
-  );
+  // An EMPTY answer ("I hold nothing of the community", no decline) is the routine outcome of every
+  // join into a community with no history: it said nothing a reader could act on and came once per
+  // member per device (25 lines in one measured row). The frame sent is the record of it; a line
+  // is kept for an answer that CARRIED something - seeds or declines.
+  if (seeds.length > 0 || gathered.missing.length > 0) {
+    console.info(
+      `[GRAINE] answered ${requester} with ${seeds.length} seed(s)` +
+        (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '') +
+        ` in ${pages.length} page(s)`
+    );
+  }
 }
 
 /** A gather the admission gate cannot decide until the key group drains - the ask is parked. */
@@ -859,10 +864,14 @@ async function gatherCommunityHistory(
   if (share === null || isUndecided(share)) return share;
   const { seeds, inScope, outOfScope, policy } = share;
   const truncated = inScope > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
-  console.info(
-    `[GRAINE] sending ${seeds.length} of ${inScope} seed(s) this key group may read as history to ${frame.sender}` +
-      (policy === 'joined' ? ", floored at that member's arrival" : '')
-  );
+  // Said only when there WAS a past in scope: `0 of 0` is a fresh community's every join, once per
+  // member per device, and states nothing (an empty hand over a non-empty scope still speaks).
+  if (inScope > 0) {
+    console.info(
+      `[GRAINE] sending ${seeds.length} of ${inScope} seed(s) this key group may read as history to ${frame.sender}` +
+        (policy === 'joined' ? ", floored at that member's arrival" : '')
+    );
+  }
   // "I HOLD NOTHING" IS A CLAIM ABOUT THE STORE, NOT ABOUT THIS KEY (section 24). The read above skips
   // a row it cannot decrypt - a PIN change re-sealing, a backup row sealed under another key - and
   // an empty list from it would put a durable "nothing" at the requester while the past sits here.

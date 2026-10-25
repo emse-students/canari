@@ -109,6 +109,9 @@ import {
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
 import { drainOutboxForExit } from '$lib/utils/chat/outbox';
+
+/** Salons whose "decoded after entry was decided" decision was already logged this session. */
+const salonEntryDecisionNoted = new SvelteSet<string>();
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -686,10 +689,9 @@ export function useConversations() {
       );
       return;
     }
-    if (stored.length === 0) {
-      Log.d('CHANNEL', `${salonTag} stored page empty - nothing drawn`);
-      return;
-    }
+    // An empty stored page is every first open of a salon: nothing to draw is no event, and the
+    // server page that follows is what draws (and logs) the salon.
+    if (stored.length === 0) return;
     if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
       Log.d('CHANNEL', `${salonTag} stored page not drawn - a newer load started meanwhile`);
       return;
@@ -847,7 +849,10 @@ export function useConversations() {
       // DECODED ONLY ONCE NO LISTING CAN STILL ENTER THIS SALON: a row missing its seed asks for it
       // on the community's key group, which a listing still in flight may not have registered yet
       // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
-      if (await whenSalonEntryDecided(rawId)) {
+      // Said ONCE per salon per session: it is the decision (the page waited for an entry), and the
+      // same salon re-reading on every open repeated it (5 lines in one measured row).
+      if ((await whenSalonEntryDecided(rawId)) && !salonEntryDecisionNoted.has(rawId)) {
+        salonEntryDecisionNoted.add(rawId);
         ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
       }
       const loaded: ChatMessage[] = [];

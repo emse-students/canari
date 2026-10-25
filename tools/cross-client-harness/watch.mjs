@@ -2334,7 +2334,6 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
     /^\[GRAINE\] absorbed (\d+)\/\1 seed\(s\) \(0 already held; endorsements verified: \d+ from the tree, \d+ from the server's published keys\) from [0-9a-f]{8}… in community [0-9a-f]{8} - salon\(s\) (?:none|[0-9a-f]{8}(?:, [0-9a-f]{8})*)$/
   ),
   atLevels(['debug'], /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/),
-  atLevels(['debug'], /^\[CHANNEL\] channel_[0-9a-f]{8} stored page empty - nothing drawn$/),
   atLevels(['log'], /^\[PENDING\] (?:web|tauri)-[0-9a-f]{8}…-[0-9a-z]+-[0-9a-z]+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/),
 ];
 
