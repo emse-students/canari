@@ -56,7 +56,7 @@
  *
  * IT BUILDS ITS OWN VENUE and deletes it.
  */
-import { APP_TAB, client, countMessage, evaluate, realClick, send } from '../chat.mjs';
+import { APP_TAB, clearOverlays, client, countMessage, evaluate, realClick, send } from '../chat.mjs';
 import {
   acceptInviteLink,
   channelRow,
@@ -72,7 +72,6 @@ import {
   openCommunitySettings,
   openInviteLink,
   revokeChannelAccess,
-  saveChannelAccess,
   selectedChannel,
   setHistoryVisibility,
 } from '../comm.mjs';
@@ -329,14 +328,12 @@ const cycles = [];
 for (let i = 1; i <= CYCLES && channelId; i += 1) {
   const cycle = await step(`cycle ${i}`, async () => {
     await openSalon(w1);
-    // GRANT AND REVOKE END THE PANEL DIFFERENTLY, so they are called differently. A grant is staged
-    // and `saveChannelAccess` commits it AND clears the modal, so it is the last gesture inside an
-    // `openChannelAccess` - wrapping it in `inPanel` closes the panel before the save can happen,
-    // and the save then misses a button that is no longer mounted. A revoke commits on its own
-    // confirmation and leaves the panel up, so it is the one that needs `inPanel` to close it.
+    // A GRANT IS WRITTEN WHEN ITS ROW APPEARS (#1171: the panel has no Save), so the grant is final
+    // when `grantChannelAccess` returns and `clearOverlays` only takes the modal off the composer.
+    // A revoke commits on its own confirmation and is wrapped in `inPanel`, which closes it too.
     await openChannelAccess(w1);
     await grantChannelAccess(w1, PEER_NAME);
-    await saveChannelAccess(w1);
+    await clearOverlays(w1);
 
     // THE PEER COMMITS ITS OWN ADD, so the gesture that moves the epoch is the peer LOADING the
     // salon, not the owner granting it. Without this the roster never changes, no send rotates, and
@@ -386,7 +383,7 @@ await (cycles.length === CYCLES ? step : skipped)('let the peer back in for good
   await openSalon(w1);
   await openChannelAccess(w1);
   await grantChannelAccess(w1, PEER_NAME);
-  await saveChannelAccess(w1);
+  await clearOverlays(w1);
   // Entitlement is not routing, and the reads below are about a peer who is BOTH. Asserted here
   // rather than left to the warm read, so a peer that never got back on the roster is reported as
   // this step failing and not as the transcript being incomplete.

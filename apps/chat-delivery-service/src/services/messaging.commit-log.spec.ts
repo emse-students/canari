@@ -1114,7 +1114,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             kickedAt: IsNull(),
           },
         ],
-        select: { deviceId: true },
+        select: { deviceId: true, status: true },
       });
       expect(transaction).not.toHaveBeenCalled();
       expect(sent).not.toHaveBeenCalled();
