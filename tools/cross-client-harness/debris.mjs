@@ -59,3 +59,16 @@ export const GROUP_DEBRIS = [
 
 /** True when `name` is a group a runner minted, and therefore a group a sweep may delete. */
 export const isGroupDebris = (name) => GROUP_DEBRIS.some((r) => r.test(name));
+
+/**
+ * THE COMMUNITIES A RUNNER MINTS, by the same rule: enumerated from the runners, never relaxed.
+ *
+ * - `C<n>[ <arm>] COMM<n>-<mark>`: the COMM checks (COMM-12 names its arm between the two).
+ * - `RM<n>-<mark tail>`: the 1.4.1 salon runner (`archive/salon.mjs`), which mints its community as
+ *   `rowGroupName(rowId)`. RM ONLY: no other row prefix mints a community a sweep may take, and
+ *   `cleanup.mjs` reported seven of them as "0 match a check's venue" on 2026-10-25.
+ */
+export const COMMUNITY_DEBRIS = [/^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/, /^RM\d+-[0-9a-z]+$/];
+
+/** True when `name` is a community a runner minted, and therefore one a sweep may delete. */
+export const isCommunityDebris = (name) => COMMUNITY_DEBRIS.some((r) => r.test(name));

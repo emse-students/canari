@@ -275,7 +275,10 @@ async function play() {
   await clearOverlays(W1);
   const workspaceId = workspaceIdOf(community, { memberUserId: user.W1 });
   if (!workspaceId) return { premise: [`${community} is not on the server after its creation`], detail: {} };
-  const c = { user, name, community, link, workspaceId, salon: `${community}-salon` };
+  // LOWER CASE, because a salon granted live is drawn lowercased on the grantee until it reloads (the
+  // P3 in `docs/wiki/backlog.md`, RM-4 2026-10-25): with a mixed-case name the grantee's row never
+  // matched and the premise failed on a defect that is not this row's subject.
+  const c = { user, name, community, link, workspaceId, salon: `${community}-salon`.toLowerCase() };
   for (const d of spec.devices.filter((x) => x !== 'W1')) await joinByLink(c, d);
   const premise = spec.devices.filter((d) => !isCommunityMember(workspaceId, user[d])).map((d) => `${d} is not a member of ${community}`);
   if (premise.length) return { premise, detail: { workspaceId } };

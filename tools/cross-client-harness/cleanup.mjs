@@ -46,7 +46,7 @@
  */
 import { client, openChannel } from './chat.mjs';
 import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
-import { isGroupDebris } from './debris.mjs';
+import { isCommunityDebris, isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
 import { planCampaignSweep } from './campaign.mjs';
 import { sweepArgs } from './campaign-ledger.mjs';
@@ -60,9 +60,9 @@ import { SITE } from './site.mjs';
  * every run of it left a community behind that no sweep would ever take. Found 2026-08-20 with four
  * of seven communities matching and a fifth sitting there in plain sight. Widen this by ENUMERATING
  * what the runners mint, never by relaxing it: the price of a loose pattern here is a real
- * community, typed name and all, and there is no undo.
+ * community, typed name and all, and there is no undo. The list is `debris.mjs`'s
+ * `COMMUNITY_DEBRIS`, beside the group one, so `debris-selftest.mjs` pins both.
  */
-const DEBRIS = /^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/;
 
 /**
  * THE SAME ALLOWLIST, FOR THE OTHER ESTATE, and enumerated from the runners rather than guessed:
@@ -115,7 +115,7 @@ const named = psql(`SELECT id, name FROM channel_workspaces ORDER BY "createdAt"
     return { id: line.slice(0, at), name: line.slice(at + 1) };
   });
 
-let debris = named.filter((w) => DEBRIS.test(w.name));
+let debris = named.filter((w) => isCommunityDebris(w.name));
 
 // NAMES THE ESTATE, because this file DELETES. It said "on production" unconditionally while
 // routing through `estate.mjs`, which picks the local containers or production from `SITE` - so on
@@ -133,7 +133,7 @@ for (const w of debris) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
 // and a scratch probe on 2026-08-21 that minted `C22 PROBE-<mark>` outside the shape. Naming the
 // rest costs one line and makes the next escape visible on the run that causes it. These are REAL
 // communities, so they are listed and never touched.
-const strangers = named.filter((w) => !DEBRIS.test(w.name));
+const strangers = named.filter((w) => !isCommunityDebris(w.name));
 if (strangers.length > 0) {
   console.log(`[cleanup] ${strangers.length} NOT matched - left alone, check none of these is debris:`);
   for (const w of strangers) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
@@ -327,7 +327,7 @@ for (const w of debris) {
 const left = psql(`SELECT name FROM channel_workspaces`)
   .split('\n')
   .map((l) => l.trim())
-  .filter((l) => DEBRIS.test(l));
+  .filter((l) => isCommunityDebris(l));
 
 const salonsLeft = shared
   ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`)

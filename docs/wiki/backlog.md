@@ -46,6 +46,16 @@ seat yet), so the empty row stays. Owed: a server-side path that ends a group no
 `assertCallerMayMutateMembership`) each read a caller's standing on a group in their own way. Fold them onto the one kind-aware read (`standingOnGroupOfKind`) with a spec per
 route, so a group-keyed route has one answer to the question rather than three.
 
+## P3 - A salon granted live shows its name in lower case until the grantee reloads (RM-4, 2026-10-25)
+
+When an admin adds a member to a private salon's access list, the server announces it to the grantee
+(`channel.member.joined`, carrying the salon's stored name). The grantee's sidebar then draws the
+salon with its name lower-cased: `<Name>-salon` reads `<name>-salon`. It does so until a reload, which
+brings back the stored case. The creator's own sidebar shows the stored case throughout. Read on
+`1.4.1-alpha.3`; the name is stored in its original case. Where the case is lost on the receiving
+path is not yet read. The salon runner now mints lower-case salon names, so its rows no longer
+depend on this.
+
 ## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
 
 When a frame this device already read comes back (`SecretReuseError` at its own epoch),

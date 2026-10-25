@@ -1,3 +1,8 @@
-### Fixed - the salon rows wait for the member row they act on
+### Fixed - the salon rows reach their premise, and cleanup knows their communities
 
-The community panel draws a member's row only once that member's profile has loaded. The rig's roster wait counted role controls, and the invite form's own control is one of them. So RM-4..6 looked for a member before the panel drew them. `markMemberRow` now polls for the row it needs ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+The salon runner now:
+- waits for the member row it acts on;
+- closes the community panel it opened;
+- mints lower-case salon names.
+
+`cleanup.mjs` reads its community allowlist from `debris.mjs`, which now names the salon runner's `RM<n>-` communities. Both lists are pinned with controls ([cross-client-testing](docs/wiki/cross-client-testing.md), [backlog](docs/wiki/backlog.md)).
