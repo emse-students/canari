@@ -145,7 +145,7 @@ kick gets. The current device has no delete button at all.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Invitations to process |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | All memberships for device |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
@@ -1842,7 +1842,8 @@ after a PIN recovery) - and then nothing else ends the `pending` row, which ever
 a work item to Add a leaf already in the tree. The proof is the client's to carry: the server's
 self-report (`POST mls/invitations/status` -> `activateDeviceMembership`, authority `report` ->
 `promoteReportedSeat`) promotes any existing seat that is not kicked and whose owner is not awaiting
-admission, and cannot read the tree; an evicted group stays held, so holding is not the proof. After
+admission - in a key-distribution group, whose owner social-service answers is entitled
+([state machine](mls-graine-state-machine.md#seat-writes-check-membership-2026-10-25)) - and cannot read the tree; an evicted group stays held, so holding is not the proof. After
 a Welcome the promotion is a second write of the same value: the UPDATE matches the active row again,
 logs one `[INVITATION_STATUS]` line and re-adds an existing Redis route, and emits no event. A refusal naming a DIFFERENT group than the one
 asked for is not joined: the served base is unusable for this group and the join reads `build_failed`.

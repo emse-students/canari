@@ -269,6 +269,27 @@ about the row - only what a refusal owes its caller, and what to answer for `rem
 | `pending -> active` | `activateDeviceMembership`, `messaging.service.ts` | the commit fan-out; `POST mls/invitations/status`; `POST mls/push/membership-active`; `createGroup`; the external-joiner promotion (`internal.controller.ts`) |
 | `-> pending` | `deactivateDeviceMembership`, `messaging.service.ts` | `mls/kick-stale-user`; `mls/kick-stale-device`; `POST mls/invitations/status` demotion; `detectStaleDevices` (cron) |
 
+### Seat writes check membership (2026-10-25)
+
+**Neither transition writer creates a seat.** A seat is created only by a writer that checks
+membership first: the roster in a conversation; in a key-distribution group, social-service's
+entitlement (`isEntitledToDistributionGroup`) asked against a claim re-read under the seat lock
+(`utils/seat-eviction.ts`) - the accepted commit and its admits, the Welcome, the publisher.
+
+- **The demotion is one conditional `UPDATE`, never an upsert.** Every caller demotes a row it read
+  or its own device's seat, so an absent row was deleted in between (a departure, a removal or an
+  erasure) and stays deleted: the demotion writes nothing, returns `false`, warns `NOT DEMOTED ... reason=no_seat` under the
+  caller's tag, the cron does not count it, and the status route answers 403 `NOT_A_MEMBER`
+  `reason=no_seat`, as its promotion already did.
+- **A report of `active` in a key-distribution group asks the entitlement** before promoting a
+  `pending` seat (`claimEntitledReport`), against a claim the statement re-reads under the lock: not
+  entitled is 403 `NOT_A_MEMBER` `reason=not_entitled`, a departure in between is `departed`, an
+  unanswered question the usual retryable 503. An `active` seat reported again asks nobody, and the
+  `UPDATE` then matches `status = 'active'` only. A conversation's report is unchanged: its roster
+  is in the same statement.
+
+Proven against PostgreSQL by `seat-writes-membership.integration.spec.ts`, through the real doors.
+
 **ENROLMENT IS NOT A DEMOTION AND DOES NOT GO THROUGH THAT WRITER.** `registerDevice`
 (`devices.controller.ts`), `addGroupMember` (`members.controller.ts`) and `sendWelcome`
 (`messaging.service.ts`) insert a `pending` row for a device that has never been in this group's

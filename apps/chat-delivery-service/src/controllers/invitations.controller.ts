@@ -607,10 +607,16 @@ export class InvitationsController {
     // `group:members:{groupId}` - routable and electable to serve a Welcome it cannot produce.
     // `removedFromTreeAt: null` because nobody removed this device's leaf: it is reporting its own
     // state, no member owes it an Add, and `kickedAt` must keep whatever it already said.
-    await this.messagingService.deactivateDeviceMembership(safeUserId, safeDeviceId, safeGroupId, {
-      removedFromTreeAt: null,
-      tag: 'INVITATION_STATUS',
-    });
+    //
+    // A REPORT OF `pending` DEMOTES A SEAT AND NEVER CREATES ONE, exactly as a report of `active`
+    // promotes one: a device with no seat here is refused (`no_seat`), already logged by the writer.
+    const demoted = await this.messagingService.deactivateDeviceMembership(
+      safeUserId,
+      safeDeviceId,
+      safeGroupId,
+      { removedFromTreeAt: null, tag: 'INVITATION_STATUS' }
+    );
+    if (!demoted) throw activationRefusalException('no_seat');
     return { status: 'pending' as const };
   }
 

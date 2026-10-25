@@ -423,13 +423,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // Reset to pending - the device will need to receive a new Welcome.
       // `removedFromTreeAt: null`: nothing removed this device's leaf, it simply stopped
       // republishing a KeyPackage. Recording a kick here would make the hourly stranded report
-      // accuse a member of an Add nobody ever promised.
-      await this.messagingService.deactivateDeviceMembership(
+      // accuse a member of an Add nobody ever promised. A row a departure or a removal deleted
+      // after this sweep read it is not re-created: the writer says so under this tag, and it is
+      // not counted.
+      const demoted = await this.messagingService.deactivateDeviceMembership(
         member.userId,
         member.deviceId,
         member.groupId,
         { removedFromTreeAt: null, tag: 'CRON_STALE_DEVICE' }
       );
+      if (!demoted) continue;
       reset++;
       // `lastUpdate` is reported because it is EVIDENCE, not because it decided anything: when a
       // demotion looks wrong, the first question is whether somebody else's write kept the row
