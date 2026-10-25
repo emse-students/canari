@@ -6,7 +6,7 @@
  * session, so every runner writes here rather than only to stdout.
  */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, existsSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { ESTATE, SITE } from './site.mjs';
 import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
 import { observedBundles } from './bundle.mjs';
 import { RECORDER_ONLY, VERDICTS, isVerdict } from './verdicts.mjs';
-import { gate, report } from './watch.mjs';
+import { consoleDump, gate, report } from './watch.mjs';
 import { parseBuildStamp } from './buildstamp.mjs';
 
 /**
@@ -600,6 +600,8 @@ export async function recordObserved(id, verdict, detail, observers) {
     blind: { '*': `the bundle check itself failed: ${String(e?.message ?? e)}` },
   }));
 
+  // THE WHOLE CONSOLE, read now and written only if the row does not PASS - see `consoleDump`.
+  const consoles = consoleDump(observers);
   const reports = {};
   for (const [label, o] of Object.entries(observers))
     if (o) reports[label] = typeof o.clean === 'boolean' ? o : await report(o);
@@ -613,7 +615,32 @@ export async function recordObserved(id, verdict, detail, observers) {
     // THE ROW'S OWN ID decides which 1.4.1 server lines are its own (`srvlog.mjs` `ROW_RULES`).
     serverWindowSince ? takeServerWindow(srvLines, serverWindowSince, [], id) : null
   );
-  return record(id, folded.verdict, { ...folded.detail, ...rowDetail });
+  const kept = folded.verdict === 'PASS' ? null : keepConsoles(id, consoles);
+  return record(id, folded.verdict, { ...folded.detail, ...rowDetail, ...(kept ? { consoles: kept } : {}) });
+}
+
+/**
+ * Writes each client's console to `<STATE_DIR>/logs/consoles/`, outside the repository (the lines
+ * carry ids), and returns label -> path. A write that fails is a note in the row, never a lost verdict.
+ */
+function keepConsoles(id, consoles) {
+  const labels = Object.keys(consoles);
+  if (!labels.length) return null;
+  const dir = join(STATE_DIR, 'logs', 'consoles');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const paths = {};
+  for (const label of labels) {
+    const path = join(dir, `${id}-${stamp}-${label}.log`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path, consoles[label] + '\n');
+      paths[label] = path;
+    } catch (e) {
+      console.error(`[results] could not keep ${label}'s console for ${id}: ${String(e?.message ?? e)}`);
+      paths[label] = `unwritten: ${String(e?.message ?? e)}`;
+    }
+  }
+  return paths;
 }
 
 /**
