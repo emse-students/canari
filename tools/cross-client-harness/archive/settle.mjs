@@ -53,6 +53,7 @@ import {
   DUP7_ELSEWHERE,
   SEAT_CLAIM_OVERTAKEN_BODY,
   SETTLE_ROWS,
+  INVITATION_FAILED,
   TOK_NARRATION,
   authLines,
   blockedHereOnly,
@@ -447,9 +448,12 @@ const ACTIONS = {
       { match: '/api/auth/refresh', method: 'POST', fault: 'lose-answer once' },
     ];
     const idx = W1.events.length;
+    const linesBefore = consoleLines(W1).length;
     const f = await armFault(W1, rules);
     const g = outcome(addMembers(W1, [c.name(spec.subject)]));
     await f.awaitFired(1, 1, 45_000).catch(() => {});
+    // The app's own verdict on the Add, which the click cannot see (`INVITATION_FAILED`).
+    const failedLine = await awaitLine(W1, '[GROUP] an invitation added nobody (failed)', 30_000);
     const gesture = await g;
     const commitPosts = requestsSince(W1, COMMIT_URL, idx).length;
     const rep = await f.disarm();
@@ -470,14 +474,14 @@ const ACTIONS = {
       joiners: [],
       members: spec.devices.filter((d) => d !== spec.subject),
       narration: TOK_NARRATION[id],
-      detail: { gesture, refreshes, loggedOut, commitPosts, probe, probeSince, epochAfter, unknownLines, auth },
+      detail: { gesture, failedLine, refreshes, loggedOut, commitPosts, probe, probeSince, epochAfter, unknownLines, auth },
       judge: (view, seq) => [
         firedAtLeast('lose-answer on the renewal', byRule(rep.records, 1), 1),
         ...renewalFailedOwn({
           auth,
           fired401: provokedFailures(byRule(rep.records, 0)).length,
           commitPosts,
-          gestureFailed: !gesture.ok,
+          gestureFailed: !gesture.ok || lines.slice(linesBefore).some((l) => INVITATION_FAILED.test(l)),
           unknownLines,
           epochBefore: c.fromEpoch,
           epochAfter,

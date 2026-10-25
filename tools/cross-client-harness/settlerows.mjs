@@ -296,10 +296,30 @@ export function authLines(lines) {
   return Object.fromEntries(Object.entries(AUTH_LINES).map(([k, re]) => [k, texts.filter((t) => re.test(t))]));
 }
 
+/**
+ * THE APP'S OWN VERDICT ON AN ADD GESTURE THAT FAILED. `addMembers` returns once the invite button is
+ * pressed and cannot see the outcome, so TOK-2's "the gesture failed" read `ok: true` on alpha.4 while
+ * W1 logged exactly this. The row reads the outcome here, from the app, never from the click.
+ */
+export const INVITATION_FAILED = /\[GROUP\] an invitation added nobody \(failed\)$/;
+
+/**
+ * TOK-2's failed Add, as W1 reports it (alpha.4): the bulk invite's typed error, at log and at error
+ * level, and the socket the provoked transport failure took down (`[A] ws-`; `ws+` follows). Anchored
+ * on `DeliveryRenewalFailedError` - any other reason for a failed Add stays dirt on this row too.
+ * THREE LINES FOR ONE FAILURE IS ITSELF NOISE, owed ONE accusing line - forgiven here only because
+ * the row provokes it: backlog, "One failed Add is reported three times (TOK-2, 2026-10-25)".
+ */
+const TOK2_FAILED_ADD = [
+  /^\[SYNC\] processBulkAddition failed: DeliveryRenewalFailedError: POST \/api\/mls\/commit answered 401 and the token renewal failed /,
+  /^Bulk invite error: DeliveryRenewalFailedError: POST \/api\/mls\/commit answered 401 and the token renewal failed /,
+  /^\[A\] ws-$/,
+];
+
 /** What each TOK row expects W1 to narrate - forgiven there and nowhere else. */
 export const TOK_NARRATION = {
   'TOK-1': [AUTH_LINES.renewing, AUTH_LINES.okAfterRenewal],
-  'TOK-2': [AUTH_LINES.renewing, AUTH_LINES.renewalFailed],
+  'TOK-2': [AUTH_LINES.renewing, AUTH_LINES.renewalFailed, ...TOK2_FAILED_ADD],
 };
 
 const noWarnBut = (auth, allowed = []) => {
