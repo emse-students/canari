@@ -39,6 +39,7 @@ import {
   raceEnrolOwn,
   reenrolledDevice,
   revokedOwn,
+  addAcrossReloadPremise,
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 import { recordCreated } from '../campaign.mjs';
@@ -394,7 +395,10 @@ const ACTIONS = {
       reloaded = (await unlockClient(W1.cx, W1.target.port, W1.target.account, { match: APP_TAB })).verdict === 'unlocked';
     }
     const minted = await mintP;
-    const records = { W1: (await f.disarm()).records };
+    const disarmed = await f.disarm();
+    const records = { W1: disarmed.records };
+    const unmet = addAcrossReloadPremise({ vacuous: disarmed.vacuous });
+    if (unmet.length) return { premise: unmet, members: ['W1', 'W2', 'W3'], minted: { W3: minted }, records, detail: { minted, vacuous: disarmed.vacuous } };
     const listed = minted.deviceId ? (await awaitListed(seats.seat.W3.cx, c.group.name, 120_000)) !== null : false;
     // A SECOND COPY, IF ONE COMES, comes from the reloaded W1's settlement: given the same bound.
     await sleep(15_000);

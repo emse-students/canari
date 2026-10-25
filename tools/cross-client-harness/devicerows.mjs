@@ -249,6 +249,23 @@ export function bgWelcomeOwn(variant, { phone, webview = [], server, newcomerRea
 }
 
 /** DUP-7: the Add settled by resubmission, the Welcome held across a reload, and ONE join. */
+/**
+ * DUP-7'S PREMISE: W1 must have COMMITTED the Add of W3 (fault rule #0, its commit answer lost).
+ *
+ * Read on alpha.3 (2026-10-25): the owner's new device joined the group by its OWN external commit,
+ * W1 posted no commit at all, so rule #0 never fired and neither did the held Welcome. Judged, that
+ * was three failed assertions about a path that never ran - a FAIL naming a defect nobody met. A rule
+ * that never fired is the row not happening, so it is a premise, named with what happened instead.
+ *
+ * @param {{ vacuous: number[] }} p the fault rules that never fired (`fault.mjs` `disarm()`)
+ * @returns {string[]} the unmet premises, `[]` when W1's Add was committed
+ */
+export function addAcrossReloadPremise({ vacuous }) {
+  return (vacuous ?? []).includes(0)
+    ? ["W1 never posted a commit for the group: the new device joined by its own external commit, so the lost-answer Add and the held Welcome this row measures did not happen"]
+    : [];
+}
+
 export function welcomeAcrossReloadOwn({ seq, heldWelcome, reloaded, welcome, listed }) {
   const accepts = seq.filter((d) => d.kind === 'ACCEPT').length;
   const duplicates = seq.filter((d) => d.kind === 'DUPLICATE').length;
