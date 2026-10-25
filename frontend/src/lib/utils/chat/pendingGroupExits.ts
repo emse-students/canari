@@ -88,6 +88,33 @@ export function classifyExitFailure(error: unknown): ExitFailure {
 }
 
 /**
+ * The one log line of a BEST-EFFORT server delete whose failure nothing retries (an orphan group a
+ * failed creation or a merged duplicate leaves behind). Every swallowed branch logs, at the level its
+ * TYPED outcome earns ({@link classifyExitFailure}): no answer or the service's own refusal is a
+ * warning (the orphan stays for the server's collection); anything else is a defect of ours, an error.
+ *
+ * @param groupId The group the delete was for.
+ * @param error What `deleteGroupOnServer` threw.
+ * @param why What the delete was cleaning up, for the line.
+ */
+export function logBestEffortGroupDeleteFailure(
+  groupId: string,
+  error: unknown,
+  why: string
+): void {
+  const short = groupId.slice(0, 8);
+  const failure = classifyExitFailure(error);
+  if (failure === 'unreachable' || error instanceof GroupExitRefusedError) {
+    console.warn(
+      `[EXIT] ${short}... ${why}: server delete not done (${failure}) - left to the server's collection:`,
+      error
+    );
+    return;
+  }
+  console.error(`[EXIT] ${short}... ${why}: server delete failed on our side:`, error);
+}
+
+/**
  * Write down that this device owes the server an exit for `groupId`, before attempting it.
  *
  * Best-effort by necessity - a storage that refuses must not stop the user leaving a group - but a
@@ -278,7 +305,13 @@ export async function drainPendingGroupExits(params: {
       } catch (e) {
         const failure = classifyExitFailure(e);
         if (failure === 'already-gone') {
-          log(`[EXIT] ${short}... ${entry.kind} already done server-side - clearing`);
+          // The same outcome, its own line: a key-distribution group is ended with its community and
+          // never by this route, so "already done" would name something that did not happen.
+          log(
+            e instanceof GroupExitRefusedError && e.code === 'KEY_DISTRIBUTION_GROUP'
+              ? `[EXIT] ${short}... ${entry.kind} refused KEY_DISTRIBUTION_GROUP - a key-distribution group is ended with its community, never by this device; nothing owed - clearing`
+              : `[EXIT] ${short}... ${entry.kind} already done server-side - clearing`
+          );
           await clearPendingGroupExit(storage, entry.groupId, log);
           outcomes.push({ groupId: entry.groupId, kind: entry.kind, result: 'answered' });
           continue;

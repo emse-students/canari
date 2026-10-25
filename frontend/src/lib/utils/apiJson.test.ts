@@ -124,6 +124,21 @@ describe('refusalOrigin', () => {
     ).resolves.toBe('gateway');
   });
 
+  // The delivery service's 409 to a pending member: recognised so a label names its origin truly.
+  it("reads the 409 awaiting_admission as the gateway's, and only on a 409", async () => {
+    const body = {
+      error: 'awaiting_admission',
+      message: 'a member has not admitted this person yet',
+    };
+    await expect(refusalOrigin(json(body, 409))).resolves.toBe('gateway');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await expect(refusalOrigin(json(body, 403))).resolves.toBe('edge');
+    await expect(refusalOrigin(json({ error: 'awaiting', message: 'm' }, 409))).resolves.toBe(
+      'edge'
+    );
+    debug.mockRestore();
+  });
+
   it("reads a JSON-speaking edge (a WAF or CDN block) as the edge's", async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     await expect(

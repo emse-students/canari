@@ -9,6 +9,7 @@ import {
   drainPendingGroupExits,
   owedFor,
   flushPendingGroupExits,
+  logBestEffortGroupDeleteFailure,
   pendingGroupExitIds,
   recordPendingGroupExit,
   registerPendingGroupExitDrain,
@@ -295,6 +296,28 @@ describe('drainPendingGroupExits', () => {
     expect(storage.rows.size).toBe(0);
   });
 
+  // Same outcome as any service 403, but "already done server-side" would name something that did
+  // not happen: a key-distribution group is ended with its community, never by this route.
+  it('clears a KEY_DISTRIBUTION_GROUP refusal under its own line', async () => {
+    const storage = makeStorage([{ groupId: G1, kind: 'delete', requestedAt: 1 }]);
+    const mlsService = makeMls({
+      deleteGroupOnServer: vi.fn(async () => {
+        throw new GroupExitRefusedError(G1, 403, 'delete', 'gateway', 'KEY_DISTRIBUTION_GROUP');
+      }),
+    });
+    const lines: string[] = [];
+    const out = await drainPendingGroupExits({
+      storage,
+      mlsService,
+      userId: 'u1',
+      log: (l) => lines.push(l),
+    });
+    expect(out).toEqual([{ groupId: G1, kind: 'delete', result: 'answered' }]);
+    expect(storage.rows.size).toBe(0);
+    expect(lines.some((l) => l.includes('refused KEY_DISTRIBUTION_GROUP'))).toBe(true);
+    expect(lines.some((l) => l.includes('already done server-side'))).toBe(false);
+  });
+
   // An edge's HTML 403 or 404 (a portal, a WAF, a misrouted deploy) is not the service answering.
   it.each([
     ['delete', 404],
@@ -472,5 +495,28 @@ describe('the session lifecycle', () => {
     });
     expect(await flushPendingGroupExits()).toEqual([]);
     expect(mlsService.deleteGroupOnServer).not.toHaveBeenCalled();
+  });
+});
+
+/** A best-effort delete nothing retries still logs, at the level its typed outcome earns. */
+describe('logBestEffortGroupDeleteFailure', () => {
+  it('warns on no answer and on the service refusing; an error only for a defect of ours', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      logBestEffortGroupDeleteFailure(G1, NET, 'failed group creation');
+      logBestEffortGroupDeleteFailure(
+        G1,
+        new GroupExitRefusedError(G1, 500, 'delete', 'gateway'),
+        'failed group creation'
+      );
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(error).not.toHaveBeenCalled();
+      logBestEffortGroupDeleteFailure(G1, new TypeError('x is undefined'), 'merged duplicate 1:1');
+      expect(error).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
 });

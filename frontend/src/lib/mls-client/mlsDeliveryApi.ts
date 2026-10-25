@@ -10,7 +10,12 @@ import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
-import { assertAnsweredByApi, readApiJson, refusalOrigin } from '$lib/utils/apiJson';
+import {
+  assertAnsweredByApi,
+  isAwaitingAdmissionBody,
+  readApiJson,
+  refusalOrigin,
+} from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError } from '$lib/stores/auth';
@@ -324,13 +329,7 @@ export async function awaitingAdmissionFrom(
   if (res.status !== 409) return null;
   try {
     const body: unknown = await res.clone().json();
-    if (
-      body &&
-      typeof body === 'object' &&
-      (body as { error?: unknown }).error === 'awaiting_admission'
-    ) {
-      return new AwaitingAdmissionError(groupId);
-    }
+    if (isAwaitingAdmissionBody(res.status, body)) return new AwaitingAdmissionError(groupId);
   } catch {
     // Not JSON: an edge page, not the delivery service's answer - the caller's own branch reads it.
     console.debug(
@@ -650,11 +649,34 @@ export class GroupExitRefusedError extends Error {
      * exit on a 403 only when the delivery service sent it; an edge's or a portal's page says
      * nothing about the group.
      */
-    readonly origin: ResponseOrigin
+    readonly origin: ResponseOrigin,
+    /**
+     * The refusal's contract `code` when the delivery service sent one (`KEY_DISTRIBUTION_GROUP`,
+     * `NOT_A_MEMBER`, ...), else null. Never read off an edge's body. It changes no outcome - the
+     * status and the origin decide that - and names the answer in the drain's log.
+     */
+    readonly code: string | null = null
   ) {
-    super(`Group ${operation} refused for ${groupId}: ${status} (${origin})`);
+    super(
+      `Group ${operation} refused for ${groupId}: ${status} (${origin}${code ? `, ${code}` : ''})`
+    );
     this.name = 'GroupExitRefusedError';
   }
+}
+
+/**
+ * The {@link GroupExitRefusedError} of a refused exit response: its status, WHO answered
+ * (`refusalOrigin`) and, from the delivery service only, its contract code.
+ */
+async function groupExitRefusal(
+  groupId: string,
+  res: Response,
+  operation: 'delete' | 'leave'
+): Promise<GroupExitRefusedError> {
+  const origin = await refusalOrigin(res);
+  const code =
+    origin === 'gateway' ? (await refusalFromResponse(res, `group ${operation}`)).code : null;
+  return new GroupExitRefusedError(groupId, res.status, operation, origin, code);
 }
 
 /**
@@ -2120,7 +2142,7 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (!res.ok) {
-      throw new GroupExitRefusedError(groupId, res.status, 'delete', await refusalOrigin(res));
+      throw await groupExitRefusal(groupId, res, 'delete');
     }
     assertAnsweredByApi(res, `DELETE /api/mls/groups (group ${groupId.slice(0, 8)})`);
   }
@@ -2135,7 +2157,7 @@ export class MlsDeliveryApi {
     // already out - which is what a leave asks for - and it reaches the caller as a status and an
     // origin it can act on rather than as a sentence it would have to read.
     if (!res.ok) {
-      throw new GroupExitRefusedError(groupId, res.status, 'leave', await refusalOrigin(res));
+      throw await groupExitRefusal(groupId, res, 'leave');
     }
     // The route answers `{ status: 'removed' }`: a portal's 200 removed nobody, and the drain must
     // not clear the owed leave on it (`NotFromApiError`, a transport failure, keeps the row).
@@ -2464,9 +2486,20 @@ export class MlsDeliveryApi {
       );
       return 'error';
     }
-    if (!g || typeof g !== 'object') return 'absent';
-    const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;
-    if (typeof id !== 'string' || !id) return 'absent';
+    // ONLY the handler's explicit `{ found: false }` is an absence: any other shape without an id
+    // (a bare `null`, an array, an object of another shape) is a body nobody documented, and doubt
+    // never purges.
+    if (g && typeof g === 'object' && (g as { found?: unknown }).found === false) return 'absent';
+    const id =
+      g && typeof g === 'object'
+        ? ((g as { id?: unknown; groupId?: unknown }).groupId ?? (g as { id?: unknown }).id)
+        : undefined;
+    if (typeof id !== 'string' || !id) {
+      console.warn(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} with JSON that is neither a group nor { found: false } - unknown, nothing purged`
+      );
+      return 'error';
+    }
     return {
       groupId: id,
       name:

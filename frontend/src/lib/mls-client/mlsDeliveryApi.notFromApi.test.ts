@@ -149,9 +149,12 @@ describe("a delete for everyone is done only on the delivery service's answer", 
     );
     const coded = await api.deleteGroupOnServer('g1').catch((e: unknown) => e);
     expect((coded as GroupExitRefusedError).origin).toBe('gateway');
+    expect((coded as GroupExitRefusedError).code).toBe('NOT_A_MEMBER');
     expect(classifyExitFailure(coded)).toBe('already-gone');
     const unknown = await api.deleteGroupOnServer('g1').catch((e: unknown) => e);
     expect((unknown as GroupExitRefusedError).origin).toBe('edge');
+    // A code is never read off a body that is not the service's.
+    expect((unknown as GroupExitRefusedError).code).toBeNull();
     expect(classifyExitFailure(unknown)).toBe('refused');
   });
 
@@ -211,6 +214,19 @@ describe("a leave and a dismiss are done only on the delivery service's answer",
       expect((failure as GroupExitRefusedError).origin).toBe('edge');
       expect(classifyExitFailure(failure)).toBe('refused');
     }
+  });
+
+  it("a pending member's 409 awaiting_admission is labelled the service's, and still kept", async () => {
+    const { api } = makeApi(() =>
+      Response.json(
+        { error: 'awaiting_admission', message: 'a member has not admitted this person yet' },
+        { status: 409 }
+      )
+    );
+    const failure = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
+    expect((failure as GroupExitRefusedError).origin).toBe('gateway');
+    expect((failure as GroupExitRefusedError).message).toContain('409 (gateway)');
+    expect(classifyExitFailure(failure)).toBe('refused');
   });
 
   it('an envelope-imitating 503 keeps the owed leave: the status says nothing about the exit', async () => {

@@ -43,7 +43,7 @@ export function responseOrigin(res: Pick<Response, 'headers'>): ResponseOrigin {
 
 /**
  * WHO REFUSED, for a refusal whose reading DESTROYS something (a sign-out, a retired conversation, a
- * forgotten exit): `gateway` only when the JSON body is one of the two shapes our services write.
+ * forgotten exit): `gateway` only when the JSON body is one of the three shapes our services write.
  *
  * - NEST'S ENVELOPE, whose `statusCode` repeats the HTTP status (`{ statusCode, message, error }`):
  *   no service here installs an exception filter, so every `HttpException` built from a string and
@@ -54,13 +54,17 @@ export function responseOrigin(res: Pick<Response, 'headers'>): ResponseOrigin {
  *   (`NOT_A_MEMBER`, `MEMBERSHIP_NOT_ALLOWED`) a removed member is answered with take this shape,
  *   and reading them as the edge's kept a removed member's conversation and replayed an owed leave
  *   forever. An unknown `code` string proves nothing.
+ * - THE 409 OF A SEAT AWAITING ADMISSION, `{ error: 'awaiting_admission', message }`
+ *   ({@link isAwaitingAdmissionBody}): the delivery service's answer to a pending member, which no
+ *   reader destroys anything on - recognised so a log or an error names its origin truthfully.
  *
  * WHY THE HEADER ALONE IS NOT ENOUGH HERE: the estate sits behind an edge that can answer in JSON
  * too (a WAF or CDN block page served as `application/json`, `{ type, title, status, detail,
  * error_code }`). Its body never repeats the status as `statusCode` and never carries a contract
- * code, so these two shapes separate it where {@link responseOrigin} cannot. The gateway's own
- * error pages imitate the envelope only for 413/429/5xx, statuses no destructive reader acts on. A
- * body that does not parse is the edge's. The body is read from a CLONE, so the caller can still
+ * code, so these shapes separate it where {@link responseOrigin} cannot. The gateway's own error
+ * pages (nginx) imitate the envelope for 413/429/5xx, and for a 404 under `/api/media/public/live/`:
+ * no destructive reader acts on those statuses, nor on that route. A body that does not parse is the
+ * edge's. The body is read from a CLONE, so the caller can still
  * read or report the original.
  *
  * Non-destructive readings keep {@link responseOrigin}: a misread there costs a retry, not a state.
@@ -80,11 +84,32 @@ export async function refusalOrigin(res: Response): Promise<ResponseOrigin> {
   }
   const { statusCode, code } = body as { statusCode?: unknown; code?: unknown };
   if (statusCode === res.status || isContractRefusalCode(code)) return 'gateway';
+  if (isAwaitingAdmissionBody(res.status, body)) return 'gateway';
   console.debug(
-    `[HTTP] a ${res.status} JSON body is neither Nest's envelope nor a contract refusal code` +
+    `[HTTP] a ${res.status} JSON body is neither Nest's envelope, a contract refusal code nor an awaiting-admission answer` +
       ` (code ${typeof code === 'string' ? code : 'absent'}) - read as the edge's`
   );
   return 'edge';
+}
+
+/** The `error` the delivery service names a seat still awaiting a member's admission with. */
+export const AWAITING_ADMISSION_ERROR = 'awaiting_admission';
+
+/**
+ * Whether a parsed refusal body is the delivery service's 409 for a seat still awaiting a member's
+ * admission (`awaitingAdmissionRefusal`, `{ error: 'awaiting_admission', message }`). Status AND
+ * field, the one reading `awaitingAdmissionFrom` (`mlsDeliveryApi.ts`) and {@link refusalOrigin} share.
+ *
+ * @param status The HTTP status of the refusal.
+ * @param body Its parsed JSON body.
+ */
+export function isAwaitingAdmissionBody(status: number, body: unknown): boolean {
+  return (
+    status === 409 &&
+    !!body &&
+    typeof body === 'object' &&
+    (body as { error?: unknown }).error === AWAITING_ADMISSION_ERROR
+  );
 }
 
 /**

@@ -49,10 +49,17 @@ describe('getGroupServerStatus', () => {
     expect(await api.getGroupServerStatus('g1')).toBe('error');
   });
 
-  it('corps "null" litteral sur 200 -> \'absent\'', async () => {
-    const api = makeApi(async () => response('null', { status: 200 }));
-    expect(await api.getGroupServerStatus('g1')).toBe('absent');
-  });
+  // Only `{ found: false }` purges: any other JSON without an id is a body nobody documented.
+  it.each([['null'], ['[]'], ['{}'], ['{"found":true}'], ['{"found":"false"}']])(
+    "JSON %s on 200 -> 'error', never a purge",
+    async (body) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const api = makeApi(async () => response(body, { status: 200 }));
+      expect(await api.getGroupServerStatus('g1')).toBe('error');
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    }
+  );
 
   // THE HANDLER NEVER ANSWERS 404 (a missing row is `{ found: false }`), so a 404 is an edge, a
   // portal or a misrouted deploy - and a route-level 404 would purge EVERY group at once.

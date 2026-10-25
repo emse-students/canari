@@ -1365,8 +1365,15 @@ contract (`isContractRefusalCode`, `utils/refusalCodes.ts`). The membership refu
 member meets (`NOT_A_MEMBER`, `MEMBERSHIP_NOT_ALLOWED`) are coded: an envelope-only first draft read
 them as the edge's, so a removed member kept the conversation and an owed leave replayed for ever.
 Any other JSON body (a CDN's `{ type, title, status, detail, error_code }`, an unknown code) is the
-edge's. The gateway's own error pages imitate the envelope only for 413/429/5xx, statuses no
-destructive reader acts on. The remaining header-only readers (the send's edge refusal, media, live, resumable upload)
+edge's, except the delivery service's 409 `{ error: 'awaiting_admission' }` to a pending member,
+recognised (`isAwaitingAdmissionBody`) so its label is true although nothing destroys on it. The
+gateway's own error pages (nginx) imitate the envelope for 413/429/5xx and for a 404 under
+`/api/media/public/live/`; no destructive reader acts on those statuses or on that route. A refused
+exit also carries the service's `code` (`GroupExitRefusedError.code`), which changes no outcome and
+names the answer in the drain's log (`KEY_DISTRIBUTION_GROUP` has its own line). A best-effort
+server delete nothing retries (a failed creation's orphan, a merged duplicate) logs its failure
+through `logBestEffortGroupDeleteFailure`. `getGroupServerStatus` reads `absent` from `{ found:
+false }` alone; any other JSON without an id is `error`. The remaining header-only readers (the send's edge refusal, media, live, resumable upload)
 only choose between retrying and reporting, so a misread there costs a retry, not a state. The log line an operator reads is
 `[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept
 for a retry: NotFromApiError: POST /api/mls/send (group <group>) answered 200 with text/html... -
