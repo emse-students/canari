@@ -146,6 +146,20 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
   KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
   before the first round (never learn by failing what a fact could tell).
+- **Restored notices carry no proof and no mark (the `[AUTHORSHIP] ... carry no author proof` lines of
+  DEV-1).** Every one checked is a system notice row (`sender 'system'`), never a user message: the
+  count equals the system rows of each batch. Two classes. (a) Device-local rows relayed into other
+  members' timelines (contact lines, outbox failure lines): P3, already filed above, fix = a
+  "device-local" property set where the row is written and kept out of digest, diff and bundle.
+  (b) Shared notices (member added/removed, rename, picture, Join cards) a new device legitimately
+  restores: P2 under the Graine v2 authorship item, NOT a regression (v1.4.0 takes every restored row
+  on the relayer's word with no mark; `#2276` makes it visible in the pre-releases). Fix at the
+  source: store the event frame's verified authorship on the notice row, add a notice verdict in
+  `restoredAuthorship.ts` that verifies the signed system frame and redraws the text locally
+  (`renderVisibleNotice`) instead of taking the relayer's text; same for `channel_invitation`.
+  Interim decision owed after the stable: show the unverified mark on system rows
+  (`ChatMessageGroups.svelte` system branch) or not. Do not lower the log level; split the count
+  into notices and messages.
 - **Two flaky unit tests** (they pass alone, fail in the full parallel run, with or without recent
   changes): `ChatArea.entryWindow.svelte.test.ts` ("never mounts more than the 20-row entry frame")
   and `outbox.reelResume` ("KILL MID-UPLOAD"). Find the shared-state or ordering cause; a flaky gate is
