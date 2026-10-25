@@ -213,6 +213,18 @@ those devices, unverified. The DEV-1 judge reads the owner's pane at 0 lines wit
 bounds the window, not the relay. The fresh device logged unverified-authorship relays on DEV-1 and
 DEV-2; which rows they were is not read. The same "device-local" property closes both.
 
+## P3 - A revoked device signs out twice: the wipe's `clearAuth`, then the session-expired path's (DEV-2, `1.4.1-alpha.3`, 2026-10-25)
+
+The revoked W3 logged `[A] logout✓200` twice, 70 ms apart and in sequence (61 ms, then 59 ms). The
+cause, from reading the code, with the timing to match: `onDeviceRevoked` (`sessionAuth.ts`) runs
+`wipeRevokedDevice`, which awaits `clearAuth()` (the first `POST /api/auth/logout`). It then calls
+`cb.onSessionExpired()` for the redirect, and `handleSessionExpired` (`ChatBackgroundService.svelte`)
+runs `clearAuth()` again (the second). The second is harmless: the session row is already gone and the
+server answers 200. But it is a write sent for nothing, and the account's sign-out handlers run twice.
+The redirect wanted is `/login` with no second sign-out: either the seam carries "already signed out"
+or the revocation gets its own path to `/login`. Until the fix lands, both lines stay dirt on DEV-2
+and DEV-3.
+
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 
 `awaitOwnKeyPackagePublished` (`BaseMlsService.ts`) reads `fetchDeviceKeyPackage(self)` before an

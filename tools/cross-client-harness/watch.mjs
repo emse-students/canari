@@ -2321,9 +2321,9 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
  * (`1.4.1-alpha.3`, 2026-10-25). `clearAuthUnderway` ends every per-account store in turn and each one
  * says what it forgot; on any device that was NOT revoked these lines are a sign-out nobody asked for.
  *
- * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. DEV-2's W3 logged it TWICE, and two
- * `POST /api/auth/logout` for one sign-out is the double sign-out `auth.ts` documents having fixed.
- * Until that is read, both stay dirt rather than being forgiven by a needle that cannot count.
+ * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. DEV-2's W3 logged it TWICE - the wipe's `clearAuth`
+ * and then the session-expired redirect's (the backlog's P3, "A revoked device signs out twice"). Both
+ * stay dirt until that is fixed, rather than being forgiven by a needle that cannot count.
  */
 export const REVOKED_SIGN_OUT_NARRATION = [
   atLevels(['debug'], /^\[TRUST\] device-event consumer removed$/),
