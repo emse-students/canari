@@ -1658,46 +1658,67 @@ refresh that does not tighten the caps, or caps counted from the redistribution)
 
 ### A joiner whose first frame beats its Welcome waits for it (DUP-2, 2026-10-25)
 
-**The server is right to send it the frame.** A commit that admits a device records its seat
-`pending` with `admittedAtEpoch` (`ValidateCommitBody.admits`), and from then on the fan-out queues
-it every frame sealed at or after that epoch ([chat-delivery](../services/chat-delivery.md)). Those
-frames are exactly the ones the Welcome's epoch can open - a member's Remove at the Add's epoch is the
-next commit the joiner MUST apply - so withholding them until the Welcome is delivered would cut the
-joiner off its own next epoch. When the adder's answer is lost, its Welcome is owed state on the adder
-(above) and goes out only once the late resubmission settles; a member committing in between reaches
-the joiner first.
+**The server is right to send it the frame, and the server-side fix was rejected for that reason.** A
+commit that admits a device records its seat `pending` with `admittedAtEpoch`
+(`ValidateCommitBody.admits`), and from then on the fan-out queues it every frame sealed at or after
+that epoch ([chat-delivery](../services/chat-delivery.md)). Those frames are exactly the ones the
+Welcome's epoch can open - a member's Remove at the Add's epoch is the next commit the joiner MUST
+apply. "Do not fan a commit to a device whose Welcome the server has not seen" would therefore cut the
+joiner off its own next epoch, or need a second queue the Welcome releases; the frame already waits
+in the server queue, unacknowledged, which is that queue. When the adder's answer is lost, its
+Welcome is owed state on the adder (above) and goes out only once the late resubmission settles; a
+member committing in between reaches the joiner first.
 
 **What the joiner does with it.** The frame names a group it holds no state for
 (`handleUnknownGroup`): it is buffered, left unacknowledged in the server queue, and the one recovery
-seam `requestReAdd` runs once to read the server's facts. `[PIPELINE] Recovery attempt finished for
-<g>` is that run settling - the line `startRecovery` writes whatever the seam decided. Until DUP-2 the
-seam read `owed` (a Welcome queued, or a member holding the add lock) and then sent a
+seam `requestReAdd` runs once to read the device's membership row. `[PIPELINE] Recovery attempt
+finished for <g>` is that run settling - the line `startRecovery` writes whatever the seam decided.
+Until DUP-2 the seam read "owed" (a Welcome queued, or a member holding the add lock) and then sent a
 `welcome_request` anyway: every member was asked to do the Add's work again, the adder's lock turned
 them away (`Lock busy`), and a member finding the lock free would have REPLACED the leaf the Add had
-just written - a second commit and a second Welcome. **`owed` now waits and asks nobody**
-(`[READD] <g>... a Welcome is owed to this device ... waiting for it, no member asked`), as the Graine
-key-group join already did: the not-ready marker keeps the group on the sync watchdog's cadence, each
-pass re-reads the row, and once neither fact holds the reading is `unhonoured-seat` and the
-self-service join is the device's own. When the Welcome lands, the buffer replays and the frames left
-behind as `unknown-group` are re-fetched. A seat from a link (`awaiting-admission`) still asks a member:
-there, the ask IS the admission request. A server that carries neither fact reads `owed` and so
-waits too; every estate has carried both since 2026-09-03.
+just written - a second commit and a second Welcome. Now the row is read as two facts
+(`readWelcomeOwedFromRow`), and neither asks a member:
 
-**The re-fetch reads a frame twice, and that is a duplicate.** The re-fetch pulls every row the
-server still holds for the group, and a frame live delivery read a moment earlier may not be
-acknowledged yet. MLS refuses the second read with `SecretReuseError`, which it can only reach after
-opening the frame's sender data under this device's copy of the epoch - so the frame is neither from
-a fork nor damaged. `messaging.rs` classifies it from the error's TYPE (`is_spent_generation`) before
-the fork judgement: one `debug` line, no fork verdict, and the same `SecretReuse` error to every
-caller, whose frame ledger then says `Duplicate delivery ... silent ACK`. Until then it logged `[FORK]
-not a fork ... the frame itself is damaged` at WARN and a same-epoch ERROR for an expected duplicate.
-A frame whose bytes really are damaged keeps its WARN (`tests/spent_generation_is_not_damage.rs`).
+- `welcome-queued`: the Welcome is in this device's OWN mailbox, so the mailbox is pulled
+  (`fetchPendingMessages`).
+- `add-in-flight`: some member holds the group's add lock - per group, so not necessarily an Add of
+  this device - and the device waits for it to settle.
+- `pending-unqualified`: the server carries neither fact (older than 2026-09-03, which no estate
+  runs); waited on like the two above.
 
-**Not covered.** An Add accepted by the server whose adder neither holds the lock nor has queued
-the Welcome (`admittedAtEpoch` set, both facts false) still reads `unhonoured-seat`, so the joiner
-serves itself an external commit over a leaf already in the tree. `getDeviceMemberships` does not
-carry `admitted` (the user-groups route does); the decision of what a joiner owes a dead adder is in
-[backlog](../backlog.md#p2---a-seat-a-commit-admitted-reads-as-unhonoured-once-the-adder-lets-go-of-the-lock-dup-2-2026-10-25).
+The not-ready marker keeps the group on the sync watchdog's cadence, each pass re-reads the row, and
+once no fact holds the reading is `unhonoured-seat` and the self-service join is the device's own
+(`recovery.test.ts`, "the wait ENDS on the facts"). A seat from a link (`awaiting-admission`) still
+asks a member: there, the ask IS the admission request. The Graine key-group join waits on the same
+readings (`isWelcomeOwed`).
+
+**A Welcome this device has just spent is not a Welcome on its way.** When a Welcome fails to install
+(`NoMatchingKeyPackage`, `GroupAlreadyExists`), the handler starts the recovery before it returns
+`true`, so before the drain acknowledges that Welcome: the row can still list it as queued. The
+handler says so (`requestReAdd(..., { welcomeHandled: true })`) and the reading looks past the queued
+Welcome, so the repair runs at once instead of waiting a cadence for the Welcome it just spent.
+
+**When the Welcome lands, the buffer replays** and the frames left behind as `unknown-group` are
+re-fetched. That re-fetch pulls every row the server still holds for the group, including a frame
+live delivery read a moment earlier and has not acknowledged yet - a second read the client gives
+itself, which is a defect of its own, open in
+[backlog](../backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25).
+What is fixed is what that second read was CALLED. MLS refuses it with `SecretReuseError`, which it
+can only reach after opening the frame's sender data under this device's copy of the epoch - so the
+frame is neither from a fork nor damaged. `messaging.rs` classifies it from the error's TYPE
+(`is_spent_generation`) before the fork judgement: one `debug` line, no fork verdict, and the same
+`SecretReuse` error to every caller, whose frame ledger then says `Duplicate delivery ... silent
+ACK`. Until then it logged `[FORK] not a fork ... the frame itself is damaged` at WARN and a
+same-epoch ERROR that `logging.rs` demoted by its marker; the demotion is deleted with the line it
+hid. A frame whose bytes really are damaged keeps its WARN (`tests/spent_generation_is_not_damage.rs`).
+
+**An admitted seat with neither fact joins by itself, and that is safe.** An Add the server accepted
+whose adder holds no lock and has queued no Welcome leaves a seat with `admittedAtEpoch` that reads
+`unhonoured-seat`. The external commit carries the same signature key as the leaf the Add wrote, and
+OpenMLS removes that leaf in the same commit - one leaf for the key, the routine rejoin of an active
+device (`tests/external_join.rs`, `an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`).
+Whether any adder path reaches that state, and what its late Welcome then meets, is a verification
+in [backlog](../backlog.md#p3---verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own-leaf-dup-2-review-2026-10-25).
 
 ### An Add enrols its people with the accepted commit (2026-10-25)
 

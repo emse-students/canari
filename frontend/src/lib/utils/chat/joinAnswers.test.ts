@@ -149,6 +149,8 @@ function joinerSide(member: ReturnType<typeof memberSide>) {
     isDistributionGroup: vi.fn().mockReturnValue(false),
     noteDistributionGroup: vi.fn(),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    // A seat whose Welcome is queued pulls this device's own mailbox rather than asking a member.
+    fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
     forgetGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue(JOINER_DEVICE),
@@ -335,8 +337,12 @@ describe('a join by invitation link, end to end', () => {
 
     // The Add stored a Welcome: the seat is owed, no longer awaiting - the joiner waits for it.
     resetReAddCooldowns();
+    joiner.mlsService.sendWelcomeRequest.mockClear();
     await requestReAdd(GROUP, joiner.deps);
     expect(joiner.mlsService.externalJoin).not.toHaveBeenCalled();
+    // Waits by pulling its own mailbox, where the Welcome is - and asks no member again.
+    expect(joiner.mlsService.fetchPendingMessages).toHaveBeenCalled();
+    expect(joiner.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
 
     // The Welcome processed, the device reports itself active: in the tree, nothing left to join.
     m.seat.status = 'active';

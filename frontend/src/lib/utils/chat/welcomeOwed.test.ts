@@ -1,4 +1,4 @@
-import { isStrandedSeat, readWelcomeOwedFromRow } from './welcomeOwed';
+import { isStrandedSeat, isWelcomeOwed, readWelcomeOwedFromRow } from './welcomeOwed';
 
 /**
  * The one reading that picks a door into a group - shared by conversation recovery and, since
@@ -13,11 +13,36 @@ describe('readWelcomeOwedFromRow', () => {
     expect(readWelcomeOwedFromRow(row({ status: 'active' }))).toBe('not-pending');
   });
 
-  it('a pending row with a queued Welcome or an add in flight is owed', () => {
-    expect(readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true }))).toBe('owed');
+  it('a queued Welcome and a held add lock are two readings, both owed', () => {
+    // Two facts that send the device to two places - its own mailbox, or somebody else's work - so
+    // a caller can act on each (review of #2466).
+    expect(readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true }))).toBe(
+      'welcome-queued'
+    );
+    expect(
+      readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true, addInFlight: true }))
+    ).toBe('welcome-queued');
     expect(
       readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: false, addInFlight: true }))
-    ).toBe('owed');
+    ).toBe('add-in-flight');
+    for (const r of ['welcome-queued', 'add-in-flight', 'pending-unqualified'] as const) {
+      expect(isWelcomeOwed(r)).toBe(true);
+    }
+    for (const r of ['unhonoured-seat', 'not-pending', 'awaiting-admission'] as const) {
+      expect(isWelcomeOwed(r)).toBe(false);
+    }
+  });
+
+  it('reads past a queued Welcome the caller has just handled', () => {
+    // The failed-Welcome recovery starts before that Welcome's ACK lands, so the row can still list
+    // it. Read as `welcome-queued`, the device would wait for the Welcome it has already spent.
+    const queued = row({ status: 'pending', welcomeQueued: true, addInFlight: false });
+    expect(readWelcomeOwedFromRow(queued, { ignoreQueuedWelcome: true })).toBe('unhonoured-seat');
+    expect(
+      readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true, addInFlight: true }), {
+        ignoreQueuedWelcome: true,
+      })
+    ).toBe('add-in-flight');
   });
 
   it('a pending row nothing follows is an unhonoured seat', () => {
@@ -27,7 +52,8 @@ describe('readWelcomeOwedFromRow', () => {
   });
 
   it('a server that does not say is not a server saying no', () => {
-    expect(readWelcomeOwedFromRow(row({ status: 'pending' }))).toBe('owed');
+    // Named for what it is - a server older than 2026-09-03, which no estate runs - and waited on.
+    expect(readWelcomeOwedFromRow(row({ status: 'pending' }))).toBe('pending-unqualified');
   });
 
   it("a seat awaiting a member's admission is never a door the device serves itself", () => {

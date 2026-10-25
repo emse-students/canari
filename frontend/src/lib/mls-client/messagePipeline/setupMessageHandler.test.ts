@@ -528,7 +528,11 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     // First detection: republish fresh key material, then drive the externalJoin-first seam.
     expect(mls.republishKeyMaterial).toHaveBeenCalledWith('device-key');
-    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything());
+    // `welcomeHandled`: the recovery starts before this Welcome's ACK, so the server may still list
+    // it as queued - and the seam must not wait for the Welcome this device just spent (#2466).
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), {
+      welcomeHandled: true,
+    });
     // The self-heal seam owns welcome_request (fallback); the handler no longer calls it directly.
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
@@ -556,7 +560,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // No 3-strike wait: the peer-independent externalJoin (via requestReAdd) is attempted at once,
     // so a device whose peers have suspended re-adds can still self-heal.
     await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
-    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything());
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), {
+      welcomeHandled: true,
+    });
   });
 
   it('Welcome (GroupAlreadyExists) → noop, ACK', async () => {

@@ -254,7 +254,11 @@ fn an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key() {
         .expect("alice applies the external commit");
     bob.merge_pending_commit_for(gid).expect("bob merges");
 
-    assert_eq!(bob_leaves(&alice), 1, "one leaf for bob's key on the member");
+    assert_eq!(
+        bob_leaves(&alice),
+        1,
+        "one leaf for bob's key on the member"
+    );
     assert_eq!(bob_leaves(&bob), 1, "one leaf for bob's key on bob");
     let frame = alice.send_message(gid, b"after the rejoin").expect("send");
     let plaintext = bob

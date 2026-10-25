@@ -12,7 +12,11 @@ import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repai
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { readWelcomeOwedFromRow, type WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
+import {
+  isWelcomeOwed,
+  readWelcomeOwedFromRow,
+  type WelcomeOwedReading,
+} from '$lib/utils/chat/welcomeOwed';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -304,7 +308,7 @@ async function joinDistributionGroup(
     const reading = await readWelcomeOwedForThisDevice(mlsService, ref.groupId, scope, log);
     if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
       log(
-        reading === 'owed'
+        reading !== null && isWelcomeOwed(reading)
           ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (queued, or an add in flight) - not joining by external commit, the admitter's Welcome is the door`
           : `[GRAINE] ${scopeLabel(scope)}: this device has a seat but whether a Welcome is owed could not be read - joining nothing this pass, so two doors are never opened at once`
       );
