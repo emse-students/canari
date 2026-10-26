@@ -816,6 +816,16 @@ export function whyWelcomeUndeliverable(reason: AdmitRefusalReason): string | nu
     : null;
 }
 
+/**
+ * Whether a refused admit says something about the DEVICE in every group, rather than about the
+ * person in this one - so one group's answer may settle the device's other invitations. Only
+ * `no_key_package` (revoked or erased) and `unresolved_identity` (a placeholder) are; a key group's
+ * `not_entitled` / `departure_in_progress` are about one community or salon and settle nothing else.
+ */
+export function admitRefusalIsAboutTheDevice(reason: AdmitRefusalReason): boolean {
+  return reason === 'no_key_package' || reason === 'unresolved_identity';
+}
+
 /** Whether a Welcome to a device the gate refused for `reason` can never be delivered. */
 export function admitRefusalMakesWelcomeUndeliverable(reason: AdmitRefusalReason): boolean {
   return whyWelcomeUndeliverable(reason) !== null;
