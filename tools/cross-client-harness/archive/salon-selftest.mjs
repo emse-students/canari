@@ -145,7 +145,18 @@ for (const line of [
   '[RoutePreload] {"pathname":"/posts","first":true}',
   'Removed from channel 0fb4ddf1…',
   '[channelSettings.afterAccessWrite another write landed] {"channelId":"channel_0fb4ddf1…","base":3,"revision":5}',
+  '[GRAINE] f7a9bb80… holds nothing of community bbd34b31 at distribution epoch 5 - 2 device(s) answered (web-f7a9bb80…-mvn2mqtk-3phn, web-f7a9bb80…-mvpdkiy2-nme2), recorded, every device of f7a9bb80… on the key group has answered - asking the next member',
+  '[GRAINE] f7a9bb80… holds nothing of community bbd34b31 at distribution epoch 5 - 1 device(s) answered (web-f7a9bb80…-mvn2mqtk-3phn), recorded, 1 device(s) of f7a9bb80… on the key group are offline and still unasked - asking the next member',
+  '[CHANNEL] page of 0fb4ddf1 decoded after its salon entry was decided (held 412 ms behind a listing in flight)',
 ]) ok(`narration: ${line.slice(0, 60)}`, said(line));
+// The forms #2527 removed or left out stay dirt: an old client's per-device and per-seat lines, an
+// unmeasured page line, another community's answer, and a walk held by a request naming no device.
+ok('control: the per-device "still to answer" form stays dirt', !said('[GRAINE] f7a9bb80…:web-f7a9bb80…-mvn2mqtk-3phn holds nothing of community bbd34b31 - recorded; 1 device(s) of f7a9bb80… still to answer'));
+ok('control: another seat\'s absorb of an empty answer stays dirt', !said('[GRAINE] absorbed 0/0 seed(s) (0 already held) from f7a9bb80… in community bbd34b31 - salon(s) none'));
+ok('control: another community\'s aggregated answer is not the row\'s', !said('[GRAINE] f7a9bb80… holds nothing of community 99999999 at distribution epoch 5 - 1 device(s) answered (web-x), recorded, every device of f7a9bb80… on the key group has answered - asking the next member'));
+ok('control: a held walk is a stall, not narration', !said('[GRAINE] f7a9bb80…:web-x holds nothing of community bbd34b31 - recorded; the request named no device, so the walk waits for 2 more device(s) of f7a9bb80… on the key group, offline ones included'));
+ok('control: the old, unmeasured page line stays dirt', !said('[CHANNEL] page of 0fb4ddf1 decoded after its salon entry was decided'));
+ok('control: another salon\'s held page is not the row\'s', !said('[CHANNEL] page of 99999999 decoded after its salon entry was decided (held 12 ms behind a listing in flight)'));
 ok('control: another community\'s join is not the row\'s', !said('Joined channel 99999999…'));
 ok('control: another key group\'s Welcome is not the row\'s', !said('[WELCOME] 99999999... is a KEY-DISTRIBUTION group (server row) - installing it as a seed carrier'));
 ok('control: a per-read Graine answer stays dirt (fixed at the source)', !said('[GRAINE] sending 0 of 0 seed(s) this key group may read as history to c71e1a5b…'));
