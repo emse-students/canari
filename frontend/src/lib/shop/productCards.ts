@@ -20,9 +20,9 @@ export function productDisplayName(p: Pick<AssociationProduct, 'name' | 'type'>)
 }
 
 /**
- * The cotisation tiers this viewer may still buy: only a rise (`higher`) or a tier with no ranking
- * (`none`). The tier held and any lower one are not offered - the server refuses them anyway
- * (`TIER_NOT_A_RISE`). Ordered base-first, then by ascending level. An empty list means there is no
+ * The cotisation tiers this viewer may still buy: only what the server marks a rise (`higher`) or
+ * unranked (`none`). The tier held, a lower one, and a listing that does not say (no
+ * `viewerTierRelation`, an old server) offer no action - nothing is guessed from tags or prices. Ordered base-first, then by ascending level. An empty list means there is no
  * membership card at all (the highest tier is held, or the association sells none).
  */
 export function offeredTiers(products: AssociationProduct[]): AssociationProduct[] {
@@ -30,8 +30,7 @@ export function offeredTiers(products: AssociationProduct[]): AssociationProduct
     .filter(
       (p) =>
         p.type === 'membership' &&
-        p.viewerTierRelation !== 'held' &&
-        p.viewerTierRelation !== 'lower'
+        (p.viewerTierRelation === 'higher' || p.viewerTierRelation === 'none')
     )
     .sort((a, b) => tierRank(a) - tierRank(b));
 }

@@ -54,6 +54,11 @@ describe('offeredTiers', () => {
     expect(offeredTiers([low, held, rise, none]).map((t) => t.id)).toEqual(['rise', 'none']);
   });
 
+  it('offers no action when the listing does not say where a tier stands (old server)', () => {
+    const unknown = product({ id: 'u', type: 'membership', variantKey: 'u' });
+    expect(offeredTiers([unknown])).toEqual([]);
+  });
+
   it('is empty for the holder of the highest tier: no membership card at all', () => {
     expect(offeredTiers([low, held])).toEqual([]);
   });
