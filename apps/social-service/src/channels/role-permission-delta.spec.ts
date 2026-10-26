@@ -75,22 +75,27 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
      * pass against a version that never took the lock, and would be measuring itself.
      */
     let queue: Promise<unknown> = Promise.resolve();
+    /** The role repository as the transaction sees it: the edited row is read only for update. */
     const em = {
-      findOne: jest.fn(
-        (_entity: unknown, opts: { where: { id: string }; lock?: { mode?: string } }) => {
-          if (opts.lock?.mode !== 'pessimistic_write') {
-            throw new Error('read inside the transaction without a row lock');
-          }
-          return Promise.resolve(opts.where.id === ROLE ? snapshot() : null);
+      findOne: jest.fn((opts: { where: { id: string }; lock?: { mode?: string } }) => {
+        if (opts.lock?.mode !== 'pessimistic_write') {
+          throw new Error('read inside the transaction without a row lock');
         }
-      ),
-      save: jest.fn((_entity: unknown, row: { permissions: string[] }) =>
-        Promise.resolve(write(row))
-      ),
+        return Promise.resolve(opts.where.id === ROLE ? snapshot() : null);
+      }),
+      save: jest.fn((row: { permissions: string[] }) => Promise.resolve(write(row))),
+      // The actor's roles, read again under the community removal lock.
+      find: jest.fn((options: unknown) => roleRepo.find(options)),
     };
+    // The community removal lock's transaction, run one at a time - the serialisation the advisory
+    // lock gives two requests on one community.
     const manager = {
-      transaction: jest.fn((fn: (m: typeof em) => Promise<unknown>) => {
-        const run = queue.then(() => fn(em));
+      transaction: jest.fn((fn: (m: unknown) => Promise<unknown>) => {
+        const tx = {
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: (entity: unknown) => (entity === ChannelRole ? em : memberRepo),
+        };
+        const run = queue.then(() => fn(tx));
         queue = run.then(
           () => undefined,
           () => undefined
@@ -100,7 +105,6 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     };
 
     const roleRepo = {
-      manager,
       findOne: jest.fn((opts: { where: { id: string } }) =>
         Promise.resolve(opts.where.id === ROLE ? snapshot() : ADMIN_ROLE)
       ),
@@ -121,6 +125,7 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
         { workspaceId: WORKSPACE, userId: MODERATOR, roleIds: [ROLE] },
       ]),
       save: jest.fn(),
+      manager,
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
@@ -182,7 +187,7 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     await service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_ROLES, true);
 
     expect(em.findOne).toHaveBeenCalledTimes(1);
-    expect(em.findOne.mock.calls[0][1]).toMatchObject({
+    expect(em.findOne.mock.calls[0][0]).toMatchObject({
       where: { id: ROLE },
       lock: { mode: 'pessimistic_write' },
     });

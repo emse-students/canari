@@ -1021,14 +1021,12 @@ column they mean to write is `roleIds` itself, so they only race each other.
 - **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
   the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant
   and `hardDeleteWorkspace` take salon rows before membership rows (the grant-vs-deletion cycle
-  #2284's review found is closed). Left: the reorder transaction writes several salon rows in the
-  order the client sent, and `hardDeleteWorkspace`'s bulk `DELETE` takes them in whatever order the
-  plan visits them, so either can cross a departure on two salons. PostgreSQL aborts one side
-  (`40P01`); an aborted departure settles `cancelled` and is retried inline, a reorder is answered
-  5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR UPDATE`) before each bulk write.
-- **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
-  kicking each other at the same moment both pass it and can leave a community with members and no
-  admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+  #2284's review found is closed; since 2026-10-26 `hardDeleteWorkspace` also opens with the
+  removal lock, so it is serialised with every departure). Left: the reorder transaction writes
+  several salon rows in the order the client sent, so it can cross a departure on two salons.
+  PostgreSQL aborts one side (`40P01`); an aborted departure settles `cancelled` and is retried
+  inline, a reorder is answered 5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR
+  UPDATE`) before the bulk write.
 - **A group retirement runs after the commit, outside any lock.** A makes a salon public, B makes it
   private again (the idempotent mint returns the same group G), then A's retirement deletes G on
   chat-delivery and nulls `distributionGroupId`: a private salon with no group. The fix is a

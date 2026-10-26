@@ -288,16 +288,24 @@ maybe('a member write against PostgreSQL', () => {
   });
 
   it("an erasure's successor removed meanwhile is not written back; the next one is promoted", async () => {
-    // Both candidates rank alike, so the user id decides: 'a-heir' first. The erasure reads the
-    // community, then 'a-heir' is removed before the promotion is written.
+    // Both candidates rank alike, so the user id decides: 'a-heir' first. 'a-heir' is removed to
+    // its commit from inside the erasure's first call to chat-delivery (its eviction) - after the
+    // erasure found other members, before its departure chooses the successor under the lock.
     const { ws, roles } = await community({ boss: 'admin', 'a-heir': 'mod', 'b-next': 'mod' });
-    const ran = afterNextRead(
-      'find',
-      (w) => w.workspaceId === ws && w.userId === undefined,
-      () => service.kickFromWorkspace(ws, 'a-heir', 'b-next')
-    );
-    expect(await service.removeAccountFromWorkspaces('boss')).toBe(1);
-    expect(ran()).toBe(true);
+    const answer = global.fetch;
+    let ran = false;
+    global.fetch = (async (...args: Parameters<typeof fetch>) => {
+      global.fetch = answer;
+      ran = true;
+      await service.kickFromWorkspace(ws, 'a-heir', 'b-next');
+      return answer(...args);
+    }) as typeof fetch;
+    try {
+      expect(await service.removeAccountFromWorkspaces('boss')).toBe(1);
+    } finally {
+      global.fetch = answer;
+    }
+    expect(ran).toBe(true);
     expect(await rowOf(ws, 'a-heir')).toBeNull();
     expect((await rowOf(ws, 'b-next'))?.roleIds).toEqual([roles.admin]);
     expect(await rowOf(ws, 'boss')).toBeNull();

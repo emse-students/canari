@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -59,12 +60,19 @@ describe('the MLS device guard on an invitation', () => {
     };
     const workspaceRepo = { findOne: jest.fn().mockResolvedValue({ id: WORKSPACE, slug: 'ws' }) };
     const memberRepo = {
-      findOne: jest
-        .fn()
-        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: ACTOR, roleIds: ['r-admin'] }),
+      // The inviter is a member (read early, and again under the removal lock); the target is not.
+      findOne: jest.fn(({ where }: { where: { userId: string } }) =>
+        Promise.resolve(
+          where.userId === ACTOR
+            ? { workspaceId: WORKSPACE, userId: ACTOR, roleIds: ['r-admin'] }
+            : null
+        )
+      ),
       find: jest.fn().mockResolvedValue([]),
       create: jest.fn((x: Record<string, unknown>) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve(x)),
+      // An admission re-checks under the removal lock that the community still has members.
+      count: jest.fn().mockResolvedValue(1),
     };
     const roleRepo = {
       find: jest.fn().mockResolvedValue([{ permissions: [CHANNEL_PERMISSIONS.INVITE_MEMBERS] }]),
@@ -72,6 +80,9 @@ describe('the MLS device guard on an invitation', () => {
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

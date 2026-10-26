@@ -1253,11 +1253,65 @@ this is what the code does.
 
 | Operation | What it checks now | Refusal |
 |---|---|---|
-| `leaveWorkspace` | the leaver is not the sole admin while others remain | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `kickFromWorkspace` | the TARGET's roles, which it never consulted before | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `updateWorkspaceMemberRole` | the new role still carries `workspace.manage`, or another admin exists | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `acceptWorkspaceInvite` | the community still has at least one member | `WORKSPACE_HAS_NO_MEMBERS` |
+| `leaveWorkspace` | the leaver is not the sole admin while others remain | `400` early, `409` under the lock: `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `kickFromWorkspace` | the TARGET's roles, which it never consulted before | `400` early, `409` under the lock: `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `updateWorkspaceMemberRole` | the new role still carries `workspace.manage`, or another admin exists | `400` early, `409` under the lock: `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `setRoleBasePermission` (revoking `workspace.manage`) | someone still holds a role carrying it, or the community has no members | `409 WORKSPACE_WOULD_HAVE_NO_ADMIN` (asked under the lock only) |
+| `acceptWorkspaceInvite`, `inviteToChannel` (a new member) | the community still has at least one member | `404 WORKSPACE_HAS_NO_MEMBERS` |
 | `internal DELETE users/:id` | cannot refuse - repairs instead, see below | - |
+
+**The check is asked twice: early, then under the lock where the write happens (2026-10-26).** The
+early answer (`400`) comes before anything is asked of another service, and it cannot see a write
+that commits after it. So every write that can shrink the admin set runs inside the community
+removal lock (`withCommunityRemovalLock`, or the departure's roster write) and decides again there,
+from what holds then; the one that would break the invariant is refused `409
+WORKSPACE_WOULD_HAVE_NO_ADMIN` and writes nothing. The client names the code whichever status
+carries it (`describeCommunityRefusal`), the role-permission grid and the member role picker
+included. What holds, exactly:
+
+- **A leave and a kick** ask `assertExitKeepsAnAdminLocked` in their roster write.
+- **Every role change** (`updateWorkspaceMemberRole`) writes under the lock, whatever its early
+  reads said. There it reads again the target's row, the actor's row and the roles of both and of
+  the new role - the role rows share-locked, so no permission edit lands before the commit - and
+  decides from them: the actor's bound (`actorMayGrantRole`, and `role.manage` itself), whether the
+  change now DEMOTES (a role that lost `workspace.manage` since the early read makes a promotion a
+  demotion), and, if it does, the last-admin postcondition. A target re-roled since the early read
+  is refused `409 MEMBER_CHANGED_MEANWHILE`.
+- **Every edit of what a role grants** (`setRoleBasePermission`) and **every role creation**
+  (`createRole`) write under the lock, taken before the role row. There the actor's row and roles
+  are read again, and the actor's right to manage roles and its bound (`actorMayGrantRole`) are
+  asked of them. A revoke of `workspace.manage` also recomputes the admin set with the role's new
+  permissions, and is refused when it would be empty while the community has members.
+- **An account erasure** decides under the lock too, see below.
+- **An admission** (an invite link accepted, a salon invitation that creates a membership) asks
+  under the lock that the community still has members, and a salon invitation also asks there that
+  the inviter still holds a right to invite. **An invite link is written under the lock too**
+  (`createWorkspaceInvite`), after the actor's right to invite is asked again there; an erasure that
+  closed a community emptied its account's roles under the same lock, which is what refuses a link
+  then (the members check that follows is redundant defence). A community with no members therefore admits nobody, and stays empty until it
+  is deleted.
+- **A community's deletion** (`hardDeleteWorkspace`) asks its premise under the lock BEFORE its
+  first call to another service (the key groups): an administrator's deletion, that the deleter
+  holds `workspace.manage`; the last member's departure or an erasure, who is still a member. The
+  membership premise is asked again in the transaction that deletes the rows, which opens with the
+  lock; the deleter's right is not, since the key groups are gone by then and the rows must follow: an admission, a departure or a role change
+  commits before it (and is deleted with the community) or waits and finds it gone.
+
+**One lock order: the removal lock, then salon rows, then member and role rows.** A departure locks
+its community's private salons (`ORDER BY id`) BEFORE its guard reads member and role rows; a salon
+grant (`grantPrivateChannelAccess`) locks the salon before the grantee's row; a role change
+share-locks the role rows it decides on before its member `UPDATE`; a deletion deletes salons
+before members. So no two of them can each hold what the other waits on. The member rows read under
+the lock take no row lock of their own: every departure, every role change (an erasure's promotion
+included) and every admission holds the removal lock, and under READ COMMITTED a statement run after
+taking it sees the previous holder's commit. Other member-row writes (a voucher, a sort order, a
+read mark) take no removal lock; none deletes a row or touches `roleIds`, so none changes the
+answer asked here. Proven on PostgreSQL by `last-admin.integration.spec.ts`: each race commits (or
+starts) the second operation from a hook inside the first - after one of its reads, or inside its
+first call to chat-delivery - and, where the second must be waiting on a lock before the first goes
+on, waits for PostgreSQL to report it waiting, never for a clock. Every race case there fails on the
+code before 2026-10-26 (two with `40P01 deadlock detected`); the revoke case is a plain refusal, not
+a race.
 
 `listWorkspaceAdminIds` is the single definition of "admin": a member holding a role whose
 permissions include `workspace.manage`. It is the permission that can grant every other one back,
@@ -1271,19 +1325,32 @@ six tables in dependency order - `channel_messages`, `channel_members`, `channel
 Those six are the complete set: no other table in the database carries a `workspaceId` or a
 `channelId` (checked against `information_schema` on prod, 2026-08-18). `channel_key_distributions`
 was a seventh until the Graine rework dropped the table. Attached media are left to the retention
-sweep, which collects them once nothing accesses them again.
+sweep, which collects them once nothing accesses them again. Each caller names who may still be a
+member when the rows go (`anyone` for an admin's deletion, `nobody` after the last departure, the
+erased account alone for an erasure), asked under the lock; anyone else there refuses the deletion
+and is logged at error.
 
 **Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
 the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
-in turn: cut off its private channels, repair it as if the account were already gone - a community
-left with nobody is hard-deleted, one left with members but no admin promotes the survivor with the
-highest priority, then whose roles grant the most distinct permissions, then the lowest user id
-(custom roles all rank just above the base role, so among them what they grant decides) - and only
-THEN delete the membership row. A failed
-repair keeps that row and the call throws, so the erasure queue's retry finds the community again
+in turn (`removeAccountFromOneWorkspace`), and the account's membership row is always the LAST thing
+to go, so a failure at any step leaves it and the erasure queue's retry finds the community again
 ([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
-community for ever. Logged at `warn` because an automatic promotion is something a human should be
-able to find afterwards.
+community for ever.
+
+- **The account is the last member** (`closeCommunityOfLastMember`, under the lock): the community's
+  invite links are deleted and the account's roles emptied, so neither door admits anyone, then the
+  community is hard-deleted, the account's row with it.
+- **Otherwise the account departs**, with `promoteSuccessorAdmin` as the departure's guard: under the
+  lock, in the transaction that deletes the account's row, a community left with members but no
+  admin promotes the survivor with the highest priority, then whose roles grant the most distinct
+  permissions, then the lowest user id (custom roles all rank just above the base role, so among
+  them what they grant decides). Logged at `warn`, because an automatic promotion is something a
+  human should be able to find afterwards. When everyone else left meanwhile, the guard refuses the
+  departure (the row stays) and the community is taken again as the last member's, up to three
+  times before the queue retries.
+- **No role carries `workspace.manage` at all**: the community was ungoverned before the erasure,
+  and the erased account was no admin of it, so its departure changes nothing about who governs.
+  The departure goes on, and the fault is logged at error - this path cannot repair it.
 
 ### One invite link, bounded (2026-08-18)
 
@@ -1384,8 +1451,10 @@ and `affected !== 1` refuses the call with nothing written:
   bound was judged against (`AND "roleIds" = :judged`, `AND permissions = :judged`): 0 rows - the
   member was re-roled or removed since - is `409 MEMBER_CHANGED_MEANWHILE`, which the client names.
 - `updateWorkspaceImage` and `updateWorkspaceHistoryVisibility` write their one column; 0 rows is `404`.
-- The successor an account erasure promotes is chosen again under `withCommunityRemovalLock`, from
-  rows read `FOR UPDATE` in id order, since every removal deletes through that lock.
+- The successor an account erasure promotes is chosen under the community removal lock, in the
+  departure that deletes the account's row; every departure and every role change holds that lock,
+  so the rows it reads are current for that choice without a row lock (see
+  [the last-admin section](#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18)).
 
 Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
 `association-member-write-gone.integration.spec.ts`, each committing the other write between the read
@@ -1477,9 +1546,10 @@ An invitation into a salon deleted meanwhile also takes back the membership it c
 with reason `invite_withdrawn`), so the `404` leaves nothing half-made.
 
 **Lock order.** Salon rows are locked before membership rows everywhere: the grant (salon, then the
-grantee's membership), a departure (all the community's private salons, `ORDER BY id`, then the
-membership delete), and `hardDeleteWorkspace` (salons deleted before memberships). An access-list
-rewrite takes the removal lock, then its salon, then the community's membership rows, share-locked.
+grantee's membership), a departure (the removal lock, all the community's private salons, `ORDER BY
+id`, then its guard's member and role reads and the membership delete), and `hardDeleteWorkspace`
+(the removal lock, then salons deleted before memberships). An access-list rewrite takes the removal
+lock, then its salon, then the community's membership rows, share-locked.
 
 ### Every writer that ADDS to an allowlist asks membership under a lock a kick also takes (2026-10-25)
 
