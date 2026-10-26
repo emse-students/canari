@@ -124,8 +124,8 @@ ok('the loser\'s user with a seat fails', !allOk(l({ view: { ...v1, seats: [...v
 ok('the winner\'s user missing fails', !allOk(l({ view: { ...v1, roster: v1.roster.filter((x) => x.userId !== U5) } })));
 ok('the winner\'s gesture died fails; the loser\'s outcome is not judged', !allOk(l({ outcomes: { W2: { ok: false, error: 'x' } } })) && allOk(l({ outcomes: { W2: { ok: true }, W1: { ok: false, error: 'cancelled' } } })));
 const busy = (s) => ADD_LOCK_REFUSED_NARRATION.some((re) => re.test(s));
-ok('the loser\'s two narration lines are forgiven', busy(`[WARN] Add-lock busy for ${G} - invite cancelled (another device is in progress).`) && busy(`[SYNC] Add-lock busy for ${G}, aborting to avoid concurrent commits`));
-ok('control: another WARN is not', !busy(`[WARN] Add-lock release failed for ${G}`) && !busy(`[WARN] Add-lock busy for ${G} - invite cancelled (another device is in progress). extra`));
+ok('the loser\'s one outcome line is forgiven', busy(`[GROUP] an invitation added nobody (add-lock-busy) in ${G.slice(0, 8)}...`));
+ok('control: another outcome is not', !busy(`[GROUP] an invitation added nobody (failed) in ${G.slice(0, 8)}...`) && !busy(`[GROUP] an invitation added nobody (add-lock-busy) in ${G.slice(0, 8)}... extra`));
 
 console.log('what each racer is forgiven - per gesture, not per seat name');
 const N = { creation: ['create', 'staged', 'notice'], blockQuestion: 'block?', lockRefused: ['busy'], removal: ['removed'] };

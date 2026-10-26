@@ -27,6 +27,16 @@ export interface LostInvitationReplannerDeps {
   isCurrent: () => boolean;
 }
 
+/** What a re-plan that cannot run yet waits on, as its line says it - total over the reasons. */
+const WAITING_ON: Record<Extract<LostInvitationOutcome, { kind: 'waiting' }>['on'], string> = {
+  'add-lock':
+    "the group's add lock was refused (held by another device, or a lock of this device the server has not let go) - kept, re-planned at the group's next commit or the next connection",
+  'tree-unconfirmed':
+    "the tree could not be confirmed at the server's epoch - kept, re-planned at the group's next commit or the next connection",
+  connection:
+    "a request the re-plan needed got no answer, before anything was staged - kept, re-planned at the group's next commit or the next connection",
+};
+
 /**
  * The re-planner the MLS service drains lost invitations through (`setOwedInvitationReplanner`),
  * registered only once the conversations are RESTORED - before that, every row would read absent.
@@ -83,11 +93,7 @@ export function makeLostInvitationReplanner(
     try {
       const outcome = await deps.replan(owed, convo);
       if (outcome.kind === 'waiting') {
-        console.log(
-          outcome.on === 'add-lock'
-            ? `[INVITE_OWED] ${short}... the group's add lock was refused (held by another device, or a lock of this device the server has not let go) - kept, re-planned at the group's next commit or the next connection`
-            : `[INVITE_OWED] ${short}... the tree could not be confirmed at the server's epoch - kept, re-planned at the group's next commit or the next connection`
-        );
+        console.log(`[INVITE_OWED] ${short}... ${WAITING_ON[outcome.on]}`);
         return 'waiting';
       }
       if (ended()) return 'waiting';

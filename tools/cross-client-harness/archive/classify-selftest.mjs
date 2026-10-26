@@ -363,9 +363,10 @@ const CASES = [
   // A commit race lost and answered (#2416, #2414), verbatim from the two pull requests, and the
   // controls: a reason outside the enum, and the same sentence saying something WAS committed.
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (tree-unconfirmed) - nothing committed', 'notable'],
-  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - nobody added', 'notable'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (removed-meanwhile): w5 left the roster or the tree while the Add was rebuilt', 'notable'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (commit-race-lost) in 46163138... (the invitation lost at epoch 2, re-planned): AddAbortedError: The Add in 46163138... was abandoned before its stage (premise-unreadable): no roster baseline to rebuild on', 'notable'],
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (gave-up) - nothing committed', 'unexplained'],
-  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - half of them added', 'unexplained'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (gave-up): x', 'unexplained'],
   // FRAMES REFUSED FOR LACK OF A ROW (#2414/#2416 round 4): normal only where a row provokes them, so
   // UNEXPLAINED by default - the generic `/epoch|GAP/` rule must NOT claim them (REFUSED_FOR_LACK_OF_ROW_NARRATION).
   ['log', "[04:00:00] [COMMIT_RACE] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
