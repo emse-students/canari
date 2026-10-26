@@ -10,6 +10,7 @@ import {
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { AuthController } from './auth.controller';
+import { UserRowGoneError } from '../users/user-write';
 import type { AuthSessionsService, RotateResult } from './auth-sessions.service';
 
 const JWT_SECRET = 'test-secret-not-the-production-one';
@@ -126,6 +127,7 @@ describe('AuthController sessions', () => {
 
     const users = {
       findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+      isUserAdmin: jest.fn().mockResolvedValue(false),
     };
     const platform = {
       getConfig: jest.fn().mockResolvedValue({}),
@@ -568,10 +570,18 @@ describe('AuthController sessions', () => {
     let fetchSpy: jest.SpyInstance;
 
     function callbackController(
-      erasure: { before: string; after: string } = { before: 'none', after: 'none' },
-      users = {
+      erasure: { before: string; after: string; during?: string } = {
+        before: 'none',
+        after: 'none',
+      },
+      users: {
+        findOrCreateFromOidc: jest.Mock;
+        claimLegacyCotisations: jest.Mock;
+        isUserAdmin?: jest.Mock;
+      } = {
         findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
         claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn().mockResolvedValue(false),
       }
     ): AuthController {
       process.env.AUTHENTIK_BASE_URL = 'https://auth.example';
@@ -587,7 +597,12 @@ describe('AuthController sessions', () => {
         sessions as unknown as AuthSessionsService,
         { enabled: false } as never,
         {
-          erasureState: jest.fn().mockResolvedValue(erasure.before),
+          // The first read is the check before the upsert; any later one (the upsert found its row
+          // gone) answers `during`, which defaults to the first.
+          erasureState: jest
+            .fn()
+            .mockResolvedValueOnce(erasure.before)
+            .mockResolvedValue(erasure.during ?? erasure.before),
           confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
         } as never,
         {} as never // RestoreCredentialsService: no restore route here
@@ -698,6 +713,65 @@ describe('AuthController sessions', () => {
       expect((err as ForbiddenException).getResponse()).toMatchObject({
         code: 'ACCOUNT_ERASURE_PENDING',
       });
+      expect(cookies).toEqual({});
+      warn.mockRestore();
+    });
+
+    /**
+     * A role change that commits between the upsert's read of the row and the session's creation:
+     * the token is signed from the flag as it stands once the session exists, never from that read.
+     */
+    it('signs the admin flag read after the session exists, not the one the upsert read', async () => {
+      authentikAnswers('h.idtoken.s');
+      let adminNow = true;
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: true }),
+        claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn(async () => adminNow),
+      };
+      // The change commits while the session is being opened.
+      sessions.create.mockImplementationOnce(async () => {
+        adminNow = false;
+        return { sessionId: 'sid-new', tokenId: 'jti-new', expiresAt: new Date(Date.now() + 1000) };
+      });
+      const body = await callbackController(undefined, users).oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { admin?: boolean };
+      expect(access.admin).toBe(false);
+      expect(body.user.admin).toBe(false);
+      expect(users.isUserAdmin).toHaveBeenCalledWith('user-1');
+    });
+
+    /**
+     * The user row was read, then deleted by an erasure before the upsert's update landed: the
+     * upsert refuses, typed, and the callback answers with the erasure's own refusal - no session.
+     */
+    it('answers a row gone during the upsert with the erasure refusal, and opens no session', async () => {
+      authentikAnswers('h.idtoken.s');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockRejectedValue(new UserRowGoneError('user-1')),
+        claimLegacyCotisations: jest.fn(),
+      };
+      const { res, cookies } = makeRes();
+      const err = await callbackController(
+        { before: 'none', during: 'pending', after: 'pending' },
+        users
+      )
+        .oidcCallback(
+          { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          res
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'ACCOUNT_ERASURE_PENDING',
+      });
+      expect(sessions.create).not.toHaveBeenCalled();
       expect(cookies).toEqual({});
       warn.mockRestore();
     });

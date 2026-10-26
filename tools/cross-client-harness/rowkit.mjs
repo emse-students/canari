@@ -59,6 +59,7 @@ export const commitsSince = (commitEpochs, fromEpoch) => (commitEpochs ?? []).fi
  * - `VACUOUS` when an armed fault never fired (`fault.mjs` `report().vacuous`): the case the row
  *   exists for did not happen, so nothing about it was proved - whatever else held.
  * - `INCONCLUSIVE` when an invariant pass could not be judged (`unsettled`: the group never settled).
+ *   Also when the row's own settlement never came (`unjudged`) and nothing it saw failed.
  * - `FAIL` when one of the row's own assertions or one invariant does not hold.
  * - `PASS` otherwise. `recordObserved` then gates it on the clients' and the server's windows, so a
  *   clean assertion over a dirty window still lands as `PASS-DIRTY`.
@@ -69,9 +70,10 @@ export const commitsSince = (commitEpochs, fromEpoch) => (commitEpochs ?? []).fi
  *   `checkInvariant()`'s result; null only for a row whose premise failed before it could run
  * @param {{rule: number, fault: string}[]} [p.vacuousFaults] armed rules that never fired
  * @param {string[]} [p.premise] what the row could not build
+ * @param {string[]} [p.unjudged] what the row's own assertions could not decide, and why
  * @returns {{verdict: string, failures: string[]}}
  */
-export function composeVerdict({ own = [], invariant = null, vacuousFaults = [], premise = [] }) {
+export function composeVerdict({ own = [], invariant = null, vacuousFaults = [], premise = [], unjudged = [] }) {
   const failures = [];
   for (const a of own) if (!a.ok) failures.push(a.what);
   for (const p of invariant?.passes ?? []) for (const f of p.failures) failures.push(`invariant ${f.invariant} (${p.pass}): ${f.what}`);
@@ -83,6 +85,11 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
   const unsettled = (invariant?.passes ?? []).filter((p) => p.unsettled).map((p) => `invariant (${p.pass}): ${p.unsettled}`);
   if (unsettled.length) return { verdict: 'INCONCLUSIVE', failures: [...unsettled, ...failures] };
   if (!invariant && !own.length) return { verdict: 'INVALID', failures: ['the row asserted nothing'] };
+  // WHAT THE ROW ITSELF COULD NOT JUDGE (`unjudged`: its own settlement never came). A failure the
+  // row did see stands - an admitted sample is a finding whether or not the group settled - and only
+  // a row with no failure is left INCONCLUSIVE.
+  if (unjudged.length && !failures.length && own.every((a) => a.ok)) return { verdict: 'INCONCLUSIVE', failures: unjudged.map((u) => `unjudged: ${u}`) };
+  for (const u of unjudged) failures.push(`unjudged: ${u}`);
   if (!invariant) failures.push('the invariant of section 4.0 was not run');
   return { verdict: failures.length ? 'FAIL' : 'PASS', failures };
 }
@@ -93,7 +100,7 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
  */
 export const invariantDetail = (inv) =>
   inv
-    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs } : {}), ...(p.unsettled ? { unsettled: p.unsettled } : {}) }))
+    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs, settled: p.settled, settleRounds: p.settleRounds } : {}), ...(p.unsettled ? { unsettled: p.unsettled } : {}) }))
     : null;
 
 /**
