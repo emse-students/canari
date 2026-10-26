@@ -1366,9 +1366,14 @@ exhaustive case fails the day a code is added to the union and nobody decides wh
 ### Erasing a revoked device, and the 1.25 s that undid it
 
 `wipeRevokedDevice` (`session/sessionAuth.ts`) is the one consequence of one fact - this device is
-revoked - reached from the three places that can learn it: the PIN check at login, the
-`device_revoked` frame on a live session, and a vault or biometric login asking the server. Its
-steps are ORDERED, and the order is the whole mechanism:
+revoked - reached from the four places that can learn it: the PIN check at login, the
+`device_revoked` frame on a live session (`answerDeviceRevokedFrame`), a vault or biometric login
+asking the server, and the session-expired reaction when the refresh refusal says the session died
+BY this revocation (`settleSessionEndByRevocationImpl`, since 2026-10-25 -
+[sessions](../../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)).
+It runs once per device: a discoverer arriving while it runs joins it, and one arriving after it
+completed finds the device in the page's completed-reset record and erases nothing again. Its steps are ORDERED, and the
+order is the whole mechanism:
 
 1. `tearDownLiveSession(ctx, cb, 'revoked')` - stop everything that is running.
 2. `resetMls()` - destroy the MLS client.
@@ -1554,9 +1559,10 @@ WebView has measured the smaller half - which is how this survived two fixes.
 
 **A device revoked while OFFLINE is not wiped offline, by design.** Every login path asks the server
 `isDeviceRevoked`, which answers `false` when it cannot be reached - a status code is an answer, a
-transport failure is not - so the wipe happens at the first login WITH a network and never on a dead
-link. One residue follows from the same fact: nobody is there to receive `notifyDeviceRevoked`, so
-the device's `auth_sessions` row lives to its 7-day expiry.
+transport failure is not - so the wipe happens at the first exchange WITH a network and never on a
+dead link. Since 2026-10-25 that first exchange is usually the refresh itself: the revocation ended
+the device's session server-side (`endDeviceSessions`), and the refusal says so
+(`DEVICE_REVOKED_BY_OWNER`), which the session-expired reaction answers with this wipe (DEV-3).
 
 
 #### The wipe's first step is what started the login that undid it

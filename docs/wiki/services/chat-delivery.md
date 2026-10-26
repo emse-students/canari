@@ -1374,7 +1374,7 @@ group names nobody. The client removes exactly those leaves
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
-| POST | `/api/mls/welcome` | Deliver Welcome message to a device |
+| POST | `/api/mls/welcome` | Deliver Welcome message to a device. A target device no key package names (revoked, or never registered) is `404 WELCOME_TARGET_UNKNOWN` (`error: 'welcome_target_unknown'`), one `warn` decision line; a target off the roster is `403 WELCOME_TARGET_NOT_MEMBER`. Until 2026-10-25 the first was a bare `Error`, a 500 with a stack (DEV-3) |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |

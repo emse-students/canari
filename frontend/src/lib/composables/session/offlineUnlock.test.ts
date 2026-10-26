@@ -332,14 +332,17 @@ describe('a login can never race the wipe that erases it', () => {
  * wires unconditionally. These pin the choice, not the wording.
  */
 describe('a revoked live device is logged out, not asked for its PIN', () => {
-  /** The push handler from the line that announces the revocation to the next registration. */
+  /** The frame's answer, from the line that announces the revocation to the end of the function. */
   const liveRevocationTail = (() => {
-    const at = loginImplBody.indexOf('[SECURITY] This device was revoked by its owner');
+    const frameBody = bodyOf('export async function answerDeviceRevokedFrame');
+    const at = frameBody.indexOf('[SECURITY] This device was revoked by its owner');
     expect(at).toBeGreaterThan(-1);
-    const end = loginImplBody.indexOf('onWelcomeRequest', at);
-    expect(end).toBeGreaterThan(at);
-    return loginImplBody.slice(at, end);
+    return frameBody.slice(at);
   })();
+
+  it('is the handler the live session registers for the frame', () => {
+    expect(loginImplBody).toContain('answerDeviceRevokedFrame(ctx, cb, mlsService)');
+  });
 
   it('wipes first, then hands over to the session-expired seam', () => {
     const wipe = liveRevocationTail.indexOf('await wipeRevokedDevice(ctx, cb);');

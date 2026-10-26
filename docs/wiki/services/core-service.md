@@ -106,7 +106,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/oidc/callback` | none | Exchange Authentik auth code for JWT + refresh cookie; upsert local user |
-| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay |
+| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay; a session an owner's DEVICE REVOCATION ended is refused `401 DEVICE_REVOKED_BY_OWNER` ([sessions](../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)) |
 | POST | `/api/auth/logout` | cookie | Delete the session row, then clear the cookie |
 | GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |

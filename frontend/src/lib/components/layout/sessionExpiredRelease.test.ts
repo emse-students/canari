@@ -147,3 +147,27 @@ describe('the PIN modal is released by a proof, never by a clock', () => {
     expect(submitBody).toMatch(/\.then\(\(\) => \{[\s\S]*?auth_pin_no_result/);
   });
 });
+
+/**
+ * A SESSION ENDED BY THE OWNER REVOKING THIS DEVICE RESETS THE DEVICE BEFORE THE SIGN-OUT (DEV-2 /
+ * DEV-3, 2026-10-25). The reaction asks `settleSessionEndByRevocation` - which reads the refusal's
+ * latched cause, so whichever path arrives first decides nothing - and only then signs out. Reversed,
+ * the sign-out would run first and the reset would find the account it was owed already gone.
+ */
+describe('a session the revocation ended resets the device first', () => {
+  it('settles the revocation before the sign-out, with the refused account', () => {
+    const settle = handlerBody.indexOf('globalSession.settleSessionEndByRevocation(');
+    const signOut = handlerBody.indexOf('await clearAuth()');
+    expect(settle).toBeGreaterThan(-1);
+    expect(signOut).toBeGreaterThan(settle);
+    expect(handlerBody.slice(settle, signOut)).toContain(
+      "globalSession.userId || currentUserId() || ''"
+    );
+  });
+
+  it('accuses a failed reset instead of swallowing it', () => {
+    expect(handlerBody).toContain(
+      '[SECURITY] The revoked-device reset FAILED - local data may remain'
+    );
+  });
+});
