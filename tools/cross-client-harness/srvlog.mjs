@@ -844,6 +844,17 @@ const NOTABLE = [
   // name rather than arriving pre-forgiven.
   /\[ChannelService\] \[CHANNEL_GRAINE\] group ready channel=\S+ group=\S+/,
   /\[ChannelService\] \[CHANNEL_GRAINE\] group retired channel=\S+ group=\S+ reason=made_public/,
+  // THE ENTITLEMENT A KEY GROUP'S GATE ASKS FOR, said once per person and scope
+  // (`internal-distribution-entitlement.controller.ts`: logged when the decision CHANGES, never per
+  // read). Read on every community and salon of alpha.5's RM rows (2026-10-26). Only a FIRST verdict
+  // of `true` is ordinary: a `false`, or a flip in either direction (`(was ...)`, which names its
+  // cause), is a membership decision and stays the finding.
+  /\[InternalDistributionEntitlementController\] \[DISTRIBUTION_GROUP\] entitlement (?:workspace|channel)=[0-9a-f-]{36} user=[0-9a-f]{8} entitled=true \(first evaluation\)$/,
+  // A ROLE'S PERMISSION EDITED, then its holders told (`channel.service.ts` `setRolePermission`,
+  // `announceRolePermissions`) - RM-6's gesture, one line each per edit. `REFUSED revoke ...` and
+  // `permissions saved but holders not told` are the other branches and stay dirt.
+  /\[ChannelService\] \[ROLE\] (?:granted|revoked) [a-z.]+ role=[0-9a-f-]{36} by=[0-9a-f]{8} perms=\d+$/,
+  /\[ChannelService\] \[ROLE\] standing announced role=[0-9a-f-]{36} holders=\d+ verdicts=\d+$/,
   // THE ACCESS CHANGE ITSELF, the product half of the same transition. Deliberate, rare, and visible
   // to everyone in the salon at once - which is the definition this file uses for notable rather than
   // benign. Both spellings appear, one per side of the write: the grant that opened it and the policy
