@@ -177,6 +177,97 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
+
+This is a finding, not design. It is open until it is known why the frame arrives late.
+
+Group `7820dd5c` is DEV-6's group. The first minted device (W3) is a member at epoch 1. At start-up,
+while `WasmMlsClient::new` loads its state, it meets an epoch-1 application frame when the group is
+already at epoch 2:
+
+```
+verbose [RUST::DEBUG] Sender data decryption error
+info [RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=1 group_epoch=2 group=7820dd5c-... err=ValidationError(UnableToDecrypt(AeadError))
+info [21:28:49.670] [HISTORY] 7820dd5c… holds 1 frame(s) it can never read - reconciling (e.g. k1:137qgdw)
+```
+
+The second minted device (W6) reports the same frame key at 21:30:09. The invariant held, and HISTORY
+reconciled the frame. The message is not lost to the user. The loss is on the MLS path.
+
+The failure is `AeadError`, not `TooDistantInThePast`. The epoch-1 secret was still held, so the frame
+could not be opened with a secret this device had at epoch 1.
+
+What the console shows about the order: W3 took a Welcome into the group at 21:27:48. At 21:28:34 it
+rejoined by its own external commit ("`[READD] ... roster seat with NO queued Welcome and NO add in
+flight - nobody owes us anything; serving ourselves`", then "externalJoin succeeded ... (base epoch
+1...)"). That rejoin is what took the group to epoch 2. The questions to answer:
+
+- why a device that had just been Welcomed rejoined by external commit;
+- whether the epoch-1 frame was encrypted before or after that rejoin;
+- whether delivery order (the frame before the rejoin's commit) would have prevented the loss.
+
+In the same load, the other groups show the expected case: frames older than the joiner's membership,
+`TooDistantInThePast`. W3 logged 65 such lines. For example, six on group `1589de4c`:
+
+```
+info [RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=2 group_epoch=54 group=1589de4c-... err=ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInThePast)))
+info [21:28:49.602] [HISTORY] 1589de4c… holds 6 frame(s) it can never read - reconciling (e.g. oz:hnqfta, jd:326tvj, ...)
+```
+
+Those `TooDistantInThePast` lines are the item already filed above (*A past-epoch frame older than
+the joiner's own Welcome is logged at WARN*). This item is the `AeadError` alone.
+
+## P3 - A commit that has its answer waits for a history bundle applied under its loan (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
+
+The cause is to be read. On the second minted device (W6), two stray-leaf removals of the revoked
+first device each got the server's answer while a frame of ANOTHER group held the loan of the MLS
+mutex. Both times the borrower was a `history_bundle` system event:
+
+```
+info [21:30:12.853] [MLS_LOCK] a frame of a1c4da59… is applied while the commit of b1ecb448… awaits its answer
+info [21:30:12.854] [MLS] System event 'history_bundle' from <member> in a1c4da59…
+info [21:30:12.856] [MLS_LOCK] the commit of b1ecb448… has its answer - waiting for the frame applied under its loan
+info [21:30:12.951] [STRAY] b1ecb448... is now at epoch 74 - the revoked leaves are gone from the tree
+
+info [21:30:13.589] [MLS_LOCK] a frame of 10ddf2b7… is applied while the commit of 1589de4c… awaits its answer
+info [21:30:13.615] [MLS_LOCK] the commit of 1589de4c… has its answer - waiting for the frame applied under its loan
+info [21:30:13.674] [STRAY] 1589de4c... is now at epoch 57 - the revoked leaves are gone from the tree
+```
+
+Each merge was held for about 95 ms and 59 ms (`lendMlsLockWhile` in `mlsPerGroupScheduler.ts`).
+Each wait ended without a cut or an error. A bundle's application (store, authorship check, encrypted
+checkpoint) is longer than a commit's round trip, so a commit that lends to one waits for it.
+
+Questions:
+
+- should a frame whose application persists a checkpoint be allowed to borrow at all;
+- or should the loan be bounded to frames whose cost is known.
+
+The reclaim wait counts against the commit's lock-hold budget (`mayStartCommitRequest`). On a slow
+device or a large bundle, this wait could turn a commit's outcome into "unknown".
+
+## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
+
+The salon creator (W1) asked the same member the same question twice: same devices, same community,
+same epoch:
+
+```
+[21:49:56.321] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
+[21:49:56.367] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
+[21:49:56.446] [GRAINE] ignoring "I hold nothing" for community 53844ba7 from <member>: it answers request d6b6eb63…, not the history ask in flight (addressed to <member>)
+```
+
+The second ask replaced the first in `historyRequest`. Both devices' answers to the first ask were
+then dropped at `debug` (`noteHistoryHeldNothing` in `graine/repair.ts`), so W1 printed the
+`ignoring` line twice, and the member answered again. Nothing was lost; the cost is one extra round
+trip per member. The row's other seats (W2, W4) show the same line shape.
+
+The `ignoring` line is correct for a genuinely superseded ask. The defect is the second ask: two
+triggers fire `requestCommunityHistory` for one epoch with nothing deduplicating them.
+
+To do: name the two callers (the log context shows a key-group epoch move to 5 just before), and make
+an ask for an epoch that already has one in flight to the same member a no-op.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
@@ -522,6 +613,13 @@ forgive (a 404 elsewhere on that path is a real loss). Wanted: the own-publicati
 read of one's own publication rather than a new status on the shared one; old clients that read the
 404 get a [legacy-compatibility](legacy-compatibility.md) row with its removal date. Until it lands
 the DEV rows stay `PASS-DIRTY` on this line, named.
+
+**Seen again on DEV-6 of `1.4.1-alpha.6` (2026-10-26)**, on the second minted device. The 404 is
+that device's read of ITS OWN package: the URL names its own device id. It is not a read of the
+revoked first device's package. It is followed by
+`[MLS] externalJoin b8ea5710... finds NO KeyPackage published for this device (absent) and no round
+running - starting the round` at `warn`, which is the same item. It is not a separate finding about
+revoked devices.
 
 ## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
 
