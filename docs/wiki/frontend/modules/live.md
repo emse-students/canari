@@ -849,6 +849,31 @@ a text or a ciphertext.
 `LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
 
+## The first rig readings, and what they hold against the `lives_mode` flip (LIVE-WEB, 2026-10-27)
+
+Production serves `lives.mode = off`, dev `on`. A finding here **blocks the FLIP of `lives_mode` on
+production, not a stable**. Readings on dev `1.4.1-alpha.6`: the Mi 9T (build `349f092c9`) broadcast
+as a member, two browsers watched ([board](../../cross-client-testing.md)).
+
+**What held** (LIVE-WEB-2 and -3, both `PASS-DIRTY` on undeclared `[LIVE]` narration):
+
+- Rules accepted, then on air within one second.
+- Both viewers saw the feed card on their first refresh, joined, and played 720x1280.
+- The broadcaster's count showed 2.
+- After End, both viewers showed "Le live est terminé" within 1.5 s.
+- Seven segments were sent, none dropped, none off a keyframe.
+- The announcement was computed once per live: `[LIVE_ANNOUNCE] ... followers=1` with one follower.
+- Chat-delivery answered `No token` for a browser account: a web seat registers no push token, so
+  delivery to a follower's DEVICE is owed on a phone signed in as a follower.
+
+| # | Finding | Severity | Owed |
+| --- | --- | --- | --- |
+| L-F1 | **The viewer freezes about every 4 s.** The Android recorder hands over TWO 2 s fragments at once every ~4 s (paired seals 40 ms apart, on every chunk of the reading, against 14 % of chunks in WP-L1). The viewer plays at `end - LIVE_PLAYER_TARGET_BUFFER_MS`, so it runs dry before the next pair: `[LIVE] viewer ... stalled at N` then `seek to the live edge (stall)`, 4 seeks in 14 s on one viewer, 7 to 11 stall or seek lines per viewer in the next run | **P2, blocks the flip** (a visible freeze) | A reading with a PHONE as the viewer, to see whether a phone shows the same freeze; then the fix belongs where the cause is (the target buffer against the recorder's real cadence) |
+| L-F2 | Segments of ~45 kB per 2 s (~180 kb/s) against WP-L1's 600-800 kB at 2 Mb/s | observation | A reading with a lit, moving scene before it is called anything: the bench phone's front lens saw a dark, static scene |
+| L-F3 | The viewer's manifest poll after the End meets `404` (the row is deleted at the end, [above](#the-viewer-as-built-2026-10-19)), and the BROWSER logs `Failed to load resource ... 404` at error level | designed | The browser's own line cannot be demoted by the app. The rig's LIVE-WEB narration must match it EXACTLY (that live's manifest, after End only, on a viewer) |
+| L-F4 | On a phone's first live, the OS camera and microphone prompts send the app to the background in preview (`[LIVE-BROADCAST] app hidden in preview`); the preview recovers once granted | observation | Nothing |
+| L-F5 | A desktop browser cannot broadcast: `facingMode: { exact }` in `liveDevice.ts` meets a camera that reports no facing (`OverconstrainedError`, "Canari ne trouve aucune caméra utilisable"). LIVE-WEB-1 `ERROR`. The same request is in `reels/cameraAccess.ts` | **P2**, fix in flight (one shared constraint builder: ideal facing first, exact only on a switch) | LIVE-WEB-1 and a desktop reel-camera row on the pre-release that carries the fix |
+
 ## Open questions for the user, each with a recommendation
 
 Answered on 2026-10-15 and moved to the decisions table: viewer cap (L8), simultaneous lives (L9),
