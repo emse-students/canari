@@ -16,7 +16,9 @@ const ADMIN = 'aaaaaaaa-1111-4111-8111-111111111111';
 
 describe('PlatformService', () => {
   let service: PlatformService;
-  let repo: jest.Mocked<Pick<Repository<PlatformConfig>, 'findOne' | 'findOneOrFail' | 'save'>>;
+  let repo: jest.Mocked<
+    Pick<Repository<PlatformConfig>, 'findOne' | 'findOneOrFail' | 'save' | 'update'>
+  >;
 
   beforeEach(() => {
     mockedAxios.post.mockReset();
@@ -25,6 +27,12 @@ describe('PlatformService', () => {
       findOne: jest.fn(),
       findOneOrFail: jest.fn(),
       save: jest.fn(),
+      // A config write is ONE column update of the row: applied to the row the reads answer.
+      update: jest.fn(async (_where: unknown, patch: unknown) => {
+        const row = await repo.findOneOrFail({ where: { id: 1 } });
+        Object.assign(row, patch);
+        return { affected: 1, raw: [], generatedMaps: [] };
+      }) as never,
     };
     service = new PlatformService(repo as unknown as Repository<PlatformConfig>);
   });
@@ -118,6 +126,7 @@ describe('PlatformService', () => {
       /above this server's own version 0\.14\.1/
     );
     expect(repo.save).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
   });
 
   it('updateConfig accepts a minClientVersion equal to the deployed version', async () => {
@@ -162,7 +171,7 @@ describe('PlatformService', () => {
       expect(mockedAxios.post).toHaveBeenCalledTimes(1);
       expect(mockedAxios.post.mock.calls[0][0]).toMatch(/internal\/payments\/provider-activated$/);
       // The release reads the provider back from core, so it must come after the save.
-      expect((repo.save as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      expect((repo.update as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
         mockedAxios.post.mock.invocationCallOrder[0]
       );
     });
@@ -256,6 +265,16 @@ describe('PlatformService', () => {
         PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE
       );
     });
+  });
+
+  it('updateConfig writes only the columns it names, never a save of the row read', async () => {
+    rowWithMin('0.13.0');
+    await service.updateConfig({ callsMode: 'audio', maintenanceEnabled: true }, ADMIN);
+    expect(repo.update).toHaveBeenCalledWith(
+      { id: 1 },
+      { callsMode: 'audio', maintenanceEnabled: true }
+    );
+    expect(repo.save).not.toHaveBeenCalled();
   });
 
   it('updateConfig switches paymentProvider and leaves other fields untouched', async () => {
