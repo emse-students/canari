@@ -222,7 +222,7 @@
       "minimumSystemVersion": "16.0"
     },
     "android": {
-      "versionCode": 100400105
+      "versionCode": 100400106
     }
   }
 }
