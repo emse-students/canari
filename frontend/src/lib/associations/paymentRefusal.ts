@@ -44,6 +44,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === TIER_NOT_A_RISE) {
     return m.shop_tier_not_a_rise();
   }
+  if (err instanceof SocialApiError && err.code === TIER_NOT_RANKABLE) {
+    return m.shop_tier_not_rankable();
+  }
   if (err instanceof SocialApiError && err.code === CHECKOUT_IN_PROGRESS) {
     return m.shop_checkout_in_progress();
   }
@@ -82,6 +85,12 @@ export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
  * priced at least as high as this one: buying it would replace the held tier (`product-checkout.ts`).
  */
 export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
+
+/**
+ * The body `code` of social-service's 409 when the buyer holds a sibling cotisation tier and one of
+ * the two has no fixed price (a grid or a free amount), so no rank can be established online.
+ */
+export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
 /**
  * The body `code` of the 409 a boutique checkout gets while the buyer's previous attempt of that

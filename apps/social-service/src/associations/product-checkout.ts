@@ -48,6 +48,13 @@ export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 
 /**
+ * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds a sibling tier and
+ * one of the two has no fixed price (a grid, a free amount, or a held tag whose tier product is
+ * gone): no rank can be established, and the sibling XOR would replace the held tier.
+ */
+export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */

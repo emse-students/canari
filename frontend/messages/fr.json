@@ -3238,6 +3238,7 @@
   "shop_payment_amount_min": "Montant refusé : il doit être d'au moins {min}.",
   "shop_already_purchased": "Vous avez déjà acheté ce produit.",
   "shop_tier_not_a_rise": "Vous avez déjà une cotisation au moins équivalente à celle-ci.",
+  "shop_tier_not_rankable": "Votre cotisation actuelle ne peut pas être échangée contre celle-ci en ligne. Contactez l'association.",
   "shop_checkout_in_progress": "Un paiement de ce produit est déjà en train de s'ouvrir. Vous pourrez réessayer dans trois minutes au plus.",
   "shop_previous_checkout_open": "Votre demande de paiement précédente pour ce produit est encore ouverte. Réessayez quand elle aura expiré, au plus tard 35 minutes après son lancement.",
   "shop_return_checking": "Vérification du paiement...",
