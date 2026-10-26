@@ -175,7 +175,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/group-invites/:token/accept` | Accept group invite |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Get pending invitations |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | Get device memberships |
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | POST | `/api/mls/kick-stale-user` | Reset all devices for user to pending |
 | POST | `/api/mls/kick-stale-device` | Reset single device to pending |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership |

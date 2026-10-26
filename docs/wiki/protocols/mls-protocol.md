@@ -145,7 +145,7 @@ kick gets. The current device has no delete button at all.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Invitations to process |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | All memberships for device |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
@@ -1135,6 +1135,46 @@ vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming su
 or expired - discovery removes it with no status read: there is no past and no exclusion to keep.
 Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
 never-admitted, and both demotions out of `active` clear the flag.
+
+**A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
+2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
+persisted, enumerated by the SYNC_WATCHDOG - is what drives every later pass. Discovery removed the
+declined row and left the marker, so the next pass (after a reload, 27 s later) found no row for its
+device - the decline deletes the seat and its device rows - read that as an `active` row would read
+(`not-pending`: "joined once, serve yourself"), re-created the placeholder, tried an external join the
+server refused with a 403, and retired the placeholder as a `removed` conversation the user then saw
+listed. The changes that close it:
+
+- `purgeLocalConversationRecord` drops the not-ready marker with the row, at every site that drops
+  one, so no pass is scheduled for a conversation that is gone (and logs a stored row it could not
+  delete). The in-memory cooldown is a throttle and stays.
+- `requestReAdd` reads "no row for this device" as its own answer and asks the account's seat on the
+  groups list (`readAccountSeat`, under the `absenceIsEvidence` guard). A list that cannot be
+  believed skips the round. A seated account keeps its door, re-read from the list's own
+  `deviceMembership` when it carries one. No seat ends the recovery - no row created, no join, no
+  ask - but only for what the list can speak for: no conversation row, or a never-admitted one. A
+  row this device was ever in is decided on the group's roster by ONE reader and ONE reducer that
+  discovery now shares (`readStillUserMember`, `decideAbsentGroupFate` in `groupLifecycle.ts`): the
+  typed 403 `NOT_A_MEMBER` is a proven exclusion and retires the row, `active` or `pending` alike - a
+  `pending` row kept on it re-ran recovery on every sweep; a roster that does not answer skips the
+  round; a roster that names us means the list was stale, and the pass goes on to the join.
+  Discovery used to swallow that 403 as doubt (`.catch(() => null)`), so its exclusion branch never
+  fired.
+- `stopRecovering` removes a never-admitted row instead of retiring it - the decision discovery takes
+  for the same row.
+- **The `absenceIsEvidence` guard had a blind spot, now closed (review of #2493).** It refused an
+  empty list whenever the device held trees, and the list never names Graine key groups - so for any
+  community member an honestly empty list (a joiner whose only ask was declined) was unbelievable for
+  ever, and neither recovery nor discovery could end the ask. It now counts conversation trees only
+  (`isDistributionGroup` excluded, `groupSweep.ts`). The price is taken deliberately: a member whose
+  only conversations are pending link asks now believes a transient `200 []` too, and its ask row is
+  removed locally though the seat stands - a second ask from the link, and no history lost, since a
+  never-admitted row holds none.
+
+Nothing local records the decline: the server's missing seat is the terminal state, read afresh on
+every pass, so a member who Adds the person later is not blocked - the Welcome installs the group and
+writes the row.
+
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
@@ -1726,7 +1766,22 @@ seconds old (two extra commits on the server, each accepted at the next epoch: n
 too many). Naming the leaf lets the state itself say which entry describes it, whatever reached disk;
 an entry of a former leaf reads as a first sight, the direction that costs no commit. Pinned by
 `leafRefresh.test.ts` ("a date written for a FORMER leaf ...") and
-`mls-core/tests/self_update.rs::the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it`.
+`mls-core/tests/self_update.rs::the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it`
+and `::the_own_leaf_key_moves_on_an_add_a_remove_and_an_external_join` (every own commit moves
+the key, so every merge's entry names a new leaf).
+
+**The upgrade costs one first sight per group per device, by design.** Entries written before #2489
+name no leaf, so the first send after the upgrade reads each one as a first sight: the leaf is
+observed again and its schedule restarts at that observation plus the offset - up to about seven
+extra days before its next refresh, once, in the direction that costs no commit.
+
+**The observation is written for the leaf in the state when it is written.** The decision runs
+outside the MLS lock, and an own commit can merge while it awaits; that merge dates its own leaf, and
+an observation of the leaf read before it would overwrite the entry with a leaf already gone (a
+false "FORMER leaf" line at the next send). So the leaf is read again just before the write, with no
+await between them, and a leaf that moved writes nothing (`leaf-moved`). An ACTIVE group whose tree
+holds no leaf of this device is not an inactive group: it is a defect, reported as `no-own-leaf` at
+warn level once per group and epoch, never once per send. Pinned by `leafRefresh.test.ts`.
 
 **The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
 leaf is older than the interval, so a decision on age alone makes every seat refresh at its first
@@ -1867,7 +1922,8 @@ after a PIN recovery) - and then nothing else ends the `pending` row, which ever
 a work item to Add a leaf already in the tree. The proof is the client's to carry: the server's
 self-report (`POST mls/invitations/status` -> `activateDeviceMembership`, authority `report` ->
 `promoteReportedSeat`) promotes any existing seat that is not kicked and whose owner is not awaiting
-admission, and cannot read the tree; an evicted group stays held, so holding is not the proof. After
+admission - in a key-distribution group, whose owner social-service answers is entitled
+([state machine](mls-graine-state-machine.md#seat-writes-check-membership-2026-10-25)) - and cannot read the tree; an evicted group stays held, so holding is not the proof. After
 a Welcome the promotion is a second write of the same value: the UPDATE matches the active row again,
 logs one `[INVITATION_STATUS]` line and re-adds an existing Redis route, and emits no event. A refusal naming a DIFFERENT group than the one
 asked for is not joined: the served base is unusable for this group and the join reads `build_failed`.

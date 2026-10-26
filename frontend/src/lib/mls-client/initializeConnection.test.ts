@@ -2,8 +2,14 @@
 const getTokenMock = vi.hoisted(() => vi.fn(() => Promise.resolve('jwt-access-token')));
 const getIsTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 
+// The types the catch tests by `instanceof`: plain stand-ins, as the store would pull in the app graph.
+const authErrors = vi.hoisted(() => ({
+  SessionExpiredError: class SessionExpiredError extends Error {},
+  SignOutInProgressError: class SignOutInProgressError extends Error {},
+}));
 vi.mock('$lib/stores/auth', () => ({
   getToken: () => getTokenMock(),
+  ...authErrors,
 }));
 
 vi.mock('$lib/mls-client/tabLeader', () => ({

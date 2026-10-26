@@ -50,6 +50,7 @@ import {
 } from '../account-erasure/account-erasure.service';
 import type { User } from '../users/entities/user.entity';
 import { RestoreCredentialsService } from './restore/restore-credentials.service';
+import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 interface OidcCallbackDto {
@@ -175,13 +176,6 @@ const ANDROID_APP_ORIGINS: readonly string[] = [
   'http://tauri.localhost',
   'https://tauri.localhost',
 ];
-
-/**
- * The code of a refresh refused because the session's device was revoked by its owner - the same
- * code the delivery service gives a device-creating call from such a device, so the client has ONE
- * name for the fact (`frontend/src/lib/utils/refusalCodes.ts`, typed elsewhere).
- */
-const DEVICE_REVOKED_BY_OWNER = 'DEVICE_REVOKED_BY_OWNER';
 
 /** A restore refusal, as a code the client branches on (never on the message). */
 function restoreRefusal(code: string, message: string): { code: string; message: string } {
@@ -849,11 +843,15 @@ export class AuthController {
       // A CODE, NOT A SENTENCE: the device answers this refusal with a full local reset instead of
       // a sign-out that keeps its stores, and it may only branch on a typed field. `statusCode`
       // keeps Nest's envelope, so a client older than the code reads the 401 it always read.
+      // AND IT NAMES THE DEVICE AND THE ACCOUNT, so a client resets only when both are its own.
       this.clearRefreshCookie(res);
       throw new UnauthorizedException({
         statusCode: 401,
-        code: DEVICE_REVOKED_BY_OWNER,
-        message: 'This device was revoked by its owner - its session has ended',
+        ...refusalBody(
+          RefusalCode.DEVICE_REVOKED_BY_OWNER,
+          'This device was revoked by its owner - its session has ended',
+          { userId: result.userId, deviceId: result.deviceId }
+        ),
       });
     }
     if (result.status === 'replayed' || result.status === 'unknown') {

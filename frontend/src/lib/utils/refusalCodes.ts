@@ -34,6 +34,34 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
 };
 
 /**
+ * The code BOTH services give a refusal caused by the owner's revocation of the calling device: the
+ * delivery service on a device-creating call, core-service on a refresh whose session the revocation
+ * ended. ONE name for the fact, read from here by every client reader.
+ */
+export const DEVICE_REVOKED_BY_OWNER = 'DEVICE_REVOKED_BY_OWNER';
+
+/** The device and account an owner's revocation names (`userId`, `deviceId` of the refusal body). */
+export interface RevokedDeviceIdentity {
+  userId: string;
+  deviceId: string;
+}
+
+/**
+ * The revoked device a refresh refusal names, or `null` when the body is not that refusal or does
+ * not name both - read as an ordinary dead session then, never as a revocation of THIS device.
+ *
+ * @param body The parsed refusal body (`unknown`: anything an answer can carry).
+ */
+export function revokedDeviceOfRefusal(body: unknown): RevokedDeviceIdentity | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  if (b.code !== DEVICE_REVOKED_BY_OWNER) return null;
+  if (typeof b.userId !== 'string' || !b.userId) return null;
+  if (typeof b.deviceId !== 'string' || !b.deviceId) return null;
+  return { userId: b.userId, deviceId: b.deviceId };
+}
+
+/**
  * Codes a server registry carries that are NEVER shown to a member as a sentence, because a typed
  * flow answers them: a revoked id is re-enrolled under a fresh one, a full device list is a typed
  * `DeviceLimitReachedError`, a key package the client minted wrong is a bug of ours, a
@@ -42,8 +70,9 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
  */
 export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   'DEVICE_REVOKED',
-  // An owner's revocation is a typed `DeviceRevokedByOwnerError`, answered by signing out and wiping.
-  'DEVICE_REVOKED_BY_OWNER',
+  // An owner's revocation is a typed `DeviceRevokedByOwnerError` (delivery service) or
+  // `SessionEndedByDeviceRevocationError` (a refused refresh), answered by signing out and wiping.
+  DEVICE_REVOKED_BY_OWNER,
   'DEVICE_LIMIT_REACHED',
   'KEY_PACKAGE_IDENTITY_INVALID',
   'KEY_DISTRIBUTION_GROUP',

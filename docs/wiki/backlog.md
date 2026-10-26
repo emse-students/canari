@@ -129,6 +129,45 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
   newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
   Proof: the newly-reached spec counting zero for readers who already saw the post.
 
+## P3 - what the 1.4.1 dev campaign left unexplained or noisy (2026-10-25, alpha.4)
+
+Each is a log or console line the campaign met and no row asserts on. NOISE IS NEVER ACCEPTABLE
+([CLAUDE.md](../../CLAUDE.md)): explain it or fix it, never demote it.
+
+- **A past-epoch frame older than the joiner's own Welcome is logged at WARN as an unreadable loss.**
+  Seen on ADM-1/3/4 (`[RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=2
+  group_epoch=3 ... TooDistantInThePast`), emitted while a new `WasmMlsClient` loads its state, right
+  after "Welcome complete: re-queued 1 buffered message(s)" and before "[HISTORY] ... holds 1 frame(s)
+  it can never read - reconciling". The frame predates the membership, so under the no-past-for-new-
+  members decision it is not a loss: drop it at INFO with its reason, once.
+- **A freshly minted device asks the server three times whether its own KeyPackage exists while it
+  already knows its first publication is running.** DEV-1, W3: census "0 proven" and a generate round
+  in flight, yet each of the three key-group external joins does `GET /api/mls/devices/<user>/<device>/key-package`
+  and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
+  KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
+  before the first round (never learn by failing what a fact could tell).
+- **Restored notices carry no proof and no mark (the `[AUTHORSHIP] ... carry no author proof` lines of
+  DEV-1).** Every one checked is a system notice row (`sender 'system'`), never a user message: the
+  count equals the system rows of each batch. Two classes. (a) Device-local rows relayed into other
+  members' timelines (contact lines, outbox failure lines): P3, already filed above, fix = a
+  "device-local" property set where the row is written and kept out of digest, diff and bundle.
+  (b) Shared notices (member added/removed, rename, picture, Join cards) a new device legitimately
+  restores: P2 under the Graine v2 authorship item, NOT a regression (v1.4.0 takes every restored row
+  on the relayer's word with no mark; `#2276` makes it visible in the pre-releases). Fix at the
+  source: store the event frame's verified authorship on the notice row, add a notice verdict in
+  `restoredAuthorship.ts` that verifies the signed system frame and redraws the text locally
+  (`renderVisibleNotice`) instead of taking the relayer's text; same for `channel_invitation`.
+  Interim decision owed after the stable: show the unverified mark on system rows
+  (`ChatMessageGroups.svelte` system branch) or not. Do not lower the log level; split the count
+  into notices and messages.
+- **Two flaky unit tests** (they pass alone, fail in the full parallel run, with or without recent
+  changes): `ChatArea.entryWindow.svelte.test.ts` ("never mounts more than the 20-row entry frame")
+  and `outbox.reelResume` ("KILL MID-UPLOAD"). Find the shared-state or ordering cause; a flaky gate is
+  a gate nobody believes.
+- **The rig's volume lines and its own probes** (JOIN_*, WELCOME_REQ, DISCOVERY, 409/400/403 probes,
+  DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
+  the ADM and DEV rows; a rig allowlist PR follows the chain.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
@@ -448,6 +487,17 @@ server answers 200. But it is a write sent for nothing, and the account's sign-o
 The redirect wanted is `/login` with no second sign-out: either the seam carries "already signed out"
 or the revocation gets its own path to `/login`. Until the fix lands, both lines stay dirt on DEV-2
 and DEV-3.
+
+## A revoked device whose refresh cannot name its revocation
+
+A design limit of the refusal record of [sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25),
+not a defect: the record answers only for a session the revocation itself ended and that is still
+inside its credential's life. Three cases fall outside it and leave through the plain sign-out,
+which keeps the local stores until the next sign-in: a device that stays away longer than its
+refresh credential lives, a session bound to no device id, and a session the revocation could not
+end (the delete answered `503`). What covers all three is the device check on the next sign-in, which
+asks with a fresh session and resets the device there. Owed: one rig row reading that next-sign-in
+reset, so the cover is observed rather than read from code.
 
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 

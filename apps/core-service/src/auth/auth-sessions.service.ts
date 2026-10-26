@@ -65,8 +65,10 @@ export type RotateResult =
   /**
    * The session was ended by its OWNER REVOKING THE DEVICE it was bound to - the one ending the
    * device must answer differently (a full local reset, not a sign-out that keeps its stores).
+   * Names WHICH device and account, so a client resets only when they are its own: a client whose
+   * device id rotated since the session was opened is a different device.
    */
-  | { status: 'device-revoked' }
+  | { status: 'device-revoked'; userId: string; deviceId: string }
   /** No such session, or it has expired or been revoked. */
   | { status: 'unknown' };
 
@@ -227,7 +229,7 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `Refresh refused sid=${sessionId} user=${revoked.userId} - the session was ended by its owner revoking device ${revoked.deviceId}`
         );
-        return { status: 'device-revoked' };
+        return { status: 'device-revoked', userId: revoked.userId, deviceId: revoked.deviceId };
       }
     }
     if (!row || row.expiresAt.getTime() <= now.getTime()) {

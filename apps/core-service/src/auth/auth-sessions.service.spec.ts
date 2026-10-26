@@ -425,6 +425,8 @@ describe('AuthSessionsService', () => {
 
       await expect(service.rotate(opened.sessionId, opened.tokenId)).resolves.toEqual({
         status: 'device-revoked',
+        userId: 'user-1',
+        deviceId: 'phone-1',
       });
       expect(
         warn.mock.calls.some(([l]) => String(l).includes('owner revoking device phone-1'))

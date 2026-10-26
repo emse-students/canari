@@ -7501,6 +7501,8 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** The epoch at which a refresh of each group last failed this session (`leafRefresh.ts`). */
   private readonly leafRefreshAttempts = new Map<string, number>();
+  /** The epoch each active group was last reported holding no leaf of ours at (`leafRefresh.ts`). */
+  private readonly leafRefreshNoOwnLeafReports = new Map<string, number>();
   /** One refresh decision in flight per group: two sends in a row must not stage two commits. */
   private readonly leafRefreshInFlight = new Map<string, Promise<unknown>>();
 
@@ -7527,8 +7529,10 @@ export abstract class BaseMlsService implements IMlsService {
         refreshOwnLeaf: (g) => this.refreshOwnLeaf(g),
         checkpoint: () => persistMlsStructuralCheckpoint({ mlsService: this }),
         attemptedAtEpoch: this.leafRefreshAttempts,
+        noOwnLeafReportedAtEpoch: this.leafRefreshNoOwnLeafReports,
         now: () => Date.now(),
         log: (message) => console.log(message),
+        warn: (message) => console.warn(message),
       },
       groupId
     )

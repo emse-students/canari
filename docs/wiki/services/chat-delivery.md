@@ -1413,7 +1413,7 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/group-invites/:token/accept` | Accept group invite |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Get pending invitations |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | Get device memberships |
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership status |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | POST | `/api/mls/kick-stale-user` | Reset all devices for a user to pending |
 | POST | `/api/mls/kick-stale-device` | Reset single device to pending |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership (own device; an admitted member of the group may end another user's row only while it is not `active`) |

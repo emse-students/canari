@@ -343,6 +343,8 @@ export function leafRefreshHold(groupId: string): string | null {
 export type LeafRefreshOutcome =
   | 'key-group'
   | 'inactive'
+  | 'no-own-leaf'
+  | 'leaf-moved'
   | 'first-sight'
   | 'not-due'
   | 'epoch-gap'
@@ -375,8 +377,15 @@ export interface LeafRefreshDeps {
    * epoch faces the same answer; the epoch moving is what makes the next one different.
    */
   attemptedAtEpoch: Map<string, number>;
+  /**
+   * The epoch at which each group was last REPORTED holding no leaf of ours in an active tree. The
+   * state is a defect, and every durable send reads it: said once per group and epoch, not per send.
+   */
+  noOwnLeafReportedAtEpoch: Map<string, number>;
   now(): number;
   log(message: string): void;
+  /** A line that accuses: a state that should not exist. */
+  warn(message: string): void;
 }
 
 /**
@@ -397,10 +406,21 @@ export async function refreshLeafIfDue(
   const now = deps.now();
   const leaf = await deps.ownLeafKey(groupId);
   if (leaf === null) {
-    // An active group whose tree holds no leaf of ours: nothing to refresh, and nothing to date.
-    deps.log(`[LEAF_REFRESH] ${short}... no own leaf in the tree - nothing to refresh`);
-    return 'inactive';
+    // AN ACTIVE GROUP WHOSE TREE HOLDS NO LEAF OF OURS IS NOT AN INACTIVE GROUP: this device believes
+    // it is a member and the tree says it is not, so it can neither refresh nor be read by anyone.
+    // Nothing here repairs it (the departure and stray-leaf paths own membership); it is said, once
+    // per group and epoch, since every durable send at that epoch decides the same thing.
+    const epoch = deps.getEpoch(groupId);
+    if (deps.noOwnLeafReportedAtEpoch.get(groupId) !== epoch) {
+      deps.noOwnLeafReportedAtEpoch.set(groupId, epoch);
+      deps.warn(
+        `[LEAF_REFRESH] ${short}... ACTIVE at epoch ${epoch} but its tree holds NO leaf of this ` +
+          'device - nothing to refresh or date; not said again before the epoch moves'
+      );
+    }
+    return 'no-own-leaf';
   }
+  deps.noOwnLeafReportedAtEpoch.delete(groupId);
   const mintedAtSec = await deps.ownLeafMintedAt(groupId);
   const offsetMs = leafRefreshOffsetMs(deps.deviceId, groupId);
   const decision = decideLeafRefresh({
@@ -412,6 +432,20 @@ export async function refreshLeafIfDue(
   });
   const epoch = deps.getEpoch(groupId);
   if (decision.basis === 'first-sight') {
+    // THE LEAF IS READ AGAIN BEFORE THE OBSERVATION IS WRITTEN. This decision runs outside the MLS
+    // lock, and an own commit can merge while it awaits: that merge dates ITS leaf
+    // (`noteOwnLeafReplaced`), and an observation of the leaf read before it would overwrite that
+    // entry with one naming a leaf already gone - so the next send would read a first sight and a
+    // false "FORMER leaf" line. No await separates this read from the write below, so the leaf the
+    // write names is the leaf in the state when it is made.
+    const current = await deps.ownLeafKey(groupId);
+    if (current !== leaf) {
+      deps.log(
+        `[LEAF_REFRESH] ${short}... the leaf was replaced while deciding (an own commit merged) - ` +
+          'nothing observed, the merge dated the new one'
+      );
+      return 'leaf-moved';
+    }
     noteLeafObserved(deps.userId, deps.deviceId, groupId, epoch, leaf, now);
     deps.log(
       `[LEAF_REFRESH] ${short}... first sight of this leaf (${mintedAtSec === null ? 'commit-sourced' : 'admitted'}, ` +

@@ -1371,7 +1371,8 @@ revoked - reached from the four places that can learn it: the PIN check at login
 asking the server, and the session-expired reaction when the refresh refusal says the session died
 BY this revocation (`settleSessionEndByRevocationImpl`, since 2026-10-25 -
 [sessions](../../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)).
-It is single-flight: a discoverer arriving while it runs joins it. Its steps are ORDERED, and the
+It runs once per device: a discoverer arriving while it runs joins it, and one arriving after it
+completed finds the device in the page's completed-reset record and erases nothing again. Its steps are ORDERED, and the
 order is the whole mechanism:
 
 1. `tearDownLiveSession(ctx, cb, 'revoked')` - stop everything that is running.

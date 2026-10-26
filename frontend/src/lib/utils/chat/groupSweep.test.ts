@@ -87,6 +87,21 @@ describe('readGroupSweepSnapshot', () => {
     expect(snapshot.unusableReason).toContain('empty');
   });
 
+  it('BELIEVES an empty list when the only trees held are key groups, which the list never names', async () => {
+    // Review of #2493: any community member holds key-group trees, and `GET /mls/users/:id/groups`
+    // leaves distribution groups out by construction - so a joiner whose only ask was declined got
+    // an empty list it could never believe, and neither recovery nor discovery could end the ask.
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['key-group']),
+      isDistributionGroup: vi.fn((id: string) => id === 'key-group'),
+    });
+
+    const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+
+    expect(snapshot.absenceIsEvidence).toBe(true);
+    expect(snapshot.unusableReason).toBeNull();
+  });
+
   it('BELIEVES an empty list when this device holds nothing - that is a real empty account', async () => {
     // The guard is about the two reads DISAGREEING, not about emptiness. A device with no trees has
     // nothing at risk, and refusing here would be a second, silent way to never sweep anything.

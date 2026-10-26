@@ -40,6 +40,7 @@ import {
   inviteLink,
   openCommunity,
   openInviteLink,
+  PERMISSION_GRID_DRAWN,
   permissionGrid,
   permissionKeyOf,
   setMemberRole,
@@ -83,7 +84,7 @@ const W2_TOGGLES = { label: caption('chat_permission_manage_roles_label'), key: 
 /** Opens the roles grid on a client and waits for the table to have rendered its rows. */
 async function openGrid(cx) {
   await communityTab(cx, 'roles');
-  await until(cx, `!!document.querySelector('table tbody tr')`, 20000);
+  await until(cx, PERMISSION_GRID_DRAWN, 20000);
   return permissionGrid(cx);
 }
 

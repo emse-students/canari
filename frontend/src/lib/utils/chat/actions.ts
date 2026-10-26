@@ -41,6 +41,7 @@ import {
   classifyServerStatus,
   decideAbsentGroupFate,
   isDistributionGroupMeta,
+  readStillUserMember,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
 import {
@@ -1111,6 +1112,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -1146,6 +1148,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -1175,6 +1178,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -1183,11 +1187,12 @@ export async function discoverMissingGroups(params: {
 
         // Anti-race: only re-validate our actual membership on a LIVE conversation group absent
         // from our getUserGroups snapshot (which may be stale for a group just created/joined).
+        // THE ONE READER recovery uses too (`readStillUserMember`): the roster's typed 403 is a
+        // "no", logged. A swallowing `.catch(() => null)` here read it as doubt, so the exclusion
+        // branch below could never fire and the two seams disagreed (re-review of #2493).
         let isStillUserMember: boolean | null = null;
         if (serverStatus.kind === 'active') {
-          const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
-          isStillUserMember =
-            userMembers === null ? null : userMembers.some((m) => m.userId === userId);
+          isStillUserMember = await readStillUserMember(mlsService, convo.id, userId, log);
         }
 
         const fate = decideAbsentGroupFate({
@@ -1203,6 +1208,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
