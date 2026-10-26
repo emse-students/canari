@@ -576,11 +576,9 @@ const fcmCallers = [
   ['an admission the server refused is forgiven by nothing', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMIT_REFUSED group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b reason=no_key_package`, 'unexplained'],
   // A TOKEN BEING STORED IS NOT A NOTIFICATION BEING SENT. The handler 400s when the body carries
   // neither token, so this line always means a write happened and there is nothing to decide.
-  // THE HOURLY REPORTS AS THE SERVER SPELLS THEM (CC-3, alpha.4): the commit-rate line with its `; `
-  // separators, and the TURN meter under budget - each with the finding it must not swallow.
-  ['the hourly commit rate with no busy group', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 9 commit(s) in 3 group(s); per group p50=3 p90=4 max=4; busiest single committer per group p50=2 p90=3 max=3; 0 group(s) at >= 8 by one device`, 'notable'],
-  ['the hourly commit rate when nothing committed', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - no group committed`, 'notable'],
-  ['control: a busy group in the commit rate is a finding', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 40 commit(s) in 3 group(s); per group p50=3 p90=30 max=30; busiest single committer per group p50=2 p90=29 max=29; 1 group(s) at >= 8 by one device`, 'unexplained'],
+  // THE TURN METER'S HOURLY REPORT AS THE SERVER SPELLS IT, with the findings it must not swallow.
+  // (The commit-rate report is no row's: `srvReport` lifts it out, pinned below and in
+  // `archive/commitreport-selftest.mjs`.)
   ['the TURN meter under budget', `${NEST}[CallsService] [TURN-METER] 2026-10 (UTC calendar month): 0.62/950 GB metered egress (0.1%) - TURN available`, 'notable'],
   ['the TURN meter reading its dataset limits', `${NEST}[TurnUsageMeter] [ICE] TURN dataset limits: maxDuration=2764800s notOlderThan=2764800s`, 'notable'],
   ['control: unreadable cached TURN limits are a finding', `[Nest] 1  - 10/25/2026, 5:58:30 PM   ERROR [TurnUsageMeter] [ICE] cached TURN dataset limits are unreadable (x) - re-reading`, 'unexplained'],
@@ -1113,7 +1111,6 @@ check(
     ["the base withheld is not ADM-6's (its joiner never asks)", L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-10', 'ADM-6'],
     ['a Decline answered already-admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
     ['a Decline refused to a non-member', W('MembersController', `[JOIN_DECLINE] REJECT group=${G} caller=none target=bbbbbbbb - not an admitted member, or their own ask`), 'ADM-4', 'ADM-2'],
-    ["KILL-1's own burst in the hourly commit rate (alpha.4)", L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 10 commit(s) in 1 group(s); per group p50=10 p90=10 max=10; busiest single committer per group p50=10 p90=10 max=10; 1 group(s) at >= 8 by one device'), 'KILL-1', 'DUP-1'],
     ["a member's Add admitted the joiner", L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=admits - a member's Add answered their invitation-link ask`), 'ADM-1', 'FLOOR-2'],
     ['a stored Welcome admitted the joiner', L('MessagingService', `[BG_WELCOME][bg-wlc-1234abcd] ADMITTED group=${G} users=1 door=welcome - a member's Add answered their invitation-link ask`), 'ADM-6', 'DEV-7'],
     ["the waiting seat's own commit refused", W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external reason=awaiting_admission`), 'ADM-4', 'ADM-5'],
@@ -1155,7 +1152,6 @@ check(
     ['a background Welcome line nobody read', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] Welcome LOST group=${G}`), 'DEV-7'],
     ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
     ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
-    ['TWO busy groups in the hourly commit rate: not one row\'s burst', L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 30 commit(s) in 2 group(s); per group p50=15 p90=15 max=15; busiest single committer per group p50=15 p90=15 max=15; 2 group(s) at >= 8 by one device'), 'KILL-1'],
     ["a Decline answered not-awaiting is no row's", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=not-awaiting`), 'ADM-3'],
     ['a person refused for a reason no row plays: blocked', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=blocked committer=aaaaaaaa - the commit is refused whole`), 'ADM-10'],
     ['a person refused because the committer is off the roster', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=committer_not_on_roster committer=aaaaaaaa - the commit is refused whole`), 'ADM-3'],
@@ -1226,6 +1222,16 @@ check(
   check('R6 srvReport: FLOOR-1 is NOT clean on the same line', [inFloor.clean, inFloor.outOfRowCount, inFloor.lines], [false, 1, 1]);
   check('R6 srvReport: the out-of-row line says which rows expect it', /expected only in DUP-\*/.test(inFloor.outOfRow[0]), true);
   check('R6 srvReport: no row named is not clean either', asRow(null).clean, false);
+  // THE HOURLY COMMIT REPORT IS LIFTED OUT OF EVERY ROW'S WINDOW (DEV-6, alpha.6): a busy group, a
+  // hole, even a failed report - none gates a row, and the count says they were there.
+  const hourly = [
+    L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 248 commit(s) in 20 group(s); per group p50=4 p90=20 max=40; busiest single committer per group p50=2 p90=10 max=20; 1 group(s) at >= 8 by one device'),
+    W('AppController', `[CRON] reportCommitLogHealth: 1 group(s) have a HOLE in their commit log - 2 epoch(s) between the oldest retained commit and the head were accepted and never recorded, so no device below one can replay past it and only a re-Welcome reaches the head. Newest 1 of 1: ${G}(first hole at 4, 2 missing, log 1..9, after 2026-10-26T20:00:00.000Z)`),
+  ];
+  for (const row of ['DEV-6', 'KILL-1', null]) {
+    const r = srvReport((s) => (s === 'chat-delivery-service' ? hourly : []), '1m', { row })['chat-delivery-service'];
+    check(`R6 srvReport: the hourly commit report is no row's (${row ?? 'no row'})`, [r.clean, r.hourlyCommitReportCount, r.lines, r.outOfRowCount ?? 0, r.errorCount ?? 0], [true, 2, 0, 0, 0]);
+  }
   // WHICH ROW A PASS'S WINDOW IS JUDGED AS (`run.mjs`): the one row it recorded, else none.
   check('R6 windowRow: a single-row pass owns its window', windowRow([{ id: 'DUP-1' }]), 'DUP-1');
   check('R6 windowRow: the same row recorded twice is still one row', windowRow([{ id: 'CC-2' }, { id: 'CC-2' }]), 'CC-2');
