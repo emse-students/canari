@@ -68,6 +68,7 @@ import {
   resubmissionLine,
   sessionSurvived,
   settleNarration,
+  dup2DeferredJoinNarration,
   settledOnce,
 } from '../settlerows.mjs';
 import { GROUP_CREATION_NARRATION, REMOVE_NARRATION, awaitLine, consoleLines } from '../watch.mjs';
@@ -204,15 +205,20 @@ const ACTIONS = {
     const settled = await awaitLine(c.cx('W1'), resubmissionLine(c.group.id, c.fromEpoch, 'accepted'), 30_000);
     const gesture = await g;
     const rep = await f.disarm();
+    const subjectNarration = [];
     return {
       premise,
       records: rep.records,
       vacuous: vacuousOf(rules, rep),
       joiners: [spec.subject],
       removed: [spec.intervening.remove],
-      narrationBy: { [spec.intervening.by]: REMOVE_NARRATION },
+      // W2's narration is decided by the judge, which runs after the invariant: by then the Welcome
+      // its add-lock wait was waiting for has arrived or has not (`dup2DeferredJoinNarration`).
+      narrationBy: { [spec.intervening.by]: REMOVE_NARRATION, [spec.subject]: subjectNarration },
       detail: { gesture, w4Gesture: w4, heldMs, clientSettled: settled },
-      judge: (view, seq) => [
+      judge: (view, seq) => {
+        subjectNarration.push(...dup2DeferredJoinNarration(consoleLines(c.cx(spec.subject)), c.group.id));
+        return [
         firedAtLeast('hold', byRule(rep.records, 0), 2),
         firedAtLeast('lose-answer', byRule(rep.records, 1), 1),
         { what: `W4's Remove of W5 completed${w4.ok ? '' : ` (${w4.error})`}`, ok: w4.ok },
@@ -226,7 +232,8 @@ const ACTIONS = {
           joined: [c.user[spec.subject]],
           removed: [c.user[spec.intervening.remove]],
         }),
-      ],
+      ];
+      },
     };
   },
 

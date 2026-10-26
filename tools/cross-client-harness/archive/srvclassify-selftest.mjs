@@ -929,6 +929,24 @@ check(
 
 // ── the scratch browser's previous device being deleted before a re-enrolment (NOTIF-20) ─────────
 check(
+  'a Welcome carried by reference is reported in every row - under the budget too (alpha.5 DUP-2)',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: 2184B, budget 3734B') &&
+    rowVerdict('[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: 2184B, budget 3734B', 'DUP-2') === null,
+  true
+);
+check(
+  '... but not a lookalike with no sizes, nor key material',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: ?B') ||
+    matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][send-07084c98] key-material carried by reference: 9000B, budget 3734B'),
+  false
+);
+check(
+  'an avatar served or absent for a push is reported, a refused one is not',
+  matches(NOTABLE_RULES, '[Nest] 1  - LOG [PushController] [PUSH_AVATAR] outcome=absent status=404 ms=6 device=true target=223bc34e') &&
+    !matches(NOTABLE_RULES, '[Nest] 1  - WARN [PushController] [PUSH_AVATAR] outcome=rejected status=403 ms=6 device=true target=223bc34e'),
+  true
+);
+check(
   'a device deletion is reported',
   matches(
     NOTABLE_RULES,
@@ -1110,9 +1128,6 @@ check(
     ['a departure abandoned, settling what it began', W('ChannelService', `[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=1: The departure could not be completed, retry. - settling what it began`), 'RM-5', 'FLOOR-1'],
     ['a salon grant refused', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=not_allowed`), 'RM-5', 'RM-4'],
     ['a salon gone before its roster write', W('ChannelService', `[CHANNEL] salon gone before its roster write channel=c-1 user=bbbbbbbb`), null, 'RM-5'],
-    ['a Welcome carried by reference in an admission row', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 6148B, budget 3734B'), 'ADM-3', 'DUP-1'],
-    ['... and in a device row', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 4608B, budget 3716B'), 'DEV-2', 'RM-4'],
-    ['... and in a large-group variant', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 9001B, budget 3716B'), 'BIG-1-noI1', 'CC-1'],
   ];
   for (const [name, line, row, other] of FAMILY) {
     if (row) check(`R6 expected   ${name} (${row})`, verdictIn(line, row), 'expected');
@@ -1139,7 +1154,6 @@ check(
     ['the pre-#2505 refusal that dropped admits and kept the commit', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10'],
     ['an undated admission of a seat that was not awaiting', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] ADMITTED_UNDATED group=${G} user=bbbbbbbb committer=aaaaaaaa decidedBy=base_epoch decidedAtSeatGeneration=2 seat=none - an Add with no invitation generation answered an ask`), 'ADM-6'],
     ['the member-add route refusing for an undeclared reason', W('MembersController', `[ADD_MEMBER][add-member-c3adcdfe] REFUSED not_admitted group=${G} user=bbbbbbbb reason=banned caller=aaaaaaaa - no accepted commit admitted them; nothing written`), 'ADM-10'],
-    ['a Welcome carried by reference with no sizes', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: ?B'), 'ADM-1'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
 
