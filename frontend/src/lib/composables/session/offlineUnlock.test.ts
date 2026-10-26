@@ -349,7 +349,9 @@ describe('a revoked live device is logged out, not asked for its PIN', () => {
     expect(wipe).toBeGreaterThan(-1);
     // The order is the point: handing over before the wipe would navigate away from the device
     // being erased, and nothing would finish erasing it.
-    expect(liveRevocationTail.indexOf('cb.onSessionExpired?.();')).toBeGreaterThan(wipe);
+    expect(
+      liveRevocationTail.indexOf('cb.onSessionExpired?.({ alreadySignedOut: true });')
+    ).toBeGreaterThan(wipe);
   });
 
   it('never reopens the PIN prompt for a device that no longer has one', () => {

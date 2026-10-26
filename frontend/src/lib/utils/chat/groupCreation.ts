@@ -650,11 +650,14 @@ async function processBulkAddition(
     // that could not be READ is a rebuild that could not be justified - retried like a lost race.
     if (e instanceof AddAbortedError) {
       log(`[SYNC] the Add was abandoned before its stage (${e.why}) - nobody added`);
-      console.warn(`[SYNC] processBulkAddition: ${e.message}`);
-      // Refused to admit everyone it named: a Decline, a departure or a block came first.
+      // Refused to admit everyone it named: a Decline, a departure or a block came first. That is
+      // the designed outcome of a race the member lost on purpose, so it is an info line with the
+      // same facts, never a warning.
       if (e.why === 'removed-meanwhile' || e.why === 'not-admitted') {
+        console.info(`[SYNC] processBulkAddition: ${e.message}`);
         return notAdded('removed-meanwhile');
       }
+      console.warn(`[SYNC] processBulkAddition: ${e.message}`);
       if (e.why === 'tree-unconfirmed') return notAdded('tree-unconfirmed');
       return notAdded('commit-race-lost');
     }

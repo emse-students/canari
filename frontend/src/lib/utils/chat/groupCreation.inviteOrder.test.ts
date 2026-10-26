@@ -197,6 +197,28 @@ describe('inviteMembersToGroup - a person the server did not admit', () => {
     expect(d.order.some((s) => s.startsWith('welcome:'))).toBe(false);
   });
 
+  it('narrates a Decline that won the race as an info line, never a warning', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      throw admitRefused(devices.map((x) => x.userId));
+    }) as never;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('abandoned'))).toEqual(
+      []
+    );
+    expect(
+      info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('abandoned before its stage (not-admitted)'))
+    ).toHaveLength(1);
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
   it('stops on a refusal naming nobody the Add offered: no progress, no rebuild', async () => {
     const d = inviteDeps();
     d.mlsService.addMembersBulk = vi.fn(async () => {

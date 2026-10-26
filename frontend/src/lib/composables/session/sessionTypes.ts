@@ -19,6 +19,15 @@ import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '
  */
 export type MlsFatalErrorKind = 'oom' | 'private_mode' | 'keystore_lost' | 'restore_shortfall';
 
+/**
+ * What the caller of `onSessionExpired` already knows about the sign-out. `alreadySignedOut` is
+ * true when the revoked-device reset has run `clearAuth` itself, so the handler redirects without
+ * signing out a second time (one revocation, one `POST /api/auth/logout`).
+ */
+export interface SessionExpiredOutcome {
+  alreadySignedOut?: boolean;
+}
+
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
   /** Reactive map of all open conversations, keyed by conversation ID. */
@@ -152,7 +161,7 @@ export interface ChatSessionCallbacks {
    * SessionExpiredError). Distinct from onLoginFailed: this is not a retryable error
    * shown in the PIN modal but an authentication loss - the caller should log the user
    * out and redirect straight to /login rather than surface a message in the modal. */
-  onSessionExpired?: () => void;
+  onSessionExpired?: (outcome?: SessionExpiredOutcome) => void;
   log: (msg: string) => void;
   messageReactions: SvelteMap<string, any[]>;
   getSelectedContact: () => string | null;

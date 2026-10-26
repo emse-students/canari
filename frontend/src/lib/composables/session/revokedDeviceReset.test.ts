@@ -193,6 +193,8 @@ describe('a device revoked by its owner while online', () => {
     expect(s.logs()).toContain('Revoked-device reset already running - joined');
     // Then the user is handed to the session-expired seam, after the reset.
     expect(s.cb.onSessionExpired).toHaveBeenCalledTimes(1);
+    // ...and says the reset already signed out, so the handler redirects without a second logout.
+    expect(s.cb.onSessionExpired).toHaveBeenCalledWith({ alreadySignedOut: true });
   });
 
   it('refusal first: a request meets the dead session, then the frame arrives - the same ONE reset', async () => {

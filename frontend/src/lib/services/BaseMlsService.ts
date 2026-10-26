@@ -143,7 +143,7 @@ import {
   takeGroupsAwaiting,
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
-import { getToken } from '$lib/stores/auth';
+import { getToken, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
 import { productionDeliveryApi } from '$lib/mls-client/productionDeliveryApi';
 import {
   GatewayOpenAbandonedError,
@@ -2764,7 +2764,17 @@ export abstract class BaseMlsService implements IMlsService {
         // gives up at once on a transport failure (nobody answered: no smaller page can help), which
         // is the expected end of an offline start - one line, by its class, no stack.
         const where = `the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect`;
-        if (isTransportFailure(e)) {
+        if (
+          e instanceof SessionEndedByDeviceRevocationError &&
+          e.names(this.userId, this.deviceId)
+        ) {
+          // A DESIGNED END, NOT A FAULT: the owner revoked THIS device, the server deleted its
+          // backlog, and the wipe that follows erases the device. Nothing is left to drain and no
+          // reconnect would drain it, so neither an error line nor "stays queued" is true.
+          console.info(
+            `[PENDING] Pending fetch ended after ${fetched} message(s): this device was revoked by its owner, nothing remains to drain`
+          );
+        } else if (isTransportFailure(e)) {
           console.warn(
             `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
           );

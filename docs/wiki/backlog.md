@@ -499,18 +499,6 @@ counts there, the line about W3 itself. Each contact relays 3 to 5 such rows per
 in step with the owner devices minted before. This was read from relay counts by relayer, not row by
 row. The same "device-local" property closes both.
 
-## P3 - A revoked device signs out twice: the wipe's `clearAuth`, then the session-expired path's (DEV-2, `1.4.1-alpha.3`, 2026-10-25)
-
-The revoked W3 logged `[A] logout✓200` twice, 70 ms apart and in sequence (61 ms, then 59 ms). The
-cause, from reading the code, with the timing to match: `onDeviceRevoked` (`sessionAuth.ts`) runs
-`wipeRevokedDevice`, which awaits `clearAuth()` (the first `POST /api/auth/logout`). It then calls
-`cb.onSessionExpired()` for the redirect, and `handleSessionExpired` (`ChatBackgroundService.svelte`)
-runs `clearAuth()` again (the second). The second is harmless: the session row is already gone and the
-server answers 200. But it is a write sent for nothing, and the account's sign-out handlers run twice.
-The redirect wanted is `/login` with no second sign-out: either the seam carries "already signed out"
-or the revocation gets its own path to `/login`. Until the fix lands, both lines stay dirt on DEV-2
-and DEV-3.
-
 ## A revoked device whose refresh cannot name its revocation
 
 A design limit of the refusal record of [sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25),

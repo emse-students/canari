@@ -473,6 +473,13 @@ things read it, and they converge on ONE reset ([auth](frontend/modules/auth.md#
 owner → reset if it is this one`, `[SECURITY] Revoked-device reset starting.`, `[RESET] done - nothing
 of this device remains`, and on the live variant also `revocation check: the server ended this
 session BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
+
+**Designed outcomes of that end, and how they log (2026-10-26).** The reset's own `clearAuth` IS the
+device's one sign-out: the frame path hands `onSessionExpired({ alreadySignedOut: true })` and the
+refusal path's `settleSessionEndByRevocation` answers `true`, so `handleSessionExpired` redirects
+without a second `POST /api/auth/logout`. A pending fetch refused with the typed error naming THIS
+device ends with one info line (the server deleted the backlog; nothing remains to drain), never an
+error claiming it stays queued.
 `the server disagrees`, and no `Gateway inaccessible` after it.
 
 **The cases this record does not reach** are a design limit, listed with what covers them in

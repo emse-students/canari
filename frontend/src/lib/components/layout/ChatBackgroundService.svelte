@@ -26,6 +26,7 @@
     isDeviceKeyPersistenceEnabled,
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
+  import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -630,7 +631,7 @@
    * reset must not depend on which came first. Measured on DEV-2 (2026-10-25): the frame's check met
    * the dead session, read "not revoked", and this generic sign-out kept every local store.
    */
-  async function handleSessionExpired() {
+  async function handleSessionExpired(outcome?: SessionExpiredOutcome) {
     // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
     // TRIGGER. `_sessionExpiredHandled` answers "has a logout already run for this expiry" -
     // several observers reach the same verdict at once (the global notifier, the promotion path, a
@@ -677,18 +678,34 @@
     );
     // A session the server ended BECAUSE ITS OWNER REVOKED THIS DEVICE resets the device first. The
     // account is the refused credential's: on a cold start no login has named it to the session yet.
+    //
+    // THE RESET'S OWN SIGN-OUT IS THE SIGN-OUT. `wipeRevokedDevice` runs `clearAuth` itself, so a second
+    // one here was a second `POST /api/auth/logout` and a second round of sign-out handlers. The fact
+    // comes from where it is known, never from a timing argument: the reset answering `true` here
+    // (the refusal path), or the frame path saying `alreadySignedOut` when it handed over.
+    let signedOut = outcome?.alreadySignedOut === true;
     try {
-      await globalSession.settleSessionEndByRevocation(
-        sessionCb(),
-        globalSession.userId || currentUserId() || ''
-      );
+      if (
+        await globalSession.settleSessionEndByRevocation(
+          sessionCb(),
+          globalSession.userId || currentUserId() || ''
+        )
+      ) {
+        signedOut = true;
+      }
     } catch (e) {
       // ACCUSED, never swallowed: the stores of a disowned device may remain.
       console.error('[SECURITY] The revoked-device reset FAILED - local data may remain:', e);
       appendLog(`[SECURITY] The revoked-device reset FAILED - local data may remain: ${e}`);
     }
-    appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
-    await clearAuth().catch(() => {});
+    if (signedOut) {
+      appendLog(
+        `[AUTH] Session expired - the revoked-device reset already signed out; redirecting to ${loginPath}.`
+      );
+    } else {
+      appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
+      await clearAuth().catch(() => {});
+    }
     void goto(resolve(internalPath(loginPath)), { replaceState: true });
   }
 

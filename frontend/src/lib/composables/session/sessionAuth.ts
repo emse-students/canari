@@ -837,7 +837,7 @@ export async function answerDeviceRevokedFrame(
   // unconditionally: it clears the auth and goes to /login. Nothing is lost by the change,
   // because the message it replaces was displayed in a modal the app abandoned two seconds
   // later anyway.
-  cb.onSessionExpired?.();
+  cb.onSessionExpired?.({ alreadySignedOut: true });
 }
 
 /**
