@@ -17,8 +17,12 @@ import {
   ADMISSION_ENDINGS,
   ADMIT_ROWS,
   OLD_REF,
+  admitRefusedFor,
   admittedOwn,
   baseWithheldRepeats,
+  advancedFor,
+  connectionOpens,
+  deviceRefusals,
   declinedOwn,
   gateRefusals,
   memberRoutes,
@@ -26,6 +30,7 @@ import {
   oldBuildOwn,
   oldMemberOwn,
   outsiderOwn,
+  perConnection,
   probeOwn,
   raceOwn,
   rateLimitedOwn,
@@ -33,6 +38,8 @@ import {
   routeEnrolments,
   seatState,
   staleAddOwn,
+  undatedAdmissions,
+  welcomeRefusedFor,
 } from '../admitrows.mjs';
 import { apiAt, apiGet, apiPost, evaluate, goto, send } from '../chat.mjs';
 import { psql, srvLines } from '../estate.mjs';
@@ -160,6 +167,31 @@ async function answerWhereShown(asks, by, userId, choice) {
   return true;
 }
 
+/**
+ * The Welcomes queued for `user` in `group` at the moment of reading - a commit refused whole queues
+ * none. Weak evidence (a row delivered and deleted before the read is gone), kept as a cross-check.
+ */
+const queuedWelcomes = (group, user) => Number(psql(`SELECT count(*) FROM queued_message WHERE "groupId" = '${group}' AND "recipientId" = '${user}' AND "isWelcome" = true`));
+
+/**
+ * WHAT A COMMIT REFUSED WHOLE LEFT BEHIND (#2505), about `user` in `group`: the gate's lines naming
+ * them, which of the two refusal lines fired (`admit_refused`, or `welcome_target_not_admitted` when
+ * the Add carried the Welcome inline), whether anything the refusal stopped was accepted after all
+ * (`advancedFor`), the Welcomes queued for them, and any admission nobody dated (the ADM-3c rule).
+ */
+function refusalFacts(c, user) {
+  const lines = srvLines('chat-delivery-service', c.startSince);
+  return {
+    lines,
+    gateRefused: gateRefusals(lines, c.group.id, user),
+    admitRefused: admitRefusedFor(lines, c.group.id, user),
+    welcomeRefused: welcomeRefusedFor(lines, c.group.id, user),
+    advanced: advancedFor(lines, c.group.id, user),
+    welcomes: queuedWelcomes(c.group.id, user),
+    undated: undatedAdmissions(lines, c.group.id, user),
+  };
+}
+
 const ACTIONS = {
   /** ADM-1: waiting, refused the base, asked everywhere, admitted by one member, the ask gone everywhere. */
   async 'ADM-1'(c) {
@@ -252,8 +284,7 @@ const ACTIONS = {
     const records = await fa.disarm();
     const after = seatState(serverView(c.group.id), joinerUser);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 5_000)) !== null;
-    const lines = srvLines('chat-delivery-service', c.startSince);
-    const gateRefused = gateRefusals(lines, c.group.id, joinerUser);
+    const { lines, ...refusal } = refusalFacts(c, joinerUser);
     const routeEnrolled = routeEnrolments(lines, c.group.id, joinerUser);
     // AN ADMITTED SAMPLE IS A FINDING SETTLED OR NOT; a group that never settled with none is unjudged.
     const unjudged = !decided.ok
@@ -265,8 +296,8 @@ const ACTIONS = {
       members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
       records: { [approve]: records.records },
       unjudged,
-      detail: { asks, trail, settleMs: settled.ms, settled: settled.settled, rounds: settled.rounds.length },
-      judge: () => staleAddOwn({ held, declined, trail, after, listed, gateRefused, routeEnrolled }),
+      detail: { asks, trail, settleMs: settled.ms, settled: settled.settled, rounds: settled.rounds.length, refusal },
+      judge: () => staleAddOwn({ held, declined, trail, after, listed, ...refusal, routeEnrolled }),
     };
   },
 
@@ -294,11 +325,13 @@ const ACTIONS = {
     const ra = await fa.disarm();
     const rd = await fd.disarm();
     const after = seatState(serverView(c.group.id), c.user[spec.joiner]);
+    // WHEN THE DECLINE WON, THE ADD WAS REFUSED WHOLE: judged by `raceOwn` only on that branch.
+    const { lines: _lines, ...refusal } = refusalFacts(c, c.user[spec.joiner]);
     return {
       members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
       records: { [spec.race.approve]: ra.records, [spec.race.decline]: rd.records },
-      detail: { asks, releasedAt, final: after },
-      judge: () => raceOwn({ outcomes, after, listedTrail }),
+      detail: { asks, releasedAt, final: after, refusal },
+      judge: () => raceOwn({ outcomes, after, listedTrail, refusal }),
     };
   },
 
@@ -362,11 +395,34 @@ const ACTIONS = {
     }
     const admitted = await seatReaches(c, u, 'admitted', 60_000);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 90_000)) !== null;
-    const admissionErrors = srvLines('chat-delivery-service', c.startSince).filter((l) => l.includes('[ADMISSION]') && /\bERROR\b/.test(l) && l.includes(c.group.id)).length;
+    // DOCKER-STAMPED LINES: the one clock the delivery service and the gateway share, sub-second and
+    // UTC - Nest's own stamp is whole seconds in the container's zone, and could invent or hide a wedge.
+    const lines = srvLines('chat-delivery-service', c.startSince, { timestamps: true });
+    const admissionErrors = lines.filter((l) => l.includes('[ADMISSION]') && /\bERROR\b/.test(l) && l.includes(c.group.id)).length;
+    const shimUndated = undatedAdmissions(lines, c.group.id, u, ['ADMITTED_UNDATED']);
+    // THE OLD MEMBER'S REFUSED COMMITS, PER CONNECTION, BY DEVICE: each refused trace's own START line
+    // names the device that sent it, so W1 (A1's user) is never counted as A1. v1.4.0 keeps its device
+    // id in `localStorage` (`mls_device_id_<user>`), as the new client does; an id the page does not
+    // expose leaves the count unjudged, never zero.
+    const oldDevice = await deviceIdOf(seats.seat[spec.old].cx, c.user[spec.old]);
+    const refusalsPerConnection = oldDevice
+      ? perConnection(deviceRefusals(lines, c.group.id, oldDevice), connectionOpens(srvLines('chat-gateway', c.startSince, { timestamps: true }), c.user[spec.old], oldDevice))
+      : [];
+    const refusals = refusalsPerConnection.reduce((a, n) => a + n, 0);
     return {
       members: [...c.members, spec.joiner],
-      detail: { follow: w.follow, base: w.base?.status, addedBy },
-      judge: () => oldMemberOwn({ admitted, listed, admissionErrors, addedBy }),
+      unjudged: oldDevice ? [] : [`${spec.old}'s device id is unreadable, so its refused commits per connection are not counted`],
+      detail: {
+        follow: w.follow,
+        base: w.base?.status,
+        addedBy,
+        shimUndated,
+        refusalsPerConnection,
+        // THIS ROW DECLINES NOBODY, so it provokes no refusal: the per-connection check is made only on
+        // a refusal that happened, and said here when there was none.
+        ...(refusals === 0 && { perConnection: 'not exercised: no refused commit from the old member in this row' }),
+      },
+      judge: () => oldMemberOwn({ admitted, listed, admissionErrors, addedBy, shim: addedBy !== spec.answer.by, shimUndated, refusalsPerConnection }),
     };
   },
 
