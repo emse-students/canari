@@ -2425,6 +2425,17 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
 ];
 
 /**
+ * A FRESHLY MINTED DEVICE RESTORING ITS HISTORY, and saying how much of it no author proof covers -
+ * read on alpha.5's DEV-2 (2026-10-26), fifteen lines on the minted W3, one per conversation restored.
+ * Given to the MINTED seat of a fresh-device row only: on a device that was not just minted, a
+ * restore of unproven messages is not this row's story and stays dirt. The product follow-up (one
+ * summary per restore, and whether these messages should carry proofs) is the lead's, after the stable.
+ */
+export const FRESH_DEVICE_RESTORE_NARRATION = [
+  atLevels(['log', 'info'], /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/),
+];
+
+/**
  * A REVOKED DEVICE SIGNING ITSELF OUT - DEV-2 and DEV-3's subject on the revoked W3, read on DEV-2
  * (`1.4.1-alpha.3`, 2026-10-25). `clearAuthUnderway` ends every per-account store in turn and each one
  * says what it forgot; on any device that was NOT revoked these lines are a sign-out nobody asked for.
@@ -2442,6 +2453,9 @@ export const REVOKED_SIGN_OUT_NARRATION = [
   atLevels(['log'], /^\[OUTBOX\] signed out: \d+ control refusal\(s\) unbound from memory$/),
   atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] \d+ saved community list\(s\) erased$/),
   atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] signed out: \d+ community\(ies\) forgotten$/),
+  // The MLS client torn down and its socket released (alpha.5 DEV-2): the revocation's own teardown.
+  atLevels(['log', 'info'], /^\[WS\] MLS client destroyed - its socket is released and no open may follow$/),
+  atLevels(['log', 'info'], /^\[WS\] Paused - disconnect sent, socket released until the next foreground\.$/),
 ];
 
 /**
