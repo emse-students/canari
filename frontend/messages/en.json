@@ -1934,6 +1934,7 @@
   "asso_cotisations_tier_price_free_label": "No price set",
   "asso_cotisations_tier_base_badge": "Base tier",
   "asso_cotisations_tier_add_button": "Add a tier",
+  "asso_cotisations_tier_add_unavailable": "Adding a tier is not available yet: the server has to be updated first.",
   "asso_cotisations_tier_add_title": "New tier",
   "asso_cotisations_tier_create_button": "Create tier",
   "asso_cotisations_tier_create_error": "Failed to create the tier.",

@@ -1966,6 +1966,7 @@
   "asso_cotisations_tier_price_free_label": "Prix non défini",
   "asso_cotisations_tier_base_badge": "Palier de base",
   "asso_cotisations_tier_add_button": "Ajouter un palier",
+  "asso_cotisations_tier_add_unavailable": "L'ajout d'un palier n'est pas encore disponible : le serveur doit d'abord être mis à jour.",
   "asso_cotisations_tier_add_title": "Nouveau palier",
   "asso_cotisations_tier_create_button": "Créer le palier",
   "asso_cotisations_tier_create_error": "Erreur lors de la création du palier.",

@@ -1643,6 +1643,12 @@ export interface CotisationOptions {
    * add needs, because a form that grants a cotisation on payment does the same thing.
    */
   mayGrant: boolean;
+  /**
+   * CAPABILITY: this social-service derives a new tier's key from its label (`deriveVariantKey`).
+   * Absent on an older server, which would strip the flag and create a BASE tier instead - so the
+   * admin screen offers tier creation only when this is `true` (`mayCreateTier`).
+   */
+  tierKeyFromLabel?: boolean;
 }
 
 /**

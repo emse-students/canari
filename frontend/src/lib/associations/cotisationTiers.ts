@@ -8,7 +8,19 @@
  */
 import { m } from '$lib/paraglide/messages';
 import { formatAmount } from '$lib/forms/fillAnswers';
-import type { AssociationProduct } from './api';
+import type { AssociationProduct, CotisationOptions } from './api';
+
+/**
+ * Whether the screen may offer to create a tier: only when the server SAID it derives the key from
+ * the label (`tierKeyFromLabel` in `cotisation-options`). An older server strips the
+ * `deriveVariantKey` flag and would create a base tier instead, so the absence of the capability -
+ * or options that could not be read - offers nothing rather than guessing.
+ */
+export function mayCreateTier(
+  options: Pick<CotisationOptions, 'tierKeyFromLabel'> | null | undefined
+): boolean {
+  return options?.tierKeyFromLabel === true;
+}
 
 /** The columns of a tier product the editor reads. */
 export type TierLike = Pick<

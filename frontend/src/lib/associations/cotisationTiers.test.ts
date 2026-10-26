@@ -5,6 +5,7 @@ import {
   centsToEuros,
   defaultRiseSource,
   eurosToCents,
+  mayCreateTier,
   riseGivesNoDiscount,
   riseSentence,
   riseSourceTier,
@@ -28,6 +29,19 @@ function tier(id: string, name: string, cents: number | null, grid = false): Tie
 
 const sansAlcool = tier('sans', 'Cotisation', 1500);
 const avecAlcool = tier('avec', 'Cotisation Alcool', 3000);
+
+describe('mayCreateTier', () => {
+  it('offers tier creation only to a server that says it derives the key from the label', () => {
+    expect(mayCreateTier({ tierKeyFromLabel: true })).toBe(true);
+  });
+
+  it('offers nothing to an older server, or when the options could not be read', () => {
+    expect(mayCreateTier({})).toBe(false);
+    expect(mayCreateTier({ tierKeyFromLabel: false })).toBe(false);
+    expect(mayCreateTier(null)).toBe(false);
+    expect(mayCreateTier(undefined)).toBe(false);
+  });
+});
 
 describe('tiersInPriceOrder', () => {
   it('reads cheapest first, whatever order the API answered in', () => {

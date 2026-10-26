@@ -84,13 +84,10 @@ editor" below for what the screen shows and why.
 Reworked on 2026-10-26 after the user found the screen "pas clair du tout". Three decisions:
 
 - **The key is a TECHNICAL id: never shown, never typed, never edited by a person.** A new tier is
-  created with a label and a price only; the client sends `deriveVariantKey: true` and
-  `ProductsService.create` derives the key from the label with `variantKeyFromLabel`
-  (`cotisation-tag.util.ts`: lowercase, ASCII-folded, hyphenated, `palier` for a label with no
-  letter or digit, `-2`/`-3`... until free among the association's tiers). It is FIXED afterwards:
-  the edit form never sends `variantKey`, so renaming a forfait leaves its tag and its cotisants
-  where they are. The server keeps honouring an explicit `variantKey` on create and update for
-  older clients, and refuses it alongside `deriveVariantKey`. The base tier keeps `variantKey: null`.
+  created with a label and a price only, and the server derives the key (next section). The edit
+  form never sends `variantKey`. The add button is offered only when `cotisation-options` publishes
+  `tierKeyFromLabel` (`mayCreateTier`); against an older server the tab says creation needs a
+  server update, rather than letting it create a base tier.
 - **The order is visible**: tiers are listed cheapest first, numbered (`tiersInPriceOrder` in
   `frontend/src/lib/associations/cotisationTiers.ts`) - the product price is what a rise is ranked
   by. A gridded or unpriced tier cannot be ranked and is listed last.
@@ -101,9 +98,8 @@ Reworked on 2026-10-26 after the user found the screen "pas clair du tout". Thre
   computes a complement. The pair is saved whole or not at all: a source tier with no amount is
   cleared, since the checkout would charge the full price for it anyway.
 
-What this removed: the "changing the identifier transfers the cotisants" field. The server path
-(`planTierRetag`, next paragraph) still exists for an API caller, but no screen reaches it, so an
-association that wants its base tier to become a named one has no button for it any more.
+What this removed: the "changing the identifier transfers the cotisants" field - recorded in
+[backlog](backlog.md#p3---no-screen-turns-the-base-tier-into-a-named-one-2026-10-26).
 
 ### A new tier's key is derived from its label (server, 2026-10-26)
 

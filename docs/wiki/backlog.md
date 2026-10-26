@@ -199,6 +199,15 @@ yes because it is a migration: a partial unique index on `(associationId, varian
 `membership` products (plus one for the base tier's null key), after counting the duplicates it
 would refuse.
 
+## P3 - No screen turns the base tier into a named one (2026-10-26)
+
+The tier editor rework (the key is never shown, typed or edited) removed the only screen that changed
+a tier's `variantKey` - which also moved every cotisant of that tier to the new tag. The server path
+remains: `PATCH /api/associations/:id/products/:productId` with `variantKey`, handled by
+`ProductsService.update` through `planTierRetag` ([cotisations](cotisations.md#multi-tier-cotisations-named-variants)).
+Owed: a decision on whether an association ever needs it from a screen, and if so a control that
+never shows the key.
+
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
 Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since

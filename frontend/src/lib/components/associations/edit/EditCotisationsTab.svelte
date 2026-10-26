@@ -11,6 +11,7 @@
     createProduct,
     updateProduct,
     deleteProduct,
+    fetchCotisationOptions,
     type Association,
     type AssociationProduct,
     type CotisantRosterItem,
@@ -42,6 +43,7 @@
   import {
     centsToEuros,
     eurosToCents,
+    mayCreateTier,
     riseSourceTier,
     riseSources,
     singlePriceCents,
@@ -87,6 +89,11 @@
   let tiersLoadedForAssoId: string | null = null;
 
   let showAddTierForm = $state(false);
+  /**
+   * Whether this server derives a new tier's key from its label (`tierKeyFromLabel`). Read before
+   * offering tier creation, never inferred: an older server would create a base tier instead.
+   */
+  let tierCreationSupported = $state(false);
   let addingTier = $state(false);
   let newTierName = $state('');
   let newTierPriceEuros = $state<number | ''>('');
@@ -333,8 +340,21 @@
     tiersError = '';
     console.log(`[Cotisations] Loading tier products - asso=${asso.id.slice(0, 8)}`);
     try {
-      const productsList = await listAssociationProductsForManage(asso.id);
+      const [productsList, options] = await Promise.all([
+        listAssociationProductsForManage(asso.id),
+        // Unread options offer no creation, but must not hide the tiers that DID load.
+        fetchCotisationOptions(asso.id).catch((e: unknown) => {
+          console.error('[Cotisations] Failed to read cotisation options:', e);
+          return null;
+        }),
+      ]);
       tierProducts = productsList.filter((p) => p.type === 'membership');
+      tierCreationSupported = mayCreateTier(options);
+      if (!tierCreationSupported) {
+        console.warn(
+          `[Cotisations] Tier creation not offered - asso=${asso.id.slice(0, 8)}: the server publishes no tierKeyFromLabel`
+        );
+      }
     } catch (e) {
       tiersError = m.asso_cotisations_membership_load_error();
       console.error('[Cotisations] Failed to load tier products:', e);
@@ -772,7 +792,7 @@
                 <p class="text-text-muted mt-0.5 text-xs">{m.asso_cotisations_tier_order_hint()}</p>
               {/if}
             </div>
-            {#if !tiersLoading && tierProducts.length > 0}
+            {#if !tiersLoading && tierProducts.length > 0 && tierCreationSupported}
               <button
                 type="button"
                 onclick={() => (showAddTierForm = !showAddTierForm)}
@@ -1006,7 +1026,9 @@
             </ul>
           {/if}
 
-          {#if showAddTierForm}
+          {#if !tiersLoading && tierProducts.length > 0 && !tierCreationSupported}
+            <p class="text-text-muted text-xs">{m.asso_cotisations_tier_add_unavailable()}</p>
+          {:else if showAddTierForm}
             <form
               class="border-cn-border bg-cn-bg space-y-3 rounded-xl border p-4"
               onsubmit={(e) => {
