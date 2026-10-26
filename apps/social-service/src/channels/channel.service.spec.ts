@@ -66,8 +66,14 @@ describe('ChannelService security hardening', () => {
       // A community setting is one column update of the row; 1 row found.
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
-        transaction: jest.fn((cb: (m: { delete: typeof hardDeletes }) => Promise<void>) =>
-          cb({ delete: hardDeletes })
+        // The deletion takes the community removal lock (`query`) and asks its premise again
+        // through the member and role repositories.
+        transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: hardDeletes,
+            query: jest.fn(() => Promise.resolve([])),
+            getRepository: (entity: unknown) => (entity === ChannelRole ? roleRepo : memberRepo),
+          })
         ),
       },
     };
@@ -92,6 +98,9 @@ describe('ChannelService security hardening', () => {
       save: jest.fn(),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       delete: jest.fn(),
+      // An admission re-checks, under the removal lock, that the community still has members;
+      // one member by default, so only the test about an emptied community sees zero.
+      count: jest.fn(() => Promise.resolve(1)),
     };
     // The Graine history floor is the one read that goes through a query builder rather than a
     // `find`. Rows are pushed in by the test that needs them, so every other test sees the honest
@@ -128,6 +137,7 @@ describe('ChannelService security hardening', () => {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       increment: jest.fn(() => Promise.resolve()),
+      delete: jest.fn(() => Promise.resolve({ affected: 0 })),
     };
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
@@ -138,7 +148,7 @@ describe('ChannelService security hardening', () => {
     };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo, inviteRepo })),
     });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -2638,8 +2648,12 @@ describe('ChannelService security hardening', () => {
     repos.memberRepo.save.mockImplementation((m: unknown) => Promise.resolve(m));
     repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1' });
     repos.roleRepo.find.mockResolvedValue(GOVERNED_ROLES);
-    repos.roleRepo.findOne.mockImplementation(({ where }: { where: { name: string } }) =>
-      Promise.resolve(GOVERNED_ROLES.find((r) => r.name === where.name) ?? null)
+    // By name for the early read, by id for the re-read under the removal lock.
+    repos.roleRepo.findOne.mockImplementation(
+      ({ where }: { where: { name?: string; id?: string } }) =>
+        Promise.resolve(
+          GOVERNED_ROLES.find((r) => (where.id ? r.id === where.id : r.name === where.name)) ?? null
+        )
     );
     repos.channelRepo.find.mockResolvedValue([{ id: 'ch1' }]);
     return rows;
