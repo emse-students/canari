@@ -20,6 +20,11 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 import { inviteMembersToGroup } from './groupCreation';
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+
+/** The gate refusing a commit whole for the people it would admit, as `refusalFromResponse` types it. */
+const admitRefused = (userIds: string[]) =>
+  new ApiRefusalError(409, 'ADMIT_REFUSED', 'Commit submission HTTP error (409)', { userIds });
 import { decodeAppMessage } from '$lib/proto/codec';
 
 /**
@@ -205,6 +210,25 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(h.deps.addMessageToChat).not.toHaveBeenCalled();
   });
 
+  it('a person the gate refuses to admit is left out of the rebuilt Add; their departure stops nothing else', async () => {
+    const h = inviteHarness();
+    // w4 was on the roster when the invitation began; a departure the gate recorded refuses them.
+    h.roster.add('w4');
+    h.mlsService.addMembersBulk.mockImplementationOnce(async () => {
+      h.roster.delete('w4');
+      throw admitRefused(['w4']);
+    });
+
+    const outcome = await inviteMembersToGroup(['w4', 'w5'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['w5'] });
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(2);
+    expect(h.state.tree).toContain('w5:w5-dev');
+    expect(h.state.tree).not.toContain('w4:w4-dev');
+    expect(h.mlsService.registerMember).not.toHaveBeenCalledWith(G, 'w4');
+    expect(h.mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+  });
+
   it('B3: a device a STALE tree still shows is not filtered - the tree is caught up, and the Add is made', async () => {
     const h = inviteHarness();
     // This device never applied the Remove that took w4's device out: its tree still shows it.
@@ -322,6 +346,19 @@ describe('processPendingInvitations - a lost commit race', () => {
     expect(h.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
     // Read as the race it is: the sweep asks whether the invitation was fulfilled meanwhile.
     expect(h.mlsService.getDeviceMemberships).toHaveBeenCalledWith('w4', 'w4-new');
+  });
+
+  it('a pending Add the gate refuses to admit is not rebuilt: nothing registered or Welcomed, the row stays', async () => {
+    const h = sweepHarness();
+    h.mlsService.addMember.mockRejectedValue(admitRefused(['w4']));
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
+    expect(h.mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(h.mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(h.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
   });
 
   it('B1: the commit that won REMOVED the person - the rebuild stops, nothing staged or registered', async () => {

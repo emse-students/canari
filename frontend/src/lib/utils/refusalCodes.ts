@@ -60,6 +60,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A member-add call naming a person no accepted commit admitted is a typed
   // `MemberNotAdmittedError`: the invite withholds the Welcome and reports the person not added.
   'MEMBER_NOT_ADMITTED',
+  // A commit refused whole for the people it would admit is read by `refusedAdmits`: an Add is
+  // rebuilt without them, and they are reported not added.
+  'ADMIT_REFUSED',
 ];
 
 /** Every code {@link describeRefusalCode} words. */

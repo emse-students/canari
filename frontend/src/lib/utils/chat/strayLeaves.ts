@@ -142,42 +142,6 @@ export async function removeStrayLeaves(
 }
 
 /**
- * TAKES BACK THE LEAVES A MERGED ADD GAVE PEOPLE THE SERVER DID NOT ADMIT, NOW.
- *
- * The member-add call answered `MemberNotAdmittedError`: the commit was accepted, but a Decline or a
- * departure the server recorded before the Add was decided meant it admitted nobody named in
- * `users`. Their leaves hold no seat - the very shape {@link removeStrayLeaves} collects - so this is
- * that collector, run on the one group right away rather than at the next connection: until it
- * lands, a person nobody admitted holds the group's keys. The caller withholds their Welcome.
- *
- * @returns whether a removal landed; false is logged loudly, and the next connection retries.
- */
-export async function takeBackUnadmittedLeaves(
-  mlsService: IMlsService,
-  groupId: string,
-  selfUserId: string,
-  users: string[],
-  tag: string,
-  log: (msg: string) => void
-): Promise<boolean> {
-  const short = groupId.slice(0, 8);
-  log(
-    `${tag} ${users.join(', ')} not admitted by the server in ${short}... (a Decline or a departure ` +
-      'came before this Add was decided) - Welcome withheld, removing the leaves the commit gave them'
-  );
-  const swept = await removeStrayLeaves(mlsService, [groupId], selfUserId, log);
-  if (swept.length > 0) {
-    log(`${tag} the unadmitted leaves are gone from ${short}...`);
-    return true;
-  }
-  log(
-    `${tag} [WARN] the unadmitted leaves of ${short}... were NOT removed now - the stray collector ` +
-      'retries at the next connection'
-  );
-  return false;
-}
-
-/**
  * Which leaves of a tree belong to a device the server names as revoked. PURE.
  *
  * An ALLOWLIST: a leaf is a candidate only when its WHOLE identity (`userId:deviceId`) is in the

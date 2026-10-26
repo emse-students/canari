@@ -845,12 +845,10 @@ with no one asked, and the commit's `admits` lifts their `awaitingAdmission`. "H
 "is a member". Not built: the fix needs a fact the client can read that says the leaf is owed a
 Remove (the server's exclusion intervals, or `removeStrayLeaves` run before the sweep decides) -
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
-**Narrowed by ADM-3 (2026-10-25), not closed:** the member-add route no longer re-enrols anyone, and
-the gate orders an automatic Add (it carries no invitation generation) against its base epoch, so
-while no commit has moved the epoch since the removal the Add's person is refused and the leaf is
-taken back at once (`takeBackUnadmittedLeaves`). Still open once another commit moved the epoch
-past the removal: the base then post-dates it, and the gate admits
-([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
+**Closed by ADM-3 (2026-10-25), to delete once it ships:** the member-add route no longer enrols
+anyone, and an Add that carries no invitation generation never admits an awaiting seat of a person
+who ever departed (`departed_and_undated`, the whole commit refused) - only a member's invitation,
+which says when it was decided, does; a leaf without a seat is the stray collector's ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 
 ## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
 

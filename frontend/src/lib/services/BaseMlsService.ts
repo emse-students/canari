@@ -188,6 +188,7 @@ import {
   SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
   SEAT_CLAIM_OVERTAKEN_REASON,
   COMMIT_LOCK_BUDGET_SPENT_REASON,
+  refusedAdmits,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
@@ -5223,11 +5224,15 @@ export abstract class BaseMlsService implements IMlsService {
       (answer.error instanceof ApiRefusalError
         ? (answer.error.code ?? `http_${answer.error.status}`)
         : undefined);
+    // A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT (`ADMIT_REFUSED`) is the invitation minus
+    // them: re-planned for the others as a race is, never again for the people it names.
+    const refusedPeople = refusedAdmits(answer.error);
     const owed = this.oweLostInvitation(
       read.status === 'recorded' ? read.record : null,
       submission,
       reason === RACE_REFUSAL_REASON ? 'race' : 'refused',
-      reason
+      reason,
+      refusedPeople ?? undefined
     );
     await this.clearPendingCommit(groupId).catch((e: unknown) => {
       // Still staged, so still unresolved: the next settlement reads it again.
@@ -5258,11 +5263,31 @@ export abstract class BaseMlsService implements IMlsService {
   private oweLostInvitation(
     record: StagedRecord | null,
     submission: CommitSubmission,
-    cause: LostInvitationCause,
-    reason?: string
+    refusedCause: LostInvitationCause,
+    reason?: string,
+    notAdmitted?: readonly string[]
   ): boolean {
-    const invitation = record ? invitationOf(record) : null;
-    if (!invitation) return false;
+    const recorded = record ? invitationOf(record) : null;
+    if (!recorded) return false;
+    // The people the gate refused to admit leave the invitation; the others are owed it as after a
+    // race - the refusal named them, so nobody else is what it was about. Refused for everyone it
+    // named, it stays `refused`, and the member is told.
+    let invitation = recorded;
+    let cause = refusedCause;
+    const users = notAdmitted ? recorded.users.filter((u) => !notAdmitted.includes(u)) : [];
+    if (notAdmitted && notAdmitted.length > 0 && users.length > 0) {
+      invitation = {
+        ...recorded,
+        users,
+        ...(recorded.rostered
+          ? { rostered: recorded.rostered.filter((u) => !notAdmitted.includes(u)) }
+          : {}),
+      };
+      cause = 'race';
+      console.warn(
+        `[INVITE_OWED] ${submission.groupId.slice(0, 8)}... the gate refused to admit ${notAdmitted.length} invited person(s) - the invitation goes on without them`
+      );
+    }
     const { groupId, baseEpoch } = submission;
     try {
       recordOwedInvitation(this.userId, {

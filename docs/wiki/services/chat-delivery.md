@@ -761,7 +761,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
   `removeGroupMember` take the group's seat lock, then `dm_group_members`, then (on a removal the
   membership interval and the queued Welcomes, then) the device rows - the add, since ADM-3, only
-  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but a creator
+  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the caller, into an empty roster
   ([mls-protocol](../protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)). Two transactions that take the same rows in the same
   order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
   that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;
@@ -1310,7 +1310,7 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group as dismissed |
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
-| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only a creator into an empty roster |
+| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the caller, into an empty roster |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |

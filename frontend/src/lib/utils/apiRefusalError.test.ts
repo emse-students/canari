@@ -39,6 +39,16 @@ describe('refusalFromResponse', () => {
     ).toBeNull();
   });
 
+  it('carries the people a refusal names, and only a list of strings', async () => {
+    const refusal = await refusalFromResponse(
+      json(409, { code: 'ADMIT_REFUSED', userIds: ['a', 'b'] }),
+      'x'
+    );
+    expect(refusal.userIds).toEqual(['a', 'b']);
+    expect((await refusalFromResponse(json(409, { userIds: ['a', 3] }), 'x')).userIds).toBeNull();
+    expect((await refusalFromResponse(json(409, { userIds: 'a' }), 'x')).userIds).toBeNull();
+  });
+
   it('reads a non-JSON edge page as a status alone, and leaves the body to the caller', async () => {
     const res = new Response('<html>bad gateway</html>', { status: 502 });
 

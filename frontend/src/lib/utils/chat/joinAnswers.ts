@@ -18,7 +18,10 @@ import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
  * docs/wiki/protocols/mls-protocol.md, "Who admits a new person".
  */
 export interface JoinAnswerDeps {
-  mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'declineJoinRequest'>;
+  mlsService: Pick<
+    IMlsService,
+    'getGroupMemberIdentities' | 'getGroupRosterAtGeneration' | 'declineJoinRequest'
+  >;
   conversations: ReadonlyMap<string, Conversation>;
   /**
    * The member's own Add (`inviteMembersToGroup`), which returns what it did and never throws.
@@ -29,6 +32,11 @@ export interface JoinAnswerDeps {
     conversation: Conversation,
     answering?: AnsweredJoinAsk
   ) => Promise<BulkAdditionOutcome>;
+  /**
+   * Runs the stray collector (`removeStrayLeaves`) on one group, now: true when a Remove landed. A
+   * leaf whose holder has no admitted seat is taken out before the member's Add brings them in.
+   */
+  collectStrayLeaves: (groupId: string) => Promise<boolean>;
   log: (message: string) => void;
 }
 
@@ -59,10 +67,36 @@ async function holdsALeaf(request: JoinRequest, deps: JoinAnswerDeps): Promise<b
 }
 
 /**
+ * The requester's seat on the server: `admitted`, still `awaiting` a member, `absent`, or `null`
+ * when the roster could not be read.
+ */
+async function seatOf(
+  request: JoinRequest,
+  deps: JoinAnswerDeps
+): Promise<'admitted' | 'awaiting' | 'absent' | null> {
+  try {
+    const { members } = await deps.mlsService.getGroupRosterAtGeneration(request.groupId);
+    const row = members.find((m) => m.userId.toLowerCase() === request.userId.toLowerCase());
+    if (!row) return 'absent';
+    return row.awaitingAdmission === true ? 'awaiting' : 'admitted';
+  } catch (e) {
+    deps.log(
+      `[JOIN_REQUEST] roster of ${request.groupId.slice(0, 8)}... unreadable: ${String(e).slice(0, 100)}`
+    );
+    return null;
+  }
+}
+
+/**
  * ADMITS the person: the member's own Add, built and signed by this device - the one way a new
  * person enters a conversation (`automaticAdmission` in `actions.ts`). Done only when the Add's
  * commit put a device of theirs in the tree (`BulkAdditionOutcome.added`), or when another member's
  * Add already had.
+ *
+ * A LEAF IS NOT AN ADMISSION: only the seat the server holds says another member's Add admitted
+ * them. A leaf held under a seat still awaiting (or no seat) is taken out by the stray collector
+ * first, then the member's Add is built - never answered "done" on the leaf alone, which left the
+ * seat awaiting with nobody to lift it.
  */
 export async function admitJoinRequest(
   request: JoinRequest,
@@ -71,10 +105,23 @@ export async function admitJoinRequest(
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   if ((await holdsALeaf(request, deps)) === true) {
+    const seat = await seatOf(request, deps);
+    if (seat === 'admitted') {
+      deps.log(
+        `[JOIN_REQUEST] ${request.userId} already holds a leaf in ${request.groupId.slice(0, 8)}... - admitted by another member's Add`
+      );
+      return { done: true };
+    }
+    if (seat === null) return { done: false, reason: 'their seat could not be read' };
     deps.log(
-      `[JOIN_REQUEST] ${request.userId} already holds a leaf in ${request.groupId.slice(0, 8)}... - admitted by another member's Add`
+      `[JOIN_REQUEST] ${request.userId} holds a leaf in ${request.groupId.slice(0, 8)}... under a seat that is ${seat === 'awaiting' ? 'still awaiting' : 'gone'} - removing it before the Add`
     );
-    return { done: true };
+    if (!(await deps.collectStrayLeaves(request.groupId))) {
+      return {
+        done: false,
+        reason: 'a leaf of theirs that holds no admitted seat is not removed yet',
+      };
+    }
   }
   // An ask with an identity is answered AS that ask: a Decline or a newer ask since it was raised
   // makes this Add stop before its stage (`rosterPremise`), never admit over the Decline.

@@ -15,13 +15,13 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
   resolveDisplayNames: async () => (id: string) => id,
 }));
 
-// The collector is pinned on its own (`strayLeaves.test.ts`); here only WHETHER it is handed the
-// unadmitted people matters.
-vi.mock('./strayLeaves', () => ({ takeBackUnadmittedLeaves: vi.fn(async () => true) }));
-
 import { inviteMembersToGroup } from './groupCreation';
-import { takeBackUnadmittedLeaves } from './strayLeaves';
 import { MemberNotAdmittedError } from '$lib/mls-client/mlsDeliveryApi';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+
+/** The gate's whole-commit refusal naming `userIds`, as `refusalFromResponse` types it. */
+const admitRefused = (userIds: string[]) =>
+  new ApiRefusalError(409, 'ADMIT_REFUSED', 'Commit submission HTTP error (409)', { userIds });
 
 /**
  * The INVITE path owes the same ordering as creation: the server names a joiner BEFORE its Welcome
@@ -41,6 +41,8 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
       members: [{ userId: 'u1' }],
       seatGeneration: 3,
     })),
+    // A rebuild re-reads the roster (`rosterPremise`): the inviter alone, as at the start.
+    getGroupUserMembers: vi.fn(async () => [{ userId: 'u1' }]),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
     // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
@@ -152,14 +154,61 @@ describe('inviteMembersToGroup - says what it did', () => {
 });
 
 /**
- * A DECLINE HOLDS AGAINST AN ADD DECIDED BEFORE IT (ADM-3). The commit is accepted - it may carry
- * other people - but the server admitted nobody it had ordered a Decline or a departure against, and
- * says so on the member-add call (`MemberNotAdmittedError`). That person gets no Welcome, is not
- * reported added, and the leaf the merged commit gave them is handed to the collector at once.
+ * A DECLINE HOLDS AGAINST AN ADD DECIDED BEFORE IT (ADM-3). The gate refuses a commit WHOLE when it
+ * would give a leaf to a person it may not admit (`ADMIT_REFUSED`, naming them): the Add is rebuilt
+ * without them, they get no Welcome and are not reported added. A member-add call refused after the
+ * merge (`MemberNotAdmittedError`, a departure since) withholds the Welcome too.
  */
 describe('inviteMembersToGroup - a person the server did not admit', () => {
-  it('withholds their Welcome, drops them from `added`, and takes their leaf back', async () => {
-    vi.mocked(takeBackUnadmittedLeaves).mockClear();
+  it('rebuilds the Add without the people the gate refused, and reports only the others', async () => {
+    const d = inviteDeps();
+    let calls = 0;
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      calls++;
+      if (devices.some((x) => x.userId === 'carol')) throw admitRefused(['carol']);
+      return { addedDeviceIds: ['bob-dev'], skipped: [], welcome: new Uint8Array([1]) };
+    }) as never;
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(calls).toBe(2);
+    const second = vi.mocked(d.mlsService.addMembersBulk).mock.calls[1] as unknown[];
+    expect((second[1] as { userId: string }[]).map((x) => x.userId)).toEqual(['bob']);
+    // The intent the rebuilt commit carries no longer names them either.
+    expect(second[3]).toEqual(expect.objectContaining({ users: ['bob'] }));
+    expect(d.order).toContain('welcome:bob');
+    expect(d.order).not.toContain('register:carol');
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['bob'] });
+  });
+
+  it('answers `removed-meanwhile` when the gate refused everyone it named, and never loops', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      throw admitRefused(devices.map((x) => x.userId));
+    }) as never;
+
+    expect(await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(d.order.some((s) => s.startsWith('welcome:'))).toBe(false);
+  });
+
+  it('stops on a refusal naming nobody the Add offered: no progress, no rebuild', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw admitRefused(['dave']);
+    }) as never;
+
+    expect(await inviteMembersToGroup(['bob'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'failed',
+    });
+    expect(d.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds the Welcome of a person the member-add call refuses after the merge', async () => {
     const d = inviteDeps(async (u) => {
       if (u === 'carol') throw new MemberNotAdmittedError('g1', 'carol');
     });
@@ -169,18 +218,9 @@ describe('inviteMembersToGroup - a person the server did not admit', () => {
     expect(d.order).toContain('welcome:bob');
     expect(d.order).not.toContain('welcome:carol');
     expect(outcome).toEqual({ kind: 'added', addedUsers: ['bob'] });
-    expect(takeBackUnadmittedLeaves).toHaveBeenCalledExactlyOnceWith(
-      d.mlsService,
-      'g1',
-      'u1',
-      ['carol'],
-      '[SYNC]',
-      expect.any(Function)
-    );
   });
 
-  it('answers `removed-meanwhile` when nobody it named was admitted', async () => {
-    vi.mocked(takeBackUnadmittedLeaves).mockClear();
+  it('answers `removed-meanwhile` when the member-add call admitted nobody it named', async () => {
     const d = inviteDeps(async (u) => {
       if (u !== 'u1') throw new MemberNotAdmittedError('g1', u);
     });

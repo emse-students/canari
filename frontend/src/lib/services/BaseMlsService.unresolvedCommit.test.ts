@@ -1165,6 +1165,11 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
       { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation: INVITATION },
       { welcome: new Uint8Array([3]), addedIndices: [0] }
     );
+  const keptWith = (invitation: { users: string[]; rostered: string[] }) =>
+    kept(
+      { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation },
+      { welcome: new Uint8Array([3]), addedIndices: [0] }
+    );
   const raceLost = () => submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 5 });
   /** The drain runs on its own: wait for it the way the session would not. */
   const drained = async (c: ReturnType<typeof ctx>) => {
@@ -1226,6 +1231,36 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     await settled(c);
     expect(replanner).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ cause: 'refused', reason: 'http_400' })
+    );
+  });
+
+  it('a commit refused whole for the people it admits is re-planned WITHOUT them, as a race', async () => {
+    const c = ctx(
+      submitting(new ApiRefusalError(409, 'ADMIT_REFUSED', 'refused', { userIds: ['w6'] })),
+      { state: keptWith({ users: ['w5', 'w6'], rostered: ['w6'] }) }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cause: 'race',
+        reason: 'ADMIT_REFUSED',
+        invitation: { users: ['w5'], rostered: [] },
+      })
+    );
+  });
+
+  it('a commit refused whole for EVERY person it admits is `refused` - told, never re-planned', async () => {
+    const c = ctx(
+      submitting(new ApiRefusalError(409, 'ADMIT_REFUSED', 'refused', { userIds: ['w5'] })),
+      { state: keptInvite() }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cause: 'refused', reason: 'ADMIT_REFUSED', invitation: INVITATION })
     );
   });
 

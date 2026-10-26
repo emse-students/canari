@@ -50,7 +50,7 @@ import {
 } from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { isCommitRaceRefusal, refusedAdmits } from '$lib/mls-client/CommitRefusedError';
 import { AddAbortedError, rebuildOnRace } from './commitRace';
 import { readConfirmedTree, type TreeReading } from './confirmedTree';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
@@ -61,7 +61,6 @@ import {
   verdictAdmits,
 } from '$lib/mls-client/deviceTrust';
 import { MemberNotAdmittedError, type PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
-import { takeBackUnadmittedLeaves } from './strayLeaves';
 import {
   isRefusedDevice,
   recordRefusedDevice,
@@ -812,19 +811,14 @@ export async function processPendingInvitations(params: {
           );
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
-          // NOT ADMITTED: the server recorded their departure before this Add was decided - no
-          // Welcome, no history, and the leaf the merged commit gave them is taken back now.
+          // NOT ADMITTED: the commit admitted them, and the server holds no seat for them now - a
+          // departure since the merge, whose own Remove takes the leaf. No Welcome, no history.
           try {
             await mlsService.registerMember(groupId, inv.userId);
           } catch (e) {
             if (!(e instanceof MemberNotAdmittedError)) throw e;
-            await takeBackUnadmittedLeaves(
-              mlsService,
-              groupId,
-              userId,
-              [inv.userId],
-              '[PENDING]',
-              log
+            log(
+              `[PENDING] [WARN] ${inv.userId} holds no seat after the accepted Add of ${inv.deviceId} in ${groupId.slice(0, 8)}... (a departure since) - Welcome withheld`
             );
             continue;
           }
@@ -863,6 +857,15 @@ export async function processPendingInvitations(params: {
           if (e instanceof DeviceTrustRefusedError) {
             reportDeviceTrustRefusal('[PENDING]', groupId, e);
             await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
+            continue;
+          }
+          // THE GATE REFUSED TO ADMIT THIS PERSON (`ADMIT_REFUSED`): the whole commit was refused,
+          // nothing advanced and nobody got a leaf. A one-device Add has nobody to rebuild without;
+          // the row stays as the server holds it, and a removal or a member's answer settles it.
+          if (refusedAdmits(e) !== null) {
+            log(
+              `[PENDING] Add of ${inv.deviceId} to ${groupId.slice(0, 8)}... refused: the server does not admit ${inv.userId} - nothing committed`
+            );
             continue;
           }
           // THE PREMISE WENT BEFORE ANY STAGE: nothing committed, nothing registered, no history.
@@ -1745,19 +1748,14 @@ export async function handleWelcomeRequest(params: {
         result = await mlsService.replaceMember(groupId, invitee, exclude);
       }
     }
-    // NOT ADMITTED: the server recorded their departure before this commit was decided - no
-    // Welcome, no history, and the leaf the merged commit gave them is taken back now.
+    // NOT ADMITTED: the commit admitted them, and the server holds no seat for them now - a
+    // departure since the merge, whose own Remove takes the leaf. No Welcome, no history.
     try {
       await mlsService.registerMember(groupId, requesterUserId);
     } catch (e) {
       if (!(e instanceof MemberNotAdmittedError)) throw e;
-      await takeBackUnadmittedLeaves(
-        mlsService,
-        groupId,
-        userId,
-        [requesterUserId],
-        '[WELCOME_REQ]',
-        log
+      log(
+        `[WELCOME_REQ] [WARN] ${requesterUserId} holds no seat after the accepted Add of ${requesterDeviceId.slice(0, 12)}... in ${groupId.slice(0, 8)}... (a departure since) - Welcome withheld`
       );
       return;
     }
@@ -1792,6 +1790,14 @@ export async function handleWelcomeRequest(params: {
     if (e instanceof DeviceTrustRefusedError) {
       reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);
       await recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e, mlsService);
+      return;
+    }
+    // THE GATE REFUSED TO ADMIT THE REQUESTER (`ADMIT_REFUSED`): nothing advanced, nobody got a
+    // leaf, and this request is not answered - only a member's Add brings the person back.
+    if (refusedAdmits(e) !== null) {
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... refused: the server does not admit ${requesterUserId} in ${groupId.slice(0, 8)}... - nothing committed`
+      );
       return;
     }
     const errStr = String(e);

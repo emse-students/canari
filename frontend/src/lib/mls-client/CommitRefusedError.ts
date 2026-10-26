@@ -1,3 +1,5 @@
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+
 /**
  * The server's epoch gate refused a staged commit, which was then rolled back without a merge.
  *
@@ -102,4 +104,18 @@ export function rebuildableRefusal(
   if (epochNow > error.baseEpoch) return 'epoch-moved';
   if (error.reason === SEAT_CLAIM_OVERTAKEN_REASON) return 'seat-claim-overtaken';
   return null;
+}
+
+/**
+ * The people a commit was refused WHOLE for, or `null` when `error` is not that refusal: the
+ * server's 409 `ADMIT_REFUSED`, which the gate answers when the commit would give a leaf to a person
+ * it may not admit (a departure or a Decline recorded after the Add was decided, a block). Nothing
+ * advanced and nobody got a leaf; a commit rebuilt WITHOUT the named people may be submitted again,
+ * and one that still names them meets the same answer. Read off the typed status, code and list,
+ * never the message. An empty list names nobody, so it proves nothing a rebuild could drop.
+ */
+export function refusedAdmits(error: unknown): string[] | null {
+  return error instanceof ApiRefusalError && error.status === 409 && error.code === 'ADMIT_REFUSED'
+    ? (error.userIds ?? [])
+    : null;
 }

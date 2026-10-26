@@ -12,6 +12,7 @@ import {
   declineJoinRequest as declineJoinAsk,
   type JoinAnswerDeps,
 } from '$lib/utils/chat/joinAnswers';
+import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -2170,6 +2171,8 @@ export function useConversations() {
           },
           answering ? { answering } : {}
         ),
+      collectStrayLeaves: async (groupId) =>
+        (await removeStrayLeaves(mlsService, [groupId], ctx.userId, ctx.log)).includes(groupId),
       log: ctx.log,
     };
   }

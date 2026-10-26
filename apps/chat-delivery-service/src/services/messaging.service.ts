@@ -379,6 +379,21 @@ class SeatClaimOvertaken extends Error {
 }
 
 /**
+ * Thrown inside the advance's transaction when the commit would give a leaf to a person
+ * {@link MessagingService.enrolAdmittedPeople} refuses. Accepting it with that person's admits
+ * dropped - what the gate did before - merged a leaf no seat holds into every member's tree, which
+ * only a later Remove could take back: so the whole commit rolls back and is answered `409
+ * ADMIT_REFUSED` naming them, and the client rebuilds it without them. A type, so the catch never
+ * reads a message.
+ */
+class AdmitRefused extends Error {
+  constructor(readonly userIds: string[]) {
+    super(`admit refused: ${userIds.length} person(s)`);
+    this.name = 'AdmitRefused';
+  }
+}
+
+/**
  * The seat a Welcome is stored for, as {@link MessagingService.lockWelcomeSeat} re-reads it. In a
  * key group, `claim` is the target's seat claim, taken before social-service was asked whether the
  * target is entitled (`utils/seat-eviction.ts`); a conversation's seat is its roster row, so null.
@@ -2513,7 +2528,8 @@ export class MessagingService {
           // THE PEOPLE THIS COMMIT ADMITS ARE ENROLLED WITH THE ADVANCE ({@link enrolAdmittedPeople}),
           // so an accepted Add and its roster row commit together or not at all - whichever request
           // of the commit lands, and a resubmission answered `duplicate` finds both. A person it
-          // refuses gets no device row either: their admits are dropped here. BEFORE ANY DEVICE ROW,
+          // refuses refuses the WHOLE commit ({@link AdmitRefused}): no leaf is accepted that no seat
+          // holds, and the client rebuilds without them. BEFORE ANY DEVICE ROW,
           // the one order of `utils/seat-eviction.ts` (the roster row, then the device rows), so this
           // and the route writing the same person wait on the roster row, never in a cycle.
           // ORDERED AGAINST WHEN THE ADD WAS DECIDED: the generation a member's invitation read with
@@ -2531,9 +2547,8 @@ export class MessagingService {
               invitationSeatGeneration === undefined ? 'base_epoch' : 'invitation',
               traceId
             );
-            if (refused.size > 0) admitted = admitted.filter((a) => !refused.has(a.userId));
             // A Welcome stored with this advance would hand a refused person the epoch's secrets:
-            // the commit is refused whole, as for a Welcome whose seat went.
+            // refused as for a Welcome whose seat went, the answer that commit's sender reads.
             if (welcome && refused.has(welcome.userId)) {
               this.logger.warn(
                 `[COMMIT][${traceId}] REJECT welcome_target_not_admitted group=${groupId} ` +
@@ -2541,6 +2556,14 @@ export class MessagingService {
                   `the Welcome it carries is for a person this commit may not admit`
               );
               throw new WelcomeSeatGone();
+            }
+            if (refused.size > 0) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT admit_refused group=${groupId} baseEpoch=${baseEpoch} ` +
+                  `users=${[...refused].map(cutUserId).join(',')} - the commit would give them a ` +
+                  `leaf no seat holds; nothing advanced`
+              );
+              throw new AdmitRefused([...refused]);
             }
           }
           // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
@@ -2634,6 +2657,7 @@ export class MessagingService {
         // advanced from it, and the row it collided with is a defect the error line below reports.
         if (
           e instanceof SeatClaimOvertaken ||
+          e instanceof AdmitRefused ||
           e instanceof WelcomeSeatGone ||
           (e instanceof EpochAdvanceLost && e.lost === 'epoch_moved')
         ) {
@@ -2653,6 +2677,16 @@ export class MessagingService {
             refusalBody(RefusalCode.SEAT_CLAIM_OVERTAKEN, 'this commit is not accepted', {
               error: 'seat_claim_overtaken',
               seat: e.seat,
+            })
+          );
+        }
+        // A person it admits may not be admitted: nothing was written, and the client rebuilds the
+        // commit without the people named (`RefusalCode.ADMIT_REFUSED`).
+        if (e instanceof AdmitRefused) {
+          throw new ConflictException(
+            refusalBody(RefusalCode.ADMIT_REFUSED, 'this commit is not accepted', {
+              error: 'admit_refused',
+              userIds: e.userIds,
             })
           );
         }
@@ -3748,7 +3782,7 @@ export class MessagingService {
    * can skip it.
    *
    * THE ONE WRITER OF A NEW PERSON (ADM-3, 2026-10-25). `POST mls/groups/:id/members` enrols nobody
-   * any more but a group's creator: it answers `409 MEMBER_NOT_ADMITTED` for anyone this did not
+   * any more but the caller, into an empty roster: it answers `409 MEMBER_NOT_ADMITTED` for anyone this did not
    * admit. It used to enrol whoever it was named, after the accept and with no departure read, so a
    * Decline this gate had just honoured was undone in the same second by the adding member's call.
    *
@@ -3771,13 +3805,15 @@ export class MessagingService {
    *   (`epochSeatGeneration`): such a re-invite at an unchanged epoch is then refused, and needs a new
    *   Add. Ordered by a COUNTER every removal and Decline moves under the seat lock, never by a clock.
    *   An AWAITING seat is asked the same question: a person declined who asked AGAIN holds a new
-   *   awaiting seat, and an Add built before the Decline must not lift that second ask either.
-   * A refused person's admits are dropped by the caller: no device row, so no frame is queued for a
-   * device whose Welcome will be refused (`WELCOME_TARGET_NOT_MEMBER`, terminal for the sender) and
-   * no stale row later dates their arrival. The leaf stays in the tree with no seat; the committer's
-   * own client removes it when the member-add route refuses it, and the stray sweep otherwise
-   * (`strayLeaves.ts`, which reads an awaiting seat as off the roster) - it repairs nothing: the
-   * person needs a new Add. A person already ADMITTED is left as they are. A key group's roster is
+   *   awaiting seat, and an Add built before the Decline must not lift that second ask either;
+   * - AN AWAITING SEAT WHOSE PERSON EVER DEPARTED OR WAS EVER DECLINED, when the commit carries no
+   *   invitation generation (`departed_and_undated`): the base epoch alone cannot order it against
+   *   that departure.
+   * ANY REFUSAL REFUSES THE WHOLE COMMIT (the caller throws `AdmitRefused`, answered `409
+   * ADMIT_REFUSED` with the people named): accepting it with their admits dropped merged a leaf no
+   * seat holds into every member's tree. The client rebuilds the commit without them. An awaiting
+   * seat admitted on the base epoch's order alone is logged at WARN (`ADMITTED_UNDATED`), so its rate
+   * is measured. A person already ADMITTED is left as they are. A key group's roster is
    * social-service's entitlement, not a row here, and never reaches this.
    *
    * IDEMPOTENT BY CONSTRUCTION: it runs once per accepted commit, inside the transaction that writes
@@ -3817,7 +3853,7 @@ export class MessagingService {
       refused.add(userId);
       this.logger.warn(
         `[ADD_MEMBER][${traceId}] NOT_ENROLLED group=${groupId} user=${cutUserId(userId)} ` +
-          `reason=${reason} committer=${cutUserId(committer)} - its admits dropped, its leaf admitted by no seat`
+          `reason=${reason} committer=${cutUserId(committer)} - the commit is refused whole`
       );
     };
     const committerSeat = await seats.findOne({
@@ -3842,6 +3878,29 @@ export class MessagingService {
         )) as Array<{ userId: string }>
       ).map((r) => r.userId)
     );
+    // AN AWAITING SEAT WHOSE PERSON EVER DEPARTED - removed, left, or declined by a member - is
+    // admitted only by an Add that says WHEN it was decided (`invitationSeatGeneration`, at or after
+    // that departure - the order above). One that does not - an automatic Add, an older client - is
+    // ordered only by its base epoch, which cannot tell an Add decided before the departure from one
+    // decided after it once another commit moved the epoch, so it is refused here. A stretch closed
+    // before migration 039 has no generation and counts too.
+    const awaiting = candidates.filter((u) => held.get(u) === true);
+    const everDeparted =
+      decidedBy === 'base_epoch' && awaiting.length > 0
+        ? new Set(
+            (
+              (await m.query(
+                `SELECT "userId" FROM dm_seat_evictions
+                  WHERE "groupId" = $1 AND "userId" = ANY($2::varchar[])
+                    AND "declinedAtSeatGeneration" IS NOT NULL
+                 UNION
+                 SELECT "userId" FROM dm_group_membership_intervals
+                  WHERE "groupId" = $1 AND "userId" = ANY($2::varchar[]) AND "leftAt" IS NOT NULL`,
+                [groupId, awaiting]
+              )) as Array<{ userId: string }>
+            ).map((r) => r.userId)
+          )
+        : new Set<string>();
     for (const userId of candidates) {
       if (departed.has(userId)) {
         refuse(
@@ -3851,11 +3910,26 @@ export class MessagingService {
         );
         continue;
       }
+      if (everDeparted.has(userId)) {
+        refuse(userId, 'departed_and_undated decidedBy=base_epoch seat=awaiting');
+        continue;
+      }
       if (await isBlockedBetween(m, committer, userId)) {
         refuse(userId, 'blocked');
         continue;
       }
-      if (held.has(userId)) continue; // an awaiting seat: lifted by the caller, never re-enrolled
+      if (held.has(userId)) {
+        // An awaiting seat: lifted by the caller, never re-enrolled. Admitted on the base epoch's
+        // order alone, it is said at WARN, so how often an undated Add answers an ask is counted.
+        if (decidedBy === 'base_epoch') {
+          this.logger.warn(
+            `[ADD_MEMBER][${traceId}] ADMITTED_UNDATED group=${groupId} user=${cutUserId(userId)} ` +
+              `committer=${cutUserId(committer)} decidedBy=base_epoch decidedAtSeatGeneration=${decidedAt} ` +
+              `seat=awaiting - an Add with no invitation generation answered an ask`
+          );
+        }
+        continue;
+      }
       await ensureGroupMember(m, groupId, userId);
       this.logger.log(
         `[ADD_MEMBER][${traceId}] ENROLLED by commit group=${groupId} user=${cutUserId(userId)} ` +

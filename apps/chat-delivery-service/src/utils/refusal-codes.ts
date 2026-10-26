@@ -71,6 +71,13 @@ export const RefusalCode = {
    * landed. Terminal for that call: the person needs a new Add, and the Welcome is withheld.
    */
   MEMBER_NOT_ADMITTED: 'MEMBER_NOT_ADMITTED',
+  /**
+   * 409 - a commit that would give a leaf to a person the gate may not admit (a departure or a
+   * Decline recorded after the Add was decided, a block, a committer with no admitted seat) was
+   * refused WHOLE: nothing advanced, nobody got a leaf. `userIds` names them; rebuild the commit
+   * without them. Refused again with the same people it is terminal for them.
+   */
+  ADMIT_REFUSED: 'ADMIT_REFUSED',
 } as const;
 
 /** A stable refusal code of this service. */

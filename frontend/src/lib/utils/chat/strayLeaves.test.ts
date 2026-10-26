@@ -1,7 +1,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { GroupRosterBatch } from '$lib/mls-client/mlsDeliveryApi';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
-import { removeStrayLeaves, takeBackUnadmittedLeaves } from './strayLeaves';
+import { removeStrayLeaves } from './strayLeaves';
 
 /**
  * A leaver's leaf outlives the leaver, and only a remaining member can collect it.
@@ -245,28 +245,6 @@ describe('removeStrayLeaves - awaiting seats', () => {
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(removeMember).not.toHaveBeenCalled();
-  });
-
-  it('takeBackUnadmittedLeaves removes them at once and says so', async () => {
-    trees.g1 = ['alice:web-1', 'joe:web-1'];
-    batch = answered({ g1: ['alice'] });
-    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
-
-    expect(await takeBackUnadmittedLeaves(mls(), 'g1', 'alice', ['joe'], '[T]', log)).toBe(true);
-    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['joe']);
-    const said = lines.join(' | ');
-    expect(said).toContain('not admitted by the server');
-    expect(said).toContain('the unadmitted leaves are gone');
-  });
-
-  it('takeBackUnadmittedLeaves says loudly when nothing could be removed now', async () => {
-    trees.g1 = ['alice:web-1', 'joe:web-1'];
-    batch = answered({ g1: ['alice'] });
-    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
-    removeMember.mockRejectedValue(new Error('epoch_mismatch'));
-
-    expect(await takeBackUnadmittedLeaves(mls(), 'g1', 'alice', ['joe'], '[T]', log)).toBe(false);
-    expect(lines.join(' | ')).toContain('were NOT removed now');
   });
 });
 

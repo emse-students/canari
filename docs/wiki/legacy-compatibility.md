@@ -323,9 +323,9 @@ ACCEPTS IT (`enrolAdmittedPeople`, [mls-protocol](protocols/mls-protocol.md#an-a
 so against a current server the call after the accept ENROLS NOBODY (ADM-3, 2026-10-25): it writes
 the device rows of a person the commit admitted, and answers `409 MEMBER_NOT_ADMITTED` for anyone
 else (absent, or a seat still awaiting a member) - typed client-side as `MemberNotAdmittedError`,
-on which the caller withholds the Welcome and takes the merged leaf back at once
-(`takeBackUnadmittedLeaves`). So a departure or a member's Decline holds against an Add decided
-before it on EVERY path, the direct accept included
+on which the caller withholds the Welcome. And the gate refuses WHOLE a commit that would admit a
+person it may not (`409 ADMIT_REFUSED`), so no such commit gives anyone a leaf. So a departure or a
+member's Decline holds against an Add decided before it on EVERY path, the direct accept included
 ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 It stays for a store build live before production deploys, whose server does not enrol with the
 commit: dropping it there would lose the enrolment of every Add.
@@ -333,6 +333,13 @@ commit: dropping it there would lose the enrolment of every Add.
 by a client that sends no `invitationSeatGeneration` (older than ADM-3), is ordered by the base
 epoch and refused; the member re-invites after the next commit. A current client sends the
 generation it read and is a fresh invite.
+**What a client older than ADM-3 does with `409 ADMIT_REFUSED`:** read in the `v1.4.0` tag, a 4xx
+from `POST /api/mls/commit` leaves its commit transaction as thrown, so the Add is reported failed
+and is not retried in a loop - but its staged commit is not cleared, and that device stages no other
+commit in the group until a commit of another member is processed (openmls clears an own pending
+commit then). The same holds there for every 4xx the gate already answered; nothing is retried on the
+wire meanwhile. It ends with the floor (`minClientVersion` at a build that clears the stage on a
+definitive refusal).
 **Transitional loss, accepted:** an Add the PRE-DEPLOY server accepted with its answer lost, and
 settled after the deploy as a `duplicate`, is never enrolled - the duplicate is answered before any
 transaction, and the enrolment ran with an advance that predates it. Its Welcome is refused
