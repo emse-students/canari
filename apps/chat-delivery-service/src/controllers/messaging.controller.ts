@@ -583,6 +583,9 @@ export function foregroundCommitBody(body: ForegroundCommitBody): ForegroundComm
   if (body.excludeDeviceIds !== undefined) out.excludeDeviceIds = body.excludeDeviceIds;
   if (body.groupInfo !== undefined) out.groupInfo = body.groupInfo;
   if (body.admits !== undefined) out.admits = body.admits;
+  if (body.invitationSeatGeneration !== undefined) {
+    out.invitationSeatGeneration = body.invitationSeatGeneration;
+  }
   if (body.removes !== undefined) out.removes = body.removes;
   return out;
 }

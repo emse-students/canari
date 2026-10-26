@@ -101,4 +101,26 @@ describe('fetchGroupRosters', () => {
     const { api: a } = api(() => json({ rosters: { g1: ['alice'] }, refused: [] }));
     expect((await a.fetchGroupRosters(['g1'])).revoked.size).toBe(0);
   });
+
+  it('carries the seats still awaiting admission of each answered group, and only those', async () => {
+    // A seat awaiting a member's answer admits nobody: the stray collector reads it as off the roster.
+    const { api: a } = api(() =>
+      json({
+        rosters: { g1: ['alice', 'joe'], g2: ['alice'] },
+        refused: ['g3'],
+        awaiting: { g1: ['joe', 7], g2: 'nope', g3: ['eve'] },
+      })
+    );
+
+    const got = await a.fetchGroupRosters(['g1', 'g2', 'g3']);
+
+    expect(got.awaiting.get('g1')).toEqual(['joe']);
+    expect(got.awaiting.has('g2')).toBe(false);
+    expect(got.awaiting.has('g3')).toBe(false);
+  });
+
+  it('knows no awaiting seat from a server that predates the field', async () => {
+    const { api: a } = api(() => json({ rosters: { g1: ['alice'] }, refused: [] }));
+    expect((await a.fetchGroupRosters(['g1'])).awaiting.size).toBe(0);
+  });
 });

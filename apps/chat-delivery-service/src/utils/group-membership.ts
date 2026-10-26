@@ -134,8 +134,12 @@ export async function ensureGroupMember(
   }
 }
 
-/** What {@link writePendingSeats} did: the seats written, or why none was. */
-export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
+/**
+ * What {@link writePendingSeats} did: the seats written, or why none was. `not_admitted` only for a
+ * caller that asked for an admitted seat (`requireAdmitted`): the roster row awaits a member's
+ * admission.
+ */
+export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster' | 'not_admitted';
 
 /**
  * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
@@ -152,6 +156,11 @@ export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
  *   transaction ({@link ensureGroupMember}) as a seat AWAITING A MEMBER'S ADMISSION - no member chose
  *   this person, the link did (`GroupMember.awaitingAdmission`); false for a device registration,
  *   which writes seats only where its owner is ALREADY on the roster.
+ * @param opts.requireAdmitted (with `enrol` false) the owner's roster row must also be ADMITTED - not
+ *   awaiting a member: the member-add route, which writes the device seats of a person an accepted
+ *   commit admitted and never admits anyone itself (`MembersController.addGroupMember`). Read under
+ *   the same lock and row lock as the roster row, so a Decline (which takes the seat lock exclusive)
+ *   is wholly before this read or waits for this transaction.
  * @param manager a NON-transactional manager - this opens the transaction itself.
  */
 export async function writePendingSeats(
@@ -159,7 +168,8 @@ export async function writePendingSeats(
   groupId: string,
   userId: string,
   deviceIds: readonly string[],
-  enrol: boolean
+  enrol: boolean,
+  opts: { requireAdmitted?: boolean } = {}
 ): Promise<PendingSeatsOutcome> {
   return manager.transaction(async (m) => {
     await takeSharedSeatLock(m, groupId);
@@ -177,6 +187,7 @@ export async function writePendingSeats(
         lock: { mode: 'pessimistic_read' },
       });
       if (!seat) return 'not_on_roster';
+      if (opts.requireAdmitted === true && seat.awaitingAdmission === true) return 'not_admitted';
     }
     // Each row only beside its device's key package, read `FOR SHARE` under the lock
     // ({@link heldKeyPackages}): a device of an account being erased gets none.

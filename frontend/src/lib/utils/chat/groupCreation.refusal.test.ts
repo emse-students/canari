@@ -27,6 +27,7 @@ import { isBlockedWith } from '$lib/users/blocks';
 import { createNewGroup, startNewConversation, type ConversationRefusal } from './groupCreation';
 import { conversationRefusalMessage } from './conversationRefusalMessage';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /** Deps for the named-group path. Everything succeeds unless a case replaces one mock. */
 function groupDeps(conversations = new SvelteMap<string, { name?: string }>()) {
@@ -224,6 +225,21 @@ describe('startNewConversation names its refusal', () => {
     const outcome = await startNewConversation('peer', d.args as never);
 
     expect(outcome).toEqual({ ok: false, reason: 'follower-tab' });
+  });
+
+  it('abandons the Add at once when the gate refuses to admit the peer - nothing is staged again', async () => {
+    const d = dmDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw new CommitRefusedError('admit_refused', 1, 1, null, ['peer']);
+    });
+
+    const outcome = await startNewConversation('peer', d.args as never);
+
+    expect(outcome).toEqual({ ok: false, reason: 'creation-failed' });
+    // A conversation without its peer is never re-staged for the creator alone.
+    expect(d.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(d.mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(d.mlsService.deleteGroupOnServer).toHaveBeenCalledWith('g-dm');
   });
 
   it('answers with the key of the conversation it opened', async () => {
