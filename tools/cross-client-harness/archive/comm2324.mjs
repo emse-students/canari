@@ -130,9 +130,9 @@ const routed = !startPrivate
     })
   : null;
 
-// A FRESH PANEL, BECAUSE THE SAVE CLOSED THE OLD ONE. Reading the state at the end of the flip
-// answered `{isPrivate: null, allowed: [], writePolicy: null}` on every run: `saveChannelAccess`
-// ends with `clearOverlays`, deliberately, so the read found no toggle and reported the instrument
+// A FRESH PANEL, BECAUSE THE ROUTING STEP LEFT THE OLD ONE. Reading the state at the end of the flip
+// answered `{isPrivate: null, allowed: [], writePolicy: null}` on every run while the panel's old
+// Save ended with `clearOverlays`, so the read found no toggle and reported the instrument
 // rather than the app - and `panelAgrees` then compared null with a boolean and failed a switch that
 // had worked. Reading BEFORE the save would have been worse than useless: it would have echoed the
 // click this check just made, not the app's answer. A reopened panel refetches, so what it states is
