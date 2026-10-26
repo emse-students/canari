@@ -391,6 +391,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/store-divergence/divergence.test.mjs
 	@bun tools/version-report/lib.test.mjs
 	@bun tools/test-inventory/lib.test.mjs
+	@bun tools/backlog-triage.test.mjs
 	@bun test tools/store-listings
 	@bun test tools/call-audio-fidelity
 

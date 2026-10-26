@@ -240,7 +240,6 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
    REFUTED. Owed: a re-measure; a server decoder only if the count floors ([backlog](docs/wiki/backlog.md#p2---nothing-republishes-a-last-resort-packages-expiry-so-the-undated-rows-drain-only-as-their-owners-upgrade-production-re-measured-2026-10-09)).
 8. **P1 - whether the deleted placeholder left a LEAF in the MLS tree** - a member's client question ([backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered)).
 9. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-9a. **P1 - A HISTORY REPLAY SAVES ITS STREAM CURSOR BEFORE THE CHECKPOINT IT CLAIMS TO FOLLOW** (found 2026-10-21 by reading; since 2026-08-14; a kill in that window is the `wrong-epoch` class, unmeasured) - fix in review ([backlog](docs/wiki/backlog.md)); the inert checkpoint-skip measurement switch rides #2078 ([open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
 10. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
    and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
    WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
