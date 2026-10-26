@@ -24,6 +24,7 @@ import * as jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { DataSource, Repository } from 'typeorm';
 import { AuthSession } from '../auth/entities/auth-session.entity';
+import { DeviceRevokedSession } from '../auth/entities/device-revoked-session.entity';
 import { AuthSessionsService } from '../auth/auth-sessions.service';
 import { SessionPushEndService } from '../auth/session-push-end.service';
 import { AuthController } from '../auth/auth.controller';
@@ -144,7 +145,7 @@ maybe('a user write against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [User, ProfileChange, ProfileCorrectionRequest, AuthSession],
+      entities: [User, ProfileChange, ProfileCorrectionRequest, AuthSession, DeviceRevokedSession],
       synchronize: true,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
@@ -167,7 +168,8 @@ maybe('a user write against PostgreSQL', () => {
     axios.delete = jest.fn().mockResolvedValue({ data: { removed: 0 } });
     sessions = new AuthSessionsService(
       ds.getRepository(AuthSession),
-      new SessionPushEndService(ds)
+      new SessionPushEndService(ds),
+      ds.getRepository(DeviceRevokedSession)
     );
     const erasure = { erasureState: async () => 'none' };
     const unused = {} as never;

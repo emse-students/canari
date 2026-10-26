@@ -17,8 +17,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const getTokenMock = vi.hoisted(() => vi.fn(() => Promise.resolve('jwt-access-token')));
 const getIsTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 
+// The types the gateway path stops on, by TYPE: stand-in classes, as the store's own would pull the
+// whole app graph into this test. The revocation's is a SUBCLASS with a name of its own, as in the
+// store - the shape a name compare let through (DEV-3, 2026-10-25).
+const { SessionExpiredError, SessionEndedByDeviceRevocationError, SignOutInProgressError } =
+  vi.hoisted(() => {
+    class SessionExpiredError extends Error {
+      constructor(message = 'session expired') {
+        super(message);
+        this.name = 'SessionExpiredError';
+      }
+    }
+    class SessionEndedByDeviceRevocationError extends SessionExpiredError {
+      constructor() {
+        super('A device was revoked by its owner - this session has ended');
+        this.name = 'SessionEndedByDeviceRevocationError';
+      }
+    }
+    class SignOutInProgressError extends Error {
+      constructor() {
+        super('refresh request dropped - a sign-out is in progress');
+        this.name = 'SignOutInProgressError';
+      }
+    }
+    return { SessionExpiredError, SessionEndedByDeviceRevocationError, SignOutInProgressError };
+  });
+
 vi.mock('$lib/stores/auth', () => ({
   getToken: () => getTokenMock(),
+  SessionExpiredError,
+  SignOutInProgressError,
 }));
 
 vi.mock('$lib/mls-client/tabLeader', () => ({
@@ -133,8 +161,7 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     // THE ONE ERROR THAT IS NOT A TRANSPORT FAILURE. It travelled through a rejection before and
     // travels through a resolved value now; what must not change is that it reaches the caller as
     // a throw, because backoff against an expired session is an infinite loop.
-    const expired = new Error('session expired');
-    expired.name = 'SessionExpiredError';
+    const expired = new SessionExpiredError();
     const connect = vi.fn().mockRejectedValue(expired);
     const { deps } = makeDeps(connect);
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -143,11 +170,31 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     await expect(openGatewayConnection(deps, started)).rejects.toThrow('session expired');
   });
 
+  it('re-throws a session a device revocation ended - no gateway failure, nothing scheduled', async () => {
+    // DEV-3 (2026-10-25): the revocation's error is a SUBCLASS with a name of its own, so the name
+    // compare that stood here missed it - "Gateway inaccessible", a `console.error`, `false`, and a
+    // backoff ladder knocking with a credential the server had already refused for good.
+    const ended = new SessionEndedByDeviceRevocationError();
+    getTokenMock.mockRejectedValue(ended);
+    const connect = vi.fn();
+    const { deps, setIsWsConnected } = makeDeps(connect);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleError.mockClear();
+
+    await expect(openGatewayConnection(deps)).rejects.toBe(ended);
+
+    expect(setIsWsConnected).toHaveBeenCalledWith(false);
+    expect(deps.scheduleReconnect).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.flat().join(' | ');
+    expect(logged).not.toContain('Gateway inaccessible');
+    expect(logged).toContain('the session has ended');
+  });
+
   it('re-throws a sign-out in progress without logging a gateway failure', async () => {
     // Not a backoff case either (a reconnect into a session being ended), and not an error: the
     // user chose it, so neither the log nor the console accuses anything.
-    const stopped = new Error('refresh request dropped - a sign-out is in progress');
-    stopped.name = 'SignOutInProgressError';
+    const stopped = new SignOutInProgressError();
     getTokenMock.mockRejectedValue(stopped);
     const connect = vi.fn();
     const { deps, setIsWsConnected } = makeDeps(connect);

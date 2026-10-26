@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   GoneException,
+  NotFoundException,
   ServiceUnavailableException,
   Inject,
 } from '@nestjs/common';
@@ -4062,7 +4063,9 @@ export class MessagingService {
     }
     const deviceInfo = await this.keyPackageRepo.findOne({ where: query });
     if (!deviceInfo) {
-      this.logger.error(
+      // A REFUSAL, NOT A FAULT: a device its owner revoked is purged, and a sender that built its Add
+      // before the revocation still Welcomes it. One decision line, at the level of a refusal.
+      this.logger.warn(
         `[${tag}][${traceId}] REJECT welcome_target_unknown group=${groupId} ` +
           `target=${targetUserId ?? 'unknown'}:${targetDeviceId} - no device registered under it`
       );
@@ -4309,9 +4312,14 @@ export class MessagingService {
       'WELCOME'
     );
     if ('refused' in target) {
+      // TYPED AT THE THROW (DEV-3, 2026-10-25): this was a bare `Error`, so a KNOWN refusal - a
+      // Welcome to a device its owner had just revoked - reached the client as a 500 with a stack in
+      // this log. The decision line above is the whole record of it.
       if (target.refused === 'welcome_target_unknown') {
-        throw new Error(
-          `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
+        throw new NotFoundException(
+          refusalBody(RefusalCode.WELCOME_TARGET_UNKNOWN, 'this Welcome has no target device', {
+            error: 'welcome_target_unknown',
+          })
         );
       }
       // `code` is what a client types the refusal by (`WelcomeTargetNotMemberError`); `error` and the

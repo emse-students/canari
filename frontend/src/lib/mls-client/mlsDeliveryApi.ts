@@ -18,7 +18,8 @@ import {
 } from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
-import { RefreshFailedError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
+import { DEVICE_REVOKED_BY_OWNER } from '$lib/utils/refusalCodes';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -302,8 +303,7 @@ export async function classifyRevokedDeviceRefusal(
     .json()
     .then((b) => b as { code?: unknown; reason?: unknown })
     .catch(() => undefined);
-  if (body?.code === 'DEVICE_REVOKED_BY_OWNER')
-    return new DeviceRevokedByOwnerError(deviceId, true);
+  if (body?.code === DEVICE_REVOKED_BY_OWNER) return new DeviceRevokedByOwnerError(deviceId, true);
   if (body?.code !== 'DEVICE_REVOKED') return null;
   if (body.reason === 'retired') return new DeviceRevokedError(deviceId);
   console.error(
@@ -1084,6 +1084,14 @@ export class MlsDeliveryApi {
    * question cannot be reached - **a transport failure is not a verdict**, and erasing a device
    * because the network was down would be the worst possible reading of it.
    *
+   * **AN OWNER'S REVOCATION ENDS THIS DEVICE'S SESSION, SO THE QUESTION IS OFTEN ASKED WITH A DEAD
+   * CREDENTIAL** (DEV-2, 2026-10-25): the access token dies with the session, the token renewal is
+   * refused - and that refusal is the server's answer, typed at its throw as
+   * {@link SessionEndedByDeviceRevocationError} (`DEVICE_REVOKED_BY_OWNER`, recorded by core-service
+   * when the revocation ended the session). That is `true` when the refusal names `userId:deviceId`,
+   * and `false` when it names another device. Any other dead session is `false` here: it signs the
+   * user out through the auth layer, and is no proof of a revocation.
+   *
    * TAKES ITS IDS EXPLICITLY, unlike its neighbours that read `this.userId`, because the answer
    * decides whether a device erases itself and the ambient fields are `'unknown'` / `'pending'`
    * until `init()` has run. Asking about `unknown` would answer "not revoked" for a reason that
@@ -1102,7 +1110,22 @@ export class MlsDeliveryApi {
       const d = (await res.json()) as { revoked?: boolean };
       return d.revoked === true;
     } catch (e) {
-      console.warn(`[MLS] revocation check unreachable - treated as NOT revoked: ${String(e)}`);
+      // ...AND ONLY WHEN THE REFUSAL NAMES THE DEVICE ASKED ABOUT: the session may be bound to an
+      // id this install has since rotated away from, whose revocation says nothing about this one.
+      if (e instanceof SessionEndedByDeviceRevocationError) {
+        const mine = e.names(userId, deviceId);
+        console.warn(
+          mine
+            ? '[MLS] revocation check: the server ended this session BECAUSE the device was revoked by its owner - revoked'
+            : `[MLS] revocation check: the session ended by the revocation of ANOTHER device (${sanitizeForLog(e.revoked.deviceId)}) - not this one, not revoked`
+        );
+        return mine;
+      }
+      console.warn(
+        isTransportFailure(e)
+          ? `[MLS] revocation check unreachable - treated as NOT revoked: ${String(e)}`
+          : `[MLS] revocation check not answered - treated as NOT revoked: ${String(e)}`
+      );
       return false;
     }
   }

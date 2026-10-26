@@ -51,6 +51,7 @@ import {
 } from '../account-erasure/account-erasure.service';
 import type { User } from '../users/entities/user.entity';
 import { RestoreCredentialsService } from './restore/restore-credentials.service';
+import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 interface OidcCallbackDto {
@@ -862,6 +863,21 @@ export class AuthController {
     }
 
     const result = await this.authSessions.rotate(sessionId, payload.jti, client);
+    if (result.status === 'device-revoked') {
+      // A CODE, NOT A SENTENCE: the device answers this refusal with a full local reset instead of
+      // a sign-out that keeps its stores, and it may only branch on a typed field. `statusCode`
+      // keeps Nest's envelope, so a client older than the code reads the 401 it always read.
+      // AND IT NAMES THE DEVICE AND THE ACCOUNT, so a client resets only when both are its own.
+      this.clearRefreshCookie(res);
+      throw new UnauthorizedException({
+        statusCode: 401,
+        ...refusalBody(
+          RefusalCode.DEVICE_REVOKED_BY_OWNER,
+          'This device was revoked by its owner - its session has ended',
+          { userId: result.userId, deviceId: result.deviceId }
+        ),
+      });
+    }
     if (result.status === 'replayed' || result.status === 'unknown') {
       this.clearRefreshCookie(res);
       throw new UnauthorizedException(

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthSessionsService } from './auth-sessions.service';
 import { SessionPushEndService } from './session-push-end.service';
 import { AuthSession } from './entities/auth-session.entity';
+import { DeviceRevokedSession } from './entities/device-revoked-session.entity';
 
 /**
  * The session store and its push-ending outbox, as a module of their own: the auth routes open and
@@ -12,7 +13,7 @@ import { AuthSession } from './entities/auth-session.entity';
  * service (and so one sweep timer and one outbox drain).
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([AuthSession])],
+  imports: [TypeOrmModule.forFeature([AuthSession, DeviceRevokedSession])],
   providers: [AuthSessionsService, SessionPushEndService],
   exports: [AuthSessionsService, SessionPushEndService],
 })
