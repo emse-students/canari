@@ -3195,14 +3195,49 @@ every run. The request ordering is the proof and needs no inference: the console
 `GET /api/channels/workspaces/user/me` issued at line 196, `POST /api/channels/workspaces` (the
 creation) at 398, and `[WORKSPACE-LOAD] communities/channels loaded` at 497.
 
-The repair is a **creation tick**, not a timestamp: `creationEpoch` counts what this device has
-created, ever. It is read BEFORE the listing request goes out, stamped onto the sidebar entry the
-moment a community exists locally (`createdEpoch`) and onto `locallyCreatedChannels` for a salon, and
-both prunes spare anything stamped later than the request. The question is not "how old is this" but
-"did this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
-wrong about and nothing to tune. A community that really was deleted elsewhere is still removed, and
-both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
-can attribute.
+The repair is a **tick**, not a timestamp. It is read BEFORE the listing request goes out, and both
+prunes spare anything dated later than the request. The question is not "how old is this" but "did
+this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
+wrong about and nothing to tune. A community that really was deleted elsewhere is still removed.
+
+### A live fact heard during a listing is newer than its answer (2026-10-26)
+
+The 2026-08-20 repair dated only what this device CREATED. **Measured on dev by the cross-client rig
+(Mi 9T)**: a community joined in-session logged `[WORKSPACE-LOAD] community joined in-session -
+loading its salons` at T, its listing went out at T+0.2 s, the server created a salon at T+2.6 s and
+the phone logged `Joined channel <id>` (`onChannelMemberJoined`), the listing answered at T+6.4 s - and
+its prune deleted the salon's conversation and row, without a line. The member did not see the salon
+until a later listing. Same code on the web: only the width of the in-flight window differs.
+
+The mirror image was open too: a salon or community DELETED, LEFT or taken from this member during a
+listing was still in its answer, and the listing drew it back.
+
+**One record, `listingLedger.ts`**, holds the LAST thing learned live about each id - `present`
+(created here, or heard of on the socket) or `gone` (deleted, left, removed) - with the tick it was
+learned at. Salons are keyed by conversation id, communities by `community:<slug>`. Every live
+write goes through one of four places, and the listing's own writes go through none of them:
+
+| Live fact | Where it is dated |
+| --- | --- |
+| salon created here, heard of (`channel.member.joined`), or drawn by a community creation | `addChannelToWorkspace` (the listing draws through `upsertChannelRow`) |
+| community heard of on an event, or created here | `ensureWorkspaceForChannelEvent`, `ensureWorkspaceByName` |
+| salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`) | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`) |
+| community deleted, left, removed from | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
+
+A listing then (1) does not draw a community or salon learned `gone` after its request
+(`[WORKSPACE-LOAD] salon <id> not restored: ...`, debug), and (2) does not prune one learned
+`present` after it (`kept <kind> <id>: ...`, debug). **Every prune says itself per id at `warn`** -
+`pruned <kind> <id>: not listed by the server, and neither created nor heard of on this device after
+the listing was asked (tick N)` - for the conversation, the row, the stored page (F4) and the
+community: it is the visible end of a removal this device did not hear live. The ledger keeps the
+last fact only, so a salon removed then heard of again in the same window is drawn. Pinned by an
+explicit order in `useChannelWorkspaces.svelte.test.ts` ("a live fact heard while a listing is in
+flight"), with the not-heard control still pruned.
+
+**What the ledger does NOT cover** (the same race, on fields rather than existence): a rename or a
+`viewerCanWrite` change heard during a listing (`onChannelUpdated`) is overwritten by the listing's
+older row, and a role change (`workspace.role.changed`) or a cover/history change
+(`workspace.updated`) by `upsertWorkspaceFromDto`'s older DTO, until the next listing.
 
 ### The communities are loaded side by side, not one after another (2026-10-12)
 

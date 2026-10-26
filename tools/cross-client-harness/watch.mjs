@@ -285,7 +285,12 @@ const BENIGN = [
   // spared instead of deleting them in silence. It is EXPECTED here specifically - COMM-12 builds
   // two communities back to back, which is the race - and its absence proves nothing either way,
   // since a run where no listing happened to be in flight is a run with nothing to spare.
-  /^\[WORKSPACE-LOAD\] kept \d+ (community\(ies\)|salon\(s\)) created after this listing was requested/,
+  // Since 2026-10-26 it is one `debug` line per id, and it covers a salon or community HEARD OF live
+  // during the listing too; its sibling is the listing declining to draw back what was removed live
+  // in the same window. The PRUNE itself is said at `warn`, per id, and stays dirt: it is the visible
+  // end of a removal this client did not hear live.
+  /^\[WORKSPACE-LOAD\] kept (salon|salon row|stored salon page|community) \S+: not listed by the server, but created or heard of on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ not restored: listed by the server, but removed on this device after the listing was asked \(tick \d+\)$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.

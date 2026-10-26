@@ -75,6 +75,7 @@ import {
   storeWorkspaceSnapshot,
 } from '$lib/utils/chat/workspaceSnapshot';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { communityLedgerKey, createListingLedger } from '$lib/utils/chat/listingLedger';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 import { signDirectAdmission } from '$lib/utils/graine/admissionIssue';
@@ -131,12 +132,6 @@ export interface ChannelSidebarWorkspace {
   historyVisibility?: GraineHistoryVisibility;
   /** Ordered list of channels belonging to this workspace. */
   channels: ChannelSidebarItem[];
-  /**
-   * The creation tick at which THIS DEVICE made the community, or absent when the server named
-   * it first. Compared against the tick a workspace listing was requested at, so a listing can
-   * never delete a community that did not exist when it was asked for.
-   */
-  createdEpoch?: number;
 }
 
 /** Runtime dependencies injected by the parent composable into workspace/channel operations. */
@@ -211,30 +206,20 @@ export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
 
   /**
-   * How many communities and salons this device has created, ever - a tick, not a clock.
+   * What this device learned LIVE about each salon and community - created or heard of (present),
+   * deleted, left or removed (gone) - dated by a tick a listing reads before its request goes out.
    *
-   * IT EXISTS TO DATE A SERVER LISTING AGAINST A LOCAL FACT. `executeWorkspaceLoadAttempt` ends
-   * by deleting everything the listing did not mention, and between the request going out and
-   * that prune it awaits an MLS group join and a channel listing PER COMMUNITY - seconds, on a
-   * real account. Anything created in that window is absent from an answer that was already on
-   * its way, and was deleted for it: measured 2026-08-20, a community vanished from the sidebar
-   * 1.5 s after it was created and the app dropped the user into an unrelated one.
-   *
-   * A COUNTER RATHER THAN A TIMESTAMP, deliberately. The question is not "how old is this" but
-   * "did this exist when I asked", and a monotonic tick answers it exactly, with no clock to be
-   * wrong about and nothing to tune.
+   * IT EXISTS TO DATE A SERVER LISTING AGAINST A LOCAL FACT. `executeWorkspaceLoadAttempt` ends by
+   * deleting everything the listing did not mention, and between the request going out and that
+   * prune it awaits an MLS group join and a channel listing PER COMMUNITY - seconds, on a real
+   * account. Anything created in that window is absent from an answer that was already on its way
+   * (a community vanished 1.5 s after its creation, 2026-08-20; a salon HEARD OF live was pruned the
+   * same way, dev 2026-10-26), and anything removed in it is still in that answer. Every live
+   * insertion goes through {@link addChannelToWorkspace} / {@link ensureWorkspaceForChannelEvent} /
+   * the two creations, and every live removal through {@link removeChannelFromWorkspaces} /
+   * {@link purgeWorkspaceLocally}; the listing itself writes through neither. See `listingLedger.ts`.
    */
-  let creationEpoch = 0;
-
-  /**
-   * Conversation id of every salon this device created, and the tick it created it at.
-   *
-   * The same protection as `createdEpoch`, for the half of the reconciliation that prunes
-   * CHANNELS. A salon created during the window was dropped from the sidebar and its
-   * conversation deleted, which is how COMM-12 came to log "Channel created" for a salon that
-   * was not there a second later.
-   */
-  const locallyCreatedChannels = new SvelteMap<string, number>();
+  const ledger = createListingLedger();
   let selectedChannelConversationId = $state('');
   /**
    * Whether a community load is in flight. REACTIVE because the notification landing waits on it:
@@ -388,7 +373,7 @@ export function useChannelWorkspaces() {
     // READ BEFORE THE REQUEST GOES OUT, not after it comes back. The server answers about the
     // moment it was asked, so anything this device creates from here on is newer than the answer
     // whatever order the two happen to complete in.
-    const epochAtRequest = creationEpoch;
+    const epochAtRequest = ledger.tick;
     const landingAtRequest = notifNav.landing;
     const backendWorkspaces = await service.listUserWorkspaces();
     assertListingSession(session, 'the community rows');
@@ -413,6 +398,18 @@ export function useChannelWorkspaces() {
     // rethrown only then.
     const prepared: { sidebarWorkspace: ChannelSidebarWorkspace; workspaceId: string }[] = [];
     for (const workspace of backendWorkspaces) {
+      // A COMMUNITY THIS DEVICE LEFT, OR WAS REMOVED FROM, AFTER THE QUESTION is in an answer that
+      // predates it; drawing it back would resurrect what the member just saw go.
+      const slug = workspaceSlugOf(workspace);
+      if (
+        slug !== null &&
+        ledger.learnedSince(communityLedgerKey(slug), epochAtRequest) === 'gone'
+      ) {
+        console.debug(
+          `[WORKSPACE-LOAD] community ${slug} not restored: listed by the server, but removed on this device after the listing was asked (tick ${epochAtRequest})`
+        );
+        continue;
+      }
       const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
       const workspaceId = sidebarWorkspace.workspaceDbId;
       if (!workspaceId) continue;
@@ -427,7 +424,8 @@ export function useChannelWorkspaces() {
           sidebarWorkspace,
           workspaceId,
           validChannelConversationIds,
-          session
+          session,
+          epochAtRequest
         )
       )
     );
@@ -468,7 +466,8 @@ export function useChannelWorkspaces() {
     sidebarWorkspace: ChannelSidebarWorkspace,
     workspaceId: string,
     validChannelConversationIds: string[],
-    session: number
+    session: number,
+    epochAtRequest: number
   ): Promise<void> {
     // THE KEY GROUP AND THE SALON ROWS GO SIDE BY SIDE (F3, 2026-10-14). The salons used to be
     // listed only once the key group had answered - `distribution-group`, then `members`, then the
@@ -505,6 +504,15 @@ export function useChannelWorkspaces() {
       const actualId = channel.id || channel._id;
       if (!actualId) continue;
 
+      // A SALON DELETED, LEFT OR TAKEN FROM THIS MEMBER AFTER THE QUESTION is in an answer that
+      // predates it: no row, no conversation, no entry - the live removal is the newer fact.
+      if (ledger.learnedSince(`channel_${actualId}`, epochAtRequest) === 'gone') {
+        console.debug(
+          `[WORKSPACE-LOAD] salon channel_${actualId} not restored: listed by the server, but removed on this device after the listing was asked (tick ${epochAtRequest})`
+        );
+        continue;
+      }
+
       const isPrivate = channel.visibility === 'private';
       const viewerHasAccess = channel.viewerHasAccess !== false;
       salons.push({ actualId, isPrivate, viewerHasAccess });
@@ -519,7 +527,8 @@ export function useChannelWorkspaces() {
       if (!validChannelConversationIds.includes(channelConversationId)) {
         validChannelConversationIds.push(channelConversationId);
       }
-      addChannelToWorkspace(sidebarWorkspace.id, {
+      // THE LISTING'S OWN WRITE, not a live fact: it goes past the ledger.
+      upsertChannelRow(sidebarWorkspace.id, {
         id: channelConversationId,
         name: channel.name,
         isPrivate,
@@ -613,14 +622,15 @@ export function useChannelWorkspaces() {
    * conversations cannot reach them: a salon gets a conversation only once it is listed in this
    * process, so the page of a salon the member lost, or that was deleted, while the app was closed
    * would stay at rest for ever. The boot used to erase every salon's rows, which was the only sweep
-   * before F4 kept them. A salon created on this device after the request is spared, as above.
+   * before F4 kept them. A salon created or heard of on this device after the request is spared, as
+   * above.
    *
    * Never fatal: a store that cannot be read leaves the sweep to the next listing, said in the log.
    */
   async function sweepStoredSalonPages(
     ctx: ChannelWorkspaceContext,
     validChannelConversationIds: string[],
-    bornAfterTheRequest: (id: string) => boolean,
+    epochAtRequest: number,
     session: number
   ): Promise<void> {
     if (!ctx.storedSalonPageIds || !ctx.deleteConversation) return;
@@ -634,12 +644,11 @@ export function useChannelWorkspaces() {
       return;
     }
     const listed = new SvelteSet(validChannelConversationIds);
-    const orphans = stored.filter((id) => !listed.has(id) && !bornAfterTheRequest(id));
+    const orphans = stored.filter(
+      (id) => !listed.has(id) && !keepUnlisted('stored salon page', id, id, epochAtRequest)
+    );
     if (orphans.length === 0) return;
     assertListingSession(session, 'sweeping the stored salon pages');
-    ctx.log(
-      `[WORKSPACE-LOAD] ${orphans.length} stored salon page(s) the listing no longer names deleted`
-    );
     for (const id of orphans) {
       await ctx
         .deleteConversation(id)
@@ -650,8 +659,30 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * THE ONE DECISION ON SOMETHING A LISTING DID NOT NAME, and the line that says which way it went.
+   *
+   * NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER: kept when this device created it or heard
+   * of it live after the listing was asked (`ledger`), deleted otherwise. A deletion is said per id
+   * at `warn`, with both halves of its reason, because it is the visible end of a removal this device
+   * did not hear live - and a salon pruned in silence is how a member lost one they had just been
+   * given (dev, 2026-10-26). A keep is said per id at `debug`.
+   */
+  function keepUnlisted(kind: string, id: string, key: string, epochAtRequest: number): boolean {
+    if (ledger.learnedSince(key, epochAtRequest) === 'present') {
+      console.debug(
+        `[WORKSPACE-LOAD] kept ${kind} ${id}: not listed by the server, but created or heard of on this device after the listing was asked (tick ${epochAtRequest})`
+      );
+      return true;
+    }
+    console.warn(
+      `[WORKSPACE-LOAD] pruned ${kind} ${id}: not listed by the server, and neither created nor heard of on this device after the listing was asked (tick ${epochAtRequest})`
+    );
+    return false;
+  }
+
+  /**
    * What a load ends with: the salons and communities the listing did not name are deleted, except
-   * those created on this device after it was requested.
+   * those created or heard of on this device after it was requested.
    */
   async function pruneAfterLoad(
     ctx: ChannelWorkspaceContext,
@@ -661,33 +692,22 @@ export function useChannelWorkspaces() {
     session: number,
     landingAtRequest: number
   ): Promise<void> {
-    // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created while this listing
-    // was in flight is missing from it by construction, and deleting it here destroys a salon the
-    // user is very probably typing in.
-    const bornAfterTheRequest = (id: string) =>
-      (locallyCreatedChannels.get(id) ?? 0) > epochAtRequest;
+    // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created - or heard of on the
+    // socket - while this listing was in flight is missing from it by construction, and deleting it
+    // here destroys a salon the user is very probably typing in, or has just been given.
+    const learnedPresentAfter = (id: string) =>
+      ledger.learnedSince(id, epochAtRequest) === 'present';
     const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
       (id) =>
         isChannelConversationId(id) &&
         !validChannelConversationIds.includes(id) &&
-        !bornAfterTheRequest(id)
+        !keepUnlisted('salon', id, id, epochAtRequest)
     );
-    const sparedChannels = Array.from(ctx.conversations.keys()).filter(
-      (id) =>
-        isChannelConversationId(id) &&
-        !validChannelConversationIds.includes(id) &&
-        bornAfterTheRequest(id)
-    );
-    if (sparedChannels.length > 0) {
-      ctx.log(
-        `[WORKSPACE-LOAD] kept ${sparedChannels.length} salon(s) created after this listing was requested`
-      );
-    }
     for (const staleId of staleLocalChannelIds) {
       assertListingSession(session, `pruning ${staleId}`);
       ctx.invalidateChannelHistoryCache?.(staleId);
       ctx.conversations.delete(staleId);
-      removeChannelFromWorkspaces(staleId);
+      dropChannelRow(staleId);
       if (selectedChannelConversationId === staleId) {
         selectedChannelConversationId = '';
       }
@@ -698,25 +718,22 @@ export function useChannelWorkspaces() {
         );
     }
     assertListingSession(session, 'pruning the communities');
-    await sweepStoredSalonPages(ctx, validChannelConversationIds, bornAfterTheRequest, session);
+    await sweepStoredSalonPages(ctx, validChannelConversationIds, epochAtRequest, session);
 
     // A SALON ROW WITH NO CONVERSATION IS PRUNED TOO. The loop above walks the conversations, and a
     // row drawn from the saved snapshot (F1) has none until a listing names it - so a salon deleted,
     // or closed to this member, since the snapshot was written would stay on the rail for ever.
     // Only in the communities this listing answered for: a community created after it was asked
     // keeps its salons for the same reason it is kept itself.
-    let staleRows = 0;
     channelWorkspaces = channelWorkspaces.map((ws) => {
       if (!validWorkspaceSlugs.has(ws.id)) return ws;
       const channels = ws.channels.filter(
-        (c) => validChannelConversationIds.includes(c.id) || bornAfterTheRequest(c.id)
+        (c) =>
+          validChannelConversationIds.includes(c.id) ||
+          keepUnlisted('salon row', c.id, c.id, epochAtRequest)
       );
-      staleRows += ws.channels.length - channels.length;
       return channels.length === ws.channels.length ? ws : { ...ws, channels };
     });
-    if (staleRows > 0) {
-      ctx.log(`[WORKSPACE-LOAD] removed ${staleRows} salon row(s) the server no longer lists`);
-    }
 
     // A LANDING ON A SALON THIS ANSWER DOES NOT NAME ENDS HERE, when it was published before the
     // question was asked - a saved row tapped before the session (F1) for a salon closed to the
@@ -729,7 +746,7 @@ export function useChannelWorkspaces() {
       isChannelConversationId(landing) &&
       notifNav.landing <= landingAtRequest &&
       !validChannelConversationIds.includes(landing) &&
-      !bornAfterTheRequest(landing)
+      !learnedPresentAfter(landing)
     ) {
       ctx.log(
         `[WORKSPACE-LOAD] landing on salon ${landing.slice(0, 16)} abandoned: the listing asked after it does not name it`
@@ -739,28 +756,17 @@ export function useChannelWorkspaces() {
     }
 
     // Prune workspaces that no longer exist on the server - EXCEPT the ones that did not exist
-    // when this listing was requested, which are missing from it for a reason that is not deletion.
-    const spared = channelWorkspaces.filter(
-      (ws) => !validWorkspaceSlugs.has(ws.id) && (ws.createdEpoch ?? 0) > epochAtRequest
-    );
-    if (spared.length > 0) {
-      ctx.log(
-        `[WORKSPACE-LOAD] kept ${spared.length} community(ies) created after this listing was requested: ` +
-          spared.map((ws) => ws.id).join(', ')
-      );
-    }
-    const kept = channelWorkspaces.filter(
-      (ws) => validWorkspaceSlugs.has(ws.id) || (ws.createdEpoch ?? 0) > epochAtRequest
-    );
+    // when this listing was requested (created, or heard of on the socket, since), which are missing
+    // from it for a reason that is not deletion.
+    //
     // THE INVALIDATION OF THE SAVED LIST IS THIS LINE: a community the member lost since the
     // snapshot was written leaves here, on the server's answer, and the snapshot is rewritten from
     // what is left (the effect on `channelWorkspaces`). No clock decides it.
-    if (kept.length < channelWorkspaces.length) {
-      ctx.log(
-        `[WORKSPACE-LOAD] removed ${channelWorkspaces.length - kept.length} community(ies) the server no longer lists`
-      );
-    }
-    channelWorkspaces = kept;
+    channelWorkspaces = channelWorkspaces.filter(
+      (ws) =>
+        validWorkspaceSlugs.has(ws.id) ||
+        keepUnlisted('community', ws.id, communityLedgerKey(ws.id), epochAtRequest)
+    );
   }
 
   /**
@@ -901,12 +907,22 @@ export function useChannelWorkspaces() {
     return registerCommunityHistoryVisibility(workspaceId, visibility);
   }
 
+  /**
+   * The sidebar id a community DTO is drawn under: its slug, else one derived from its id, else
+   * `null` when it carries neither (and is then drawn under a random id nothing else can name).
+   */
+  function workspaceSlugOf(workspace: WorkspaceDto): string | null {
+    const workspaceId = workspace.id ?? workspace._id;
+    return (
+      workspace.slug?.trim().toLowerCase() || (workspaceId ? `workspace-${workspaceId}` : null)
+    );
+  }
+
   /** Inserts a new workspace sidebar entry or updates the matching one if it already exists. Returns the sidebar entry. */
   function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
     const workspaceId = workspace.id ?? workspace._id;
     const workspaceSlug =
-      workspace.slug?.trim().toLowerCase() ||
-      `workspace-${workspaceId || crypto.randomUUID().slice(0, 8)}`;
+      workspaceSlugOf(workspace) ?? `workspace-${crypto.randomUUID().slice(0, 8)}`;
     const existing = channelWorkspaces.find((item) => item.id === workspaceSlug);
     if (existing) {
       existing.workspaceDbId = workspaceId;
@@ -967,8 +983,11 @@ export function useChannelWorkspaces() {
    * overwrite would clear every unread badge each time the workspaces were re-read.
    *
    * The entry keeps its POSITION, so a refresh never reorders the sidebar under the reader.
+   *
+   * This is the LISTING's write. Anything else that draws a salon - a creation here, an event heard
+   * on the socket - goes through {@link addChannelToWorkspace}, which also dates it for the prune.
    */
-  function addChannelToWorkspace(workspaceSlug: string, channel: ChannelSidebarItem) {
+  function upsertChannelRow(workspaceSlug: string, channel: ChannelSidebarItem) {
     const idx = channelWorkspaces.findIndex((item) => item.id === workspaceSlug);
     if (idx === -1) return;
     const workspace = channelWorkspaces[idx];
@@ -985,8 +1004,30 @@ export function useChannelWorkspaces() {
     ];
   }
 
-  /** Removes the given channel conversation ID from every workspace in the sidebar. */
+  /**
+   * Draws a salon this device CREATED or HEARD OF LIVE (`channel.member.joined`), and records it as
+   * present in the ledger - THE ONE PLACE every live insertion of a salon row goes through, so a
+   * listing already in flight cannot prune it (it was absent from an answer that predates it). The
+   * listing's own rows go through {@link upsertChannelRow} and date nothing.
+   */
+  function addChannelToWorkspace(workspaceSlug: string, channel: ChannelSidebarItem) {
+    ledger.present(channel.id);
+    upsertChannelRow(workspaceSlug, channel);
+  }
+
+  /**
+   * Takes a salon off the rail because this device LEARNED LIVE that it is gone - deleted, left, or
+   * taken from this member - and records that in the ledger, so a listing already in flight cannot
+   * draw it back from an answer that predates the removal. THE ONE PLACE every live removal of a
+   * salon row goes through; the prune's own removal is {@link dropChannelRow}.
+   */
   function removeChannelFromWorkspaces(channelConversationId: string) {
+    ledger.gone(channelConversationId);
+    dropChannelRow(channelConversationId);
+  }
+
+  /** Removes the given channel conversation ID from every workspace in the sidebar, dating nothing. */
+  function dropChannelRow(channelConversationId: string) {
     channelWorkspaces = channelWorkspaces.map((workspace) => ({
       ...workspace,
       channels: workspace.channels.filter((channel) => channel.id !== channelConversationId),
@@ -1018,6 +1059,8 @@ export function useChannelWorkspaces() {
       }
       if (event.imageMediaId !== undefined) existing.imageMediaId = event.imageMediaId;
       channelWorkspaces = [...channelWorkspaces];
+      // HEARD OF LIVE: the event is newer than any listing in flight, as for its salon.
+      ledger.present(communityLedgerKey(existing.id));
       return existing;
     }
 
@@ -1030,6 +1073,9 @@ export function useChannelWorkspaces() {
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
+    // A COMMUNITY HEARD OF LIVE while a listing is in flight is absent from its answer; this is what
+    // stops that listing from deleting the placeholder before the join's own listing names it.
+    ledger.present(communityLedgerKey(created.id));
     return created;
   }
 
@@ -1567,7 +1613,9 @@ export function useChannelWorkspaces() {
     const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
     // STAMPED THE MOMENT IT EXISTS LOCALLY, and before any of the awaits below: a listing already
     // in flight cannot know about it, and this is what stops that listing from deleting it.
-    sidebarWorkspace.createdEpoch = ++creationEpoch;
+    // Its salons are drawn below through `addChannelToWorkspace`, which dates each of them the same
+    // way: the conversation of a default salon used to be pruned by that listing while its row stayed.
+    ledger.present(communityLedgerKey(sidebarWorkspace.id));
     const workspaceId = sidebarWorkspace.workspaceDbId;
 
     // THE CREATOR PREPARES ITS OWN COMMUNITY, and until 2026-08-20 nothing did. Creating a community
@@ -1685,8 +1733,9 @@ export function useChannelWorkspaces() {
       const channelId = `channel_${actualId}`;
 
       const isPrivate = visibility === 'private';
-      // Same stamp as a community, for the same window and the same prune.
-      locallyCreatedChannels.set(channelId, ++creationEpoch);
+      // Same stamp as a community, for the same window and the same prune - dated the moment the
+      // server answers, before the awaits below. `addChannelToWorkspace` dates it again on the row.
+      ledger.present(channelId);
       registerChannelWorkspace(actualId, workspaceId, isPrivate);
 
       // The salon was created private, so social-service has already minted its group; this device
@@ -1957,6 +2006,13 @@ export function useChannelWorkspaces() {
    * longer list is residue nothing else would ever come back for.
    */
   async function purgeWorkspaceLocally(workspaceDbId: string, ctx: WorkspacePurgeContext) {
+    // DATED GONE BEFORE THE FIRST AWAIT, the community and every salon on its rail: a listing in
+    // flight answers from before this removal, and would otherwise draw all of it back.
+    const doomed = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
+    if (doomed) {
+      ledger.gone(communityLedgerKey(doomed.id));
+      for (const ch of doomed.channels) ledger.gone(ch.id);
+    }
     await forgetCommunityGraine(workspaceDbId);
     const workspace = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
     if (workspace) {
@@ -2544,9 +2600,9 @@ export function useChannelWorkspaces() {
     },
     /** Inserts or updates a workspace sidebar entry from a backend DTO. */
     upsertWorkspaceFromDto,
-    /** Appends a channel to the sidebar entry for the given workspace slug, ignoring duplicates. */
+    /** Draws a salon created or heard of live, dated so a listing in flight cannot prune it. */
     addChannelToWorkspace,
-    /** Removes the given channel conversation ID from every workspace in the sidebar. */
+    /** Removes a salon learned gone live, dated so a listing in flight cannot draw it back. */
     removeChannelFromWorkspaces,
     /** Returns or creates a sidebar workspace entry for an incoming real-time channel event. */
     ensureWorkspaceForChannelEvent,

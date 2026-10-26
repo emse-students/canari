@@ -133,6 +133,7 @@ import {
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
 import { flushMacrotask } from '../../test/flush';
+import { buildConversationRow } from '$lib/utils/chat/conversations';
 
 function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelWorkspaceContext {
   return {
@@ -983,6 +984,217 @@ describe('useChannelWorkspaces - a listing that predates a creation', () => {
     listUserWorkspaces.mockResolvedValueOnce([]);
     await api.loadChannelWorkspacesFromBackend(ctx);
     expect(api.channelWorkspaces.some((w) => w.id === 'partie')).toBe(false);
+  });
+});
+
+/**
+ * WHAT IS LEARNED LIVE WHILE A LISTING IS IN FLIGHT IS NEWER THAN ITS ANSWER (dev, 2026-10-26).
+ *
+ * Found by the rig on the Mi 9T: a community joined in-session started a listing, the server created
+ * a salon 2.4 s into it, the phone heard it (`Joined channel <id>`), and the listing's prune deleted
+ * it 3.8 s later, without a line - only salons CREATED on this device were dated against the request.
+ * Each case drives an explicit order - listing asked, live fact, listing answered - with the listing
+ * held on a promise: no clock decides anything here.
+ */
+describe('useChannelWorkspaces - a live fact heard while a listing is in flight', () => {
+  const ws = makeWorkspaceDto('ws1', 'Com', 'com');
+
+  /** One listing that answered `channels`, so the next one has something to prune. */
+  async function primed(channels: ChannelDto[]) {
+    listUserWorkspaces.mockResolvedValueOnce([ws]);
+    listChannels.mockResolvedValueOnce(channels);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    return { api, ctx };
+  }
+
+  /** Starts a listing whose community answer is held until `release` - the in-flight window. */
+  async function listingInFlight(
+    api: ReturnType<typeof useChannelWorkspaces>,
+    ctx: ChannelWorkspaceContext
+  ) {
+    let release: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((resolve) => (release = resolve))
+    );
+    const loading = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    expect(listUserWorkspaces).toHaveBeenCalled();
+    return { loading, release: (answer: WorkspaceDto[]) => release(answer) };
+  }
+
+  /** What `onChannelMemberJoined` does to local state (`ChatBackgroundService.svelte`). */
+  function hearSalon(
+    api: ReturnType<typeof useChannelWorkspaces>,
+    ctx: ChannelWorkspaceContext,
+    id: string,
+    event: { workspaceId: string; workspaceSlug: string } = {
+      workspaceId: 'ws1',
+      workspaceSlug: 'com',
+    }
+  ) {
+    const workspace = api.ensureWorkspaceForChannelEvent(event);
+    api.addChannelToWorkspace(workspace.id, { id: `channel_${id}`, name: id });
+    ctx.conversations.set(
+      `channel_${id}`,
+      buildConversationRow({
+        id: `channel_${id}`,
+        lifecycle: 'active',
+        identity: { contactName: `channel_${id}`, displayName: id },
+      })
+    );
+  }
+
+  const rail = (api: ReturnType<typeof useChannelWorkspaces>, slug = 'com') =>
+    api.channelWorkspaces.find((w) => w.id === slug)?.channels.map((c) => c.id) ?? [];
+
+  let debug: ReturnType<typeof vi.spyOn>;
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    ensureCommunityDistributionGroup.mockResolvedValue(true);
+    debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    debug.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('keeps a salon heard of after the request, and says so per id at debug', async () => {
+    const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+    const listing = await listingInFlight(api, ctx);
+
+    hearSalon(api, ctx, 'c2');
+    listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(ctx.conversations.has('channel_c2')).toBe(true);
+    expect(rail(api)).toEqual(['channel_c1', 'channel_c2']);
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[WORKSPACE-LOAD\] kept salon channel_c2: not listed by the server/)
+    );
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('pruned salon channel_c2'));
+  });
+
+  /**
+   * THE CONTROL: a salon that existed when the listing was asked, is missing from its answer and was
+   * not heard of since really is gone - pruned, and said per id at warn, beside the one that is kept.
+   */
+  it('still prunes a salon gone server-side and not heard of during the listing, at warn', async () => {
+    const { api, ctx } = await primed([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c3', 'gone'),
+    ]);
+    expect(ctx.conversations.has('channel_c3')).toBe(true);
+    const listing = await listingInFlight(api, ctx);
+
+    hearSalon(api, ctx, 'c2');
+    listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(ctx.conversations.has('channel_c3')).toBe(false);
+    expect(rail(api)).toEqual(['channel_c1', 'channel_c2']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[WORKSPACE-LOAD\] pruned salon channel_c3: not listed by the server, and neither created nor heard of/
+      )
+    );
+  });
+
+  /** A salon heard of BEFORE the request is the listing's to judge: absent from it, it goes. */
+  it('prunes a salon heard of before the request when the answer does not name it', async () => {
+    const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+    hearSalon(api, ctx, 'c2');
+    const listing = await listingInFlight(api, ctx);
+
+    listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(ctx.conversations.has('channel_c2')).toBe(false);
+    expect(rail(api)).toEqual(['channel_c1']);
+  });
+
+  it('does not resurrect a salon removed live during the listing', async () => {
+    const { api, ctx } = await primed([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c4', 'deleted'),
+    ]);
+    const listing = await listingInFlight(api, ctx);
+
+    // What `onChannelDeleted` does (`ChatBackgroundService.svelte`).
+    ctx.conversations.delete('channel_c4');
+    api.removeChannelFromWorkspaces('channel_c4');
+    // The answer predates the deletion, so it still names the salon.
+    listChannels.mockResolvedValueOnce([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c4', 'deleted'),
+    ]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(ctx.conversations.has('channel_c4')).toBe(false);
+    expect(rail(api)).toEqual(['channel_c1']);
+  });
+
+  /** The last fact wins: removed, then heard of again, during the same listing - it is there. */
+  it('draws a salon removed then heard of again during the listing', async () => {
+    const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+    const listing = await listingInFlight(api, ctx);
+
+    ctx.conversations.delete('channel_c1');
+    api.removeChannelFromWorkspaces('channel_c1');
+    hearSalon(api, ctx, 'c1');
+    listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(ctx.conversations.has('channel_c1')).toBe(true);
+    expect(rail(api)).toEqual(['channel_c1']);
+  });
+
+  it('keeps a community heard of after the request, and prunes one that was not', async () => {
+    listUserWorkspaces.mockResolvedValueOnce([ws, makeWorkspaceDto('ws-old', 'Old', 'old')]);
+    listChannels.mockResolvedValue([]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    const listing = await listingInFlight(api, ctx);
+
+    hearSalon(api, ctx, 'n1', { workspaceId: 'ws-new', workspaceSlug: 'heard' });
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(api.channelWorkspaces.map((w) => w.id).sort()).toEqual(['com', 'heard']);
+    expect(rail(api, 'heard')).toEqual(['channel_n1']);
+    expect(ctx.conversations.has('channel_n1')).toBe(true);
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[WORKSPACE-LOAD\] kept community heard: not listed by the server/)
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[WORKSPACE-LOAD\] pruned community old: not listed by the server/)
+    );
+  });
+
+  it('does not resurrect a community removed live during the listing, nor its salons', async () => {
+    const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+    const listing = await listingInFlight(api, ctx);
+
+    await api.handleWorkspaceDeleted({ workspaceId: 'ws1' }, ctx);
+    // The answer predates the deletion, so it still names the community and its salon.
+    listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(api.channelWorkspaces.some((w) => w.id === 'com')).toBe(false);
+    expect(ctx.conversations.has('channel_c1')).toBe(false);
+    expect(listChannels).toHaveBeenCalledTimes(1);
   });
 });
 
