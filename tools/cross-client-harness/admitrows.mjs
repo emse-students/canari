@@ -116,12 +116,14 @@ export const ADMIT_ROWS = {
 export const ADMISSION_ENDINGS = {
   'ADM-1': { admitted: true },
   'ADM-2': { declined: true },
-  'ADM-3': { admitted: true, declined: true },
+  // `addRefused`: a member's Add may land AFTER the Decline and be refused whole by the gate (#2505) -
+  // ADM-3 when the Decline wins the race, ADM-10 always. Its approver narrates that refusal.
+  'ADM-3': { admitted: true, declined: true, addRefused: true },
   'ADM-4': { declined: true },
   'ADM-5': { admitted: true },
   'ADM-6': { admitted: true },
   'ADM-9': { admitted: true, declined: true },
-  'ADM-10': { declined: true },
+  'ADM-10': { declined: true, addRefused: true },
 };
 
 /** Whether an `apiCall` answer is the waiting seat's refusal. */
@@ -398,17 +400,23 @@ export function declinedOwn({ asks, after, excluded, listed, shown }) {
 
 /**
  * ADM-3: one answer won and the two sides agree; an admitted person is never stripped. `listedTrail`
- * is the joiner's "lists the conversation" sampled across the settling window: true then false is a
- * person admitted and then taken away.
+ * is the joiner's "lists the conversation" sampled across the settling window, and `stateTrail` the
+ * server's seat state (`seatState`) at the same samples.
+ *
+ * STRIPPED IS JUDGED ON THE SERVER'S STATE, NEVER ON THE JOINER'S LISTING: a waiting joiner lists the
+ * conversation too - its placeholder (`[DISCOVERY] ... awaits a member admission`) - and a Decline
+ * removes that placeholder, which is the Decline winning, not a member taken away (alpha.5 ADM-3 read
+ * `L-----` on exactly that). A sample `admitted` on the server followed by one that is not is a
+ * person admitted and then taken away. The listing still decides whether the two sides agree at the end.
  */
-export function raceOwn({ outcomes, after, listedTrail, refusal = null }) {
-  const stripped = listedTrail.some((v, i) => v && listedTrail.slice(i + 1).some((w) => !w));
+export function raceOwn({ outcomes, after, listedTrail, stateTrail = [], refusal = null }) {
+  const stripped = stateTrail.some((s, i) => s === 'admitted' && stateTrail.slice(i + 1).some((t) => t !== 'admitted'));
   const listedAtEnd = listedTrail.at(-1) === true;
   const consistent = after.state === 'admitted' ? after.active > 0 && listedAtEnd : after.state === 'absent' ? after.active === 0 && !listedAtEnd : false;
   return [
     { what: `both answers were given (${Object.entries(outcomes).map(([d, o]) => `${d} ${o.ok ? 'ok' : o.error}`).join('; ')})`, ok: Object.keys(outcomes).length === 2 },
     { what: `one side won and the server and the joiner agree (${after.state}, ${after.active} seat(s), ${listedAtEnd ? 'listed' : 'not listed'})`, ok: consistent },
-    { what: `an admitted person was never stripped (${listedTrail.map((v) => (v ? 'L' : '-')).join('')})`, ok: !stripped },
+    { what: `an admitted person was never stripped (listed ${listedTrail.map((v) => (v ? 'L' : '-')).join('')}, server ${stateTrail.map((s) => String(s)[0]).join('')})`, ok: !stripped },
     // WHEN THE DECLINE WON, the Add was refused whole and nothing let the person back in undated. An
     // Add that WON may be dated by its base epoch alone (it raced nothing that settled before it).
     ...(after.state === 'absent' && refusal

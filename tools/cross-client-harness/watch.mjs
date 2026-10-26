@@ -2270,7 +2270,7 @@ export const FRESH_CLIENT_NARRATION = [
  * @param {string} group the row's group id
  * @param {{admitted?: boolean, declined?: boolean}} [ends] the endings the row plays
  */
-export function admissionMemberNarration(group, { admitted = false, declined = false } = {}) {
+export function admissionMemberNarration(group, { admitted = false, declined = false, addRefused = false } = {}) {
   const g = groupPrefixRe(group);
   return [
     atLevels(['log', 'info'], new RegExp(String.raw`^\[(JOIN_ASK|WELCOME_REQ)\] \S+ has no leaf in ${g} - a new person is not added automatically, a member's approval is asked$`)),
@@ -2281,6 +2281,17 @@ export function admissionMemberNarration(group, { admitted = false, declined = f
           atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] \S+ declined in ${g}( - the ask leaves this screen)?$`)),
           // The one line that names no group: the Decline given on THIS screen. Kept to the declining rows.
           atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ declined - their seat is withdrawn$/),
+        ]
+      : []),
+    // AN ADD THE GATE REFUSED WHOLE (#2505), narrated by the member who approved it: the refusal, the
+    // Add abandoned before its stage, and the answer that did not happen because the ask was settled.
+    // Read on alpha.5 ADM-3 (2026-10-26), where the Decline won. Only the `not-admitted` /
+    // `removed-meanwhile` reasons: any other reason is a different outcome and stays dirt.
+    ...(addRefused
+      ? [
+          atLevels(['log', 'info'], new RegExp(String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`)),
+          atLevels(['log', 'info'], /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/),
+          atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`)),
         ]
       : []),
   ];
