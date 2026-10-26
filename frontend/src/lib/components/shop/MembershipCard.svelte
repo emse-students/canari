@@ -12,9 +12,11 @@
     /** The tiers this viewer may buy (`offeredTiers`): never empty, the caller omits the card. */
     tiers: AssociationProduct[];
     accentColor?: string | null;
+    /** A tier cannot be ranked against the membership held: say why it has no action. */
+    unrankedHint?: boolean;
   }
 
-  let { tiers, accentColor = null }: Props = $props();
+  let { tiers, accentColor = null, unrankedHint = false }: Props = $props();
 
   /** True when at least one row shows a reduced amount, so the hint explaining it is worth a line. */
   const hasRise = $derived(tiers.some((t) => struckCents(t) !== null));
@@ -34,6 +36,9 @@
         </li>
       {/each}
     </ul>
+    {#if unrankedHint}
+      <p class="text-text-muted text-xs" data-unranked-hint>{m.shop_tier_not_rankable()}</p>
+    {/if}
     {#if hasRise}
       <p class="text-text-muted text-xs">{m.shop_membership_rise_hint()}</p>
     {/if}

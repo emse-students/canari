@@ -3,6 +3,7 @@ import type { AssociationProduct } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
 import {
   dueCents,
+  hasUnrankedTier,
   nonTierProducts,
   offeredTiers,
   productDisplayName,
@@ -57,6 +58,18 @@ describe('offeredTiers', () => {
   it('offers no action when the listing does not say where a tier stands (old server)', () => {
     const unknown = product({ id: 'u', type: 'membership', variantKey: 'u' });
     expect(offeredTiers([unknown])).toEqual([]);
+  });
+
+  it('offers NO action on an unranked tier, and hints only when a membership is held', () => {
+    const unranked = product({
+      id: 'un',
+      type: 'membership',
+      variantKey: 'un',
+      viewerTierRelation: 'unranked',
+    });
+    expect(offeredTiers([unranked, rise]).map((t) => t.id)).toEqual(['rise']);
+    expect(hasUnrankedTier([unranked])).toBe(false);
+    expect(hasUnrankedTier([unranked, product({ viewerIsCotisant: true })])).toBe(true);
   });
 
   it('is empty for the holder of the highest tier: no membership card at all', () => {

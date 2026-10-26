@@ -30,6 +30,8 @@ export function offeredTiers(products: AssociationProduct[]): AssociationProduct
     .filter(
       (p) =>
         p.type === 'membership' &&
+        // Explicit allowlist: `held`, `lower`, `unranked` (a grid or free amount stands between the
+        // two tiers, so no rank can be established) and an absent relation offer NO action.
         (p.viewerTierRelation === 'higher' || p.viewerTierRelation === 'none')
     )
     .sort((a, b) => tierRank(a) - tierRank(b));
@@ -63,4 +65,16 @@ export function struckCents(p: AssociationProduct): number | null {
   const due = dueCents(p);
   if (due === null || p.amountCents === null || p.viewerPrice?.kind === 'grid') return null;
   return due < p.amountCents ? p.amountCents : null;
+}
+
+/**
+ * True when a tier cannot be ranked against the one the viewer holds (`unranked`) and the viewer
+ * does hold a membership: the card then says why that tier has no action, in the words of the
+ * server's `TIER_NOT_RANKABLE` refusal.
+ */
+export function hasUnrankedTier(products: AssociationProduct[]): boolean {
+  return (
+    products.some((p) => p.type === 'membership' && p.viewerTierRelation === 'unranked') &&
+    products.some((p) => p.viewerIsCotisant === true)
+  );
 }

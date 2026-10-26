@@ -22,7 +22,7 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import ProductCard from '$lib/components/shop/ProductCard.svelte';
   import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
-  import { nonTierProducts, offeredTiers } from '$lib/shop/productCards';
+  import { hasUnrankedTier, nonTierProducts, offeredTiers } from '$lib/shop/productCards';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -273,7 +273,11 @@
                 <!-- One membership card with the tiers inside, then one card per other product -->
                 <div class={CARD_GRID}>
                   {#if tiers.length > 0}
-                    <MembershipCard {tiers} accentColor={associationAccent(asso)} />
+                    <MembershipCard
+                      {tiers}
+                      accentColor={associationAccent(asso)}
+                      unrankedHint={hasUnrankedTier(assocProducts)}
+                    />
                   {/if}
                   {#each others as product (product.id)}
                     <ProductCard

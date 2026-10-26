@@ -65,7 +65,7 @@
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
   import ProductCard from '$lib/components/shop/ProductCard.svelte';
   import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
-  import { nonTierProducts, offeredTiers } from '$lib/shop/productCards';
+  import { hasUnrankedTier, nonTierProducts, offeredTiers } from '$lib/shop/productCards';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
 
@@ -600,7 +600,11 @@
         </div>
         <div class={CARD_GRID}>
           {#if shopTiers.length > 0}
-            <MembershipCard tiers={shopTiers} accentColor={cardAccentColor} />
+            <MembershipCard
+              tiers={shopTiers}
+              accentColor={cardAccentColor}
+              unrankedHint={hasUnrankedTier(products)}
+            />
           {/if}
           {#each nonTierProducts(products) as product (product.id)}
             <ProductCard
