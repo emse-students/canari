@@ -40,6 +40,14 @@ export const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 
 /**
+ * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds, ACTIVE, a sibling
+ * tier whose product price is greater than or equal to it: the sibling XOR would replace the held
+ * tier, a silent downgrade (or a sideways swap paid in full). Holding that very tier answers
+ * `PRODUCT_ALREADY_PURCHASED` instead.
+ */
+export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */

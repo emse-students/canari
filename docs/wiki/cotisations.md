@@ -195,10 +195,52 @@ in the same DB transaction - a cotisant holds exactly one tier of a given associ
 `UserTagService.revokeSiblingTierTags` is the single implementation, called both by a paid
 fulfillment and by a manual grant, so the two paths cannot drift apart. The base tier participates
 like any other (an association that kept it alongside named tiers must not leave a buyer holding
-both), and inactive tiers are swept too: a tier taken off sale is still held by its cotisants. Buying a
-sibling tier for the first time is allowed even if another tier was already purchased (purchase caps
-are tracked per-product, not per-association), but re-buying the *same* tier while its tag is still
-active is blocked like any other membership renewal check.
+both), and inactive tiers are swept too: a tier taken off sale is still held by its cotisants. Because
+the XOR REPLACES the held tier, a buyer may only buy a sibling tier that is a rise - next section.
+
+### Rising to a higher tier
+
+Decided by the user on 2026-10-26: a holder of a lower tier pays only the complement to rise, and a
+holder of the highest tier is not offered membership.
+
+**The complement IS the admin's preferential price - nothing is computed.** It is the existing
+`memberPriceTag` + `amountCentsMember` pair above ("Tarif preferentiel depuis" in the tier editor):
+the Cercle admin set it in production on 2026-10-26 on the alcohol tier (full price 30 EUR,
+preferential 15 EUR from the other tier). A rise to a tier with NO preferential price configured is
+charged in FULL; setting it is the admin's job, and making that visible is the admin screen's. An
+automatic `target - held` was designed and dropped the same day: it would have duplicated or
+contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE function that picks
+the amount, called by the checkout (`resolvePurchase`) and the shop listing alike, and the checkout
+row freezes it: settlement records the row's amount, never a re-read of the product.
+
+**What the server refuses (`assertTierIsARise`, on every `membership` checkout).** Rank comes from
+DATA with no stored ordinal and no migration: `variantLevel` is null in production and only ever
+sorted the shop. `tierRelation` compares the target's PRODUCT price (`amountCents`, never what the
+holder paid) with the product of the tier the buyer holds ACTIVE (`heldTierOf`, the same
+enumeration as `isBuyerCotisant`, on sale or not):
+
+| Relation | When | Checkout |
+|---|---|---|
+| `held` | the target IS the held tier (same `variantKey`) | 409 `PRODUCT_ALREADY_PURCHASED` - now even with no purchase record, since a manual grant or a claimed legacy row holds the tier as surely |
+| `lower` | target price `<=` held price, a different tier | 409 `TIER_NOT_A_RISE` - equal counts, a sideways swap would be paid in full for nothing |
+| `higher` | target price `>` held price | allowed, at `fixedPriceFor`'s amount; the XOR swaps at settlement |
+| `none` | nothing held, or either tier is gridded or free-amount | allowed, exactly as before - no rank is guessed |
+
+A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The manual
+paths (`grantCotisant`, the cash grant) are a manager's decision and are NOT ranked: a manager may
+still downgrade someone on purpose. Lydia's own floor (50 cents, `LYDIA_MIN_AMOUNT_CENTS` in
+core-service) still answers `AMOUNT_OUT_OF_RANGE` before any request is issued, so a preferential
+price set below it is refused rather than charged.
+
+**What the shop gets.** `/products/all` annotates every product with `viewerTierRelation` (the
+table's relation, `none` for a non-tier) and `viewerDueCents`: what a checkout would charge THIS
+viewer now - null for `held`/`lower`, the grid's cell for a gridded product, null for a free amount.
+Purchase caps and tag gates are not folded into it. The client displays it and never recomputes
+money; `paymentRefusal.ts` words `TIER_NOT_A_RISE` from its code.
+
+**Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
+30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real
+payment of a complement has happened yet.
 
 ### Product member gating & pricing
 
@@ -705,7 +747,7 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/cotisants` | Grant a tier's tag only, no payment (`MANAGE_MEMBERS`) |
 | GET | `/api/associations/:id/cotisation-tiers` | Tiers offered, for the manual-add picker (`MANAGE_MEMBERS`) |
 | GET | `/api/associations/:id/cotisants/export` | Roster as `.xlsx` (`MANAGE_MEMBERS`) |
-| GET | `/api/associations/products/all` | All active products + per-product `viewerIsCotisant`/`viewerActiveTier` (shop) |
+| GET | `/api/associations/products/all` | All active products + per-product `viewerIsCotisant`/`viewerActiveTier`/`viewerTierRelation`/`viewerDueCents` (shop) |
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |

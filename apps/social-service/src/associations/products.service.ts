@@ -23,6 +23,7 @@ import {
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
+  TIER_NOT_A_RISE,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -39,6 +40,7 @@ import {
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { fixedPriceFor, tierRelation, type HeldTier, type TierRelation } from './tier-pricing';
 import {
   isDelegating,
   resolvePaymentTarget,
@@ -93,7 +95,23 @@ export type ShopProduct = AssociationProduct & {
   viewerIsCotisant: boolean;
   viewerActiveTier: string | null;
   viewerPrice: ViewerPrice;
+  /** This product against the tier the viewer holds (`tierRelation`); `none` for a non-tier. */
+  viewerTierRelation: TierRelation;
+  /**
+   * Cents a checkout would charge this viewer now, from the same `fixedPriceFor` / grid cell the
+   * checkout uses. Null when the server would refuse the tier (`held`, `lower`), when the grid does
+   * not sell this combination, and for a free amount. Purchase caps and tag gates are not folded in.
+   */
+  viewerDueCents: number | null;
 };
+
+/** One association's cotisation status for one viewer (see `cotisantStatusFor`). */
+interface CotisantStatus {
+  isCotisant: boolean;
+  activeTier: string | null;
+  /** The tier held, with its product so it can be ranked; null when none is held. */
+  heldTier: HeldTier | null;
+}
 
 /**
  * What one viewer pays for one product, resolved server-side.
@@ -123,6 +141,18 @@ export interface ViewerPrice {
    */
   dependsOnProfile: boolean;
 }
+
+/**
+ * The membership-product columns a held tier is identified and ranked by (`tierRelation`): the
+ * product price, its grid (a gridded tier is not ranked), and the tier key.
+ */
+const TIER_RANK_COLUMNS = {
+  id: true,
+  associationId: true,
+  variantKey: true,
+  amountCents: true,
+  priceMatrix: true,
+} as const;
 
 /** The answer for a product with no grid: its own columns price it, exactly as before. */
 const FIXED_PRICE: ViewerPrice = { kind: 'fixed', amountCents: null, dependsOnProfile: false };
@@ -285,7 +315,7 @@ export class ProductsService {
   private async viewerPricesFor(
     products: AssociationProduct[],
     userId: string | undefined,
-    statusByAssoc: Map<string, { isCotisant: boolean; activeTier: string | null }>
+    statusByAssoc: Map<string, CotisantStatus>
   ): Promise<Map<string, ViewerPrice>> {
     const prices = new Map<string, ViewerPrice>();
     // `!= null`, not `!== null`: a product assembled in memory rather than read from a row carries
@@ -465,43 +495,88 @@ export class ProductsService {
   /**
    * Returns all active products across all associations (login required, listed on /shop), each
    * annotated with `viewerIsCotisant`/`viewerActiveTier` for `userId` so the client can gate/label
-   * members-only products without mirroring the cotisation-tag derivation, and with `viewerPrice`
+   * members-only products without mirroring the cotisation-tag derivation, with `viewerPrice`
    * - what a gridded product costs THIS viewer, since a grid rests on facts a browser has no way
-   * to evaluate.
+   * to evaluate - and with `viewerTierRelation`/`viewerDueCents`, so a tier rise is quoted at the
+   * amount the checkout will charge and a client never recomputes money.
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
     const products = await this.productRepo.find({
       where: { isActive: true },
       order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
     });
-    const statusByAssoc = await this.cotisantStatusFor(userId, [
+    const { byAssoc: statusByAssoc, activeTagNames } = await this.cotisantStatusFor(userId, [
       ...new Set(products.map((p) => p.associationId)),
     ]);
     const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
+      const viewerPrice = viewerPrices.get(p.id) ?? FIXED_PRICE;
+      const viewerTierRelation: TierRelation =
+        p.type === 'membership' ? tierRelation(p, status?.heldTier ?? null) : 'none';
       return this.toSafeProduct({
         ...p,
         viewerIsCotisant: status?.isCotisant ?? false,
         viewerActiveTier: status?.activeTier ?? null,
-        viewerPrice: viewerPrices.get(p.id) ?? FIXED_PRICE,
+        viewerPrice,
+        viewerTierRelation,
+        viewerDueCents: this.dueCentsFor(
+          p,
+          viewerTierRelation,
+          viewerPrice,
+          status?.isCotisant ?? false,
+          activeTagNames
+        ),
       });
     });
   }
 
   /**
+   * What a checkout of `product` would charge this viewer now, from the SAME decisions
+   * `resolvePurchase` takes: a refused tier (`held`, `lower`) has no price, a grid answers its cell
+   * (null when it does not sell this combination), a fixed price goes through `fixedPriceFor`, and a
+   * free amount is the buyer's to choose, so null.
+   */
+  private dueCentsFor(
+    product: AssociationProduct,
+    relation: TierRelation,
+    viewerPrice: ViewerPrice,
+    isCotisant: boolean,
+    activeTagNames: ReadonlySet<string>
+  ): number | null {
+    if (relation === 'held' || relation === 'lower') return null;
+    if (product.priceMatrix != null) return viewerPrice.amountCents;
+    if (product.amountCents === null) return null;
+    return fixedPriceFor(
+      {
+        amountCents: product.amountCents,
+        amountCentsMember: product.amountCentsMember,
+        memberPriceTag: product.memberPriceTag,
+      },
+      {
+        isCotisant,
+        holdsMemberPriceTag: product.memberPriceTag
+          ? activeTagNames.has(product.memberPriceTag)
+          : false,
+      }
+    ).amountCents;
+  }
+
+  /**
    * Given a user and a set of association ids, returns per-association cotisation status: whether
    * the user holds ANY active tier tag for it (`isCotisant`, back-compat `membersOnly`/generic
-   * semantics - see `isBuyerCotisant`), and which specific tier (`variantKey`) they currently hold,
-   * if any (`activeTier`, WP-COT-3). Loads each association's tiered products and the user's active
-   * tags once, so annotating N products costs a fixed number of queries regardless of product count.
+   * semantics - see `isBuyerCotisant`), which specific tier (`variantKey`) they currently hold, if
+   * any (`activeTier`, WP-COT-3), and that tier's product (`heldTier`, to rank a rise against) - plus
+   * the user's active tag names, which the preferential price of a `memberPriceTag` product reads.
+   * Loads each association's tiered products and the user's active tags once, so annotating N
+   * products costs a fixed number of queries regardless of product count.
    */
   private async cotisantStatusFor(
     userId: string,
     assocIds: string[]
-  ): Promise<Map<string, { isCotisant: boolean; activeTier: string | null }>> {
-    const result = new Map<string, { isCotisant: boolean; activeTier: string | null }>();
-    if (assocIds.length === 0) return result;
+  ): Promise<{ byAssoc: Map<string, CotisantStatus>; activeTagNames: ReadonlySet<string> }> {
+    const byAssoc = new Map<string, CotisantStatus>();
+    if (assocIds.length === 0) return { byAssoc, activeTagNames: new Set() };
     const [assos, tierProducts, activeTags] = await Promise.all([
       this.assoRepo.find({
         where: { id: In(assocIds) },
@@ -511,22 +586,22 @@ export class ProductsService {
       // a user already holds (see `listCotisationTiers`).
       this.productRepo.find({
         where: { associationId: In(assocIds), type: 'membership' },
-        select: { associationId: true, variantKey: true },
+        select: TIER_RANK_COLUMNS,
       }),
       this.userTagService.listByUser(userId),
     ]);
     const activeTagNames = new Set(activeTags.map((t) => t.tagName));
-    const tiersByAssoc = new Map<string, { variantKey: string | null }[]>();
+    const tiersByAssoc = new Map<string, AssociationProduct[]>();
     for (const p of tierProducts) {
       const list = tiersByAssoc.get(p.associationId) ?? [];
-      list.push({ variantKey: p.variantKey });
+      list.push(p);
       tiersByAssoc.set(p.associationId, list);
     }
     for (const asso of assos) {
       if (!asso.cotisationMode) continue;
-      let isCotisant = false;
-      let activeTier: string | null = null;
-      for (const variantKey of tierVariantKeys(tiersByAssoc.get(asso.id) ?? [])) {
+      const tiers = tiersByAssoc.get(asso.id) ?? [];
+      let heldTier: HeldTier | null = null;
+      for (const variantKey of tierVariantKeys(tiers)) {
         const { tagName } = deriveCotisationTag(
           asso.slug,
           asso.cotisationMode,
@@ -534,14 +609,20 @@ export class ProductsService {
           variantKey
         );
         if (activeTagNames.has(tagName)) {
-          isCotisant = true;
-          activeTier = variantKey;
+          heldTier = {
+            variantKey,
+            product: tiers.find((t) => t.variantKey === variantKey) ?? null,
+          };
           break;
         }
       }
-      result.set(asso.id, { isCotisant, activeTier });
+      byAssoc.set(asso.id, {
+        isCotisant: heldTier !== null,
+        activeTier: heldTier?.variantKey ?? null,
+        heldTier,
+      });
     }
-    return result;
+    return { byAssoc, activeTagNames };
   }
 
   /**
@@ -559,8 +640,8 @@ export class ProductsService {
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
     const statusByAssoc = userId
-      ? await this.cotisantStatusFor(userId, [associationId])
-      : new Map<string, { isCotisant: boolean; activeTier: string | null }>();
+      ? (await this.cotisantStatusFor(userId, [associationId])).byAssoc
+      : new Map<string, CotisantStatus>();
     const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
     return products.map((p) =>
       this.toSafeProduct({ ...p, viewerPrice: viewerPrices.get(p.id) ?? FIXED_PRICE })
@@ -1610,8 +1691,10 @@ export class ProductsService {
       );
     }
 
-    const isCotisant = await this.isBuyerCotisant(asso, userId);
+    const heldTier = await this.heldTierOf(asso, userId);
+    const isCotisant = heldTier !== null;
     await this.assertCanPurchase(product, userId, isCotisant);
+    if (product.type === 'membership') this.assertTierIsARise(product, heldTier, userId);
 
     let amountCents: number;
     if (product.priceMatrix) {
@@ -1632,16 +1715,22 @@ export class ProductsService {
         `[SHOP] grid price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
       );
     } else if (product.amountCents !== null) {
-      const qualifiesForMemberPrice = product.memberPriceTag
+      const holdsMemberPriceTag = product.memberPriceTag
         ? await this.userTagService.hasActiveTag(userId, product.memberPriceTag)
-        : isCotisant;
-      if (qualifiesForMemberPrice && product.amountCentsMember != null) {
-        amountCents = product.amountCentsMember;
+        : false;
+      const price = fixedPriceFor(
+        {
+          amountCents: product.amountCents,
+          amountCentsMember: product.amountCentsMember,
+          memberPriceTag: product.memberPriceTag,
+        },
+        { isCotisant, holdsMemberPriceTag }
+      );
+      amountCents = price.amountCents;
+      if (price.preferential) {
         this.logger.debug(
           `[SHOP] member price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
         );
-      } else {
-        amountCents = product.amountCents;
       }
     } else if (product.allowCustomAmount && customAmountCents !== undefined) {
       this.assertWithinCustomBounds(product, associationId, customAmountCents, 'custom amount');
@@ -1844,11 +1933,22 @@ export class ProductsService {
    * exact same cotisant definition, rather than duplicating the tier-enumeration logic.
    */
   async isBuyerCotisant(asso: Association, userId: string): Promise<boolean> {
-    if (!asso.cotisationMode) return false;
+    return (await this.heldTierOf(asso, userId)) !== null;
+  }
+
+  /**
+   * The tier `userId` holds ACTIVE in `asso` - the first of `tierVariantKeys` (named before base)
+   * whose derived tag they hold - with its product, so a purchase can be ranked against it; null
+   * when they hold none, or the association has no cotisation mode. The single enumeration behind
+   * `isBuyerCotisant` and the checkout's rise check, so "is a cotisant" and "holds this tier" cannot
+   * drift apart.
+   */
+  private async heldTierOf(asso: Association, userId: string): Promise<HeldTier | null> {
+    if (!asso.cotisationMode) return null;
     // All tiers, sellable or not - holding a withdrawn tier's tag still makes you a cotisant.
     const tiers = await this.productRepo.find({
       where: { associationId: asso.id, type: 'membership' },
-      select: { variantKey: true },
+      select: TIER_RANK_COLUMNS,
     });
     for (const variantKey of tierVariantKeys(tiers)) {
       const { tagName } = deriveCotisationTag(
@@ -1857,9 +1957,50 @@ export class ProductsService {
         new Date(),
         variantKey
       );
-      if (await this.userTagService.hasActiveTag(userId, tagName)) return true;
+      if (await this.userTagService.hasActiveTag(userId, tagName)) {
+        return { variantKey, product: tiers.find((t) => t.variantKey === variantKey) ?? null };
+      }
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * Refuses a cotisation tier that is not a RISE over the tier the buyer holds active (user,
+   * 2026-10-26): the sibling XOR at settlement would replace the held tier, so buying a cheaper or
+   * equally priced tier was a silent downgrade, paid. The held tier itself answers
+   * `PRODUCT_ALREADY_PURCHASED` (even with no purchase record - a manual grant holds it just as
+   * well); a lower or equal one `TIER_NOT_A_RISE`. A rise, nothing held, or a tier the server does
+   * not rank (grid, free amount) passes - the price of a rise is the admin's preferential price.
+   */
+  private assertTierIsARise(
+    product: AssociationProduct,
+    heldTier: HeldTier | null,
+    userId: string
+  ): void {
+    const relation = tierRelation(product, heldTier);
+    this.logger.debug(
+      `[SHOP] tier rank: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+        `held=${heldTier ? (heldTier.variantKey ?? 'base') : 'none'} relation=${relation}`
+    );
+    if (relation === 'held') {
+      this.logger.log(
+        `[SHOP] refused: product=${product.id.slice(0, 8)} is the tier user=${userId.slice(0, 8)} already holds`
+      );
+      throw new ConflictException({
+        code: PRODUCT_ALREADY_PURCHASED,
+        message: 'You already hold this membership',
+      });
+    }
+    if (relation === 'lower') {
+      this.logger.log(
+        `[SHOP] refused: product=${product.id.slice(0, 8)} is not a rise over the tier ` +
+          `user=${userId.slice(0, 8)} holds (${heldTier?.variantKey ?? 'base'})`
+      );
+      throw new ConflictException({
+        code: TIER_NOT_A_RISE,
+        message: 'You already hold a membership tier worth at least this one',
+      });
+    }
   }
 
   /** Returns true when the user holds at least one of the given tag names. */

@@ -3205,6 +3205,7 @@
   "shop_payment_amount_range": "Amount refused: it must be between {min} and {max}.",
   "shop_payment_amount_min": "Amount refused: it must be at least {min}.",
   "shop_already_purchased": "You have already bought this product.",
+  "shop_tier_not_a_rise": "You already hold a membership worth at least this one.",
   "shop_checkout_in_progress": "A payment for this product is already being opened. You can try again in three minutes at most.",
   "shop_previous_checkout_open": "Your previous payment request for this product is still open. Try again once it has expired, at most 35 minutes after it was started.",
   "shop_return_checking": "Checking the payment...",
