@@ -93,7 +93,8 @@ async function deadReport(w) {
  * THE DYING PAGE'S CONSOLE IS KEPT EVEN WHEN THE REVIVAL THROWS. It is read before the kill and was
  * written only at the end of a run, so a revival that threw lost it - alpha.5's KILL-2 run 10
  * (2026-10-26), where the kill took W1's cookie jar and the record kept nothing from that run. The
- * error is rethrown unchanged: keeping the evidence never turns a rig ERROR into a verdict.
+ * error is rethrown unchanged: keeping the evidence never turns a rig ERROR into a verdict. The
+ * revived page's console rides on the error when `reviveSeat` could read it (`failedRevival`).
  *
  * @param {string} label the run's console label, `<seat>-run<n>`
  * @param {string} dying the dying page's console, read before the kill
@@ -103,8 +104,8 @@ async function revivingKeepsDying(label, dying, revive) {
   try {
     return await revive();
   } catch (e) {
-    const kept = keepConsoles(id, { [`${label}-dying`]: dying });
-    console.log(`[${id}] ${label}: the revival failed - its dying console is kept at ${kept?.[`${label}-dying`] ?? 'nowhere'}`);
+    const kept = keepConsoles(id, { [`${label}-dying`]: dying, ...(e?.revivedConsole ? { [`${label}-revived`]: e.revivedConsole } : {}) });
+    for (const [which, path] of Object.entries(kept ?? {})) console.log(`[${id}] ${label}: the revival failed - ${which} console kept at ${path}`);
     throw e;
   }
 }
