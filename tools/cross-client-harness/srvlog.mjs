@@ -1131,6 +1131,22 @@ const SEVERE = [
  * server line - its warm-process staging is logged by the PHONE (`[BG_WELCOME]`/`[BG_STATE]` in
  * Rust), which the logcat window reads, and its server face is #2287's `[BG_WELCOME]` route below.
  */
+/**
+ * Whether a `[DEVICE_MEMBERSHIPS]` line is a device part-way through being seated: every status
+ * `active` or an untouched `pending(welcome=false,adding=false)`, at least one of each, `count` the
+ * number of statuses and `stranded` the number still pending (see the `ROW_RULES` entry using it).
+ *
+ * @param {string} line
+ */
+export function mintedDeviceSeating(line) {
+  const m = /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=(\d+) statuses=(\S+)$/.exec(line);
+  if (!m) return false;
+  const statuses = [...m[3].matchAll(/([0-9a-f]{8}):(active|pending\(welcome=false,adding=false\)),?/g)];
+  if (statuses.map((s) => s[0]).join('') !== m[3]) return false;
+  const pending = statuses.filter((s) => s[2] !== 'active').length;
+  return statuses.length === Number(m[1]) && pending === Number(m[2]) && pending > 0 && pending < statuses.length;
+}
+
 const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6', 'ADM-9', 'ADM-10'];
 const THROTTLED = String.raw`repeat=10*, said at 1, 10, 100\.\.\.`;
 const ROW_RULES = [
@@ -1212,9 +1228,23 @@ const ROW_RULES = [
   // - DEV-6 (`originalArrivalOwn` firstSeatedMs).
   // DEV-3's alpha.4 window holds two of these lines.
   {
+    // `[0-9a-f]{8}` and never `\S+?` before each status: a lazy `\S+?` spans whole entries, so the
+    // first spelling claimed a line holding `pending(welcome=true,...)` too (found 2026-10-26).
     name: 'a minted device before it is seated',
-    tag: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=(\S+?:pending\(welcome=false,adding=false\),?)+$/,
-    shape: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=(\S+?:pending\(welcome=false,adding=false\),?)+$/,
+    tag: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=([0-9a-f]{8}:pending\(welcome=false,adding=false\),?)+$/,
+    shape: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=([0-9a-f]{8}:pending\(welcome=false,adding=false\),?)+$/,
+    rows: ['DEV-1', 'DEV-2', 'DEV-3', 'DEV-4', 'DEV-6'],
+  },
+  // ...and the SAME minted device while it is being seated (alpha.5 DEV-2, 2026-10-26): each external
+  // join turns one `pending` into `active`, so its next read says `stranded=` one fewer. Claimed only
+  // when the line is CONSISTENT - every status `active` or the untouched `pending(welcome=false,
+  // adding=false)`, at least one of each, `count` the number of statuses and `stranded` the number
+  // still pending. Any other mix (`adding=true`, a welcome queued, a count that disagrees) is not this
+  // join and stays with the general classifier, where `stranded` not 0 is the finding.
+  {
+    name: 'a minted device being seated',
+    tag: { test: mintedDeviceSeating },
+    shape: { test: mintedDeviceSeating },
     rows: ['DEV-1', 'DEV-2', 'DEV-3', 'DEV-4', 'DEV-6'],
   },
   {
@@ -1433,7 +1463,11 @@ export function rowVerdict(line, row) {
   if (ERROR_LEVEL.test(line) || SEVERE.some((r) => r.test(line))) return null;
   const family = ROW_RULES.filter((r) => r.tag.test(line));
   if (!family.length) return null;
-  const rule = family.find((r) => r.shape.test(line));
+  // A LINE TWO RULES READ IS JUDGED BY THE ONE THAT NAMES THIS ROW. `decline answered` (ADM-2/4/9/10)
+  // and `decline answered in a race` (ADM-3) both read `outcome=withdrawn`; taking the first match
+  // made ADM-3's own Decline out-of-row whenever it won the race (alpha.5, 2026-10-26).
+  const shaped = family.filter((r) => r.shape.test(line));
+  const rule = shaped.find((r) => rowNamed(r.rows, row)) ?? shaped[0];
   if (!rule) return { expected: false, rule: null, reason: 'a line of a 1.4.1 family in a shape nobody has read' };
   if (rowNamed(rule.rows, row)) return { expected: true, rule: rule.name, reason: `expected in ${row}` };
   return {
