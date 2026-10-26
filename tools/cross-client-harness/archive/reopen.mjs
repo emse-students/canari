@@ -107,8 +107,13 @@ export async function killSeat(seat, how) {
     // storage check below could not tell what the kill did from what was already broken.
     if (!quotaDbOf(seat.target.device)) throw new Error(`${seat.target.device}: rig - the profile has no quota database BEFORE the kill`);
     if ((await siteCookies(seat.cx)) === 0) throw new Error(`${seat.target.device}: rig - the browser holds no cookie for the site BEFORE the kill`);
+    // KILLED FIRST, ITS SOCKET CLOSED AFTER. A row's `armFault` lives on this connection, and closing
+    // the CDP session that enabled `Fetch` RELEASES every request it holds: the held commit and its
+    // answer reached the page, which merged them in the milliseconds before the process died. KILL-2
+    // ran ten "answer unseen" runs that way and every one of them saw its answer (2026-10-25).
+    const deadInMs = await killBrowser(seat.target.device.toLowerCase());
     seat.cx.close?.();
-    return { how, killedAt, deadInMs: await killBrowser(seat.target.device.toLowerCase()) };
+    return { how, killedAt, deadInMs };
   }
   const phone = await import('../phone.mjs');
   // `useDevice` in `phone.mjs`: the kill lands on the phone this seat names.

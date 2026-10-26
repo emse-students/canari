@@ -1203,7 +1203,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 | delivery | `PIN_INCORRECT` | 403 | wrong current PIN, or the lost compare-and-swap | PIN change |
 | delivery | `PIN_NOT_SET` | 400 | PIN change on an account with no PIN | PIN change |
 | core | `BLOCK_SELF`, `BLOCK_TARGET_NOT_FOUND`, `BLOCK_LIMIT_REACHED` (+`max`), `NOT_BLOCKED` | 400/404/422/404 | the block list | settings, blocked people |
-| core | `ADMIN_SELF_DEMOTE` | 403 | an administrator removes their own right | no screen calls it yet |
+| core | `ADMIN_SELF_DEMOTE`, `ADMIN_SELF_CHANGE` | 403 | an administrator removes, or otherwise writes, their own right | no screen calls it yet |
 | core | `USER_SEARCH_FILTER_REQUIRED`, `USER_SEARCH_TOO_LONG` (+`max`) | 400 | the directory with no filter, a search past 200 characters | `/directory` |
 
 `MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` were coded in
@@ -1413,7 +1413,7 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/group-invites/:token/accept` | Accept group invite |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Get pending invitations |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | Get device memberships |
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership status |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | POST | `/api/mls/kick-stale-user` | Reset all devices for a user to pending |
 | POST | `/api/mls/kick-stale-device` | Reset single device to pending |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership (own device; an admitted member of the group may end another user's row only while it is not `active`) |

@@ -954,11 +954,11 @@ describe('ChannelService - the community distribution group', () => {
 
     /** An actor holding exactly `permissions` in the community. */
     function arrangeActorRole(repos: ReturnType<typeof makeService>, permissions: string[]) {
-      repos.memberRepo.findOne.mockResolvedValue({
-        workspaceId: WORKSPACE,
-        userId: USER,
-        roleIds: ['r-admin'],
-      });
+      const actor = { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] };
+      repos.memberRepo.findOne.mockResolvedValue(actor);
+      // The community as a locked read sees it: the actor is a member, so a flip that grants them
+      // passes the grantee check (`assertGranteesAreMembers`).
+      repos.memberRepo.find.mockResolvedValue([actor]);
       repos.roleRepo.find.mockResolvedValue([{ id: 'r-admin', permissions, priority: 10 }]);
     }
 

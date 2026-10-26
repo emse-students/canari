@@ -176,6 +176,13 @@ export const INVITE_ROLE_NOT_GRANTABLE = 'INVITE_ROLE_NOT_GRANTABLE';
 export const ROLE_CHANGE_EXCEEDS_ACTOR = 'ROLE_CHANGE_EXCEEDS_ACTOR';
 
 /**
+ * The refusal code (409) of a membership write whose row is no longer the one it judged: its roles
+ * or permissions changed since the read, or the membership is gone. Nothing was written; reading
+ * the member again and retrying is the answer. Thrown by community and association role changes.
+ */
+export const MEMBER_CHANGED_MEANWHILE = 'MEMBER_CHANGED_MEANWHILE';
+
+/**
  * The refusal code of a pin or unpin by a member who may not moderate - whoever wrote the message.
  * A CODE, so a client maps the refusal from what the server typed rather than from its prose.
  */

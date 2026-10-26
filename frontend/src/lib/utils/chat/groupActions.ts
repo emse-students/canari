@@ -10,6 +10,7 @@ import { pinEntries } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
+import { clearGroupNotReady } from './notReadyRegistry';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
@@ -687,21 +688,39 @@ export async function forgetMlsGroupIfPresent(
 /**
  * Removes a sidebar / IndexedDB conversation row only (no MLS mutation).
  * Safe to call even when WASM no longer knows the groupId.
+ *
+ * `userId` names the account whose recovery marker goes with the row: see the comment on
+ * `clearGroupNotReady` below.
  */
 export async function purgeLocalConversationRecord(params: {
   conversations: Map<string, Conversation>;
   contactKey: string;
   groupId: string;
+  userId: string;
   deleteConversation?: (key: string) => Promise<void>;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { conversations, contactKey, groupId, deleteConversation, log } = params;
+  const { conversations, contactKey, groupId, userId, deleteConversation, log } = params;
   localStorage.removeItem(`discovery_pending:${groupId}`);
   // Same reason as the `discovery_pending` key above, and the same lifetime: per-conversation local
   // state may not outlive the conversation. This one was user-visible when it did.
   forgetGroupReconciliation(groupId);
+  // THE RECOVERY MARKER IS THE IDENTITY OF EVERY LATER RE-ADD, AND IT DIES WITH THE ROW (ADM-2,
+  // 2026-10-25). The SYNC_WATCHDOG enumerates the not-ready registry, which is persisted, so a
+  // marker written while an invitation-link ask waited survived discovery removing the declined
+  // ask: the next pass - after a reload, 27 s later - re-created the placeholder, tried an external
+  // join the server refused (403) and left the conversation listed as `removed`. Every caller of
+  // this function drops the row because the server no longer lists this account in the group, so no
+  // recovery is owed for it. The in-memory cooldown (`lastReAddAt`) is a throttle, schedules
+  // nothing, and stays.
+  clearGroupNotReady(userId, groupId);
   if (deleteConversation) {
-    await deleteConversation(contactKey).catch(() => {});
+    // Best-effort, never silent: a row left in the local store comes back at the next restore.
+    await deleteConversation(contactKey).catch((e: unknown) =>
+      log?.(
+        `[UI] Local conversation ${groupId} dropped from memory, but its stored row could not be deleted: ${String(e).slice(0, 120)}`
+      )
+    );
   }
   conversations.delete(contactKey);
   log?.(`[UI] Local conversation removed (${groupId})`);
@@ -725,7 +744,7 @@ export async function purgeOrphanGroup(params: {
   if (mlsChanged) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
-  await purgeLocalConversationRecord({ ...uiParams, groupId, log });
+  await purgeLocalConversationRecord({ ...uiParams, groupId, userId, log });
 }
 
 /** Returns whether the group is still active for this user on the server (null = unknown). */
