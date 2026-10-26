@@ -25,6 +25,7 @@ import {
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   TIER_NOT_A_RISE,
   TIER_NOT_RANKABLE,
+  PAYMENT_ROUTING_CHANGED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -33,6 +34,7 @@ import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
+import { lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
   PurchaseRecord,
@@ -53,6 +55,7 @@ import {
   isDelegating,
   resolvePaymentTarget,
   fetchActivePaymentProvider,
+  type PaymentProviderId,
   type PaymentTarget,
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -192,6 +195,16 @@ const TIER_RANK_COLUMNS = {
   priceMatrix: true,
 } as const;
 
+/** What `preparePurchase` fetched from other services, for `decidePurchase` to use under the lock. */
+interface PreparedPurchase {
+  associationId: string;
+  productId: string;
+  provider: PaymentProviderId;
+  paymentTarget: PaymentTarget;
+  vendorToken: string;
+  profile: { promo: number | null; formation: string | null };
+}
+
 /** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
 interface ResolvedPurchase {
   asso: Association;
@@ -292,12 +305,22 @@ export class ProductsService {
    * actually delegates.
    */
   private async resolvePaymentTargetFor(asso: Association): Promise<PaymentTarget> {
-    const [provider, parent] = await Promise.all([
-      fetchActivePaymentProvider(this.httpService),
-      isDelegating(asso)
-        ? this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
-        : Promise.resolve(null),
-    ]);
+    return this.routeWith(asso, await this.activePaymentProvider());
+  }
+
+  /** The platform's active payment provider: a call to core-service. */
+  private activePaymentProvider(): Promise<PaymentProviderId> {
+    return fetchActivePaymentProvider(this.httpService);
+  }
+
+  /**
+   * The payment target of `asso` under a provider ALREADY fetched: reads the delegation parent by
+   * id and calls nothing, so it may run under a lock (`decidePurchase`).
+   */
+  private async routeWith(asso: Association, provider: PaymentProviderId): Promise<PaymentTarget> {
+    const parent = isDelegating(asso)
+      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
+      : null;
     return resolvePaymentTarget(asso, parent, provider);
   }
 
@@ -352,14 +375,17 @@ export class ProductsService {
   private async resolveGridPrice(
     matrix: PriceMatrix,
     userId: string,
-    associationId: string
+    associationId: string,
+    profile: { promo: number | null; formation: string | null }
   ): Promise<CellValue> {
-    const facts = await this.pricingFacts.build({
-      userId,
-      associationId,
-      needProfile: dimensionsNeedProfile(matrix.dimensions),
-    });
-    return resolveCellPrice(matrix, facts, 'product');
+    // The profile was fetched BEFORE the buyer's tier lock (`preparePurchase`): only the
+    // cotisation half is built here, and `needProfile: false` keeps it from calling core-service.
+    const facts = await this.pricingFacts.build({ userId, associationId, needProfile: false });
+    return resolveCellPrice(
+      matrix,
+      { ...facts, promo: profile.promo, formation: profile.formation },
+      'product'
+    );
   }
 
   /**
@@ -1305,16 +1331,13 @@ export class ProductsService {
     // The rank, the amount and the attempt row are decided under the buyer's tier lock, so a
     // settlement of a sibling tier cannot commit between the rank this checkout reads and the row
     // it writes: whichever takes the lock second reads the other's commit.
+    // Everything that calls another service is decided BEFORE the lock (`preparePurchase`).
+    const prepared = await this.preparePurchase(associationId, productId, userId);
     let opened: { resolved: ResolvedPurchase; checkout: ProductCheckout };
     try {
       opened = await this.checkoutRepo.manager.transaction(async (manager) => {
         await this.lockBuyerTiers(manager, associationId, userId);
-        const resolved = await this.resolvePurchase(
-          associationId,
-          productId,
-          userId,
-          customAmountCents
-        );
+        const resolved = await this.decidePurchase(prepared, userId, customAmountCents);
         const checkout = await manager.save(
           ProductCheckout,
           this.checkoutRepo.create({
@@ -1720,25 +1743,15 @@ export class ProductsService {
   }
 
   /**
-   * Serialises, for the length of `manager`'s transaction, everything that ranks or changes ONE
-   * buyer's tiers in ONE association: a checkout opening (rank + amount + attempt row) and a
-   * settlement (re-rank + grant + XOR). A transaction-scoped advisory lock - released by the commit
-   * or rollback, never by a clock - so the second comer blocks until the first commits, and then
-   * reads its commit (READ COMMITTED): the tier state is always read AFTER the lock is held.
-   *
-   * Key: `pg_advisory_xact_lock(hashtextextended('tier:<associationId>:<userId>', 0))`, the one-key
-   * 64-bit form this repo already uses for seat locks. The `tier:` prefix keeps it apart from any
-   * other advisory key; a 64-bit hash collision between two buyers could only make them wait for
-   * each other, never let two writers of one buyer through.
+   * Takes the buyer's tier lock (`lockBuyerTiers` in `users/buyer-tier-lock.ts`, the ONE
+   * implementation every grant path shares) and logs it.
    */
   private async lockBuyerTiers(
     manager: EntityManager,
     associationId: string,
     userId: string
   ): Promise<void> {
-    await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      `tier:${associationId}:${userId}`,
-    ]);
+    await lockBuyerTiers(manager, associationId, userId);
     this.logger.debug(
       `[SHOP] tier lock held: association=${associationId.slice(0, 8)} user=${userId.slice(0, 8)}`
     );
@@ -1959,7 +1972,8 @@ export class ProductsService {
   }
 
   /**
-   * Loads product/association, validates purchase rules, and resolves the amount in cents.
+   * Loads product/association, validates purchase rules, and resolves the amount in cents:
+   * `preparePurchase` (everything that calls another service) then `decidePurchase`.
    */
   private async resolvePurchase(
     associationId: string,
@@ -1967,6 +1981,20 @@ export class ProductsService {
     userId: string,
     customAmountCents?: number
   ): Promise<ResolvedPurchase> {
+    const prepared = await this.preparePurchase(associationId, productId, userId);
+    return this.decidePurchase(prepared, userId, customAmountCents);
+  }
+
+  /**
+   * The half of a purchase that CALLS other services, run BEFORE the buyer's tier lock: the active
+   * payment provider (core-service), the routing it gives, and - for a grid priced on promo or
+   * formation - the buyer's profile (core-service). A slow peer must never hold the lock.
+   */
+  private async preparePurchase(
+    associationId: string,
+    productId: string,
+    userId: string
+  ): Promise<PreparedPurchase> {
     const [asso, product] = await Promise.all([
       this.assoRepo.findOne({ where: { id: associationId } }),
       this.productRepo.findOne({ where: { id: productId, associationId } }),
@@ -1979,7 +2007,8 @@ export class ProductsService {
     }
 
     // Route to the association's own account, or an approved parent's when delegating.
-    const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    const provider = await this.activePaymentProvider();
+    const paymentTarget = await this.routeWith(asso, provider);
     const vendorToken = paymentTarget.connectAccountId;
     if (!paymentTarget.ready || !vendorToken) {
       throw new BadRequestException(
@@ -1987,6 +2016,49 @@ export class ProductsService {
           ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
           : 'Association has not completed onboarding to receive payments'
       );
+    }
+    const profile = await this.pricingFacts.profileFor(
+      userId,
+      product.priceMatrix ? dimensionsNeedProfile(product.priceMatrix.dimensions) : false
+    );
+    return { associationId, productId, provider, paymentTarget, vendorToken, profile };
+  }
+
+  /**
+   * The half of a purchase that reads only this database, so it may run under the buyer's tier
+   * lock: reloads the association and the product BY ID, re-validates the routing
+   * `preparePurchase` decided against them (`routeWith`, no call: same provider, the parent read by
+   * id) and refuses `PAYMENT_ROUTING_CHANGED` if it no longer holds - then ranks and prices.
+   */
+  private async decidePurchase(
+    prepared: PreparedPurchase,
+    userId: string,
+    customAmountCents?: number
+  ): Promise<ResolvedPurchase> {
+    const { associationId, productId, paymentTarget, vendorToken } = prepared;
+    const [asso, product] = await Promise.all([
+      this.assoRepo.findOne({ where: { id: associationId } }),
+      this.productRepo.findOne({ where: { id: productId, associationId } }),
+    ]);
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!product) throw new NotFoundException('Product not found');
+    if (!product.isActive) {
+      throw new NotFoundException('Product not found or inactive');
+    }
+    const now = await this.routeWith(asso, prepared.provider);
+    if (
+      !now.ready ||
+      now.connectAccountId !== paymentTarget.connectAccountId ||
+      now.targetAssociationId !== paymentTarget.targetAssociationId
+    ) {
+      this.logger.warn(
+        `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
+          'routing changed while the purchase was being prepared'
+      );
+      throw new ConflictException({
+        code: PAYMENT_ROUTING_CHANGED,
+        message: 'The payment account of this association changed while the purchase was opened.',
+      });
     }
 
     const facts = await this.tierFactsOf(asso, userId);
@@ -2000,7 +2072,12 @@ export class ProductsService {
       // and `memberPriceTag` decide nothing while one is set. Two mechanisms for "some people pay
       // less" would need an order between them, and an order that decides money is the priority
       // rule this whole design exists in order not to have.
-      const cell = await this.resolveGridPrice(product.priceMatrix, userId, associationId);
+      const cell = await this.resolveGridPrice(
+        product.priceMatrix,
+        userId,
+        associationId,
+        prepared.profile
+      );
       if (cell === null) {
         this.logger.log(
           `[SHOP] purchase refused by the grid: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} - ` +
@@ -2407,7 +2484,15 @@ export class ProductsService {
     } else if (product.priceMatrix) {
       // The beneficiary is known, so their cell is known: falling back to `amountCents` here would
       // record a cash sale at a price the grid never quoted, and `amountCents` may not even be set.
-      const cell = await this.resolveGridPrice(product.priceMatrix, dto.userId, associationId);
+      const cell = await this.resolveGridPrice(
+        product.priceMatrix,
+        dto.userId,
+        associationId,
+        await this.pricingFacts.profileFor(
+          dto.userId,
+          dimensionsNeedProfile(product.priceMatrix.dimensions)
+        )
+      );
       if (cell === null) {
         throw new BadRequestException(
           'The pricing grid does not sell this product to that person, so there is no amount to record.'
@@ -2621,6 +2706,9 @@ export class ProductsService {
     const { product, userId, amountCents, paymentMethod, stripePaymentIntentId, grantedBy } =
       params;
     return this.productRepo.manager.transaction(async (manager) => {
+      // A cash sale grants and swaps tiers like a settlement: the same lock, so the two cannot
+      // interleave for one buyer. A manager's sale is not ranked - it may be a deliberate downgrade.
+      await this.lockBuyerTiers(manager, product.associationId, userId);
       await this.grantPurchaseTag(
         manager,
         product,

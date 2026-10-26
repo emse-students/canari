@@ -248,18 +248,40 @@ paid while it is no longer `none` or `higher` against what the buyer holds NOW i
 payment but NOT granted, so the XOR cannot replace the held tier, and it is logged at ERROR - a
 refund is owed.
 
-**One lock per buyer per association decides the order.** A checkout opening (rank, amount, attempt
-row) and a settlement (re-rank, grant, XOR) each run in a transaction that first takes
-`pg_advisory_xact_lock(hashtextextended('tier:<associationId>:<userId>', 0))` (`lockBuyerTiers`) -
-the one-key 64-bit form the chat service already uses for its seat locks, namespaced by the `tier:`
-prefix. The second comer blocks until the first COMMITS, and reads the buyer's tiers only after it
-holds the lock, so under READ COMMITTED it sees the first one's grant: two concurrent settlements of
-sibling tiers grant exactly one. No clock, no retry: the lock is released by the commit or rollback
-alone. A hash collision between two buyers could only make them wait for each other. The settlement
-takes this lock BEFORE its row lock (`FOR UPDATE`), the order every path follows. The manual grants
-do not take it. `product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL (two
-concurrent settlements; a settlement and a checkout opening each blocked on a held lock, then
-re-reading the grant made under it); with the lock removed, all three fail.
+**One lock per buyer per association decides the order.** Every path that ranks, grants or swaps a
+buyer's tiers runs in a transaction that first takes
+`pg_advisory_xact_lock(hashtextextended('tier:<associationId>:<userId>', 0))` (`lockBuyerTiers` in
+`users/buyer-tier-lock.ts`, the one implementation) - the one-key 64-bit form the chat service
+already uses for its seat locks, namespaced by the `tier:` prefix. The second comer blocks until the
+first COMMITS, and reads the buyer's tiers only after it holds the lock, so under READ COMMITTED it
+sees the first one's grant: two concurrent settlements of sibling tiers grant exactly one. No clock,
+no retry: the lock is released by the commit or rollback alone. A hash collision between two buyers
+could only make them wait for each other. Settlement takes this lock BEFORE its row lock
+(`FOR UPDATE`), the order every path follows.
+
+| Path | Takes the lock |
+| --- | --- |
+| Checkout opening (rank, amount, attempt row) | yes |
+| Settlement (re-rank, grant, XOR) | yes |
+| Cash sale (`grantProductPurchase`) | yes |
+| `grantCotisant` - the roster picker, a paid form's grant | yes |
+| Legacy claim (`grantCotisantUnlessHeld`: "already holds one" is re-read under the lock) | yes |
+| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | yes |
+| Tier retag on a product edit (`planTierRetag`) | no - one bulk rename across every holder of a tier, with no single buyer to key on |
+| Tag revocation | no - it removes, never grants or swaps |
+
+**Nothing that calls another service runs under the lock**, so a slow peer can never hold a buyer
+waiting. A checkout opening is split in two: `preparePurchase` fetches the active payment provider,
+the routing it gives and, for a grid priced on promo or formation, the buyer's profile - all before
+the lock; `decidePurchase`, under it, reads only this database. It reloads the association and the
+product by id and recomputes the routing with the provider already fetched; if the account or the
+target association no longer matches, it refuses `409 PAYMENT_ROUTING_CHANGED` - no retry, nothing
+opened, and trying again uses the new account.
+
+`product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL, asserting the wait
+through `pg_locks` rather than a timer: two concurrent settlements; a settlement and a checkout
+opening each blocked on a held lock, then re-reading the grant made under it; a manual grant and a
+settlement queued on one buyer's lock, ending on exactly one tier. With the lock removed, each fails.
 
 A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The manual
 paths (`grantCotisant`, the cash grant) are a manager's decision and are NOT ranked: a manager may

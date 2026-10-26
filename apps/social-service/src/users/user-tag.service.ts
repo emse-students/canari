@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { lockBuyerTiers } from './buyer-tier-lock';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
@@ -231,6 +232,55 @@ export class UserTagService {
     variantKey: string | null = null,
     metadata: Record<string, unknown> = {}
   ): Promise<UserTag> {
+    const tag = await this.grantCotisantLocked(
+      assocId,
+      userId,
+      grantedBy,
+      variantKey,
+      metadata,
+      false
+    );
+    if (!tag) throw new Error('grantCotisant: no tag granted without unlessHoldingAny');
+    return tag;
+  }
+
+  /**
+   * `grantCotisant`, except that it grants NOTHING (and answers null) when the user already holds
+   * any tier of the association - asked UNDER the buyer's tier lock, so a tier paid for at the same
+   * moment is seen and kept instead of being swapped out by the XOR. The legacy claim's path: a
+   * cotisation bought in Canari outranks anything a legacy list says.
+   */
+  async grantCotisantUnlessHeld(
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>
+  ): Promise<UserTag | null> {
+    return this.grantCotisantLocked(assocId, userId, grantedBy, variantKey, metadata, true);
+  }
+
+  /**
+   * Grants a raw tag in the name of `assocId` (the admin's "grant a tag" endpoint) under the
+   * buyer's tier lock: the tag may be one of the association's tier tags, so it must not interleave
+   * with a settlement or another grant ranking or swapping that buyer's tiers.
+   */
+  async grantTagForAssociation(assocId: string, data: GrantTagData): Promise<UserTag> {
+    return this.repo.manager.transaction(async (manager) => {
+      await lockBuyerTiers(manager, assocId, data.userId);
+      return this.grantOrRenew({ ...data, issuingAssocId: assocId }, manager);
+    });
+  }
+
+  /** The body of `grantCotisant` / `grantCotisantUnlessHeld`, see both. */
+  private async grantCotisantLocked(
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>,
+    unlessHoldingAny: boolean
+  ): Promise<UserTag | null> {
     const rows: { slug: string; cotisationMode: CotisationMode | null }[] =
       await this.repo.manager.query(
         `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
@@ -263,7 +313,16 @@ export class UserTagService {
     this.logger.debug(
       `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName}`
     );
+    // The grant and the XOR run under the buyer's tier lock, like a settlement's: whatever the
+    // buyer holds is read only once the lock is held.
     return this.repo.manager.transaction(async (manager) => {
+      await lockBuyerTiers(manager, assocId, userId);
+      if (unlessHoldingAny && (await this.holdsAnyCotisation(userId, assocId))) {
+        this.logger.debug(
+          `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+        );
+        return null;
+      }
       const tag = await this.grantOrRenew(
         { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
         manager

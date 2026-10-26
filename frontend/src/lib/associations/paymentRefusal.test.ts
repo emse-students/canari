@@ -144,6 +144,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'The payment account of this association changed while the purchase was opened.',
+          'PAYMENT_ROUTING_CHANGED',
+          409
+        )
+      )
+    ).toBe(m.shop_payment_routing_changed());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'A checkout of this product is already being opened.',
           'CHECKOUT_IN_PROGRESS',
           409

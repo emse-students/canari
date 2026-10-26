@@ -1179,10 +1179,9 @@ export class AssociationsController {
     @Headers('x-user-id') grantedBy: string,
     @Body() dto: GrantTagDto
   ) {
-    return this.userTagService.grantOrRenew({
+    return this.userTagService.grantTagForAssociation(id, {
       userId: dto.userId,
       tagName: dto.tagName,
-      issuingAssocId: id,
       grantedBy,
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
     });

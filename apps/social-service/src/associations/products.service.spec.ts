@@ -1907,12 +1907,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         })
       );
       userTagService.hasActiveTag.mockResolvedValue(true);
-      pricingFacts.build.mockResolvedValue({
-        promo: 2024,
-        formation: 'ICM',
-        cotisationTiers: [],
-        answers: {},
-      });
+      // The profile is fetched before the tier lock, the cotisation half under it.
+      pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: 'ICM' });
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(9000);
@@ -1947,12 +1943,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           priceMatrix: promoGrid({ b1: 7000, b2: null, _others: 12000 }),
         })
       );
-      pricingFacts.build.mockResolvedValue({
-        promo: 2024,
-        formation: null,
-        cotisationTiers: [],
-        answers: {},
-      });
+      pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
 
       await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
         BadRequestException
@@ -1990,6 +1981,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(pricingFacts.build).toHaveBeenCalledWith(
         expect.objectContaining({ needProfile: false })
       );
+      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
     });
 
     it('refuses a grid that prices on a question, which only a form has', async () => {
@@ -2478,6 +2470,30 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           ['tier:asso1:user1'],
           ['tier:asso1:user1'],
         ]);
+      });
+
+      it('refuses PAYMENT_ROUTING_CHANGED when the payment account changes while the routing is fetched, and opens nothing', async () => {
+        const t = cercleBuyer();
+        const fetchProvider = (t.service as any).activePaymentProvider.bind(t.service);
+        // The account changes while the call to the other service is in flight, i.e. between the
+        // routing decided outside the lock and its re-validation under it.
+        jest.spyOn(t.service as any, 'activePaymentProvider').mockImplementation(() => {
+          t.assoRepo.findOne.mockResolvedValue(
+            asso({ slug: 'cercle', cotisationMode: 'lifetime', lydiaAccountId: 'acct_2' })
+          );
+          return fetchProvider();
+        });
+
+        const err = await t.open('prod-avec').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'PAYMENT_ROUTING_CHANGED'
+        );
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+        expect(t.checkouts.rows).toEqual([]);
       });
 
       it("opening a tier cancels the buyer's open attempt of a SIBLING tier first", async () => {

@@ -129,7 +129,9 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
         post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
       },
       // Payments are routed and ready: what is under test is the rank, not the routing.
-      resolvePaymentTargetFor: () =>
+      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      activePaymentProvider: () => Promise.resolve('lydia'),
+      routeWith: () =>
         Promise.resolve({
           ready: true,
           delegated: false,
@@ -204,8 +206,18 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       (value) => ({ value, error: null as unknown }),
       (e: unknown) => ({ value: null as T | null, error: e })
     );
+    expect(await waitersReach(1)).toBe(1);
+    await admin.query('COMMIT');
+    return pending;
+  }
+
+  /**
+   * Reads `pg_locks` until `n` sessions wait on an advisory lock, or a bounded number of reads has
+   * gone by; answers the last count. A read loop, never a clock.
+   */
+  async function waitersReach(n: number): Promise<number> {
     let waiting = 0;
-    for (let i = 0; i < 10_000 && waiting === 0; i++) {
+    for (let i = 0; i < 10_000 && waiting < n; i++) {
       const [row] = (
         await admin.query(
           `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
@@ -213,10 +225,41 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       ).rows as { n: number }[];
       waiting = row.n;
     }
-    expect(waiting).toBe(1);
-    await admin.query('COMMIT');
-    return pending;
+    return waiting;
   }
+
+  /** Settles a promise into a value or an error, so a test can await it after a commit. */
+  const settled = <T>(p: Promise<T>) =>
+    p.then(
+      (value) => ({ value, error: null as unknown }),
+      (e: unknown) => ({ value: null as T | null, error: e })
+    );
+
+  it('a manual grant and a settlement for one buyer queue on the same lock, and end on ONE tier', async () => {
+    const buyer = newBuyer();
+    const a = await openAttempt(buyer, TIER_A);
+
+    await admin.query('BEGIN');
+    await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `tier:${ASSO}:${buyer}`,
+    ]);
+    // The manager's grant of tier B waits for the lock ...
+    const manual = settled(tags.grantCotisant(ASSO, buyer, 'manager', 'b'));
+    expect(await waitersReach(1)).toBe(1);
+    // ... and so does the payment of tier A.
+    const paid = settled(settle(a.id));
+    expect(await waitersReach(2)).toBe(2);
+    await admin.query('COMMIT');
+    const [m, p] = await Promise.all([manual, paid]);
+
+    expect(m.error).toBeNull();
+    expect(p.error).toBeNull();
+    // In either order the outcome is the manager's tier: granted first, it makes A a non-rise; granted
+    // second, it swaps A out by the XOR, as a manual grant is meant to.
+    expect(await heldTags(buyer)).toEqual([TAG_B]);
+    const [row] = await ds.query(`SELECT status FROM product_checkouts WHERE id = $1`, [a.id]);
+    expect(row.status).toBe('paid');
+  });
 
   it('two CONCURRENT settlements of sibling tiers grant exactly ONE, and record both payments', async () => {
     const buyer = newBuyer();
