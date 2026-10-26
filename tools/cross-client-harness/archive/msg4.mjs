@@ -16,7 +16,7 @@ import { fixture } from '../fixtures.mjs';
 import { APP_TAB, attachFiles, awaitMessage, client, countMessage, ensureChat, evaluate, openConversation, pollFact, realClick, until } from '../chat.mjs';
 import { gate, report, watch } from '../watch.mjs';
 import { record, mark, exitOnRecorded } from '../results.mjs';
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
 
 
 const w1 = await client(PORTS.W1, APP_TAB);
