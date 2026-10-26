@@ -902,8 +902,10 @@ const NOTABLE = [
   /\[SEND\]\[send-[0-9a-f]+\] PENDING_ADMITTED group=\S+ frameEpoch=\d+ devices=\S+$/,
   // AN INVITEE ENROLLED BY THE COMMIT THAT ADDS IT (#2419, `messaging.service.ts`): one line per
   // newcomer, in the accept transaction. Met unexplained on FLOOR-2's first alpha.4 PASS (2026-10-25).
-  // Its refusals (`departed_since_base`, `blocked`) are a different sentence and stay unmatched.
-  /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] ENROLLED by commit group=\S+ user=[0-9a-f]{8} committer=[0-9a-f]{8}$/,
+  // `decidedBy=invitation` only (#2505): the Add says when it was decided. `decidedBy=base_epoch` is
+  // an Add ordered by its base epoch alone - an older client - and stays unmatched. So do the
+  // refusals (`NOT_ENROLLED`, a different sentence).
+  /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] ENROLLED by commit group=\S+ user=[0-9a-f]{8} committer=[0-9a-f]{8} decidedBy=invitation$/,
   // ...AND THE ADMISSION A KEY GROUP'S COMMIT ASKED FOR, per scope (a salon or a community): how many
   // people it named and how many the scope entitles. One per commit, met on RM-4 (2026-10-25).
   /\[COMMIT\]\[commit-[0-9a-f]+\] ADMITS_ASKED group=\S+ (?:channel|workspace)=\S+ people=\d+ entitled=\d+$/,
@@ -1228,13 +1230,49 @@ const ROW_RULES = [
     shape: /\[[A-Z_]+\]\[[^\]]+\] ADMITTED group=\S+ users=\d+ door=(admits|welcome) - a member's Add answered their invitation-link ask$/,
     rows: ['ADM-1', 'ADM-3', 'ADM-5', 'ADM-6', 'ADM-9'],
   },
-  // AN ADD WHOSE PERSON LEFT SINCE ITS BASE, refused at the commit gate (`messaging.service.ts`):
-  // the Add carried a seat a Decline withdrew. ADM-10 orders it so on purpose and ASSERTS the line;
-  // ADM-3 races the two and meets it whenever the Decline wins.
+  // ── #2505: A DECLINE HOLDS AGAINST AN ADD DECIDED BEFORE IT, AND THE GATE REFUSES THE COMMIT WHOLE ──
+  // (`messaging.service.ts` `enrolAdmittedPeople`). One `NOT_ENROLLED` per refused person, then the
+  // commit's own `REJECT admit_refused`, answered `200 {accepted: false, reason: 'admit_refused'}`;
+  // nothing advanced. ADM-10 orders a held Add after a settled Decline and ASSERTS both lines; ADM-3
+  // races the two and meets them whenever the Decline wins. ADM-6's v1.4.0 member re-adding a refused
+  // person is refused the same way, once per connection (its Add carries no invitation generation,
+  // hence `departed_and_undated`). `committer_not_on_roster` and `blocked` are refusals no row plays.
   {
-    name: 'stale Add refused at the gate',
+    name: 'an Add refused whole at the gate: the person',
     tag: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED /,
-    shape: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=\S+ user=[0-9a-f]{1,8} reason=departed_since_base baseSeatGeneration=\d+ committer=[0-9a-f]{1,8} - its admits dropped, the leaf has no seat$/,
+    shape: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=\S+ user=[0-9a-f]{1,8} reason=(departed_since_decision decidedAtSeatGeneration=\d+ decidedBy=(invitation|base_epoch) seat=(awaiting|none)|departed_and_undated decidedBy=base_epoch seat=awaiting) committer=[0-9a-f]{1,8} - the commit is refused whole$/,
+    rows: ['ADM-3', 'ADM-6', 'ADM-10'],
+  },
+  {
+    name: 'an Add refused whole at the gate: the commit',
+    tag: /\[COMMIT\]\[commit-[0-9a-f]+\] REJECT (admit_refused|committer_not_on_roster) /,
+    shape: /\[COMMIT\]\[commit-[0-9a-f]+\] REJECT admit_refused group=\S+ baseEpoch=\d+ users=[0-9a-f]{1,8}(,[0-9a-f]{1,8})* - the commit would give them a leaf no seat holds; nothing advanced$/,
+    rows: ['ADM-3', 'ADM-6', 'ADM-10'],
+  },
+  // The refused Add carried the person's Welcome: refused before it is stored. The new client sends
+  // the Welcome with the Add's commit, so the rows that meet the refusal may meet this one with it.
+  {
+    name: 'a Welcome for a person the commit may not admit',
+    tag: /\[COMMIT\]\[commit-[0-9a-f]+\] REJECT welcome_target_not_admitted /,
+    shape: /\[COMMIT\]\[commit-[0-9a-f]+\] REJECT welcome_target_not_admitted group=\S+ target=\S+:\S+ - the Welcome it carries is for a person this commit may not admit$/,
+    rows: ['ADM-3', 'ADM-10'],
+  },
+  // An awaiting seat lifted by an Add that names no invitation generation (an older client's Add,
+  // ordered by its base epoch alone): WARN, so its rate is counted. ADM-6's v1.4.0 member is that
+  // client; in any other row it is an Add that lost its date.
+  {
+    name: 'an ask answered by an undated Add',
+    tag: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] ADMITTED_UNDATED /,
+    shape: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] ADMITTED_UNDATED group=\S+ user=[0-9a-f]{1,8} committer=[0-9a-f]{1,8} decidedBy=base_epoch decidedAtSeatGeneration=\d+ seat=awaiting - an Add with no invitation generation answered an ask$/,
+    rows: ['ADM-6'],
+  },
+  // The member-add route asked for a person no accepted commit admitted: it writes nothing. The new
+  // client still calls it after its Add, so the rows whose Add is refused (ADM-3 when the Decline
+  // wins, ADM-10) meet it once.
+  {
+    name: 'the member-add route refusing a person not admitted',
+    tag: /\[ADD_MEMBER\]\[add-member-[0-9a-f]+\] REFUSED not_admitted /,
+    shape: /\[ADD_MEMBER\]\[add-member-[0-9a-f]+\] REFUSED not_admitted group=\S+ user=[0-9a-f]{1,8} reason=(no_seat|awaiting_admission) caller=([0-9a-f]{1,8}|none) - no accepted commit admitted them; nothing written$/,
     rows: ['ADM-3', 'ADM-10'],
   },
   // The waiting seat's own commit refused at the gate - nothing it does admits anyone.

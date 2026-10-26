@@ -127,17 +127,77 @@ export const ADMISSION_ENDINGS = {
 /** Whether an `apiCall` answer is the waiting seat's refusal. */
 export const isAwaitingRefusal = (r) => r?.status === 409 && /awaiting_admission/.test(String(r?.body ?? ''));
 
+/** The reasons the commit gate gives when a Decline holds against an Add (#2505). */
+export const DEPARTED_REASONS = ['departed_since_decision', 'departed_and_undated'];
+
 /**
- * ADM-10's first door: the commit gate's refusal of an Add whose person left since its base. Only
- * `reason=departed_since_base` counts. Another `NOT_ENROLLED` is a different refusal, and it would
- * pass the row on a gate that never weighed the Decline. The gate names the user by an 8-hex prefix.
+ * The commit gate's per-person refusals of `user` in `group` (#2505, `enrolAdmittedPeople`):
+ * `NOT_ENROLLED ... - the commit is refused whole`. Only a reason in `reasons` counts, by default the
+ * two a Decline produces. Another `NOT_ENROLLED` (`committer_not_on_roster`, `blocked`) is a
+ * different refusal, and it would pass the row on a gate that never weighed the Decline. The gate
+ * names the user by an 8-hex prefix.
  */
-export function gateRefusals(lines, group, user) {
+export function gateRefusals(lines, group, user, reasons = DEPARTED_REASONS) {
   const prefix = String(user).toLowerCase().slice(0, 8);
   return (lines ?? []).filter((l) => {
-    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=(\S+) user=([0-9a-f]+) reason=(\S+)/.exec(l);
-    return m !== null && m[1] === group && m[2] === prefix && m[3] === 'departed_since_base';
+    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=(\S+) user=([0-9a-f]+) reason=(\S+) .* - the commit is refused whole$/.exec(l);
+    return m !== null && m[1] === group && m[2] === prefix && reasons.includes(m[3]);
   }).length;
+}
+
+/**
+ * The commits the gate refused WHOLE in `group` (#2505): `[COMMIT][trace] REJECT admit_refused` (or
+ * `committer_not_on_roster`), each with the people it would have admitted. Nothing advanced for any
+ * of them; the client is answered `200 {accepted: false, reason}`.
+ *
+ * @returns {{trace: string, reason: string, baseEpoch: number, users: string[]}[]}
+ */
+export function refusedCommits(lines, group) {
+  const out = [];
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] REJECT (admit_refused|committer_not_on_roster) group=(\S+) baseEpoch=(\d+) users=([0-9a-f,]+) - /.exec(l);
+    if (m && m[3] === group) out.push({ trace: m[1], reason: m[2], baseEpoch: Number(m[4]), users: m[5].split(',') });
+  }
+  return out;
+}
+
+/** How many refused-whole commits named `user` (by its 8-hex prefix) with reason `admit_refused`. */
+export const admitRefusedFor = (lines, group, user) =>
+  refusedCommits(lines, group).filter((r) => r.reason === 'admit_refused' && r.users.includes(String(user).toLowerCase().slice(0, 8))).length;
+
+/**
+ * AN ADMISSION NOBODY DATED, about `user` in `group`: `ENROLLED by commit ... decidedBy=base_epoch`
+ * (a new person enrolled by an Add ordered by its base epoch alone) or `ADMITTED_UNDATED` (an
+ * awaiting seat lifted that way). After a Decline, either is the person let back in by an Add that
+ * cannot say it came after - the ADM-3c rule (a re-ask with a killed committer, or a v1.4.0 committer).
+ */
+export function undatedAdmissions(lines, group, user) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  return (lines ?? []).filter((l) => {
+    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] (?:ENROLLED by commit|ADMITTED_UNDATED) group=(\S+) user=([0-9a-f]+) .*decidedBy=base_epoch/.exec(l);
+    return m !== null && m[1] === group && m[2] === prefix;
+  }).length;
+}
+
+/**
+ * Refused commits per CONNECTION of one device: `rejectAt` the refusals' instants, `closedAt` the
+ * instants its connection closed (`[presence] Explicit disconnect`). A v1.4.0 member re-adding a
+ * refused person is refused once per connection, and a second refusal inside one connection is a
+ * stage it did not clear - a wedge.
+ *
+ * @param {number[]} rejectAt
+ * @param {number[]} closedAt
+ * @returns {number[]} the count in each connection, in order (the last one still open)
+ */
+export function perConnection(rejectAt, closedAt) {
+  const cuts = [...closedAt].sort((a, b) => a - b);
+  const counts = new Array(cuts.length + 1).fill(0);
+  for (const t of rejectAt) {
+    let i = 0;
+    while (i < cuts.length && t > cuts[i]) i++;
+    counts[i]++;
+  }
+  return counts;
 }
 
 /**
