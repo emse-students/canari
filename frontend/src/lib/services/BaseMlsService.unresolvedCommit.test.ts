@@ -1722,7 +1722,7 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
     expect(after.delivery.sendWelcome).not.toHaveBeenCalled();
   });
 
-  it('a refusal a Welcome is not barred by (`already_active`) still owes it, said once', async () => {
+  it('a refusal a Welcome is not barred by (`already_active`) still owes it, said once at debug', async () => {
     const c = ctx(
       submitting({
         accepted: true,
@@ -1730,15 +1730,19 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
       })
     );
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
     const result = (await addOf(c)) as { notAdmitted: RefusedAdmit[] };
 
     expect(result.notAdmitted).toEqual([]);
+    // An ordinary answer to a re-Add: never at log level, where it would print on every such commit.
+    expect(log.mock.calls.flat().join(' | ')).not.toContain('did not record the admit');
     expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(G, ['u-b:d-b']);
-    expect(log.mock.calls.flat().join('\n')).toContain(
+    expect(debug.mock.calls.flat().join(' | ')).toContain(
       'did not record the admit of u-b:d-b (already_active) - its Welcome is sent and answered as before'
     );
     log.mockRestore();
+    debug.mockRestore();
   });
 
   it('a Welcome refused WELCOME_TARGET_UNKNOWN - the answer that named it was lost - is owed no longer', async () => {

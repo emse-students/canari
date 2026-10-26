@@ -385,8 +385,8 @@ const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailur
 };
 
 /**
- * The admits an ACCEPTED commit's answer says the gate did not record (`refusedAdmits`), each said
- * once, and of them the ones no Welcome can reach ({@link admitRefusalMakesWelcomeUndeliverable}) -
+ * The admits an ACCEPTED commit's answer says the gate did not record (`refusedAdmits`) - each said
+ * once, at debug unless it bars the Welcome - and of them the ones no Welcome can reach ({@link admitRefusalMakesWelcomeUndeliverable}) -
  * returned, so the merge owes them nothing and the caller sends them nothing.
  *
  * NEVER LEARNED BY FAILING (DEV-3, 2026-10-25): a device its owner revoked while a member's Add was
@@ -407,7 +407,8 @@ function undeliverableAdmits(groupId: string, refused: RefusedAdmit[] | undefine
           'erased) - no Welcome is owed or sent; its leaf has no seat and the stray sweep removes it'
       );
     } else {
-      console.log(
+      // At debug: `already_active` is an ordinary answer to a re-Add, not news on every commit.
+      console.debug(
         `[COMMIT] ${short}... the gate did not record the admit of ${who} ` +
           `(${sanitizeForLog(r.reason)}) - its Welcome is sent and answered as before`
       );
