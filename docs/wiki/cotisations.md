@@ -76,10 +76,34 @@ which `deriveCotisationTag(slug, mode, now, variantKey)` suffixes onto the tag
 (`cotisant:cercle-avec-alcool`) so each tier gets its own tag namespace. `variantLevel` is a reserved
 ordinal for a future "tier >= N" inclusion check (not used yet, see WP-COT-8).
 
-Admins manage tiers from the Cotisations tab (`EditCotisationsTab.svelte`, WP-COT-6): the
-auto-provisioned base tier (`variantKey: null`) is listed first; additional tiers are created with a
-name, price, and a required `variantKey`. Each tier's edit form can also set the upgrade-pricing link
-(`memberPriceTag` + `amountCentsMember`, next section) via a dropdown of sibling tiers.
+Admins manage tiers from the Cotisations tab (`EditCotisationsTab.svelte`, WP-COT-6); see "The tier
+editor" below for what the screen shows and why.
+
+### The tier editor
+
+Reworked on 2026-10-26 after the user found the screen "pas clair du tout". Three decisions:
+
+- **The key is a TECHNICAL id: never shown, never typed, never edited by a person.** A new tier is
+  created with a label and a price only; the client sends `deriveVariantKey: true` and
+  `ProductsService.create` derives the key from the label with `variantKeyFromLabel`
+  (`cotisation-tag.util.ts`: lowercase, ASCII-folded, hyphenated, `palier` for a label with no
+  letter or digit, `-2`/`-3`... until free among the association's tiers). It is FIXED afterwards:
+  the edit form never sends `variantKey`, so renaming a forfait leaves its tag and its cotisants
+  where they are. The server keeps honouring an explicit `variantKey` on create and update for
+  older clients, and refuses it alongside `deriveVariantKey`. The base tier keeps `variantKey: null`.
+- **The order is visible**: tiers are listed cheapest first, numbered (`tiersInPriceOrder` in
+  `frontend/src/lib/associations/cotisationTiers.ts`) - the product price is what a rise is ranked
+  by. A gridded or unpriced tier cannot be ranked and is listed last.
+- **A rise is a sentence**: "Un detenteur de [tier] qui passe a X paie [15] EUR au lieu de 30 EUR",
+  edited by `TierRiseEditor.svelte` over the unchanged stored pair `memberPriceTag` +
+  `amountCentsMember`, with a preview of the sentence and of the line the member reads in the shop.
+  Switched off, the editor says that a holder of another tier pays the FULL price - nothing
+  computes a complement. The pair is saved whole or not at all: a source tier with no amount is
+  cleared, since the checkout would charge the full price for it anyway.
+
+What this removed: the "changing the identifier transfers the cotisants" field. The server path
+(`planTierRetag`, next paragraph) still exists for an API caller, but no screen reaches it, so an
+association that wants its base tier to become a named one has no button for it any more.
 
 ### A new tier's key is derived from its label (server, 2026-10-26)
 
@@ -126,7 +150,8 @@ sibling XOR and the base tier (`variantKey: null`) are untouched.
 its un-suffixed tag answers `tier: null` on `cotisant-status` - which a consumer such as Le Cercle
 reads as "no forfait". A multi-tier association therefore has to get rid of it, two ways:
 
-- **Convert it.** `variantKey` is editable on an existing tier. `ProductsService.update` detects the
+- **Convert it** (server only since 2026-10-26 - see "The tier editor"). `variantKey` is
+  editable on an existing tier through the API. `ProductsService.update` detects the
   change, re-derives `grantedTagName`/`tagExpiresAt`, and - in the SAME transaction - renames the tag
   on every `user_tags` row the association issued under the old name. Because the tag is fully
   derived, nobody loses their cotisation over a re-labelling. A key already used by a sibling tier is
@@ -283,6 +308,11 @@ admin:
 | Sell/gate ordinary products (`type: 'other'`), set `membersOnly` + member price | **Paiements** (boutique) | `edit/EditBoutiqueTab.svelte` | `MANAGE_PRODUCTS` |
 | Create/edit `balance_topup` (Cercle) products + retry failed webhooks | **`/admin/cercle`** | `routes/admin/cercle/+page.svelte` | **global admin only** |
 | Set member pricing on a form | form create/edit | `routes/forms/create/+page.svelte` | `MANAGE_FORMS` |
+
+The **Achats** tab (`edit/EditAchatsTab.svelte`, purchases and cash sales) names every product
+through `frontend/src/lib/associations/productLabel.ts`: a Cercle top-up reads as its localized type,
+never as its stored name (one was seen as `balance_topup`), and a cash sale of a cotisation names the
+tier rather than the tag it grants. No admin screen shows a tag name or a tier key.
 
 The **product `type` dropdown was removed** from the boutique: membership is managed in the
 Cotisations tab, `balance_topup` moved to `/admin/cercle` (with a beneficiary-association selector,

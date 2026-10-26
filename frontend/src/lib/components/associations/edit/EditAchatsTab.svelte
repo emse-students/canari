@@ -15,6 +15,8 @@
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
+  import { productLabel, purchaseItemLabel } from '$lib/associations/productLabel';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { Log } from '$lib/utils/Log';
 
@@ -50,12 +52,14 @@
       ? purchases.filter((p) => p.productId === purchaseFilterProductId)
       : purchases
   );
+  /** Products by id, so a purchase line can be named by its product's type (a Cercle top-up). */
+  const productsById = $derived(new Map(products.map((p) => [p.id, p])));
   const filterOptions = $derived<PickerOption[]>([
     { value: '', label: m.asso_achats_filter_all() },
-    ...products.map((p) => ({ value: p.id, label: p.name })),
+    ...products.map((p) => ({ value: p.id, label: productLabel(p) })),
   ]);
   const grantProductOptions = $derived<PickerOption[]>(
-    grantableProducts.map((p) => ({ value: p.id, label: p.name }))
+    grantableProducts.map((p) => ({ value: p.id, label: productLabel(p) }))
   );
 
   onMount(loadPurchases);
@@ -199,8 +203,8 @@
       {/if}
     </div>
     <p class="text-text-muted text-xs">
-      {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
-        {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
+      {#if grantSelectedProduct?.type === 'membership'}
+        {m.asso_achats_grant_cotisation_hint({ name: grantSelectedProduct.name })}
       {:else}
         {m.asso_achats_grant_other_hint()}
       {/if}
@@ -248,7 +252,7 @@
                 {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>
               <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
-              <td class="text-text-main px-4 py-3">{purchase.productName}</td>
+              <td class="text-text-main px-4 py-3">{purchaseItemLabel(purchase, productsById)}</td>
               <td class="px-4 py-3">
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
@@ -264,7 +268,7 @@
               <td class="text-text-muted px-4 py-3">{paymentMethodLabel(purchase.paymentMethod)}</td
               >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
-                {(purchase.amountCents / 100).toFixed(2)} €
+                {formatAmount(purchase.amountCents)}
               </td>
             </tr>
           {/each}
