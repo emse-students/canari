@@ -1137,6 +1137,23 @@ check(
   // the general classifier, in an admission row too.
   check('R6 unclaimed   key material carried by reference (in ADM-3)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] key-material carried by reference: 9000B, budget 3734B'), 'ADM-3'), 'unclaimed');
   check('R6 unclaimed   a long frame carried by reference (in DEV-2)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] long frame carried by reference: 5000B, budget 3734B'), 'DEV-2'), 'unclaimed');
+  // TWO RULES READ ONE LINE: the one naming the row judges it (ADM-3's Decline winning, alpha.5).
+  {
+    const withdrawn = L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`);
+    check('R6 expected   a Decline that won the ADM-3 race (ADM-3)', verdictIn(withdrawn, 'ADM-3'), 'expected');
+    check('R6 expected   ... and the same line in ADM-2', verdictIn(withdrawn, 'ADM-2'), 'expected');
+    check('R6 dirt       ... and in a row no rule names (ADM-1)', verdictIn(withdrawn, 'ADM-1'), 'out-of-row');
+  }
+  // A MINTED DEVICE BEING SEATED (alpha.5 DEV-2): consistent mid-join lines are the DEV rows' own.
+  {
+    const seating = L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaaaaaa count=3 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),10ddf2b7:active,1589de4c:pending(welcome=false,adding=false)');
+    check('R6 expected   a minted device being seated (DEV-2)', verdictIn(seating, 'DEV-2'), 'expected');
+    check('R6 dirt       a minted device being seated (in ADM-1)', verdictIn(seating, 'ADM-1'), 'out-of-row');
+    check('R6 unclaimed   a seating line whose stranded disagrees with its statuses (in DEV-2)', verdictIn(seating.replace('stranded=2', 'stranded=1'), 'DEV-2'), 'unclaimed');
+    check('R6 unclaimed   a seating line whose count disagrees (in DEV-2)', verdictIn(seating.replace('count=3', 'count=4'), 'DEV-2'), 'unclaimed');
+    check('R6 unclaimed   a seating line with a welcome queued (in DEV-2)', verdictIn(seating.replace('10ddf2b7:active', '10ddf2b7:pending(welcome=true,adding=false)').replace('stranded=2', 'stranded=3'), 'DEV-2'), 'unclaimed');
+    check('R6 unclaimed   every group active is stranded=0, the general rule (in DEV-2)', verdictIn(L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaaaaaa count=1 stranded=0 statuses=10ddf2b7:active'), 'DEV-2'), 'unclaimed');
+  }
 
   // NEVER JUDGED PER ROW: an ERROR line gates as it always did, in the row of its family too.
   check('R6 [ADMISSION] at ERROR is never a row line', verdictIn(E('MessagingService', `[ADMISSION] group=${G} user=aaaaaaaa holds 1 active device(s) under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`), 'ADM-1'), 'unclaimed');
