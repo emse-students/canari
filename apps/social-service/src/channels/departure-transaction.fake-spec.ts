@@ -1,6 +1,7 @@
 import { Channel } from './entities/channel.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelRole } from './entities/channel-role.entity';
+import { WorkspaceInvite } from './entities/workspace-invite.entity';
 
 /** How a departure ended, keyed `groupId:userId:departure`, as `distribution_departures` holds it. */
 export type DecidedDepartures = Map<string, 'departed' | 'cancelled'>;
@@ -17,7 +18,13 @@ export type DecidedDepartures = Map<string, 'departed' | 'cancelled'>;
  * `distribution-departure.integration.spec.ts`.
  */
 export function fakeDepartureManager(
-  repos: () => { channelRepo: unknown; memberRepo: unknown; roleRepo: unknown }
+  repos: () => {
+    channelRepo: unknown;
+    memberRepo: unknown;
+    roleRepo: unknown;
+    /** Given, the invite links an erasure deletes when it closes a community it is the last of. */
+    inviteRepo?: unknown;
+  }
 ): {
   query: jest.Mock;
   transaction: jest.Mock;
@@ -57,6 +64,8 @@ export function fakeDepartureManager(
     if (entity === ChannelMember) return repos().memberRepo;
     // The removal bound reads the roles it compares through the transaction, row-locked.
     if (entity === ChannelRole) return repos().roleRepo;
+    const { inviteRepo } = repos();
+    if (entity === WorkspaceInvite && inviteRepo) return inviteRepo;
     throw new Error(`fakeDepartureManager: no repository for ${String(entity)}`);
   };
   // A callback that throws rolls back what it recorded, as the real transaction does.

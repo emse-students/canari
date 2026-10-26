@@ -123,6 +123,7 @@ export function createMlsServiceStub(
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
+    getGroupRosterAtGeneration: vi.fn().mockResolvedValue({ members: [], seatGeneration: 0 }),
     getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
     // As the server answers: the person asked `for` is counted, with nothing withheld.
     getGroupWithheld: vi.fn(
@@ -131,9 +132,12 @@ export function createMlsServiceStub(
     ),
     // As every server since step A answers: addressed history answers are routed.
     getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
-    getGroupRosters: vi
-      .fn()
-      .mockResolvedValue({ rosters: new Map(), refused: new Set(), revoked: new Map() }),
+    getGroupRosters: vi.fn().mockResolvedValue({
+      rosters: new Map(),
+      refused: new Set(),
+      revoked: new Map(),
+      awaiting: new Map(),
+    }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
     getPendingInvitations: vi.fn().mockResolvedValue([]),

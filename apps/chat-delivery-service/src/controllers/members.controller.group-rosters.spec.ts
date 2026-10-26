@@ -112,6 +112,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
       rosters: {},
       refused: [],
       revoked: {},
+      awaiting: {},
     });
     expect(groupMemberRepo.find).not.toHaveBeenCalled();
     expect(revokedRepo.find).not.toHaveBeenCalled();
@@ -182,5 +183,45 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
       controller.getGroupRosters({ groupIds: tooMany }, 'alice', undefined)
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(groupMemberRepo.find).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A SEAT STILL AWAITING A MEMBER'S ANSWER ADMITS NOBODY (ADM-3): an Add decided before a Decline can
+ * merge a leaf for a person whose seat is a new, unanswered ask. The batch names those seats per
+ * answered group, so the stray collector reads them as off the roster.
+ */
+describe('MembersController.getGroupRosters - the seats still awaiting admission', () => {
+  it('names them per answered group, and only for answered groups', async () => {
+    const groupMemberRepo = {
+      find: jest.fn().mockResolvedValue([
+        { groupId: 'g-a', userId: 'alice', awaitingAdmission: false },
+        { groupId: 'g-a', userId: 'joe', awaitingAdmission: true },
+        { groupId: 'g-b', userId: 'alice', awaitingAdmission: false },
+        { groupId: 'g-other', userId: 'eve', awaitingAdmission: true },
+      ]),
+    };
+    const controller = new MembersController(
+      groupMemberRepo as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never
+    );
+    jest.spyOn(controller['logger'], 'log').mockImplementation(() => undefined);
+
+    const got = await controller.getGroupRosters(
+      { groupIds: ['g-a', 'g-b', 'g-other'] },
+      'alice',
+      undefined
+    );
+
+    expect(got.awaiting).toEqual({ 'g-a': ['joe'] });
+    expect(got.refused).toEqual(['g-other']);
   });
 });

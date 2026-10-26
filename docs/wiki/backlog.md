@@ -204,6 +204,18 @@ client's cleanup `DELETE mls/groups/:id` is now answered 403 `NOT_A_MEMBER` (the
 seat yet), so the empty row stays. Owed: a server-side path that ends a group nobody ever joined
 (the creator's own bootstrap, or the orphan sweep), with a spec.
 
+## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
+
+The settlement of an unresolved commit classifies a refusal from its body once, and treats it as
+final even when the reason is a state that can change later (a seat, a block). Owed: name which
+refusal reasons are definitive, and re-plan rather than settle on the others, with a test per reason.
+
+## P3 - Key groups still accept a commit with a refused admit dropped (ADM-3 review, 2026-10-26)
+
+A conversation's gate refuses the whole commit when it may not admit someone (ADM-3); a key group's
+gate still accepts it and drops that admit. Owed: decide whether key groups follow the same
+whole-commit rule, and the client rebuild it needs, with a spec on each side.
+
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
 `assertCallerActsOnGroup` (`utils/group-membership.ts`) and the private member checks of
@@ -543,8 +555,9 @@ send. Owed: one device reading on the Mi 9T behind a portal.
 
 - **P3** `renameGroup` / `setGroupImage`, and the notification-preference PATCH/PUTs
   (`notifications/preferencesApi.ts`): the change is lost silently and shows again on reload.
-- **P3** `registerMember` swallows every outcome (it is due to leave the Add paths anyway, see the
-  entry on it below).
+- **P3** `registerMember` swallows every outcome but its two typed refusals (`USER_BLOCKED`,
+  `MEMBER_NOT_ADMITTED` since ADM-3); its removal condition is
+  [legacy-compatibility](legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
 
 The plan is the shared guard (`assertAnsweredByApi`, `utils/apiJson.ts`) applied per site with its
 test. `dismissGroup` and `removeMemberFromServer` already carry it (#2428). A blanket sweep inside `apiFetch` is not the plan: some routes answer
@@ -702,28 +715,6 @@ and no second pull happens; a restore that throws before phase 1 still opens the
 `startupOrder.test.ts` updated; a frame decrypted between the gate and phase 2 survives phase 2's
 stored-page write.
 
-## P3 - Remove `registerMember` from the Add client paths; then the Decline and departure guards hold everywhere (review of #2419, 2026-10-25)
-
-The commit gate enrols the people an accepted Add admits, and refuses a person who left, was
-removed or was declined after the Add was built (`departed_since_base`,
-[mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)).
-That guard holds at the gate, so on a settlement and on an outbox replay. But every client Add path
-still calls `registerMember` after a DIRECT accept, and that route enrols the person whatever the
-gate refused, so on the direct path a departure or a Decline that came first is still undone, as
-before #2419. Not a regression. The source fix is to delete the post-accept calls
-(`processBulkAddition`, `performDirectAdd`, the pending-invitation and `welcome_request` Adds),
-which is gated on the server version: see
-[legacy-compatibility](legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
-The same deletion turns the accepted cost of a deliberate re-invite right after a Decline or a
-self-leave (refused at the gate, repaired today by that call) into a refusal on every path.
-
-Also accepted there, and left open: **a stale Add landing after the declined person RE-ASKED by
-link lifts the new ask and admits them.** An awaiting seat counts as already on the roster, so the
-departure check never runs, and member B's Decline is overridden silently by member A's Add,
-which was built before it. It needs a re-ask at the same epoch as the Decline, plus a stale Add.
-A fix would order the ask itself against the Add's base epoch (stamp the ask's seat generation
-and refuse a lift by an Add built before it). Not designed.
-
 ## P3 - Three Welcome paths still end in a conversation row or skip a key-group step (2026-10-25)
 
 What wrote and then probed a key group's conversation row is fixed
@@ -877,6 +868,10 @@ with no one asked, and the commit's `admits` lifts their `awaitingAdmission`. "H
 "is a member". Not built: the fix needs a fact the client can read that says the leaf is owed a
 Remove (the server's exclusion intervals, or `removeStrayLeaves` run before the sweep decides) -
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+**Closed by ADM-3 (2026-10-25), to delete once it ships:** the member-add route no longer enrols
+anyone, and an Add that carries no invitation generation never admits an awaiting seat of a person
+who ever departed (`departed_and_undated`, the whole commit refused) - only a member's invitation,
+which says when it was decided, does; a leaf without a seat is the stray collector's ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 
 ## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
 
@@ -1004,6 +999,12 @@ a device reads its key package under the lock" ([channel-encryption](protocols/c
 `writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
 `heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
 writes and that names no one once its own window ends, or by asking core whether the account exists.
+**Narrowed by ADM-3 (2026-10-25) to the creation bootstrap:** the route now enrols nobody but a
+caller registering ITSELF into an empty roster; for anyone else it re-reads the seat under the seat
+lock through `writePendingSeats` (which reads `heldKeyPackages`) and refuses a person no commit
+admitted (`409 MEMBER_NOT_ADMITTED`). What is left: the bootstrap transaction still takes no seat
+lock and reads no key package under it - an erased account would need its own still-valid token and
+an empty group to use it ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 
 ## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
 
@@ -1020,14 +1021,12 @@ column they mean to write is `roleIds` itself, so they only race each other.
 - **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
   the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant
   and `hardDeleteWorkspace` take salon rows before membership rows (the grant-vs-deletion cycle
-  #2284's review found is closed). Left: the reorder transaction writes several salon rows in the
-  order the client sent, and `hardDeleteWorkspace`'s bulk `DELETE` takes them in whatever order the
-  plan visits them, so either can cross a departure on two salons. PostgreSQL aborts one side
-  (`40P01`); an aborted departure settles `cancelled` and is retried inline, a reorder is answered
-  5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR UPDATE`) before each bulk write.
-- **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
-  kicking each other at the same moment both pass it and can leave a community with members and no
-  admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+  #2284's review found is closed; since 2026-10-26 `hardDeleteWorkspace` also opens with the
+  removal lock, so it is serialised with every departure). Left: the reorder transaction writes
+  several salon rows in the order the client sent, so it can cross a departure on two salons.
+  PostgreSQL aborts one side (`40P01`); an aborted departure settles `cancelled` and is retried
+  inline, a reorder is answered 5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR
+  UPDATE`) before the bulk write.
 - **A group retirement runs after the commit, outside any lock.** A makes a salon public, B makes it
   private again (the idempotent mint returns the same group G), then A's retirement deletes G on
   chat-delivery and nulls `distributionGroupId`: a private salon with no group. The fix is a
@@ -1728,7 +1727,7 @@ each image runs as a non-root user and `trivy config infrastructure/local` repor
 
 ## P3 - Bump the four Alpine pins when upstream rebuilds with brotli 1.2.1 (2026-10-24)
 
-Owner: Master. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
+Owner: Master. `CVE-2026-92392` (curl 8.22.0-r0, fixed in 8.23.0-r0) joined it on 2026-10-26 under the same conditions, so the rebuild must carry BOTH fixes and both entries go together. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
 `.github/image-scan-allowlist.yaml` because no patched image existed: Alpine fixed it on 2026-10-22
 and the official `adminer`, `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`
 builds of that day still carry 1.2.0. Done when the three digest pins (production and dev compose,

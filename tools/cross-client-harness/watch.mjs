@@ -970,6 +970,10 @@ const NOTABLE = [
   // same claim and must never share its rule. Never `clean`-breaking, because a join or a departure
   // legitimately produces one - but in a check that moved nobody, its presence IS the finding.
   /^\[QUEUE\] Processing Commit group=/,
+  // THE FRAMES A COMMIT HELD BACK, DRAINED once it releases the MLS lock (#2471, new in 1.4.1-alpha.5,
+  // `BaseMlsService.resumeFramesHeldByCommit`). A commit's own tail: reported for the reason a commit
+  // is, never routine. It is printed only when work is runnable, so a count of 0 is not its shape.
+  /^\[QUEUE\] the commit of [0-9a-f]{8}\.\.\. released the MLS lock - draining the [1-9]\d* frame\(s\) it held back$/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
@@ -2270,7 +2274,7 @@ export const FRESH_CLIENT_NARRATION = [
  * @param {string} group the row's group id
  * @param {{admitted?: boolean, declined?: boolean}} [ends] the endings the row plays
  */
-export function admissionMemberNarration(group, { admitted = false, declined = false } = {}) {
+export function admissionMemberNarration(group, { admitted = false, declined = false, addRefused = false } = {}) {
   const g = groupPrefixRe(group);
   return [
     atLevels(['log', 'info'], new RegExp(String.raw`^\[(JOIN_ASK|WELCOME_REQ)\] \S+ has no leaf in ${g} - a new person is not added automatically, a member's approval is asked$`)),
@@ -2281,6 +2285,17 @@ export function admissionMemberNarration(group, { admitted = false, declined = f
           atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] \S+ declined in ${g}( - the ask leaves this screen)?$`)),
           // The one line that names no group: the Decline given on THIS screen. Kept to the declining rows.
           atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ declined - their seat is withdrawn$/),
+        ]
+      : []),
+    // AN ADD THE GATE REFUSED WHOLE (#2505), narrated by the member who approved it: the refusal, the
+    // Add abandoned before its stage, and the answer that did not happen because the ask was settled.
+    // Read on alpha.5 ADM-3 (2026-10-26), where the Decline won. Only the `not-admitted` /
+    // `removed-meanwhile` reasons: any other reason is a different outcome and stays dirt.
+    ...(addRefused
+      ? [
+          atLevels(['log', 'info'], new RegExp(String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`)),
+          atLevels(['log', 'info'], /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/),
+          atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`)),
         ]
       : []),
   ];
@@ -2746,7 +2761,9 @@ export const DEVICE_PANEL_NARRATION = [
   /^\[DevicePanel\] \d+ live session\(s\)$/,
   /^\[DevicePanel\] Found \d+ device\(s\)$/,
   /^\[DevicePanel\] Deleting device \S+$/,
-  /^\[DevicePanel\] Deleted device \S+ \(groups cleaned: \d+, keyPackages: \d+\)$/,
+  // `deviceRowRemoval.ts` (#2450) says the eight first characters and nothing else: the old
+  // `(groups cleaned: N, keyPackages: N)` tail is gone, and its needle forgave nothing on alpha.5.
+  /^\[DevicePanel\] Deleted device \S+$/,
 ];
 
 /**

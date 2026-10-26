@@ -59,6 +59,7 @@ function cxOf(entries) {
 const CASES = [
   // [level, line, expected bucket]
   ['log', '[14:24:25] [OUTBOX] 1 entry still queued', 'notable'],
+  ['log', '[14:59:42] [QUEUE] the commit of 59333a90... released the MLS lock - draining the 1 frame(s) it held back', 'notable'],
   ['log', '[14:24:25] [OUTBOX] 12 entries still queued', 'notable'],
   ['log', '[14:24:25] [OUTBOX] ef8eca5e… skipped, backing off for 4452ms (attempt 2)', 'notable'],
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
@@ -1401,7 +1402,7 @@ const FORGIVE_CASES = [
       ['log', '[DevicePanel] 2 live session(s)'],
       ['log', '[DevicePanel] Found 4 device(s)'],
       ['log', '[DevicePanel] Deleting device f0a3bb2c…'],
-      ['log', '[DevicePanel] Deleted device f0a3bb2c… (groups cleaned: 9, keyPackages: 3)'],
+      ['log', '[DevicePanel] Deleted device web-f0a3…'],
     ],
     DEVICE_PANEL_NARRATION,
     // TWO NEEDLES GO DRY HERE AND THAT IS THE MEASUREMENT, not a slack expectation: `Loading devices
@@ -1640,6 +1641,48 @@ const FORGIVE_CASES = [
     [['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined in 21a3145f... - the ask leaves this screen']],
     admissionMemberNarration(ADM_G, { admitted: true }),
     { clean: false, unmatched: 3 },
+  ],
+  // AN ADD THE GATE REFUSED WHOLE (#2505), narrated by its approver: ADM-3 when the Decline wins, ADM-10.
+  [
+    "an Add refused whole in the row's group, in a row that plays it (ADM-3), forgiven",
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
+    { clean: true, unmatched: 5 },
+  ],
+  [
+    'control: the same three lines in a row where no gate refusal is expected (ADM-2) stay dirt',
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    // The SYNC line names no group (as the Decline's "their seat is withdrawn" does): it is kept to the
+    // two rows that play a refusal, and the two lines that DO name a group stay dirt for another one.
+    'control: the two group-naming lines about ANOTHER group stay dirt, even in ADM-10',
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 098bfb7f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 098bfb7f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 6 },
+  ],
+  [
+    'control: an Add abandoned for a reason nobody declared, or the refusal at warn, is not forgiven in ADM-10',
+    [
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (lost) - nobody added'],
+      ['warning', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 7, warnings: 1 },
   ],
   [
     "the joiner's wait and both endings in the row's group, forgiven",

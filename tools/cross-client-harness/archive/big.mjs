@@ -2,6 +2,7 @@
  * THE LARGE-GROUP ROWS OF THE 1.4.1 CAMPAIGN - every seat the rig has, in one conversation.
  *
  *   bun archive/big.mjs --row BIG-1|BIG-2|BIG-3     # class B: A1 and I1 are in play
+ *   bun archive/big.mjs --row BIG-1-noI1|...        # the same row without I1, recorded under its own id
  *
  * `docs/wiki/cross-client-campaign-1-4-1.md` section 4.8; the table and every judge are `bigrows.mjs`.
  * BIG-1 and BIG-2 play in a group of their own (`mintRowGroup`, the three other accounts added in ONE
@@ -12,7 +13,7 @@
  * build the phone runs and recorded with that build (`results.mjs` `clientBuild`).
  */
 import { awaitAppSettled, clearOverlays, openChannel, send } from '../chat.mjs';
-import { BIG_ROWS, bulkAddOwn, burstOwn, checkpointMs, communityEntitlement, inSendOrder, seedPerEventOwn, sessionsByPhase } from '../bigrows.mjs';
+import { BIG_ROWS, bulkAddOwn, playedRow, burstOwn, checkpointMs, communityEntitlement, inSendOrder, seedPerEventOwn, sessionsByPhase } from '../bigrows.mjs';
 import { createChannel, createCommunity, deleteCommunity, inviteLink, openCommunity, openInviteLink, acceptInviteLink, removeCommunityMember, setHistoryVisibility } from '../comm.mjs';
 import { psql } from '../estate.mjs';
 import { awaitCommunityRouting, channelIdOf, communityDistribution, communityMemberIds, isCommunityMember, workspaceIdOf } from '../grainedb.mjs';
@@ -46,6 +47,8 @@ if (!BIG_ROWS[id]) {
   process.exit(2);
 }
 const spec = BIG_ROWS[id];
+// A VARIANT (`BIG-1-noI1`) PLAYS ITS ROW: the same action, names and marks; only the verdict keeps `id`.
+const row = playedRow(id);
 const since = new Date().toISOString();
 let seats = null;
 let community = null;
@@ -81,7 +84,7 @@ const ACTIONS = {
     for (const d of spec.devices.filter((x) => x !== 'W1')) listed[d] = await awaitListed(cx(d), c.group.name, 180_000);
     listed.W1 = 0;
     const seq = commitSequence(commitLines(c.group.id, c.startSince));
-    const mark = rowMessageMark(id, 'FIRST');
+    const mark = rowMessageMark(row, 'FIRST');
     await send(cx('W1'), `${id} the first message [${mark}]`);
     const shown = {};
     for (const d of spec.devices) {
@@ -116,7 +119,7 @@ const ACTIONS = {
     for (const d of spec.devices) await openGroup(cx(d), c.group.name, { navigate: false, label: id });
     const w1Device = await deviceIdOf(cx('W1'), c.user.W1);
     const burstSince = now();
-    const marks = Object.fromEntries(spec.senders.map((s) => [s, Array.from({ length: spec.perSender }, (_, i) => rowMessageMark(id, `${s}${i}`))]));
+    const marks = Object.fromEntries(spec.senders.map((s) => [s, Array.from({ length: spec.perSender }, (_, i) => rowMessageMark(row, `${s}${i}`))]));
     await Promise.all(
       spec.senders.map(async (s) => {
         for (let i = 0; i < spec.perSender; i++) {
@@ -153,7 +156,7 @@ const ACTIONS = {
 /** BIG-3, whole: a community of its own, a removal, a newcomer, and the seeds each event minted. */
 async function playCommunity(user) {
   const W1 = cx('W1');
-  community = rowGroupName(id);
+  community = rowGroupName(row);
   await createCommunity(W1, community);
   await setHistoryVisibility(W1, 'joined');
   const link = await inviteLink(W1);
@@ -182,7 +185,7 @@ async function playCommunity(user) {
     const out = [];
     for (const s of spec.senders) {
       await openChannel(cx(s), community, salon);
-      const m = rowMessageMark(id, `${tag}${s}`);
+      const m = rowMessageMark(row, `${tag}${s}`);
       await send(cx(s), `${id} ${tag} from ${s} [${m}]`);
       out.push(m);
     }
@@ -254,13 +257,13 @@ async function playCommunity(user) {
 /** Set up, act, judge. */
 async function play() {
   const user = Object.fromEntries(spec.devices.map((d) => [d, userOf(seats, d)]));
-  if (id === 'BIG-3') return playCommunity(user);
-  const group = await mintRowGroup(cx('W1'), id, user.W1);
-  assertRowOwns({ kind: 'group', id: group.id, name: group.name }, id);
+  if (row === 'BIG-3') return playCommunity(user);
+  const group = await mintRowGroup(cx('W1'), row, user.W1);
+  assertRowOwns({ kind: 'group', id: group.id, name: group.name }, row);
   await openGroup(cx('W1'), group.name, { navigate: false, label: id });
   const fromEpoch = serverView(group.id).activeEpoch;
   const c = { user, group, startSince: now() };
-  const act = await ACTIONS[id](c);
+  const act = await ACTIONS[row](c);
   if (act.premise?.length) return { premise: act.premise, detail: { group: group.id } };
   const invariant = await checkInvariant({
     group: group.id,

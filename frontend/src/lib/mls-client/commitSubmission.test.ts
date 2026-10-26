@@ -124,6 +124,35 @@ describe('composeSubmission - the one spelling of a request, from the record its
     });
   });
 
+  it("sends an invitation's seat generation with the Add it admits, and never without one", () => {
+    // The gate orders a Decline against it (ADM-3); a commit that admits nobody has nothing to order.
+    const intent = encodeIntent({
+      groupId: 'g-1',
+      self: 'u-a:d-a',
+      excludeDeviceIds: ['u-a:d-a', 'u-b:d-b1'],
+      keyPackageDevices: ['d-b1'],
+      invitation: { users: ['u-b'], rostered: [], seatGeneration: 7 },
+    });
+    expect(composeSubmission(record(intent, [0]))?.invitationSeatGeneration).toBe(7);
+    expect(composeSubmission(record(intent, []))?.invitationSeatGeneration).toBeUndefined();
+  });
+
+  it('drops a seat generation that is not a non-negative integer', () => {
+    const bytes = (seatGeneration: unknown) =>
+      new TextEncoder().encode(
+        JSON.stringify({
+          groupId: 'g-1',
+          self: 'u-a:d-a',
+          excludeDeviceIds: ['u-a:d-a', 'u-b:d-b1'],
+          keyPackageDevices: ['d-b1'],
+          invitation: { users: ['u-b'], seatGeneration },
+        })
+      );
+    for (const bad of [-1, 1.5, '3', null]) {
+      expect(composeSubmission(record(bytes(bad), [0]))?.invitationSeatGeneration).toBeUndefined();
+    }
+  });
+
   it('reads an intent that does not decode as null - unreadable, never absent', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(composeSubmission(record(new TextEncoder().encode('[1]')))).toBeNull();
