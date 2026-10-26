@@ -2060,6 +2060,8 @@ are builder stages and the local compose file, which reach no estate.
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
   parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
 
+**2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+
 **Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
 (no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
 Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
