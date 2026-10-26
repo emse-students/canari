@@ -194,7 +194,10 @@
         label is what makes "sent" distinguishable from "read" without sight: the two differ by one
         tick and a colour otherwise.
       -->
-      <span class="msg-status msg-status-sent inline-flex items-center opacity-50" role="status">
+      <span
+        class="msg-status msg-status-sent relative inline-flex items-center opacity-50"
+        role="status"
+      >
         <Check size={12} strokeWidth={2.5} />
         <span class="sr-only">{m.msg_statut_envoye()}</span>
       </span>

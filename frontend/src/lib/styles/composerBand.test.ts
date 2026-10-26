@@ -74,3 +74,13 @@ describe('the composer band', () => {
     );
   });
 });
+
+describe('the thread panel on desktop', () => {
+  /** `hidden` is still a scroll container; a descendant scrollIntoView moved it (BIG-2, 1.4.1 alpha.5). */
+  it('clips instead of hiding, so no programmatic scroll can move the header off-screen', () => {
+    const from = css.indexOf('--chat-thread-ground: var(--cn-surface);');
+    const block = css.slice(css.lastIndexOf('.chat-thread-panel {', from), from);
+    expect(block).toContain('overflow: clip;');
+    expect(block).not.toContain('overflow: hidden');
+  });
+});
