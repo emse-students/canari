@@ -807,39 +807,41 @@ export class FormsService {
    *
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
    * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
-   * user who will be told they are not a member. Returns false ONLY when a retry could succeed (the
-   * grant threw), which is what `fulfilPayment` releases its claim on.
+   * user who will be told they are not a member. Answers `failed` ONLY when a retry could succeed
+   * (the grant threw), which is what `fulfilPayment` releases its claim on; `not-granted` when the
+   * tier was refused as not a rise over the one held (`grantCotisantIfARise`) - final, not retried.
    */
   private async grantCotisationIfConfigured(
     form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
     userId: string,
     grantedBy: string,
     metadata: Record<string, unknown>
-  ): Promise<boolean> {
-    if (!form.grantsCotisation) return true;
+  ): Promise<'granted' | 'not-granted' | 'failed'> {
+    if (!form.grantsCotisation) return 'granted';
     if (!form.associationId) {
       this.logger.error(
         '[UserTag] Form grants a cotisation but names no beneficiary association - nothing to be ' +
           'a member of. The create/update DTO must reject this pairing.'
       );
-      return true;
+      return 'granted';
     }
     try {
-      await this.userTagService.grantCotisant(
+      // Ranked like a boutique settlement: a paid form never swaps out a dearer tier by the XOR.
+      const outcome = await this.userTagService.grantCotisantIfARise(
         form.associationId,
         userId,
         grantedBy,
         form.cotisationVariantKey,
         metadata
       );
-      return true;
+      return 'granted' in outcome ? 'granted' : 'not-granted';
     } catch (e) {
       this.logger.error(
         `[UserTag] Failed to grant cotisation tier "${form.cotisationVariantKey ?? 'base'}" of ` +
           `assoc=${form.associationId.slice(0, 8)} to user=${userId.slice(0, 8)}`,
         e
       );
-      return false;
+      return 'failed';
     }
   }
 
@@ -885,6 +887,10 @@ export class FormsService {
     // form cannot be saved with a grant (`assertPublicConfigValid`), so a granting form holding a
     // guest row was made private after the guest answered: the money is real, the grant cannot be.
     // ERROR, once: the flag is claimed and kept, so a replay of the payment does not say it again.
+    // A tier refused as not a rise is a payment taken for nothing granted: its purchase record says
+    // so (`paid_not_granted`), the durable marker the association's purchases and the hourly report
+    // read.
+    let tierNotGranted = false;
     if (seatGiven && (await this.claimFulfilment(submission.id, 'cotisationGrantedAt'))) {
       if (!submission.userId) {
         if (form.grantsCotisation) {
@@ -900,7 +906,9 @@ export class FormsService {
           how.grantedBy,
           how.metadata
         );
-        if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+        if (granted === 'failed')
+          await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+        tierNotGranted = granted === 'not-granted';
       }
     }
     if (
@@ -915,7 +923,7 @@ export class FormsService {
           formId: submission.formId,
           amountCents: submission.totalPaid,
           paymentMethod: how.paymentMethod,
-          status: 'paid',
+          status: tierNotGranted ? 'paid_not_granted' : 'paid',
           associationId: form.associationId,
           productName: form.title ?? 'Formulaire',
         });

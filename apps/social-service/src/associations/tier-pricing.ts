@@ -81,6 +81,20 @@ export function tierRelation(target: RankedTier, held: HeldTier | null): TierRel
 }
 
 /**
+ * `tierRelation` for a viewer who may hold SEVERAL tier tags (a legacy base tag beside a named one):
+ * a target among `heldKeys` is `held` whichever tier `pickHeldTier` ranks against, so buying the
+ * cheaper of two held tiers answers "already held", not "not a rise".
+ */
+export function tierRelationOf(
+  target: RankedTier,
+  heldKeys: readonly (string | null)[],
+  held: HeldTier | null
+): TierRelation {
+  if (heldKeys.includes(target.variantKey)) return 'held';
+  return tierRelation(target, held);
+}
+
+/**
  * The sibling tier a stored `memberPriceTag` names, as its `variantKey`, or `undefined` when it
  * names none of `tierKeys`. The tag is matched against each tier's tag STEM (`cotisant:<slug>` or
  * `cotisant:<slug>-<variant>`), with or without an academic-year suffix: a `dated` association's

@@ -1841,6 +1841,11 @@ export interface AssociationPurchase {
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
+  /**
+   * A cotisation tier paid for and NOT granted: it was no longer a rise over the tier the buyer held
+   * when the payment landed. A refund or a manual grant is owed.
+   */
+  notGranted?: boolean;
 }
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
