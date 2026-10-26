@@ -153,6 +153,21 @@ No row verdict depends on it; it stays here until it is explained.
 | BIG-2-noI1 | BIG-2 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, the desktop thread panel scrolled under a sr-only status label (fixed by #2535); replayed on `1.4.1-alpha.6` |
 | BIG-3-noI1 | BIG-3 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, a salon heard of live was lower-cased until a reload (fixed by #2538); replayed on `1.4.1-alpha.6` |
 
+## LIST - a salon heard of live while its community's listing is in flight
+
+Found by BIG-3-noI1 on A1 (2026-10-26); the cause and the fix are the backlog P2 "A salon heard of
+live while its community's listing is in flight is deleted by that listing's clean-up". Runner
+`archive/listrace.mjs`, table and judge `listracerows.mjs`. The subject's listing ANSWER is held
+(`hold-answer once`), released under the client's own 20 s stall, and every wait is counted in rounds.
+RED is `FAIL` on a build without the fix; GREEN is owed on the pre-release that carries it.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| LIST-RACE-1-W | W4 joins by link; W8 (same account) lists in session with its answer held; W1's salon heard while held is listed after the release | W1 W4 W8 - U | `FAIL` - `1.4.1-alpha.6`: RED as expected, the salon not listed in 20 rounds; GREEN owed on `1.5.0-alpha.1` |
+| LIST-RACE-1-W-CTL | LIST-RACE-1-W with nothing held | W1 W4 W8 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: listed in round 1 |
+| LIST-RACE-1-A1 | W1's first salon starts A1's listing, held; a second salon heard while held is listed after the release | W1 +A1 - B | `FAIL` - `1.4.1-alpha.6`: RED as expected, the salon not listed in 20 rounds; GREEN owed on `1.5.0-alpha.1` |
+| LIST-RACE-1-A1-CTL | LIST-RACE-1-A1 with nothing held | W1 +A1 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: listed in round 1 |
+
 ## TOK - a token expiring in the middle of an operation
 
 | Id | What it asks | Needs | State |

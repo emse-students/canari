@@ -55,7 +55,7 @@ export const GROUP_DEBRIS = [
   // (`rowkit.mjs`): the row group's prefix, its number, the mark's tail - `FLOOR2-<tail>`. The
   // prefixes are `ROW_GROUPS`, enumerated, never `[A-Z]+`; the one optional lower-case letter is a
   // sibling row's (`RM-4b` -> `RM4b-<tail>`, `rowStem`).
-  /^(FLOOR|CC|DUP|OFF|KILL|GAP|RM|ADM|DEV|BIG|TOK|NET)\d+[a-z]?-[0-9a-z]+$/,
+  /^(FLOOR|CC|DUP|OFF|KILL|GAP|RM|ADM|DEV|BIG|TOK|NET|LIST)\d+[a-z]?-[0-9a-z]+$/,
 ];
 
 /** True when `name` is a group a runner minted, and therefore a group a sweep may delete. */
