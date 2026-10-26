@@ -81,6 +81,21 @@ Now:
 - Test: `associationsHeader.test.ts` (wiring), `audienceRules.test.ts` (`reachChoiceToRules`). Read on the
   local estate at 390 and 1280 (no horizontal scroll, nav wraps cleanly).
 
+## The slug is a technical id: derived by the server, never shown, typed or edited (user, 2026-10-26)
+
+The product rule is *a technical id is never shown to, typed by, or edited by a person*. For an
+association, list or institution it means: no `@slug` under the detail title (a list keeps its
+parent's name), none in the edit subtitles (a list keeps its promo year), and no "Slug (URL)" field
+on the shared creation flow. The slug remains the URL segment (`/associations/<slug>`) and the
+unique key.
+
+The server derives it: `CreateAssociationDto.slug` is optional, and `AssociationsService.create`
+walks `slugCandidates(name)` from `association-slug.util.ts` - lowercase, accents folded, hyphenated,
+at most 50 characters, then `-2`, `-3`... Each candidate is its OWN transaction and the unique index
+is the arbiter (a unique violation aborts the transaction it happens in, and a check-then-insert
+would let two concurrent creates both pass). A slug SENT explicitly (an old client) is still
+validated and refused `400` when taken, including when it loses the race at the index.
+
 ## The audience tab and the campus prompt (WP-B, 2026-10-08)
 
 The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global admin and a BDE star of the association: two presets (my campus; my campus and chosen formations), a third (everyone) for an institution only, the grid link for admins. The creation page shows `ProfileCampusPrompt` instead of the form when the creator's profile has no campus, and maps the five typed server refusals through `audienceRefusal.ts`. Mechanism, limits (a star cannot read the current audience) and tests: [profiles-and-access](../../profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).

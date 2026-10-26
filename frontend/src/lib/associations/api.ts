@@ -205,7 +205,8 @@ export interface Association {
 
 export interface CreateAssociationPayload {
   name: string;
-  slug: string;
+  /** Never sent by the app: the server derives it from the name (a technical id is never typed). */
+  slug?: string;
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;

@@ -51,6 +51,8 @@ import {
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
+import { SLUG_MAX_ATTEMPTS, SLUG_PATTERN, slugCandidates } from './association-slug.util';
+import { isUniqueViolation } from '../common/pg-errors';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
@@ -324,8 +326,9 @@ export class AssociationsService {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   /**
-   * Creates a new association (or list). Throws if the slug is already taken or has an invalid
-   * format.
+   * Creates a new association (or list). The slug is DERIVED from the name (suffixed `-2`, `-3`... on
+   * a collision, the unique index deciding); one sent explicitly by an old client is validated and
+   * refused if taken.
    *
    * IT REACHES ITS CREATOR'S CAMPUS BY DEFAULT (audiences chantier, user 2026-10-07; it replaced
    * D36's "the creator's spaces"): in the SAME transaction as the row, ONE rule `(every formation,
@@ -338,7 +341,8 @@ export class AssociationsService {
    * not edit what it made (decision 7).
    */
   async create(dto: CreateAssociationDto, userId: string, isGlobalAdmin: boolean) {
-    if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
+    const explicitSlug = dto.slug?.trim() ? dto.slug : null;
+    if (explicitSlug !== null && !SLUG_PATTERN.test(explicitSlug)) {
       throw new BadRequestException(
         'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
       );
@@ -347,15 +351,50 @@ export class AssociationsService {
     const logoUrl = dto.logoUrl?.trim() ? dto.logoUrl.trim() : null;
     if (logoUrl !== null) assertAssociationImageUrl(logoUrl);
 
-    const existing = await this.assoRepo.findOne({
-      where: { slug: dto.slug },
-    });
-    if (existing) {
-      throw new BadRequestException('An association with this slug already exists');
+    if (explicitSlug !== null) {
+      // An old client's own slug: refused when taken, as before. The unique index still arbitrates
+      // a race between this read and the insert.
+      const existing = await this.assoRepo.findOne({ where: { slug: explicitSlug } });
+      if (existing) {
+        throw new BadRequestException('An association with this slug already exists');
+      }
+      try {
+        return await this.insertAssociation(dto, explicitSlug, logoUrl, userId, isGlobalAdmin);
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        this.logger.warn(`[slug] explicit slug ${explicitSlug} was taken between check and insert`);
+        throw new BadRequestException('An association with this slug already exists');
+      }
     }
 
+    // DERIVED: each candidate is its own transaction, because a unique violation aborts the one it
+    // happens in. The unique index is the arbiter, so two concurrent creates of one name end on
+    // `-2` and `-3` instead of a check-then-insert that both pass.
+    for (const candidate of slugCandidates(dto.name)) {
+      try {
+        const saved = await this.insertAssociation(dto, candidate, logoUrl, userId, isGlobalAdmin);
+        this.logger.log(`[slug] derived ${candidate} from the name`);
+        return saved;
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        this.logger.log(`[slug] ${candidate} is taken, trying the next suffix`);
+      }
+    }
+    this.logger.error(`[slug] no free slug in ${SLUG_MAX_ATTEMPTS} attempts for "${dto.name}"`);
+    throw new BadRequestException('No free slug could be derived from this name');
+  }
+
+  /** One create attempt with ONE slug: the row and its default audience rule, in one transaction. */
+  private insertAssociation(
+    dto: CreateAssociationDto,
+    slug: string,
+    logoUrl: string | null,
+    userId: string,
+    isGlobalAdmin: boolean
+  ) {
     const asso = this.assoRepo.create({
       ...dto,
+      slug,
       logoUrl,
       contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
       createdBy: userId,

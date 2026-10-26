@@ -310,11 +310,7 @@
 </script>
 
 <PageContainer width="tool">
-  <PageHeader
-    title={editSection ? sectionLabel(editSection) : words.editTitle()}
-    subtitle={asso ? `@${asso.slug}` : undefined}
-    {crumbs}
-  />
+  <PageHeader title={editSection ? sectionLabel(editSection) : words.editTitle()} {crumbs} />
 
   <div class="space-y-6">
     {#if loading}

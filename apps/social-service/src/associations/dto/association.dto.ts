@@ -35,13 +35,18 @@ export class CreateAssociationDto {
   @MaxLength(100)
   name: string;
 
+  /**
+   * OPTIONAL since 2026-10-26: the server derives it from the name (a technical id is never typed
+   * by a person). Only an old client still sends one, and it is validated and refused if taken.
+   */
   @IsString()
+  @IsOptional()
   @IsNotEmpty()
   @MaxLength(60)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
     message: 'slug must be lowercase alphanumeric with hyphens',
   })
-  slug: string;
+  slug?: string;
 
   @IsString()
   @IsOptional()

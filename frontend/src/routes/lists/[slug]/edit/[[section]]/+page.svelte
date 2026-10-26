@@ -182,9 +182,7 @@
 <PageContainer>
   <PageHeader
     title={editSection ? sectionLabel(editSection) : m.list_edit_page_title()}
-    subtitle={list
-      ? `@${list.slug}${list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}`
-      : undefined}
+    subtitle={list?.promo ? m.list_campaigns_heading({ year: list.promo }) : undefined}
     {crumbs}
   />
 

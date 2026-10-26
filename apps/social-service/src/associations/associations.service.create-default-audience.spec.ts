@@ -127,3 +127,66 @@ describe('AssociationsService.create - a non-admin creator is bound to the campu
     expect(manager.insert).toHaveBeenCalled();
   });
 });
+
+describe('AssociationsService.create - the slug is derived, never typed (user, 2026-10-26)', () => {
+  const unique = () => Object.assign(new Error('duplicate key'), { code: '23505' });
+
+  it('derives the slug from the name when none is sent, accents folded', async () => {
+    const { service, assoRepo } = makeService('gardanne');
+
+    await service.create({ name: 'Bureau des Élèves' } as never, 'u', true);
+
+    expect(assoRepo.findOne).not.toHaveBeenCalled();
+    expect(assoRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'bureau-des-eleves' })
+    );
+  });
+
+  it('appends -2, -3 on each unique violation, the index being the arbiter', async () => {
+    const { service, manager, assoRepo } = makeService('gardanne');
+    manager.save
+      .mockRejectedValueOnce(unique())
+      .mockRejectedValueOnce(unique())
+      .mockImplementation((row: object) => Promise.resolve({ ...row, id: 'new-asso' }));
+
+    const saved = await service.create({ name: 'Club' } as never, 'u', true);
+
+    expect(saved).toMatchObject({ slug: 'club-3' });
+    expect(assoRepo.create.mock.calls.map((c) => (c[0] as { slug: string }).slug)).toEqual([
+      'club',
+      'club-2',
+      'club-3',
+    ]);
+  });
+
+  it('rethrows a failure that is not a unique violation, without retrying', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(new Error('connection lost'));
+
+    await expect(service.create({ name: 'Club' } as never, 'u', true)).rejects.toThrow(
+      'connection lost'
+    );
+    expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses an explicit slug that is taken, and validates its shape', async () => {
+    const { service, assoRepo } = makeService('gardanne');
+    assoRepo.findOne.mockResolvedValueOnce({ id: 'other' } as never);
+
+    await expect(
+      service.create({ name: 'Club', slug: 'club' } as never, 'u', true)
+    ).rejects.toThrow('already exists');
+    await expect(
+      service.create({ name: 'Club', slug: 'Bad Slug' } as never, 'u', true)
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses an explicit slug that loses the race at the unique index', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(unique());
+
+    await expect(
+      service.create({ name: 'Club', slug: 'club' } as never, 'u', true)
+    ).rejects.toThrow('already exists');
+  });
+});
