@@ -80,6 +80,19 @@ export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
 }
 
 /**
+ * Whether two cursus lists say the same thing, field by field. NOT `JSON.stringify`: the column is
+ * `jsonb`, which hands its keys back in its own order (shorter first), so a stored entry and the
+ * same entry freshly parsed from the claims stringify differently and every sign-in read as a
+ * profile change - a log line and an `UPDATE` that changed nothing.
+ */
+export function sameCursus(a: CursusEntry[], b: CursusEntry[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((e, i) => e.formation === b[i].formation && e.promo === b[i].promo)
+  );
+}
+
+/**
  * The `promo` / `formation` columns derived from a cursus (WP3): its FIRST entry, null for none.
  * ONE definition, shared by the sign-in upsert and the admin edit, until WP6 moves every consumer
  * onto `cursus` and the columns go.
