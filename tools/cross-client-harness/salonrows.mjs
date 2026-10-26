@@ -259,10 +259,15 @@ const anyOf = (ids) => `(?:${ids.map(short).join('|') || '(?!)'})`;
  * function-entry logs and a route's first preload. First met on RM-4's first alpha.4 run
  * (2026-10-25), which was the first time the row reached judging.
  *
- * NOT HERE, ON PURPOSE: the lines said once per READ rather than per decision - Graine's `sending 0
- * of 0` / `holds nothing` answers and absorbs, `stored page empty`, `page … decoded after its salon
- * entry` - which are fixed at the source and stay dirt until then; and `redelivered Welcome ignored`,
- * a duplicate delivery the backlog already carries.
+ * And two lines fixed at the source in #2527 and now said once per decision: the asker's ONE line
+ * per member that answered a history ask "I hold nothing" (it used to be one per device, plus an
+ * `absorbed 0/0` and an `ignoring` on every other seat), and a salon page decoded behind a listing
+ * still entering salons, said once per salon per session with what it held the open.
+ *
+ * NOT HERE, ON PURPOSE: `stored page empty`, still said once per read; the per-device and per-seat
+ * forms of the Graine answer and an unmeasured `page … decoded` line, which only an old client prints;
+ * a history walk held by a request that named no device, a stall rather than narration; and
+ * `redelivered Welcome ignored`, a duplicate delivery the backlog already carries.
  *
  * @param {{workspaceId: string, channelIds: string[], keyGroupIds: string[]}} p
  */
@@ -287,6 +292,9 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
     R(String.raw`^Removed from channel ${ch}…$`),
     R(String.raw`^\[channelSettings\.afterAccessWrite another write landed\] \{"channelId":"channel_${ch}…","base":\d+,"revision":\d+\}$`),
     /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
+    // The asker's one line per member answered "I hold nothing", and a page held behind a listing.
+    R(String.raw`^\[GRAINE\] [0-9a-f]{8}… holds nothing of community ${ws} at distribution epoch \d+ - \d+ device\(s\) answered \([^)]+\), recorded, (?:every device of [0-9a-f]{8}… on the key group has answered|\d+ device\(s\) of [0-9a-f]{8}… on the key group are offline and still unasked) - asking the next member$`),
+    R(String.raw`^\[CHANNEL\] page of ${ch} decoded after its salon entry was decided \(held \d+ ms behind a listing in flight\)$`),
   ];
 }
 

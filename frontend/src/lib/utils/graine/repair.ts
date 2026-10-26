@@ -37,6 +37,7 @@ import {
   forgetPagedHistoryAnswer,
   incompleteHistoryPages,
   noteHistoryAsked,
+  recordedHistoryAsk,
 } from './pagedHistoryAnswer';
 
 /**
@@ -208,8 +209,35 @@ const historyRequest = new Map<
     groupId: string;
     /** The distribution epoch the request was sealed at, `null` when the group was not ridable. */
     epoch: number | null;
+    /**
+     * The devices recorded as holding nothing for this request, in arrival order - said in ONE line
+     * when the member is answered, never one line per device ({@link noteHistoryHeldNothing}).
+     */
+    heldNothing: string[];
+    /** Whether the walk being held by a request that named no device was already said. */
+    stallSaid: boolean;
   }
 >();
+
+/**
+ * Every history request id this device sent in this app session. An "I hold nothing" reaches every
+ * member of the key group, so a bundle quoting an id not in here answers ANOTHER device's ask: no
+ * decision of this device's, and no line. One quoting an id in here that is no longer in flight is a
+ * late answer to an ask of ours that was superseded, and is said. Bounded by the asks a session makes.
+ */
+const ownHistoryRequestIds = new Set<string>();
+
+/**
+ * Seeds {@link ownHistoryRequestIds} from the DURABLE record of this device's history ask
+ * (`noteHistoryAsked`), when an answer quotes it: an ask sent before a restart is still ours, and a
+ * late answer to it keeps its line. Called by the frame handler BEFORE the page is recorded, since
+ * recording a complete answer deletes that record.
+ */
+export function adoptRecordedHistoryAsk(workspaceId: string, requestId: string): void {
+  if (!requestId || ownHistoryRequestIds.has(requestId) || !isGraineReady()) return;
+  const { userId } = requireGraineRuntime('cannot read the recorded history ask');
+  if (recordedHistoryAsk(userId, workspaceId) === requestId) ownHistoryRequestIds.add(requestId);
+}
 
 /**
  * The key group each asked session went out on, and the epoch it was sealed at.
@@ -1265,7 +1293,10 @@ export async function requestCommunityHistory(
     unanswered: heldView.unansweredOnTree(answerer),
     groupId,
     epoch,
+    heldNothing: [],
+    stallSaid: false,
   });
+  ownHistoryRequestIds.add(requestId);
   // DURABLE beside it, so a page of the answer absorbed after a restart is still known as ours.
   const undoHistoryAsked = noteHistoryAsked(
     userId,
@@ -1349,6 +1380,9 @@ export function noteHistoryHeldNothing(
   requestId: string,
   answererDevice: string
 ): void {
+  // ANOTHER DEVICE'S ASK, ANSWERED: the bundle reaches every member of the key group, and an id this
+  // device never sent is not a question it asked - the common case on every seat but the asker's.
+  if (!ownHistoryRequestIds.has(requestId)) return;
   const inFlight = historyRequest.get(workspaceId);
   if (
     !inFlight ||
@@ -1400,20 +1434,33 @@ export function noteHistoryHeldNothing(
     );
     return;
   }
+  inFlight.heldNothing.push(answererDevice);
   const memberDone = inFlight.unanswered !== null && inFlight.unanswered.size === 0;
   const namedDone = inFlight.pending !== null && inFlight.pending.size === 0;
+  // ONE LINE PER MEMBER ANSWERED, NOT PER DEVICE (RM-4, 2026-10-26): each device's answer is recorded
+  // durably as it lands, and what moves the walk is the last one - which names them all. A request
+  // that named devices moves once they have answered, and they were online when it was sent.
   if (!memberDone && !namedDone) {
-    console.info(
-      `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
-        `recorded; ${inFlight.pending?.size ?? inFlight.unanswered?.size ?? 'every other'} device(s) ` +
-        `of ${answerer} still to answer`
-    );
+    // A REQUEST THAT NAMED NO DEVICE moves only once every device of the member on the tree has
+    // answered, and an offline one may never: the walk is held here until the next start. Said ONCE,
+    // at the first answer that leaves it so, since nothing else would say the walk stopped.
+    if (inFlight.pending === null && !inFlight.stallSaid) {
+      inFlight.stallSaid = true;
+      console.info(
+        `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
+          `recorded; the request named no device, so the walk waits for ` +
+          (inFlight.unanswered === null
+            ? `a tree that could not be read - nothing moves it before the next start`
+            : `${inFlight.unanswered.size} more device(s) of ${answerer} on the key group, offline ones included`)
+      );
+    }
     return;
   }
   historyRequest.delete(workspaceId);
   console.info(
-    `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} at ` +
-      `distribution epoch ${inFlight.epoch} - recorded, ` +
+    `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} at distribution ` +
+      `epoch ${inFlight.epoch} - ${inFlight.heldNothing.length} device(s) answered ` +
+      `(${inFlight.heldNothing.join(', ')}), recorded, ` +
       (memberDone
         ? `every device of ${answerer} on the key group has answered`
         : `${inFlight.unanswered?.size ?? 'an unknown number of'} device(s) of ${answerer} on the key group are offline and still unasked`) +
@@ -1660,6 +1707,7 @@ export function resetGraineRepairState(): void {
   historyAsked.clear();
   historyUnanswerableAt.clear();
   historyRequest.clear();
+  ownHistoryRequestIds.clear();
   for (const { cancel } of parked.values()) cancel();
   parked.clear();
   for (const cancel of historyParked.values()) cancel();

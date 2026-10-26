@@ -8,6 +8,7 @@ import {
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
 import {
+  adoptRecordedHistoryAsk,
   forgetWorkspaceRepairState,
   noteHistoryAnswered,
   noteHistoryHeldNothing,
@@ -677,14 +678,94 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     const { requestId, devices } = sentAsk();
     expect([...devices].sort()).toEqual(['bob-phone', 'web-bob']);
 
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const heldNothingLines = () =>
+      info.mock.calls.flat().filter((l) => String(l).includes('holds nothing of community'));
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    // Recorded, and said by nobody yet: one line per member answered, not one per device.
+    expect(heldNothingLines()).toEqual([]);
 
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sentAsk(1).answerer).toBe('carol');
+    expect(heldNothingLines()).toHaveLength(1);
+    expect(heldNothingLines()[0]).toContain('2 device(s) answered (web-bob, bob-phone)');
+    info.mockRestore();
+  });
+
+  it("says nothing of an answer to ANOTHER device's ask, and says a late answer to a superseded ask of ours", async () => {
+    await requestCommunityHistory('ws-1');
+    const first = sentAsk(0).requestId;
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const ignored = () =>
+      debug.mock.calls.flat().filter((l) => String(l).includes('ignoring "I hold nothing"'));
+
+    // Every member of the key group receives every answer: an id this device never sent is not ours.
+    noteHistoryHeldNothing('ws-1', 'bob', 'someone-elses-request', 'web-bob');
+    expect(ignored()).toEqual([]);
+
+    // bob answers, the walk asks carol: a late copy of bob's answer quotes an ask of ours no longer
+    // in flight - a decision of this device's, and said.
+    await answerNothing(0);
+    expect(sentAsk(1).answerer).toBe('carol');
+    noteHistoryHeldNothing('ws-1', 'bob', first, 'web-bob');
+    expect(ignored()).toHaveLength(1);
+    expect(ignored()[0]).toContain(`it answers request ${first}, not the history ask in flight`);
+    debug.mockRestore();
+  });
+
+  it('knows an ask sent before a restart as its own, from the durable record', async () => {
+    await requestCommunityHistory('ws-1');
+    const first = sentAsk(0).requestId;
+    restart();
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const ignored = () =>
+      debug.mock.calls.flat().filter((l) => String(l).includes('ignoring "I hold nothing"'));
+
+    // The session forgot it; the frame handler adopts it from the record before the page closes it.
+    adoptRecordedHistoryAsk('ws-1', first);
+    noteHistoryHeldNothing('ws-1', 'bob', first, 'web-bob');
+    expect(ignored()).toHaveLength(1);
+
+    // An id the record does not hold is still not ours.
+    adoptRecordedHistoryAsk('ws-1', 'someone-elses-request');
+    noteHistoryHeldNothing('ws-1', 'bob', 'someone-elses-request', 'web-bob');
+    expect(ignored()).toHaveLength(1);
+    debug.mockRestore();
+  });
+
+  it('says ONCE that a request naming no device holds the walk until every tree device answered', async () => {
+    // No per-device presence: the request names nobody, and only the tree says when bob is done.
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true },
+      { userId: 'alice', online: true },
+      { userId: 'carol', online: true },
+    ]);
+    treeLeaves = [
+      'bob:web-bob',
+      'bob:bob-phone',
+      'bob:bob-laptop',
+      'alice:device-1',
+      'carol:web-carol',
+    ];
+    await requestCommunityHistory('ws-1');
+    const { requestId, devices } = sentAsk();
+    expect(devices).toEqual([]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const held = () =>
+      info.mock.calls.flat().filter((l) => String(l).includes('the walk waits for'));
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(held()).toHaveLength(1);
+    expect(held()[0]).toContain('2 more device(s) of bob on the key group');
+    info.mockRestore();
   });
 
   it('a member whose online phone said "nothing" is NOT answered while a laptop of theirs on the tree is offline - asked when it is online', async () => {

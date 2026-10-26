@@ -27,6 +27,7 @@ import {
   forgetAskedSession,
   noteHistoryAnswered,
   noteHistoryHeldNothing,
+  adoptRecordedHistoryAsk,
   noteSeedUnavailable,
 } from './repair';
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
@@ -1021,6 +1022,22 @@ function pageNote(frame: DistributionFrame, bundle: canari.GraineBundleMsg.$Prop
   return ` - page ${index + 1}/${count} of request ${String(bundle.requestId ?? '')}`;
 }
 
+/** `community|answerer` pairs whose empty, claimless bundle was already said this session. */
+const emptyBundlesSaid = new Set<string>();
+
+/** Whether this is the first empty, claimless bundle from `sender` in `workspaceId` this session. */
+function firstEmptyBundleFrom(workspaceId: string, sender: string): boolean {
+  const key = `${workspaceId}|${sender.toLowerCase()}`;
+  if (emptyBundlesSaid.has(key)) return false;
+  emptyBundlesSaid.add(key);
+  return true;
+}
+
+/** Test seam: forgets which empty bundles were already said. */
+export function resetEmptyBundleNotes(): void {
+  emptyBundlesSaid.clear();
+}
+
 /**
  * Stores the seeds of an answer - or of one PAGE of it - and tells the UI which salons just became
  * readable. A page is a complete bundle: nothing here waits for, counts or assembles the others.
@@ -1126,6 +1143,7 @@ async function absorbSeedBundle(
   // AFTER its seeds are stored, never before: a page recorded as arrived is a page whose seeds are
   // here, which is what an incomplete history answer is judged on at the next start (section 4.4).
   // A bundle answering anything but this device's history ask is ignored there.
+  adoptRecordedHistoryAsk(frame.workspaceId, String(bundle.requestId ?? ''));
   noteHistoryPage(
     requireGraineRuntime('cannot record a history page').userId,
     frame.workspaceId,
@@ -1152,14 +1170,31 @@ async function absorbSeedBundle(
   //
   // Counted per SEED and the salons named: "answered with N seed(s)" upstream against "absorbed 0"
   // here is the shape of an answer whose seeds were all refused, and nothing else would show it.
-  console.debug(
-    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held` +
-      (absorbed > 0
-        ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
-        : '') +
-      `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
-      page
-  );
+  //
+  // ONLY A BUNDLE THAT CARRIED SEEDS ABSORBED ANYTHING (RM-4, 2026-10-26). An "I hold nothing" or a
+  // decline carries none, reaches every member of the key group, and its claim is what speaks - on
+  // the device that asked, below. `absorbed 0/0` said nothing on every seat, once per answer.
+  if (carried.length > 0) {
+    console.debug(
+      `[GRAINE] absorbed ${absorbed}/${carried.length} seed(s) (${alreadyHeld} already held` +
+        (absorbed > 0
+          ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
+          : '') +
+        `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
+        page
+    );
+  } else if (
+    !bundle.holdsNothing &&
+    (bundle.missingSessionIds ?? []).length === 0 &&
+    firstEmptyBundleFrom(frame.workspaceId, frame.sender)
+  ) {
+    // Neither seeds nor a claim: what an answerer older than `holds_nothing` sends for an empty hand.
+    // It reaches every seat, per answer, so it is said ONCE per answerer and community per session.
+    console.debug(
+      `[GRAINE] ${frame.sender} sent an empty bundle in community ${frame.workspaceId.slice(0, 8)} - ` +
+        `no seed and no claim, nothing absorbed${page} (said once per answerer this session)`
+    );
+  }
 
   // A HISTORY ASK ANSWERED WITH A SEED THIS DEVICE DID NOT HOLD settles a widened ask
   // (`historyClosedSeen.ts`). Only a STORED one: a bundle of seeds already held, or of seeds all

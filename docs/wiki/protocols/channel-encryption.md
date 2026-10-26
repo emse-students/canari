@@ -4165,6 +4165,15 @@ unreadable rows each still ask their session's sender (`noteMissingSeed`, the SE
 which reads no "nothing" record), the next membership change moves the epoch and asks again, and a
 new seed minted later reaches the requester directly and ends the ask.
 
+**What is said, and where (2026-10-26, RM-4).** The answer is broadcast on the key group, so every
+seat receives it. Only the device that ASKED says anything: one line per member answered, naming the
+devices that answered, when the walk moves on. A request that named no device says ONCE that the
+walk is held until every tree device has answered. A bundle carrying no seed absorbs nothing and prints no
+`absorbed` line. An answer quoting a request id this device never sent is someone else's and is not
+said. The ids are this session's asks plus the durable record of the last one, so a late answer to
+an ask sent before a restart still gets its debug line. An empty bundle with no claim, from an
+answerer older than `holds_nothing`, is said once per answerer and community per session.
+
 **The account wipe owes the key, and takes it from the ONE list.** The key is built by
 `ACCOUNT_KEY.historyHeldNothing` in `utils/accountLocalKeys.ts` (#2023, WP-DEL-LOCAL), and the
 deletion's allowlist removes it whole: one key per account, written only by that account's device,

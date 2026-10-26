@@ -158,6 +158,14 @@ export function noteHistoryAsked(
 }
 
 /**
+ * The request id of this device's recorded history ask of `workspaceId`, or `null` - durable, so a
+ * session started after the ask still knows the id as its own. Read-only.
+ */
+export function recordedHistoryAsk(userId: string, workspaceId: string): string | null {
+  return readAll(userId)[workspaceId]?.requestId ?? null;
+}
+
+/**
  * Records that a bundle answering `requestId`, sent by `sender`, was absorbed. Anything but our
  * history ask is ignored. An answer of one message (`pageCount` 0) and the last missing page both
  * close the record.
