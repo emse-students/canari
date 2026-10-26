@@ -50,6 +50,41 @@ export function deriveCotisationTag(
   return { tagName: `cotisant:${base}-${academicYear}`, expiresAt };
 }
 
+/** Longest key `variantKeyFromLabel` produces, before any collision suffix. */
+const VARIANT_KEY_MAX = 60;
+
+/** The key of a tier whose label holds no letter or digit at all (an emoji, punctuation). */
+const VARIANT_KEY_EMPTY_LABEL = 'palier';
+
+/**
+ * Derives a new tier's `variantKey` from the label a person typed: lowercase, ASCII-folded
+ * (`"Cotisation Alcoolisée"` -> `"cotisation-alcoolisee"`), every run of other characters one
+ * hyphen, and unique among `taken` (the association's existing keys) by a `-2`, `-3`... suffix.
+ *
+ * The key is a TECHNICAL id (it names the tier's tag and is what Le Cercle reads as `tier`), so a
+ * person never types it; it is derived once, at creation, and never follows a later label edit -
+ * renaming a forfait must not move its cotisants to another tag.
+ */
+export function variantKeyFromLabel(label: string, taken: Iterable<string | null>): string {
+  const folded = label
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/œ/g, 'oe')
+    .replace(/æ/g, 'ae')
+    .replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, VARIANT_KEY_MAX)
+    .replace(/-+$/, '');
+  const base = folded || VARIANT_KEY_EMPTY_LABEL;
+  const used = new Set(taken);
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base}-${n}`)) n += 1;
+  return `${base}-${n}`;
+}
+
 /**
  * Returns the distinct `variantKey`s among an association's `membership` products, one per
  * cotisation tier - `[null]` (the base, un-suffixed tier) when the association has no explicit

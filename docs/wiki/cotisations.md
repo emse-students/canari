@@ -81,6 +81,30 @@ auto-provisioned base tier (`variantKey: null`) is listed first; additional tier
 name, price, and a required `variantKey`. Each tier's edit form can also set the upgrade-pricing link
 (`memberPriceTag` + `amountCentsMember`, next section) via a dropdown of sibling tiers.
 
+### A new tier's key is derived from its label (server, 2026-10-26)
+
+Decided by the user: the key (`variantKey`) is a TECHNICAL id that no person types, sees or edits.
+`POST /api/associations/:id/products` accepts `deriveVariantKey: true` on a `membership` product sent
+WITHOUT a `variantKey`; `ProductsService.create` then derives the key from `name` with
+`variantKeyFromLabel` (`cotisation-tag.util.ts`): lowercase, ASCII-folded, every other run of
+characters one hyphen, `palier` for a label with no letter or digit, and `-2`, `-3`... until it is
+free among the association's tiers (the base tier's null key never collides). Everything after is
+unchanged: `deriveCotisationTag` names the tag from that key, the sibling XOR and the base tier
+(`variantKey: null`) are untouched.
+
+- **Older clients keep working**: an explicit `variantKey` is still honoured on create and update.
+  Sending both is refused (400), and so is `deriveVariantKey` on a non-membership product.
+- **The key is fixed by a label edit**: `update` changes a tier's key only when `variantKey` itself
+  is sent (`planTierRetag`, the conversion below); a rename alone leaves the key, the tag and every
+  cotisant holding it where they are. A spec holds this.
+- **The client reads a CAPABILITY before offering tier creation**: `GET
+  /api/associations/:id/cotisation-options` answers `tierKeyFromLabel: true`. The global
+  `ValidationPipe` (`whitelist: true`) STRIPS an unknown field, so an older social-service would
+  silently drop `deriveVariantKey` and create a BASE tier instead of the named one asked for. A
+  client that does not read the field therefore offers no tier creation at all - it never tries
+  and classifies the failure. **social-service is never rolled back below the first release
+  publishing the field**: a client that read it would create a base tier against the older server.
+
 **Getting rid of the base tier (WP-COT-11).** Enabling cotisation always provisions a base tier, and
 its un-suffixed tag answers `tier: null` on `cotisant-status` - which a consumer such as Le Cercle
 reads as "no forfait". A multi-tier association therefore has to get rid of it, two ways:

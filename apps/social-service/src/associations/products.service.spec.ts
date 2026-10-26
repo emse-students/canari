@@ -570,6 +570,60 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(created.grantedTagName).toBe('cotisant:bde');
     });
 
+    it('derives a new tier key from its label when asked, free among the sibling tiers', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      productRepo.find.mockResolvedValue([
+        product({ id: 'base', type: 'membership', variantKey: null }),
+        product({ id: 'other', type: 'membership', variantKey: 'avec-alcool' }),
+      ] as never);
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Avec Alcool', type: 'membership', deriveVariantKey: true },
+        false
+      );
+
+      expect(created.variantKey).toBe('avec-alcool-2');
+      expect(created.grantedTagName).toBe('cotisant:bde-avec-alcool-2');
+      expect(created).not.toHaveProperty('deriveVariantKey');
+    });
+
+    it('still honours an explicit variantKey (older clients) and refuses it with deriveVariantKey', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+
+      await expect(
+        service.create(
+          'asso1',
+          { name: 'Avec alcool', type: 'membership', variantKey: 'x', deriveVariantKey: true },
+          false
+        )
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.create('asso1', { name: 'Goodies', type: 'other', deriveVariantKey: true }, false)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('keeps the key and the tag when only the label changes - a rename moves nobody', async () => {
+      const { service, productRepo } = makeService();
+      const tierRow = product({
+        id: 'tier1',
+        type: 'membership',
+        name: 'Avec alcool',
+        variantKey: 'avec-alcool',
+        grantedTagName: 'cotisant:bde-avec-alcool',
+      });
+      productRepo.findOne.mockResolvedValue(tierRow as never);
+
+      const saved = await service.update('asso1', 'tier1', { name: 'Forfait bar' }, false);
+
+      expect(saved.name).toBe('Forfait bar');
+      expect(saved.variantKey).toBe('avec-alcool');
+      expect(saved.grantedTagName).toBe('cotisant:bde-avec-alcool');
+      expect(productRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
     it('rejects creating a membership tier when cotisation is not enabled', async () => {
       const { service, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));

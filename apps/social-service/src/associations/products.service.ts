@@ -38,7 +38,7 @@ import {
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { deriveCotisationTag, tierVariantKeys, variantKeyFromLabel } from './cotisation-tag.util';
 import {
   isDelegating,
   resolvePaymentTarget,
@@ -610,7 +610,13 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
-    const { webhookUrl, webhookSecret, ...rest } = dto;
+    const { webhookUrl, webhookSecret, deriveVariantKey, ...rest } = dto;
+
+    if (deriveVariantKey && (dto.type !== 'membership' || dto.variantKey !== undefined)) {
+      throw new BadRequestException(
+        'deriveVariantKey applies to a membership tier sent without a variantKey'
+      );
+    }
 
     // Membership tiers derive their granted tag server-side from the association's own
     // slug/mode + this tier's variantKey - the single source of truth (`deriveCotisationTag`),
@@ -621,12 +627,16 @@ export class ProductsService {
       if (!asso.cotisationMode) {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
-      await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+      if (deriveVariantKey) {
+        rest.variantKey = await this.deriveFreeVariantKey(associationId, dto.name);
+      } else {
+        await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+      }
       const derived = deriveCotisationTag(
         asso.slug,
         asso.cotisationMode,
         new Date(),
-        dto.variantKey ?? null
+        rest.variantKey ?? null
       );
       grantedTagName = derived.tagName;
       tagExpiresAt = derived.expiresAt;
@@ -807,6 +817,24 @@ export class ProductsService {
       newTagName: newTag.tagName,
       newExpiresAt: newTag.expiresAt,
     };
+  }
+
+  /**
+   * The key a new named tier labelled `name` gets: `variantKeyFromLabel` over the keys the
+   * association's tiers already hold, so it is free by construction and never the base (null) key.
+   */
+  private async deriveFreeVariantKey(associationId: string, name: string): Promise<string> {
+    const siblings = await this.productRepo.find({
+      where: { associationId, type: 'membership' },
+    });
+    const key = variantKeyFromLabel(
+      name,
+      siblings.map((p) => p.variantKey ?? null)
+    );
+    this.logger.log(
+      `[COTISATION] derived tier key for association=${associationId.slice(0, 8)}: "${key}" (${siblings.length} existing tier(s))`
+    );
+    return key;
   }
 
   /**

@@ -1,4 +1,27 @@
-import { deriveCotisationTag, getAcademicYear } from './cotisation-tag.util';
+import { deriveCotisationTag, getAcademicYear, variantKeyFromLabel } from './cotisation-tag.util';
+
+describe('variantKeyFromLabel', () => {
+  it('lowercases, folds accents and ligatures to ASCII, and hyphenates', () => {
+    expect(variantKeyFromLabel('Cotisation Alcoolisée', [])).toBe('cotisation-alcoolisee');
+    expect(variantKeyFromLabel('  Œuvre & Café !! ', [])).toBe('oeuvre-cafe');
+  });
+
+  it('gives a label with no letter or digit a fixed key rather than an empty one', () => {
+    expect(variantKeyFromLabel('\u{1F37A} !!', [])).toBe('palier');
+  });
+
+  it('suffixes the first free number on a collision, and ignores the base (null) key', () => {
+    expect(variantKeyFromLabel('Avec alcool', [null, 'avec-alcool'])).toBe('avec-alcool-2');
+    expect(variantKeyFromLabel('Avec alcool', ['avec-alcool', 'avec-alcool-2'])).toBe(
+      'avec-alcool-3'
+    );
+    expect(variantKeyFromLabel('Avec alcool', [null])).toBe('avec-alcool');
+  });
+
+  it('caps the key length without leaving a trailing hyphen', () => {
+    expect(variantKeyFromLabel(`${'a'.repeat(59)} b`, [])).toBe('a'.repeat(59));
+  });
+});
 
 describe('cotisation-tag util', () => {
   describe('getAcademicYear', () => {
