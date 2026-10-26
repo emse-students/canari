@@ -763,7 +763,7 @@ export async function killAndProveDead(timeoutMs = 20_000) {
  *
  * @returns {{focus: 'front' | 'behind' | 'unknown', dump: string}}
  */
-export function focusState() {
+function focusState() {
   let dump;
   try {
     dump = sh('dumpsys window | grep mCurrentFocus');
