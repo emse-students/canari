@@ -762,7 +762,16 @@ const NOTABLE = [
   // A signed-out browser booting asks for a refresh it cannot have: the client cannot see an
   // HttpOnly cookie, so asking is the only way to learn there is none. Every wipe produces it
   // (`newdevice.mjs`), and the refusal of a PRESENT but bad credential is another spelling.
-  /\[AuthController\] Refresh refused: no canari_refresh cookie\. cookies=\[\] x-canari-refresh=absent /,
+  // `cf_clearance` is the dev zone's edge cookie (Cloudflare's JS detections, the same environment the
+  // `dev-edge-cloudflare-challenge-inline-script` exception names) and says nothing about the session:
+  // a wiped browser on dev carries it and nothing else (DEV-1/DEV-4, alpha.4, 2026-10-25). Named, so
+  // any OTHER cookie beside a missing refresh stays unexplained.
+  /\[AuthController\] Refresh refused: no canari_refresh cookie\. cookies=\[(cf_clearance)?\] x-canari-refresh=absent /,
+  // A DEVICE'S SIGNATURE KEY recorded at its registration, and the two reads that serve and date it to
+  // a member vetting a KeyPackage (`device-signature-keys.service.ts`). Every enrolment crosses them
+  // once; `REFUSED` and `unreadable or foreign` are the findings and stay unmatched.
+  /\[DeviceSignatureKeysService\] \[DEVICE_KEY\] RECORDED source=register-device user=\S+ device=\S+ new=[01]$/,
+  /\[DeviceSignatureKeysService\] \[DEVICE_KEY\] (served|dated) user=\S+ device=\S+ keys=\d+$/,
   // The legacy-cotisation claim looked up at sign-in and finding no row for this account - the
   // ordinary answer for most accounts ([cotisations](../../docs/wiki/cotisations.md)).
   /\[LegacyCotisationService\] \[legacy\] no match key for user=\S+ \(promo=\d+\)$/,
@@ -1120,7 +1129,7 @@ const SEVERE = [
  * server line - its warm-process staging is logged by the PHONE (`[BG_WELCOME]`/`[BG_STATE]` in
  * Rust), which the logcat window reads, and its server face is #2287's `[BG_WELCOME]` route below.
  */
-const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6'];
+const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6', 'ADM-9', 'ADM-10'];
 const THROTTLED = String.raw`repeat=10*, said at 1, 10, 100\.\.\.`;
 const ROW_RULES = [
   // ── #2358: a new person joins a group only through a member ───────────────────────────────────
@@ -1136,12 +1145,15 @@ const ROW_RULES = [
     rows: ADM_JOIN,
   },
   // The external-join base withheld from a waiting seat. A CURRENT client is told before it asks
-  // (`device-memberships`), so only the OLD joiner of ADM-5 meets it - and ADM-4, which asks.
+  // (`device-memberships`), so only the OLD joiner of ADM-5 meets it on its own - but every waiting
+  // row asks it ITSELF, from the joiner's page (`archive/admit.mjs` `baseAs` in `followAndWait`), to
+  // assert the 409, so the line is the row's own in each of them (ADM-1 and ADM-3, alpha.4). Only the
+  // rows that call `baseAs`, then: ADM-6's joiner is a NEW client that is told first and never asks.
   {
     name: 'external-join base withheld',
     tag: /\[GROUP_INFO\] .*base withheld/,
     shape: new RegExp(String.raw`\[GROUP_INFO\] group=\S+ user=\S+ awaits a member's admission - base withheld \(${THROTTLED}\)$`),
-    rows: ['ADM-4', 'ADM-5'],
+    rows: ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-9', 'ADM-10'],
   },
   // A waiting seat's ask relayed to a member (the ordinary START has no `ask=` and stays BENIGN).
   {
@@ -1153,11 +1165,55 @@ const ROW_RULES = [
     rows: ADM_JOIN,
   },
   // A member's Decline, and its four answers (`AwaitingSeatWithdrawal`).
+  // A Decline of a WAITING seat answers `withdrawn`, and every declining row but ADM-3 declines one:
+  // ADM-2 and ADM-9 the ask itself, ADM-4 its closing Decline (`archive/admit.mjs`), ADM-10 while the
+  // Add is held. Any other answer in them is the finding.
   {
     name: 'decline answered',
     tag: /\[JOIN_DECLINE\]/,
-    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=(withdrawn|already-admitted|not-awaiting|gone)$/,
-    rows: ['ADM-2', 'ADM-3'],
+    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=withdrawn$/,
+    rows: ['ADM-2', 'ADM-4', 'ADM-9', 'ADM-10'],
+  },
+  // ADM-3 RACES the Decline against an Add, so either may land first: `already-admitted` is the Add
+  // winning. `not-awaiting` and `gone` are answers no row plays, and stay dirt everywhere.
+  {
+    name: 'decline answered in a race',
+    tag: /\[JOIN_DECLINE\]/,
+    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=(withdrawn|already-admitted)$/,
+    rows: ['ADM-3'],
+  },
+  // THE ASK TOLD TO THE MEMBERS AND ITS SETTLEMENT (`join-ask-announce.ts`): every waiting row
+  // raises one and settles it. `NOT announced` and a throw past the guard are other spellings and
+  // stay dirt; `devices=` counts the member devices reached and is not judged here.
+  {
+    name: 'join ask announced or settled',
+    tag: /\[JOIN_ASK\] (ANNOUNCED|SETTLED) /,
+    shape: /\[JOIN_ASK\] (ANNOUNCED group=\S+ asker=[0-9a-f]+ ask=[0-9a-f]{1,8}|SETTLED group=\S+ asker=[0-9a-f]+ ask=[0-9a-f]{1,8} outcome=(admitted|declined|expired|withdrawn)) devices=\d+$/,
+    rows: ADM_JOIN,
+  },
+  // ADM-4's two call probes, the row's own (`memberRoutes`: `call initiate`, `call ring` with the
+  // fixed id `adm4-probe`); the 409 they meet is the assertion.
+  {
+    name: 'ADM-4 call probes',
+    tag: /\[calls\] initiateCall |\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
+    shape: /\[calls\] initiateCall user=\S+ group=\S+$|\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
+    rows: ['ADM-4'],
+  },
+  // A FRESHLY MINTED DEVICE'S FIRST MEMBERSHIP READ (`invitations.controller.ts`): every group its
+  // owner is in is pending and nobody is adding it yet - the starting state of an enrolment, before
+  // the owner's other devices seat it. The BENIGN `stranded=0` rule keeps its reason; this shape is
+  // only the all-pending, nobody-adding answer. It is forgiven only in the rows that mint AND assert
+  // the minted device seated, so a device that stays at this line fails its row:
+  // - DEV-1 (`deviceAddedOwn` seatedMs);
+  // - DEV-2 and DEV-3 (a premise: "never seated, nothing to revoke");
+  // - DEV-4 (`raceEnrolOwn` seated);
+  // - DEV-6 (`originalArrivalOwn` firstSeatedMs).
+  // DEV-3's alpha.4 window holds two of these lines.
+  {
+    name: 'a minted device before it is seated',
+    tag: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=(\S+?:pending\(welcome=false,adding=false\),?)+$/,
+    shape: /\[DEVICE_MEMBERSHIPS\] user=\S+ device=\S+ count=(\d+) stranded=\1 statuses=(\S+?:pending\(welcome=false,adding=false\),?)+$/,
+    rows: ['DEV-1', 'DEV-2', 'DEV-3', 'DEV-4', 'DEV-6'],
   },
   {
     name: 'decline refused to a non-member',
@@ -1170,7 +1226,16 @@ const ROW_RULES = [
     name: 'admitted by a member',
     tag: /\] ADMITTED group=/,
     shape: /\[[A-Z_]+\]\[[^\]]+\] ADMITTED group=\S+ users=\d+ door=(admits|welcome) - a member's Add answered their invitation-link ask$/,
-    rows: ['ADM-1', 'ADM-3', 'ADM-5', 'ADM-6'],
+    rows: ['ADM-1', 'ADM-3', 'ADM-5', 'ADM-6', 'ADM-9'],
+  },
+  // AN ADD WHOSE PERSON LEFT SINCE ITS BASE, refused at the commit gate (`messaging.service.ts`):
+  // the Add carried a seat a Decline withdrew. ADM-10 orders it so on purpose and ASSERTS the line;
+  // ADM-3 races the two and meets it whenever the Decline wins.
+  {
+    name: 'stale Add refused at the gate',
+    tag: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED /,
+    shape: /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=\S+ user=[0-9a-f]{1,8} reason=departed_since_base baseSeatGeneration=\d+ committer=[0-9a-f]{1,8} - its admits dropped, the leaf has no seat$/,
+    rows: ['ADM-3', 'ADM-10'],
   },
   // The waiting seat's own commit refused at the gate - nothing it does admits anyone.
   {

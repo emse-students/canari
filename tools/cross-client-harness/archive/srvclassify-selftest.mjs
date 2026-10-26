@@ -981,6 +981,31 @@ check(
   true
 );
 check(
+  "... and so is one carrying only the dev edge's cf_clearance cookie",
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [AuthController] Refresh refused: no canari_refresh cookie. cookies=[cf_clearance] x-canari-refresh=absent client=1.4.1-alpha.4 origin=https://dev.canari-emse.fr ua=Mozilla'),
+  true
+);
+check(
+  '... but not one carrying any other cookie',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [AuthController] Refresh refused: no canari_refresh cookie. cookies=[canari_session] x-canari-refresh=absent client=1.4.1-alpha.4'),
+  false
+);
+check(
+  "a new device's signature key recorded at registration is reported",
+  matches(NOTABLE_RULES, '[Nest] 1 - LOG [DeviceSignatureKeysService] [DEVICE_KEY] RECORDED source=register-device user=aaaaaaaa device=web-aaaa-mvodptr3-eou6 new=1'),
+  true
+);
+check(
+  '... and the reads that serve and date it',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [DeviceSignatureKeysService] [DEVICE_KEY] dated user=aaaaaaaa device=web-aaaa-mvodptr3-eou6 keys=1'),
+  true
+);
+check(
+  '... but never a refused one',
+  matches(NOTABLE_RULES, '[Nest] 1 - WARN [DeviceSignatureKeysService] [DEVICE_KEY] REFUSED source=register-device user=aaaaaaaa device=web-aaaa'),
+  false
+);
+check(
   'a refresh refused with a credential PRESENT is NOT',
   matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [AuthController] Refresh refused: no canari_refresh cookie. cookies=[x] x-canari-refresh=present client=0.18.27'),
   false
@@ -1017,9 +1042,21 @@ check(
     ['a waiting seat refused a member route', W('MembersController', `[ROSTER_READ] REFUSED group=${G} caller=aaaaaaaa - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=1, said at 1, 10, 100...)`), 'ADM-1', 'FLOOR-1'],
     ['... with its target, at the 100th refusal', W('MembersController', `[MEMBERSHIP] REFUSED group=${G} caller=aaaaaaaa target=bbbbbbbb - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=100, said at 1, 10, 100...)`), 'ADM-4', 'ADM-7'],
     ['... on a calls scope', W('CallsService', `[ring-end] REFUSED group=${G} caller=aaaaaaaa - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=10, said at 1, 10, 100...)`), 'ADM-4', 'DUP-1'],
-    ['the external-join base withheld', L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-5', 'ADM-1'],
+    ['the external-join base withheld', L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-5', 'DEV-1'],
+    ['... and in a waiting row that asks it itself', L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-1', 'ADM-8'],
     ["a waiting seat's ask relayed", L('MessagingService', `[WELCOME_REQ][welcome-req-81fb5450] START group=${G} requester=aaaaaaaa:${DEV} members=3 ask=awaiting-member repeat=10 (said at 1, 10, 100...)`), 'ADM-6', 'DEV-1'],
     ["a member's Decline withdrew the ask", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-2', 'ADM-1'],
+    ["... ADM-4's closing Decline", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-4', 'ADM-8'],
+    ['the ask announced to the members', L('JoinAsk', `[JOIN_ASK] ANNOUNCED group=${G} asker=aaaaaaaa ask=c80e3db4 devices=5`), 'ADM-1', 'DEV-1'],
+    ['the ask settled', L('JoinAsk', `[JOIN_ASK] SETTLED group=${G} asker=aaaaaaaa ask=c80e3db4 outcome=declined devices=5`), 'ADM-3', 'ADM-8'],
+    ["ADM-4's call-initiate probe", D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'ADM-4', 'ADM-1'],
+    ["ADM-4's ring probe", D('CallsService', `[ring] ringGroup caller=${'a'.repeat(64)} group=${G} call=adm4-probe`), 'ADM-4', 'DUP-1'],
+    ['a minted device before it is seated', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-4', 'ADM-1'],
+    ['a stale Add refused at the gate', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10', 'ADM-1'],
+    ['a re-invited joiner declined then admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-9', 'ADM-8'],
+    ['... not in a row that never mints and seats one (DEV-7)', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-6', 'DEV-7'],
+    ["ADM-4's closing Decline answered already-admitted is not its own", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-4'],
+    ["the base withheld is not ADM-6's (its joiner never asks)", L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-10', 'ADM-6'],
     ['a Decline answered already-admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
     ['a Decline refused to a non-member', W('MembersController', `[JOIN_DECLINE] REJECT group=${G} caller=none target=bbbbbbbb - not an admitted member, or their own ask`), 'ADM-4', 'ADM-2'],
     ["KILL-1's own burst in the hourly commit rate (alpha.4)", L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 10 commit(s) in 1 group(s); per group p50=10 p90=10 max=10; busiest single committer per group p50=10 p90=10 max=10; 1 group(s) at >= 8 by one device'), 'KILL-1', 'DUP-1'],
@@ -1058,14 +1095,20 @@ check(
     ['a base withheld at repeat=11', L('MessagingService', `[GROUP_INFO] group=${G} user=aaaaaaaa awaits a member's admission - base withheld (repeat=11, said at 1, 10, 100...)`), 'ADM-5'],
     ['an ask relayed at repeat=3', L('MessagingService', `[WELCOME_REQ][welcome-req-81fb5450] START group=${G} requester=aaaaaaaa:${DEV} members=3 ask=awaiting-member repeat=3 (said at 1, 10, 100...)`), 'ADM-1'],
     ['a Decline with an outcome nobody declared', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=evicted`), 'ADM-2'],
+    ['an ask settled with an outcome nobody declared', L('JoinAsk', `[JOIN_ASK] SETTLED group=${G} asker=aaaaaaaa ask=c80e3db4 outcome=lost devices=5`), 'ADM-2'],
     ['a door nobody declared', L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=link - a member's Add answered their invitation-link ask`), 'ADM-1'],
     ['an uninvited-entry line of a new kind', W('MessagingController', `[UNINVITED_ENTRY] ACCEPT reporter=aaaaaaaa group=${G}`), 'ADM-7'],
     ['a background Welcome line nobody read', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] Welcome LOST group=${G}`), 'DEV-7'],
     ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
     ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
     ['TWO busy groups in the hourly commit rate: not one row\'s burst', L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 30 commit(s) in 2 group(s); per group p50=15 p90=15 max=15; busiest single committer per group p50=15 p90=15 max=15; 2 group(s) at >= 8 by one device'), 'KILL-1'],
+    ["a Decline answered not-awaiting is no row's", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=not-awaiting`), 'ADM-3'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
+
+  // A MINTED DEVICE LINE WITH ONE GROUP BEING ADDED is not the all-pending starting state: no row rule
+  // claims it, so it falls to the general classifier (stranded is not 0) and stays dirt in DEV-4 too.
+  check('R6 unclaimed   a minted device line with one group being added (in DEV-4)', verdictIn(L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=true)'), 'DEV-4'), 'unclaimed');
 
   // NEVER JUDGED PER ROW: an ERROR line gates as it always did, in the row of its family too.
   check('R6 [ADMISSION] at ERROR is never a row line', verdictIn(E('MessagingService', `[ADMISSION] group=${G} user=aaaaaaaa holds 1 active device(s) under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`), 'ADM-1'), 'unclaimed');

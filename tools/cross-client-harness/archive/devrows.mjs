@@ -87,6 +87,7 @@ import {
   OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_RETURN_NARRATION,
   REVOKED_SIGN_OUT_NARRATION,
+  SIBLING_MINT_NARRATION,
   consoleLines,
   logcatSince,
 } from '../watch.mjs';
@@ -305,7 +306,7 @@ const ACTIONS = {
     await send(seats.seat.W1.cx, `${id} at the owner's arrival [${mark}]`);
     const first = await mintOn('W3');
     if (!first.enrolled) return { premise: [`W3 did not enrol: ${first.refused ?? 'not enrolled'}`], detail: { first } };
-    await seatActiveWithin(c.group.id, first.deviceId, 120_000);
+    const firstSeatedMs = await seatActiveWithin(c.group.id, first.deviceId, 120_000);
     const panel = revokeFrom('W1', first.deviceId);
     const goneMs = await seatGoneWithin(c.group.id, first.deviceId, 120_000);
     const second = await mintOn('W6');
@@ -315,8 +316,8 @@ const ACTIONS = {
       members: ['W1', 'W6'],
       revoked: ['W3'],
       minted: { W3: first, W6: second },
-      detail: { first, second, panel, goneMs },
-      judge: () => originalArrivalOwn({ revoked: panel.ok && goneMs !== null, listed: read.listed, earlyShown: read.shown }),
+      detail: { first, second, panel, goneMs, firstSeatedMs },
+      judge: () => originalArrivalOwn({ firstSeatedMs, revoked: panel.ok && goneMs !== null, listed: read.listed, earlyShown: read.shown }),
     };
   },
 
@@ -491,6 +492,9 @@ try {
   const refusals = {};
   for (const d of spec.mint) {
     logs[d] = (act.revoked ?? []).includes(d) ? REVOKED_NARRATION : MINT_NARRATION;
+    // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
+    // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
+    if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
     refusals[d] = MINT_REFUSALS;
   }
   const observers = await observersOf(seats, { logs, refusals, provoked: act.records ?? {}, offline: act.offline ?? [] });

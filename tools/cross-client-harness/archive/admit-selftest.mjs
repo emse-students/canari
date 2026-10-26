@@ -13,6 +13,7 @@ import {
   admittedOwn,
   baseWithheldRepeats,
   declinedOwn,
+  gateRefusals,
   isAwaitingRefusal,
   isPowerOfTen,
   memberRoutes,
@@ -23,7 +24,10 @@ import {
   probeOwn,
   raceOwn,
   rateLimitedOwn,
+  reinviteOwn,
+  routeEnrolments,
   seatState,
+  staleAddOwn,
 } from '../admitrows.mjs';
 
 let failures = 0;
@@ -127,6 +131,32 @@ ok('minted and accepted fails', failing(noAskOwn([{ kind: 'direct', mint: { stat
 ok('an ask raised fails', failing(noAskOwn([{ kind: 'direct', mint: { status: 400 }, accept: null, askLines: 1, after: absent }])) === 1);
 ok('a waiting seat written fails', failing(noAskOwn([{ kind: 'direct', mint: { status: 400 }, accept: null, askLines: 0, after: seatState(waiting, J) }])) === 1);
 ok('a kind with no conversation to mint on is a failure, not a pass', failing(noAskOwn([{ kind: 'key-group', missing: 'none' }])) === 1);
+
+// ── ADM-9 ────────────────────────────────────────────────────────────────────────────────────────
+console.log('ADM-9 reinviteOwn');
+const a9 = (over = {}) => reinviteOwn({ declined: absent, rewaiting: 'waiting', asks: { W1: 900, W2: 1200 }, admitted: seatState(admitted, J), listed: true, ...over });
+ok('declined, waiting again, asked, admitted, listed -> all hold', allOk(a9()));
+ok('the second link refused (no waiting seat) fails', failing(a9({ rewaiting: 'absent' })) === 1);
+ok('the Add after the Decline not admitting fails', failing(a9({ admitted: absent })) === 1);
+ok('the first ask never declined fails', failing(a9({ declined: seatState(waiting, J) })) === 1);
+
+// ── ADM-10 ───────────────────────────────────────────────────────────────────────────────────────
+console.log('ADM-10 staleAddOwn');
+const a10 = (over = {}) => staleAddOwn({ held: { ok: true }, declined: absent, trail: ['absent', 'absent'], after: absent, listed: false, gateRefused: 1, routeEnrolled: 0, ...over });
+ok('held, declined, refused at the gate, nothing enrolled -> all hold', allOk(a10()));
+ok('the member-add route enrolling after the Decline fails (alpha.4)', failing(a10({ routeEnrolled: 1 })) === 1);
+ok('no gate refusal fails', failing(a10({ gateRefused: 0 })) === 1);
+ok('one admitted sample fails', failing(a10({ trail: ['absent', 'admitted', 'absent'] })) === 1);
+ok('the commit never held fails', failing(a10({ held: { ok: false, error: 'timeout' } })) === 1);
+const JU = 'bbbbbbbb' + 'c'.repeat(56);
+const gate = (reason, user = 'bbbbbbbb', group = G) => `WARN [MessagingService] [ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${group} user=${user} reason=${reason} baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`;
+ok('gateRefusals: departed_since_base about the joiner in the group counts', gateRefusals([gate('departed_since_base')], G, JU) === 1);
+ok('gateRefusals: another NOT_ENROLLED reason does not', gateRefusals([gate('never_invited')], G, JU) === 0);
+ok('gateRefusals: another user or another group does not', gateRefusals([gate('departed_since_base', 'dddddddd'), gate('departed_since_base', 'bbbbbbbb', 'other-group')], G, JU) === 0);
+const done = (user = JU, group = G) => `LOG [MembersController] [ADD_MEMBER][add-member-c3adcdfe] DONE group=${group} user=${user} devices=6`;
+ok('routeEnrolments: a DONE about the joiner in the group counts, case-folded', routeEnrolments([done(JU.toUpperCase())], G, JU) === 1);
+ok('routeEnrolments: a DONE about another user or group does not', routeEnrolments([done('e'.repeat(64)), done(JU, 'other-group')], G, JU) === 0);
+ok('ADM-10 orders two different members', ADMIT_ROWS['ADM-10'].stale.approve !== ADMIT_ROWS['ADM-10'].stale.decline);
 
 if (failures) {
   console.error(`\n${failures} admission assertion(s) failed`);

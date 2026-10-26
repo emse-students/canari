@@ -190,16 +190,23 @@ async function readClient(slot, group, markers, provoked) {
  * connection may itself commit (`behindServer`). The bound is an ABORT, never a verdict: a group that
  * never settled is unjudged, and the pass says why (`unsettled`).
  *
+ * `sample`, when given, is read on every round and kept on it. A row that must judge a state the
+ * settlement covers (ADM-10: the joiner never admitted) reads it on the same rounds, not by a clock.
+ *
+ * @param {{cx: object, target: {device?: string, port: number}}[]} members
+ * @param {string} group
+ * @param {number} [abortMs]
+ * @param {(() => object) | null} [sample]
  * @returns {Promise<{ms: number, settled: boolean, rounds: {serverEpoch: number|null, behind: string[]}[]}>}
  */
-async function awaitSettled(members, group, abortMs = 60_000) {
+export async function awaitSettled(members, group, abortMs = 60_000, sample = null) {
   const started = Date.now();
   const rounds = [];
   for (;;) {
     const epochs = {};
     for (const s of members) epochs[s.target.device ?? String(s.target.port)] = JSON.parse(await evaluate(s.cx, EPOCHS)).epochs;
     const serverEpoch = serverView(group).activeEpoch;
-    rounds.push({ serverEpoch, behind: behindServer(epochs, group, serverEpoch) });
+    rounds.push({ serverEpoch, behind: behindServer(epochs, group, serverEpoch), ...(sample ? sample() : {}) });
     const ms = Date.now() - started;
     if (settledRounds(rounds)) return { ms, settled: true, rounds };
     if (ms > abortMs) return { ms, settled: false, rounds };

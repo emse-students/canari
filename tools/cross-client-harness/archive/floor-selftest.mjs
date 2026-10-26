@@ -70,6 +70,14 @@ ok('a reload pass that never settled -> INCONCLUSIVE with the reason, never a PA
   return v.verdict === 'INCONCLUSIVE' && v.failures.some((f) => f.includes('never settled'));
 })());
 ok('... and a premise missing still wins: INVALID', composeVerdict({ own: good, invariant: unsettledInv, premise: ['no group'] }).verdict === 'INVALID');
+ok('a row whose own settlement never came, nothing failing -> INCONCLUSIVE with the reason', (() => {
+  const v = composeVerdict({ own: good, invariant: cleanInv, unjudged: ['the group never settled after the release'] });
+  return v.verdict === 'INCONCLUSIVE' && v.failures.some((f) => f.startsWith('unjudged: '));
+})());
+ok('... but a failure it did see stands: FAIL, the unjudged reason kept', (() => {
+  const v = composeVerdict({ own: [{ what: 'never admitted', ok: false }], invariant: cleanInv, unjudged: ['never settled'] });
+  return v.verdict === 'FAIL' && v.failures.includes('never admitted') && v.failures.includes('unjudged: never settled');
+})());
 ok('nothing asserted -> INVALID', composeVerdict({}).verdict === 'INVALID');
 ok('a premise missing -> INVALID, even over clean assertions', composeVerdict({ own: good, invariant: cleanInv, premise: ['W4 never listed'] }).verdict === 'INVALID');
 ok('a premise outranks a fault that never fired', composeVerdict({ own: good, invariant: cleanInv, premise: ['x'], vacuousFaults: [{ rule: 0, fault: 'hold' }] }).verdict === 'INVALID');

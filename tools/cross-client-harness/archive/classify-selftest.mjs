@@ -29,6 +29,10 @@ import {
   REMOVE_NARRATION,
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
+  PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+  SIBLING_MINT_NARRATION,
+  admissionJoinerNarration,
+  admissionMemberNarration,
   REVOKED_SIGN_OUT_NARRATION,
   PAGE_BOOT_NARRATION,
   REFUSED_FOR_LACK_OF_ROW_NARRATION,
@@ -1317,6 +1321,8 @@ const benignFirst = await report({
  * cases below are the ones that would go quiet - a needle over-matching a NEIGHBOURING sentence, and
  * dirt of another kind sitting beside a forgiven line.
  */
+/** The admission cases' group: its prefix is what the lines print. */
+const ADM_G = '21a3145f-088e-4214-9692-63455cc27ac9';
 const FORGIVE_CASES = [
   [
     'frames refused for lack of a row: forgiven where a row names the narration',
@@ -1606,6 +1612,86 @@ const FORGIVE_CASES = [
     ],
     REMOVE_NARRATION,
     { clean: false, unmatched: 2 },
+  ],
+  // ── the admission narrations (#2500): scoped to the row's group and to the endings it plays ──
+  [
+    "a member's ask, admitted and declined in the row's group, forgiven at its levels",
+    [
+      ['log', "[10:01:02] [JOIN_ASK] 223bc34e… has no leaf in 21a3145f... - a new person is not added automatically, a member's approval is asked"],
+      ['log', "[10:01:02] [JOIN_REQUEST] 223bc34e… asks to join 21a3145f... - a member's answer is awaited"],
+      ['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… admitted in 21a3145f... - the ask leaves this screen'],
+      ['info', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined in 21a3145f…'],
+      ['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined - their seat is withdrawn'],
+    ],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true }),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same ask at warn, and an ask about ANOTHER group, stay dirt',
+    [
+      ['warning', "[10:01:02] [JOIN_REQUEST] 223bc34e… asks to join 21a3145f... - a member's answer is awaited"],
+      ['log', "[10:01:02] [JOIN_ASK] 223bc34e… has no leaf in 098bfb7f... - a new person is not added automatically, a member's approval is asked"],
+    ],
+    admissionMemberNarration(ADM_G),
+    { clean: false, unmatched: 2, warnings: 1 },
+  ],
+  [
+    'control: a Decline in a row that plays none (ADM-1) stays dirt',
+    [['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined in 21a3145f... - the ask leaves this screen']],
+    admissionMemberNarration(ADM_G, { admitted: true }),
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    "the joiner's wait and both endings in the row's group, forgiven",
+    [
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 21a3145f… created.'],
+      ['log', '[10:01:02] [DISCOVERY] "21a3145f…" awaits a member admission'],
+      ['log', '[10:01:02] [DISCOVERY] "21a3145f…" no longer awaits a member'],
+      ['log', '[10:01:02] [DISCOVERY] never-admitted "21a3145f…" is no longer listed - the ask was declined or expired - removing'],
+    ],
+    admissionJoinerNarration(ADM_G, { admitted: true, declined: true }),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "control: the joiner's lines about another group, an ending the row does not play, or at error, stay dirt",
+    [
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 098bfb7f… created.'],
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 21a3145fabc created.'],
+      ['log', '[10:01:02] [DISCOVERY] never-admitted "21a3145f…" is no longer listed - the ask was declined or expired - removing'],
+      ['error', '[10:01:02] [DISCOVERY] "21a3145f…" awaits a member admission'],
+    ],
+    admissionJoinerNarration(ADM_G, { admitted: true }),
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    "a minted sibling's KeyPackage vetted, at debug, forgiven",
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 472df672... vetted: pinned']],
+    SIBLING_MINT_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same vetting at warn, or another outcome, stays dirt',
+    [
+      ['warning', '[10:01:02] [TRUST] KeyPackage for 472df672... vetted: pinned'],
+      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672... vetted: mismatch'],
+    ],
+    SIBLING_MINT_NARRATION,
+    { clean: false, unmatched: 1, warnings: 1 },
+  ],
+  [
+    "RM-6's refused privacy flip, by its code at debug, forgiven",
+    [['debug', '[10:01:02] [channelSettings.handleTogglePrivacy failed] ChannelApiError: {"code":"REMOVAL_EXCEEDS_ACTOR","message":"x"}']],
+    PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same refusal at warn, or another code, stays dirt',
+    [
+      ['warning', '[10:01:02] [channelSettings.handleTogglePrivacy failed] ChannelApiError: {"code":"REMOVAL_EXCEEDS_ACTOR","message":"x"}'],
+      ['error', '[10:01:02] [channelSettings.handleTogglePrivacy failed] ChannelApiError: {"code":"FORBIDDEN","message":"x"}'],
+    ],
+    PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+    { clean: false, unmatched: 1, warnings: 1 },
   ],
 ];
 for (const [what, lines, needles, want] of FORGIVE_CASES) {

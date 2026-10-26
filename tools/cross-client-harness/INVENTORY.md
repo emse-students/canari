@@ -25,7 +25,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `a1apk.mjs` | BUILD THE A1 APK AGAINST THE ESTATE `SITE` NAMES (LOCAL OR DEV), INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
 | `a1plan.mjs` | WHAT AN A1 APK BUILD MUST BE FOR THE ESTATE `SITE` NAMES - the decisions of `a1apk.mjs`, pure. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
-| `admitrows.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..8 - their table, the waiting seat's route table, |
+| `admitrows.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..10 - their table, the waiting seat's route table, |
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
