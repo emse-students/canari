@@ -42,7 +42,7 @@ import { evaluate, reloadAndWait } from './cdp.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, srvLines } from './estate.mjs';
 import { closeOverlays } from './groupnav.mjs';
-import { behindServer, invariantVerdict, settleDecision, settledRounds } from './invariantverdict.mjs';
+import { behindServer, invariantVerdict, movedUnderJudge, settleDecision, settledRounds } from './invariantverdict.mjs';
 import { ESTATE } from './site.mjs';
 import { consoleEntries, watch } from './watch.mjs';
 
@@ -303,16 +303,36 @@ export async function checkInvariant({ group, targets, members, conversation, fr
    * IS invariant 1's finding, so the pass is judged anyway on what the last round saw - the wait only
    * gave the commit in flight its chance. After the reload, an unsettled group is unjudged as before:
    * the reload itself may still be committing, and `composeVerdict` makes the row INCONCLUSIVE.
+   *
+   * AND A GROUP THAT MOVED UNDER THE JUDGE (`movedUnderJudge`) IS SETTLED AND JUDGED AGAIN, up to
+   * `MOVES` times: the pass straddled a commit and judged no state. Past that bound the last pass
+   * stands, and says the group kept moving.
    */
+  const MOVES = 3;
   const settledJudge = async (label, { judgeUnsettled }) => {
-    const settled = await awaitSettled(slots.filter((s) => s.member), group);
-    const decision = settleDecision(label, settled, { judgeUnsettled });
-    const pass = decision.judge ? await judge(label) : decision.unjudged;
-    if (decision.approximation) pass.approximations.push(decision.approximation);
-    pass.settleRounds = settled.rounds.length;
-    pass.settleMs = settled.ms;
-    pass.settled = settled.settled;
-    return pass;
+    const members = slots.filter((s) => s.member);
+    let settled = await awaitSettled(members, group);
+    for (let moved = 0; ; moved++) {
+      const decision = settleDecision(label, settled, { judgeUnsettled });
+      const pass = decision.judge ? await judge(label) : decision.unjudged;
+      const after = decision.judge ? serverView(group).activeEpoch : null;
+      if (decision.judge && movedUnderJudge(settled, after) && moved < MOVES) {
+        console.log(`[invariant] ${label}: the group moved under the judge (settled at ${settled.rounds.at(-1).serverEpoch}, server now ${after}) - settling again`);
+        settled = await awaitSettled(members, group);
+        continue;
+      }
+      if (decision.approximation) pass.approximations.push(decision.approximation);
+      if (moved) {
+        pass.approximations.push({
+          invariant: 0,
+          what: `the group moved under the judge ${moved} time(s) ${label}${movedUnderJudge(settled, after) ? ', and was still moving at the last' : ''}: re-settled and judged again`,
+        });
+      }
+      pass.settleRounds = settled.rounds.length;
+      pass.settleMs = settled.ms;
+      pass.settled = settled.settled;
+      return pass;
+    }
   };
 
   const passes = [await settledJudge('after the action', { judgeUnsettled: true })];
