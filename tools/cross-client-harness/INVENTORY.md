@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-108 scripts.
+109 scripts.
 
 | script | what it is |
 |---|---|
@@ -74,6 +74,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
 | `killrows.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - KILL-1..5 and RM-3 - their table and their judges. |
 | `launch.mjs` | Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5 |
+| `listracerows.mjs` | LIST-RACE-1 - A SALON HEARD OF LIVE WHILE ITS COMMUNITY'S LISTING IS IN FLIGHT (2026-10-26). |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
@@ -146,7 +147,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-91 scripts.
+92 scripts.
 
 | script | what it is |
 |---|---|
@@ -201,6 +202,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/k.mjs` | NOTIF-6c - the notification QUICK REPLY from a merely BACKGROUNDED app (WP-NOTIF-1). |
 | `archive/kill.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - a process that dies with a commit in flight. |
 | `archive/life.mjs` | LIFE-1..8 - the phone in every state an OS can put it in, one check per run. |
+| `archive/listrace.mjs` | LIST-RACE-1: a salon heard of live while its community's listing is held - listed after the release? |
 | `archive/mention.mjs` | MENTION-1..6 - the @mention composer, the cleartext `mentionedUserIds` routing hint it produces |
 | `archive/msg1.mjs` | MSG-1: W1 -> W2, both foreground, DM, plain text. One copy, correct author, and it STAYS. |
 | `archive/msg10.mjs` | MSG-10 - the SENDER is offline. |
@@ -246,7 +248,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-61 scripts.
+62 scripts.
 
 | script | what it is |
 |---|---|
@@ -283,6 +285,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/invariant-selftest.mjs` | THE FIVE INVARIANTS EVERY MLS ROW ASSERTS, PINNED (R8, `invariantverdict.mjs`). |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
 | `archive/kill-selftest.mjs` | THE KILL ROWS' OWN JUDGEMENTS, PINNED (`killrows.mjs`). |
+| `archive/listrace-selftest.mjs` | LIST-RACE-1'S TABLE AND JUDGE, PINNED (`listracerows.mjs`). |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
@@ -369,4 +372,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-308 scripts in total.
+311 scripts in total.
