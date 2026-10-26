@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADMIT_ROWS } from './admitrows.mjs';
+import { BIG_ROWS } from './bigrows.mjs';
 import { DEV_ROWS } from './devicerows.mjs';
 import { FLOOR_ROWS } from './floorrows.mjs';
 import { KILL_ROWS } from './killrows.mjs';
@@ -530,6 +531,15 @@ export const PHASES = {
     scripts: ['salon.mjs --row RM-4', 'salon.mjs --row RM-4b', 'salon.mjs --row RM-5', 'salon.mjs --row RM-6'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // A LARGE GROUP (BIG-1..3), class B: every web seat and A1. Declared on 2026-10-26, when the first
+  // `--file big.mjs` run was refused for belonging to no phase. The `-noI1` variants are the ones the
+  // rig can play unattended. The full rows also need I1, which no preflight here arms, so they are
+  // run by hand once the iPhone is wired: `bun archive/big.mjs --row BIG-1|BIG-2|BIG-3`.
+  BIG: {
+    title: '1.4.1 - a large group: twelve devices, a burst under commits, a community removal and newcomer',
+    scripts: ['big.mjs --row BIG-1-noI1', 'big.mjs --row BIG-2-noI1', 'big.mjs --row BIG-3-noI1'],
+    needs: ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'A1'],
+  },
 };
 
 /**
@@ -651,11 +661,12 @@ const onlyOf = (words) => {
  * used to preflight the phase's browsers alone - no phone read, no `a1Build` stamp, and the row then
  * recorded "bound a phone and carries no a1Build" (OFF-5, 2026-10-25). FLOOR is selected by number.
  */
-const ROW_TABLES = {
+export const ROW_TABLES = {
   'offline.mjs': OFFLINE_ROWS,
   'kill.mjs': KILL_ROWS,
   'admit.mjs': ADMIT_ROWS,
   'devrows.mjs': DEV_ROWS,
+  'big.mjs': BIG_ROWS,
   'floor.mjs': Object.fromEntries(Object.entries(FLOOR_ROWS).map(([k, v]) => [k.replace(/^FLOOR-/, ''), v])),
 };
 

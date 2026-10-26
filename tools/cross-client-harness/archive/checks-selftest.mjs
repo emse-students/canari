@@ -32,7 +32,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, fileRefusal, scriptPath } from "../checks.mjs";
+import { PHASES, PHONE_SCRIPTS, ROW_TABLES, SCRATCH_SCRIPTS, devicesFor, fileRefusal, scriptPath } from "../checks.mjs";
 import { codeOnly } from "../srcscan.mjs";
 
 /** The harness root, one level above this self-test. */
@@ -74,6 +74,20 @@ const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice|mintdevice" +
 const COMPUTED_PORT = /PORTS\[/;
 
 /**
+ * A RUNNER THAT OPENS ITS ROW'S OWN SEATS REACHES EVERY DEVICE ITS ROW TABLE NAMES.
+ *
+ * `big.mjs` opens `openSeats(spec.devices)` from `BIG_ROWS`, so no device is ever spelled in the
+ * file and every literal door above read it as reaching neither A1 nor W3. Its table is the
+ * declaration (`ROW_TABLES` in `checks.mjs`), so the door is the table AND the call that opens it,
+ * never either alone - and only the rows a PHASE selects (`file --row X`): kill.mjs's table also holds
+ * KILL-4, a class-B row run outside its phase, which must not make KILL declare the phone.
+ * Added 2026-10-26 with the BIG phase.
+ */
+const phaseRowsOf = (file) =>
+  Object.values(PHASES).flatMap((p) => p.scripts.map((s) => s.split(' ')).filter((w) => w[0] === file && w[1] === '--row').map((w) => w[2]));
+const OPENS_ROW_SEATS = /openSeats\(spec\.devices\b/;
+
+/**
  * Whether a runner file contains any door to `device`. Throws if the file is unreadable.
  *
  * A DOOR IS CODE, NOT PROSE. `tauri.localhost` in a COMMENT explaining why `publicAppOrigin()`
@@ -83,6 +97,7 @@ const COMPUTED_PORT = /PORTS\[/;
 function drives(file, doors, device) {
   const src = codeOnly(readFileSync(scriptPath(file), "utf8"));
   if (doors.test(src)) return true;
+  if (OPENS_ROW_SEATS.test(src) && phaseRowsOf(file).some((r) => ROW_TABLES[file]?.[r]?.devices?.includes(device))) return true;
   return COMPUTED_PORT.test(src) && new RegExp(`['"]${device}['"]`).test(src);
 }
 
@@ -313,13 +328,14 @@ for (const c of cases) {
 // `devicesFor` still ANSWERS a file in no phase (W1 W2, `phase: null`); what `run.mjs --file` does
 // with that answer is `fileRefusal`, and it must refuse. A path is the spelling that reached a chain
 // on 2026-10-25 and preflighted fourteen rows with two browsers - FLOOR-2 went VACUOUS on an
-// unpreflighted W5. `big.mjs` is a real script in no phase: the control that a refusal is not only
-// for names that do not exist.
+// unpreflighted W5. `recon.mjs` is a real script in no phase (`RECON`, deliberately): the control that
+// a refusal is not only for names that do not exist. It was `big.mjs` until BIG got its phase.
 const refusalCases = [
   { file: "archive/floor.mjs", args: ["--row", "2"], refused: /not a path.*--file floor\.mjs/ },
   { file: "archive\\floor.mjs", args: ["--row", "2"], refused: /not a path.*--file floor\.mjs/ },
   { file: "nosuchscript.mjs", args: [], refused: /belongs to no phase/ },
-  { file: "big.mjs", args: [], refused: /belongs to no phase/ },
+  { file: "recon.mjs", args: [], refused: /belongs to no phase/ },
+  { file: "big.mjs", args: ["--row", "BIG-1-noI1"], refused: null },
   { file: "floor.mjs", args: ["--row", "2"], refused: null },
   { file: "devrows.mjs", args: ["--row", "DUP-7"], refused: null },
   { file: "del.mjs", args: ["--only", "7", "--destructive"], refused: null },
