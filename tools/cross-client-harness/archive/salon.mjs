@@ -43,7 +43,7 @@ import { awaitUserRouting, channelIdOf, communityChannels, communityMemberIds, c
 import { closeSeats, displayNameOf, observersOf, openSeats, userOf } from '../mlsrow.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName } from '../rowkit.mjs';
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, kickRaceNarration, kickRaceRefusals, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
 import { PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION, atLevels } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
@@ -409,6 +409,17 @@ try {
   // RM-4's 409 IS ITS SUBJECT TOO: the access race's loser, on either racing admin's seat - only one
   // loses, and `accessRaceOwn` asserts which (alpha.5, 2026-10-26).
   if (id === 'RM-4' && scope) for (const d of Object.keys(spec.race)) refusals[d] = salonRaceRefusals(scope.channelIds);
+  // RM-5'S KICK RACE, BOTH OUTCOMES (alpha.6, 2026-10-26): the granter's refused Welcome or refused
+  // grant, and the kicked subject's refused distribution-group reads - scoped to the row's salon,
+  // its group and the subject (`kickRaceNarration`, `kickRaceRefusals`).
+  if (id === 'RM-5' && scope) {
+    const groupId = salonDistribution(out.detail.channelId)?.groupId;
+    const kick = { workspaceId: scope.workspaceId, channelIds: scope.channelIds, groupIds: groupId ? [groupId] : [], subject: userOf(seats, spec.subject) };
+    logs[spec.granter] = [...narration, ...kickRaceNarration(kick)];
+    const r = kickRaceRefusals(kick);
+    refusals[spec.granter] = r.granter;
+    refusals[spec.subject] = r.subject;
+  }
   const observers = await observersOf(seats, { provoked: out.records ?? {}, logs, refusals });
   await finishObserved(
     id,
