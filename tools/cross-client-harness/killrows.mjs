@@ -355,6 +355,33 @@ export function storageLost({ quotaDb, idb, estimate, cookies = null }) {
   return failed.length ? failed.join('; ') : null;
 }
 
+/** Seconds between Chrome's cookie epoch (1601-01-01) and the Unix epoch. */
+const CHROME_EPOCH_OFFSET_S = 11_644_473_600;
+
+/** A Chrome cookie-file `expires_utc` (microseconds since 1601) as Unix seconds; null when absent. */
+export const chromeExpiresToUnixS = (expiresUtc) => (expiresUtc === null || expiresUtc === undefined ? null : Number(expiresUtc) / 1e6 - CHROME_EPOCH_OFFSET_S);
+
+/**
+ * WHERE THE REFRESH COOKIE WAS WHEN THE BROWSER DIED - read without a clock (coordinator,
+ * 2026-10-26). The browser's MEMORY is read over CDP just before the kill, and the profile's cookie
+ * FILE once the process is dead, before the relaunch. Chrome holds the file locked while it runs.
+ *
+ * - `not-signed-in`: memory held no refresh cookie, so the run's premise is unmet and it is INVALID.
+ * - `on-disk`: the file holds the rotation memory held (expiries within 2 s), so the kill cannot
+ *   have taken the session.
+ * - `not-on-disk` / `older-on-disk`: memory held a cookie the file does not, or holds only an
+ *   earlier rotation of. The kill took the jar's newest state. That is the product's known P2
+ *   (an HttpOnly cookie is not durable across an unclean kill), never a rig fault.
+ *
+ * @param {{memoryExpiresS: number|null, diskExpiresS: number|null}} p Unix seconds, null when absent
+ * @returns {'not-signed-in'|'on-disk'|'not-on-disk'|'older-on-disk'}
+ */
+export function refreshCookieAtKill({ memoryExpiresS, diskExpiresS }) {
+  if (memoryExpiresS === null || memoryExpiresS === undefined) return 'not-signed-in';
+  if (diskExpiresS === null || diskExpiresS === undefined) return 'not-on-disk';
+  return Math.abs(diskExpiresS - memoryExpiresS) <= 2 ? 'on-disk' : diskExpiresS < memoryExpiresS ? 'older-on-disk' : 'on-disk';
+}
+
 /**
  * The refresh cookie's lifetime the server sets (`SESSION_TTL_SECONDS`, auth-sessions.service.ts), so
  * a cookie's expiry minus this is the moment the browser received its last rotation.
