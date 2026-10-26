@@ -168,6 +168,27 @@ RED is `FAIL` on a build without the fix; GREEN is owed on the pre-release that 
 | LIST-RACE-1-A1 | W1's first salon starts A1's listing, held; a second salon heard while held is listed after the release | W1 +A1 - B | `FAIL` - `1.4.1-alpha.6`: RED as expected, the salon not listed in 20 rounds; GREEN owed on `1.5.0-alpha.1` |
 | LIST-RACE-1-A1-CTL | LIST-RACE-1-A1 with nothing held | W1 +A1 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: listed in round 1 |
 
+## CALL - in-app 1:1 audio calls between two browsers
+
+Runner `archive/callweb.mjs`, table, judges and narration `callrows.mjs`. W2 calls W4 in their DM;
+W5 is CALL-WEB-7's second caller; CALL-WEB-6 closes W4 and W8, every device of the callee. Each seat
+captures its OWN tone, read off its microphone before the row: on one shared beep, W2's echo
+canceller learnt its own beep coming back and CALL-WEB-2 failed six times as a rig artifact (voided
+`INVALID`). Every wait is counted in rounds; the unanswered rows wait 90 s, past the server's 60 s
+ring window. The first readings were a scratch runner; the repo row replays them.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| CALL-WEB-1 | W2 calls W4, W4 accepts: connected, audio heard both ways, W2 hangs up, both end | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: dirt is undeclared call narration only, now `callNarration` |
+| CALL-WEB-2 | W2 mutes and unmutes mid-call: W4 hears under 1 %, then at least 20 % again | W2 W4 - U | `INVALID` - `1.4.1-alpha.6`: six FAILs voided as the shared-beep rig artifact; `PASS-DIRTY` with the far end muted; owed on distinct tones |
+| CALL-WEB-2q | CALL-WEB-2 with W4 muted first, the scratch diagnostic of the shared beep | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: with no echo of its own beep, W2 is heard again after the unmute; the repo row has no such variant |
+| CALL-WEB-3 | the callee hangs up a connected call: both end | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
+| CALL-WEB-4 | W4 declines while ringing: both end, never connected | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only; the call is written as a call with a duration (calls B15) |
+| CALL-WEB-5 | W2 hangs up while W4 rings: W4's ring stops, W2 ends | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
+| CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS-DIRTY` - `1.4.1-alpha.6`: ended at the window; a first `FAIL` was the rig's own 60 s bound |
+| CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: W5 rings its whole 60 s with no busy answer (calls B16) |
+| CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
+
 ## TOK - a token expiring in the middle of an operation
 
 | Id | What it asks | Needs | State |
