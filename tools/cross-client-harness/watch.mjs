@@ -2396,7 +2396,7 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
   atLevels(['debug'], /^\[VAULT\] persistence already off - every slot kept$/),
   atLevels(
     ['log'],
-    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \(absent, a round is running\): the commit gate refuses an activation without one$/
+    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \((?:absent|first publication running, not read), a round is running\): the commit gate refuses an activation without one$/
   ),
   atLevels(['log'], /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/),
   atLevels(['log'], /^\[DISCOVERY\] Placeholder [0-9a-f]{8}… created\.$/),
