@@ -20,6 +20,15 @@ describe('ChatBackgroundService - the community listing trigger', () => {
     expect(source).toMatch(/if \(!listingMayStart\) return;/);
   });
 
+  it('keeps the server casing of a joined salon name in the channel entry and the displayName', () => {
+    const handler = source.slice(source.indexOf('onChannelMemberJoined: (event: any) =>'));
+    const body = handler.slice(0, 1800);
+    expect(body).toContain("const channelName = event.channelName || 'canal';");
+    expect(body).toContain('name: channelName,');
+    expect(body).toContain('displayName: channelName,');
+    expect(body).not.toContain('toLowerCase');
+  });
+
   it('forgets the account list on sign-out', () => {
     const handler = source.slice(source.indexOf('function handleSignedOut'));
     expect(handler.slice(0, 1500)).toContain('globalChannels.forgetAccount(appendLog)');
