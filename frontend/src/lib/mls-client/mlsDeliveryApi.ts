@@ -788,11 +788,15 @@ export interface RefusedAdmit {
  *   one), so the same `WELCOME_TARGET_UNKNOWN`.
  * - `not_entitled`: a key group's member gate answered that this person is not a member of its
  *   community or salon, and the Welcome's target is asked the same question - `403
- *   WELCOME_TARGET_NOT_MEMBER`. A grant written later is admitted by a member's next Add, a commit
- *   with a Welcome of its own; this one stays refused.
+ *   WELCOME_TARGET_NOT_MEMBER`.
  * - `departure_in_progress`: the person's departure from the key group is being written; the
- *   Welcome's seat claim is re-read under the seat lock and refused for it, and once the departure
- *   lands the person is not entitled at all.
+ *   Welcome's seat claim is re-read under the seat lock and refused for it.
+ *
+ * WHAT BRINGS THE DEVICE BACK, for the two key-group reasons: never this Welcome, and never a
+ * member's next Add either - the refused leaf is still in the tree, and an admission skips a device
+ * that already holds one. A person granted access later (or whose departure is decided cancelled)
+ * re-enters by the device's OWN external join, once its seat claim holds again; that commit removes
+ * the stale leaf as it adds the new one. Until then the stray sweep may collect the seatless leaf.
  *
  * NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
  * `registerMember` before its Welcome, which then lands. NOT `already_active`: the device is routed
@@ -814,16 +818,6 @@ export function whyWelcomeUndeliverable(reason: AdmitRefusalReason): string | nu
   return Object.hasOwn(UNDELIVERABLE_WELCOME_BECAUSE, reason)
     ? (UNDELIVERABLE_WELCOME_BECAUSE[reason] ?? null)
     : null;
-}
-
-/**
- * Whether a refused admit says something about the DEVICE in every group, rather than about the
- * person in this one - so one group's answer may settle the device's other invitations. Only
- * `no_key_package` (revoked or erased) and `unresolved_identity` (a placeholder) are; a key group's
- * `not_entitled` / `departure_in_progress` are about one community or salon and settle nothing else.
- */
-export function admitRefusalIsAboutTheDevice(reason: AdmitRefusalReason): boolean {
-  return reason === 'no_key_package' || reason === 'unresolved_identity';
 }
 
 /** Whether a Welcome to a device the gate refused for `reason` can never be delivered. */

@@ -61,11 +61,7 @@ import {
   reportDeviceTrustRefusal,
   verdictAdmits,
 } from '$lib/mls-client/deviceTrust';
-import {
-  MemberNotAdmittedError,
-  admitRefusalIsAboutTheDevice,
-  type PendingInvitationRow,
-} from '$lib/mls-client/mlsDeliveryApi';
+import { MemberNotAdmittedError, type PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
 import {
   isRefusedDevice,
   recordRefusedDevice,
@@ -840,17 +836,14 @@ export async function processPendingInvitations(params: {
           // revoked it while this Add was in flight. The commit merged - its leaf has no seat, and the
           // stray sweep removes it - so the state is saved, but no member is registered, no Welcome is
           // sent and no history goes to it: the answer said so, and nothing is learned by failing
-          // (DEV-3, 2026-10-25). Its invitation is retired, and the rest of the sweep knows it - only
-          // when the refusal is about the DEVICE: a person a key group refused may be owed elsewhere.
+          // (DEV-3, 2026-10-25). Its invitation is retired, and the rest of the sweep knows it.
           if (result.notAdmitted) {
             log(
               `[PENDING] Device ${inv.deviceId} was not admitted by the commit gate (${result.notAdmitted}) ` +
                 `in ${groupId} -> no Welcome, cleanup`
             );
             await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-            if (admitRefusalIsAboutTheDevice(result.notAdmitted)) {
-              cannotBeAdded.set(deviceKey, result.notAdmitted);
-            }
+            cannotBeAdded.set(deviceKey, result.notAdmitted);
             retirePendingInvitation(mlsService, inv, groupId, log);
             continue;
           }

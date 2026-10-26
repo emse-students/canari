@@ -1703,7 +1703,12 @@ resolve the target by, `WELCOME_TARGET_UNKNOWN`), `not_entitled` and `departure_
 group's member gate refusing the person, which the Welcome is held to as well - `403
 WELCOME_TARGET_NOT_MEMBER`, met on RM-5 2026-10-26). NOT `not_enrolled`, which the sender's own
 `registerMember` enrols before a Welcome that then lands, nor `already_active` (a re-Add, whose
-Welcome lands); an unknown reason is inert. `mergeAccepted` owes them nothing,
+Welcome lands); an unknown reason is inert. For the two key-group reasons nothing re-sends that
+Welcome, and a member's next Add does not help either: the refused leaf is still in the tree, and an
+admission skips a device that already holds one. A person granted access later, or whose departure
+is decided cancelled, comes back through the device's OWN external join once its seat claim holds
+again, and that commit removes the stale leaf. The pending sweep only ever sees conversation rows,
+so it never meets those two reasons. `mergeAccepted` owes them nothing,
 `addMember` / `replaceMember` hand out no Welcome and name the refusal (`notAdmitted`), and
 `addMembersBulk` leaves them out of `addedDeviceIds`, the list every caller welcomes. The pending
 sweep registers nobody, sends no Welcome or history, retires the invitation, and answers every other

@@ -118,28 +118,6 @@ describe('a pending device the gate did not admit', () => {
     expect(lines).not.toContain('Welcome(s) sent');
   });
 
-  it('a refusal about the PERSON in one group (`not_entitled`) settles no other group of the device', async () => {
-    const mlsService = makeMls({
-      addMember: vi
-        .fn()
-        .mockResolvedValueOnce({ ratchetTree: new Uint8Array([7]), notAdmitted: 'not_entitled' })
-        .mockResolvedValue({ welcome: new Uint8Array([3]), ratchetTree: new Uint8Array([7]) }),
-    } as Partial<IMlsService>);
-
-    const lines = await sweep(mlsService);
-
-    // g1 refused the person: no Welcome there. g2 and g3 are each asked and welcomed on their own.
-    expect(mlsService.addMember).toHaveBeenCalledTimes(3);
-    expect(mlsService.sendWelcome).toHaveBeenCalledTimes(2);
-    expect(mlsService.deleteDeviceMembership).toHaveBeenCalledExactlyOnceWith(
-      'peer',
-      'peer-dev',
-      'g1'
-    );
-    expect(lines).toContain('was not admitted by the commit gate (not_entitled) in g1');
-    expect(lines).not.toContain('more invitation(s) of it retired');
-  });
-
   it('a `revoked` key-package answer is asked ONCE for the whole sweep', async () => {
     const mlsService = makeMls({
       fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'revoked' }),

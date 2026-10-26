@@ -28,7 +28,8 @@ import type {
  *
  * `notAdmitted` is set when the commit gate accepted the commit but did NOT record the device, for a
  * reason that makes its Welcome undeliverable (`whyWelcomeUndeliverable`) - its owner revoked it
- * while the Add was in flight, or a key group refused the person. `welcome` is then ABSENT: the commit merged, the Welcome
+ * while the Add was in flight, its identity is an unresolved placeholder (`unresolved_identity`), or
+ * a key group refused the person. `welcome` is then ABSENT: the commit merged, the Welcome
  * the merge owed is already discharged, and nothing is to be sent to that device (DEV-3, 2026-10-25).
  */
 export interface OneDeviceAddResult {

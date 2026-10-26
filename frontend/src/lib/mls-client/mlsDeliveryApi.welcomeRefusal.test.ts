@@ -3,7 +3,6 @@ import {
   MlsDeliveryApi,
   WelcomeTargetNotMemberError,
   WelcomeTargetUnknownError,
-  admitRefusalIsAboutTheDevice,
   admitRefusalMakesWelcomeUndeliverable,
   isTerminalWelcomeRefusal,
   whyWelcomeUndeliverable,
@@ -91,15 +90,5 @@ describe('which refused admits make a Welcome undeliverable - an allowlist', () 
   ])('leaves %s inert', (reason) => {
     expect(admitRefusalMakesWelcomeUndeliverable(reason)).toBe(false);
     expect(whyWelcomeUndeliverable(reason)).toBeNull();
-  });
-});
-
-describe('which refused admits are about the device in every group', () => {
-  it('names the device-wide ones only - a key group refusing a person says nothing of another group', () => {
-    expect(admitRefusalIsAboutTheDevice('no_key_package')).toBe(true);
-    expect(admitRefusalIsAboutTheDevice('unresolved_identity')).toBe(true);
-    for (const reason of ['not_entitled', 'departure_in_progress', 'already_active', 'later']) {
-      expect(admitRefusalIsAboutTheDevice(reason)).toBe(false);
-    }
   });
 });
