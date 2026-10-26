@@ -57,7 +57,7 @@ export function focusOf(dump) {
     .split(/\r?\n/)
     .map((l) => /mCurrentFocus=(.*)$/.exec(l.trim())?.[1]?.trim())
     .filter((v) => v !== undefined);
-  const named = lines.filter((v) => v && v !== 'null' && /^Window\{/.test(v));
+  const named = lines.filter((v) => v && v !== 'null' && v.startsWith('Window{'));
   if (named.some((v) => v.includes(`${PACKAGE}/`))) return 'front';
   if (named.length) return 'behind';
   return 'unknown';
