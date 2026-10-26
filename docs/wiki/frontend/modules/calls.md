@@ -1502,7 +1502,8 @@ experiment rows of the rig (below) settle it on Chrome 155:
   again** hands a new capture to the SAME sender, `sendrecv` - its transform stays attached and fed
   (rig `video-off-on`). The first camera of a call that had none is a FRESH transceiver, as before.
 - **Switch** stops the current capture first (a phone opens one camera at a time), opens the other
-  with an EXACT `facingMode`, `replaceTrack` on the same sender. A switch that cannot open the other
+  with an EXACT `facingMode` (the first capture is IDEAL; one builder, `facingConstraint` in
+  `utils/cameraFacing.ts`, shared with the reel and live cameras), `replaceTrack` on the same sender. A switch that cannot open the other
   camera turns the camera OFF, said (`call_camera_switch_failed`) and logged at ERROR - never a
   silent keep of the old one. Offered only when `enumerateDevices` lists two cameras.
 - **One camera operation at a time, OFF always wins**: a tap while an on or a switch is still
