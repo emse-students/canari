@@ -1641,6 +1641,48 @@ const FORGIVE_CASES = [
     admissionMemberNarration(ADM_G, { admitted: true }),
     { clean: false, unmatched: 3 },
   ],
+  // AN ADD THE GATE REFUSED WHOLE (#2505), narrated by its approver: ADM-3 when the Decline wins, ADM-10.
+  [
+    "an Add refused whole in the row's group, in a row that plays it (ADM-3), forgiven",
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
+    { clean: true, unmatched: 5 },
+  ],
+  [
+    'control: the same three lines in a row where no gate refusal is expected (ADM-2) stay dirt',
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    // The SYNC line names no group (as the Decline's "their seat is withdrawn" does): it is kept to the
+    // two rows that play a refusal, and the two lines that DO name a group stay dirt for another one.
+    'control: the two group-naming lines about ANOTHER group stay dirt, even in ADM-10',
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 098bfb7f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 098bfb7f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 6 },
+  ],
+  [
+    'control: an Add abandoned for a reason nobody declared, or the refusal at warn, is not forgiven in ADM-10',
+    [
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (lost) - nobody added'],
+      ['warning', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 7, warnings: 1 },
+  ],
   [
     "the joiner's wait and both endings in the row's group, forgiven",
     [
