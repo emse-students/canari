@@ -1884,6 +1884,18 @@ all`. Matching `[CRON] reportSingleHolderGroups:` would have silenced the findin
 to deliver, which is how a classifier earns the right to be ignored. The same discipline is already
 written above for `[DEVICE_MEMBERSHIPS] ... stranded=0`.
 
+**A report about the WHOLE estate over the last hour is no row's, so it leaves the row window
+(2026-10-26).** `reportCommitLogHealth` names busy groups and commit-log holes across every group. On
+`1.4.1-alpha.6`, its busy-group line landed in DEV-6's window and read as DEV-6's dirt. The real cause
+was KILL-1's commits an hour earlier, and the clock happened to strike during DEV-6. So `srvlog.mjs`
+now takes every `[CRON] reportCommitLogHealth` line out of each row's window before classifying it,
+and only counts it there (`hourlyCommitReportCount`). Its findings are judged once per run by
+`bun archive/hourlyread.mjs --since <run start>` (`commitreport.mjs`). That read requires:
+
+- every group a report names belongs to the campaign, by ledger id or by its busiest committer;
+- a group at the per-device threshold appears only in an hour KILL-1 ran in, and only one such group;
+- no hole, no failed report, and no spelling the read was not written for. Any of these fails the run.
+
 ### AND A STAMP IS NOT A SPELLING - #742 KILLED EVERY ANCHORED RULE AT ONCE, FOR FIVE DAYS
 
 The section below is about rules that had never met a sentence. This is its opposite and it is
