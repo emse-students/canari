@@ -348,17 +348,40 @@ export async function openCommunitySettings(cx) {
   // on the overlay and the wait then times out on a modal that was already open. Detected by
   // "Quitter la communaute", which only this modal draws - the three tab captions are ordinary
   // words that appear elsewhere in the page, which is the whole subject of `communityTab` below.
-  const marker = JSON.stringify(caption('chat_community_leave_button'));
-  const alreadyOpen = await evaluate(cx, `document.body.innerText.indexOf(${marker}) >= 0`);
-  if (alreadyOpen !== 'true' && alreadyOpen !== true) {
+  //
+  // AND A MODAL THAT IS CLOSING IS NOT OPEN (2026-10-26). `setHistoryVisibility` ends in
+  // `clearOverlays`, which returns once the overlay count drops - while the panel is still in the
+  // DOM, animating out. Read by text, that panel was "already open", the gear was skipped, the panel
+  // finished closing, and BIG-3-noI1's `inviteLink` then clicked "Membres" on whatever was left: the
+  // CHANNEL member list, and twenty seconds waiting for an invite field it never has. Measured live:
+  // `moving` at 0 ms after the history save, `absent` from 55 ms. So the state is read as
+  // open / moving / absent (`SETTINGS_MODAL_STATE`), and a moving panel is waited out - on the FACT
+  // that it stopped moving, never a duration - before deciding.
+  await until(cx, `${SETTINGS_MODAL_STATE()} !== 'moving'`, 5000);
+  if ((await evaluate(cx, SETTINGS_MODAL_STATE())) !== 'open') {
     await realClick(cx, `[aria-label=${JSON.stringify(caption('sidebar_community_settings_title'))}]`);
   }
-  await until(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_community_overview_tab'))}) >= 0`,
-    10000
-  );
+  // OPEN AND SETTLED, which the overview caption alone could not say: that caption also stays in the
+  // page after the panel is gone (measured the same day), so it proved nothing about the panel.
+  await until(cx, `${SETTINGS_MODAL_STATE()} === 'open'`, 10000);
 }
+
+/**
+ * The community-settings panel as `open`, `moving` (opening or closing) or `absent`, read from the
+ * one control only this panel draws ("Quitter la communauté") and the animations on it or above it.
+ * Browser-side source, built here so the caption is never spelt in this file.
+ */
+export const SETTINGS_MODAL_STATE = () => `(function () {
+  var want = ${JSON.stringify(caption('chat_community_leave_button'))};
+  var el = [].slice.call(document.querySelectorAll('body *')).filter(function (b) {
+    return [].some.call(b.childNodes, function (n) { return n.nodeType === 3 && n.nodeValue.indexOf(want) >= 0; });
+  })[0];
+  if (!el) return 'absent';
+  for (var n = el; n && n !== document.body; n = n.parentElement) {
+    if (typeof n.getAnimations === 'function' && n.getAnimations().some(function (a) { return a.playState === 'running' || a.playState === 'pending'; })) return 'moving';
+  }
+  return 'open';
+})()`;
 
 /**
  * Switches the community-settings modal to one of its three tabs, OPENING IT FIRST.
