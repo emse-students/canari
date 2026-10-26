@@ -16,6 +16,12 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
 }));
 
 import { inviteMembersToGroup } from './groupCreation';
+import { MemberNotAdmittedError } from '$lib/mls-client/mlsDeliveryApi';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+
+/** The gate's whole-commit refusal naming `userIds`, as the commit transaction types it. */
+const admitRefused = (userIds: string[]) =>
+  new CommitRefusedError('admit_refused', 1, 1, null, userIds);
 
 /**
  * The INVITE path owes the same ordering as creation: the server names a joiner BEFORE its Welcome
@@ -30,6 +36,13 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
       if (registerImpl) await registerImpl(u);
     }),
     fetchUserDevices: vi.fn(async (u: string) => [{ deviceId: `${u}-dev` }]),
+    // The invitation's baseline, read with the seat generation it is decided at.
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [{ userId: 'u1' }],
+      seatGeneration: 3,
+    })),
+    // A rebuild re-reads the roster (`rosterPremise`): the inviter alone, as at the start.
+    getGroupUserMembers: vi.fn(async () => [{ userId: 'u1' }]),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
     // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
@@ -46,6 +59,8 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
     }),
     sendMessage: vi.fn(async () => {}),
     getDeviceId: vi.fn(() => 'dev-1'),
+    // Read by the race rule on a typed refusal: the epoch never moved.
+    getEpoch: vi.fn(() => 1),
   };
   return {
     order,
@@ -137,5 +152,160 @@ describe('inviteMembersToGroup - says what it did', () => {
       kind: 'not-added',
       reason: 'failed',
     });
+  });
+});
+
+/**
+ * A DECLINE HOLDS AGAINST AN ADD DECIDED BEFORE IT (ADM-3). The gate refuses a commit WHOLE when it
+ * would give a leaf to a person it may not admit (`ADMIT_REFUSED`, naming them): the Add is rebuilt
+ * without them, they get no Welcome and are not reported added. A member-add call refused after the
+ * merge (`MemberNotAdmittedError`, a departure since) withholds the Welcome too.
+ */
+describe('inviteMembersToGroup - a person the server did not admit', () => {
+  it('rebuilds the Add without the people the gate refused, and reports only the others', async () => {
+    const d = inviteDeps();
+    let calls = 0;
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      calls++;
+      if (devices.some((x) => x.userId === 'carol')) throw admitRefused(['carol']);
+      return { addedDeviceIds: ['bob-dev'], skipped: [], welcome: new Uint8Array([1]) };
+    }) as never;
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(calls).toBe(2);
+    const second = vi.mocked(d.mlsService.addMembersBulk).mock.calls[1] as unknown[];
+    expect((second[1] as { userId: string }[]).map((x) => x.userId)).toEqual(['bob']);
+    // The intent the rebuilt commit carries no longer names them either.
+    expect(second[3]).toEqual(expect.objectContaining({ users: ['bob'] }));
+    expect(d.order).toContain('welcome:bob');
+    expect(d.order).not.toContain('register:carol');
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['bob'] });
+  });
+
+  it('answers `removed-meanwhile` when the gate refused everyone it named, and never loops', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      throw admitRefused(devices.map((x) => x.userId));
+    }) as never;
+
+    expect(await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(d.order.some((s) => s.startsWith('welcome:'))).toBe(false);
+  });
+
+  it('stops on a refusal naming nobody the Add offered: no progress, no rebuild', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw admitRefused(['dave']);
+    }) as never;
+
+    expect(await inviteMembersToGroup(['bob'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'failed',
+    });
+    expect(d.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds the Welcome of a person the member-add call refuses after the merge', async () => {
+    const d = inviteDeps(async (u) => {
+      if (u === 'carol') throw new MemberNotAdmittedError('g1', 'carol');
+    });
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(d.order).toContain('welcome:bob');
+    expect(d.order).not.toContain('welcome:carol');
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['bob'] });
+  });
+
+  it('answers `removed-meanwhile` when the member-add call admitted nobody it named', async () => {
+    const d = inviteDeps(async (u) => {
+      if (u !== 'u1') throw new MemberNotAdmittedError('g1', u);
+    });
+
+    expect(await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.order.some((s) => s.startsWith('welcome:'))).toBe(false);
+  });
+
+  it('sends the seat generation its roster was read at with the Add', async () => {
+    const d = inviteDeps();
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(d.mlsService.addMembersBulk.mock.calls[0]).toContainEqual(
+      expect.objectContaining({ seatGeneration: 3 })
+    );
+  });
+});
+
+/**
+ * AN ANSWER TO A JOIN ASK IS AN ANSWER TO THAT ASK. A Decline that settled it first removes the seat
+ * (or a new ask replaces it under another identity): the Add stops before anything is staged.
+ */
+describe('inviteMembersToGroup - answering a join ask', () => {
+  const answering = { userId: 'joe', askId: 'ask-1' };
+
+  it('stages nothing when the ask it answers was declined first', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }],
+      seatGeneration: 5,
+    }));
+
+    expect(await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering })).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('stages nothing when the seat now awaits under ANOTHER ask', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }, { userId: 'joe', awaitingAdmission: true, askId: 'ask-2' }],
+      seatGeneration: 6,
+    }));
+
+    expect(await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering })).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('adds when the very ask it answers is still open', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }, { userId: 'joe', awaitingAdmission: true, askId: 'ask-1' }],
+      seatGeneration: 6,
+    }));
+    d.mlsService.addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: ['joe-dev'],
+      skipped: [],
+      welcome: new Uint8Array([1]),
+    }));
+
+    expect(await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering })).toEqual({
+      kind: 'added',
+      addedUsers: ['joe'],
+    });
+  });
+
+  it('stages nothing when the ask cannot be read', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => {
+      throw new Error('502');
+    });
+
+    const outcome = await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering });
+
+    expect(outcome.kind).toBe('not-added');
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 });

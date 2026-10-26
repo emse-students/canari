@@ -1,5 +1,9 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
+import {
+  CommitRefusedError,
+  rebuildableRefusal,
+  refusedAdmits,
+} from '$lib/mls-client/CommitRefusedError';
 import type { CommitInvitation } from '$lib/mls-client/commitSubmission';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
 import type { SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
@@ -16,14 +20,18 @@ import { readConfirmedTree } from './confirmedTree';
  *   removal deleted it;
  * - `removed-meanwhile`: a person on the roster when a member's invitation began is off it now - a
  *   concurrent Remove of the same person, which the invitation must not undo;
- * - `premise-unreadable`: the server read that would show the premise failed.
+ * - `premise-unreadable`: the server read that would show the premise failed;
+ * - `not-admitted`: the gate refused the commit whole for every person it would have admitted
+ *   (`admit_refused`), so nobody is left to add - or refused a person the gesture cannot go on
+ *   without (`mustAdmit`), before anything was staged again.
  */
 export type AddAbortReason =
   | 'tree-unconfirmed'
   | 'not-a-member-device'
   | 'invitation-withdrawn'
   | 'removed-meanwhile'
-  | 'premise-unreadable';
+  | 'premise-unreadable'
+  | 'not-admitted';
 
 /**
  * An Add abandoned before its stage (see {@link AddAbortReason}): no commit, nothing registered. A
@@ -98,20 +106,23 @@ export type RacedAddResult =
       ratchetTree?: Uint8Array;
       addedDeviceIds: string[];
       skipped: SkippedDevice[];
+      /** The people the gate refused to admit, left out of the commit that merged. */
+      notAdmitted: string[];
     }
   /**
    * Every candidate holds a leaf in the tree CONFIRMED at the server's epoch - by the commit that
    * won a race, or before: no commit.
    */
-  | { kind: 'already-in-tree' };
+  | { kind: 'already-in-tree'; notAdmitted: string[] };
 
 /** What a member gesture's Add rests on, and what it carries - see {@link addDevicesRebuildingOnRace}. */
 export interface RacedAddOptions {
   /**
    * Re-checks, in each pass, what the gesture rests on; throws {@link AddAbortedError} when it no
-   * longer holds.
+   * longer holds. `refused` names the people the gate refused to admit so far: they are out of the
+   * commit, so their own departure is no longer a premise of it.
    */
-  confirmPremise?: (attempt: number) => Promise<void>;
+  confirmPremise?: (attempt: number, refused: ReadonlySet<string>) => Promise<void>;
   /**
    * The premise reads the TREE'S OWN RECORD (`removalEpochs`), so it is only an answer on a tree
    * CONFIRMED at the server's epoch: the tree is confirmed in every pass, whatever it holds, and the
@@ -122,14 +133,20 @@ export interface RacedAddOptions {
   /**
    * Re-checked UNDER THE MLS LOCK right before the stage (`addMembersBulk`'s `beforeStage`): the
    * part of the premise a commit applied between the confirmation and the stage could break - a
-   * Remove of the very person invited. Throws {@link AddAbortedError}; nothing is staged.
+   * Remove of the very person invited. Throws {@link AddAbortedError}; nothing is staged. `refused`
+   * is the same set {@link confirmPremise} receives.
    */
-  beforeStage?: () => Promise<void>;
+  beforeStage?: (refused: ReadonlySet<string>) => Promise<void>;
   /**
    * A member's invitation only: carried into each commit's intent, so a commit that is kept and then
    * does not land is re-planned rather than lost (`owedInvitations.ts`).
    */
   invitation?: CommitInvitation;
+  /**
+   * A person the gesture means nothing without - a 1:1 conversation's peer. Refused by the gate, the
+   * Add is abandoned at once (`not-admitted`), never staged again for the others.
+   */
+  mustAdmit?: string;
 }
 
 /**
@@ -147,6 +164,14 @@ export interface RacedAddOptions {
  * the commit built on it - unless the premise reads the tree's own record (`premiseReadsTree`). One
  * that cannot be confirmed aborts ({@link AddAbortedError} `tree-unconfirmed`), never "added".
  *
+ * **A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT IS REBUILT WITHOUT THEM** (`admit_refused`,
+ * {@link refusedAdmits}): the gate names them, nothing advanced, and the next pass offers only the
+ * other candidates - the invitation it carries loses them too, so a kept commit re-planned later
+ * never names them again. TERMINATION IS THE SAME KIND OF PROOF: each such pass drops at least one
+ * candidate, and a refusal naming none of them leaves as thrown. None left, and the Add is
+ * abandoned (`not-admitted`). The dropped people are returned (`notAdmitted`), so the caller reports
+ * them not added.
+ *
  * @param actingUserId - this device's user, for the catch-up that confirms the tree.
  * @throws {@link AddAbortedError} before any stage; otherwise what the last attempt threw when it
  *   proves no progress - a race refusal that moved nothing included (`isCommitRaceRefusal`).
@@ -159,48 +184,91 @@ export async function addDevicesRebuildingOnRace(
   log: (msg: string) => void,
   opts: RacedAddOptions = {}
 ): Promise<RacedAddResult> {
-  const { confirmPremise, premiseReadsTree = false, beforeStage, invitation } = opts;
-  const holdsAny = (leaves: readonly string[]) =>
-    candidates.some((d) => treeHoldsDevice(leaves, d.userId, d.deviceId));
-  return rebuildOnRace(
-    mlsService,
-    groupId,
-    `the Add of ${candidates.length} device(s)`,
-    async (attempt) => {
-      if (!premiseReadsTree) await confirmPremise?.(attempt);
-      const reading = await readConfirmedTree(
+  const { confirmPremise, premiseReadsTree = false, beforeStage, invitation, mustAdmit } = opts;
+  const refused = new Set<string>();
+  let offered = candidates;
+  // Counted across every rebuild, so a pass after a refusal re-checks the premise like any rebuild.
+  let pass = 0;
+  for (;;) {
+    const pool = offered;
+    const holdsAny = (leaves: readonly string[]) =>
+      pool.some((d) => treeHoldsDevice(leaves, d.userId, d.deviceId));
+    const carried: CommitInvitation | undefined =
+      invitation && refused.size > 0
+        ? {
+            ...invitation,
+            users: invitation.users.filter((u) => !refused.has(u)),
+            ...(invitation.rostered
+              ? { rostered: invitation.rostered.filter((u) => !refused.has(u)) }
+              : {}),
+          }
+        : invitation;
+    const stageCheck = beforeStage ? () => beforeStage(refused) : undefined;
+    try {
+      const result = await rebuildOnRace(
         mlsService,
         groupId,
-        actingUserId,
-        '[COMMIT_RACE]',
-        (leaves) => !premiseReadsTree && !holdsAny(leaves)
+        `the Add of ${pool.length} device(s)`,
+        async () => {
+          const attempt = pass++;
+          if (!premiseReadsTree) await confirmPremise?.(attempt, refused);
+          const reading = await readConfirmedTree(
+            mlsService,
+            groupId,
+            actingUserId,
+            '[COMMIT_RACE]',
+            (leaves) => !premiseReadsTree && !holdsAny(leaves)
+          );
+          if (reading.status === 'unconfirmed') {
+            throw new AddAbortedError(
+              groupId,
+              'tree-unconfirmed',
+              'which candidates already hold a leaf is unknown'
+            );
+          }
+          if (premiseReadsTree) await confirmPremise?.(attempt, refused);
+          const missing = pool.filter(
+            (d) => !treeHoldsDevice(reading.identities, d.userId, d.deviceId)
+          );
+          if (missing.length === 0) {
+            log(
+              `[COMMIT_RACE] ${groupId.slice(0, 8)}... all ${pool.length} device(s) already hold a leaf at the server's epoch - no Add`
+            );
+            return { kind: 'already-in-tree' } as const;
+          }
+          const bulk = await mlsService.addMembersBulk(
+            groupId,
+            missing,
+            missing.map((d) => `${d.userId}:${d.deviceId}`),
+            carried,
+            stageCheck
+          );
+          return { kind: 'added', ...bulk } as const;
+        },
+        log
       );
-      if (reading.status === 'unconfirmed') {
+      return { ...result, notAdmitted: [...refused] };
+    } catch (e) {
+      const named = refusedAdmits(e);
+      if (named === null) throw e;
+      const dropped = new Set(named.filter((u) => pool.some((d) => d.userId === u)));
+      // A refusal naming nobody this commit offered proves nothing a rebuild could change.
+      if (dropped.size === 0) throw e;
+      for (const u of dropped) refused.add(u);
+      offered = pool.filter((d) => !dropped.has(d.userId));
+      if (offered.length === 0 || (mustAdmit !== undefined && dropped.has(mustAdmit))) {
+        log(
+          `[COMMIT_RACE] ${groupId.slice(0, 8)}... the gate refused to admit every person the Add offered (${[...refused].join(', ')}) - nobody added`
+        );
         throw new AddAbortedError(
           groupId,
-          'tree-unconfirmed',
-          'which candidates already hold a leaf is unknown'
+          'not-admitted',
+          `the gate refused to admit ${[...refused].join(', ')}`
         );
       }
-      if (premiseReadsTree) await confirmPremise?.(attempt);
-      const missing = candidates.filter(
-        (d) => !treeHoldsDevice(reading.identities, d.userId, d.deviceId)
+      log(
+        `[COMMIT_RACE] ${groupId.slice(0, 8)}... the gate refused to admit ${[...dropped].join(', ')} - rebuilding the Add without them (${offered.length} device(s) left)`
       );
-      if (missing.length === 0) {
-        log(
-          `[COMMIT_RACE] ${groupId.slice(0, 8)}... all ${candidates.length} device(s) already hold a leaf at the server's epoch - no Add`
-        );
-        return { kind: 'already-in-tree' } as const;
-      }
-      const bulk = await mlsService.addMembersBulk(
-        groupId,
-        missing,
-        missing.map((d) => `${d.userId}:${d.deviceId}`),
-        invitation,
-        beforeStage
-      );
-      return { kind: 'added', ...bulk } as const;
-    },
-    log
-  );
+    }
+  }
 }

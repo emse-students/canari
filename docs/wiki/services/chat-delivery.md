@@ -759,8 +759,10 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   an empty `deviceId` or `groupId` when the scope names one, because a criterion left out of a delete
   widens it to every row.
 - **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
-  `removeGroupMember` write `dm_group_members` first, then the membership interval, then the device
-  rows and (on a removal) the queued Welcomes. Two transactions that take the same rows in the same
+  `removeGroupMember` take the group's seat lock, then `dm_group_members`, then (on a removal the
+  membership interval and the queued Welcomes, then) the device rows - the add, since ADM-3, only
+  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the caller, into an empty roster
+  ([mls-protocol](../protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)). Two transactions that take the same rows in the same
   order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
   that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;
   it cannot run two live sessions, so it proves the order and not the wait). Both Welcome stores -
@@ -1308,8 +1310,8 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group as dismissed |
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
-| POST | `/api/mls/groups/:groupId/members` | Add member record to group |
-| GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the caller, into an empty roster |
+| GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
@@ -1370,7 +1372,7 @@ group names nobody. The client removes exactly those leaves
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
-| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
+| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)). An ACCEPT names every declared admit it dropped in `refusedAdmits` (`{ userId, deviceId, reason }`, absent when none), so the committer sends no Welcome a refusal already decided ([mls-protocol](../protocols/mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |

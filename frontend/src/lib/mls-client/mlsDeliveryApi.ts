@@ -73,6 +73,18 @@ export type GroupUserMemberRow = {
   askId?: string | null;
 };
 
+/**
+ * A group's roster as a member's invitation reads it (`GET .../user-members?withSeatGeneration=1`):
+ * the rows, and the group's seat generation the server read BEFORE them - the number the invitation's
+ * Add carries (`invitationSeatGeneration`), which the commit gate orders every Decline and removal
+ * against. `null` from a server older than the parameter (it answers the bare rows): that server's
+ * gate reads no such number, so nothing is lost by not sending one.
+ */
+export interface GroupRosterAtGeneration {
+  members: GroupUserMemberRow[];
+  seatGeneration: number | null;
+}
+
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
@@ -144,6 +156,13 @@ export interface GroupRosterBatch {
    * empty against a server that predates the field: nothing known revoked is nothing removed.
    */
   revoked: Map<string, string[]>;
+  /**
+   * The people of an answered group's roster whose seat still AWAITS a member's admission, by group:
+   * a leaf of theirs is one no accepted commit admitted (the commit that admits a person lifts the
+   * flag in the transaction that accepts it), so `removeStrayLeaves` reads them as off the roster.
+   * Absent for a group with none, and empty against a server that predates the field.
+   */
+  awaiting: Map<string, string[]>;
 }
 
 /**
@@ -658,6 +677,27 @@ export class UserBlockedError extends Error {
 }
 
 /**
+ * The member-add call named a person NO ACCEPTED COMMIT ADMITTED (`409 MEMBER_NOT_ADMITTED`, `POST
+ * /api/mls/groups/:id/members`): the commit gate enrols the people an Add admits in the transaction
+ * that accepts it, and refused this one - a member's Decline of their ask, or their departure, was
+ * recorded after the Add was decided. Typed so the adder withholds the Welcome (the server would
+ * refuse it anyway) and reports the person not added; the leaf the merged commit put in the tree has
+ * no seat, and the stray sweep removes it. Terminal for this Add: the person needs a new one.
+ */
+export class MemberNotAdmittedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly userId: string
+  ) {
+    super(
+      `${userId} was not admitted to ${groupId.slice(0, 8)}... by the accepted commit - a Decline ` +
+        'or a departure came before the Add was decided'
+    );
+    this.name = 'MemberNotAdmittedError';
+  }
+}
+
+/**
  * The server refused a Welcome because the conversation's roster does not name its target
  * (`403 WELCOME_TARGET_NOT_MEMBER`, `POST /api/mls/welcome`).
  *
@@ -680,6 +720,72 @@ export class WelcomeTargetNotMemberError extends Error {
     );
     this.name = 'WelcomeTargetNotMemberError';
   }
+}
+
+/**
+ * The server refused a Welcome because no device is registered under its target - no KeyPackage
+ * row names it (`404 WELCOME_TARGET_UNKNOWN`, `POST /api/mls/welcome`): its owner revoked it, its
+ * account is being erased, or it never registered.
+ *
+ * TERMINAL FOR THAT WELCOME like {@link WelcomeTargetNotMemberError}: a revoked id is denylisted and
+ * never registers again. The sender is normally told before it sends - the commit's own answer names
+ * the admit it refused (`refusedAdmits`, see {@link RefusedAdmit}) - so this is met only by a Welcome
+ * whose commit answer did not say it: a resubmission answered `duplicate`, or a revocation landing
+ * between the commit and the send. Until 2026-10-25 the server answered it with a 500.
+ */
+export class WelcomeTargetUnknownError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly targetUserId: string,
+    readonly targetDeviceId: string
+  ) {
+    super(
+      `the Welcome of ${groupId.slice(0, 8)}... to ${targetUserId}:${targetDeviceId} was refused - ` +
+        'no device is registered under its target'
+    );
+    this.name = 'WelcomeTargetUnknownError';
+  }
+}
+
+/** Whether `e` is a Welcome refusal that sending the same bytes again can never change. */
+export function isTerminalWelcomeRefusal(
+  e: unknown
+): e is WelcomeTargetNotMemberError | WelcomeTargetUnknownError {
+  return e instanceof WelcomeTargetNotMemberError || e instanceof WelcomeTargetUnknownError;
+}
+
+/**
+ * Why the commit gate did not record a device a commit declared admitting - mirrors
+ * `AdmitRefusalReason` in the delivery service. A reason this build does not know is kept as the
+ * string it is and acted on by nobody (see {@link admitRefusalMakesWelcomeUndeliverable}).
+ */
+export type AdmitRefusalReason =
+  | 'committer'
+  | 'unresolved_identity'
+  | 'no_key_package'
+  | 'already_active'
+  | 'not_entitled'
+  | 'departure_in_progress'
+  | 'not_enrolled'
+  | (string & {});
+
+/** One declared admit an ACCEPTED commit did not record (`refusedAdmits` of `POST /api/mls/commit`). */
+export interface RefusedAdmit {
+  userId: string;
+  deviceId: string;
+  reason: AdmitRefusalReason;
+}
+
+/**
+ * The refusals after which a Welcome to that device CANNOT be delivered - an ALLOWLIST, because
+ * acting on one drops the Welcome. `no_key_package` alone: `POST /api/mls/welcome` resolves its
+ * target by that very row and refuses it `WELCOME_TARGET_UNKNOWN`, and a revoked id never registers
+ * again. NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
+ * `registerMember` before its Welcome, which then lands. Every other reason, and any reason added
+ * later, leaves the Welcome to be sent and answered as before.
+ */
+export function admitRefusalMakesWelcomeUndeliverable(reason: AdmitRefusalReason): boolean {
+  return reason === 'no_key_package';
 }
 
 /**
@@ -1324,14 +1430,15 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Adds `userId` to the server-side member list of `groupId` (idempotent).
+   * Writes the device seats of `userId` in `groupId` once an accepted commit admitted them (and, for
+   * a new group's creator, enrols them into its empty roster). Idempotent.
    *
-   * ONE refusal is raised and the rest are logged. A 403 carrying `USER_BLOCKED` is the server
-   * stating a fact the caller has to act on - the person may not be added, and a group that
-   * pretended otherwise would show a member the server does not have. Every other non-2xx keeps the
-   * historical tolerance of this call, which callers up and down the invite path rely on, but it no
-   * longer passes in silence: an HTTP failure was swallowed here without so much as a line, since
-   * `f` resolves rather than throwing on a bad status and only transport errors reached the catch.
+   * TWO refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`: the
+   * person may not be added, and a group that pretended otherwise would show a member the server does
+   * not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
+   * them - a Decline or a departure came before the Add was decided - so the caller withholds the
+   * Welcome. Every other non-2xx keeps the historical tolerance of this call, which callers up and
+   * down the invite path rely on, logged: `f` resolves rather than throwing on a bad status.
    */
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
@@ -1341,13 +1448,12 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ userId }),
       });
       if (res.ok) return;
-      const body = await res.text().catch(() => '');
-      if (res.status === 403 && body.includes('USER_BLOCKED')) {
-        throw new UserBlockedError(userId);
-      }
+      const refusal = await refusalFromResponse(res, 'registerMember refused');
+      if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
+      if (refusal.code === 'MEMBER_NOT_ADMITTED') throw new MemberNotAdmittedError(groupId, userId);
       console.error(`registerMember refused: group=${groupId} user=${userId} status=${res.status}`);
     } catch (e) {
-      if (e instanceof UserBlockedError) throw e;
+      if (e instanceof UserBlockedError || e instanceof MemberNotAdmittedError) throw e;
       console.error('Failed to register member', e);
     }
   }
@@ -1508,11 +1614,17 @@ export class MlsDeliveryApi {
             groupId,
           }),
         });
-        // The one refusal a sender must act on, typed at the throw from the server's code.
+        // The refusals a sender must act on, typed at the throw from the server's code.
         if (response.status === 403) {
           const refusal = await refusalFromResponse(response, 'Welcome delivery');
           if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
             throw new WelcomeTargetNotMemberError(groupId, targetUserId, deviceId);
+          }
+        }
+        if (response.status === 404) {
+          const refusal = await refusalFromResponse(response, 'Welcome delivery');
+          if (refusal.code === 'WELCOME_TARGET_UNKNOWN') {
+            throw new WelcomeTargetUnknownError(groupId, targetUserId, deviceId);
           }
         }
         await assertOkMlsDeliveryResponse(
@@ -1546,6 +1658,11 @@ export class MlsDeliveryApi {
    * were deleted by the server's half of the removal, which ran first, so the server queues the
    * commit to the devices it parted for exactly these (`partingKey`, server side): the removed
    * devices receive the commit that removes them. Only a staged Remove has any.
+   *
+   * `invitationSeatGeneration` is the seat generation a member's invitation read with its roster
+   * baseline ({@link getGroupRosterAtGeneration}): the gate orders every Decline and removal of the
+   * people this Add admits against it, so one made after the member decided holds and one made
+   * before does not. Only the Add of a member's invitation has one.
    */
   async submitCommit(
     groupId: string,
@@ -1554,7 +1671,8 @@ export class MlsDeliveryApi {
     excludeDeviceIds?: string[],
     groupInfoBase64?: string,
     admits?: Array<{ userId: string; deviceId: string }>,
-    removes?: CommitRemoval[]
+    removes?: CommitRemoval[],
+    invitationSeatGeneration?: number
   ): Promise<{
     accepted: boolean;
     reason?: string;
@@ -1562,6 +1680,10 @@ export class MlsDeliveryApi {
     newEpoch?: number;
     /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
     duplicate?: boolean;
+    /** The declared admits an ACCEPTED commit did not record, each with why ({@link RefusedAdmit}). */
+    refusedAdmits?: RefusedAdmit[];
+    /** A refusal `admit_refused` only: the people the gate may not admit (`refusedAdmits`). */
+    userIds?: string[];
   }> {
     // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
     // leave), because a commit transaction awaits this while it HOLDS THE MLS MUTEX, from its stage to
@@ -1591,6 +1713,7 @@ export class MlsDeliveryApi {
           ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
           ...(admits?.length ? { admits } : {}),
           ...(removes?.length ? { removes } : {}),
+          ...(invitationSeatGeneration !== undefined ? { invitationSeatGeneration } : {}),
         }),
       },
       { requestClass: 'write' }
@@ -1607,6 +1730,8 @@ export class MlsDeliveryApi {
       currentEpoch?: number;
       newEpoch?: number;
       duplicate?: boolean;
+      refusedAdmits?: RefusedAdmit[];
+      userIds?: string[];
     };
   }
 
@@ -2317,6 +2442,37 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * The roster of `groupId` WITH the seat generation the server read before it - the baseline of a
+   * member's invitation ({@link GroupRosterAtGeneration}). Never joined to a read in flight: the
+   * number must be read after the member decided. Failures classified as
+   * {@link getGroupUserMembers}'s. A server older than the parameter answers the bare rows, read as
+   * `seatGeneration: null` - what that server said, not a guess.
+   */
+  async getGroupRosterAtGeneration(groupId: string): Promise<GroupRosterAtGeneration> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${groupId}/user-members?withSeatGeneration=1`,
+      { headers: await this.auth() }
+    );
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
+    if (!res.ok) throw await refusalFromResponse(res, 'getGroupRosterAtGeneration failed');
+    const body = (await readApiJson(
+      res,
+      `GET /api/mls/groups/user-members (group ${groupId.slice(0, 8)})`
+    )) as GroupUserMemberRow[] | { seatGeneration?: unknown; members?: unknown };
+    if (Array.isArray(body)) return { members: body, seatGeneration: null };
+    if (
+      !Array.isArray(body.members) ||
+      typeof body.seatGeneration !== 'number' ||
+      !Number.isInteger(body.seatGeneration) ||
+      body.seatGeneration < 0
+    ) {
+      throw new Error(`getGroupRosterAtGeneration: malformed answer for ${groupId.slice(0, 8)}...`);
+    }
+    return { members: body.members as GroupUserMemberRow[], seatGeneration: body.seatGeneration };
+  }
+
+  /**
    * The windows during which each current member of `groupId` was out of it - what a history answer
    * must withhold (user, 2026-10-14: a Remove holds against a later re-add).
    *
@@ -2419,7 +2575,12 @@ export class MlsDeliveryApi {
    * per group - so the caller knows it without asking again.
    */
   async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
-    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set(), revoked: new Map() };
+    const out: GroupRosterBatch = {
+      rosters: new Map(),
+      refused: new Set(),
+      revoked: new Map(),
+      awaiting: new Map(),
+    };
     for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
       const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
       try {
@@ -2439,6 +2600,7 @@ export class MlsDeliveryApi {
           rosters?: Record<string, string[]>;
           refused?: string[];
           revoked?: Record<string, unknown>;
+          awaiting?: Record<string, unknown>;
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
           // A roster that is not a list is not an empty roster: an empty one names every leaf as a
@@ -2454,6 +2616,15 @@ export class MlsDeliveryApi {
             (id): id is string => typeof id === 'string' && id.length > 0
           );
           if (named.length > 0) out.revoked.set(groupId, named);
+        }
+        // THE SAME ALLOWLIST: an awaiting person becomes a removal candidate, so a malformed entry
+        // names nobody, and only a group whose roster was answered is read.
+        for (const [groupId, userIds] of Object.entries(data.awaiting ?? {})) {
+          if (!out.rosters.has(groupId) || !Array.isArray(userIds)) continue;
+          const named = userIds.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          );
+          if (named.length > 0) out.awaiting.set(groupId, named);
         }
       } catch (e) {
         console.warn(

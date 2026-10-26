@@ -38,6 +38,8 @@ import {
   ADD_LOCK_WAIT_BOUND_MS,
   MlsDeliveryApi,
   WelcomeTargetNotMemberError,
+  WelcomeTargetUnknownError,
+  type RefusedAdmit,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -71,7 +73,14 @@ const BASE = 'Ag=='; // base64 of the staged groupInfo [2]
 
 const proto = BaseMlsService.prototype as unknown as Record<string, unknown>;
 
-type Answer = { accepted: boolean; reason?: string; currentEpoch?: number; duplicate?: boolean };
+type Answer = {
+  accepted: boolean;
+  reason?: string;
+  currentEpoch?: number;
+  duplicate?: boolean;
+  refusedAdmits?: RefusedAdmit[];
+  userIds?: string[];
+};
 type Step = Answer | Error;
 
 /** A delivery whose `submitCommit` answers (or throws) each step in turn. */
@@ -294,7 +303,8 @@ describe('runCommitTransaction - the record is written by the stage, never after
       undefined,
       BASE,
       undefined,
-      [{ userId: 'user-z' }]
+      [{ userId: 'user-z' }],
+      undefined
     );
   });
 
@@ -695,6 +705,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
       ['u-b:d-b'],
       BASE,
       [{ userId: 'u-b', deviceId: 'd-b' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
@@ -896,6 +907,7 @@ describe('settleUnresolvedCommits - a stage a background engine wrote', () => {
       ['carol:dev-c'],
       BASE,
       [{ userId: 'carol', deviceId: 'dev-c' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(gid, ['carol:dev-c']);
@@ -1162,6 +1174,11 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
       { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation: INVITATION },
       { welcome: new Uint8Array([3]), addedIndices: [0] }
     );
+  const keptWith = (invitation: { users: string[]; rostered: string[] }) =>
+    kept(
+      { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation },
+      { welcome: new Uint8Array([3]), addedIndices: [0] }
+    );
   const raceLost = () => submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 5 });
   /** The drain runs on its own: wait for it the way the session would not. */
   const drained = async (c: ReturnType<typeof ctx>) => {
@@ -1223,6 +1240,36 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     await settled(c);
     expect(replanner).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ cause: 'refused', reason: 'http_400' })
+    );
+  });
+
+  it('a commit refused whole for the people it admits is re-planned WITHOUT them, as a race', async () => {
+    const c = ctx(
+      submitting({ accepted: false, reason: 'admit_refused', currentEpoch: 5, userIds: ['w6'] }),
+      { state: keptWith({ users: ['w5', 'w6'], rostered: ['w6'] }) }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cause: 'race',
+        reason: 'admit_refused',
+        invitation: { users: ['w5'], rostered: [] },
+      })
+    );
+  });
+
+  it('a commit refused whole for EVERY person it admits is `refused` - told, never re-planned', async () => {
+    const c = ctx(
+      submitting({ accepted: false, reason: 'admit_refused', currentEpoch: 5, userIds: ['w5'] }),
+      { state: keptInvite() }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cause: 'refused', reason: 'admit_refused', invitation: INVITATION })
     );
   });
 
@@ -1687,6 +1734,96 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
     await expect(callerSends(c, result)).rejects.toBeInstanceOf(WelcomeTargetNotMemberError);
     error.mockRestore();
     expect(c.owed.size).toBe(0);
+  });
+
+  /**
+   * DEV-3 (2026-10-25): a device its owner revoked while this Add was in flight. The gate accepts the
+   * commit, drops the admit (`no_key_package`) and SAYS SO in its answer; the Welcome used to be sent
+   * anyway, answered 500, and stay owed for every later connection.
+   */
+  it('a device the gate did not admit for want of a key package is owed NO Welcome, and the transaction says so', async () => {
+    const refused = { userId: 'u-b', deviceId: 'd-b', reason: 'no_key_package' };
+    const c = ctx(submitting({ accepted: true, refusedAdmits: [refused] }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = (await addOf(c)) as { notAdmitted: RefusedAdmit[] };
+
+    expect(result.notAdmitted).toEqual([refused]);
+    // Merged - the commit landed - but owing nothing.
+    expect(c.mergePendingCommitOwingWelcome).not.toHaveBeenCalled();
+    expect(c.mergePendingCommit).toHaveBeenCalledExactlyOnceWith(G);
+    expect(c.owed.size).toBe(0);
+    expect(log.mock.calls.flat().join('\n')).toContain('NOT admitted by the gate (no_key_package');
+    log.mockRestore();
+    // And no later connection sends it either.
+    const after = reloaded(c);
+    await after.settleUnresolvedCommits();
+    expect(after.delivery.sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('a refusal a Welcome is not barred by (`already_active`) still owes it, said once at debug', async () => {
+    const c = ctx(
+      submitting({
+        accepted: true,
+        refusedAdmits: [{ userId: 'u-b', deviceId: 'd-b', reason: 'already_active' }],
+      })
+    );
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    const result = (await addOf(c)) as { notAdmitted: RefusedAdmit[] };
+
+    expect(result.notAdmitted).toEqual([]);
+    // An ordinary answer to a re-Add: never at log level, where it would print on every such commit.
+    expect(log.mock.calls.flat().join(' | ')).not.toContain('did not record the admit');
+    expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(G, ['u-b:d-b']);
+    expect(debug.mock.calls.flat().join(' | ')).toContain(
+      'did not record the admit of u-b:d-b (already_active) - its Welcome is sent and answered as before'
+    );
+    log.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('a Welcome refused WELCOME_TARGET_UNKNOWN - the answer that named it was lost - is owed no longer', async () => {
+    // Accepted only through the duplicate answer, which names no refused admit.
+    const c = ctx(submitting(lost(), { accepted: true, duplicate: true }));
+    const quiet = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await addOf(c);
+    expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(G, ['u-b:d-b']);
+    c.delivery.sendWelcome.mockRejectedValueOnce(new WelcomeTargetUnknownError(G, 'u-b', 'd-b'));
+
+    await expect(callerSends(c, result)).rejects.toBeInstanceOf(WelcomeTargetUnknownError);
+
+    expect(c.owed.size).toBe(0);
+    expect(quiet.mock.calls.flat().join('\n')).toContain('no device is registered under it');
+    quiet.mockRestore();
+  });
+
+  it('the connection drain stops owing a Welcome refused WELCOME_TARGET_UNKNOWN, without an error line', async () => {
+    const owed: OwedState = new Map([
+      [
+        G,
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['u-b:d-b'],
+          },
+        ],
+      ],
+    ]);
+    const c = ctx(submitting(), { owed });
+    c.delivery.sendWelcome.mockRejectedValueOnce(new WelcomeTargetUnknownError(G, 'u-b', 'd-b'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await c.settleUnresolvedCommits();
+
+    expect(owed.size).toBe(0);
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+    warn.mockRestore();
   });
 
   it('sends the Welcome ONCE when the connection drain meets the caller sending it', async () => {

@@ -36,8 +36,12 @@ import {
   type CommitRemoval,
   type JoinDeclineOutcome,
   type GroupUserMemberRow,
+  type GroupRosterAtGeneration,
   type PendingInvitationRow,
-  WelcomeTargetNotMemberError,
+  WelcomeTargetUnknownError,
+  isTerminalWelcomeRefusal,
+  admitRefusalMakesWelcomeUndeliverable,
+  type RefusedAdmit,
   ADD_LOCK_WAIT_BOUND_MS,
   boundAddLockWait,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -74,6 +78,7 @@ import type {
   BaseRefreshOutcome,
   DecryptedApplication,
   IncomingDeliveryMeta,
+  OneDeviceAddResult,
 } from '$lib/mls-client/IMlsService';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
@@ -187,6 +192,7 @@ import {
   SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
   SEAT_CLAIM_OVERTAKEN_REASON,
   COMMIT_LOCK_BUDGET_SPENT_REASON,
+  ADMIT_REFUSED_REASON,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
@@ -379,6 +385,56 @@ const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailur
   STATE_UNDECRYPTABLE: 'undecryptable',
   IDENTITY_MISMATCH: 'mismatch',
 };
+
+/**
+ * The admits an ACCEPTED commit's answer says the gate did not record (`refusedAdmits`) - each said
+ * once, at debug unless it bars the Welcome - and of them the ones no Welcome can reach ({@link admitRefusalMakesWelcomeUndeliverable}) -
+ * returned, so the merge owes them nothing and the caller sends them nothing.
+ *
+ * NEVER LEARNED BY FAILING (DEV-3, 2026-10-25): a device its owner revoked while a member's Add was
+ * in flight is dropped by the gate (`no_key_package`), and the member still sent it a Welcome,
+ * which came back a 500 and stayed owed for every later connection. The answer had said it first.
+ * The leaf stays in the tree with no seat, and the stray sweep removes it.
+ */
+function undeliverableAdmits(groupId: string, refused: RefusedAdmit[] | undefined): RefusedAdmit[] {
+  if (!refused?.length) return [];
+  const short = groupId.slice(0, 8);
+  const undeliverable: RefusedAdmit[] = [];
+  for (const r of refused) {
+    const who = `${sanitizeForLog(r.userId).slice(0, 8)}:${sanitizeForLog(r.deviceId)}`;
+    if (admitRefusalMakesWelcomeUndeliverable(r.reason)) {
+      undeliverable.push(r);
+      console.log(
+        `[COMMIT] ${short}... ${who} NOT admitted by the gate (${r.reason}: revoked, or its account ` +
+          'erased) - no Welcome is owed or sent; its leaf has no seat and the stray sweep removes it'
+      );
+    } else {
+      // At debug: `already_active` is an ordinary answer to a re-Add, not news on every commit.
+      console.debug(
+        `[COMMIT] ${short}... the gate did not record the admit of ${who} ` +
+          `(${sanitizeForLog(r.reason)}) - its Welcome is sent and answered as before`
+      );
+    }
+  }
+  return undeliverable;
+}
+
+/**
+ * A one-device Add's answer, from its commit transaction: the Welcome, unless the gate did not admit
+ * `device` for a reason no Welcome gets past - then `notAdmitted` says why and no Welcome is handed
+ * out, since the merge owed it none ({@link undeliverableAdmits}).
+ */
+function oneDeviceAddResult(
+  result: { welcome?: Uint8Array; ratchetTree?: Uint8Array; notAdmitted: RefusedAdmit[] },
+  device: { userId: string; deviceId: string }
+): OneDeviceAddResult {
+  const refusal = result.notAdmitted.find(
+    (r) => r.userId === device.userId && r.deviceId === device.deviceId
+  );
+  return refusal
+    ? { ratchetTree: result.ratchetTree, notAdmitted: refusal.reason }
+    : { welcome: result.welcome, ratchetTree: result.ratchetTree };
+}
 
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
@@ -3011,8 +3067,14 @@ export abstract class BaseMlsService implements IMlsService {
           ratchetTreeBytes
         );
       } catch (e) {
-        if (e instanceof WelcomeTargetNotMemberError) {
-          await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'refused', persistEach);
+        if (isTerminalWelcomeRefusal(e)) {
+          await this.consumeOwedWelcome(
+            groupId,
+            recipient,
+            welcomeBytes,
+            e instanceof WelcomeTargetUnknownError ? 'unknown-target' : 'refused',
+            persistEach
+          );
         }
         throw e;
       }
@@ -3037,15 +3099,18 @@ export abstract class BaseMlsService implements IMlsService {
    * handed to the next checkpoint. `refused` is the terminal `WELCOME_TARGET_NOT_MEMBER`:
    * the server enrols an Add's people with the commit it accepts, or refuses them for good, so
    * resending the same bytes cannot change the answer - said at the level that accuses, since an
-   * accepted Add whose person is off the roster is the visible end of something upstream. A clear
-   * that fails leaves the recipient owed: the next connection sends the same bytes again, which the
-   * server stores once.
+   * accepted Add whose person is off the roster is the visible end of something upstream.
+   * `unknown-target` is the terminal `WELCOME_TARGET_UNKNOWN`: no device is registered under the
+   * target any more (revoked, or its account erased) - a race with a revocation, said at WARN, since
+   * the commit's own answer normally says it first and no Welcome is owed at all
+   * ({@link undeliverableAdmits}). A clear that fails leaves the recipient owed: the next connection
+   * sends the same bytes again, which the server stores once.
    */
   private async consumeOwedWelcome(
     groupId: string,
     recipient: string,
     welcome: Uint8Array,
-    answer: 'delivered' | 'refused',
+    answer: 'delivered' | 'refused' | 'unknown-target',
     persist: boolean
   ): Promise<void> {
     const short = groupId.slice(0, 8);
@@ -3054,6 +3119,13 @@ export abstract class BaseMlsService implements IMlsService {
         `[WELCOME] ${short}... Welcome REFUSED for ${recipient.slice(0, 8)}...: the roster does not ` +
           'name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray ' +
           'sweep collects it'
+      );
+    }
+    if (answer === 'unknown-target') {
+      console.warn(
+        `[WELCOME] ${short}... Welcome REFUSED for ${recipient.slice(0, 8)}...: no device is ` +
+          'registered under it any more (revoked, or its account erased) - terminal, no longer owed; ' +
+          'the leaf it admitted has no seat and the stray sweep collects it'
       );
     }
     try {
@@ -4012,6 +4084,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupUserMembers(groupId, opts);
   }
 
+  async getGroupRosterAtGeneration(groupId: string): Promise<GroupRosterAtGeneration> {
+    return this.delivery.getGroupRosterAtGeneration(groupId);
+  }
+
   async getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions> {
     return this.delivery.getGroupWithheld(groupId, forUserId);
   }
@@ -4673,6 +4749,8 @@ export abstract class BaseMlsService implements IMlsService {
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
     skipped: SkippedDevice[];
+    /** Admitted to the tree, NOT recorded by the gate, and owed no Welcome ({@link undeliverableAdmits}). */
+    notAdmitted: RefusedAdmit[];
   }> {
     // A FOLLOWER TAB DOES NOT COMMIT (`FollowerTabCommitError`): its state is a copy no disk and no
     // other tab will follow, so a commit it sent stranded the leader behind the group.
@@ -4939,7 +5017,9 @@ export abstract class BaseMlsService implements IMlsService {
             throw new CommitRefusedError(
               validation.reason || 'epoch_mismatch',
               baseEpoch,
-              validation.currentEpoch
+              validation.currentEpoch,
+              null,
+              Array.isArray(validation.userIds) ? validation.userIds : null
             );
           }
           if (validation.duplicate) {
@@ -4952,13 +5032,17 @@ export abstract class BaseMlsService implements IMlsService {
           // caller sends it after this returns, and that send consumes the obligation
           // ({@link sendWelcome}); held only in the caller's hands, a reload before the send lost it
           // with the merge already on disk, and only the invitee's own repair let it in (DUP-7).
-          await this.mergeAccepted(submission);
+          // ...TO THE DEVICES THE GATE ADMITTED. One it did not record, for a reason no Welcome can
+          // get past, is owed none (`undeliverableAdmits`): the answer already said so.
+          const notAdmitted = undeliverableAdmits(groupId, validation.refusedAdmits);
+          await this.mergeAccepted(submission, notAdmitted);
           const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
           return {
             welcome: staged.welcome,
             ratchetTree,
             addedDeviceIds: staged.addedDeviceIds ?? [],
             skipped: staged.skipped ?? [],
+            notAdmitted,
           };
         }
       })
@@ -4991,7 +5075,8 @@ export abstract class BaseMlsService implements IMlsService {
         submission.excludeDeviceIds,
         submission.groupInfo,
         submission.admits,
-        submission.removes
+        submission.removes,
+        submission.invitationSeatGeneration
       )
     );
   }
@@ -5217,11 +5302,18 @@ export abstract class BaseMlsService implements IMlsService {
       (answer.error instanceof ApiRefusalError
         ? (answer.error.code ?? `http_${answer.error.status}`)
         : undefined);
+    // A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT (`admit_refused`) is the invitation minus
+    // them: re-planned for the others as a race is, never again for the people it names.
+    const refusedPeople =
+      answer.answer?.reason === ADMIT_REFUSED_REASON && Array.isArray(answer.answer.userIds)
+        ? answer.answer.userIds
+        : null;
     const owed = this.oweLostInvitation(
       read.status === 'recorded' ? read.record : null,
       submission,
       reason === RACE_REFUSAL_REASON ? 'race' : 'refused',
-      reason
+      reason,
+      refusedPeople ?? undefined
     );
     await this.clearPendingCommit(groupId).catch((e: unknown) => {
       // Still staged, so still unresolved: the next settlement reads it again.
@@ -5252,11 +5344,31 @@ export abstract class BaseMlsService implements IMlsService {
   private oweLostInvitation(
     record: StagedRecord | null,
     submission: CommitSubmission,
-    cause: LostInvitationCause,
-    reason?: string
+    refusedCause: LostInvitationCause,
+    reason?: string,
+    notAdmitted?: readonly string[]
   ): boolean {
-    const invitation = record ? invitationOf(record) : null;
-    if (!invitation) return false;
+    const recorded = record ? invitationOf(record) : null;
+    if (!recorded) return false;
+    // The people the gate refused to admit leave the invitation; the others are owed it as after a
+    // race - the refusal named them, so nobody else is what it was about. Refused for everyone it
+    // named, it stays `refused`, and the member is told.
+    let invitation = recorded;
+    let cause = refusedCause;
+    const users = notAdmitted ? recorded.users.filter((u) => !notAdmitted.includes(u)) : [];
+    if (notAdmitted && notAdmitted.length > 0 && users.length > 0) {
+      invitation = {
+        ...recorded,
+        users,
+        ...(recorded.rostered
+          ? { rostered: recorded.rostered.filter((u) => !notAdmitted.includes(u)) }
+          : {}),
+      };
+      cause = 'race';
+      console.warn(
+        `[INVITE_OWED] ${submission.groupId.slice(0, 8)}... the gate refused to admit ${notAdmitted.length} invited person(s) - the invitation goes on without them`
+      );
+    }
     const { groupId, baseEpoch } = submission;
     try {
       recordOwedInvitation(this.userId, {
@@ -5454,10 +5566,21 @@ export abstract class BaseMlsService implements IMlsService {
    * later alike: whichever state reaches disk, it holds either the stage and its record (a
    * settlement re-derives the Add) or the merge and its owed Welcome (the connection drain sends
    * it), never the merge alone.
+   *
+   * `notAdmitted` are admits the gate's answer said it did not record and that no Welcome can reach
+   * ({@link undeliverableAdmits}): they are owed nothing. A settlement learns the accept from a
+   * `duplicate` answer, which names none, so it owes every admit, and a refused one is answered by
+   * its Welcome's typed refusal instead.
    */
-  private async mergeAccepted(submission: CommitSubmission): Promise<string[]> {
+  private async mergeAccepted(
+    submission: CommitSubmission,
+    notAdmitted: readonly RefusedAdmit[] = []
+  ): Promise<string[]> {
+    const refused = new Set(notAdmitted.map((r) => `${r.userId}:${r.deviceId}`));
     const recipients = submission.welcome
-      ? (submission.admits ?? []).map((a) => `${a.userId}:${a.deviceId}`)
+      ? (submission.admits ?? [])
+          .map((a) => `${a.userId}:${a.deviceId}`)
+          .filter((recipient) => !refused.has(recipient))
       : [];
     if (recipients.length > 0) {
       await this.mergePendingCommitOwingWelcome(submission.groupId, recipients);
@@ -5574,7 +5697,7 @@ export abstract class BaseMlsService implements IMlsService {
           );
         } catch (e) {
           // Terminal: already dropped from the state, and said why.
-          if (e instanceof WelcomeTargetNotMemberError) {
+          if (isTerminalWelcomeRefusal(e)) {
             changed = true;
             continue;
           }
@@ -7204,7 +7327,7 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
-  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+  ): Promise<OneDeviceAddResult> {
     // REFUSED BEFORE THE LOCK, NOT INSIDE IT: a package the binding or the pin refuses would make
     // Rust stage nothing and answer with a sentence; the type is decided here, from the verdict.
     const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
@@ -7229,7 +7352,7 @@ export abstract class BaseMlsService implements IMlsService {
     );
     // This device's own Add may have given its account - or a contact - a new device.
     void this.handOverDeviceEvents('own add');
-    return { welcome: result.welcome, ratchetTree: result.ratchetTree };
+    return oneDeviceAddResult(result, device);
   }
 
   /**
@@ -7245,7 +7368,7 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
-  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+  ): Promise<OneDeviceAddResult> {
     const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
     if (!verdictAdmits(verdict) && isDeviceTrustRefusal(verdict)) {
       throw new DeviceTrustRefusedError(verdict, device.userId, device.deviceId);
@@ -7266,7 +7389,7 @@ export abstract class BaseMlsService implements IMlsService {
     );
     // As `addMember`: a replaced device under a new key is a device event this commit recorded.
     void this.handOverDeviceEvents('own add');
-    return { welcome: result.welcome, ratchetTree: result.ratchetTree };
+    return oneDeviceAddResult(result, device);
   }
 
   async addMembersBulk(
@@ -7280,6 +7403,7 @@ export abstract class BaseMlsService implements IMlsService {
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
     skipped: SkippedDevice[];
+    notAdmitted: RefusedAdmit[];
   }> {
     const result = await this.runCommitTransaction(
       groupId,
@@ -7310,7 +7434,16 @@ export abstract class BaseMlsService implements IMlsService {
       }
     );
     void this.handOverDeviceEvents('own add');
-    return result;
+    // A DEVICE THE GATE DID NOT ADMIT IS OWED NO WELCOME, so it leaves `addedDeviceIds` - the list
+    // every caller welcomes - matched by the PAIR, never by the device id alone.
+    const notAdmitted = new Set(result.notAdmitted.map((r) => `${r.userId}:${r.deviceId}`));
+    const ownerOf = new Map(devices.map((d) => [d.deviceId, d.userId]));
+    return {
+      ...result,
+      addedDeviceIds: result.addedDeviceIds.filter(
+        (id) => !notAdmitted.has(`${ownerOf.get(id)}:${id}`)
+      ),
+    };
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {

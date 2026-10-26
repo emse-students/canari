@@ -19,18 +19,50 @@ import {
  * the pair safe on one.
  */
 describe('MembersController - lock order of an add and a removal', () => {
-  /** The tables a transaction writes, in order, between its BEGIN and its COMMIT. */
+  /**
+   * The tables a transaction touches, in order, between its BEGIN and its COMMIT - the group's seat
+   * lock named `seat-lock`, since it is a function call and not a table.
+   */
   const tablesInTransaction = (statements: RecordedStatement[]): string[] => {
     const begin = statements.findIndex((s) => s.sql === 'BEGIN');
     const commit = statements.findIndex((s, i) => i > begin && s.sql === 'COMMIT');
     return statements
       .slice(begin + 1, commit)
-      .map((s) => tableOf(s.sql))
+      .map((s) => (s.sql.includes('pg_advisory_xact_lock') ? 'seat-lock' : tableOf(s.sql)))
       .filter((t): t is string => t !== null);
   };
 
-  async function controllerOn() {
-    const recorded = await recordingDataSource();
+  /**
+   * What the database answers a SELECT: one row for the group and for bob's ADMITTED seat, and one
+   * key package per device - built from the column aliases the real builder wrote, so the row is the
+   * shape TypeORM hydrates.
+   */
+  const answerAsAdmitted = (stmt: RecordedStatement): unknown[] => {
+    if (!stmt.sql.startsWith('SELECT') || stmt.sql.includes('pg_advisory_xact_lock')) return [];
+    const aliases = [...stmt.sql.matchAll(/AS "([A-Za-z]+)_([A-Za-z]+)"/g)];
+    // A raw query (the block check) is no entity read: it answers nothing, as with no block.
+    if (aliases.length === 0) return [];
+    const row = (deviceId: string) =>
+      Object.fromEntries(
+        aliases.map(([, entity, field]) => [
+          `${entity}_${field}`,
+          (
+            {
+              id: 'row-1',
+              groupId: 'g-1',
+              userId: 'bob',
+              deviceId,
+              deletedAt: null,
+              awaitingAdmission: false,
+            } as Record<string, unknown>
+          )[field] ?? null,
+        ])
+      );
+    return tableOf(stmt.sql) === 'key_package' ? [row('b1'), row('b2')] : [row('b1')];
+  };
+
+  async function controllerOn(answer?: (stmt: RecordedStatement) => unknown) {
+    const recorded = await recordingDataSource(answer);
     const repo = () => ({
       find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn().mockResolvedValue(null),
@@ -62,34 +94,44 @@ describe('MembersController - lock order of an add and a removal', () => {
     return { controller, statements: recorded.statements };
   }
 
-  it('both write dm_group_members before the device rows', async () => {
-    const add = await controllerOn();
+  it('both take the seat lock first, then the roster row, then the device rows', async () => {
+    // The route enrols nobody but a creator (ADM-3): for a person an accepted commit admitted, it
+    // re-reads their ADMITTED seat under the group's seat lock and writes their device rows.
+    const add = await controllerOn(answerAsAdmitted);
     await add.controller.addGroupMember('g-1', { userId: 'bob' }, 'alice', undefined);
     const remove = await controllerOn();
     await remove.controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
     const addOrder = tablesInTransaction(add.statements);
     const removeOrder = tablesInTransaction(remove.statements);
-    // The enrolment reads the last departure and the earliest device row before it opens the
-    // interval (`admittedAt`): two plain SELECTs, which take no row lock, so the write order
-    // below them is unchanged.
     expect(addOrder).toEqual([
+      'seat-lock',
+      'dm_groups',
       'dm_group_members',
-      'dm_group_membership_intervals',
-      'dm_device_group_memberships',
-      'dm_group_membership_intervals',
-      'dm_device_group_memberships',
+      'key_package',
       'dm_device_group_memberships',
     ]);
     // The removal first reads whether the seat was an open invitation-link ask (to announce its
     // end): a plain SELECT, no row lock, so the write order below it is unchanged.
-    expect(removeOrder).toEqual([
+    expect(removeOrder.filter((t) => t !== 'seat-lock' && t !== 'dm_groups')).toEqual([
       'dm_group_members',
       'dm_group_members',
       'dm_group_membership_intervals',
       'queued_message',
       'dm_device_group_memberships',
     ]);
+    expect(removeOrder[0]).toBe('seat-lock');
+  });
+
+  it('the add of a person no commit admitted writes nothing, under the lock', async () => {
+    // No seat for bob: the typed 409 MEMBER_NOT_ADMITTED, and not one INSERT.
+    const add = await controllerOn((stmt) =>
+      tableOf(stmt.sql) === 'dm_group_members' ? [] : answerAsAdmitted(stmt)
+    );
+    await expect(
+      add.controller.addGroupMember('g-1', { userId: 'bob' }, 'alice', undefined)
+    ).rejects.toMatchObject({ status: 409, response: { code: 'MEMBER_NOT_ADMITTED' } });
+    expect(add.statements.some((s) => s.sql.startsWith('INSERT'))).toBe(false);
   });
 
   it('the removal takes the queued Welcomes inside the transaction that ends the membership', async () => {

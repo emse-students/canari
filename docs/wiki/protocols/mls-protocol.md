@@ -213,7 +213,7 @@ no catch-up, the existing worker-retry + fallback stands.
 3. Creator: `fetchUserDevices(peerId)` -> get peer's key packages
 4. Creator: `addMembersBulk(groupId, devices, excludeDeviceIds)` -> one staged transaction (C7-A): stage the Add, validate the epoch (`POST /api/mls/commit`), merge on accept and broadcast the commit / roll back on reject. Returns `{ welcome, ratchetTree, addedDeviceIds, skipped }` (`skipped` = `{ deviceId, reason }[]`, the reason a typed `SkippedKeyPackageReason` classified in Rust - see [chat-delivery](../services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)) (the ratchet tree is exported post-merge).
 5. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` -> POST `/api/mls/welcome`
-6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` - **BEFORE step 5 on every add path**: the server names a joiner before its Welcome can arrive, so an inviter dying between the two leaves nothing half-registered; a user whose registration fails is sent no Welcome (`groupCreation.inviteOrder.test.ts`)
+6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` - **BEFORE step 5 on every add path**: the server names a joiner before its Welcome can arrive, so an inviter dying between the two leaves nothing half-registered; a user whose registration fails is sent no Welcome (`groupCreation.inviteOrder.test.ts`). **Since ADM-3 the call enrols nobody but the caller, into an empty roster**: the peer was enrolled by the accepted commit of step 4, and the call writes their device rows or answers `409 MEMBER_NOT_ADMITTED` ("The commit is the one writer of a new person")
 
 Only the bulk commit must stay unique (staged under the add-lock). Everything around it is
 plain HTTP and runs in parallel (`groupCreation.ts` / `deliverWelcomes` in `groupActions.ts`):
@@ -1201,12 +1201,18 @@ accepted commit" below), `already-admitted`
 (a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
 `not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
 row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
-`gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
-the race against an Add holds against it AT THE GATE: that Add was built on the epoch the Decline
-left unchanged, so the gate enrols nobody (`departed_since_base`) and drops its admits - which is
-all a settlement or an outbox replay does. On a direct accept the adding member's `registerMember`
-still enrols the person, undoing the Decline, until that call goes (below).
-Anything else keeps the ask, logged with its reason.
+`gone`. All four leave the screen; a refused or failed call keeps the ask. **A Decline holds against
+every Add decided before it, through every writer** (ADM-3, 2026-10-25): the gate orders it against
+the seat generation the inviting member READ (below), enrols nobody and lifts nothing for it, drops
+its admits, and the member-add route that used to undo it enrols nobody any more - see "The commit
+is the one writer of a new person". An Add decided after it is a fresh invite and admits. Anything
+else keeps the ask, logged with its reason.
+
+**An answer is an answer to THAT ask.** `admitJoinRequest` hands the invite the ask's identity
+(`askId`, the seat id); the invitation's first roster read must still find that seat awaiting under
+that id, or the Add stops before anything is staged (`removed-meanwhile`) - declined, or declined and
+asked again (a NEW ask, another id). A seat no longer awaiting was admitted by another member, and
+the invite goes on to find them in the tree.
 
 **The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
 with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
@@ -1218,19 +1224,22 @@ and the server holds the person outside until a member answers:
 - The external-join base (`GET`/`PUT .../group-info`) answers **409 `awaiting_admission`** to such a
   person - deliberately not a 403, which older clients read as `NotAGroupMemberError` and retire the
   conversation on - and the commit gate refuses every commit from them, external or member.
-- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at the two doors through which a
-  member's Add reaches the server: inside the transaction of an accepted commit, for the devices its
-  `admits` name and the target of its inline Welcome; and inside the transaction that stores a
-  Welcome sent apart (`sendWelcome` -> `enqueueForLiveGroup`). Every Add ships a Welcome, so a
-  member client that declares no `admits` (older than #1151) still lifts it - otherwise its Add
-  would leave the person refused on every commit. Only an admitted member can store that Welcome:
-  `memberOfGroupKind` does not count an awaiting seat, so the asker cannot Welcome themselves.
+- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at ONE door: inside the
+  transaction of an accepted commit, for the people its `admits` name (and the target of its inline
+  Welcome) that the gate admitted. **A Welcome sent apart lifts nothing since ADM-3** (2026-10-25):
+  it lifted for clients that declared no `admits`, but every client at the version floor declares
+  them (#1151, `v0.18.28`), and that door was the second half of a Decline being undone - the gate
+  refused the person and the Welcome then let them in. `sendWelcome` -> `enqueueForLiveGroup` now
+  REFUSES a Welcome whose target seat still awaits (`403 WELCOME_TARGET_NOT_MEMBER`,
+  `reason=awaiting_admission`), read under the same row lock (`seatStandsFor`, `requireAdmitted`).
+  Only an admitted member can store a Welcome at all: `memberOfGroupKind` does not count an awaiting
+  seat, so the asker cannot Welcome themselves.
 - An ACTIVE device row is never read as awaiting: the membership reads report the flag only on a
   row that is not `active`, the client's `readWelcomeOwedFromRow` ignores it on one, and the commit
   gate reads such a seat as admitted and logs `[ADMISSION]` at ERROR - the invariant broke upstream.
   The report of `active` is refused with **409 `awaiting_admission`** while the flag stands, so a
   row cannot become active ahead of the lift. The Welcome path reads the roster row `FOR UPDATE`
-  (`seatStandsFor`), the lock the lift upgrades to, so two Welcomes stored at once cannot deadlock.
+  (`seatStandsFor`), the lock a commit's lift needs, so a store and a commit cannot deadlock.
 - An unanswered ask EXPIRES WHOLE (`expireUnansweredAsks`, in the hourly stale-pending sweep): once
   no device of the person is `active` or pending since the 14-day cutoff, the seat is withdrawn as
   a Decline withdraws it, per seat under its lock; the device-only purge never touches an awaiting
@@ -1679,6 +1688,31 @@ owing nothing. The connection drain clears every recipient of its pass and sched
 after it; a recipient that names no device is a defect of the record, dropped unsent and said as
 one, never reported as a server refusal.
 
+#### A device the gate did not admit is owed no Welcome - the commit's answer says so (2026-10-25)
+
+Measured on the rig (DEV-3): a member's pending sweep added a device its owner revoked while the Add
+was in flight. The gate accepted the commit and dropped the admit (`ADMIT_REFUSED
+reason=no_key_package`: the revocation had purged the key package), and the member sent the Welcome
+anyway - a 500, then `Add error ... Could not send the secure invitation` - and every other group's
+invitation of that device asked the server again and was told `revoked`, six 404s for one fact. The
+accept now carries **`refusedAdmits`** (`{ userId, deviceId, reason }`, every admit the gate dropped,
+before or inside its transaction). `undeliverableAdmits` (`BaseMlsService.ts`) says each once and returns
+those whose Welcome cannot be delivered - an ALLOWLIST, `no_key_package` alone
+(`admitRefusalMakesWelcomeUndeliverable`; NOT `not_enrolled`, which the sender's own
+`registerMember` enrols before a Welcome that then lands). `mergeAccepted` owes them nothing,
+`addMember` / `replaceMember` hand out no Welcome and name the refusal (`notAdmitted`), and
+`addMembersBulk` leaves them out of `addedDeviceIds`, the list every caller welcomes. The pending
+sweep registers nobody, sends no Welcome or history, retires the invitation, and answers every other
+invitation of that device in the same sweep from that answer - as it now does a `revoked` or
+`unregistered` key-package answer, which is about the device, not the group (`expired` is not carried
+over). The leaf stays in the tree with no seat; the stray sweep removes it. A `duplicate` answer names
+no refusal (the first acceptance decided them and nothing records them), so a settled Add still owes
+that Welcome, and its typed refusal ends it: `404 WELCOME_TARGET_UNKNOWN` is
+`WelcomeTargetUnknownError`, terminal like `WELCOME_TARGET_NOT_MEMBER` (`isTerminalWelcomeRefusal`),
+said at WARN. Tests: `messaging.commit-log.spec.ts`, `add-enrolment.integration.spec.ts`,
+`BaseMlsService.unresolvedCommit.test.ts`, `BaseMlsService.notAdmitted.test.ts`,
+`actions.pendingNotAdmitted.test.ts`, `mlsDeliveryApi.welcomeRefusal.test.ts`.
+
 **The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
 and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
 serialises every store of a Welcome for that device in that group, for a row still queued with that
@@ -1948,17 +1982,27 @@ device of and the roster does not name is enrolled through `ensureGroupMember` -
 writer - BEFORE any device row, the one lock order of `utils/seat-eviction.ts`. Whichever request
 lands - the first, a resubmission, an outbox replay - the advance and the seat commit together, and a
 resubmission answered `duplicate` (answered before any transaction) finds exactly the state the first
-accept left. Nothing for the client to remember, no pending-enrolment record, no clock. Every Add
-path already called `registerMember` for each person it admitted, so this grants nothing a client
-could not already do. Judged against PostgreSQL in `add-enrolment.integration.spec.ts`.
+accept left. Nothing for the client to remember, no pending-enrolment record, no clock. Judged
+against PostgreSQL in `add-enrolment.integration.spec.ts`. **It is the ONLY writer of a new person
+since ADM-3** - see "The commit is the one writer of a new person" below.
 
-**Refused, and logged `NOT_ENROLLED reason=...`, with their admits dropped** (no device row, so no
-frame is queued for a device whose Welcome will be refused, and no stale row later dates an arrival):
+**Refused, and logged `NOT_ENROLLED reason=...`; ANY such refusal refuses the WHOLE commit**
+(answered `200 {accepted: false, reason: 'admit_refused', userIds}` - `userIds` naming the refused
+people, logged `REJECT admit_refused` - the shape `WelcomeSeatGone` already answers, so a client of
+any version clears its staged commit on it): nothing advances, nobody gets a leaf, no device row is
+written. A commit accepted with its admits dropped would still have given those people a leaf in
+every member's tree - a leaf no seat holds - so the gate refuses it rather than accept it in part,
+the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Every candidate is decided before anything
+is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
+rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
 
-- everyone not on the roster when the committer holds no admitted seat itself (`committer_not_on_roster`);
+- everyone not on the roster when the committer holds no admitted seat itself - answered with its
+  own reason, `{accepted: false, reason: 'committer_not_on_roster'}` and no `userIds`: it is about
+  the committer, not the people added, so nothing is rebuilt and nobody is reported removed;
 - a person a block stands between and the committer (`blocked`);
-- **a person who departed after the epoch the commit was built on began** (`departed_since_base`).
-  A removal holds against an Add built before it (owner's rule, 2026-10-14). A self-leave makes no
+- **a person who departed after the Add was DECIDED** (`departed_since_decision`, with
+  `decidedBy=invitation|base_epoch`). A removal holds against an Add built before it (owner's rule,
+  2026-10-14). A self-leave makes no
   commit, a member's Decline of an invitation-link ask makes none either, and a removal's Remove
   commit can be lost, so an Add held in an outbox can still land at the unchanged epoch after the
   departure; enrolling then would undo it. Ordered by a COUNTER, never a clock: every removal and
@@ -1966,33 +2010,91 @@ frame is queued for a device whose Welcome will be refused, and no stale row lat
   stretch it closes (`leftAtSeatGeneration`), a Decline - which DELETES the ask's stretch, since a
   closed one would read as a gap and withhold its span from every history answer - on the person's
   `dm_seat_evictions` row (`declinedAtSeatGeneration`), and every advance records the generation its
-  epoch began at (`epochSeatGeneration`, migration 039). A departure recorded later than the base's
-  generation is one the Add could not have seen. **An ask that EXPIRES records nothing:** no member
-  decided anything, and a member's Add built while it was open is the answer it waited for - refusing
-  it because a timer ran would let a clock decide an admission. **The cost is one-sided, accepted (owner, 2026-10-25):** a
-  DELIBERATE re-invite right after a self-leave or a Decline, in a quiet group, is refused too -
-  nothing distinguishes it from the stale Add. In numbers: the epoch is E, begun at generation G-1
-  (`epochSeatGeneration` = G-1); the Decline moves the group to G and stamps G; nothing moves the
-  epoch until the next commit, so the re-invite is built on E and compared against G-1 < G. It is
-  bounded to ONE Add: that Add's own commit advances to E+1, which records G, so any Add after it is
-  compared against G and enrols. The refused one is repaired by the client's `registerMember` on a
-  direct accept, with a span lost - its admits were dropped, so no `admittedAtEpoch` row is kept and
-  a frame sent between the accept and that call (or the Welcome) is not queued for the invitee's
-  devices - or not at all if its answer was also lost, until a new Add.
+  epoch began at (`epochSeatGeneration`, migration 039). **An ask that EXPIRES records nothing:** no
+  member decided anything, and a member's Add built while it was open is the answer it waited for -
+  refusing it because a timer ran would let a clock decide an admission.
 
-  **Where the guard holds: at the commit gate, so on a settlement and an outbox replay - NOT on a
-  direct accept.** Every client Add path still calls `registerMember` after a direct accept, and that
-  route enrols the person whatever the gate refused, so a departure or a Decline that came first is
-  still undone there, exactly as before this check existed. Not a regression; the source fix is
-  deleting that call, owed in [backlog](../backlog.md#p3---remove-registermember-from-the-add-client-paths-then-the-decline-and-departure-guards-hold-everywhere-review-of-2419-2026-10-25) and gated on the server version
-  ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25)).
-  **Also accepted, and open there:** a stale Add landing after the declined person RE-ASKED by link
-  finds the new awaiting seat - already on the roster, so never checked - and lifts it: the Decline
-  is overridden silently.
+  **WHEN the Add was decided is carried by the client from where it is known** (ADM-3). A member's
+  invitation reads its roster WITH the group's seat generation (`GET .../user-members?withSeatGeneration=1`,
+  the generation read BEFORE the rows), records it in the commit's intent beside the roster baseline
+  (`CommitInvitation.seatGeneration`, so a resubmission and a re-plan send the same value) and sends it
+  as `invitationSeatGeneration` with an Add that admits somebody. The gate orders departures against
+  it: one recorded after it holds against the Add, one recorded before it does not - so a deliberate
+  re-invite after a Decline, at an unchanged epoch, is a fresh invite and enrols. A value the group
+  never reached (above its current generation), negative or not an integer is a `400
+  invitation_seat_generation_invalid`. An Add with no invitation (the automatic pending-row and
+  welcome-request Adds, an old client) has none, and is ordered by the base epoch's generation
+  (`decidedBy=base_epoch`): **the one-sided cost accepted by the owner on 2026-10-25 now falls only on
+  those** - a re-invite by a client older than this change, right after a Decline in a quiet group,
+  is refused until the next commit moves the epoch.
 
-A seat already on the roster is left as it is (one awaiting a member's admission is lifted). A key
-group has no conversation roster: its people are social-service's entitlement, asked before the
-advance (`claimKeyGroupAdmits`), and nothing here applies to it.
+- **a person whose seat still AWAITS a member's answer, against the same order** - checked like a
+  newcomer (blocks, the committer's seat, a departure recorded after the decision): a new ask after
+  a Decline is not answered by an Add decided before that Decline. An awaiting
+  seat the gate admits is lifted by the caller (`liftAwaitingAdmission`); one it refuses stays an
+  ask, unanswered.
+- **an awaiting seat of a person who EVER departed - removed, left, or declined by a member - by an
+  Add with no invitation generation** (`departed_and_undated`). Once another commit moved the epoch,
+  the base epoch alone cannot order such an Add against the departure, so only a member's invitation
+  - which carries when it was decided - admits that person again. And an awaiting seat admitted on the base epoch's order alone is logged at WARN
+  (`ADMITTED_UNDATED ... decidedBy=base_epoch`), so how often an undated Add answers an ask is
+  measured, not assumed.
+
+**The client rebuilds, and never loops.** `refusedAdmits` reads the typed `CommitRefusedError`
+(reason `admit_refused` and its `userIds`), never the message; both reasons are not rebuildable as a
+race (`rebuildableRefusal`), since the same commit meets the same answer at any epoch. `addDevicesRebuildingOnRace` drops the named people's candidates and their names from the
+invitation it carries, re-checks the premise without them, and stages again; each such pass drops at
+least one candidate, a refusal naming none of them leaves as thrown, and with nobody left the Add is
+abandoned (`not-admitted`, reported `removed-meanwhile`). A one-device Add - the pending-row sweep,
+the welcome-request answer - has nobody to rebuild without: it logs and stops, the row stays as the
+server holds it. A kept commit settled `admit_refused` (read off the answer's body) is re-planned
+for the other invited people as after a race, and is `refused` (the member told) when it named
+nobody else. A 1:1 creation whose peer is refused is abandoned at once (`mustAdmit`), before anything
+is staged again, and is not created.
+
+**A seat still awaiting a member is always an ask.** The pending-row sweep and the welcome-request
+answer never make an automatic Add for a person whose seat `awaitingAdmission`, whatever the local
+tree holds: they ask a member (`onJoinApprovalRequested`), and only that member's gesture answers.
+The Android background route `send-welcome-and-commit` goes through the same gate; its only admit is
+the Welcome target, so a refusal there is the `WelcomeSeatGone` answer.
+
+A seat already on the roster AND admitted is left as it is. A refused Welcome target refuses the
+whole commit that carries it inline (`WelcomeSeatGone`): the background native Add has no other way
+to learn. A key group has no conversation roster: its people are social-service's entitlement, asked
+before the advance (`claimKeyGroupAdmits`), and nothing here applies to it.
+
+### The commit is the one writer of a new person (ADM-3, 2026-10-25)
+
+Two writers used to decide whether a person is in: the commit's gate, which reads the seat lock and
+the departures, and the member-add route, which read neither - so a Decline the gate honoured could
+be undone by the route the same second. Now the accepted commit is the one writer.
+
+**Every writer that enrols or admits a person, and what it does now:**
+
+| Writer | Since ADM-3 |
+| --- | --- |
+| The accepted commit (`enrolAdmittedPeople` + `liftAwaitingAdmission`) | The ONLY one. Newcomers and awaiting seats, ordered against the invitation's generation, under the seat lock. |
+| `POST mls/groups/:id/members` (`addGroupMember`) | Enrols nobody but the caller, into an empty roster (the bootstrap). For anyone else it re-reads the seat under the seat lock (`writePendingSeats`, `requireAdmitted`): admitted -> writes their device rows, a no-op for the roster; absent or awaiting -> `409 MEMBER_NOT_ADMITTED`, nothing written. |
+| A Welcome sent apart (`sendWelcome`) | Admits nobody; refused for an awaiting seat. |
+| An inline Welcome in a commit | Admitted only if the commit's gate admits its target; otherwise the commit is refused. |
+| Link acceptance (`writePendingSeats`, `enrol`) | Writes an ASK, never an admission. After a Decline it may write a new one: a Decline is not a ban. |
+| `registerDevice` (`writePendingSeats`, no enrol) | Only for a person already on the roster. |
+| `withdrawAwaitingSeat`, `expireUnansweredAsks` | Remove, never admit. |
+
+**The client keeps calling the route after an accepted Add**, because a server older than this
+change still enrols through it ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25)).
+It is typed now: since the gate refuses a commit naming anyone it may not admit, an accepted commit
+enrolled everyone it named, and `MemberNotAdmittedError` after it means the person departed since
+the merge. The client then sends them NO Welcome and does not report them added - every Add path:
+the invitation (`processBulkAddition`), the pending-row Add and the welcome-request Add
+(`actions.ts`), and a 1:1 creation, which is dropped. The departure's own Remove takes their leaf, or
+the stray collector, which reads a seat still awaiting a member as off the roster (`awaiting` in
+`POST mls/group-rosters`, `awaitingAdmission` on the fresh read).
+
+**A leaf is not an admission.** A member answering an ask (`admitJoinRequest`) whose tree already
+holds a leaf of the person reads the seat before claiming another member's Add admitted them: an
+admitted seat is done, one still awaiting (or gone) has its leaf removed by the stray collector first
+and is then admitted by the member's own Add.
 
 **A refused Welcome is no longer owed for ever.** `POST /api/mls/welcome` answers a target off the
 roster `403 WELCOME_TARGET_NOT_MEMBER` (the `error` field kept for older clients), typed client-side
