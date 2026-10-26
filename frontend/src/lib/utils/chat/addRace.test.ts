@@ -21,6 +21,7 @@ import { inviteMembersToGroup } from './groupCreation';
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import { decodeAppMessage } from '$lib/proto/codec';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * AN ADD THAT LOSES A COMMIT RACE IS REBUILT ON PROVEN PROGRESS, OR SURFACED - NEVER DROPPED (CC-4,
@@ -87,6 +88,7 @@ function inviteHarness() {
     ]),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
+    renewAddLock: vi.fn(async () => 'renewed' as const),
     addMembersBulk: vi.fn(
       async (_g: string, devices: Array<{ userId: string; deviceId: string }>) => {
         state.tree.push(...devices.map((d) => `${d.userId}:${d.deviceId}`));
@@ -235,6 +237,78 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(outcome).toEqual({ kind: 'not-added', reason: 'add-lock-busy' });
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
+
+  it('an acquire NOTHING answered is `unreachable`, never a busy lock (NET-3)', async () => {
+    const h = inviteHarness();
+    h.mlsService.acquireAddLock.mockRejectedValue(
+      new TransportFailureError(new TypeError('Failed to fetch'))
+    );
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'unreachable' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('EACH REBUILD RENEWS THE LOCK FIRST - and the first attempt, right after the acquire, does not', async () => {
+    const h = inviteHarness();
+    const order: string[] = [];
+    const real = h.mlsService.addMembersBulk.getMockImplementation()!;
+    h.mlsService.renewAddLock.mockImplementation(async () => {
+      order.push('renew');
+      return 'renewed';
+    });
+    h.mlsService.addMembersBulk.mockImplementationOnce(async () => {
+      order.push('stage 1');
+      h.state.epoch = 3;
+      throw new CommitRefusedError('concurrent_commit', 2, 2);
+    });
+    h.mlsService.addMembersBulk.mockImplementationOnce(async (g, devices) => {
+      order.push('stage 2');
+      return real(g, devices);
+    });
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['w4'] });
+    expect(order).toEqual(['stage 1', 'renew', 'stage 2']);
+    expect(h.mlsService.renewAddLock).toHaveBeenCalledWith(G);
+  });
+
+  it('a lock that ran out under the rebuild ENDS the Add before any stage - answered as a busy lock', async () => {
+    const h = inviteHarness();
+    h.mlsService.renewAddLock.mockResolvedValue('lost' as never);
+    h.mlsService.addMembersBulk.mockImplementationOnce(async () => {
+      h.state.epoch = 3;
+      throw new CommitRefusedError('concurrent_commit', 2, 2);
+    });
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'add-lock-busy' });
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(h.state.tree).not.toContain('w4:w4-dev');
+    // Its release is still sent: the server's line then says released=false, the true trace.
+    expect(h.mlsService.releaseAddLock).toHaveBeenCalledWith(G);
+  });
+
+  it.each([
+    ['a server that predates the renewal', 'unsupported'],
+    ['an Add made without a lock', 'not-held'],
+  ] as const)('%s renews nothing and the rebuild goes on', async (_n, answer) => {
+    const h = inviteHarness();
+    h.mlsService.renewAddLock.mockResolvedValue(answer as never);
+    const real = h.mlsService.addMembersBulk.getMockImplementation()!;
+    h.mlsService.addMembersBulk.mockImplementationOnce(async () => {
+      h.state.epoch = 3;
+      throw new CommitRefusedError('concurrent_commit', 2, 2);
+    });
+    h.mlsService.addMembersBulk.mockImplementationOnce(real);
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['w4'] });
+  });
 });
 
 function readyConversation(id: string): Conversation {
@@ -254,6 +328,7 @@ function sweepHarness() {
       .mockResolvedValue([{ userId: 'w4', deviceId: 'w4-new', groupId: G, status: 'pending' }]),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
+    renewAddLock: vi.fn(async () => 'renewed' as const),
     getGroupMembers: vi.fn(async () => []),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
     fetchUserDevices: vi.fn(async () => [{ deviceId: 'w4-new', keyPackage: new Uint8Array([4]) }]),
@@ -305,6 +380,43 @@ describe('processPendingInvitations - a lost commit race', () => {
     expect(h.mlsService.addMember).toHaveBeenCalledTimes(2);
     expect(h.state.tree).toContain('w4:w4-new');
     expect(h.mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it("a lock that ran out under a rebuild ends the GROUP's pass - no later row is added under it", async () => {
+    const h = sweepHarness();
+    h.mlsService.getPendingInvitations.mockResolvedValue([
+      { userId: 'w4', deviceId: 'w4-new', groupId: G, status: 'pending' },
+      { userId: 'w4', deviceId: 'w4-tab', groupId: G, status: 'pending' },
+    ]);
+    h.mlsService.fetchUserDevices.mockResolvedValue([
+      { deviceId: 'w4-new', keyPackage: new Uint8Array([4]) },
+      { deviceId: 'w4-tab', keyPackage: new Uint8Array([5]) },
+    ]);
+    h.mlsService.renewAddLock.mockResolvedValue('lost' as never);
+    h.mlsService.addMember.mockImplementationOnce(async () => {
+      h.state.epoch = 3;
+      throw new CommitRefusedError('concurrent_commit', 2, 2);
+    });
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
+    expect(h.mlsService.releaseAddLock).toHaveBeenCalledWith(G);
+  });
+
+  it('an acquire nothing answered skips the group, said as no answer - never as a lock held elsewhere', async () => {
+    const h = sweepHarness();
+    h.mlsService.acquireAddLock.mockRejectedValue(
+      new TransportFailureError(new TypeError('Failed to fetch'))
+    );
+
+    await h.run();
+
+    expect(h.mlsService.addMember).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('the add lock could not be asked for (no answer)')
+    );
   });
 
   it('a race with no progress leaves the row PENDING for the next sweep - never retired', async () => {

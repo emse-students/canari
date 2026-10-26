@@ -3,7 +3,25 @@ import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRe
 import type { CommitInvitation } from '$lib/mls-client/commitSubmission';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
 import type { SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { readConfirmedTree } from './confirmedTree';
+
+/**
+ * An add-lock acquire that THREW - no answer, typically (`acquireAddLock` throws rather than read
+ * that as "held"): logged once, with its cause, and read as NOT TAKEN. The caller then does what it
+ * does without the lock - a creation goes on (its group has no other committer yet, and the commit
+ * gate fences any), a sweep skips the group until its next pass. Never said as "held by another
+ * device", which is a different fact.
+ *
+ * @param then - what the caller does about it, for the line.
+ * @returns `false`, so it reads as the acquire's own answer at a `.catch`.
+ */
+export function addLockNotAsked(groupId: string, tag: string, e: unknown, then: string): false {
+  console.warn(
+    `${tag} ${groupId.slice(0, 8)}... the add lock could not be asked for (${isTransportFailure(e) ? 'no answer' : 'failed'}) - ${then}: ${String(e).slice(0, 160)}`
+  );
+  return false;
+}
 
 /**
  * Why an Add was abandoned BEFORE anything was staged - the gesture's premise no longer held, or
@@ -16,14 +34,17 @@ import { readConfirmedTree } from './confirmedTree';
  *   removal deleted it;
  * - `removed-meanwhile`: a person on the roster when a member's invitation began is off it now - a
  *   concurrent Remove of the same person, which the invitation must not undo;
- * - `premise-unreadable`: the server read that would show the premise failed.
+ * - `premise-unreadable`: the server read that would show the premise failed;
+ * - `add-lock-lost`: the add lock the gesture took is no longer its own when a rebuild renews it
+ *   ({@link rebuildOnRace}) - it ran out under the Add, so another device may be adding now.
  */
 export type AddAbortReason =
   | 'tree-unconfirmed'
   | 'not-a-member-device'
   | 'invitation-withdrawn'
   | 'removed-meanwhile'
-  | 'premise-unreadable';
+  | 'premise-unreadable'
+  | 'add-lock-lost';
 
 /**
  * An Add abandoned before its stage (see {@link AddAbortReason}): no commit, nothing registered. A
@@ -57,10 +78,17 @@ export class AddAbortedError extends Error {
  * THE ONE LOOP EVERY GESTURE SHARES (Add, Remove, the pending-invitation sweep): a lost race used to
  * end three different ways depending on who lost it (CC-1, CC-2, CC-4 of the 1.4.1 campaign).
  *
+ * EACH REBUILD FIRST RENEWS THE ADD LOCK this page holds on the group (`renewAddLock`): the lock's
+ * lifetime is sized for one attempt, and every rebuild adds round trips (the confirmed tree, the
+ * premise re-reads). A lock found no longer this Add's ends it ({@link AddAbortedError}
+ * `add-lock-lost`) before any stage - the commit gate's epoch check would refuse a second committer
+ * anyway, but the lock exists so that nobody stages against it in the first place. A gesture that
+ * holds no lock (a Remove, a creation that went on without one) renews nothing.
+ *
  * @param what - names the gesture in the log line.
  */
 export async function rebuildOnRace<T>(
-  mlsService: Pick<IMlsService, 'getEpoch'>,
+  mlsService: Pick<IMlsService, 'getEpoch' | 'renewAddLock'>,
   groupId: string,
   what: string,
   attempt: (index: number) => Promise<T>,
@@ -68,6 +96,13 @@ export async function rebuildOnRace<T>(
 ): Promise<T> {
   for (let index = 0; ; index++) {
     try {
+      if (index > 0 && (await mlsService.renewAddLock(groupId)) === 'lost') {
+        throw new AddAbortedError(
+          groupId,
+          'add-lock-lost',
+          'the add lock ran out under the rebuild, so another device may be adding'
+        );
+      }
       return await attempt(index);
     } catch (e) {
       // Only a refusal of the gate can prove progress; anything else leaves as thrown.

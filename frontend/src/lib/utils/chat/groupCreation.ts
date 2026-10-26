@@ -25,7 +25,7 @@ import type { OwedInvitation } from '$lib/mls-client/owedInvitations';
 import { CommitRefusedError, isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { isTransportFailure } from '$lib/utils/transportFailure';
-import { AddAbortedError, addDevicesRebuildingOnRace } from './commitRace';
+import { AddAbortedError, addDevicesRebuildingOnRace, addLockNotAsked } from './commitRace';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -233,7 +233,10 @@ export async function createNewGroup(
     );
 
     if (ownDevices.length > 0) {
-      const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+      const created = groupId;
+      const lockAcquired = await mlsService
+        .acquireAddLock(created)
+        .catch((e: unknown) => addLockNotAsked(created, '[GROUP]', e, 'going on without it'));
       try {
         // Staged transaction (C7-A), rebuilt on a lost race (`commitRace.ts`): exclude every
         // candidate device from the commit broadcast (the added subset receives the Welcome
@@ -592,7 +595,8 @@ async function attemptBulkAddition(
       return notAdded(unreadDevicesReason(unread), unread[0]);
     }
 
-    const lockAcquired = await mlsService.acquireAddLock(conversation.id).catch(() => false);
+    // An acquire that got NO ANSWER throws (typed) into the catch below: `unreachable`, never "busy".
+    const lockAcquired = await mlsService.acquireAddLock(conversation.id);
     if (!lockAcquired) return notAdded('add-lock-busy');
 
     // Users registered server-side AND whose Welcome was accepted: only those are announced.
@@ -732,6 +736,8 @@ async function attemptBulkAddition(
     if (e instanceof AddAbortedError) {
       if (e.why === 'removed-meanwhile') return notAdded('removed-meanwhile', e);
       if (e.why === 'tree-unconfirmed') return notAdded('tree-unconfirmed', e);
+      // The lock ran out under a rebuild: another device may hold it now - the busy-lock case.
+      if (e.why === 'add-lock-lost') return notAdded('add-lock-busy', e);
       return notAdded('commit-race-lost', e);
     }
     const merged = addedUsers !== null && addedUsers.size > 0;
@@ -975,7 +981,9 @@ async function performDirectAdd(
 ): Promise<void> {
   const { mlsService, userId, deviceKeyB64, log } = deps;
 
-  const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+  const lockAcquired = await mlsService
+    .acquireAddLock(groupId)
+    .catch((e: unknown) => addLockNotAsked(groupId, '[ADD]', e, 'going on without it'));
   try {
     // Staged transaction (C7-A), rebuilt on a lost race (`commitRace.ts`); every candidate device
     // is excluded from the commit broadcast (the added subset receives the Welcome instead).

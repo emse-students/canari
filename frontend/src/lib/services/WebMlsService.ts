@@ -636,6 +636,11 @@ export class WebMlsService extends BaseMlsService {
       this.deviceRevokedCallback?.();
       return;
     }
+    if (msg.type === 'add_lock_released') {
+      // The add lock this device was refused, asking to be told, is released (`add-lock.ts`).
+      this.onAddLockReleased(typeof msg.groupId === 'string' ? msg.groupId : '');
+      return;
+    }
     if (msg.type === 'welcome_request') {
       const requesterUserId = (msg.requesterUserId as string) || '';
       const requesterDeviceId = (msg.requesterDeviceId as string) || '';

@@ -19,7 +19,10 @@ import {
   addLockKey,
   addLockOwner,
   addLockValue,
+  addLockWaitersKey,
+  acquireAddLock,
   releaseAddLock,
+  renewAddLock,
 } from '../utils/add-lock';
 
 /**
@@ -103,7 +106,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
   let push: PushController;
   let controllers: { locks: LocksController; push: PushController };
 
-  const redis = { set: jest.fn(), eval: jest.fn(), pttl: jest.fn() };
+  const redis = { set: jest.fn(), eval: jest.fn(), pttl: jest.fn(), publish: jest.fn() };
   /** The membership gate both doors ask before the lock; an admitted member here. */
   const messaging = { assertCallerActsOnGroup: jest.fn() };
   const pushTokenRepo = { findOne: jest.fn(), update: jest.fn() };
@@ -136,8 +139,10 @@ describe('the MLS add-lock - one policy, both doors', () => {
     controllers = { locks, push };
     pushTokenRepo.findOne.mockResolvedValue({ pushSecret: SECRET });
     redis.set.mockResolvedValue('OK');
-    redis.eval.mockResolvedValue(1);
+    // A release script answers `{deleted, waiters}`.
+    redis.eval.mockResolvedValue([1, []]);
     redis.pttl.mockResolvedValue(12_345);
+    redis.publish.mockResolvedValue(1);
     messaging.assertCallerActsOnGroup.mockResolvedValue(undefined);
   });
 
@@ -181,11 +186,12 @@ describe('the MLS add-lock - one policy, both doors', () => {
       await drop(controllers, 'tok-1');
 
       expect(redis.eval).toHaveBeenCalledTimes(1);
-      const [script, keyCount, key, value, ...rest] = redis.eval.mock.calls[0];
+      const [script, keyCount, key, waitersKey, value, ...rest] = redis.eval.mock.calls[0];
       expect(script).toContain("redis.call('get', KEYS[1]) == ARGV[1]");
       expect(script).toContain("redis.call('del', KEYS[1])");
-      expect(keyCount).toBe(1);
+      expect(keyCount).toBe(2);
       expect(key).toBe(addLockKey(GROUP));
+      expect(waitersKey).toBe(addLockWaitersKey(GROUP));
       expect(value).toBe(addLockValue(addLockOwner(USER, DEVICE), 'tok-1'));
       expect(rest).toEqual([]);
     });
@@ -193,7 +199,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
     it('a release with NO token takes the legacy owner-only path', async () => {
       await drop(controllers);
 
-      const [script, , key, owner, prefix] = redis.eval.mock.calls[0];
+      const [script, , key, , owner, prefix] = redis.eval.mock.calls[0];
       expect(script).toContain('string.sub');
       expect(key).toBe(addLockKey(GROUP));
       expect(owner).toBe(addLockOwner(USER, DEVICE));
@@ -201,7 +207,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
     });
 
     it('reports a release it did not perform as not released', async () => {
-      redis.eval.mockResolvedValue(0);
+      redis.eval.mockResolvedValue([0]);
 
       await expect(drop(controllers)).resolves.toEqual({ released: false });
     });
@@ -215,7 +221,7 @@ describe('the MLS add-lock - one policy, both doors', () => {
     ])(
       'an OWED release (%s) ends the line with owed=true only for a boolean true',
       async (_n, owed, said) => {
-        redis.eval.mockResolvedValue(0);
+        redis.eval.mockResolvedValue([0]);
         const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
         try {
           await drop(controllers, 'tok-1', owed === undefined ? {} : { owed });
@@ -287,16 +293,19 @@ describe('the MLS add-lock - one policy, both doors', () => {
    */
   describe('what each release deletes', () => {
     const OWNER = addLockOwner(USER, DEVICE);
-    const logger = { log: jest.fn() } as never;
+    const logger = { log: jest.fn(), warn: jest.fn() } as never;
     let held: string | null;
     const store = {
-      eval: jest.fn(async (_script: string, _n: number, _key: string, a1: string, a2?: string) => {
-        const legacy = a2 !== undefined;
-        const match = legacy ? held === a1 || (held?.startsWith(a2) ?? false) : held === a1;
-        if (!match) return 0;
-        held = null;
-        return 1;
-      }),
+      eval: jest.fn(
+        async (_script: string, _n: number, _key: string, _w: string, a1: string, a2?: string) => {
+          const legacy = a2 !== undefined;
+          const match = legacy ? held === a1 || (held?.startsWith(a2) ?? false) : held === a1;
+          if (!match) return [0];
+          held = null;
+          return [1, []];
+        }
+      ),
+      publish: jest.fn(),
     } as never;
     const holder = { groupId: GROUP, userId: USER, deviceId: DEVICE };
 
@@ -323,5 +332,197 @@ describe('the MLS add-lock - one policy, both doors', () => {
       held = addLockValue(addLockOwner(USER, 'd2'), 'theirs');
       await expect(releaseAddLock(store, logger, holder, 'jwt')).resolves.toBe(false);
     });
+  });
+
+  /**
+   * A WAITER IS TOLD WHEN THE LOCK IS RELEASED, NOT WHEN ITS TTL ENDS (OFF-3): a refused acquire that
+   * asks (`notifyRelease`) is registered against the lock, and the release that deletes the lock
+   * takes the registrations in the same script and publishes one frame to each. Driven against a
+   * model of the three scripts, each told apart by what it calls.
+   */
+  describe('the waiters a release tells, and the renewal', () => {
+    const HOLDER = { groupId: GROUP, userId: 'holder', deviceId: 'hd' };
+    const WAITER = { groupId: GROUP, userId: 'waiter', deviceId: 'wd' };
+    let lock: { value: string; pttl: number } | null;
+    let waiters: { members: Set<string>; pttl: number } | null;
+    let lines: string[];
+    const logger = {
+      log: (m: string) => lines.push(m),
+      warn: (m: string) => lines.push(m),
+    } as never;
+    const publish = jest.fn();
+    const model = {
+      set: jest.fn(async (_k: string, value: string) => {
+        if (lock) return null;
+        lock = { value, pttl: ADD_LOCK_TTL_SEC * 1000 };
+        return 'OK';
+      }),
+      pttl: jest.fn(async () => (lock ? lock.pttl : -2)),
+      publish,
+      eval: jest.fn(
+        async (script: string, _n: number, _k: string, _w: string, ...argv: string[]) => {
+          if (script.includes('sadd')) {
+            if (!lock) return -2;
+            waiters ??= { members: new Set(), pttl: 0 };
+            waiters.members.add(argv[0]);
+            waiters.pttl = lock.pttl;
+            return lock.pttl;
+          }
+          if (script.includes('smembers')) {
+            const legacy = argv.length === 2;
+            const match = legacy
+              ? lock?.value === argv[0] || (lock?.value.startsWith(argv[1]) ?? false)
+              : lock?.value === argv[0];
+            if (!match) return [0];
+            lock = null;
+            const taken = [...(waiters?.members ?? [])];
+            waiters = null;
+            return [1, taken];
+          }
+          // The renewal.
+          if (lock?.value !== argv[0]) return 0;
+          lock.pttl = Number(argv[1]) * 1000;
+          if (waiters) waiters.pttl = Number(argv[1]) * 1000;
+          return 1;
+        }
+      ),
+    };
+    const store = model as never;
+
+    beforeEach(() => {
+      lock = null;
+      waiters = null;
+      lines = [];
+      publish.mockReset().mockResolvedValue(1);
+    });
+
+    /** The holder takes the lock and the waiter is refused, asking (or not) to be told. */
+    async function holdAndWait(notify: unknown): Promise<string> {
+      const taken = await acquireAddLock(store, logger, HOLDER, 'jwt');
+      if (!taken.acquired) throw new Error('the model refused the first acquire');
+      lock!.pttl = 20_000;
+      await expect(acquireAddLock(store, logger, WAITER, 'jwt', notify)).resolves.toEqual({
+        acquired: false,
+        retryAfterMs: 20_000,
+      });
+      return taken.token;
+    }
+
+    it('tells a waiter that asked, once, on its own device, and says so on the release line', async () => {
+      const token = await holdAndWait(true);
+      expect(lines.at(-1)).toMatch(/acquired=false retryAfterMs=20000 via=jwt notify=true$/);
+      // The registration lives exactly as long as the lock it waits on.
+      expect(waiters?.pttl).toBe(20_000);
+
+      await expect(releaseAddLock(store, logger, HOLDER, 'jwt', token)).resolves.toBe(true);
+
+      expect(publish).toHaveBeenCalledTimes(1);
+      const [channel, payload] = publish.mock.calls[0];
+      expect(channel).toBe('chat:messages');
+      const sent = JSON.parse(payload);
+      expect(sent).toMatchObject({
+        recipientId: 'waiter',
+        deviceId: 'wd',
+        isWelcomeRequest: true,
+        groupId: GROUP,
+      });
+      expect(JSON.parse(Buffer.from(sent.proto, 'base64').toString())).toEqual({
+        type: 'add_lock_released',
+        groupId: GROUP,
+      });
+      expect(lines.at(-1)).toMatch(/ released=true by=token via=jwt told=1$/);
+
+      // Told by exactly one release: the registration went with the lock.
+      await releaseAddLock(store, logger, HOLDER, 'jwt', token);
+      expect(publish).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['absent', undefined],
+      ['the STRING "true"', 'true'],
+    ])(
+      'a refusal that did not ask (%s) registers nothing, and the release line is unchanged',
+      async (_n, notify) => {
+        const token = await holdAndWait(notify);
+        expect(lines.at(-1)).toMatch(/acquired=false retryAfterMs=20000 via=jwt$/);
+        expect(waiters).toBeNull();
+
+        await releaseAddLock(store, logger, HOLDER, 'jwt', token);
+        expect(publish).not.toHaveBeenCalled();
+        expect(lines.at(-1)).toMatch(/ released=true by=token via=jwt$/);
+      }
+    );
+
+    it('a release that deleted nothing tells nobody - the waiters stay for the real release', async () => {
+      await holdAndWait(true);
+      await expect(releaseAddLock(store, logger, HOLDER, 'jwt', 'stale')).resolves.toBe(false);
+      expect(publish).not.toHaveBeenCalled();
+      expect(waiters?.members.size).toBe(1);
+    });
+
+    it('a waiter that registers after the lock is gone registers nothing, and reads 0 ms', async () => {
+      // The lock was released between this acquire's SET and its registration.
+      model.set.mockResolvedValueOnce(null);
+      await expect(acquireAddLock(store, logger, WAITER, 'jwt', true)).resolves.toEqual({
+        acquired: false,
+        retryAfterMs: 0,
+      });
+      expect(waiters).toBeNull();
+      expect(lines.at(-1)).toMatch(/retryAfterMs=0 via=jwt$/);
+    });
+
+    it('the releasing device is never told about its own release', async () => {
+      const taken = await acquireAddLock(store, logger, HOLDER, 'jwt');
+      if (!taken.acquired) throw new Error('refused');
+      waiters = { members: new Set([JSON.stringify(HOLDER)]), pttl: 1 };
+      await releaseAddLock(store, logger, HOLDER, 'jwt', taken.token);
+      expect(publish).not.toHaveBeenCalled();
+    });
+
+    it('a waiter that could not be told is logged, and the release still stands', async () => {
+      const token = await holdAndWait(true);
+      publish.mockRejectedValue(new Error('redis down'));
+      await expect(releaseAddLock(store, logger, HOLDER, 'jwt', token)).resolves.toBe(true);
+      expect(lines.some((l) => l.includes('1 waiter(s) could not be told'))).toBe(true);
+      expect(lines.at(-1)).toMatch(/ released=true by=token via=jwt$/);
+    });
+
+    it('the renewal extends ITS OWN acquisition to a full lifetime, waiters with it', async () => {
+      const token = await holdAndWait(true);
+      await expect(renewAddLock(store, logger, HOLDER, 'jwt', token)).resolves.toBe(true);
+      expect(lock?.pttl).toBe(ADD_LOCK_TTL_SEC * 1000);
+      expect(waiters?.pttl).toBe(ADD_LOCK_TTL_SEC * 1000);
+      expect(lines.at(-1)).toBe('[RENEW_LOCK] group=g1 owner=holder:hd renewed=true via=jwt');
+    });
+
+    it('a renewal naming another acquisition extends nothing, and says renewed=false', async () => {
+      await holdAndWait(true);
+      await expect(renewAddLock(store, logger, HOLDER, 'jwt', 'expired-one')).resolves.toBe(false);
+      expect(lock?.pttl).toBe(20_000);
+      expect(lines.at(-1)).toBe('[RENEW_LOCK] group=g1 owner=holder:hd renewed=false via=jwt');
+    });
+  });
+
+  it('the JWT door hands its caller notifyRelease to the lock, and the renewal names the token', async () => {
+    redis.set.mockResolvedValue(null);
+    redis.eval.mockResolvedValue(9_000);
+    await expect(
+      locks.acquireAddLock({ groupId: GROUP, deviceId: DEVICE, notifyRelease: true }, USER)
+    ).resolves.toEqual({ acquired: false, retryAfterMs: 9_000 });
+    const [script, keyCount, key, waitersKey, member] = redis.eval.mock.calls[0];
+    expect(script).toContain('sadd');
+    expect(keyCount).toBe(2);
+    expect(key).toBe(addLockKey(GROUP));
+    expect(waitersKey).toBe(addLockWaitersKey(GROUP));
+    expect(JSON.parse(member)).toEqual({ userId: USER, deviceId: DEVICE });
+    expect(redis.pttl).not.toHaveBeenCalled();
+
+    redis.eval.mockResolvedValue(1);
+    await expect(
+      locks.renewAddLock({ groupId: GROUP, deviceId: DEVICE, token: 'tok-1' }, USER)
+    ).resolves.toEqual({ renewed: true });
+    const renewal = redis.eval.mock.calls[1];
+    expect(renewal[4]).toBe(addLockValue(addLockOwner(USER, DEVICE), 'tok-1'));
+    expect(renewal[5]).toBe(String(ADD_LOCK_TTL_SEC));
   });
 });

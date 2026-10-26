@@ -231,6 +231,9 @@ function ctx(
     'acquireAddLock',
     'releaseAddLock',
     'wakeAtAddLockExpiry',
+    'waitsOnAddLock',
+    'onAddLockReleased',
+    'renewAddLock',
     'cancelAddLockExpiryWakes',
     'notifyCommitsApplied',
   ]) {
@@ -1514,6 +1517,84 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("ANOTHER DEVICE'S LOCK, RELEASED: the server's frame re-plans at once, and the stated end wakes nothing more (OFF-3)", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const server = fakeLockServer(c);
+      server.value = `${U}:other-device#theirs`;
+      server.ttlMs = 30_000;
+      const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+        if (!(await lockOf(c).acquireAddLock(G))) return 'waiting';
+        await lockOf(c).releaseAddLock(G);
+        return 'concluded';
+      });
+      register(c, replanner);
+      await settled(c);
+      expect(replanner).toHaveBeenCalledTimes(1);
+      // An invitation waits on this group, so the refusal asked to be told.
+      expect(c.delivery.acquireAddLock).toHaveBeenLastCalledWith(G, { notifyRelease: true });
+
+      // Their Add ends two seconds later, and the server tells this device.
+      await vi.advanceTimersByTimeAsync(2_000);
+      server.value = null;
+      (c as unknown as { onAddLockReleased(g: string): void }).onAddLockReleased(G);
+      await drained(c);
+      expect(replanner).toHaveBeenCalledTimes(2);
+      expect(listOwedInvitations(U)).toEqual([]);
+
+      // The backstop at the stated end was dropped with the frame.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(replanner).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a refusal with NOTHING waiting on the group does not ask to be told', async () => {
+    const c = ctx(submitting());
+    const server = fakeLockServer(c);
+    server.value = `${U}:other-device#theirs`;
+    expect(await lockOf(c).acquireAddLock(G)).toBe(false);
+    expect(c.delivery.acquireAddLock).toHaveBeenLastCalledWith(G, { notifyRelease: false });
+  });
+
+  it('a release frame for a group nothing waits on any more re-plans nothing, and says so', async () => {
+    const c = ctx(submitting());
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      register(
+        c,
+        vi.fn(async (): Promise<ReplanVerdict> => 'concluded')
+      );
+      const replan = vi.spyOn(
+        c as unknown as { replanOwedInvitations(w: string): void },
+        'replanOwedInvitations'
+      );
+      (c as unknown as { onAddLockReleased(g: string): void }).onAddLockReleased(G);
+      expect(replan).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('nothing waits on it any more'));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('renewAddLock names the token THIS PAGE holds, and renews nothing it does not hold', async () => {
+    const c = ctx(submitting());
+    fakeLockServer(c);
+    const renew = vi.fn(async () => 'renewed' as const);
+    (c.delivery as unknown as { renewAddLock: typeof renew }).renewAddLock = renew;
+    const lock = c as unknown as {
+      acquireAddLock(g: string): Promise<boolean>;
+      renewAddLock(g: string): Promise<string>;
+    };
+    expect(await lock.renewAddLock(G)).toBe('not-held');
+    expect(renew).not.toHaveBeenCalled();
+    expect(await lock.acquireAddLock(G)).toBe(true);
+    expect(await lock.renewAddLock(G)).toBe('renewed');
+    expect(renew).toHaveBeenCalledWith(G, 't1');
   });
 
   /** A refusal stating `stated` ms on a group that owes an invitation; returns the re-planner. */

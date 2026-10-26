@@ -54,6 +54,7 @@ export function createMlsServiceStub(
     registerMember: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
+    renewAddLock: vi.fn().mockResolvedValue('not-held'),
     // A PAGE, not a bare array: the walk reads `rows` and pins its upper bound from `head`. The
     // stub is cast to `IMlsService`, so a stale shape here is invisible to the type checker and
     // only shows up as `undefined.length` inside whichever case forgot to override it.

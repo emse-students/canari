@@ -2,7 +2,12 @@ import { Controller, Post, Delete, Body, Headers, Inject, UseGuards, Logger } fr
 import Redis from 'ioredis';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue } from '../utils/sanitize';
-import { acquireAddLock, releaseAddLock, type AddLockAcquisition } from '../utils/add-lock';
+import {
+  acquireAddLock,
+  releaseAddLock,
+  renewAddLock,
+  type AddLockAcquisition,
+} from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -36,14 +41,44 @@ export class LocksController {
    */
   async acquireAddLock(
     @Body()
-    body: { groupId: string; deviceId: string },
+    body: { groupId: string; deviceId: string; notifyRelease?: unknown },
     @Headers('x-user-id') userIdRaw?: string
   ): Promise<AddLockAcquisition> {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     await this.messagingService.assertCallerActsOnGroup('ADD_LOCK', groupId, userId);
-    return acquireAddLock(this.redis, this.logger, { groupId, userId, deviceId }, 'jwt');
+    return acquireAddLock(
+      this.redis,
+      this.logger,
+      { groupId, userId, deviceId },
+      'jwt',
+      body.notifyRelease
+    );
+  }
+
+  @Post('mls/add-lock/renew')
+  /**
+   * Extends the calling device's add-lock to a full lifetime if it is still the acquisition `token`
+   * names (`utils/add-lock.ts`): `{renewed}`. Ownership-checked like the release, so it can only
+   * ever extend the caller's own acquisition; the membership was asked when it was taken.
+   */
+  async renewAddLock(
+    @Body() body: { groupId: string; deviceId: string; token: string },
+    @Headers('x-user-id') userIdRaw?: string
+  ): Promise<{ renewed: boolean }> {
+    const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const token = sanitizeQueryValue(body.token, 'token');
+    const renewed = await renewAddLock(
+      this.redis,
+      this.logger,
+      { groupId, userId, deviceId },
+      'jwt',
+      token
+    );
+    return { renewed };
   }
 
   @Delete('mls/add-lock')

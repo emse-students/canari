@@ -996,10 +996,17 @@ export interface IMlsService {
   /** Registers a user as a member of a group on the delivery service (server-side membership tracking). */
   registerMember(groupId: string, userId: string): Promise<void>;
   /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.
-   *  Returns true if acquired, false if another device already holds the lock. */
+   *  Returns true if acquired, false if another device already holds the lock; THROWS when the
+   *  request got no answer (`isTransportFailure`), which is neither. */
   acquireAddLock(groupId: string): Promise<boolean>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
+  /**
+   * Extends the add lock this page holds on `groupId` to a full lifetime, before a rebuild of a lost
+   * race: `not-held` when it holds none, `lost` when it is no longer this acquisition's (the Add must
+   * end), `unsupported` from a server that predates the renewal.
+   */
+  renewAddLock(groupId: string): Promise<'renewed' | 'not-held' | 'lost' | 'unsupported'>;
   /**
    * Fetches one Redis Stream history page for a group, optionally starting after a given stream
    * entry ID. Pass the first page's `head` back as `until` to keep the walk bounded to the rows

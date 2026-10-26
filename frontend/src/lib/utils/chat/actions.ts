@@ -52,7 +52,7 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
-import { AddAbortedError, rebuildOnRace } from './commitRace';
+import { AddAbortedError, addLockNotAsked, rebuildOnRace } from './commitRace';
 import { readConfirmedTree, type TreeReading } from './confirmedTree';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import {
@@ -627,7 +627,14 @@ export async function processPendingInvitations(params: {
 
     // Acquire distributed lock to prevent concurrent Add commits (the server's ADD_LOCK_TTL_SEC
     // covers the worst case mobile: bulk add + Argon2 + commit + Welcomes, H1).
-    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+    let lockAcquired: boolean;
+    try {
+      lockAcquired = await mlsService.acquireAddLock(groupId);
+    } catch (e) {
+      // No answer is not "held": said as what it is, and the next pass asks again.
+      addLockNotAsked(groupId, '[PENDING]', e, 'the group is skipped until the next pass');
+      continue;
+    }
     if (!lockAcquired) {
       log(`[PENDING] Group ${groupId}: lock held by another device - skip`);
       continue;
@@ -888,6 +895,9 @@ export async function processPendingInvitations(params: {
             log(
               `[PENDING] Add of ${inv.deviceId} to ${groupId.slice(0, 8)}... abandoned before its stage (${e.why}) - nothing committed`
             );
+            // The group's lock is no longer this pass's: none of its later rows may be added under
+            // it either - the next pass takes the lock again.
+            if (e.why === 'add-lock-lost') break;
             continue;
           }
           const errStr = String(e);
@@ -1608,7 +1618,15 @@ export async function handleWelcomeRequest(params: {
 
   // Acquire the distributed lock to prevent races with
   // processPendingInvitations on another device of the same group (default TTL, cf. H1)
-  const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+  let lockAcquired: boolean;
+  try {
+    lockAcquired = await mlsService.acquireAddLock(groupId);
+  } catch (e) {
+    // No answer is not "busy": said as what it is; the requester asks again.
+    addLockNotAsked(groupId, '[WELCOME_REQ]', e, 'skipped, the requester asks again');
+    welcomeRequestInProgress.delete(groupId);
+    return;
+  }
   if (!lockAcquired) {
     log(`[WELCOME_REQ] Lock busy for ${groupId} - another device in progress, skip`);
     welcomeRequestInProgress.delete(groupId);

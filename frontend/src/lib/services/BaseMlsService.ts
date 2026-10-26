@@ -230,7 +230,7 @@ import {
   type UnrecordedInvitationTeller,
 } from '$lib/mls-client/owedInvitations';
 import {
-  claimAddLockMarker,
+  claimAddLockMarkers,
   clearAddLockMarker,
   markAddLock,
 } from '$lib/mls-client/addLockMarkers';
@@ -3919,24 +3919,29 @@ export abstract class BaseMlsService implements IMlsService {
    * group this page holds; the release names the acquisition's TOKEN, so a late one frees that
    * acquisition or nothing - never a lock taken since (this page's, or the Android service's).
    *
-   * A REFUSAL CARRIES THE SERVER'S OWN FACT ABOUT WHEN THE LOCK ENDS (`retryAfterMs`): a lost
-   * invitation waiting on this group is re-planned at that moment ({@link wakeAtAddLockExpiry}) -
-   * the holder's release sends no frame, so nothing else would say it.
+   * A REFUSAL ON A GROUP WHERE A LOST INVITATION WAITS ASKS TO BE TOLD (`notifyRelease`): the
+   * holder's release sends this device an `add_lock_released` frame and the invitation is re-planned
+   * then ({@link onAddLockReleased}). The refusal's own fact about when the lock ends (`retryAfterMs`)
+   * stays the backstop ({@link wakeAtAddLockExpiry}): a holder that is cut or dead never releases.
+   *
+   * @throws what the acquire threw when it got NO ANSWER (`isTransportFailure`) - never read as held.
    */
   async acquireAddLock(groupId: string): Promise<boolean> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
-      const owed = claimAddLockMarker(this.userId, groupId);
-      if (owed) {
+      for (const owed of claimAddLockMarkers(this.userId, groupId)) {
         // Said as OWED: on the server line, this `released=false` is not an Add outliving its TTL.
         const released = await this.delivery.releaseAddLock(groupId, owed.token, { owed: true });
         console.log(
           `[ADD_LOCK] ${short}... a release this device owed (${owed.token ? 'token' : 'no token'}) was sent before acquiring: ${released ? 'answered' : 'still unanswered - kept'}`
         );
+        // Put back beside any acquisition marked meanwhile - never over it (`addLockMarkers.ts`).
         if (!released) markAddLock(this.userId, groupId, owed.token);
       }
     }
-    const answer = await this.delivery.acquireAddLock(groupId);
+    const answer = await this.delivery.acquireAddLock(groupId, {
+      notifyRelease: this.waitsOnAddLock(groupId),
+    });
     if (answer.acquired) {
       this.addLocksHeld.set(groupId, answer.token);
       markAddLock(this.userId, groupId, answer.token);
@@ -3972,13 +3977,66 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * A refused acquire on a group where a lost invitation waits: re-plans it when the server SAID the
-   * holder's lock ends - one wake per group, a fact and not a guess (an earlier release by the holder
-   * is only a bound this does not need to observe). No stated end (a server that predates it, an
-   * acquire nothing answered): no wake, the next commit or connection drains.
+   * Extends the add lock THIS PAGE holds on `groupId` to a full server lifetime - called by an Add
+   * before each rebuild of a lost race (`rebuildOnRace`), whose added round trips could otherwise
+   * outlive a lifetime sized for one attempt.
+   *
+   * @returns `renewed`; `not-held` when this page holds no lock on the group to renew (an Add made
+   *   without one, or a server that returned no token); `lost` when the lock is no longer this
+   *   acquisition's - the Add must end, another device may be adding; `unsupported` when the server
+   *   predates the renewal (the Add goes on as before it existed).
+   * @throws what the request threw when it got no answer, or was refused.
+   */
+  async renewAddLock(groupId: string): Promise<'renewed' | 'not-held' | 'lost' | 'unsupported'> {
+    const token = this.addLocksHeld.get(groupId);
+    if (token === undefined) return 'not-held';
+    const answer = await this.delivery.renewAddLock(groupId, token);
+    const line = `[ADD_LOCK] ${groupId.slice(0, 8)}... the lock held across a rebuild was renewed: ${answer}`;
+    if (answer === 'renewed') console.log(line);
+    else console.warn(line);
+    return answer;
+  }
+
+  /**
+   * Whether a refused acquire on `groupId` asks to be told of the holder's release: only when a lost
+   * invitation waits there and a re-planner can act on the frame ({@link onAddLockReleased}).
+   */
+  private waitsOnAddLock(groupId: string): boolean {
+    return this.owedInvitationReplanner !== null && owesInvitationIn(this.userId, groupId);
+  }
+
+  /**
+   * The server says the add lock this device was refused on `groupId` is RELEASED (an
+   * `add_lock_released` frame, sent because the refusal asked): the waiting invitation is re-planned
+   * now, and the backstop wake at the lock's stated end is dropped - it has nothing left to wake.
+   * Called by each platform's frame routing.
+   */
+  protected onAddLockReleased(groupId: string): void {
+    if (!groupId) {
+      console.warn('[INVITE_OWED] an add_lock_released frame named no group - ignored');
+      return;
+    }
+    const wake = this.addLockExpiryWakes.get(groupId);
+    if (wake !== undefined) {
+      clearTimeout(wake);
+      this.addLockExpiryWakes.delete(groupId);
+    }
+    // Something else (a commit applied, a connection's drain) may have concluded the wait first.
+    const waiting = this.waitsOnAddLock(groupId);
+    console.log(
+      `[INVITE_OWED] ${groupId.slice(0, 8)}... the add lock this device was refused is released - ${waiting ? 're-planned now' : 'nothing waits on it any more'}`
+    );
+    if (waiting) this.replanOwedInvitations('add lock released (server)');
+  }
+
+  /**
+   * A refused acquire on a group where a lost invitation waits: the BACKSTOP to the release frame
+   * ({@link onAddLockReleased}) for a holder that never releases (cut, or dead) - re-plans it when
+   * the server SAID the holder's lock ends, one wake per group, a fact and not a guess. No stated end
+   * (a server that predates it): no wake, the next commit or connection drains.
    */
   private wakeAtAddLockExpiry(groupId: string, stated: number | undefined): void {
-    if (!this.owedInvitationReplanner || !owesInvitationIn(this.userId, groupId)) return;
+    if (!this.waitsOnAddLock(groupId)) return;
     const short = groupId.slice(0, 8);
     const retryAfterMs = boundAddLockWait(stated);
     if (retryAfterMs !== stated) {

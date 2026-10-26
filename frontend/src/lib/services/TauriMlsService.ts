@@ -471,6 +471,11 @@ export class TauriMlsService extends BaseMlsService {
       this.deviceRevokedCallback?.();
       return;
     }
+    if (msgType === 'add_lock_released') {
+      // The add lock this device was refused, asking to be told, is released (`add-lock.ts`).
+      this.onAddLockReleased(typeof parsed.groupId === 'string' ? parsed.groupId : '');
+      return;
+    }
     if (msgType === 'welcome_request') {
       const requesterUserId = (parsed.requesterUserId as string) || '';
       const requesterDeviceId = (parsed.requesterDeviceId as string) || '';

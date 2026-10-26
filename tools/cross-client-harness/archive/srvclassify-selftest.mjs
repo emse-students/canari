@@ -188,6 +188,11 @@ const BENIGN_CASES = [
   // the lock (`released=true ... owed=true`, the generic success rule): #2426's final line, head 46dac424d.
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=owner-legacy via=jwt owed=true`,
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true by=token via=jwt owed=true`,
+  // The lock's waiters (OFF-3, 2026-10-26): a refusal that asked to be told, a release that told them,
+  // and a renewal before a rebuild that held.
+  `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=false retryAfterMs=17342 via=jwt notify=true`,
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true by=token via=jwt told=2`,
+  `${NEST}[LocksController] [RENEW_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b renewed=true via=jwt`,
   // The hourly live-report age report: its start, an empty queue, a queue inside the commitment
   // (KILL-1's window, dev, 2026-10-25). Its past-the-commitment twin is `error`, controlled below.
   '[Nest] 1  - 10/25/2026, 6:53:00 AM   DEBUG [LiveReportAgeScheduler] [LIVE_REPORT_AGE] reading the pending live reports',
@@ -228,6 +233,8 @@ const NOTABLE_CASES = [
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false`,
   // ... and in #2426's shape WITHOUT the owed flag: a slow Add whose TTL expired under it.
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt`,
+  // A renewal that found the lock gone under a rebuilding Add (OFF-3 lifetime, 2026-10-26).
+  `${NEST}[LocksController] [RENEW_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b renewed=false via=jwt`,
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=owner-legacy via=push`,
   // THE TWO BOOT LINES THAT ARE NOT THE ROUTE TABLE: a capability whose absence nothing else would
   // reveal, and a deletion pass crossing whatever window it lands in.

@@ -1802,16 +1802,30 @@ export class MlsDeliveryApi {
    * How long the lock lives is the SERVER's to decide (`ADD_LOCK_TTL_SEC`, sized on this client's
    * own worst case: bulk add + state persist + validated commit + the Welcome loop, H1).
    *
+   * `notifyRelease` asks the server, should the lock be refused, to TELL this device when its holder
+   * releases it (an `add_lock_released` frame): set only by a caller that routes that frame and has
+   * something waiting on the lock.
+   *
    * @returns taken, with the TOKEN its release must name (absent from a server that predates it); or
    *   refused, with how long the holder's lock has left (`retryAfterMs`, the server's `PTTL`) - absent
-   *   when the server predates it, or when it did not answer at all, which is never read as "held".
+   *   when the server predates it.
+   * @throws what `fetch` threw when the request got NO ANSWER (`isTransportFailure`): nothing was
+   *   taken, and nothing is known to hold the lock either - the caller says which it is, by type,
+   *   never "someone else holds it".
    */
-  async acquireAddLock(groupId: string): Promise<AddLockAnswer> {
+  async acquireAddLock(
+    groupId: string,
+    opts: { notifyRelease?: boolean } = {}
+  ): Promise<AddLockAnswer> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
+        body: JSON.stringify({
+          groupId,
+          deviceId: this.deviceId,
+          ...(opts.notifyRelease ? { notifyRelease: true } : {}),
+        }),
       });
       if (!res.ok) {
         console.warn(
@@ -1832,11 +1846,14 @@ export class MlsDeliveryApi {
         retryAfterMs: typeof data.retryAfterMs === 'number' ? data.retryAfterMs : undefined,
       };
     } catch (e) {
+      // NO ANSWER IS NOT "HELD BY SOMEONE ELSE": it leaves typed, and the caller's outcome says it
+      // once (an invitation: `unreachable`, NET-3) - logged there, not here as well.
+      if (isTransportFailure(e)) throw e;
       // Fail-safe: cannot prove the lock was acquired → assume not acquired. Returning true here
       // would allow concurrent commits if Redis is temporarily unavailable, which would fragment
       // epochs and desync local WASM states.
       console.warn(
-        `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire got no answer - not taken, and not known to be held: ${String(e).slice(0, 120)}`
+        `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire's answer could not be read - not taken, and not known to be held: ${String(e).slice(0, 120)}`
       );
       return { acquired: false, retryAfterMs: undefined };
     }
@@ -1881,6 +1898,31 @@ export class MlsDeliveryApi {
       );
       return false;
     }
+  }
+
+  /**
+   * Extends the acquisition of the add-lock `token` names to a full server lifetime
+   * (`POST mls/add-lock/renew`), so an Add that rebuilds on a lost race keeps the lock it took.
+   *
+   * @returns `renewed`; `lost` when the lock is no longer this acquisition's (it expired under the
+   *   Add, or was taken since); `unsupported` when the server has no such route (`404`: a server that
+   *   predates it - a store build can reach production before the server it was built with).
+   * @throws {@link ApiRefusalError} for any other refusal, and what `fetch` threw when nothing
+   *   answered - neither is a renewal, and the Add must not go on as if it were.
+   */
+  async renewAddLock(groupId: string, token: string): Promise<'renewed' | 'lost' | 'unsupported'> {
+    const res = await this.f(`${this.historyUrl}/api/mls/add-lock/renew`, {
+      method: 'POST',
+      headers: await this.auth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ groupId, deviceId: this.deviceId, token }),
+    });
+    if (res.status === 404) return 'unsupported';
+    if (!res.ok) throw await refusalFromResponse(res, 'add-lock renewal refused');
+    const data = (await readApiJson(
+      res,
+      `POST /api/mls/add-lock/renew (group ${groupId.slice(0, 8)})`
+    )) as { renewed?: unknown } | null;
+    return data?.renewed === true ? 'renewed' : 'lost';
   }
 
   /** Creates a new group row on the delivery service and returns the assigned `groupId`. */

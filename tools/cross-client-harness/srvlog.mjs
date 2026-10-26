@@ -82,6 +82,11 @@ const BENIGN = [
   // expected answer. The client says so in the body and the server appends ` owed=true` at the END
   // of the line; the slow-Add half below stays NOTABLE. Anchored, so a malformed flag is unexplained.
   /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false by=(token|owner-legacy) via=(jwt|push) owed=true\s*$/,
+  // A RENEWAL THAT HELD (OFF-3 lifetime, 2026-10-26): an Add rebuilding on a lost race extends the
+  // lock it took before each rebuild. `renewed=false` is NOTABLE below - the lock ran out under an Add.
+  // The ` told=<n>` a release appends when it told its waiters, and the ` notify=true` a refusal
+  // appends when it asked to be told, are both matched by the lifecycle rules above, unanchored.
+  /\[RENEW_LOCK\] group=\S+ owner=\S+ renewed=true via=(jwt|push)\s*$/,
   // A membership read. It answers a question; it changes nothing.
   /\[MembersController\] \[GET_USER_MEMBERS\] group=\S+ count=\d+/,
   // THE HOURLY LIVE-REPORT AGE REPORT (`live-report-age.scheduler.ts`, minute 53): its start, an empty
@@ -623,6 +628,10 @@ const NOTABLE = [
   // the line WITHOUT the flag: the pre-token shape, or `by=<token|owner-legacy> via=<door>`. Anchored
   // at the end, so `owed=1` or `owed=yes` matches neither and lands unexplained.
   /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false( by=(token|owner-legacy) via=(jwt|push))?\s*$/,
+  // A RENEWAL THAT FOUND THE LOCK NO LONGER ITS OWN: the TTL ran out under an Add between two of its
+  // rebuilds, and the Add ended (`add-lock-lost`) rather than stage alongside a new holder. Shown,
+  // never fatal - the same slow-Add signal as the unowed `released=false` above, seen one step earlier.
+  /\[RENEW_LOCK\] group=\S+ owner=\S+ renewed=false via=(jwt|push)\s*$/,
   // TWO THINGS A BOOT DOES THAT ITS ROUTE TABLE DOES NOT, and they are the reason the banner above
   // was demoted to BENIGN rather than the whole boot being waved through.
   //

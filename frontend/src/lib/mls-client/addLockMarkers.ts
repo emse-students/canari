@@ -16,6 +16,11 @@ import { accountStore } from './accountStore';
  * since (by this page, or by the Android background service of the same device). A server that
  * predates the token returns none, and the marker then holds none - its release is the legacy
  * owner-only one.
+ *
+ * ONE MARKER PER ACQUISITION, NOT PER GROUP: an owed release that goes unanswered is PUT BACK, and a
+ * concurrent acquire may have marked its own token meanwhile. With one slot per group the later
+ * write erased the other, and that acquisition's lost release then waited out the whole TTL. Every
+ * write here adds or removes its own token and never replaces another.
  */
 
 /** One acquisition: its token, absent when the server returned none. */
@@ -23,17 +28,32 @@ export interface AddLockMarker {
   token?: string;
 }
 
-function readAll(userId: string): Record<string, AddLockMarker> {
+/**
+ * One group's markers as stored. Reads the list this module writes, and the single
+ * `{token?}` object a build before the list wrote - a device updated with a marker pending keeps it.
+ */
+function parseGroup(v: unknown): AddLockMarker[] {
+  const entries = Array.isArray(v) ? v : [v];
+  const out: AddLockMarker[] = [];
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const token = (entry as { token?: unknown }).token;
+    out.push(typeof token === 'string' ? { token } : {});
+  }
+  return out;
+}
+
+function readAll(userId: string): Record<string, AddLockMarker[]> {
   const s = accountStore();
   if (!s) return {};
   try {
     const raw = s.getItem(ACCOUNT_KEY.addLockMarkers(userId));
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const out: Record<string, AddLockMarker> = {};
+    const out: Record<string, AddLockMarker[]> = {};
     for (const [groupId, v] of Object.entries(parsed ?? {})) {
-      const token = (v as { token?: unknown } | null)?.token;
-      out[groupId] = typeof token === 'string' ? { token } : {};
+      const markers = parseGroup(v);
+      if (markers.length > 0) out[groupId] = markers;
     }
     return out;
   } catch (e) {
@@ -44,7 +64,7 @@ function readAll(userId: string): Record<string, AddLockMarker> {
   }
 }
 
-function writeAll(userId: string, all: Record<string, AddLockMarker>): void {
+function writeAll(userId: string, all: Record<string, AddLockMarker[]>): void {
   const s = accountStore();
   if (!s) return;
   const key = ACCOUNT_KEY.addLockMarkers(userId);
@@ -58,25 +78,30 @@ function writeAll(userId: string, all: Record<string, AddLockMarker>): void {
   }
 }
 
-/** Records the acquisition this device just made on `groupId` (replacing any older marker). */
+/**
+ * Records an acquisition of `groupId` whose release is not answered yet - a new one, or an owed one
+ * put back. Adds its token beside the group's others, once; never replaces another's.
+ */
 export function markAddLock(userId: string, groupId: string, token: string | undefined): void {
   const all = readAll(userId);
-  all[groupId] = token ? { token } : {};
+  const markers = all[groupId] ?? [];
+  if (markers.some((m) => m.token === token)) return;
+  all[groupId] = [...markers, token ? { token } : {}];
   writeAll(userId, all);
 }
 
 /**
- * CLAIMS the marker of `groupId` - removed in the same synchronous call that reads it, so two
- * acquires racing in one page never both send its release. The claimant puts it back
- * ({@link markAddLock}) when that release goes unanswered.
+ * CLAIMS every marker of `groupId` - removed in the same synchronous call that reads them, so two
+ * acquires racing in one page never both send a release. The claimant puts back each one whose
+ * release goes unanswered ({@link markAddLock}).
  */
-export function claimAddLockMarker(userId: string, groupId: string): AddLockMarker | null {
+export function claimAddLockMarkers(userId: string, groupId: string): AddLockMarker[] {
   const all = readAll(userId);
-  const marker = all[groupId];
-  if (!marker) return null;
+  const markers = all[groupId];
+  if (!markers) return [];
   delete all[groupId];
   writeAll(userId, all);
-  return marker;
+  return markers;
 }
 
 /** The release of the acquisition `token` names was answered: its marker leaves - and only its own. */
@@ -86,7 +111,10 @@ export function clearAddLockMarker(
   token: string | undefined
 ): void {
   const all = readAll(userId);
-  if (!all[groupId] || all[groupId].token !== token) return;
-  delete all[groupId];
+  const markers = all[groupId];
+  if (!markers?.some((m) => m.token === token)) return;
+  const rest = markers.filter((m) => m.token !== token);
+  if (rest.length > 0) all[groupId] = rest;
+  else delete all[groupId];
   writeAll(userId, all);
 }

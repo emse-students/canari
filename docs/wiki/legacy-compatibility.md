@@ -297,6 +297,17 @@ stores (the Android service of every allowed build then sends its token). After 
 release is refused, not legacy. On the client side, the token-less release (the web client's and the
 Android service's) goes once every estate's chat-delivery-service answers the token.
 
+### 2026-12-31 - an add-lock renewal answered 404 by a server that predates it (2026-10-26)
+
+**Site (client):** `MlsDeliveryApi.renewAddLock` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`,
+and `parseGroup` in `frontend/src/lib/mls-client/addLockMarkers.ts`.
+**Shim:** a store build can reach users before production's chat-delivery-service carries
+`POST /api/mls/add-lock/renew`; its `404` is read as `unsupported` and a rebuilding Add goes on
+unrenewed, as before the renewal existed. The marker store also reads the one-object-per-group shape
+an earlier build wrote, so a marker pending at the update is kept.
+**Removal condition:** every estate's chat-delivery-service serves the renewal route (then a 404 is a
+refusal like any other), and 30 days have passed for the marker shape.
+
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
 **Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).

@@ -52,6 +52,7 @@ describe('isChannelEventFrame', () => {
     for (const type of [
       'typing',
       'device_revoked',
+      'add_lock_released',
       'welcome_request',
       'history_request',
       'epoch_rejected',

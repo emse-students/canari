@@ -676,6 +676,10 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   service, which also names its token since this change. A release with no token is the legacy
   owner-only one
   ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-add-lock-released-by-owner-alone-with-no-token-2026-10-25)).
+  **One marker per ACQUISITION, not per group** (2026-10-26): an owed release that goes unanswered
+  is put back BESIDE any acquisition marked meanwhile, never over it - with one slot per group the
+  put-back erased the newer token, and that acquisition's own lost release then waited the TTL.
+  The claim takes every marker of the group and sends each release.
 - **The owed release says so on the server line.** Two cases print `released=false by=token`: a slow
   Add whose TTL ran out under it, and a revived page's owed release of a lock that already expired.
   Only the client knows which one it is, so the owed release (the one through `claimAddLockMarker`)
@@ -683,14 +687,45 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   the END of the line, so the prefix stays the same:
   `[RELEASE_LOCK] group=<g> owner=<u:d> released=<bool> by=<token|owner-legacy> via=<jwt|push> owed=true`.
   Without the flag the line ends at `via=<door>`, as before.
+- **A waiter is TOLD when the holder releases** (OFF-3, 2026-10-26). A refused acquire on a group
+  where a lost invitation waits sends `notifyRelease: true`; the server registers the device in
+  `mls:addlock:waiters:<group>` IN ONE SCRIPT with the read of the lock's `PTTL`, and only while the
+  lock lives, with the set's expiry set to that same remaining life (a renewal extends both). The
+  release script that deletes the lock takes and deletes the set in the same script, then publishes
+  `{type: 'add_lock_released', groupId}` to each waiter on the gateway's control-frame path (never to
+  the releaser), and its line ends ` told=<n>`. **No wakeup can be lost**: a waiter registers either
+  before the release's script (and is in the set it takes) or after it (and reads `PTTL` -2, so 0 ms).
+  The client (`onAddLockReleased`, routed by both platforms) re-plans at once and drops the wake below.
+  Only a client that routes the frame sends the flag, so no client gets a frame it does not know.
 - **A refused acquire carries the server's own fact about when the lock ends** (`retryAfterMs`, its
-  `PTTL`). A lost invitation waiting on that group is re-planned at that moment, once per group
-  (`wakeAtAddLockExpiry`). This is the one timer, and the server states its value. The client bounds
+  `PTTL`) - now the BACKSTOP for a holder that never releases (cut, or dead): the release frame above
+  is the normal path. A lost invitation waiting on that group is re-planned at that moment, once per
+  group (`wakeAtAddLockExpiry`). The server states the value. The client bounds
   that value to 0..31 s (`boundAddLockWait`: TTL + 1 s, since `setTimeout` fires at once above
   2^31-1 ms), reads a non-number as no stated end, and warns when it had to bound one. The wakes go
-  with the session (sign-out) and with the client (`destroy`). The holder's
-  release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
-  registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
+  with the session (sign-out) and with the client (`destroy`). The holder's Add commit lands BEFORE
+  its release (the holder still persists, registers and sends Welcomes, 5-8 s), so the commit-applied
+  wake alone would find the lock still up.
+- **A cut holder's lock still ends by its TTL, deliberately.** Releasing it when the holder's socket
+  closes was weighed and declined: it trades the TTL for the gateway's heartbeat clock, and frees the
+  lock on every blip of a holder whose Add is still in flight (H1's shape). The epoch fence (the gate
+  refuses a second commit on one base) would make that harmless, but the lock exists so nobody stages
+  against it in the first place. The TTL stays the safety net for a holder that is gone.
+- **The lock is renewed before each rebuild of a lost race** (`rebuildOnRace` -> `renewAddLock`,
+  `POST /api/mls/add-lock/renew`, `[RENEW_LOCK] ... renewed=<bool>`). Its lifetime is sized for one
+  attempt and every rebuild adds round trips (the confirmed tree, the premise re-reads). A renewal
+  that finds the lock no longer this acquisition's ends the Add before any stage (`AddAbortedError`
+  `add-lock-lost`, told as `add-lock-busy`; a sweep stops the group's pass), and the release that
+  follows prints `released=false`, the true trace. A gesture with no lock renews nothing; a server
+  without the route answers 404 and the rebuild goes on as before it existed
+  ([legacy-compatibility](../legacy-compatibility.md#2026-12-31---an-add-lock-renewal-answered-404-by-a-server-that-predates-it-2026-10-26)).
+- **An acquire NOTHING answered throws, typed** (`isTransportFailure`), and is never read as "held by
+  another device": an invitation says `unreachable`; a creation goes on without the lock and a sweep
+  or a Welcome request skips, each saying "could not be asked for (no answer)" (`addLockNotAsked`).
+- **Left as they are, on purpose:** two leader tabs on the heartbeat fallback (no Web Locks) share
+  the per-account markers, so one could send a release naming the other's live token. Keying markers
+  by page would need page liveness, a heartbeat clock, to ever free a dead page's marker; the epoch
+  fence makes the freed lock cost one rebuilt race. Not observed; read from the code.
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
   `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
   the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
