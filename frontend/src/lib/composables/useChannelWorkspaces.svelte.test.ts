@@ -76,6 +76,7 @@ const createChannel = vi.fn();
 const renameChannel = vi.fn();
 const reorderChannels = vi.fn();
 const inviteToChannel = vi.fn();
+const deleteChannel = vi.fn();
 
 // Same reason as the auth mock above: `ChannelApiError` must be the real class, because that is
 // what `ChannelService.handleError` throws and what the code under test tests for.
@@ -89,6 +90,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     renameChannel = renameChannel;
     reorderChannels = reorderChannels;
     inviteToChannel = inviteToChannel;
+    deleteChannel = deleteChannel;
     // Every listing asks the unread counts at its end; a fake without them logged a TypeError there.
     listUnreadCounts = vi.fn().mockResolvedValue([]);
   },
@@ -114,6 +116,15 @@ vi.mock('$lib/utils/graine/distributionGroup', () => ({
   enterPrivateSalonGroup: vi.fn().mockResolvedValue(true),
 }));
 
+/**
+ * The community purge's first await. Held by one test so a purge can still be running when a
+ * listing prunes; resolved at once everywhere else, as the real one is with no Graine runtime.
+ */
+const forgetCommunityGraine = vi.fn().mockResolvedValue(0);
+vi.mock('$lib/utils/graine/forget', () => ({
+  forgetCommunityGraine: (...args: unknown[]) => forgetCommunityGraine(...args),
+}));
+
 const requestCommunityHistory = vi.fn().mockResolvedValue(undefined);
 vi.mock('$lib/utils/graine/repair', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/graine/repair')>()),
@@ -134,6 +145,9 @@ import {
 } from '$lib/utils/graine/salonSendGate';
 import { flushMacrotask } from '../../test/flush';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
+import { setMlsReady } from '$lib/composables/session/mlsReadiness';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelWorkspaceContext {
   return {
@@ -1000,11 +1014,11 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
   const ws = makeWorkspaceDto('ws1', 'Com', 'com');
 
   /** One listing that answered `channels`, so the next one has something to prune. */
-  async function primed(channels: ChannelDto[]) {
+  async function primed(channels: ChannelDto[], overrides: Partial<ChannelWorkspaceContext> = {}) {
     listUserWorkspaces.mockResolvedValueOnce([ws]);
     listChannels.mockResolvedValueOnce(channels);
     const api = useChannelWorkspaces();
-    const ctx = makeContext();
+    const ctx = makeContext(overrides);
     await api.loadChannelWorkspacesFromBackend(ctx);
     return { api, ctx };
   }
@@ -1024,7 +1038,10 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
     return { loading, release: (answer: WorkspaceDto[]) => release(answer) };
   }
 
-  /** What `onChannelMemberJoined` does to local state (`ChatBackgroundService.svelte`). */
+  /**
+   * What `onChannelMemberJoined` does to local state (`ChatBackgroundService.svelte`) - through the
+   * same two exported calls, which the source guard below holds the handler to.
+   */
   function hearSalon(
     api: ReturnType<typeof useChannelWorkspaces>,
     ctx: ChannelWorkspaceContext,
@@ -1049,22 +1066,32 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
   const rail = (api: ReturnType<typeof useChannelWorkspaces>, slug = 'com') =>
     api.channelWorkspaces.find((w) => w.id === slug)?.channels.map((c) => c.id) ?? [];
 
-  let debug: ReturnType<typeof vi.spyOn>;
-  let warn: ReturnType<typeof vi.spyOn>;
+  /** Every line `ctx.log` was given that matches `pattern`. */
+  const logged = (ctx: ChannelWorkspaceContext, pattern: RegExp) =>
+    vi
+      .mocked(ctx.log)
+      .mock.calls.map(([line]) => line)
+      .filter((line) => pattern.test(line));
+
+  let warn: { mock: { calls: unknown[][] }; mockRestore: () => void };
+  const warned = (pattern: RegExp) =>
+    warn.mock.calls
+      .map((args: unknown[]) => String(args[0]))
+      .filter((line: string) => pattern.test(line));
+
   beforeEach(() => {
     vi.clearAllMocks();
     listUserWorkspaces.mockReset();
     listChannels.mockReset();
+    forgetCommunityGraine.mockResolvedValue(0);
     ensureCommunityDistributionGroup.mockResolvedValue(true);
-    debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
   afterEach(() => {
-    debug.mockRestore();
     warn.mockRestore();
   });
 
-  it('keeps a salon heard of after the request, and says so per id at debug', async () => {
+  it('keeps a salon heard of after the request, and says so in the session log', async () => {
     const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
     const listing = await listingInFlight(api, ctx);
 
@@ -1075,15 +1102,18 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
 
     expect(ctx.conversations.has('channel_c2')).toBe(true);
     expect(rail(api)).toEqual(['channel_c1', 'channel_c2']);
-    expect(debug).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[WORKSPACE-LOAD\] kept salon channel_c2: not listed by the server/)
-    );
-    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('pruned salon channel_c2'));
+    expect(
+      logged(
+        ctx,
+        /^\[WORKSPACE-LOAD\] kept salon channel_c2 \(conversation, row\): not listed by the server/
+      )
+    ).toHaveLength(1);
+    expect(warned(/channel_c2/)).toEqual([]);
   });
 
   /**
    * THE CONTROL: a salon that existed when the listing was asked, is missing from its answer and was
-   * not heard of since really is gone - pruned, and said per id at warn, beside the one that is kept.
+   * not heard of since really is gone - pruned, and said ONCE at warn, beside the one that is kept.
    */
   it('still prunes a salon gone server-side and not heard of during the listing, at warn', async () => {
     const { api, ctx } = await primed([
@@ -1100,11 +1130,11 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
 
     expect(ctx.conversations.has('channel_c3')).toBe(false);
     expect(rail(api)).toEqual(['channel_c1', 'channel_c2']);
-    expect(warn).toHaveBeenCalledWith(
+    expect(warned(/channel_c3/)).toEqual([
       expect.stringMatching(
-        /^\[WORKSPACE-LOAD\] pruned salon channel_c3: not listed by the server, and neither created nor heard of/
-      )
-    );
+        /^\[WORKSPACE-LOAD\] pruned salon channel_c3 \(conversation, row\): not listed by the server, and neither created nor heard of/
+      ),
+    ]);
   });
 
   /** A salon heard of BEFORE the request is the listing's to judge: absent from it, it goes. */
@@ -1119,6 +1149,37 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
 
     expect(ctx.conversations.has('channel_c2')).toBe(false);
     expect(rail(api)).toEqual(['channel_c1']);
+  });
+
+  /**
+   * ONE LINE PER SALON, WHATEVER HELD IT. A salon deleted while the app was shut sits in up to three
+   * stores - conversation, row, stored page - and used to be said once per store. The stored page of
+   * a salon heard of during the listing is kept; one nothing names any more is deleted.
+   */
+  it('decides each salon once across its stores, and sweeps or keeps its stored page', async () => {
+    const storedSalonPageIds = vi.fn().mockResolvedValue([]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const { api, ctx } = await primed(
+      [makeChannelDto('c1', 'general'), makeChannelDto('c3', 'gone')],
+      { storedSalonPageIds, deleteConversation }
+    );
+    const listing = await listingInFlight(api, ctx);
+
+    hearSalon(api, ctx, 'c2');
+    storedSalonPageIds.mockResolvedValue(['channel_c2', 'channel_c3', 'channel_c9']);
+    listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+    listing.release([ws]);
+    await listing.loading;
+
+    expect(deleteConversation.mock.calls.map(([id]) => id).sort()).toEqual([
+      'channel_c3',
+      'channel_c9',
+    ]);
+    expect(warned(/pruned salon/)).toEqual([
+      expect.stringMatching(/pruned salon channel_c3 \(conversation, row, stored page\)/),
+      expect.stringMatching(/pruned salon channel_c9 \(stored page\)/),
+    ]);
+    expect(logged(ctx, /kept salon channel_c2 \(conversation, row, stored page\)/)).toHaveLength(1);
   });
 
   it('does not resurrect a salon removed live during the listing', async () => {
@@ -1141,6 +1202,38 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
 
     expect(ctx.conversations.has('channel_c4')).toBe(false);
     expect(rail(api)).toEqual(['channel_c1']);
+    expect(logged(ctx, /^\[WORKSPACE-LOAD\] salon channel_c4 not restored: /)).toHaveLength(1);
+  });
+
+  /**
+   * A DELETION MADE HERE IS DATED BEFORE ITS STORE DELETE IS AWAITED. A listing answered while
+   * `deleteConversation` runs used to set the conversation back, and nothing removed it again.
+   */
+  it('does not draw back a salon deleted here while its store delete is awaited', async () => {
+    const { api, ctx } = await primed([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c4', 'deleted'),
+    ]);
+    let releaseStore: () => void = () => {};
+    ctx.deleteConversation = vi.fn(
+      () => new Promise<void>((resolve) => (releaseStore = () => resolve()))
+    );
+    deleteChannel.mockResolvedValue(undefined);
+    const listing = await listingInFlight(api, ctx);
+
+    const deleting = api.deleteCurrentChannel('channel_c4', ctx);
+    await vi.waitFor(() => expect(ctx.deleteConversation).toHaveBeenCalledWith('channel_c4'));
+    listChannels.mockResolvedValueOnce([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c4', 'deleted'),
+    ]);
+    listing.release([ws]);
+    await listing.loading;
+    releaseStore();
+    await deleting;
+
+    expect(ctx.conversations.has('channel_c4')).toBe(false);
+    expect(rail(api)).toEqual(['channel_c1']);
   });
 
   /** The last fact wins: removed, then heard of again, during the same listing - it is there. */
@@ -1159,6 +1252,37 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
     expect(rail(api)).toEqual(['channel_c1']);
   });
 
+  /**
+   * EACH ATTEMPT DATES ITS OWN REQUEST. A salon heard of during the back-off of a failed attempt is
+   * OLDER than the retry's question, so the retry's answer is the truth about it.
+   */
+  it('re-reads the tick on a retried attempt', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+      listUserWorkspaces.mockRejectedValueOnce(
+        new TransportFailureError(new TypeError('Failed to fetch'))
+      );
+      const loading = api.loadChannelWorkspacesFromBackend(ctx);
+      await vi.waitFor(() =>
+        expect(ctx.log).toHaveBeenCalledWith(
+          '[WORKSPACE-LOAD] retryable failure - next attempt in 1000ms'
+        )
+      );
+
+      hearSalon(api, ctx, 'c5');
+      listUserWorkspaces.mockResolvedValueOnce([ws]);
+      listChannels.mockResolvedValueOnce([makeChannelDto('c1', 'general')]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await loading;
+
+      expect(ctx.conversations.has('channel_c5')).toBe(false);
+      expect(warned(/pruned salon channel_c5/)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps a community heard of after the request, and prunes one that was not', async () => {
     listUserWorkspaces.mockResolvedValueOnce([ws, makeWorkspaceDto('ws-old', 'Old', 'old')]);
     listChannels.mockResolvedValue([]);
@@ -1174,12 +1298,30 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
     expect(api.channelWorkspaces.map((w) => w.id).sort()).toEqual(['com', 'heard']);
     expect(rail(api, 'heard')).toEqual(['channel_n1']);
     expect(ctx.conversations.has('channel_n1')).toBe(true);
-    expect(debug).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[WORKSPACE-LOAD\] kept community heard: not listed by the server/)
+    expect(
+      logged(ctx, /^\[WORKSPACE-LOAD\] kept community heard \(rail\): not listed by the server/)
+    ).toHaveLength(1);
+    expect(warned(/^\[WORKSPACE-LOAD\] pruned community old \(rail\): /)).toHaveLength(1);
+  });
+
+  /**
+   * A COMMUNITY FIRST DRAWN FROM AN EVENT whose slug is not the server's is ONE entry once listed,
+   * under the server's id, with the salon heard during the listing still in it.
+   */
+  it('folds a placeholder community into the listed one when the slugs differ', async () => {
+    const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+    const listing = await listingInFlight(api, ctx);
+
+    hearSalon(api, ctx, 'n1', { workspaceId: 'ws-new', workspaceSlug: 'from-event' });
+    listChannels.mockImplementation(async (workspaceId: string) =>
+      workspaceId === 'ws1' ? [makeChannelDto('c1', 'general')] : [makeChannelDto('n1', 'n1')]
     );
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[WORKSPACE-LOAD\] pruned community old: not listed by the server/)
-    );
+    listing.release([ws, makeWorkspaceDto('ws-new', 'New', 'real')]);
+    await listing.loading;
+
+    expect(api.channelWorkspaces.map((w) => w.id).sort()).toEqual(['com', 'real']);
+    expect(rail(api, 'real')).toEqual(['channel_n1']);
+    expect(ctx.conversations.has('channel_n1')).toBe(true);
   });
 
   it('does not resurrect a community removed live during the listing, nor its salons', async () => {
@@ -1195,6 +1337,117 @@ describe('useChannelWorkspaces - a live fact heard while a listing is in flight'
     expect(api.channelWorkspaces.some((w) => w.id === 'com')).toBe(false);
     expect(ctx.conversations.has('channel_c1')).toBe(false);
     expect(listChannels).toHaveBeenCalledTimes(1);
+    expect(logged(ctx, /^\[WORKSPACE-LOAD\] community com not restored: /)).toHaveLength(1);
+  });
+
+  /**
+   * REMOVED WHILE ITS SALONS ARE BEING LISTED: the community rows were drawn, its salon listing and
+   * its key group are on their way, and the purge lands in between. Nothing more is written for it -
+   * no conversation, no channel map, no key-group join.
+   */
+  it('gives a community removed while its salons are listed nothing more', async () => {
+    setMlsReady(true);
+    try {
+      const ensureMls = vi.fn().mockResolvedValue({});
+      const { api, ctx } = await primed([], { ensureMls } as never);
+      let releaseMls: () => void = () => {};
+      ensureMls.mockImplementationOnce(
+        () => new Promise((resolve) => (releaseMls = () => resolve({})))
+      );
+      let releaseSalons: (value: ChannelDto[]) => void = () => {};
+      listChannels.mockImplementationOnce(
+        () => new Promise<ChannelDto[]>((resolve) => (releaseSalons = resolve))
+      );
+      listUserWorkspaces.mockResolvedValueOnce([ws]);
+      ensureCommunityDistributionGroup.mockClear();
+
+      const loading = api.loadChannelWorkspacesFromBackend(ctx);
+      await vi.waitFor(() => expect(listChannels).toHaveBeenCalledTimes(2));
+      await api.handleWorkspaceDeleted({ workspaceId: 'ws1' }, ctx);
+      releaseSalons([makeChannelDto('cz1', 'general')]);
+      releaseMls();
+      await loading;
+
+      expect(ctx.conversations.has('channel_cz1')).toBe(false);
+      expect(workspaceForChannel('cz1')).toBeNull();
+      expect(ensureCommunityDistributionGroup).not.toHaveBeenCalled();
+      expect(api.channelWorkspaces.some((w) => w.id === 'com')).toBe(false);
+      expect(logged(ctx, /^\[WORKSPACE-LOAD\] community com not restored: /)).toHaveLength(1);
+    } finally {
+      setMlsReady(false);
+    }
+  });
+
+  /**
+   * A REMOVAL HEARD LIVE WHOSE PURGE IS STILL RUNNING AT PRUNE TIME is the live removal it is, never
+   * a server deletion this device "did not hear": the prune reads the ledger before it accuses.
+   */
+  it('does not blame a live removal still finishing at prune time as unheard', async () => {
+    const { api, ctx } = await primed([makeChannelDto('c1', 'general')]);
+    const listing = await listingInFlight(api, ctx);
+
+    let releaseForget: () => void = () => {};
+    forgetCommunityGraine.mockImplementationOnce(
+      () => new Promise<number>((resolve) => (releaseForget = () => resolve(0)))
+    );
+    const purging = api.handleWorkspaceDeleted({ workspaceId: 'ws1' }, ctx);
+    listing.release([ws]);
+    await listing.loading;
+    releaseForget();
+    await purging;
+
+    expect(warned(/pruned (community com|salon channel_c1)/)).toEqual([]);
+    expect(
+      logged(
+        ctx,
+        /^\[WORKSPACE-LOAD\] community com \(rail\) removed on this device after the listing was asked/
+      )
+    ).toHaveLength(1);
+    expect(
+      logged(
+        ctx,
+        /^\[WORKSPACE-LOAD\] salon channel_c1 \(conversation\) removed on this device after/
+      )
+    ).toHaveLength(1);
+    expect(api.channelWorkspaces.some((w) => w.id === 'com')).toBe(false);
+    expect(ctx.conversations.has('channel_c1')).toBe(false);
+  });
+});
+
+/**
+ * THE SOCKET HANDLERS WRITE THROUGH THE RECORDING CALLS. The ledger dates what the four exported
+ * entrances are given; a handler that drew or removed a salon by hand would be the live fact the
+ * listing cannot see - the defect itself, one handler away. The tests above call the same entrances
+ * (`hearSalon`), so this is what keeps them describing the app.
+ */
+describe('ChatBackgroundService - the live handlers go through the recording calls', () => {
+  const src = readFileSync(
+    join(process.cwd(), 'src', 'lib', 'components', 'layout', 'ChatBackgroundService.svelte'),
+    'utf8'
+  );
+  const handler = (name: string, next: string) => {
+    const start = src.indexOf(`      ${name}: `);
+    const end = src.indexOf(`      ${next}: `, start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return src.slice(start, end);
+  };
+
+  it('dates a salon heard of, and its community, through the exported calls', () => {
+    const joined = handler('onChannelMemberJoined', 'onChannelMemberKicked');
+    expect(joined).toContain('globalChannels.ensureWorkspaceForChannelEvent(');
+    expect(joined).toContain('globalChannels.addChannelToWorkspace(');
+    expect(joined).not.toContain('globalChannels.channelWorkspaces =');
+  });
+
+  it('dates every removal through the exported calls', () => {
+    const kicked = handler('onChannelMemberKicked', 'onRolePermissionsChanged');
+    expect(kicked).toContain('globalChannels.removeChannelFromWorkspaces(');
+    expect(kicked).toContain('globalChannels.handleRemovedFromWorkspace(');
+    const deleted = handler('onChannelDeleted', 'onWorkspaceUpdated');
+    expect(deleted).toContain('globalChannels.removeChannelFromWorkspaces(');
+    const workspaceDeleted = handler('onWorkspaceDeleted', 'onChannelMessageDeleted');
+    expect(workspaceDeleted).toContain('globalChannels.handleWorkspaceDeleted(');
   });
 });
 

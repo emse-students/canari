@@ -3224,15 +3224,44 @@ write goes through one of four places, and the listing's own writes go through n
 | salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`) | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`) |
 | community deleted, left, removed from | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
 
-A listing then (1) does not draw a community or salon learned `gone` after its request
-(`[WORKSPACE-LOAD] salon <id> not restored: ...`, debug), and (2) does not prune one learned
-`present` after it (`kept <kind> <id>: ...`, debug). **Every prune says itself per id at `warn`** -
-`pruned <kind> <id>: not listed by the server, and neither created nor heard of on this device after
-the listing was asked (tick N)` - for the conversation, the row, the stored page (F4) and the
-community: it is the visible end of a removal this device did not hear live. The ledger keeps the
-last fact only, so a salon removed then heard of again in the same window is drawn. Pinned by an
-explicit order in `useChannelWorkspaces.svelte.test.ts` ("a live fact heard while a listing is in
-flight"), with the not-heard control still pruned.
+`leaveCurrentChannel` and `deleteCurrentChannel` record the removal as soon as the server answers,
+before they await the store delete: a listing answered during that await used to set the
+conversation back. `ChatBackgroundService.svelte`'s handlers are held to these entrances by a source
+guard in the same test file.
+
+A listing then:
+
+1. **Does not draw back** a community or salon learned `gone` after its request
+   (`[WORKSPACE-LOAD] <kind> <id> not restored: ...`). This is asked again at each point
+   `loadCommunitySalons` would write next, because the purge can land while that community's salons
+   or key group are still on their way. A community removed in that window gets no conversation, no
+   channel map, no key-group join and no entry.
+2. **Gathers every store that holds a salon the answer does not name** - its conversation, its row
+   (in the communities the answer covers) and its stored page (F4) - and **decides once per salon**,
+   reading the ledger first:
+   - learned `present`: kept (`kept salon <id> (<stores>): ...`);
+   - learned `gone`, with the purge still running: finished quietly
+     (`salon <id> (<stores>) removed on this device after the listing was asked - its removal is
+     finished here`), never blamed as unheard;
+   - nothing learned: pruned, with **one `warn` per salon** -
+     `pruned salon <id> (conversation, row, stored page): not listed by the server, and neither
+     created nor heard of on this device after the listing was asked (tick N)`. This is the visible
+     end of a removal this device did not hear live, usually one made while the app was shut: one
+     line, not one per store.
+
+   Communities get the same three outcomes.
+
+The keep, decline and finish lines go to the session log (`ctx.log`), so they reach a phone's
+in-app log: `appLog.ts` does not keep `debug`. Each attempt of a retried listing reads the tick
+again, so a salon heard during the back-off is judged by the retry's answer.
+
+A community first drawn from an event under a slug the server does not use (`workspace-<id>` when
+the event named none) is folded into the listed entry by id, under the server's slug. It used to
+appear twice.
+
+The ledger keeps only the last fact, so a salon removed and then heard of again in the same window
+is drawn. All of this is pinned by an explicit order in `useChannelWorkspaces.svelte.test.ts` ("a
+live fact heard while a listing is in flight"), and the not-heard control is still pruned.
 
 **What the ledger does NOT cover** (the same race, on fields rather than existence): a rename or a
 `viewerCanWrite` change heard during a listing (`onChannelUpdated`) is overwritten by the listing's
