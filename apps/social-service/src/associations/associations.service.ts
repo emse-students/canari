@@ -51,8 +51,13 @@ import {
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
-import { SLUG_MAX_ATTEMPTS, SLUG_PATTERN, slugCandidates } from './association-slug.util';
-import { isUniqueViolation } from '../common/pg-errors';
+import {
+  RESERVED_SLUGS,
+  SLUG_MAX_ATTEMPTS,
+  SLUG_PATTERN,
+  isSlugUniqueViolation,
+  slugCandidates,
+} from './association-slug.util';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
@@ -347,6 +352,9 @@ export class AssociationsService {
         'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
       );
     }
+    if (explicitSlug !== null && RESERVED_SLUGS.has(explicitSlug)) {
+      throw new BadRequestException('This slug is reserved');
+    }
     // The logo is normally set by the upload path; a value sent here is held to the same allowlist.
     const logoUrl = dto.logoUrl?.trim() ? dto.logoUrl.trim() : null;
     if (logoUrl !== null) assertAssociationImageUrl(logoUrl);
@@ -361,7 +369,7 @@ export class AssociationsService {
       try {
         return await this.insertAssociation(dto, explicitSlug, logoUrl, userId, isGlobalAdmin);
       } catch (err) {
-        if (!isUniqueViolation(err)) throw err;
+        if (!isSlugUniqueViolation(err)) throw err;
         this.logger.warn(`[slug] explicit slug ${explicitSlug} was taken between check and insert`);
         throw new BadRequestException('An association with this slug already exists');
       }
@@ -376,7 +384,7 @@ export class AssociationsService {
         this.logger.log(`[slug] derived ${candidate} from the name`);
         return saved;
       } catch (err) {
-        if (!isUniqueViolation(err)) throw err;
+        if (!isSlugUniqueViolation(err)) throw err;
         this.logger.log(`[slug] ${candidate} is taken, trying the next suffix`);
       }
     }

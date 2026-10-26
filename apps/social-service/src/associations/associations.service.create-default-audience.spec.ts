@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { SLUG_UNIQUE_CONSTRAINT } from './association-slug.util';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
@@ -129,7 +130,8 @@ describe('AssociationsService.create - a non-admin creator is bound to the campu
 });
 
 describe('AssociationsService.create - the slug is derived, never typed (user, 2026-10-26)', () => {
-  const unique = () => Object.assign(new Error('duplicate key'), { code: '23505' });
+  const unique = (constraint = SLUG_UNIQUE_CONSTRAINT) =>
+    Object.assign(new Error('duplicate key'), { code: '23505', constraint });
 
   it('derives the slug from the name when none is sent, accents folded', async () => {
     const { service, assoRepo } = makeService('gardanne');
@@ -167,6 +169,26 @@ describe('AssociationsService.create - the slug is derived, never typed (user, 2
       'connection lost'
     );
     expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry a unique violation on another index, and rethrows it', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(unique('UQ_some_other_index'));
+
+    await expect(service.create({ name: 'Club' } as never, 'u', true)).rejects.toMatchObject({
+      constraint: 'UQ_some_other_index',
+    });
+    expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('suffixes a name deriving to a reserved route word, and refuses it as an explicit slug', async () => {
+    const { service, assoRepo } = makeService('gardanne');
+
+    await service.create({ name: 'New' } as never, 'u', true);
+    expect(assoRepo.create).toHaveBeenCalledWith(expect.objectContaining({ slug: 'new-2' }));
+    await expect(
+      service.create({ name: 'X', slug: 'new' } as never, 'u', true)
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('still refuses an explicit slug that is taken, and validates its shape', async () => {
