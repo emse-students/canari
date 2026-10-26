@@ -677,14 +677,43 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     const { requestId, devices } = sentAsk();
     expect([...devices].sort()).toEqual(['bob-phone', 'web-bob']);
 
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const heldNothingLines = () =>
+      info.mock.calls.flat().filter((l) => String(l).includes('holds nothing of community'));
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    // Recorded, and said by nobody yet: one line per member answered, not one per device.
+    expect(heldNothingLines()).toEqual([]);
 
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sentAsk(1).answerer).toBe('carol');
+    expect(heldNothingLines()).toHaveLength(1);
+    expect(heldNothingLines()[0]).toContain('2 device(s) answered (web-bob, bob-phone)');
+    info.mockRestore();
+  });
+
+  it("says nothing of an answer to ANOTHER device's ask, and says a late answer to a superseded ask of ours", async () => {
+    await requestCommunityHistory('ws-1');
+    const first = sentAsk(0).requestId;
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const ignored = () =>
+      debug.mock.calls.flat().filter((l) => String(l).includes('ignoring "I hold nothing"'));
+
+    // Every member of the key group receives every answer: an id this device never sent is not ours.
+    noteHistoryHeldNothing('ws-1', 'bob', 'someone-elses-request', 'web-bob');
+    expect(ignored()).toEqual([]);
+
+    // bob answers, the walk asks carol: a late copy of bob's answer quotes an ask of ours no longer
+    // in flight - a decision of this device's, and said.
+    await answerNothing(0);
+    expect(sentAsk(1).answerer).toBe('carol');
+    noteHistoryHeldNothing('ws-1', 'bob', first, 'web-bob');
+    expect(ignored()).toHaveLength(1);
+    expect(ignored()[0]).toContain(`it answers request ${first}, not the history ask in flight`);
+    debug.mockRestore();
   });
 
   it('a member whose online phone said "nothing" is NOT answered while a laptop of theirs on the tree is offline - asked when it is online', async () => {

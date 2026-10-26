@@ -1152,14 +1152,26 @@ async function absorbSeedBundle(
   //
   // Counted per SEED and the salons named: "answered with N seed(s)" upstream against "absorbed 0"
   // here is the shape of an answer whose seeds were all refused, and nothing else would show it.
-  console.debug(
-    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held` +
-      (absorbed > 0
-        ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
-        : '') +
-      `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
-      page
-  );
+  //
+  // ONLY A BUNDLE THAT CARRIED SEEDS ABSORBED ANYTHING (RM-4, 2026-10-26). An "I hold nothing" or a
+  // decline carries none, reaches every member of the key group, and its claim is what speaks - on
+  // the device that asked, below. `absorbed 0/0` said nothing on every seat, once per answer.
+  if (carried.length > 0) {
+    console.debug(
+      `[GRAINE] absorbed ${absorbed}/${carried.length} seed(s) (${alreadyHeld} already held` +
+        (absorbed > 0
+          ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
+          : '') +
+        `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
+        page
+    );
+  } else if (!bundle.holdsNothing && (bundle.missingSessionIds ?? []).length === 0) {
+    // Neither seeds nor a claim: what an answerer older than `holds_nothing` sends for an empty hand.
+    console.debug(
+      `[GRAINE] ${frame.sender} sent an empty bundle in community ${frame.workspaceId.slice(0, 8)} - ` +
+        `no seed and no claim, nothing absorbed${page}`
+    );
+  }
 
   // A HISTORY ASK ANSWERED WITH A SEED THIS DEVICE DID NOT HOLD settles a widened ask
   // (`historyClosedSeen.ts`). Only a STORED one: a bundle of seeds already held, or of seeds all

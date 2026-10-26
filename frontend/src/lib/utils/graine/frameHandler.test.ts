@@ -1656,6 +1656,20 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     expect(noteHistoryHeldNothingSpy).toHaveBeenCalledWith('ws-1', 'Bob', 'r-h', 'web-bob');
   });
 
+  it('absorbs nothing and says no absorb line - the claim speaks, on the device that asked', async () => {
+    // Every seat of the key group receives the answer: `absorbed 0/0` was one line per answer on
+    // each of them (RM-4, 2026-10-26).
+    const { storage } = fakeStorage();
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(holdsNothingFrame());
+
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('absorbed');
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('empty bundle');
+    debug.mockRestore();
+  });
+
   it('ignores the claim, out loud, when the same bundle carries seeds', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
@@ -1719,6 +1733,7 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
 
     await handleDistributionFrame({
       ...holdsNothingFrame(),
@@ -1732,9 +1747,12 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
     expect(info).not.toHaveBeenCalled();
+    // An empty hand that claims nothing is the one empty bundle with nobody else to speak for it.
+    expect(debug.mock.calls.flat().join(' ')).toContain('Bob sent an empty bundle');
     warn.mockRestore();
     error.mockRestore();
     info.mockRestore();
+    debug.mockRestore();
   });
 });
 
