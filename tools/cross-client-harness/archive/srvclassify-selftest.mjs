@@ -1100,6 +1100,14 @@ check(
     ['the ask announced to the members', L('JoinAsk', `[JOIN_ASK] ANNOUNCED group=${G} asker=aaaaaaaa ask=c80e3db4 devices=5`), 'ADM-1', 'DEV-1'],
     ['the ask settled', L('JoinAsk', `[JOIN_ASK] SETTLED group=${G} asker=aaaaaaaa ask=c80e3db4 outcome=declined devices=5`), 'ADM-3', 'ADM-8'],
     ["ADM-4's call-initiate probe", D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'ADM-4', 'ADM-1'],
+    ['a real call initiated, in a CALL-WEB row', D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'CALL-WEB-1', 'KILL-3'],
+    ["ADM-4's ring probe is not a CALL-WEB row's", D('CallsService', `[ring] ringGroup caller=${'a'.repeat(64)} group=${G} call=adm4-probe`), 'ADM-4', 'CALL-WEB-1'],
+    ['a call invite', L('CallsService', `[call] invite room=${G} user=${'a'.repeat(64)} group=${G}`), 'CALL-WEB-4', 'ADM-4'],
+    ['a seat asking for ICE servers', D('CallsController', `[ICE] ice-servers request user=${'a'.repeat(64)} group=${G} call=${G}`), 'CALL-WEB-2', 'FLOOR-1'],
+    ['TURN credentials fetched', D('CallsService', '[ICE] Cloudflare returned 2 ICE server(s)'), 'CALL-WEB-8', 'ADM-4'],
+    ['a signalling session ended by its client', `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=client-close duration_ms=11489 paired_ms=10028 offer_in=1 answer_out=1`, 'CALL-WEB-1', 'DUP-1'],
+    ['... never paired (an unanswered ring)', `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=client-close duration_ms=61000 paired_ms=- offer_in=0`, 'CALL-WEB-6', 'ADM-4'],
+    ['a p2p pairing', `2026-10-26T22:31:25.146464Z  INFO call_service: [call] p2p paired room=${G} initiator=${'a'.repeat(64)}:${G} polite=${'b'.repeat(64)}:${G} resumed=false`, 'CALL-WEB-7', 'RM-5'],
     ["ADM-4's ring probe", D('CallsService', `[ring] ringGroup caller=${'a'.repeat(64)} group=${G} call=adm4-probe`), 'ADM-4', 'DUP-1'],
     ['a minted device before it is seated', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-4', 'ADM-1'],
     ['an Add refused whole: the person, Decline dated', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_decision decidedAtSeatGeneration=3 decidedBy=invitation seat=none committer=aaaaaaaa - the commit is refused whole`), 'ADM-10', 'ADM-1'],
@@ -1224,7 +1232,11 @@ check(
   check('R6 a non-member external commit is not a waiting seat', verdictIn(W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external`), null), 'unclaimed');
   check('R6 FAMILY-* names a family, not a prefix of a longer word', rowNamed(['DUP-*'], 'DUPX-1'), false);
   check('R6 an exact id is exact', rowNamed(['ADM-5'], 'ADM-50'), false);
-  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+-(\d+|\*)$/.test(x))), true);
+  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+(-[A-Z]+)?-(\d+|\*)$/.test(x))), true);
+  check('R6 CALL-WEB-* names CALL-WEB-7', rowNamed(['CALL-WEB-*'], 'CALL-WEB-7'), true);
+  check('R6 CALL-WEB-* is not CALL-1', rowNamed(['CALL-WEB-*'], 'CALL-1'), false);
+  const serverEnded = `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=server-timeout duration_ms=61000 paired_ms=- offer_in=0`;
+  check('R6 a session the SERVICE ended is not forgiven in CALL-WEB-6', verdictIn(serverEnded, 'CALL-WEB-6'), 'unread-shape');
 
   // THE NEW NOTABLE LINES: narration in every row.
   for (const [name, line] of [
