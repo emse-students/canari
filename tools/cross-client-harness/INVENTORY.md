@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-105 scripts.
+106 scripts.
 
 | script | what it is |
 |---|---|
@@ -115,6 +115,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `srcscan.mjs` | READING A SCRIPT AS CODE RATHER THAN AS TEXT. |
 | `srvlog.mjs` | THE THIRD OBSERVER: the estate's own server logs (local or dev), classified the way the browser's are. |
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES A REMOTE HOST - and its one caller is `estate.mjs`, for DEV. |
+| `stale-devices.mjs` | PURGES THE BROWSER DEVICES THE RIG MINTED AND ABANDONED - part of the campaign preflight. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |
 | `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
 | `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
@@ -363,4 +364,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-302 scripts in total.
+303 scripts in total.

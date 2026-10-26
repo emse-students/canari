@@ -16,7 +16,7 @@
  * point is not to test string splitting: it is to keep the three corrections above from being
  * quietly undone by a later edit that "simplifies" the predicate back to one column.
  */
-import { daysBetween, installTag, parseRow, runtimeOf, summarize, userTag } from '../device-census.mjs';
+import { daysBetween, installTag, parseRow, planStaleDevices, runtimeOf, summarize, userTag } from '../device-census.mjs';
 
 const TODAY = '2026-08-24';
 let failures = 0;
@@ -181,6 +181,30 @@ check(
   parseRow(row({ deviceId: 'tauri-u-1-x', os: 'android', last: '' }), TODAY).staleDays,
   null
 );
+
+// --- THE STALE-DEVICE PLAN IS AN ALLOWLIST ------------------------------------------------------
+// Rig accounts u1/u2, an outsider u9. Only an owned, non-live browser device of a rig account goes.
+{
+  const rows = [
+    { deviceId: 'web-u1-live-a', userId: 'u1' },
+    { deviceId: 'web-u1-old-b', userId: 'u1' },
+    { deviceId: 'web-u1-old-c', userId: 'u1' },
+    { deviceId: 'tauri-u1-phone', userId: 'u1' },
+    { deviceId: 'web-u2-unowned', userId: 'u2' },
+    { deviceId: 'web-u9-old', userId: 'u9' },
+  ];
+  const base = { rows, users: ['u1', 'u2'], live: ['web-u1-live-a', 'tauri-u1-phone'], owned: ['web-u1-old-b', 'web-u1-old-c', 'web-u1-live-a', 'web-u9-old'] };
+  const plan = planStaleDevices(base);
+  check('only owned, non-live browser devices of the rig accounts are targets', plan.targets.map((t) => t.deviceId), ['web-u1-old-b', 'web-u1-old-c']);
+  check(
+    'a live seat, a phone and an unowned device are kept, each with its reason',
+    plan.kept.map((k) => `${k.deviceId}:${k.why}`),
+    ['web-u1-live-a:a live seat', 'tauri-u1-phone:not a browser device', 'web-u2-unowned:not in the campaign ledger']
+  );
+  check("another person's device is never even listed, owned or not", [...plan.targets, ...plan.kept].some((r) => r.userId === 'u9'), false);
+  const refused = planStaleDevices({ ...base, unread: ['W3'] });
+  check('an unread seat refuses the whole plan - its device would look like debris', [refused.ok, refused.targets.length], [false, 0]);
+}
 
 console.log(
   failures === 0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`

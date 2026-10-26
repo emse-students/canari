@@ -138,6 +138,10 @@ pinned by `archive/campaign-selftest.mjs`):
 - **`cleanup.mjs` on dev needs `--only <ids> --expect N`**: the name shapes choose candidates, then
   only the named ids, each owned, with the expected count, are taken - anything off refuses the
   whole sweep. `--dry` prints the exact flags.
+- **`stale-devices.mjs` is the device half of that sweep, in the preflight**: every browser device of
+  the rig's accounts that no live seat holds and the ledger records creating (each DEV row mints and
+  abandons one). Read only by default; `--purge --expect N` purges exactly the N it printed, through
+  `purge-devices.mjs`. A web seat that does not answer refuses the plan - its device would look stale.
 - **Not guarded, deliberately**: `dismissLocally` (it removes only the rig device's own copy of a
   conversation already deleted) and the message deletions of `mut.mjs` and `search.mjs`, which pick
   the bubble by the run term of a message the row itself sent seconds earlier.

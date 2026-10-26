@@ -19,6 +19,7 @@ import { GATE_EXPR, KEYPAD_EXPR } from './gate-probe.mjs';
 import { PORTS } from './names.mjs';
 import { SITE } from './site.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
+import { ledger, recordCreated } from './campaign.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -348,6 +349,18 @@ const state = await evaluate(
 );
 console.log(`[pin] after: ${state}`);
 await assertLocalEstate(cx);
+
+// THE DEVICE THIS UNLOCK HOLDS IS THE CAMPAIGN'S (R5), recorded the first time it is seen. A sign-in
+// by `login.mjs` - the preflight's own repair of a seat found on /login included - enrols a device at
+// this gate and recorded nothing, so the next mint abandoned it and could not purge it
+// (`assertCampaignOwned`): seven owner devices piled up that way by alpha.5, each vouched for in
+// every ADM row. Every page this rig drives is a profile only the rig signs into.
+const sub = accounts[account]?.sub;
+const heldId = sub ? await evaluate(cx, `localStorage.getItem(${JSON.stringify(`mls_device_id_${sub}`)}) || ''`) : '';
+if (heldId && !ledger().some((e) => e.kind === 'device' && e.id === heldId)) {
+  recordCreated({ kind: 'device', id: heldId, name: `${target.device ?? port}:${account}`, by: 'pin' });
+  console.log(`[pin] recorded this seat's device in the campaign ledger (...${heldId.slice(-13)})`);
+}
 
 // THE SUCCESS PATH HAS TO END AS DELIBERATELY AS THE FAILURE ONES, and for fourteen days it did not.
 // Every refusal above closes the socket and names an exit code; a PIN that WORKED just fell off the
