@@ -310,6 +310,29 @@ describe('inviteMembersToGroup - answering a join ask', () => {
     expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 
+  it('narrates an ask settled before the Add as an info line, never a warning', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }],
+      seatGeneration: 5,
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering });
+
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('abandoned'))).toEqual(
+      []
+    );
+    expect(
+      info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('(removed-meanwhile): the ask of joe was settled'))
+    ).toHaveLength(1);
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
   it('stages nothing when the seat now awaits under ANOTHER ask', async () => {
     const d = inviteDeps();
     d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({

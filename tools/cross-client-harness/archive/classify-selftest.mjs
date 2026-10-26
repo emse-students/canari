@@ -27,6 +27,7 @@ import {
   FRESH_DEVICE_RESTORE_NARRATION,
   FRESH_DEVICE_SESSION_NARRATION,
   GROUP_CREATION_NARRATION,
+  REVOKED_REFUSALS,
   REMOVE_NARRATION,
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
@@ -35,7 +36,7 @@ import {
   admissionJoinerNarration,
   admissionMemberNarration,
   REVOKED_SIGN_OUT_NARRATION,
-  REVOKED_LOGOUT_ONCE,
+  revokedLogoutOnce,
   signOutCount,
   PAGE_BOOT_NARRATION,
   REFUSED_FOR_LACK_OF_ROW_NARRATION,
@@ -62,6 +63,9 @@ function cxOf(entries) {
 const CASES = [
   // [level, line, expected bucket]
   ['log', '[14:24:25] [OUTBOX] 1 entry still queued', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] a frame of 92c16968… is applied while the commit of b1ecb448… awaits its answer', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] a frame of 92c16968… waits for the commit of 92c16968… - put back, applied after it', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] refused to lend the MLS mutex for 92c16968: not the holder - only the commit holding it may lend it', 'unexplained'],
   ['log', '[14:59:42] [QUEUE] the commit of 59333a90... released the MLS lock - draining the 1 frame(s) it held back', 'notable'],
   ['log', '[14:24:25] [OUTBOX] 12 entries still queued', 'notable'],
   ['log', '[14:24:25] [OUTBOX] ef8eca5e… skipped, backing off for 4452ms (attempt 2)', 'notable'],
@@ -1571,7 +1575,7 @@ const FORGIVE_CASES = [
       ['log', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 9 },
+    { clean: true, unmatched: 12 },
   ],
   [
     "a revoked device's MLS client torn down, forgiven (alpha.5 DEV-2)",
@@ -1580,7 +1584,23 @@ const FORGIVE_CASES = [
       ['info', '[14:59:08.014] [WS] Paused - disconnect sent, socket released until the next foreground.'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 10 },
+    { clean: true, unmatched: 13 },
+  ],
+  [
+    "a revoked device's requests refused once its session ended, forgiven (alpha.5 DEV-3)",
+    [
+      ['info', '[15:46:38.652] [AUTH] 401 on GET /api/mls/messages - renewing the token and sending the same request once more'],
+      ['info', '[15:46:38.788] [A] refresh✗latched (cookie already proven dead by this device revocation - not asking again)'],
+      ['info', '[15:46:39.091] [SYNC] WASM purge skipped - the server list could not be fetched'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 12 },
+  ],
+  [
+    "control: a revoked device's undrained backlog at ERROR is not narration",
+    [['error', '[15:46:38.785] [PENDING] Pending fetch failed after 0 message(s) - the backlog for x is UNDRAINED and stays queued until the next reconnect: SessionEndedByDeviceRevocationError']],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 15 },
   ],
   [
     'control: the same teardown on a device nobody revoked stays dirt',
@@ -1592,7 +1612,7 @@ const FORGIVE_CASES = [
     'control: the revoked device signing out TWICE is not narrated (the known P3)',
     [['info', '[14:59:08.216] [A] logout✓200 79ms']],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 12 },
+    { clean: false, unmatched: 15 },
   ],
   [
     "a revoked device's pending fetch ended by its own revocation, and the redirect that signs out no more, forgiven",
@@ -1601,7 +1621,7 @@ const FORGIVE_CASES = [
       ['log', '[14:59:08.100] [AUTH] Session expired - the revoked-device reset already signed out; redirecting to /login.'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 12 },
+    { clean: true, unmatched: 15 },
   ],
   [
     'control: the same two lines on a device nobody revoked stay dirt, and the pending fetch at error is never forgiven',
@@ -1616,20 +1636,32 @@ const FORGIVE_CASES = [
   [
     'a revoked device that signed out ONCE: its one logout line is forgiven where it was counted',
     [['info', '[14:59:08.216] [A] logout✓200 79ms']],
-    [...REVOKED_SIGN_OUT_NARRATION, REVOKED_LOGOUT_ONCE],
-    { clean: true, unmatched: 12 },
+    [...REVOKED_SIGN_OUT_NARRATION, revokedLogoutOnce(() => ['[14:59:08.216] [A] logout✓200 79ms'])],
+    { clean: true, unmatched: 15 },
+  ],
+  [
+    'control: a SECOND logout that arrives later is counted at classification time - neither line is forgiven',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    [...REVOKED_SIGN_OUT_NARRATION, revokedLogoutOnce(() => ['[14:59:08.216] [A] logout✓200 79ms', '[14:59:09.001] [A] logout✗ 12ms: TypeError - signed out locally'])],
+    { clean: false, unmatched: 16 },
   ],
   [
     'control: the counted-once needle is not part of the revoked narration, so the row must earn it',
     [['info', '[14:59:08.216] [A] logout✓200 79ms']],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 12 },
+    { clean: false, unmatched: 15 },
   ],
   [
     "a fresh device's restore of unproven messages, forgiven on the minted seat",
     [['info', '[14:58:45.518] [AUTHORSHIP] 25 restored message(s) in b86896fc… relayed by 223bc34e carry no author proof - kept, marked unverified']],
     FRESH_DEVICE_RESTORE_NARRATION,
-    { clean: true, unmatched: 0 },
+    { clean: true, unmatched: 1 },
+  ],
+  [
+    "a minted device's hidden batch of rows that are not arrivals, forgiven",
+    [['info', '[15:40:02.017] [NOTIF] Batch into "c0ef269d…" added 1 while hidden, none of them an inbound message - nothing to raise.']],
+    FRESH_DEVICE_RESTORE_NARRATION,
+    { clean: true, unmatched: 1 },
   ],
   [
     'control: the same restore on a seat that was not minted stays dirt',
@@ -1641,7 +1673,7 @@ const FORGIVE_CASES = [
     'control: a restore that REFUSED a forged message is never narration',
     [['error', '[14:58:45.518] [AUTHORSHIP] REFUSED a replayed message 1a2b3c4d relayed by 223bc34e in b86896fc…: signed by x']],
     FRESH_DEVICE_RESTORE_NARRATION,
-    { clean: false, unmatched: 1 },
+    { clean: false, unmatched: 2 },
   ],
   [
     'a restore retired with asks still queued, and a sign-out as an ERROR, are not forgiven',
@@ -1650,7 +1682,7 @@ const FORGIVE_CASES = [
       ['error', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 12 },
+    { clean: false, unmatched: 15 },
   ],
   [
     "the adder's own memberAdded notice is forgiven at debug (#2412)",
@@ -1724,7 +1756,7 @@ const FORGIVE_CASES = [
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
-    { clean: true, unmatched: 6 },
+    { clean: true, unmatched: 7 },
   ],
   [
     'control: the same three lines in a row where no gate refusal is expected (ADM-2) stay dirt',
@@ -1746,13 +1778,13 @@ const FORGIVE_CASES = [
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 098bfb7f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 7 },
+    { clean: false, unmatched: 8 },
   ],
   [
     "a Decline that won the race, narrated by the approver at info with the group named, in a row that plays it (ADM-3), forgiven",
     [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…']],
     admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
-    { clean: true, unmatched: 8 },
+    { clean: true, unmatched: 9 },
   ],
   [
     'control: that line in a row that plays no refusal (ADM-2), for another group, or at warn, stays dirt',
@@ -1763,13 +1795,34 @@ const FORGIVE_CASES = [
     { clean: false, unmatched: 4 },
   ],
   [
+    'an ask settled before the Add, narrated at info with the group named, in a row that plays it (ADM-10), forgiven',
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: true, unmatched: 8 },
+  ],
+  [
+    'control: that line in a row that plays no refusal stays dirt',
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    'control: the settled-ask line naming ANOTHER group, or at warn, stays dirt in ADM-10',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 9, warnings: 1 },
+  ],
+  [
     'control: the same line naming ANOTHER group, or logged at warn (a read failure), stays dirt in ADM-10',
     [
       ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
       ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 8, warnings: 1 },
+    { clean: false, unmatched: 9, warnings: 1 },
   ],
   [
     'control: an Add abandoned for a reason nobody declared, or the refusal at warn, is not forgiven in ADM-10',
@@ -1778,7 +1831,7 @@ const FORGIVE_CASES = [
       ['warning', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 8, warnings: 1 },
+    { clean: false, unmatched: 9, warnings: 1 },
   ],
   [
     "the joiner's wait and both endings in the row's group, forgiven",
@@ -1862,6 +1915,12 @@ const REFUSAL_CASES = [
   ['a refresh 401 with a query string is forgiven', 'http://localhost:8081/api/auth/refresh?clientVersion=0.16.3', 401, [{ path: /^\/api\/auth\/refresh(\?|$)/, status: [401] }], true],
   // NARROW IN BOTH DIRECTIONS, which is the whole safety of a pair rule.
   ['the same path with another status is NOT forgiven', 'http://localhost:8081/api/users/' + 'a'.repeat(64), 500, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
+  // A REVOKED DEVICE'S REFUSALS (alpha.5 DEV-2/3/6), given to the revoked seat only.
+  ['a revoked device asking for its own KeyPackage: 404, forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/key-package', 404, REVOKED_REFUSALS, true],
+  ['its revocation check answered 401, forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/revoked', 401, REVOKED_REFUSALS, true],
+  ['its pending fetch answered 401, forgiven', 'https://dev.example/api/mls/messages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6?limit=500&caps=addressed-history-1', 401, REVOKED_REFUSALS, true],
+  ['control: a 500 on its KeyPackage is NOT forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/key-package', 500, REVOKED_REFUSALS, false],
+  ['control: a 401 on a send is NOT forgiven', 'https://dev.example/api/mls/send', 401, REVOKED_REFUSALS, false],
   ['the same status on another path is NOT forgiven', 'http://localhost:8081/api/mls/send', 404, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
 ];
 for (const [what, url, status, rule, shouldBeClean] of REFUSAL_CASES) {
@@ -1951,6 +2010,7 @@ const CUT_LINE =
 {
   const okCount =
     signOutCount(['[A] logout✓200 61ms', '[A] other']) === 1 &&
+    signOutCount(['[A] logout✓200 61ms', '[A] logout✗ 12ms: lost']) === 2 &&
     signOutCount(['[A] logout✓200 61ms', '[A] logout✓200 59ms']) === 2 &&
     signOutCount([]) === 0;
   console.log(`${okCount ? 'ok  ' : 'FAIL'} ${'logouts'.padEnd(12)} the sign-out counter reads zero, one and two`);

@@ -660,7 +660,8 @@ async function processBulkAddition(
       // line with the same facts. WITHOUT one (the roster read failed, or an old resumed entry) the
       // server's refusal of an undated departure is a client-side read failure, so it still warns.
       const designed =
-        (e.why === 'removed-meanwhile' || e.why === 'not-admitted') && seatGenerationCarried;
+        (e.why === 'removed-meanwhile' || e.why === 'not-admitted') &&
+        (seatGenerationCarried || e.seatGenerationKnown);
       if (designed) console.info(`[SYNC] processBulkAddition: ${e.message}`);
       else console.warn(`[SYNC] processBulkAddition: ${e.message}`);
       if (e.why === 'removed-meanwhile' || e.why === 'not-admitted') {
@@ -766,7 +767,8 @@ async function rosterPremise(
       throw new AddAbortedError(
         groupId,
         'removed-meanwhile',
-        `the ask of ${answering.userId} was settled before the Add was built`
+        `the ask of ${answering.userId} was settled before the Add was built`,
+        firstRead.seatGeneration !== null && firstRead.seatGeneration !== undefined
       );
     }
   }

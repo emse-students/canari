@@ -777,6 +777,15 @@ const comm = [
   ['the standing of a new community creator', `${NEST}[ChannelService] [WORKSPACE] creator standing workspace=00000000-0000-4000-8000-000000000001 manage=true moderate=true manageChannels=true`, 'notable'],
   ['a role granted to a member', `${NEST}[ChannelService] [WORKSPACE] role set workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb role="Administrateur" by=aaaaaaaa`, 'notable'],
   ['control: a role set but not announced is a failure, not narration', `${NEST}[ChannelService] [WORKSPACE] role set but not announced workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb: boom`, 'unexplained'],
+  // alpha.5's salon rows (RM-4..6, 2026-10-26): an entitlement's FIRST verdict of true, and a role's
+  // permission edited then announced. A false verdict, a flip, and holders left untold stay visible.
+  ['a first entitlement verdict', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=true (first evaluation)`, 'notable'],
+  ['... for a salon too', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement channel=d4baea46-7971-4739-a2ad-de419dd462bc user=f7a9bb80 entitled=true (first evaluation)`, 'notable'],
+  ['control: a first verdict of false stays visible', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=false (first evaluation)`, 'unexplained'],
+  ['control: a flip stays visible', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=true (was false)`, 'unexplained'],
+  ["a role's permission granted", `${NEST}[ChannelService] [ROLE] granted channel.manage role=72f19c26-9f8f-470c-9357-59acffa9efa6 by=f7a9bb80 perms=4`, 'notable'],
+  ['... and its holders told', `${NEST}[ChannelService] [ROLE] standing announced role=72f19c26-9f8f-470c-9357-59acffa9efa6 holders=1 verdicts=1`, 'notable'],
+  ['control: holders left untold stay visible', `${NEST}[ChannelService] [ROLE] permissions saved but holders not told role=72f19c26-9f8f-470c-9357-59acffa9efa6 holders=1: boom`, 'unexplained'],
   ['a departure begun by its first eviction', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=1`, 'notable'],
   ['control: a cut that named no departure stays visible', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=none`, 'unexplained'],
   ['the admission a key group commit asked for', `${NEST}[MessagingService] [COMMIT][commit-16f0f945] ADMITS_ASKED group=00000000-0000-4000-8000-000000000002 channel=00000000-0000-4000-8000-000000000003 people=1 entitled=1`, 'notable'],
@@ -929,11 +938,43 @@ check(
 
 // ── the scratch browser's previous device being deleted before a re-enrolment (NOTIF-20) ─────────
 check(
+  'a Welcome carried by reference is reported in every row - under the budget too (alpha.5 DUP-2)',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: 2184B, budget 3734B') &&
+    rowVerdict('[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: 2184B, budget 3734B', 'DUP-2') === null,
+  true
+);
+check(
+  '... but not a lookalike with no sizes, nor key material',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: ?B') ||
+    matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][send-07084c98] key-material carried by reference: 9000B, budget 3734B'),
+  false
+);
+check(
+  'an avatar served or absent for a push is reported, a refused one is not',
+  matches(NOTABLE_RULES, '[Nest] 1  - LOG [PushController] [PUSH_AVATAR] outcome=absent status=404 ms=6 device=true target=223bc34e') &&
+    !matches(NOTABLE_RULES, '[Nest] 1  - WARN [PushController] [PUSH_AVATAR] outcome=rejected status=403 ms=6 device=true target=223bc34e'),
+  true
+);
+check(
   'a device deletion is reported',
   matches(
     NOTABLE_RULES,
-    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc reason=owner sessionsEnded=1 groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
   ),
+  true
+);
+check(
+  '... but not one the server could not signal',
+  matches(
+    NOTABLE_RULES,
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc reason=owner sessionsEnded=1 groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=false'
+  ),
+  false
+);
+check(
+  'a session ended, its push binding read and its registrations deleted, is reported',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [InternalController] [PUSH_SESSION_END] binding read user=f7a9bb80 device=web-abc registered=false session=none') &&
+    matches(NOTABLE_RULES, '[Nest] 1 - LOG [InternalController] [PUSH_SESSION_END] user=f7a9bb80 session=e4ab0cde device=unnamed ifBoundTo=n/a removedBySession=0 removedStale=0'),
   true
 );
 check(
@@ -1096,9 +1137,6 @@ check(
     ['a departure abandoned, settling what it began', W('ChannelService', `[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=1: The departure could not be completed, retry. - settling what it began`), 'RM-5', 'FLOOR-1'],
     ['a salon grant refused', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=not_allowed`), 'RM-5', 'RM-4'],
     ['a salon gone before its roster write', W('ChannelService', `[CHANNEL] salon gone before its roster write channel=c-1 user=bbbbbbbb`), null, 'RM-5'],
-    ['a Welcome carried by reference in an admission row', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 6148B, budget 3734B'), 'ADM-3', 'DUP-1'],
-    ['... and in a device row', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 4608B, budget 3716B'), 'DEV-2', 'RM-4'],
-    ['... and in a large-group variant', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 9001B, budget 3716B'), 'BIG-1-noI1', 'CC-1'],
   ];
   for (const [name, line, row, other] of FAMILY) {
     if (row) check(`R6 expected   ${name} (${row})`, verdictIn(line, row), 'expected');
@@ -1125,7 +1163,6 @@ check(
     ['the pre-#2505 refusal that dropped admits and kept the commit', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10'],
     ['an undated admission of a seat that was not awaiting', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] ADMITTED_UNDATED group=${G} user=bbbbbbbb committer=aaaaaaaa decidedBy=base_epoch decidedAtSeatGeneration=2 seat=none - an Add with no invitation generation answered an ask`), 'ADM-6'],
     ['the member-add route refusing for an undeclared reason', W('MembersController', `[ADD_MEMBER][add-member-c3adcdfe] REFUSED not_admitted group=${G} user=bbbbbbbb reason=banned caller=aaaaaaaa - no accepted commit admitted them; nothing written`), 'ADM-10'],
-    ['a Welcome carried by reference with no sizes', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: ?B'), 'ADM-1'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
 
@@ -1137,6 +1174,12 @@ check(
   // the general classifier, in an admission row too.
   check('R6 unclaimed   key material carried by reference (in ADM-3)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] key-material carried by reference: 9000B, budget 3734B'), 'ADM-3'), 'unclaimed');
   check('R6 unclaimed   a long frame carried by reference (in DEV-2)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] long frame carried by reference: 5000B, budget 3734B'), 'DEV-2'), 'unclaimed');
+  // A REVOKED SESSION'S TOKEN REFUSED: the revocation rows' own.
+  {
+    const refused = D('AuthController', 'Access refused again: session sid=e24f05df-47fc-4b42-92ed-627d08b86a5f has ended');
+    check('R6 expected   a revoked session refused (DEV-3)', verdictIn(refused, 'DEV-3'), 'expected');
+    check('R6 dirt       a revoked session refused (in ADM-1)', verdictIn(refused, 'ADM-1'), 'out-of-row');
+  }
   // TWO RULES READ ONE LINE: the one naming the row judges it (ADM-3's Decline winning, alpha.5).
   {
     const withdrawn = L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`);

@@ -974,6 +974,11 @@ const NOTABLE = [
   // `BaseMlsService.resumeFramesHeldByCommit`). A commit's own tail: reported for the reason a commit
   // is, never routine. It is printed only when work is runnable, so a count of 0 is not its shape.
   /^\[QUEUE\] the commit of [0-9a-f]{8}\.\.\. released the MLS lock - draining the [1-9]\d* frame\(s\) it held back$/,
+  // ...and the loan itself (`mlsPerGroupScheduler.ts`, #2471): another group's frame applied under a
+  // commit's pending answer, or its own group's put back until the commit is answered. The two
+  // designed branches only - `refused to lend` and `released while its loan was still open` are faults.
+  /^\[MLS_LOCK\] a frame of \S+ is applied while the commit of \S+ awaits its answer$/,
+  /^\[MLS_LOCK\] a frame of \S+ waits for the commit of \S+ - put back, applied after it$/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
@@ -2298,6 +2303,8 @@ export function admissionMemberNarration(group, { admitted = false, declined = f
           // The same refusal as the member's console line (a Decline won the race and a seat generation was
           // carried): per group, at info only - at warn it is the client-side read failure and stays dirt.
           atLevels(['info'], new RegExp(String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`)),
+          // ...and the approver's Add stopped because the ask was settled first (another member declined, or the asker withdrew).
+          atLevels(['info'], new RegExp(String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`)),
           atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`)),
         ]
       : []),
@@ -2435,6 +2442,8 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
  * summary per restore, and whether these messages should carry proofs) is the lead's, after the stable.
  */
 export const FRESH_DEVICE_RESTORE_NARRATION = [
+  // A hidden page's batch of rows that are not arrivals (the mint's own tab is in the background).
+  atLevels(['log', 'info'], /^\[NOTIF\] Batch into "[0-9a-f]{8}…" added \d+ while hidden, none of them an inbound message - nothing to raise\.$/),
   atLevels(['log', 'info'], /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/),
 ];
 
@@ -2445,7 +2454,7 @@ export const FRESH_DEVICE_RESTORE_NARRATION = [
  *
  * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. A revoked device signs out ONCE (the wipe's `clearAuth`; the
  * session-expired redirect is told `alreadySignedOut`) and a needle cannot count, so the line is forgiven by
- * {@link REVOKED_LOGOUT_ONCE} ONLY when `signOutCount` read exactly one on that seat (`devrows.mjs`); a
+ * {@link revokedLogoutOnce} ONLY while the live console holds exactly one (`devrows.mjs`); a
  * second one stays dirt AND fails the row's counting assertion.
  */
 export const REVOKED_SIGN_OUT_NARRATION = [
@@ -2464,14 +2473,40 @@ export const REVOKED_SIGN_OUT_NARRATION = [
   atLevels(['info'], /^\[PENDING\] Pending fetch ended after \d+ message\(s\): this device was revoked by its owner, nothing remains to drain$/),
   // The session-expired handler was told the reset already signed out: it redirects and signs out no more.
   atLevels(['log', 'info'], /^\[AUTH\] Session expired - the revoked-device reset already signed out; redirecting to \S+\.$/),
+  // Its requests refused once the session ended, the renewal latched dead, the purge that needs the
+  // server's list skipped (alpha.5 DEV-2/3/6).
+  atLevels(['log', 'info'], /^\[AUTH\] 401 on GET \/api\/\S+ - renewing the token and sending the same request once more$/),
+  atLevels(['log', 'info'], /^\[A\] refresh\u2717latched \(cookie already proven dead by this device revocation - not asking again\)$/),
+  atLevels(['log', 'info'], /^\[SYNC\] WASM purge skipped - the server list could not be fetched$/),
 ];
 
-/** The ONE sign-out line of a revoked device, forgiven only where it was COUNTED as one (see {@link signOutCount}). */
-export const REVOKED_LOGOUT_ONCE = atLevels(['log', 'info'], /^\[A\] logout✓\d+ \d+ms$/);
+/**
+ * THE REQUESTS A REVOKED DEVICE HAS REFUSED, read on alpha.5's DEV-2, DEV-3 and DEV-6: its own
+ * KeyPackage gone (404), the revocation check and its last reads answered 401 once its session ended.
+ * Given to the revoked seat only, beside `MINT_REFUSALS`.
+ */
+export const REVOKED_REFUSALS = [
+  { path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/key-package$/, status: [404] },
+  { path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/revoked$/, status: [401] },
+  { path: /^\/api\/mls\/messages\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+(\?|$)/, status: [401] },
+  { path: /^\/api\/channels\/unread-counts$/, status: [401] },
+];
 
-/** How many `[A] logout✓<status>` lines a console holds: the sign-outs the app sent, counted on its own account. */
+/**
+ * The ONE sign-out line of a revoked device, forgiven only where it is COUNTED as one - and counted
+ * when the classifier ASKS, not from a snapshot: `readLines` is read at each match, so a second logout
+ * arriving after the row's own verdict is still counted and the first is no longer forgiven.
+ *
+ * @param {() => string[]} readLines the seat's console lines, read live
+ */
+export function revokedLogoutOnce(readLines) {
+  const re = /^\[A\] logout✓\d+ \d+ms$/;
+  return atLevels(['log', 'info'], { test: (s) => re.test(s) && signOutCount(readLines()) === 1, toString: () => String(re) + ' (counted once)' });
+}
+
+/** How many sign-outs a console holds: `[A] logout✓<status>` AND `[A] logout✗` (refused or lost), the sign-outs the app sent. */
 export function signOutCount(lines) {
-  return lines.filter((l) => /\[A\] logout✓\d+/.test(l)).length;
+  return lines.filter((l) => /\[A\] logout[✓✗]/.test(l)).length;
 }
 
 /**

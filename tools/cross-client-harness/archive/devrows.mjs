@@ -87,8 +87,9 @@ import {
   OIDC_LOGIN_NARRATION,
   OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_RETURN_NARRATION,
+  REVOKED_REFUSALS,
   REVOKED_SIGN_OUT_NARRATION,
-  REVOKED_LOGOUT_ONCE,
+  revokedLogoutOnce,
   signOutCount,
   SIBLING_MINT_NARRATION,
   consoleLines,
@@ -504,14 +505,12 @@ try {
   };
   const refusals = {};
   for (const d of spec.mint) {
-    // The single logout line is forgiven on a revoked seat ONLY where it was counted as exactly one.
-    logs[d] = (act.revoked ?? []).includes(d)
-      ? [...REVOKED_NARRATION, ...(signOutCount(consoleLines(cx(d))) === 1 ? [REVOKED_LOGOUT_ONCE] : [])]
-      : MINT_NARRATION;
+    // The single logout line is forgiven on a revoked seat ONLY while the live console holds exactly one.
+    logs[d] = (act.revoked ?? []).includes(d) ? [...REVOKED_NARRATION, revokedLogoutOnce(() => consoleLines(cx(d)))] : MINT_NARRATION;
     // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
     // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
     if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
-    refusals[d] = MINT_REFUSALS;
+    refusals[d] = (act.revoked ?? []).includes(d) ? [...MINT_REFUSALS, ...REVOKED_REFUSALS] : MINT_REFUSALS;
   }
   const observers = await observersOf(seats, { logs, refusals, provoked: act.records ?? {}, offline: act.offline ?? [] });
   await finishObserved(

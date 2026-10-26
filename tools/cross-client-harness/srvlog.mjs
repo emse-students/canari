@@ -751,7 +751,25 @@ const NOTABLE = [
   // a window wants to see. The gateway line is matched on its CONTROL-frame spelling only (it said
   // "stays in DB queue" for a frame with no queue row until 2026-09-27) - the MLS spelling of an
   // offline recipient is a different fact and keeps its own treatment.
-  /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ groupsCleaned=\d+ /,
+  // ITS 1.4.1 SPELLING (#2450) puts `reason=` and `sessionsEnded=` before the counts, so the first
+  // rule (`device=\S+ groupsCleaned=`) matched nothing on alpha.5 and every revocation read
+  // unexplained. Pinned to `signalled=true`: a device the server could not tell stays the finding.
+  /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ reason=\S+ sessionsEnded=\d+ groupsCleaned=\d+ keyPackagesDeleted=\d+ oneTimeKeyPackagesDeleted=\d+ queuedMessagesDeleted=\d+ signalled=true$/,
+  // A WELCOME CARRIED BY REFERENCE (`push-payload.ts` `decideProtoCarriage`): a Welcome is NEVER
+  // inlined in a push, by KIND and not by size - the device fetches it by `queuedMessageId` - and
+  // `messaging.service.ts` says so at DEBUG. First scoped to the admission, device and large rows
+  // (#2519); alpha.5's DUP-2, DUP-6 and DUP-7 then sent Welcomes of 2184 and 2812 B, UNDER the
+  // 3734 B budget, and read out-of-row: every row that adds anyone sends one, so it is reported
+  // everywhere, never a row's. Only `welcome`: `key-material` and `long-frame` are other decisions.
+  /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] welcome carried by reference: \d+B, budget \d+B$/,
+  // AN AVATAR FETCHED FOR A PUSH (`push.controller.ts` `logAvatarOutcome`): `served` and `absent`
+  // (no photo) are the two outcomes logged at info; every failure is a warn and stays the finding.
+  /\[PushController\] \[PUSH_AVATAR\] outcome=(served status=200|absent status=404) ms=\d+ device=(true|false) target=[0-9a-f]{8}$/,
+  // A SESSION ENDED, AND THE PUSH REGISTRATIONS IT LEAVES (`internal.controller.ts`): core-service
+  // asks for every session it ends deliberately - a logout, an owner revoking a device. The binding
+  // read and the delete's own account, both on their success spelling; reported, as a removal is.
+  /\[InternalController\] \[PUSH_SESSION_END\] binding read user=[0-9a-f]{8} device=\S+ registered=(true|false) session=\S+$/,
+  /\[InternalController\] \[PUSH_SESSION_END\] user=[0-9a-f]{8} session=[0-9a-f]{8} device=\S+ ifBoundTo=\S+ removedBySession=\d+ removedStale=\d+$/,
   /\[PubSub\] \S+ not connected to this gateway - control frame not delivered \(it has no queue row/,
   // THE MLS SPELLING OF AN OFFLINE RECIPIENT - its own rule, never the control-frame one above. A
   // frame for a device not on this gateway stays in its queue row and is fetched on reconnect: the
@@ -836,6 +854,17 @@ const NOTABLE = [
   // name rather than arriving pre-forgiven.
   /\[ChannelService\] \[CHANNEL_GRAINE\] group ready channel=\S+ group=\S+/,
   /\[ChannelService\] \[CHANNEL_GRAINE\] group retired channel=\S+ group=\S+ reason=made_public/,
+  // THE ENTITLEMENT A KEY GROUP'S GATE ASKS FOR, said once per person and scope
+  // (`internal-distribution-entitlement.controller.ts`: logged when the decision CHANGES, never per
+  // read). Read on every community and salon of alpha.5's RM rows (2026-10-26). Only a FIRST verdict
+  // of `true` is ordinary: a `false`, or a flip in either direction (`(was ...)`, which names its
+  // cause), is a membership decision and stays the finding.
+  /\[InternalDistributionEntitlementController\] \[DISTRIBUTION_GROUP\] entitlement (?:workspace|channel)=[0-9a-f-]{36} user=[0-9a-f]{8} entitled=true \(first evaluation\)$/,
+  // A ROLE'S PERMISSION EDITED, then its holders told (`channel.service.ts` `setRolePermission`,
+  // `announceRolePermissions`) - RM-6's gesture, one line each per edit. `REFUSED revoke ...` and
+  // `permissions saved but holders not told` are the other branches and stay dirt.
+  /\[ChannelService\] \[ROLE\] (?:granted|revoked) [a-z.]+ role=[0-9a-f-]{36} by=[0-9a-f]{8} perms=\d+$/,
+  /\[ChannelService\] \[ROLE\] standing announced role=[0-9a-f-]{36} holders=\d+ verdicts=\d+$/,
   // THE ACCESS CHANGE ITSELF, the product half of the same transition. Deliberate, rare, and visible
   // to everyone in the salon at once - which is the definition this file uses for notable rather than
   // benign. Both spellings appear, one per side of the write: the grant that opened it and the policy
@@ -1367,19 +1396,6 @@ const ROW_RULES = [
     rows: ['DEV-7'],
   },
 
-  // ── A WELCOME TOO LARGE FOR THE PUSH, CARRIED BY REFERENCE (`push-payload.ts` `decideProtoCarriage`) ──
-  // A Welcome is never inlined: its ratchet tree makes it 4-6 KB against a ~3.7 KB budget, so the
-  // device fetches it by `queuedMessageId`, and `messaging.service.ts` says so at DEBUG. A decision on
-  // an expected branch, read in alpha.5's ADM rows (2026-10-26) - expected in the rows that admit a
-  // person or a device, dirt in a row that sends no Welcome. Only `welcome`: `key-material` and
-  // `long-frame` are other decisions this rule does not read.
-  {
-    name: 'welcome carried by reference',
-    tag: /\[PUSH_SEND\]\[[^\]]+\] welcome carried by reference/,
-    shape: /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] welcome carried by reference: \d+B, budget \d+B$/,
-    rows: ['ADM-*', 'DEV-*', 'BIG-*'],
-  },
-
   // ── #2269: commit settlement and revocation ───────────────────────────────────────────────────
   // OUR OWN commit resubmitted after its answer was lost: the settlement's whole point, and a defect
   // in any row that lost no answer.
@@ -1432,6 +1448,14 @@ const ROW_RULES = [
     tag: /\[CHANNEL\] grant refused/,
     shape: /\[CHANNEL\] grant refused channel=\S+ user=\S+ outcome=(gone|public|not_member|not_allowed)$/,
     rows: ['RM-5'],
+  },
+  // A REVOKED DEVICE'S TOKEN REFUSED (`auth.controller.ts`): its session ended with the revocation,
+  // and its next request is told so. The revocation rows' own consequence, dirt anywhere else.
+  {
+    name: 'a revoked session refused',
+    tag: /\[AuthController\] Access refused again: session sid=/,
+    shape: /\[AuthController\] Access refused again: session sid=[0-9a-f-]+ has ended$/,
+    rows: ['DEV-2', 'DEV-3', 'DEV-6'],
   },
   // A salon deleted between its read and its roster write. No row provokes it.
   {

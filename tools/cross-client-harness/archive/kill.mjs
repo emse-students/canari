@@ -89,6 +89,26 @@ async function deadReport(w) {
   }
 }
 
+/**
+ * THE DYING PAGE'S CONSOLE IS KEPT EVEN WHEN THE REVIVAL THROWS. It is read before the kill and was
+ * written only at the end of a run, so a revival that threw lost it - alpha.5's KILL-2 run 10
+ * (2026-10-26), where the kill took W1's cookie jar and the record kept nothing from that run. The
+ * error is rethrown unchanged: keeping the evidence never turns a rig ERROR into a verdict.
+ *
+ * @param {string} label the run's console label, `<seat>-run<n>`
+ * @param {string} dying the dying page's console, read before the kill
+ * @param {() => Promise<any>} revive the revival
+ */
+async function revivingKeepsDying(label, dying, revive) {
+  try {
+    return await revive();
+  } catch (e) {
+    const kept = keepConsoles(id, { [`${label}-dying`]: dying });
+    console.log(`[${id}] ${label}: the revival failed - its dying console is kept at ${kept?.[`${label}-dying`] ?? 'nowhere'}`);
+    throw e;
+  }
+}
+
 /** Revives `seat`, reopens the group on it, and settles the run on the server and the seat. */
 async function reviveAndSettle(c, seat, how, label, fromEpoch) {
   const revived = await reviveSeat(seat, how, label);
@@ -161,7 +181,7 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   // THE DYING PAGE'S CONSOLE, read before the kill takes it: the row's end keeps only the last page.
   const dying = consoleDump({ page: { cx: seat.cx } }).page ?? '';
   const killed = await killSeat(seat, spec.kill);
-  const { revived, serverEpoch, caughtUpMs } = await reviveAndSettle(c, seat, spec.kill, `${id}:${killer}#${i + 1}`, fromEpoch);
+  const { revived, serverEpoch, caughtUpMs } = await revivingKeepsDying(`${killer}-run${i + 1}`, dying, () => reviveAndSettle(c, seat, spec.kill, `${id}:${killer}#${i + 1}`, fromEpoch));
   const seq = runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch);
   const { outShown, inShown } = await trafficBothWays(c, seat, other, i);
   const judged = runOutcome({ window: window ?? 'stage', seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown });
@@ -210,7 +230,7 @@ async function kill3Run(c, i, { window, delayMs, prevEnd }) {
   const dying = consoleDump({ page: { cx: seat.cx } }).page ?? '';
   const killed = await killSeat(seat, 'browser');
   const sendGesture = gesture ? await gesture : null;
-  const revived = await reviveSeat(seat, 'browser', `${id}:W1#${i + 1}`);
+  const revived = await revivingKeepsDying(`W1-run${i + 1}`, dying, () => reviveSeat(seat, 'browser', `${id}:W1#${i + 1}`));
   revived.listedMs = await openRevived(seat, c.group.name);
   const serverEpoch = serverView(c.group.id).activeEpoch;
   const caughtUpMs = await awaitClientEpoch(seat.cx, c.group.id, serverEpoch, 30_000);

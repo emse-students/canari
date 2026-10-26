@@ -7,7 +7,7 @@
  *
  *   bun archive/salon-selftest.mjs
  */
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -138,7 +138,8 @@ for (const line of [
   '[WELCOME] 3b8eb81a... is a KEY-DISTRIBUTION group (server row) - installing it as a seed carrier',
   '[QUEUE] Welcome for key group 3b8eb81a... - not announced to the conversation layer',
   '[GRAINE] ADMIT salon grantee 223bc34e to 0fb4ddf1 (community bbd34b31)',
-  "[GRAINE] salon 0fb4ddf1 of bbd34b31: a Welcome is owed to this device (queued, or an add in flight) - not joining by external commit, the admitter's Welcome is the door",
+  "[GRAINE] salon 0fb4ddf1 of bbd34b31: a Welcome is owed to this device (welcome-queued) - not joining by external commit, the admitter's Welcome is the door",
+  "[GRAINE] salon 0fb4ddf1 of bbd34b31: a Welcome is owed to this device (add-in-flight) - not joining by external commit, the admitter's Welcome is the door",
   '[WORKSPACE] my role in bbd34b31 is now "Administrateur" (canManage=true canManageChannels=true canModerate=true)',
   '[channelSettings.loadChannelAccess] channel_0fb4ddf1…',
   '[channelSettings.addAllowedUser] {"channelId":"channel_0fb4ddf1…","userId":"223bc34e…"}',
@@ -153,6 +154,16 @@ ok('control: a redelivered Welcome stays dirt', !said('[WELCOME] key group 3b8eb
 const refusal = salonRaceRefusal(scope.channelIds);
 ok('the race loser\'s 409 on the row\'s salon is RM-4\'s', refusal.test('[channelSettings.addAllowedUser failed] ChannelApiError: {"code":"CHANNEL_ACCESS_CHANGED","message":"The salon access changed meanwhile, retry.","current":{"channelId":"0fb4ddf1…","isPrivate":true'));
 ok('control: another code is not the race', !refusal.test('[channelSettings.addAllowedUser failed] ChannelApiError: {"code":"FORBIDDEN","current":{"channelId":"0fb4ddf1…"'));
+ok('control: an owed reading that is not a Welcome owed stays dirt', !said("[GRAINE] salon 0fb4ddf1 of bbd34b31: a Welcome is owed to this device (unhonoured-seat) - not joining by external commit, the admitter's Welcome is the door"));
+// Verbatim from W2 on alpha.5's RM-4 (2026-10-26), its ISO stamp stripped as `stripStamp` does.
+const reread = salonRaceReread(scope.channelIds);
+ok("the loser's panel reading the access again is RM-4's", reread.test('[channelSettings.accessWriteRefused reading the access again] {"channelId":"channel_0fb4ddf1…","code":"CHANNEL_ACCESS_CHANGED"}'));
+ok('control: a grantee who left is not the race', !reread.test('[channelSettings.accessWriteRefused reading the access again] {"channelId":"channel_0fb4ddf1…","code":"CHANNEL_GRANTEE_NOT_MEMBER"}'));
+ok("control: another salon's re-read is not the row's", !reread.test('[channelSettings.accessWriteRefused reading the access again] {"channelId":"channel_99999999…","code":"CHANNEL_ACCESS_CHANGED"}'));
+const [raceRefusal] = salonRaceRefusals(['0fb4ddf1-1111-2222-3333-444444444444']);
+ok("the loser's 409 is declared on the row's access path, 409 only", raceRefusal.path.test('/api/channels/0fb4ddf1-1111-2222-3333-444444444444/access') && raceRefusal.status.join() === '409');
+ok("control: another salon's access path is not declared", !raceRefusal.path.test('/api/channels/99999999-1111-2222-3333-444444444444/access'));
+ok('control: the salon\'s other paths are not declared', !raceRefusal.path.test('/api/channels/0fb4ddf1-1111-2222-3333-444444444444/distribution-group'));
 
 if (failures) {
   console.error(`\n${failures} salon assertion(s) failed`);
