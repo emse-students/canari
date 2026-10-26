@@ -848,6 +848,13 @@ check(
   settleFirstLooks([READ(G1).replace(' base=none active=1', '')]),
   []
 );
+// THE SALON'S SOCIAL-SERVICE TWIN (`[CHANNEL_GRAINE] served`, RM-4 alpha.6): counted apart from the
+// `read`, a singleton per group is narration and a pair is the race, exactly as above.
+const SERVED = (g) =>
+  `${NEST}[ChannelService] [CHANNEL_GRAINE] served channel=33333333-3333-4333-8333-333333333333 user=aaaaaaaa group=${g} published=false base=none active=0 devices=0`;
+check("a salon's one served first look, beside its read, is narration", settleFirstLooks([READ(G1), SERVED(G1)]), [READ(G1), SERVED(G1)]);
+check('control: two served first looks at the same salon group stay', settleFirstLooks([SERVED(G1), SERVED(G1)]), []);
+check('control: a served look that found devices is not its business', settleFirstLooks([SERVED(G1).replace('devices=0', 'devices=2')]), []);
 
 // --- namesOnlyOthers: WHOSE traffic a line is, which is what the gate is allowed to ignore -------
 //
@@ -1133,6 +1140,15 @@ check(
     ['a departure cancelled before its roster write', W('ChannelService', `[KEY_DISTRIBUTION] departure CANCELLED before its roster write scope=channel:c-1 user=bbbbbbbb departure=d-1 reason=access_removed - rolled back, retryable`), 'RM-4', 'RM-6'],
     ['a departure abandoned, settling what it began', W('ChannelService', `[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=1: The departure could not be completed, retry. - settling what it began`), 'RM-5', 'FLOOR-1'],
     ['a salon grant refused', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=not_allowed`), 'RM-5', 'RM-4'],
+    // RM-5's race, read on alpha.6 (2026-10-26): the grant the kick beat, the kick, its cut, the rejoin's cancel.
+    ['a grant refused because the kick landed first', W('ChannelService', `[CHANNEL_ACCESS] refused - the rewrite grants 1 non-member(s) channel=c-1 by=aaaaaaaa first=bbbbbbbb revision=5 locked=true`), 'RM-5', 'RM-4'],
+    ['a member kicked', L('ChannelService', `[WORKSPACE] kick workspace=w-1 target=bbbbbbbb by=aaaaaaaa`), 'RM-5', 'RM-6'],
+    ["a kick cutting the target's private salons", L('ChannelService', `[CHANNEL_GRAINE] private salons to cut workspace=w-1 user=bbbbbbbb reason=kicked salons=0/1`), 'RM-5', 'RM-4'],
+    ["a kick's departure cancelled (social)", L('ChannelService', `[KEY_DISTRIBUTION] departure outcome group=${G} user=bbbbbbbb departure=1 outcome=cancelled`), 'RM-5', 'RM-4'],
+    ['... its abandoned departure settled', L('ChannelService', `[KEY_DISTRIBUTION] abandoned departure settled scope=workspace:w-1 user=bbbbbbbb departure=1 reason=kicked outcome=cancelled settled=true`), 'RM-5', 'RM-6'],
+    ['... the distribution group cancel', L('DistributionGroup', `[DISTRIBUTION_GROUP] cancel workspace=w-1 user=bbbbbbbb departure=1 settled=true`), 'RM-5', 'RM-4'],
+    ['... and its chat-delivery face', L('MessagingService', `[DISTRIBUTION_GROUP] departure cancelled group=${G} user=bbbbbbbb departure=1 settled=true`), 'RM-5', 'DEV-6'],
+    ['the kicked member is not a reader of the salon', L('InternalDistributionEntitlementController', `[DISTRIBUTION_GROUP] entitlement channel=${G} user=bbbbbbbb entitled=false (first evaluation) - not a reader of the salon`), 'RM-5', 'RM-4'],
     ['a salon gone before its roster write', W('ChannelService', `[CHANNEL] salon gone before its roster write channel=c-1 user=bbbbbbbb`), null, 'RM-5'],
   ];
   for (const [name, line, row, other] of FAMILY) {
@@ -1152,6 +1168,11 @@ check(
     ['a background Welcome line nobody read', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] Welcome LOST group=${G}`), 'DEV-7'],
     ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
     ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
+    ['a rewrite refused for TWO non-members is not the race RM-5 plays', W('ChannelService', `[CHANNEL_ACCESS] refused - the rewrite grants 2 non-member(s) channel=c-1 by=aaaaaaaa first=bbbbbbbb revision=5 locked=true`), 'RM-5'],
+    ['a departure outcome other than cancelled', L('ChannelService', `[KEY_DISTRIBUTION] departure outcome group=${G} user=bbbbbbbb departure=1 outcome=lost`), 'RM-5'],
+    ['salons cut for a reason RM-5 does not play', L('ChannelService', `[CHANNEL_GRAINE] private salons to cut workspace=w-1 user=bbbbbbbb reason=left salons=0/1`), 'RM-5'],
+    ['an abandoned departure settled for another reason', L('ChannelService', `[KEY_DISTRIBUTION] abandoned departure settled scope=workspace:w-1 user=bbbbbbbb departure=1 reason=left outcome=cancelled settled=true`), 'RM-5'],
+    ['a cancel not settled', L('DistributionGroup', `[DISTRIBUTION_GROUP] cancel workspace=w-1 user=bbbbbbbb departure=1 settled=false`), 'RM-5'],
     ["a Decline answered not-awaiting is no row's", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=not-awaiting`), 'ADM-3'],
     ['a person refused for a reason no row plays: blocked', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=blocked committer=aaaaaaaa - the commit is refused whole`), 'ADM-10'],
     ['a person refused because the committer is off the roster', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=committer_not_on_roster committer=aaaaaaaa - the commit is refused whole`), 'ADM-3'],
