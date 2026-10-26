@@ -26,6 +26,8 @@
     isDeviceKeyPersistenceEnabled,
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
+  import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
+  import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -630,7 +632,7 @@
    * reset must not depend on which came first. Measured on DEV-2 (2026-10-25): the frame's check met
    * the dead session, read "not revoked", and this generic sign-out kept every local store.
    */
-  async function handleSessionExpired() {
+  async function handleSessionExpired(outcome?: SessionExpiredOutcome) {
     // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
     // TRIGGER. `_sessionExpiredHandled` answers "has a logout already run for this expiry" -
     // several observers reach the same verdict at once (the global notifier, the promotion path, a
@@ -677,18 +679,19 @@
     );
     // A session the server ended BECAUSE ITS OWNER REVOKED THIS DEVICE resets the device first. The
     // account is the refused credential's: on a cold start no login has named it to the session yet.
-    try {
-      await globalSession.settleSessionEndByRevocation(
-        sessionCb(),
-        globalSession.userId || currentUserId() || ''
-      );
-    } catch (e) {
-      // ACCUSED, never swallowed: the stores of a disowned device may remain.
-      console.error('[SECURITY] The revoked-device reset FAILED - local data may remain:', e);
-      appendLog(`[SECURITY] The revoked-device reset FAILED - local data may remain: ${e}`);
-    }
-    appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
-    await clearAuth().catch(() => {});
+    //
+    // The sign-out is `endExpiredSession`'s decision: the revoked-device reset's own `clearAuth` counts.
+    await endExpiredSession({
+      outcome,
+      settleRevocation: () =>
+        globalSession.settleSessionEndByRevocation(
+          sessionCb(),
+          globalSession.userId || currentUserId() || ''
+        ),
+      signOut: clearAuth,
+      loginPath,
+      log: appendLog,
+    });
     void goto(resolve(internalPath(loginPath)), { replaceState: true });
   }
 

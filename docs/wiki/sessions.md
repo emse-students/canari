@@ -475,6 +475,16 @@ of this device remains`, and on the live variant also `revocation check: the ser
 session BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
 `the server disagrees`, and no `Gateway inaccessible` after it.
 
+**Designed outcomes of that end, and how they log (2026-10-26).** The reset's own `clearAuth` IS the
+device's one sign-out: `endExpiredSession` (the session-expired handler's decision) skips its own
+sign-out when the frame path says `alreadySignedOut` or the reset answers `true` - a reset already
+running or done is joined BEFORE the identity comparison, which reads the key the wipe deletes. A reset
+that throws before its `clearAuth` still signs out once (never zero); one that throws after it costs a
+second logout, the accepted case. A pending fetch refused with the typed error naming THIS device ends
+with one info line (the server deleted the backlog; nothing remains to drain), never an error claiming
+it stays queued, and no drain-waiter line. A Decline that wins the race against an Add is an info line
+only when the Add carried a seat generation; without one the refusal is a client read failure and warns.
+
 **The cases this record does not reach** are a design limit, listed with what covers them in
 [backlog](backlog.md#a-revoked-device-whose-refresh-cannot-name-its-revocation). Tests:
 `auth-sessions.service.spec.ts`, `auth.controller.spec.ts`, `session-push-end.integration.spec.ts`,

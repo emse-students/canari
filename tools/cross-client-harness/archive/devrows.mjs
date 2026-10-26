@@ -89,6 +89,8 @@ import {
   REVOKED_RETURN_NARRATION,
   REVOKED_REFUSALS,
   REVOKED_SIGN_OUT_NARRATION,
+  revokedLogoutOnce,
+  signOutCount,
   SIBLING_MINT_NARRATION,
   consoleLines,
   logcatSince,
@@ -285,7 +287,16 @@ const ACTIONS = {
       offline: cut ? ['W3'] : [],
       minted: { W3: minted },
       detail: { minted, revokedAt, panel, seatedMs, socketsClosed: cut?.socketsClosed ?? null, reenrolled },
-      judge: () => [{ what: `the panel revoked W3 (${panel.ok ? 'ok' : `exit ${panel.exit}: ${panel.tail}`})`, ok: panel.ok }, ...own],
+      // THE SIGN-OUT IS COUNTED, NOT FORGIVEN BY A NEEDLE: the reset's own clearAuth is the one logout, and the
+      // session-expired redirect adds none. Zero (never signed out) and two (the P3 of alpha.3) both fail.
+      judge: () => [
+        { what: `the panel revoked W3 (${panel.ok ? 'ok' : `exit ${panel.exit}: ${panel.tail}`})`, ok: panel.ok },
+        ...own,
+        (() => {
+          const n = signOutCount(consoleLines(W3.cx));
+          return { what: `the revoked device signed out exactly once (${n} logout line(s))`, ok: n === 1 };
+        })(),
+      ],
     };
   },
 
@@ -494,7 +505,8 @@ try {
   };
   const refusals = {};
   for (const d of spec.mint) {
-    logs[d] = (act.revoked ?? []).includes(d) ? REVOKED_NARRATION : MINT_NARRATION;
+    // The single logout line is forgiven on a revoked seat ONLY while the live console holds exactly one.
+    logs[d] = (act.revoked ?? []).includes(d) ? [...REVOKED_NARRATION, revokedLogoutOnce(() => consoleLines(cx(d)))] : MINT_NARRATION;
     // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
     // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
     if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
