@@ -19,30 +19,59 @@ import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
-  commitPendingHistoryMarks,
+  hydrateStateLedgers,
+  resetStateLedgersForTests,
+  STATE_LEDGER,
+  takeStagedStateLedgers,
+  type StateLedgerChanges,
+} from '$lib/mls-client/stateLedgers';
+import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
   replayConversationHistory,
   resetSeenCipherCacheForTests,
-  snapshotPendingHistoryMarks,
+  stagePendingHistoryMarks,
 } from './history';
 
 const USER = 'user-1';
 const GROUP = 'group-1';
-const KEY = `history_seen_cipher:${USER}:${GROUP}`;
+const KEY = STATE_LEDGER.seen(GROUP);
+
+/** The ledgers the MLS state on disk carries: what every landed checkpoint wrote into it. */
+let disk: Map<string, string>;
 
 /** Reads the persisted set the way a later page load would. */
-const persisted = (): string[] => JSON.parse(localStorage.getItem(KEY) ?? '[]');
+const persisted = (key: string = KEY): string[] => JSON.parse(disk.get(key) ?? '[]');
 
 /** Lets pending microtasks run. A microtask drain, never a wall clock. */
 const flush = () => Promise.resolve().then(() => undefined);
 
-/** A checkpoint whose write lands at once: the snapshot, then the declaration. */
-const checkpoint = () => commitPendingHistoryMarks(snapshotPendingHistoryMarks(USER));
+/**
+ * A checkpoint whose write lands at once: the marks are staged, taken into the export, and land with
+ * it. Returns what it carried, so a case can count the writes a checkpoint made.
+ */
+const checkpoint = (): StateLedgerChanges => {
+  stagePendingHistoryMarks(USER);
+  const changes = takeStagedStateLedgers(USER) ?? {};
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  }
+  return changes;
+};
+
+/** Opens the state as a page load would, with `entries` as the ledgers it carries. */
+const openState = (entries: Record<string, string> = {}) => {
+  resetSeenCipherCacheForTests();
+  hydrateStateLedgers(USER, entries);
+};
 
 beforeEach(() => {
   localStorage.clear();
-  resetSeenCipherCacheForTests();
+  disk = new Map();
+  resetStateLedgersForTests();
+  openState();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
   // Call counts are per-case evidence: without this, a case asserting "no repair was asked for"
   // reads the reconciliations of every case before it and fails for someone else's reason.
   vi.clearAllMocks();
@@ -82,12 +111,12 @@ describe('markHistoryFrameConsumed', () => {
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
     await flush();
 
-    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(disk.has(KEY)).toBe(false);
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'fp-a')).toBe(true);
   });
 
   it('keeps what was already there rather than replacing it', () => {
-    localStorage.setItem(KEY, JSON.stringify(['older-stream-id']));
+    openState({ [KEY]: JSON.stringify(['older-stream-id']) });
 
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
     checkpoint();
@@ -98,43 +127,31 @@ describe('markHistoryFrameConsumed', () => {
   it('writes a drain that AWAITS between frames once, at its checkpoint - not once per frame', async () => {
     // The backlog's proof (performance audit, 2026-10-12): a queue drain awaits between frames, so
     // a flush coalescing one synchronous turn re-stringified the whole set - capped at five
-    // thousand entries - into `localStorage` for EVERY frame. Counted on the INSTANCE, not on
-    // `Storage.prototype`: under jsdom the prototype spy never fires, which would make every count
-    // below trivially zero.
-    const setItem = vi.spyOn(localStorage, 'setItem');
-
+    // thousand entries - into `localStorage` for EVERY frame. Now nothing is staged until the
+    // checkpoint, which carries the set once.
     for (let i = 0; i < 40; i++) {
       markHistoryFrameConsumed(USER, GROUP, `fp-${i}`);
       await flush(); // the drain's await between two frames
     }
-    expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
+    expect(takeStagedStateLedgers(USER)).toBeUndefined();
 
-    checkpoint();
-
-    expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(1);
+    expect(Object.keys(checkpoint())).toContain(KEY);
     expect(persisted()).toHaveLength(40);
-    setItem.mockRestore();
   });
 
   it('does not write twice for the same frame', () => {
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
     checkpoint();
-    // Installed AFTER the first mark is persisted, so what it counts is the second mark alone.
-    const setItem = vi.spyOn(localStorage, 'setItem');
-
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
-    checkpoint();
 
-    expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
-    setItem.mockRestore();
+    expect(checkpoint()).toEqual({});
   });
 
   it('is a no-op without an identified user or group, rather than writing a nameless key', () => {
     markHistoryFrameConsumed('', GROUP, 'fp-a');
     markHistoryFrameConsumed(USER, '', 'fp-a');
-    checkpoint();
-
-    expect(localStorage.length).toBe(0);
+    expect(checkpoint()).toEqual({});
+    expect(disk.size).toBe(0);
   });
 
   it('keeps each group to its own set', () => {
@@ -143,9 +160,7 @@ describe('markHistoryFrameConsumed', () => {
     checkpoint();
 
     expect(persisted()).toEqual(['fp-a']);
-    expect(JSON.parse(localStorage.getItem(`history_seen_cipher:${USER}:group-2`) ?? '[]')).toEqual(
-      ['fp-b']
-    );
+    expect(persisted(STATE_LEDGER.seen('group-2'))).toEqual(['fp-b']);
   });
 });
 
@@ -789,7 +804,7 @@ describe('hasHistoryFrameBeenConsumed', () => {
   });
 
   it('reads what an earlier SESSION wrote - the in-memory ring cannot, and that is why it exists', () => {
-    localStorage.setItem(KEY, JSON.stringify(['fp-from-a-previous-page-load']));
+    openState({ [KEY]: JSON.stringify(['fp-from-a-previous-page-load']) });
 
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'fp-from-a-previous-page-load')).toBe(true);
   });
@@ -809,7 +824,7 @@ describe('a mark made while a replay is walking', () => {
     //
     // Simulated here from the outside: a first mark stands in for the replay's hydration, a second
     // for a live frame arriving mid-walk, and the assertion is that the durable set holds both.
-    localStorage.setItem(KEY, JSON.stringify(['stream-id-1']));
+    openState({ [KEY]: JSON.stringify(['stream-id-1']) });
     markHistoryFrameConsumed(USER, GROUP, 'stream-id-1'); // hydrates the shared set, adds nothing
     markHistoryFrameConsumed(USER, GROUP, 'fp-live');
     checkpoint();

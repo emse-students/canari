@@ -267,6 +267,13 @@ fn reload_into(
     if let Some(dir) = path.parent() {
         report_background_stages(dir, &candidate);
     }
+    // THE APP'S LEDGERS STAY THE LIVE ONES (`mls_core::app_ledgers`): the file holds them as the last
+    // write left them, and the app may have staged newer ones into the live manager since. Sound
+    // only because both guards above held - the file is at or ahead of every live ratchet.
+    let mut candidate = candidate;
+    if let Some(current) = live.as_ref() {
+        candidate.adopt_app_ledgers(current);
+    }
     *live = Some(candidate);
     log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
     Ok(ReloadOutcome::Reloaded)
@@ -1289,6 +1296,34 @@ mod tests {
             lost.is_empty(),
             "{} bundle(s) the completed mint persisted are absent from the installed keystore -              the snapshot was read before the call rather than during it",
             lost.len()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A RESUME RELOAD KEEPS THE APP'S LEDGERS THE LIVE MANAGER HOLDS (KILL-2, 2026-10-26).
+    ///
+    /// The app staged a newer seen-ciphertext ledger into the live manager after `mls.bin` was last
+    /// written. The file is installed - nothing is ahead in a ratchet - and without the carry-over
+    /// the next write would put the older ledger back on disk under the same ratchets.
+    #[test]
+    fn a_reload_keeps_the_ledgers_the_app_staged_into_the_live_manager() {
+        let dir = temp_dir("resume-ledgers");
+        let path = dir.join("mls.bin");
+        let mut live_manager = MlsManager::load_or_create("u-resume-ledgers", "d1", None).unwrap();
+        live_manager.apply_app_ledgers([("seen:g".to_string(), Some("old".to_string()))]);
+        persist(&live_manager, &path);
+        live_manager.apply_app_ledgers([("seen:g".to_string(), Some("new".to_string()))]);
+
+        let mut live: Option<MlsManager> = Some(live_manager);
+        let outcome = reload_into(&mut live, &path, "u-resume-ledgers", "d1", DEV_KEY_B64).unwrap();
+        assert_eq!(outcome, ReloadOutcome::Reloaded);
+        assert_eq!(
+            live.as_ref()
+                .unwrap()
+                .app_ledgers()
+                .get("seen:g")
+                .map(String::as_str),
+            Some("new")
         );
         std::fs::remove_dir_all(&dir).ok();
     }

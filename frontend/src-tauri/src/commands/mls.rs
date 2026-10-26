@@ -241,9 +241,15 @@ pub(crate) async fn recuperer_cle_session_mls(
 ///
 /// The length is kept rather than nothing because a write that reports no size is a write nothing
 /// can sanity-check, and eight bytes is not a cost.
+///
+/// `ledgers` are the app's staged ledger changes (`mls_core::app_ledgers`), applied to the live
+/// manager BEFORE the export, so this write - and every later one, whoever makes it - carries them
+/// in the same file as the ratchets they describe. Applied even when the write below fails: the live
+/// manager is where they belong, and the next write of it takes them.
 #[tauri::command]
 pub(crate) async fn sauvegarder_mls_et_persister(
     device_key_b64: String,
+    ledgers: Option<std::collections::HashMap<String, Option<String>>>,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
@@ -255,6 +261,15 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         // so without this the guard lapses mid-checkpoint on a backgrounded app and a background
         // engine writes back the state it loaded BEFORE this one started (see `concurrency.rs`).
         let _checkpoint = ForegroundCritical::enter();
+        if let Some(changes) = ledgers.filter(|c| !c.is_empty()) {
+            let mut lock = manager_state
+                .lock()
+                .map_err(|_| "Failed to lock state".to_string())?;
+            let manager = lock
+                .as_mut()
+                .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+            manager.apply_app_ledgers(changes);
+        }
         let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
         // The manager lock spans the export only; the seal and the write run on the copy, in
         // checkpoint order - see `checkpoint_live_manager` for what that freed and what it kept.
@@ -484,6 +499,20 @@ pub(crate) fn oublier_groupe(
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
     manager.forget_group(&group_id, min_epoch);
     Ok(())
+}
+
+/// Every ledger the live state carries (`mls_core::app_ledgers`), read once by the app after the
+/// state opens - they arrive with the state, so nothing else needs to be read back.
+#[tauri::command]
+pub(crate) fn lire_ledgers_mls(
+    state: tauri::State<AppState>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.app_ledgers().clone())
 }
 
 #[tauri::command]

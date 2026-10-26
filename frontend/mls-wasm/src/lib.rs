@@ -413,6 +413,29 @@ impl WasmMlsClient {
         }
     }
 
+    /// Applies the app's staged ledger changes, `{ "key": "value" | null }` as JSON, to the state the
+    /// next `save_state` exports (`mls_core::app_ledgers`). Returns how many keys changed.
+    #[wasm_bindgen]
+    pub fn apply_app_ledgers(&mut self, changes_json: &str) -> Result<u32, JsValue> {
+        self.manager
+            .apply_app_ledgers_json(changes_json)
+            .map(|n| n as u32)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Every ledger the state carries, as a JSON object of strings.
+    #[wasm_bindgen]
+    pub fn app_ledgers(&self) -> String {
+        self.manager.app_ledgers_json()
+    }
+
+    /// Takes `live`'s ledgers into this client, which is about to replace it - see
+    /// `MlsManager::adopt_app_ledgers` for why a swap must carry them.
+    #[wasm_bindgen]
+    pub fn adopt_app_ledgers(&mut self, live: &WasmMlsClient) {
+        self.manager.adopt_app_ledgers(&live.manager);
+    }
+
     /// The device's STATIC fallback. Reusable: the delivery service serves this one package to
     /// every peer that finds the one-time pool empty, and an ordinary KeyPackage would be consumed
     /// by the first Welcome built on it.

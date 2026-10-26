@@ -41,10 +41,14 @@ import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
+import { readStateLedger, stageStateLedger, STATE_LEDGER } from '$lib/mls-client/stateLedgers';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
 
-/** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
+/**
+ * The in-memory key of a group's seen-ciphertext set. It was also its `localStorage` key until
+ * 2026-10-26; the set itself now lives in the MLS state ({@link STATE_LEDGER.seen}).
+ */
 function seenHistoryKey(userId: string, groupId: string): string {
   return ACCOUNT_KEY.seenCipher(userId, groupId);
 }
@@ -142,22 +146,28 @@ function saveLastStreamId(userId: string, groupId: string, streamId: string): vo
  * ONE set per (user, group), shared by the archive replay and by live delivery.
  *
  * The sharing is a CORRECTNESS requirement, not a saved parse. The replay loads this set when it
- * starts and mutates it for the whole walk, and every checkpoint writes it back
- * ({@link commitPendingHistoryMarks}). A live mark held in a separate copy would be erased by
+ * starts and mutates it for the whole walk, and every checkpoint stages it into the MLS state
+ * ({@link stagePendingHistoryMarks}). A live mark held in a separate copy would be erased by
  * that write - made from a set taken before the mark existed - and the false loss it exists to
  * prevent would return at the next reload, unchanged. Two writers and one durable slot is
  * last-write-wins; the only fix is that there be one object.
  */
 const seenCache = new Map<string, Set<string>>();
 
-/** Load the set of already-seen ciphertext fingerprints for a group, hydrating the shared cache once. */
+/**
+ * Load the set of already-seen ciphertext fingerprints for a group, hydrating the shared cache once
+ * from the ledger the MLS state carries (`stateLedgers.ts`).
+ */
 function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
   const cacheKey = seenHistoryKey(userId, groupId);
   const cached = seenCache.get(cacheKey);
   if (cached) return cached;
   let hydrated: Set<string>;
   try {
-    hydrated = new Set(JSON.parse(localStorage.getItem(cacheKey) ?? '[]'));
+    const stored: unknown = JSON.parse(readStateLedger(userId, STATE_LEDGER.seen(groupId)) ?? '[]');
+    hydrated = new Set(
+      Array.isArray(stored) ? stored.filter((e): e is string => typeof e === 'string') : []
+    );
   } catch (err) {
     console.warn(
       `[HISTORY] The seen-ciphertext set for ${groupId.slice(0, 8)} is unreadable, starting empty - ` +
@@ -170,26 +180,35 @@ function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
 }
 
 /**
- * Persist the seen-ciphertext set to localStorage. Fingerprints and row keys each keep their own cap
- * and the number of ledgers per user is capped too ({@link ./seenLedgerBounds}), so storage cannot
- * grow without limit and one namespace cannot evict the other.
+ * Stages the seen-ciphertext set INTO THE MLS STATE the checkpoint is about to export. Fingerprints
+ * and row keys each keep their own cap and the number of ledgers per user is capped too
+ * ({@link ./seenLedgerBounds}), so the state cannot grow without limit and one namespace cannot
+ * evict the other.
  */
-function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<string>): void {
-  const bounded = boundSeenEntries(hashes);
-  try {
-    localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
-  } catch (err) {
-    console.warn(
-      `[HISTORY] The seen-ciphertext set for ${groupId.slice(0, 8)} was not persisted ` +
-        `(${bounded.length} entries) - this replay is repeated in full next time: ${String(err)}`
-    );
-    return;
-  }
+function stageSeenCipherHashes(userId: string, groupId: string, hashes: Set<string>): void {
+  stageStateLedger(userId, STATE_LEDGER.seen(groupId), JSON.stringify(boundSeenEntries(hashes)));
   for (const evicted of noteLedgerWritten(userId, groupId)) {
+    stageStateLedger(userId, STATE_LEDGER.seen(evicted), null);
     const evictedKey = seenHistoryKey(userId, evicted);
-    localStorage.removeItem(evictedKey);
     seenCache.delete(evictedKey);
     pendingCheckpointMarks.delete(evictedKey);
+  }
+}
+
+/**
+ * Drops this document's in-memory sets for `userId`, because the MLS state is being OPENED and its
+ * ledgers are the only truth from now on (`BaseMlsService.openStateLedgers`).
+ *
+ * A set kept from before - an earlier login in this document - may hold marks whose ratchet advance
+ * the state being opened does not: its last checkpoint may never have landed. Kept, they would SKIP
+ * frames whose generation is unspent, the unsurvivable direction.
+ */
+export function forgetSeenCipherCaches(userId: string): void {
+  const prefix = seenHistoryKey(userId, '');
+  // Deleting the entry being visited is defined for a Map: iteration carries on with the next.
+  for (const key of seenCache.keys()) if (key.startsWith(prefix)) seenCache.delete(key);
+  for (const [key, entry] of pendingCheckpointMarks) {
+    if (entry.userId === userId) pendingCheckpointMarks.delete(key);
   }
 }
 
@@ -216,12 +235,12 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
  * DURABLE WITH THE CHECKPOINT THAT HOLDS ITS ADVANCE, NOT ON ITS OWN (2026-10-17). The in-memory
  * set answers every question of this session the instant the mark is added; the stored copy only
  * has to survive a reload, and a reload restores the ratchet as the last checkpoint left it. So
- * the mark waits for {@link commitPendingHistoryMarks}, like the replay's. It used to be written on
+ * the mark waits for {@link stagePendingHistoryMarks}, like the replay's. It used to be written on
  * its own microtask, which coalesced only the marks of ONE synchronous turn: a queue drain awaits
  * between frames, so every frame re-stringified a set capped at five thousand entries into
  * `localStorage` - and each of those writes declared a fingerprint durable before the ratchet
  * advance it stands for was, the direction that tells the next replay to skip a frame (see
- * {@link commitPendingHistoryMarks}).
+ * {@link stagePendingHistoryMarks}).
  */
 export function markHistoryFrameConsumed(
   userId: string,
@@ -294,20 +313,17 @@ export function hasHistoryFrameBeenConsumed(
 }
 
 /**
- * Groups whose shared set holds marks that no durable write has taken yet - from the archive replay
+ * Groups whose shared set holds marks that no checkpoint has taken yet - from the archive replay
  * and from every live consumer alike ({@link markHistoryFrameConsumed}).
  *
- * They deliberately do NOT drain on their own: a mark may only become durable once the ratchet
- * advance that justifies it has been checkpointed, so it waits for a checkpoint to say so. That is
- * also what bounds the writes: one per group per checkpoint, however many frames a drain decrypts.
+ * They deliberately do NOT drain on their own: a mark may only reach the disk WITH the ratchet
+ * advance that justifies it, so it waits for a checkpoint to carry it. That is also what bounds the
+ * writes: one per group per checkpoint, however many frames a drain decrypts.
  */
-const pendingCheckpointMarks = new Map<string, { userId: string; groupId: string; seq: number }>();
-
-/** Bumped on every mark, so a checkpoint can tell whether a group was marked again since. */
-let markSeq = 0;
+const pendingCheckpointMarks = new Map<string, { userId: string; groupId: string }>();
 
 /**
- * Declares that something was marked for this group that is not durable yet.
+ * Declares that something was marked for this group that no checkpoint carries yet.
  *
  * Idempotent - it is a `Map.set`, so the walk may call it on every mark without cost, which is
  * exactly why it is called there rather than once at the top: registering before anything is marked
@@ -315,147 +331,58 @@ let markSeq = 0;
  */
 function noteMarksPending(userId: string, groupId: string): void {
   if (!userId || !groupId) return;
-  pendingCheckpointMarks.set(seenHistoryKey(userId, groupId), {
-    userId,
-    groupId,
-    seq: ++markSeq,
-  });
+  pendingCheckpointMarks.set(seenHistoryKey(userId, groupId), { userId, groupId });
 }
 
 /**
- * The marks a checkpoint may declare durable: each pending group's marks AS THEY STOOD when
- * the checkpoint started, never as they stand when it lands. Opaque - only
- * {@link commitPendingHistoryMarks} reads it.
- */
-export interface PendingHistoryMarksSnapshot {
-  readonly userId: string;
-  readonly groups: ReadonlyArray<{
-    key: string;
-    groupId: string;
-    seq: number;
-    marks: Set<string>;
-  }>;
-}
-
-/**
- * Captures what {@link commitPendingHistoryMarks} may declare durable, and MUST be taken BEFORE the
- * checkpoint's write starts - the same pairing as `snapshotEmitted` for the send ledger.
- *
- * Every mark in it follows a decrypt that completed before the checkpoint was asked for, so the
- * state the checkpoint exports holds its ratchet advance. A mark made AFTER this call does not have
- * that guarantee: the native checkpoint releases the manager once it has exported (2026-10-13), and
- * the web one has always sealed in a worker, so a replay page can decrypt and mark while the seal
- * and the write are still running - an advance the file being written does not hold.
- *
- * @param userId this device's account - marks for other accounts are never captured
- */
-export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarksSnapshot {
-  const groups: Array<PendingHistoryMarksSnapshot['groups'][number]> = [];
-  if (!userId) return { userId, groups };
-  for (const [key, entry] of pendingCheckpointMarks) {
-    if (entry.userId !== userId) continue;
-    const set = seenCache.get(key);
-    if (!set) continue;
-    groups.push({ key, groupId: entry.groupId, seq: entry.seq, marks: new Set(set) });
-  }
-  return { userId, groups };
-}
-
-/**
- * Makes the accumulated marks durable, because a checkpoint just made their ratchet durable - the
+ * Stages every pending group's marks INTO THE MLS STATE the checkpoint is about to export - the
  * replay's and, since 2026-10-17, live delivery's ({@link markHistoryFrameConsumed}).
  *
- * ## The defect this closes, and why the end of the walk was the wrong moment
+ * Called by `BaseMlsService.persistCheckpoint` immediately before the platform's export, with
+ * nothing awaited in between on the web, where the export is synchronous on this thread. Every mark
+ * staged here follows a decrypt that completed before this call, so the export - taken now on the
+ * web, a moment later on native, whose decrypts all complete before their marks are made - holds
+ * its ratchet advance. And because the marks travel IN the state (`stateLedgers.ts`), they reach the
+ * disk with that advance or not at all.
  *
- * The replay returns a {@link MlsReplayCommit} the caller runs AFTER the encrypted checkpoint, so the
- * ledger can never run ahead of the persisted ratchet. That guards one direction. **The converse was
- * unguarded**: `flushEncryptedInternal` is not gated by the bulk-ingest depth (only `persistNow` is),
- * so any structural mutation DURING the walk lands a checkpoint that makes the ratchet durable while
- * the marks are still only in memory. A page killed there reloads with a ratchet ahead of its ledger,
- * the replay re-walks frames whose generation is already spent, and MLS refuses them - which the
- * client reports as `frame never read here and unreadable for good`, the loudest line it has, for
- * messages it received perfectly.
+ * ## What it replaced, and the window that closed (KILL-2, 2026-10-26)
  *
- * **Insertion order proved it rather than suggesting it** (TAB-3b, 2026-09-07). The set serialises as
- * `[...set]`, so position IS insertion order, and all six accused row keys sat at the very END of a
- * 3 511-entry set - written by the LAST run while accusing them. Had runs 3 and 4 committed their
- * own, those would appear earlier. They do not: **runs 3 and 4 wrote nothing durable at all, while
- * the generations they consumed stayed consumed.**
+ * The marks used to be written to `localStorage` AFTER the checkpoint landed, because the two
+ * orderings of two stores are not symmetric: a mark ahead of its ratchet SKIPS a frame whose
+ * generation was never spent - a message lost for good - while a ratchet ahead of its mark only
+ * re-accuses a frame that was read. That chose the survivable direction and left its window open,
+ * and the window was not microseconds: `localStorage` reaches the disk seconds after the write, so a
+ * browser killed in that delay kept the ratchet and lost the marks. KILL-2 measured the result - a
+ * read receipt consumed seconds before the kill was re-walked, MLS answered `SecretReuseError`, and
+ * the client accused it of `frame never read here and unreadable for good` and asked for a reconcile.
+ * One write holding both has no direction to choose.
  *
- * ## What binds them now
+ * ## Why the end of the walk was the wrong moment, still true
  *
- * The marks belong to whatever writes the checkpoint. `BaseMlsService.persistCheckpoint` calls this
- * after its write lands, so every checkpoint carries the marks accumulated up to it. Since
- * 2026-10-21 it is the ONLY writer of the set: the walk's thunk runs only after a checkpoint that
- * covers the walk (`withMlsBulkIngest`), so there is no "no checkpoint fired" case left for it, and
- * its write of the live set made live marks durable ahead of their own checkpoint.
+ * `flushEncryptedInternal` is not gated by the bulk-ingest depth (only `persistNow` is), so any
+ * structural mutation DURING a walk lands a checkpoint that makes the ratchet durable mid-walk.
+ * Marks committed only at the end of the walk were behind it - proved by insertion order on TAB-3b,
+ * 2026-09-07, where all six accused row keys sat at the END of a 3 511-entry set. Every checkpoint
+ * stages what is pending, so none of them leaves marks behind.
  *
- * ## The window that REMAINS, stated rather than papered over
+ * A group marked again after this call stays pending (a later mark re-registers it), so the next
+ * checkpoint carries the rest.
  *
- * A kill between the checkpoint returning and this call still leaves the ratchet one step ahead. That
- * window is not microseconds: this call writes `localStorage`, which the browser commits to disk
- * seconds later, so a process killed in that delay keeps the ratchet and loses the marks (KILL-2,
- * 2026-10-25, `docs/wiki/backlog.md`). It is the SAME window
- * `commitPersisted` accepts for the send ledger, for the same reason: **the two orderings are not
- * symmetric.** A ledger ahead of a ratchet SKIPS a frame whose generation was never spent - a message
- * lost for good. A ratchet ahead of a ledger re-accuses a frame that was in fact read - noise and a
- * pointless reconcile ask. Only the second is survivable, so the commit must follow the write and
- * cannot precede it. Shrinking the window is the fix; inverting it would not be.
- *
- * ## Only the marks that stood when the checkpoint STARTED
- *
- * It writes what {@link snapshotPendingHistoryMarks} captured before the write, not the live set: a
- * page decrypted while the seal ran is marked in a set whose ratchet advance the file does not hold,
- * and declaring it here would be the unsurvivable direction above. A group marked again since the
- * snapshot is written as the snapshot had it - merged with what the ledger already holds durably,
- * never over it - and STAYS pending, so the next checkpoint carries the rest.
- *
- * @param snapshot taken by {@link snapshotPendingHistoryMarks} before the checkpoint's write
+ * @param userId this device's account - marks for other accounts are never staged
+ * @returns how many groups were staged
  */
-export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot): void {
-  for (const group of snapshot.groups) {
-    const entry = pendingCheckpointMarks.get(group.key);
-    // Gone: a later checkpoint has written a newer set already, so this one is stale.
-    if (!entry) continue;
-    if (entry.seq === group.seq) {
-      const set = seenCache.get(group.key);
-      saveSeenCipherHashes(snapshot.userId, group.groupId, set ?? group.marks);
-      pendingCheckpointMarks.delete(group.key);
-      continue;
-    }
-    saveSeenCipherHashes(
-      snapshot.userId,
-      group.groupId,
-      withDurableMarks(snapshot.userId, group.groupId, group.marks)
-    );
+export function stagePendingHistoryMarks(userId: string): number {
+  if (!userId) return 0;
+  let staged = 0;
+  for (const [key, entry] of pendingCheckpointMarks) {
+    if (entry.userId !== userId) continue;
+    pendingCheckpointMarks.delete(key);
+    const set = seenCache.get(key);
+    if (!set) continue;
+    stageSeenCipherHashes(userId, entry.groupId, set);
+    staged++;
   }
-}
-
-/**
- * `marks` plus whatever the ledger already holds DURABLY, so writing an older snapshot can never
- * take back a mark another writer has already made durable.
- *
- * Another writer can land between a snapshot and its commit - a second checkpoint can finish
- * before an earlier one commits - so the
- * stored ledger can hold marks the snapshot predates. Writing the snapshot verbatim would drop
- * them - a frame this device read, re-accused as lost on the next walk. The extras go LAST so the bound keeps them as the newest entries; they were already durable,
- * so carrying them over makes nothing durable that was not.
- */
-function withDurableMarks(userId: string, groupId: string, marks: Set<string>): Set<string> {
-  let stored: unknown;
-  try {
-    stored = JSON.parse(localStorage.getItem(seenHistoryKey(userId, groupId)) ?? '[]');
-  } catch (err) {
-    console.warn(
-      `[HISTORY] The stored seen-ciphertext set for ${groupId.slice(0, 8)} is unreadable - ` +
-        `the checkpoint writes its snapshot alone: ${String(err)}`
-    );
-    return marks;
-  }
-  if (!Array.isArray(stored)) return marks;
-  const merged = new Set(marks);
-  for (const entry of stored) if (typeof entry === 'string') merged.add(entry);
-  return merged;
+  return staged;
 }
 
 /** @internal Drops the shared sets between Vitest cases, so one case cannot answer another's question. */
@@ -678,7 +605,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
 
 /**
  * Makes a replay's durable progress markers (Redis stream cursor + retry counters) persistent -
- * the seen-ciphertext marks are written by the checkpoint itself ({@link commitPendingHistoryMarks}). It MUST run only AFTER an encrypted MLS checkpoint that started after the replay
+ * the seen-ciphertext marks are written by the checkpoint itself ({@link stagePendingHistoryMarks}). It MUST run only AFTER an encrypted MLS checkpoint that started after the replay
  * has LANDED, so durable progress can never move ahead of the durable ratchet state (otherwise a
  * crash would skip messages whose ratchet advance was lost, forcing a costly re-add). Closing the
  * bulk-ingest window does NOT give that - the persister starts its checkpoint there without
@@ -836,7 +763,7 @@ export async function replayConversationHistory(params: {
      *
      * ONE GESTURE RATHER THAN TWO AT EIGHT CALL SITES, because "remember to register it too" is
      * precisely the obligation that produced the defect this whole seam is about - see
-     * {@link commitPendingHistoryMarks}. A site that sets the flag and forgets the registration is a
+     * {@link stagePendingHistoryMarks}. A site that sets the flag and forgets the registration is a
      * site whose marks wait for the end of the walk again, which is the behaviour being replaced.
      */
     const markSeenUpdated = (): void => {
@@ -1572,7 +1499,7 @@ export async function replayConversationHistory(params: {
     // a live commit's fingerprint durable before the checkpoint holding its epoch, and a cold replay
     // then SKIPS that commit. The walk's own marks need no write here: each was registered pending
     // (`markSeenUpdated`) before the helper marked the state dirty, so the covering checkpoint's
-    // `commitPendingHistoryMarks` snapshot holds every one of them.
+    // `stagePendingHistoryMarks` stages every one of them into the state it exports.
     return () => {
       if (latestStreamId) saveLastStreamId(userId, id, latestStreamId);
       if (retryUpdated) saveRetryCipherCounts(userId, id, retryCounts);

@@ -16,7 +16,7 @@ import { MlsStateWriteRefusedError } from '$lib/utils/hex';
  * not await it - durability must not gate delivery - and a window closing inside another one (a live
  * drain) starts nothing at all. So the cursor was written ahead of the ratchet for the length of one
  * checkpoint, and a process killed there reloads a cursor past frames its state never applied: the
- * unsurvivable direction (`commitPendingHistoryMarks` says why only "state ahead of markers" is).
+ * unsurvivable direction (`stagePendingHistoryMarks` says why only "state ahead of markers" is).
  *
  * ## What makes the ordering a proof
  *

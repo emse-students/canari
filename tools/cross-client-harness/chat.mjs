@@ -2066,8 +2066,10 @@ export async function hoverBubble(cx, textMatch) {
  *
  * The account identity matters as much as the reachability. Any check about "a second device of the
  * SAME user" is vacuous against a phone logged into the other account, while still connecting
- * perfectly. The user id is read from the page's own send-ledger key on both sides and compared
- * here - never printed, never passed as an argument.
+ * perfectly. The user id is read from the page's own device-id key (`mls_device_id_<userId>`) on
+ * both sides and compared here - never printed, never passed as an argument. It was the send-ledger
+ * key until that ledger moved into the MLS state (KILL-2, 2026-10-26); the device id is written at
+ * every login, before anything is sent.
  *
  * It takes the port and the target match rather than reading them from `names.mjs`, so this module
  * stays free of the campaign's identities: `chat.mjs` spells no name and no device.
@@ -2078,7 +2080,7 @@ export async function sameAccountAs(refCx, otherPort, otherMatch, opts = {}) {
   const UID = `(function () {
     for (var i = 0; i < localStorage.length; i++) {
       var k = localStorage.key(i);
-      if (k && k.indexOf('mls_send_ledger_') === 0) return k.slice('mls_send_ledger_'.length);
+      if (k && k.indexOf('mls_device_id_') === 0) return k.slice('mls_device_id_'.length);
     }
     return '';
   })()`;
