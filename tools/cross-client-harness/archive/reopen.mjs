@@ -23,7 +23,7 @@ import { armIfPhone } from '../device.mjs';
 import { storageLost } from '../killrows.mjs';
 import { BROWSERS, killBrowser, startBrowser } from '../launch.mjs';
 import { SITE } from '../site.mjs';
-import { watch } from '../watch.mjs';
+import { consoleDump, watch } from '../watch.mjs';
 import { unlockClient } from './pingate.mjs';
 
 /** The ways a seat is killed, by the kind of seat each applies to. */
@@ -60,6 +60,29 @@ const STORAGE_PROBE = `(async () => {
 
 /** How many cookies the browser holds for the site - read from the browser's jar, not the page. */
 const siteCookies = async (cx) => (await cx.send('Network.getCookies', { urls: [SITE] })).cookies?.length ?? null;
+
+/**
+ * A REVIVAL THAT FAILED, WITH WHAT THE REVIVED PAGE SHOWED. KILL-2's second alpha.5 attempt
+ * (2026-10-26) revived W1 on the sign-in page. The site's other cookies were still there, so the
+ * storage check passed, but `canari_refresh` was gone and nothing had been kept to say why. The error
+ * now carries the page's URL, whether the refresh cookie survived and the NAMES of the site's
+ * cookies (never a value), and the revived page's console on `revivedConsole` for the caller to keep.
+ *
+ * @param {object} cx the revived page
+ * @param {string} message the failure
+ */
+async function failedRevival(cx, message) {
+  let state;
+  let revivedConsole = '';
+  try {
+    revivedConsole = consoleDump({ page: { cx } }).page ?? '';
+    const names = ((await cx.send('Network.getCookies', { urls: [SITE] })).cookies ?? []).map((c) => c.name);
+    state = `url=${await evaluate(cx, 'location.pathname')} refreshCookie=${names.includes('canari_refresh')} cookies=${names.join(',') || 'none'}`;
+  } catch (e) {
+    state = `unreadable: ${String(e?.message ?? e).slice(0, 120)}`;
+  }
+  return Object.assign(new Error(`${message} [revived page: ${state}]`), { revivedConsole });
+}
 
 const appTabs = async (port) => (await listTargets(port).catch(() => [])).filter((t) => t.type === 'page' && String(t.url).includes(APP_TAB));
 
@@ -172,10 +195,10 @@ export async function reviveSeat(seat, how, label) {
   // gate a storage-less page can only show is recorded as the product's LOCKED.
   if (how === 'browser') {
     const lost = storageLost({ quotaDb: quotaDbOf(target.device), ...(await evaluate(cx, STORAGE_PROBE)), cookies: await siteCookies(cx) });
-    if (lost) throw new Error(`${target.device}: rig - the browser kill lost the profile's storage (${lost}); restart it cleanly, nothing to judge`);
+    if (lost) throw await failedRevival(cx, `${target.device}: rig - the browser kill lost the profile's storage (${lost}); restart it cleanly, nothing to judge`);
   }
   const pin = await unlockClient(cx, target.port, target.account, { match: APP_TAB });
-  if (pin.verdict !== 'unlocked') throw new Error(`${target.device}: the revived tab did not unlock (${pin.verdict}: ${pin.said})`);
+  if (pin.verdict !== 'unlocked') throw await failedRevival(cx, `${target.device}: the revived tab did not unlock (${pin.verdict}: ${pin.said})`);
   seat.cx = cx;
   seat.w = await watch(cx, label);
   return { readyMs, pin: pin.verdict };
