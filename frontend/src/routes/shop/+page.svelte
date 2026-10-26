@@ -28,6 +28,7 @@
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { associationAccent } from '$lib/associations/accent';
+  import AmountPicker from '$lib/components/shop/AmountPicker.svelte';
   import { customAmountLabel } from '$lib/associations/customAmountLabel';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
@@ -393,38 +394,18 @@
                           {/if}
                         </div>
 
-                        <!-- Custom amount input -->
+                        <!-- Custom amount: chips and an in-app keypad, no native input -->
                         {#if product.allowCustomAmount && product.amountCents === null}
-                          <!-- `min-w-0` on the input, and it is load-bearing: a flex item's
-                               `min-width` is `auto`, which resolves to its MIN-CONTENT width, and
-                               a bare `input type=number` carries an intrinsic one of about 170px
-                               that `flex-1` cannot shrink past. The row therefore overflowed its
-                               card the moment the card stopped being 388px wide - measured
-                               2026-09-10 on a 242px tile, with the currency label cut in half.
-                               Exactly the trap `/calendar/export` hit on a grid `1fr` track. -->
-                          <div class="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={product.customAmountMinCents != null
-                                ? product.customAmountMinCents / 100
-                                : 0}
-                              max={product.customAmountMaxCents != null
-                                ? product.customAmountMaxCents / 100
-                                : undefined}
-                              step="0.01"
-                              placeholder={m.shop_amount_placeholder()}
-                              class="border-cn-border text-text-main focus:ring-cn-accent w-full min-w-0 flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                              bind:value={customAmounts[product.id]}
-                            />
-                            <span class="text-text-muted text-xs"
-                              >{product.currency.toUpperCase()}</span
-                            >
-                          </div>
+                          <AmountPicker
+                            bind:valueCents={customAmounts[product.id]}
+                            minCents={product.customAmountMinCents}
+                            currency={product.currency}
+                          />
                         {/if}
 
                         <ProductPurchaseButton
                           {product}
-                          customAmountEuros={customAmounts[product.id]}
+                          customAmountCents={customAmounts[product.id]}
                           disabled={(product.membersOnly && !product.viewerIsCotisant) ||
                             gridRefuses(product)}
                           class="w-full"

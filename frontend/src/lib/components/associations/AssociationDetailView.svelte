@@ -65,6 +65,7 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
+  import AmountPicker from '$lib/components/shop/AmountPicker.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
   import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
   import { m } from '$lib/paraglide/messages';
@@ -636,19 +637,11 @@
                     </span>
                   </p>
                   {#if product.allowCustomAmount && product.amountCents === null}
-                    <div class="mt-2 flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={product.customAmountMinCents != null
-                          ? product.customAmountMinCents / 100
-                          : 0}
-                        max={product.customAmountMaxCents != null
-                          ? product.customAmountMaxCents / 100
-                          : undefined}
-                        step="0.01"
-                        placeholder={m.asso_product_amount_placeholder()}
-                        class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                        bind:value={shopCustomAmounts[product.id]}
+                    <div class="mt-2">
+                      <AmountPicker
+                        bind:valueCents={shopCustomAmounts[product.id]}
+                        minCents={product.customAmountMinCents}
+                        currency={product.currency}
                       />
                     </div>
                   {/if}
@@ -662,7 +655,7 @@
                 {/if}
                 <ProductPurchaseButton
                   {product}
-                  customAmountEuros={shopCustomAmounts[product.id]}
+                  customAmountCents={shopCustomAmounts[product.id]}
                   disabled={gridRefuses(product)}
                   class="w-full"
                 />
