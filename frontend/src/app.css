@@ -2546,7 +2546,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .chat-thread-panel {
     margin: 0.75rem 0.75rem 0.75rem 0.375rem;
     border-radius: 0.75rem;
-    overflow: hidden;
+    /* `clip`, NOT `hidden`: hidden is still a scroll container, so a programmatic scroll of any
+       descendant (scrollIntoView, focus) can move it and strand the header above the pane. Clip
+       paints the same rounded edge and can never be scrolled. */
+    overflow: clip;
     --chat-thread-ground: var(--cn-surface);
     background: var(--chat-thread-ground);
   }
