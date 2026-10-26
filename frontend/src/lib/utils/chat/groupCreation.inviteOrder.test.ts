@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
@@ -15,6 +15,9 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
   resolveDisplayNames: async () => (id: string) => id,
 }));
 
+import { isBlockedWith } from '$lib/users/blocks';
+import { DeliveryRenewalFailedError } from '$lib/mls-client/mlsDeliveryApi';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { inviteMembersToGroup } from './groupCreation';
 
 /**
@@ -137,5 +140,181 @@ describe('inviteMembersToGroup - says what it did', () => {
       kind: 'not-added',
       reason: 'failed',
     });
+  });
+
+  /**
+   * NET-3 (1.4.1 campaign): a request with NO ANSWER before the commit left - typed at the throw, a
+   * `TransportFailureError` that is not a `CommitOutcomeUnknownError` - staged nothing and kept
+   * nothing. It is not a failure of the invitation, and is not said as one.
+   */
+  it('answers `unreachable` when a request before the commit got no answer', async () => {
+    const d = inviteDeps();
+    d.mlsService.registerMember = vi.fn(async () => {
+      throw new TransportFailureError(new TypeError('Failed to fetch'));
+    });
+
+    expect(await inviteMembersToGroup(['bob'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'unreachable',
+    });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('answers `unreachable` when no device read of anybody was answered', async () => {
+    const d = inviteDeps();
+    d.mlsService.fetchUserDevices = vi.fn(async () => {
+      throw new TransportFailureError(new TypeError('Failed to fetch'));
+    });
+
+    const outcome = await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'unreachable' });
+  });
+
+  it('answers `no-devices` only when the server SAID nobody has a device', async () => {
+    const d = inviteDeps();
+    d.mlsService.fetchUserDevices = vi.fn(async () => []);
+
+    const outcome = await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'no-devices' });
+  });
+});
+
+/**
+ * AN INVITEE THE ADD COULD NOT REACH IS NAMED, NEVER DROPPED SILENTLY (1.4.1 dev campaign): with
+ * several invitees, the others are added and the gesture reads as a success - so the outcome carries
+ * whoever was left out, and why. A blocked invitee is skipped deliberately and is not one of them.
+ */
+describe('inviteMembersToGroup - names whoever it left out', () => {
+  it('a block check that threw leaves that person out, named `unchecked`; the others are added', async () => {
+    const d = inviteDeps();
+    vi.mocked(isBlockedWith).mockImplementation(async (u: string) => {
+      if (u === 'carol') throw new TransportFailureError(new TypeError('Failed to fetch'));
+      return false;
+    });
+    d.mlsService.addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: ['bob-dev'],
+      skipped: [],
+      welcome: new Uint8Array([1]),
+    }));
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(outcome).toEqual({
+      kind: 'added',
+      addedUsers: ['bob'],
+      leftOut: [{ userId: 'carol', why: 'unchecked' }],
+    });
+    vi.mocked(isBlockedWith).mockResolvedValue(false);
+  });
+
+  it('an empty device answer is `no-device`, an unanswered read is `unchecked`', async () => {
+    const d = inviteDeps();
+    d.mlsService.fetchUserDevices = vi.fn(async (u: string) => {
+      if (u === 'carol') return [];
+      if (u === 'dave') throw new TransportFailureError(new TypeError('Failed to fetch'));
+      return [{ deviceId: `${u}-dev` }];
+    });
+    d.mlsService.addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: ['bob-dev'],
+      skipped: [],
+      welcome: new Uint8Array([1]),
+    }));
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol', 'dave'], convo, d.deps as never);
+
+    expect(outcome).toEqual({
+      kind: 'added',
+      addedUsers: ['bob'],
+      leftOut: [
+        { userId: 'carol', why: 'no-device' },
+        { userId: 'dave', why: 'unchecked' },
+      ],
+    });
+  });
+
+  it('a blocked invitee is NOT named: that skip is deliberate', async () => {
+    const d = inviteDeps();
+    vi.mocked(isBlockedWith).mockImplementation(async (u: string) => u === 'carol');
+    d.mlsService.addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: ['bob-dev'],
+      skipped: [],
+      welcome: new Uint8Array([1]),
+    }));
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['bob'] });
+    vi.mocked(isBlockedWith).mockResolvedValue(false);
+  });
+});
+
+/**
+ * ONE OUTCOME, ONE LINE (TOK-2, 1.4.1 campaign: a failed Add was said three times in 3 ms - an
+ * untagged log line, an error with a stack, and the reporter's echo). The line is the outcome's,
+ * tagged, at `warn` for a typed failure; `error` with its stack only for an untyped cause.
+ */
+describe('inviteMembersToGroup - says its outcome once', () => {
+  let lines: { level: string; text: string }[];
+  beforeEach(() => {
+    lines = [];
+    for (const level of ['log', 'warn', 'error'] as const) {
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        lines.push({ level, text: String(args[0]) });
+      });
+    }
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const outcomeLines = () => lines.filter((l) => !l.text.startsWith('Inviting '));
+
+  it('a typed failure (a renewal that failed behind the commit) is ONE warn, no stack', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw new DeliveryRenewalFailedError(
+        'POST /api/mls/commit',
+        new TransportFailureError(new TypeError('Failed to fetch'))
+      );
+    });
+
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(outcomeLines()).toEqual([
+      {
+        level: 'warn',
+        text: expect.stringMatching(
+          /^\[GROUP\] an invitation added nobody \(failed\) in g1\.\.\.: DeliveryRenewalFailedError: /
+        ),
+      },
+    ]);
+  });
+
+  it('an untyped cause is ONE error, carrying the error itself', async () => {
+    const d = inviteDeps();
+    const boom = new Error('boom');
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw boom;
+    });
+    const errors = vi.mocked(console.error);
+
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(outcomeLines().map((l) => l.level)).toEqual(['error']);
+    expect(errors).toHaveBeenCalledExactlyOnceWith(
+      '[GROUP] an invitation added nobody (failed) in g1...: Error: boom',
+      boom
+    );
+  });
+
+  it('a refusal is ONE warn naming its reason', async () => {
+    const d = inviteDeps();
+    d.mlsService.acquireAddLock = vi.fn(async () => false);
+
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(outcomeLines()).toEqual([
+      { level: 'warn', text: '[GROUP] an invitation added nobody (add-lock-busy) in g1...' },
+    ]);
   });
 });

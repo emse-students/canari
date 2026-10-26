@@ -301,18 +301,17 @@ export function authLines(lines) {
  * pressed and cannot see the outcome, so TOK-2's "the gesture failed" read `ok: true` on alpha.4 while
  * W1 logged exactly this. The row reads the outcome here, from the app, never from the click.
  */
-export const INVITATION_FAILED = /\[GROUP\] an invitation added nobody \(failed\)$/;
+export const INVITATION_FAILED = /\[GROUP\] an invitation added nobody \(failed\)(?: in |$)/;
 
 /**
- * TOK-2's failed Add, as W1 reports it (alpha.4): the bulk invite's typed error, at log and at error
- * level, and the socket the provoked transport failure took down (`[A] ws-`; `ws+` follows). Anchored
- * on `DeliveryRenewalFailedError` - any other reason for a failed Add stays dirt on this row too.
- * THREE LINES FOR ONE FAILURE IS ITSELF NOISE, owed ONE accusing line - forgiven here only because
- * the row provokes it: backlog, "One failed Add is reported three times (TOK-2, 2026-10-25)".
+ * TOK-2's failed Add, as W1 reports it: ONE line - the app's own outcome, at warn level, carrying the
+ * typed cause (it was three on alpha.4: an untagged log line, an error with a stack and the
+ * reporter's echo; one outcome is now said once, where it is decided) - and the socket the provoked
+ * transport failure took down (`[A] ws-`; `ws+` follows). Anchored on `DeliveryRenewalFailedError` -
+ * any other reason for a failed Add stays dirt on this row too.
  */
 const TOK2_FAILED_ADD = [
-  /^\[SYNC\] processBulkAddition failed: DeliveryRenewalFailedError: POST \/api\/mls\/commit answered 401 and the token renewal failed /,
-  /^Bulk invite error: DeliveryRenewalFailedError: POST \/api\/mls\/commit answered 401 and the token renewal failed /,
+  /^\[GROUP\] an invitation added nobody \(failed\) in [0-9a-f]{8}\.\.\.: DeliveryRenewalFailedError: POST \/api\/mls\/commit answered 401 and the token renewal failed /,
   /^\[A\] ws-$/,
 ];
 
