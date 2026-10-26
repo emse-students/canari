@@ -192,7 +192,7 @@ import {
   SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
   SEAT_CLAIM_OVERTAKEN_REASON,
   COMMIT_LOCK_BUDGET_SPENT_REASON,
-  refusedAdmits,
+  ADMIT_REFUSED_REASON,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
@@ -5017,7 +5017,9 @@ export abstract class BaseMlsService implements IMlsService {
             throw new CommitRefusedError(
               validation.reason || 'epoch_mismatch',
               baseEpoch,
-              validation.currentEpoch
+              validation.currentEpoch,
+              null,
+              Array.isArray(validation.userIds) ? validation.userIds : null
             );
           }
           if (validation.duplicate) {
@@ -5300,9 +5302,12 @@ export abstract class BaseMlsService implements IMlsService {
       (answer.error instanceof ApiRefusalError
         ? (answer.error.code ?? `http_${answer.error.status}`)
         : undefined);
-    // A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT (`ADMIT_REFUSED`) is the invitation minus
+    // A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT (`admit_refused`) is the invitation minus
     // them: re-planned for the others as a race is, never again for the people it names.
-    const refusedPeople = refusedAdmits(answer.error);
+    const refusedPeople =
+      answer.answer?.reason === ADMIT_REFUSED_REASON && Array.isArray(answer.answer.userIds)
+        ? answer.answer.userIds
+        : null;
     const owed = this.oweLostInvitation(
       read.status === 'recorded' ? read.record : null,
       submission,

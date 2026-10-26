@@ -17,11 +17,11 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
 
 import { inviteMembersToGroup } from './groupCreation';
 import { MemberNotAdmittedError } from '$lib/mls-client/mlsDeliveryApi';
-import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
-/** The gate's whole-commit refusal naming `userIds`, as `refusalFromResponse` types it. */
+/** The gate's whole-commit refusal naming `userIds`, as the commit transaction types it. */
 const admitRefused = (userIds: string[]) =>
-  new ApiRefusalError(409, 'ADMIT_REFUSED', 'Commit submission HTTP error (409)', { userIds });
+  new CommitRefusedError('admit_refused', 1, 1, null, userIds);
 
 /**
  * The INVITE path owes the same ordering as creation: the server names a joiner BEFORE its Welcome
@@ -59,6 +59,8 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
     }),
     sendMessage: vi.fn(async () => {}),
     getDeviceId: vi.fn(() => 'dev-1'),
+    // Read by the race rule on a typed refusal: the epoch never moved.
+    getEpoch: vi.fn(() => 1),
   };
   return {
     order,

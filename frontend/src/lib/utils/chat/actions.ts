@@ -647,13 +647,18 @@ export async function processPendingInvitations(params: {
           retirePendingInvitation(mlsService, inv, groupId, log);
           continue;
         }
-        const admission = await automaticAdmission({
-          mlsService,
-          groupId,
-          userId: inv.userId,
-          tag: '[PENDING]',
-          log,
-        });
+        // A SEAT STILL AWAITING A MEMBER IS AN ASK, WHATEVER THE TREE SAYS: only a member's gesture
+        // answers it, so a leaf of theirs in the tree never makes it an automatic Add.
+        const admission =
+          inv.awaitingAdmission === true
+            ? 'newcomer'
+            : await automaticAdmission({
+                mlsService,
+                groupId,
+                userId: inv.userId,
+                tag: '[PENDING]',
+                log,
+              });
         if (admission === 'unreadable') continue;
         if (admission === 'newcomer') {
           askAMemberToAdmit(
@@ -892,7 +897,7 @@ export async function processPendingInvitations(params: {
             await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
             continue;
           }
-          // THE GATE REFUSED TO ADMIT THIS PERSON (`ADMIT_REFUSED`): the whole commit was refused,
+          // THE GATE REFUSED TO ADMIT THIS PERSON (`admit_refused`): the whole commit was refused,
           // nothing advanced and nobody got a leaf. A one-device Add has nobody to rebuild without;
           // the row stays as the server holds it, and a removal or a member's answer settles it.
           if (refusedAdmits(e) !== null) {
@@ -1591,16 +1596,21 @@ export async function handleWelcomeRequest(params: {
   // The roster guard above reads the server, and so does everything that brought this request
   // here. Whether the requester is a MEMBER is read from our own tree: a new person is brought in by
   // a member's gesture, never by a relayed request (`automaticAdmission`).
-  const admission = await automaticAdmission({
-    mlsService,
-    groupId,
-    userId: requesterUserId,
-    tag: '[WELCOME_REQ]',
-    log,
-  });
+  // A SEAT STILL AWAITING A MEMBER IS AN ASK, WHATEVER THE TREE SAYS: only a member's gesture
+  // answers it, so a leaf of the requester's never turns it into an automatic Add.
+  const seat = userMembers.find((m) => m.userId === requesterUserId);
+  const admission =
+    seat?.awaitingAdmission === true
+      ? 'newcomer'
+      : await automaticAdmission({
+          mlsService,
+          groupId,
+          userId: requesterUserId,
+          tag: '[WELCOME_REQ]',
+          log,
+        });
   if (admission === 'unreadable') return;
   if (admission === 'newcomer') {
-    const seat = userMembers.find((m) => m.userId === requesterUserId);
     askAMemberToAdmit(
       conversations,
       {
@@ -1860,7 +1870,7 @@ export async function handleWelcomeRequest(params: {
       await recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e, mlsService);
       return;
     }
-    // THE GATE REFUSED TO ADMIT THE REQUESTER (`ADMIT_REFUSED`): nothing advanced, nobody got a
+    // THE GATE REFUSED TO ADMIT THE REQUESTER (`admit_refused`): nothing advanced, nobody got a
     // leaf, and this request is not answered - only a member's Add brings the person back.
     if (refusedAdmits(e) !== null) {
       log(

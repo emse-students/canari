@@ -20,11 +20,10 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 import { inviteMembersToGroup } from './groupCreation';
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
-import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
-/** The gate refusing a commit whole for the people it would admit, as `refusalFromResponse` types it. */
+/** The gate refusing a commit whole for the people it would admit, as the commit transaction types it. */
 const admitRefused = (userIds: string[]) =>
-  new ApiRefusalError(409, 'ADMIT_REFUSED', 'Commit submission HTTP error (409)', { userIds });
+  new CommitRefusedError('admit_refused', 2, 2, null, userIds);
 import { decodeAppMessage } from '$lib/proto/codec';
 
 /**
@@ -227,6 +226,20 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(h.state.tree).not.toContain('w4:w4-dev');
     expect(h.mlsService.registerMember).not.toHaveBeenCalledWith(G, 'w4');
     expect(h.mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refusal about the inviter's own seat is never reported as the invitee's removal, nor rebuilt", async () => {
+    const h = inviteHarness();
+    h.mlsService.addMembersBulk.mockRejectedValue(
+      new CommitRefusedError('committer_not_on_roster', 2, 2)
+    );
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).not.toEqual({ kind: 'not-added', reason: 'removed-meanwhile' });
+    expect(outcome.kind).toBe('not-added');
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(h.state.tree).not.toContain('w4:w4-dev');
   });
 
   it('B3: a device a STALE tree still shows is not filtered - the tree is caught up, and the Add is made', async () => {

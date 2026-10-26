@@ -1,5 +1,3 @@
-import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-
 /**
  * The server's epoch gate refused a staged commit, which was then rolled back without a merge.
  *
@@ -45,12 +43,15 @@ export class CommitRefusedError extends Error {
    * @param retryAfterMs - `rate_limited` only: how long the server asked this account to wait
    *   before its next commit (`commitRateLimit.ts`); null for every other reason, or
    *   when the server named no wait.
+   * @param userIds - `admit_refused` only: the people the gate may not admit, whom the commit is
+   *   rebuilt without ({@link refusedAdmits}); null for every other reason.
    */
   constructor(
     readonly reason: string,
     readonly baseEpoch: number,
     readonly currentEpoch: number | undefined,
-    readonly retryAfterMs: number | null = null
+    readonly retryAfterMs: number | null = null,
+    readonly userIds: string[] | null = null
   ) {
     super(`Staged commit rejected: ${reason}`);
     this.name = 'CommitRefusedError';
@@ -83,6 +84,9 @@ export function isCommitRaceRefusal(error: unknown): error is CommitRefusedError
  *   group's seat generation on every submission `runCommitTransaction` made - each refusal proves
  *   an eviction landed, and the epoch stood still, so the rebuild stages on the same tree.
  *
+ * NEVER A REFUSAL ABOUT WHO THE COMMIT ADMITS (`admit_refused`, `committer_not_on_roster`): the
+ * same commit is refused again at any epoch - an Add is rebuilt WITHOUT the people instead.
+ *
  * NEVER A REFUSAL THE CLIENT ITSELF DECIDED: `rate_limited` (the server asked this account to wait)
  * and `lock_budget_spent` (nothing was even staged) are not races, and a rebuild would only meet them
  * again - whatever the epoch did meanwhile.
@@ -101,21 +105,36 @@ export function rebuildableRefusal(
   if (!(error instanceof CommitRefusedError)) return null;
   if (error.reason === 'rate_limited' || error.reason === COMMIT_LOCK_BUDGET_SPENT_REASON)
     return null;
+  // Refused for WHO it admits, not for when: the same commit meets the same answer at any epoch.
+  if (error.reason === ADMIT_REFUSED_REASON || error.reason === COMMITTER_NOT_ON_ROSTER_REASON)
+    return null;
   if (epochNow > error.baseEpoch) return 'epoch-moved';
   if (error.reason === SEAT_CLAIM_OVERTAKEN_REASON) return 'seat-claim-overtaken';
   return null;
 }
 
 /**
- * The people a commit was refused WHOLE for, or `null` when `error` is not that refusal: the
- * server's 409 `ADMIT_REFUSED`, which the gate answers when the commit would give a leaf to a person
- * it may not admit (a departure or a Decline recorded after the Add was decided, a block). Nothing
- * advanced and nobody got a leaf; a commit rebuilt WITHOUT the named people may be submitted again,
- * and one that still names them meets the same answer. Read off the typed status, code and list,
- * never the message. An empty list names nobody, so it proves nothing a rebuild could drop.
+ * The reason the gate answers (`{accepted: false, reason, userIds}`) when a commit would give a leaf
+ * to a person it may not admit - a departure or a Decline recorded after the Add was decided, a
+ * block. Nothing advanced; a commit rebuilt WITHOUT the named people may be submitted again.
+ */
+export const ADMIT_REFUSED_REASON = 'admit_refused';
+
+/**
+ * The reason the gate answers when the COMMITTER of an Add holds no admitted seat: the refusal is
+ * about this member, never about the people it adds, so nothing is rebuilt.
+ */
+export const COMMITTER_NOT_ON_ROSTER_REASON = 'committer_not_on_roster';
+
+/**
+ * The people a commit was refused WHOLE for, or `null` when `error` is not that refusal: the gate's
+ * `admit_refused` answer, read off the typed {@link CommitRefusedError} and the list it carries,
+ * never the message. Answered as a refusal in the body - the shape every client rolls its stage
+ * back on - so nothing advanced and nobody got a leaf. An empty list names nobody, so it proves
+ * nothing a rebuild could drop.
  */
 export function refusedAdmits(error: unknown): string[] | null {
-  return error instanceof ApiRefusalError && error.status === 409 && error.code === 'ADMIT_REFUSED'
+  return error instanceof CommitRefusedError && error.reason === ADMIT_REFUSED_REASON
     ? (error.userIds ?? [])
     : null;
 }

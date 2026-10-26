@@ -318,6 +318,11 @@ export interface ValidateCommitResult {
    * recorded, and that client meets the Welcome's own typed refusal instead.
    */
   refusedAdmits?: RefusedAdmit[];
+  /**
+   * On a refusal `admit_refused` only: the people the commit would have admitted and the gate may
+   * not ({@link MessagingService.enrolAdmittedPeople}). Nothing advanced; rebuild without them.
+   */
+  userIds?: string[];
 }
 
 /**
@@ -417,12 +422,19 @@ class SeatClaimOvertaken extends Error {
  * Thrown inside the advance's transaction when the commit would give a leaf to a person
  * {@link MessagingService.enrolAdmittedPeople} refuses. Accepting it with that person's admits
  * dropped - what the gate did before - merged a leaf no seat holds into every member's tree, which
- * only a later Remove could take back: so the whole commit rolls back and is answered `409
- * ADMIT_REFUSED` naming them, and the client rebuilds it without them. A type, so the catch never
- * reads a message.
+ * only a later Remove could take back: so the whole commit rolls back. It is ANSWERED, not thrown to
+ * the client: `200 {accepted: false, reason: 'admit_refused', userIds}`, the shape every client
+ * already rolls its stage back on (a client older than this change keeps its stage on a thrown 4xx,
+ * which stops its commits in the group), and the client rebuilds the commit without the people
+ * named. When the COMMITTER holds no admitted seat, the reason is `committer_not_on_roster` and
+ * names nobody: the refusal is about the committer, and dropping the people would not lift it. A
+ * type, so the catch never reads a message.
  */
 class AdmitRefused extends Error {
-  constructor(readonly userIds: string[]) {
+  constructor(
+    readonly userIds: string[],
+    readonly committerNotOnRoster: boolean
+  ) {
     super(`admit refused: ${userIds.length} person(s)`);
     this.name = 'AdmitRefused';
   }
@@ -2586,7 +2598,7 @@ export class MessagingService {
           // its roster, when it carries one, else the base epoch's (`invitationSeatGeneration`).
           // The inline Welcome's target is a person this commit admits too, held to the same bar.
           if (!distributionScopeOf(group)) {
-            const refused = await this.enrolAdmittedPeople(
+            const { refused, committerNotOnRoster } = await this.enrolAdmittedPeople(
               m,
               groupId,
               committer,
@@ -2609,11 +2621,11 @@ export class MessagingService {
             }
             if (refused.size > 0) {
               this.logger.warn(
-                `[COMMIT][${traceId}] REJECT admit_refused group=${groupId} baseEpoch=${baseEpoch} ` +
-                  `users=${[...refused].map(cutUserId).join(',')} - the commit would give them a ` +
-                  `leaf no seat holds; nothing advanced`
+                `[COMMIT][${traceId}] REJECT ${committerNotOnRoster ? 'committer_not_on_roster' : 'admit_refused'} ` +
+                  `group=${groupId} baseEpoch=${baseEpoch} users=${[...refused].map(cutUserId).join(',')} - ` +
+                  `the commit would give them a leaf no seat holds; nothing advanced`
               );
-              throw new AdmitRefused([...refused]);
+              throw new AdmitRefused([...refused], committerNotOnRoster);
             }
           }
           // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
@@ -2730,15 +2742,22 @@ export class MessagingService {
             })
           );
         }
-        // A person it admits may not be admitted: nothing was written, and the client rebuilds the
-        // commit without the people named (`RefusalCode.ADMIT_REFUSED`).
+        // A person it admits may not be admitted: nothing was written. ANSWERED, never thrown, so
+        // every client rolls its stage back ({@link AdmitRefused}); the client rebuilds without the
+        // people named - or, the committer itself holding no seat, stops.
         if (e instanceof AdmitRefused) {
-          throw new ConflictException(
-            refusalBody(RefusalCode.ADMIT_REFUSED, 'this commit is not accepted', {
-              error: 'admit_refused',
-              userIds: e.userIds,
-            })
-          );
+          return e.committerNotOnRoster
+            ? {
+                accepted: false,
+                currentEpoch: group.activeEpoch,
+                reason: 'committer_not_on_roster',
+              }
+            : {
+                accepted: false,
+                currentEpoch: group.activeEpoch,
+                reason: 'admit_refused',
+                userIds: e.userIds,
+              };
         }
         // The seat went between the target check and this transaction: nothing was written.
         if (e instanceof WelcomeSeatGone) {
@@ -3872,11 +3891,13 @@ export class MessagingService {
    * - AN AWAITING SEAT WHOSE PERSON EVER DEPARTED OR WAS EVER DECLINED, when the commit carries no
    *   invitation generation (`departed_and_undated`): the base epoch alone cannot order it against
    *   that departure.
-   * ANY REFUSAL REFUSES THE WHOLE COMMIT (the caller throws `AdmitRefused`, answered `409
-   * ADMIT_REFUSED` with the people named): accepting it with their admits dropped merged a leaf no
-   * seat holds into every member's tree. The client rebuilds the commit without them. An awaiting
-   * seat admitted on the base epoch's order alone is logged at WARN (`ADMITTED_UNDATED`), so its rate
-   * is measured. A person already ADMITTED is left as they are. A key group's roster is
+   * ANY REFUSAL REFUSES THE WHOLE COMMIT (the caller throws `AdmitRefused`, answered
+   * `{accepted: false, reason: 'admit_refused', userIds}`): accepting it with their admits dropped
+   * merged a leaf no seat holds into every member's tree. The client rebuilds the commit without
+   * them. EVERY CANDIDATE IS DECIDED BEFORE ANYTHING IS WRITTEN OR LOGGED AS ADMITTED: a refusal
+   * rolls the advance back, so nobody is enrolled and no `ENROLLED` / `ADMITTED_UNDATED` line is
+   * written for an admission that did not happen. An awaiting seat admitted on the base epoch's
+   * order alone is logged at WARN (`ADMITTED_UNDATED`), so its rate is measured. A person already ADMITTED is left as they are. A key group's roster is
    * social-service's entitlement, not a row here, and never reaches this.
    *
    * IDEMPOTENT BY CONSTRUCTION: it runs once per accepted commit, inside the transaction that writes
@@ -3885,7 +3906,8 @@ export class MessagingService {
    *
    * @param decidedAt the seat generation the Add was decided at: the invitation's, else the base
    *   epoch's (`decidedBy` says which, for the log line).
-   * @returns the people refused, whose admits the caller drops.
+   * @returns the people refused (the caller then refuses the commit), and whether the refusal is the
+   *   committer's own missing seat.
    */
   private async enrolAdmittedPeople(
     m: EntityManager,
@@ -3895,10 +3917,11 @@ export class MessagingService {
     decidedAt: number,
     decidedBy: 'invitation' | 'base_epoch',
     traceId: string
-  ): Promise<Set<string>> {
+  ): Promise<{ refused: Set<string>; committerNotOnRoster: boolean }> {
     const refused = new Set<string>();
+    const none = { refused, committerNotOnRoster: false };
     const people = [...new Set(admitted.map((a) => a.userId))].filter((u) => u !== committer);
-    if (people.length === 0) return refused;
+    if (people.length === 0) return none;
     const seats = m.getRepository(GroupMember);
     const held = new Map(
       (
@@ -3911,7 +3934,7 @@ export class MessagingService {
     // Not on the roster (enrolled below), or on it but still awaiting a member (lifted after this):
     // the people this commit would ADMIT. Someone already admitted is left as they are.
     const candidates = people.filter((u) => !held.has(u) || held.get(u) === true);
-    if (candidates.length === 0) return refused;
+    if (candidates.length === 0) return none;
     const refuse = (userId: string, reason: string) => {
       refused.add(userId);
       this.logger.warn(
@@ -3925,7 +3948,7 @@ export class MessagingService {
     });
     if (!committerSeat) {
       for (const userId of candidates) refuse(userId, 'committer_not_on_roster');
-      return refused;
+      return { refused, committerNotOnRoster: true };
     }
     // A removal or a self-leave closes a stretch; a Decline deletes the ask's stretch and records
     // its generation on the person's eviction row instead (`withdrawAwaitingSeat`).
@@ -3964,6 +3987,10 @@ export class MessagingService {
             ).map((r) => r.userId)
           )
         : new Set<string>();
+    // DECIDED FIRST, WRITTEN AFTER: a single refusal rolls the whole advance back, so nobody is
+    // enrolled or said admitted until every candidate is decided.
+    const toEnrol: string[] = [];
+    const undated: string[] = [];
     for (const userId of candidates) {
       if (departed.has(userId)) {
         refuse(
@@ -3981,25 +4008,31 @@ export class MessagingService {
         refuse(userId, 'blocked');
         continue;
       }
+      // An awaiting seat is lifted by the caller, never re-enrolled.
       if (held.has(userId)) {
-        // An awaiting seat: lifted by the caller, never re-enrolled. Admitted on the base epoch's
-        // order alone, it is said at WARN, so how often an undated Add answers an ask is counted.
-        if (decidedBy === 'base_epoch') {
-          this.logger.warn(
-            `[ADD_MEMBER][${traceId}] ADMITTED_UNDATED group=${groupId} user=${cutUserId(userId)} ` +
-              `committer=${cutUserId(committer)} decidedBy=base_epoch decidedAtSeatGeneration=${decidedAt} ` +
-              `seat=awaiting - an Add with no invitation generation answered an ask`
-          );
-        }
+        if (decidedBy === 'base_epoch') undated.push(userId);
         continue;
       }
+      toEnrol.push(userId);
+    }
+    if (refused.size > 0) return { refused, committerNotOnRoster: false };
+    // Admitted on the base epoch's order alone, an awaiting seat is said at WARN, so how often an
+    // undated Add answers an ask is counted.
+    for (const userId of undated) {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] ADMITTED_UNDATED group=${groupId} user=${cutUserId(userId)} ` +
+          `committer=${cutUserId(committer)} decidedBy=base_epoch decidedAtSeatGeneration=${decidedAt} ` +
+          `seat=awaiting - an Add with no invitation generation answered an ask`
+      );
+    }
+    for (const userId of toEnrol) {
       await ensureGroupMember(m, groupId, userId);
       this.logger.log(
         `[ADD_MEMBER][${traceId}] ENROLLED by commit group=${groupId} user=${cutUserId(userId)} ` +
           `committer=${cutUserId(committer)} decidedBy=${decidedBy}`
       );
     }
-    return refused;
+    return none;
   }
 
   /**

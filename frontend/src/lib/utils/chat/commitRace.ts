@@ -22,7 +22,8 @@ import { readConfirmedTree } from './confirmedTree';
  *   concurrent Remove of the same person, which the invitation must not undo;
  * - `premise-unreadable`: the server read that would show the premise failed;
  * - `not-admitted`: the gate refused the commit whole for every person it would have admitted
- *   (`ADMIT_REFUSED`), so nobody is left to add.
+ *   (`admit_refused`), so nobody is left to add - or refused a person the gesture cannot go on
+ *   without (`mustAdmit`), before anything was staged again.
  */
 export type AddAbortReason =
   | 'tree-unconfirmed'
@@ -141,6 +142,11 @@ export interface RacedAddOptions {
    * does not land is re-planned rather than lost (`owedInvitations.ts`).
    */
   invitation?: CommitInvitation;
+  /**
+   * A person the gesture means nothing without - a 1:1 conversation's peer. Refused by the gate, the
+   * Add is abandoned at once (`not-admitted`), never staged again for the others.
+   */
+  mustAdmit?: string;
 }
 
 /**
@@ -158,7 +164,7 @@ export interface RacedAddOptions {
  * the commit built on it - unless the premise reads the tree's own record (`premiseReadsTree`). One
  * that cannot be confirmed aborts ({@link AddAbortedError} `tree-unconfirmed`), never "added".
  *
- * **A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT IS REBUILT WITHOUT THEM** (`ADMIT_REFUSED`,
+ * **A COMMIT REFUSED WHOLE FOR THE PEOPLE IT WOULD ADMIT IS REBUILT WITHOUT THEM** (`admit_refused`,
  * {@link refusedAdmits}): the gate names them, nothing advanced, and the next pass offers only the
  * other candidates - the invitation it carries loses them too, so a kept commit re-planned later
  * never names them again. TERMINATION IS THE SAME KIND OF PROOF: each such pass drops at least one
@@ -178,7 +184,7 @@ export async function addDevicesRebuildingOnRace(
   log: (msg: string) => void,
   opts: RacedAddOptions = {}
 ): Promise<RacedAddResult> {
-  const { confirmPremise, premiseReadsTree = false, beforeStage, invitation } = opts;
+  const { confirmPremise, premiseReadsTree = false, beforeStage, invitation, mustAdmit } = opts;
   const refused = new Set<string>();
   let offered = candidates;
   // Counted across every rebuild, so a pass after a refusal re-checks the premise like any rebuild.
@@ -250,7 +256,7 @@ export async function addDevicesRebuildingOnRace(
       if (dropped.size === 0) throw e;
       for (const u of dropped) refused.add(u);
       offered = pool.filter((d) => !dropped.has(d.userId));
-      if (offered.length === 0) {
+      if (offered.length === 0 || (mustAdmit !== undefined && dropped.has(mustAdmit))) {
         log(
           `[COMMIT_RACE] ${groupId.slice(0, 8)}... the gate refused to admit every person the Add offered (${[...refused].join(', ')}) - nobody added`
         );

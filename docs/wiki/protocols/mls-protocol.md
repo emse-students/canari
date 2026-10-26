@@ -1987,13 +1987,18 @@ against PostgreSQL in `add-enrolment.integration.spec.ts`. **It is the ONLY writ
 since ADM-3** - see "The commit is the one writer of a new person" below.
 
 **Refused, and logged `NOT_ENROLLED reason=...`; ANY such refusal refuses the WHOLE commit**
-(`409 ADMIT_REFUSED`, `userIds` naming the refused people, logged `REJECT admit_refused`): nothing
-advances, nobody gets a leaf, no device row is written. A commit accepted with its admits dropped
-would still have given those people a leaf in every member's tree - a leaf no seat holds - so the
-gate refuses it rather than accept it in part, the reasoning `SEAT_CLAIM_OVERTAKEN` already follows.
-The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
+(answered `200 {accepted: false, reason: 'admit_refused', userIds}` - `userIds` naming the refused
+people, logged `REJECT admit_refused` - the shape `WelcomeSeatGone` already answers, so a client of
+any version clears its staged commit on it): nothing advances, nobody gets a leaf, no device row is
+written. A commit accepted with its admits dropped would still have given those people a leaf in
+every member's tree - a leaf no seat holds - so the gate refuses it rather than accept it in part,
+the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Every candidate is decided before anything
+is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
+rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
 
-- everyone not on the roster when the committer holds no admitted seat itself (`committer_not_on_roster`);
+- everyone not on the roster when the committer holds no admitted seat itself - answered with its
+  own reason, `{accepted: false, reason: 'committer_not_on_roster'}` and no `userIds`: it is about
+  the committer, not the people added, so nothing is rebuilt and nobody is reported removed;
 - a person a block stands between and the committer (`blocked`);
 - **a person who departed after the Add was DECIDED** (`departed_since_decision`, with
   `decidedBy=invitation|base_epoch`). A removal holds against an Add built before it (owner's rule,
@@ -2035,15 +2040,23 @@ The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRac
   (`ADMITTED_UNDATED ... decidedBy=base_epoch`), so how often an undated Add answers an ask is
   measured, not assumed.
 
-**The client rebuilds, and never loops.** `refusedAdmits` reads the 409 off its typed status, code
-and list. `addDevicesRebuildingOnRace` drops the named people's candidates and their names from the
+**The client rebuilds, and never loops.** `refusedAdmits` reads the typed `CommitRefusedError`
+(reason `admit_refused` and its `userIds`), never the message; both reasons are not rebuildable as a
+race (`rebuildableRefusal`), since the same commit meets the same answer at any epoch. `addDevicesRebuildingOnRace` drops the named people's candidates and their names from the
 invitation it carries, re-checks the premise without them, and stages again; each such pass drops at
 least one candidate, a refusal naming none of them leaves as thrown, and with nobody left the Add is
 abandoned (`not-admitted`, reported `removed-meanwhile`). A one-device Add - the pending-row sweep,
 the welcome-request answer - has nobody to rebuild without: it logs and stops, the row stays as the
-server holds it. A kept commit settled `ADMIT_REFUSED` is re-planned for the other invited people
-as after a race, and is `refused` (the member told) when it named nobody else. A 1:1 creation whose
-peer is refused is not created.
+server holds it. A kept commit settled `admit_refused` (read off the answer's body) is re-planned
+for the other invited people as after a race, and is `refused` (the member told) when it named
+nobody else. A 1:1 creation whose peer is refused is abandoned at once (`mustAdmit`), before anything
+is staged again, and is not created.
+
+**A seat still awaiting a member is always an ask.** The pending-row sweep and the welcome-request
+answer never make an automatic Add for a person whose seat `awaitingAdmission`, whatever the local
+tree holds: they ask a member (`onJoinApprovalRequested`), and only that member's gesture answers.
+The Android background route `send-welcome-and-commit` goes through the same gate; its only admit is
+the Welcome target, so a refusal there is the `WelcomeSeatGone` answer.
 
 A seat already on the roster AND admitted is left as it is. A refused Welcome target refuses the
 whole commit that carries it inline (`WelcomeSeatGone`): the background native Add has no other way

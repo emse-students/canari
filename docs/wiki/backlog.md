@@ -204,6 +204,18 @@ client's cleanup `DELETE mls/groups/:id` is now answered 403 `NOT_A_MEMBER` (the
 seat yet), so the empty row stays. Owed: a server-side path that ends a group nobody ever joined
 (the creator's own bootstrap, or the orphan sweep), with a spec.
 
+## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
+
+The settlement of an unresolved commit classifies a refusal from its body once, and treats it as
+final even when the reason is a state that can change later (a seat, a block). Owed: name which
+refusal reasons are definitive, and re-plan rather than settle on the others, with a test per reason.
+
+## P3 - Key groups still accept a commit with a refused admit dropped (ADM-3 review, 2026-10-26)
+
+A conversation's gate refuses the whole commit when it may not admit someone (ADM-3); a key group's
+gate still accepts it and drops that admit. Owed: decide whether key groups follow the same
+whole-commit rule, and the client rebuild it needs, with a spec on each side.
+
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
 `assertCallerActsOnGroup` (`utils/group-membership.ts`) and the private member checks of

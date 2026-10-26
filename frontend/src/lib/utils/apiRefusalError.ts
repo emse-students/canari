@@ -34,11 +34,6 @@ export class ApiRefusalError extends Error {
    * (`retryAfterMs`); null otherwise.
    */
   readonly retryAfterMs: number | null;
-  /**
-   * The people a refusal names, when its body carried a `userIds` list of strings (a commit refused
-   * whole for the people it would admit, `ADMIT_REFUSED`); null otherwise.
-   */
-  readonly userIds: string[] | null;
 
   constructor(
     /** The HTTP status the server answered with. */
@@ -46,24 +41,19 @@ export class ApiRefusalError extends Error {
     /** The server's stable error code, or null when the body carried none. */
     readonly code: string | null,
     message: string,
-    details: {
-      reason?: string | null;
-      retryAfterMs?: number | null;
-      userIds?: string[] | null;
-    } = {}
+    details: { reason?: string | null; retryAfterMs?: number | null } = {}
   ) {
     super(message);
     this.name = 'ApiRefusalError';
     this.reason = details.reason ?? null;
     this.retryAfterMs = details.retryAfterMs ?? null;
-    this.userIds = details.userIds ?? null;
   }
 }
 
 /**
  * TYPES A REFUSED RESPONSE AT THE THROW: the status always, the server's stable `code` when its JSON
  * body carries a string one (Nest serialises `{ code, message }` as the body itself), and its
- * `reason`, `retryAfterMs` and `userIds` when present. The ONE
+ * `reason` and `retryAfterMs` when present. The ONE
  * implementation for every endpoint that used to `throw new Error('... failed (' + status + ')')`,
  * which spelt the number into a sentence nobody could read back.
  *
@@ -81,7 +71,6 @@ export async function refusalFromResponse(
   let code: string | null = null;
   let reason: string | null = null;
   let retryAfterMs: number | null = null;
-  let userIds: string[] | null = null;
   try {
     const parsed: unknown = await res.clone().json();
     if (parsed && typeof parsed === 'object') {
@@ -91,9 +80,6 @@ export async function refusalFromResponse(
       if (typeof body.retryAfterMs === 'number' && Number.isFinite(body.retryAfterMs)) {
         retryAfterMs = Math.max(0, body.retryAfterMs);
       }
-      if (Array.isArray(body.userIds) && body.userIds.every((u) => typeof u === 'string')) {
-        userIds = body.userIds as string[];
-      }
     }
   } catch {
     // Not JSON (or already consumed): the refusal then has no machine-readable name, only a status.
@@ -101,6 +87,5 @@ export async function refusalFromResponse(
   return new ApiRefusalError(res.status, code, `${message} (${res.status})`, {
     reason,
     retryAfterMs,
-    userIds,
   });
 }

@@ -92,9 +92,6 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A Welcome to a device no key package names (revoked, or never registered) is terminal for that
   // Welcome; the sender's own commit answer already said the device was not admitted.
   'WELCOME_TARGET_UNKNOWN',
-  // A commit refused whole for the people it would admit is read by `refusedAdmits`: an Add is
-  // rebuilt without them, and they are reported not added.
-  'ADMIT_REFUSED',
 ];
 
 /** Every code {@link describeRefusalCode} words. */

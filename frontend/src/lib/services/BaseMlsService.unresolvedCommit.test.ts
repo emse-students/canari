@@ -79,6 +79,7 @@ type Answer = {
   currentEpoch?: number;
   duplicate?: boolean;
   refusedAdmits?: RefusedAdmit[];
+  userIds?: string[];
 };
 type Step = Answer | Error;
 
@@ -1244,7 +1245,7 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
 
   it('a commit refused whole for the people it admits is re-planned WITHOUT them, as a race', async () => {
     const c = ctx(
-      submitting(new ApiRefusalError(409, 'ADMIT_REFUSED', 'refused', { userIds: ['w6'] })),
+      submitting({ accepted: false, reason: 'admit_refused', currentEpoch: 5, userIds: ['w6'] }),
       { state: keptWith({ users: ['w5', 'w6'], rostered: ['w6'] }) }
     );
     const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
@@ -1253,7 +1254,7 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     expect(replanner).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         cause: 'race',
-        reason: 'ADMIT_REFUSED',
+        reason: 'admit_refused',
         invitation: { users: ['w5'], rostered: [] },
       })
     );
@@ -1261,14 +1262,14 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
 
   it('a commit refused whole for EVERY person it admits is `refused` - told, never re-planned', async () => {
     const c = ctx(
-      submitting(new ApiRefusalError(409, 'ADMIT_REFUSED', 'refused', { userIds: ['w5'] })),
+      submitting({ accepted: false, reason: 'admit_refused', currentEpoch: 5, userIds: ['w5'] }),
       { state: keptInvite() }
     );
     const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
     register(c, replanner);
     await settled(c);
     expect(replanner).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ cause: 'refused', reason: 'ADMIT_REFUSED', invitation: INVITATION })
+      expect.objectContaining({ cause: 'refused', reason: 'admit_refused', invitation: INVITATION })
     );
   });
 

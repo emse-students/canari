@@ -1682,6 +1682,8 @@ export class MlsDeliveryApi {
     duplicate?: boolean;
     /** The declared admits an ACCEPTED commit did not record, each with why ({@link RefusedAdmit}). */
     refusedAdmits?: RefusedAdmit[];
+    /** A refusal `admit_refused` only: the people the gate may not admit (`refusedAdmits`). */
+    userIds?: string[];
   }> {
     // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
     // leave), because a commit transaction awaits this while it HOLDS THE MLS MUTEX, from its stage to
@@ -1729,6 +1731,7 @@ export class MlsDeliveryApi {
       newEpoch?: number;
       duplicate?: boolean;
       refusedAdmits?: RefusedAdmit[];
+      userIds?: string[];
     };
   }
 

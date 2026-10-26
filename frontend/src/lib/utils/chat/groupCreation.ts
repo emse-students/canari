@@ -385,7 +385,7 @@ export type BulkAdditionOutcome =
  * `resumed` is set only by {@link replanLostInvitation}: the same invitation, made again after its
  * kept commit did not land. `answering` only by a member's answer to a join ask: the ask it answers.
  *
- * A PERSON THE GATE REFUSED TO ADMIT (`ADMIT_REFUSED` - a Decline or a departure recorded after the
+ * A PERSON THE GATE REFUSED TO ADMIT (`admit_refused` - a Decline or a departure recorded after the
  * Add was decided, a block) is never given a leaf: the commit is rebuilt without them
  * (`addDevicesRebuildingOnRace`) and they are absent from `addedUsers`; when nobody is left, the
  * invite is `removed-meanwhile`. A member-add call that answers `MemberNotAdmittedError` after the
@@ -946,16 +946,12 @@ async function performDirectAdd(
         ...d,
         userId: contactDeviceIds.has(d.deviceId) ? contact : userId,
       })),
-      log
+      log,
+      // A CONVERSATION WITHOUT ITS PEER IS NOT CREATED. The gate refusing to admit them (a block
+      // recorded since the check above) abandons the Add before anything is staged again
+      // (`AddAbortedError`), and the caller's catch drops the group on both estates.
+      { mustAdmit: contact }
     );
-    // A CONVERSATION WITHOUT ITS PEER IS NOT CREATED. The gate refused to admit them (a block
-    // recorded since the check above): the commit was rebuilt without them, and the caller's catch
-    // drops the group on both estates.
-    if (raced.notAdmitted.length > 0) {
-      throw new Error(
-        `the server refused to admit ${raced.notAdmitted.join(', ')} into ${groupId.slice(0, 8)}...`
-      );
-    }
     if (raced.kind === 'already-in-tree') {
       log(`[ADD] every device already holds a leaf in ${groupId} - nothing to add`);
       return;
