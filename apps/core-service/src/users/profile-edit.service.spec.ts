@@ -13,6 +13,7 @@ import {
 } from './profile-edit.errors';
 import { ProfileChange } from './entities/profile-change.entity';
 import { User } from './entities/user.entity';
+import { UserRowGoneError } from './user-write';
 
 const UUID = '11111111-2222-3333-4444-555555555555';
 const EDIT = {
@@ -83,7 +84,9 @@ describe('ProfileEditService', () => {
     jest.restoreAllMocks();
   });
 
-  function make(opts: { user?: Partial<User> | null; attributes?: Record<string, unknown> } = {}) {
+  function make(
+    opts: { user?: Partial<User> | null; attributes?: Record<string, unknown>; gone?: boolean } = {}
+  ) {
     const user = (
       opts.user === null
         ? null
@@ -91,7 +94,10 @@ describe('ProfileEditService', () => {
     ) as User | null;
     const users = { findOne: jest.fn().mockResolvedValue(user) } as unknown as Repository<User>;
     const saved: unknown[] = [];
+    // The user row is written as ONE column update; 0 rows once `gone`.
+    const userRows = { update: jest.fn().mockResolvedValue({ affected: opts.gone ? 0 : 1 }) };
     const manager = {
+      getRepository: jest.fn(() => userRows),
       save: jest.fn(async (_entity: unknown, value: unknown) => {
         saved.push(value);
         return { ...(value as object), id: 'change-1' };
@@ -112,11 +118,11 @@ describe('ProfileEditService', () => {
       expect(url).toBe('https://miconnect.example/api/v3/core/users/42/');
       return Response.json({});
     });
-    return { service, user, manager, saved, fetchMock, dataSource };
+    return { service, user, manager, userRows, saved, fetchMock, dataSource };
   }
 
   it('writes authentik FIRST with the whole attributes, then the row, then the audit', async () => {
-    const { service, user, manager, fetchMock } = make({
+    const { service, user, manager, userRows, fetchMock } = make({
       attributes: { keep: 'me', promo: 2020, profile: { version: 1, campus: 'saint-etienne' } },
     });
     const result = await service.applyEdit('u-target', 'u-admin', EDIT);
@@ -143,9 +149,15 @@ describe('ProfileEditService', () => {
       promo: 2024,
       formation: 'ISMIN',
     });
-    expect(manager.save).toHaveBeenNthCalledWith(1, User, user);
-    expect(manager.save.mock.calls[1][0]).toBe(ProfileChange);
-    expect(manager.save.mock.calls[1][1]).toMatchObject({
+    // The profile columns of the row, keyed by its id - never a save of the row read.
+    expect(manager.getRepository).toHaveBeenCalledWith(User);
+    expect(userRows.update).toHaveBeenCalledWith(
+      { id: 'u-target' },
+      expect.not.objectContaining({ admin: expect.anything() })
+    );
+    expect(manager.save).toHaveBeenCalledTimes(1);
+    expect(manager.save.mock.calls[0][0]).toBe(ProfileChange);
+    expect(manager.save.mock.calls[0][1]).toMatchObject({
       userId: 'u-target',
       actorId: 'u-admin',
       before: { version: 1, campus: 'saint-etienne' },
@@ -156,7 +168,7 @@ describe('ProfileEditService', () => {
   it('records a null before when authentik held no profile', async () => {
     const { service, manager } = make({ attributes: {} });
     await service.applyEdit('u-target', 'u-admin', EDIT);
-    expect(manager.save.mock.calls[1][1]).toMatchObject({ before: null });
+    expect(manager.save.mock.calls[0][1]).toMatchObject({ before: null });
   });
 
   it('an identical profile writes nothing at authentik and leaves no audit row', async () => {
@@ -169,10 +181,11 @@ describe('ProfileEditService', () => {
       campus: 'gardanne',
       version: 1,
     };
-    const { service, manager, fetchMock } = make({ attributes: { profile: stored } });
+    const { service, manager, userRows, fetchMock } = make({ attributes: { profile: stored } });
     const result = await service.applyEdit('u-target', 'u-admin', EDIT);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(manager.save).toHaveBeenCalledTimes(1);
+    expect(userRows.update).toHaveBeenCalledTimes(1);
+    expect(manager.save).not.toHaveBeenCalled();
     expect(result).toMatchObject({ changed: false, changeId: null });
   });
 
@@ -214,7 +227,7 @@ describe('ProfileEditService', () => {
   });
 
   it('refuses an invalid edit with the problems, writing nothing', async () => {
-    const { service, fetchMock, manager } = make();
+    const { service, fetchMock, manager, userRows } = make();
     const attempt = service.applyEdit('u-target', 'u-admin', { ...EDIT, campus: 'mars' });
     await expect(attempt).rejects.toBeInstanceOf(ProfileEditInvalidError);
     await expect(attempt).rejects.toMatchObject({
@@ -222,6 +235,7 @@ describe('ProfileEditService', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(manager.save).not.toHaveBeenCalled();
+    expect(userRows.update).not.toHaveBeenCalled();
   });
 
   it('refuses a person who has no miconnect uuid yet', async () => {
@@ -233,7 +247,7 @@ describe('ProfileEditService', () => {
   });
 
   it('an authentik failure stops everything: no row, no audit', async () => {
-    const { service, manager, fetchMock } = make();
+    const { service, manager, userRows, fetchMock } = make();
     fetchMock.mockImplementation(async (_url, init) =>
       (init?.method ?? 'GET') === 'GET'
         ? Response.json({ results: [{ pk: 42, name: 'x', attributes: {} }] })
@@ -242,6 +256,15 @@ describe('ProfileEditService', () => {
     const attempt = service.applyEdit('u-target', 'u-admin', EDIT);
     await expect(attempt).rejects.toBeInstanceOf(ProfileEditUpstreamError);
     await expect(attempt).rejects.toMatchObject({ upstreamStatus: 403, status: 502 });
+    expect(manager.save).not.toHaveBeenCalled();
+    expect(userRows.update).not.toHaveBeenCalled();
+  });
+
+  it('a row gone before its update is refused, typed, and no audit is written', async () => {
+    const { service, manager } = make({ gone: true });
+    await expect(service.applyEdit('u-target', 'u-admin', EDIT)).rejects.toBeInstanceOf(
+      UserRowGoneError
+    );
     expect(manager.save).not.toHaveBeenCalled();
   });
 

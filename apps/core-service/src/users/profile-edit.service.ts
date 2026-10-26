@@ -8,6 +8,7 @@ import { ProfileCorrectionNotPendingError } from './profile-correction.errors';
 import { MiconnectEditorClient } from './miconnect-editor.client';
 import { legacyColumns, validateProfileEdit, type ProfileSnapshot } from './miconnect-profile';
 import { ProfileEditInvalidError, ProfileEditNotLinkedError } from './profile-edit.errors';
+import { UserRowGoneError, updateUserColumns } from './user-write';
 
 /** What an applied edit reports back. `changeId` is null when nothing differed and nothing was traced. */
 export interface ProfileEditResult {
@@ -97,7 +98,7 @@ export class ProfileEditService {
 
     try {
       return await this.dataSource.transaction(async (manager) => {
-        Object.assign(user, {
+        const columns = {
           campus: after.campus,
           cursus: after.cursus,
           posts: after.posts,
@@ -105,8 +106,18 @@ export class ProfileEditService {
           lastName: after.lastName,
           displayName: `${after.firstName} ${after.lastName}`,
           ...legacyColumns(after.cursus),
-        });
-        await manager.save(User, user);
+        };
+        // The profile columns of the row, never a save of the copy read above: that copy predates
+        // the authentik round-trip, and a save would write back every other column changed since
+        // and re-insert a row deleted since. A row gone answers 404 and rolls the audit back.
+        await updateUserColumns(
+          manager.getRepository(User),
+          targetId,
+          columns,
+          'profile.edit',
+          this.logger
+        );
+        Object.assign(user, columns);
         let changeId: string | null = null;
         if (!unchanged) {
           const change = await manager.save(
@@ -132,6 +143,15 @@ export class ProfileEditService {
         return { user, changed: !unchanged, changeId };
       });
     } catch (err) {
+      if (err instanceof UserRowGoneError) {
+        // Only an account erasure deletes a user row, so there is no Canari row left to disagree
+        // with: authentik keeps the edit, which belongs to the person's MiConnect account.
+        this.logger.error(
+          `[PROFILE_EDIT] authentik was written for ${targetId.slice(0, 8)} but the Canari account ` +
+            `was deleted meanwhile - no row and no audit written`
+        );
+        throw err;
+      }
       this.logger.error(
         `[PROFILE_EDIT] authentik was written for ${targetId.slice(0, 8)} but Canari's row and the ` +
           `audit were NOT (${String(err)}) - the sources disagree until the person's next sign-in`
