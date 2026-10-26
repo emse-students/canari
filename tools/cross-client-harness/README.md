@@ -1119,8 +1119,8 @@ and asks only that the server and W2 agree. Judgements in `offlinerows.mjs`, pin
 `archive/offline-selftest.mjs`.
 
 ```sh
-bun archive/kill.mjs --row KILL-1|KILL-2|KILL-5|RM-3   # browsers: a tab closed, a browser killed
-bun archive/kill.mjs --row KILL-3|KILL-4               # A1, class B: swiped away, force-stopped
+bun archive/kill.mjs --row KILL-1|KILL-2|KILL-3|KILL-5|RM-3   # browsers: a tab closed, a browser killed
+bun archive/kill.mjs --row KILL-4                             # A1, class B: force-stopped
 ```
 
 **A KILL ROW CHOOSES ITS SIDE OF THE SERVER, THEN DRAWS ONLY THE DELAY.** Each run's commit is a leaf

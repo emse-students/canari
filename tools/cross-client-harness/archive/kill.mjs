@@ -3,7 +3,7 @@
  *
  *   bun archive/kill.mjs --row KILL-1   # W1's tab closed, 20 runs                       (W1 W2)
  *   bun archive/kill.mjs --row KILL-2   # W1's whole browser killed, 10 runs              (W1 W2)
- *   bun archive/kill.mjs --row KILL-3   # A1 swiped from recents, 10 runs                 (A1 W2, class B)
+ *   bun archive/kill.mjs --row KILL-3   # W1's browser killed after a send or a receive, 12 runs (W1 W2)
  *   bun archive/kill.mjs --row KILL-4   # A1 force-stopped inside the stage + checkpoint  (A1 W2, class B)
  *   bun archive/kill.mjs --row KILL-5   # W1's tab closed between the merge and the Welcome (W1 W2)
  *   bun archive/kill.mjs --row RM-3     # W1's tab closed between the roster delete and the Remove
@@ -19,7 +19,7 @@ import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL_BLOCKED, KILL_ROWS, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 import { SITE } from '../site.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
@@ -172,6 +172,88 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   return run;
 }
 
+/**
+ * One KILL-3 run: a send (or a receive) on W1, the browser killed `delayMs` after the window's
+ * moment, the relaunch, then the killed message and the next message each way counted.
+ *
+ * THE MOMENT DEPENDS ON THE WINDOW:
+ * - in the two held windows, the message POST is held on its side of the server;
+ * - in `after-send`, it is the send's answer;
+ * - in `after-receive`, it is W2's message showing on W1.
+ *
+ * Each moment is waited for as an event, and the drawn delay is all that places the kill after it.
+ */
+async function kill3Run(c, i, { window, delayMs, prevEnd }) {
+  const seat = seats.seat.W1;
+  const other = seats.seat.W2;
+  const cookieWaitMs = await awaitCookieCommitted(seat.cx, `W1#${i + 1}`);
+  const runStart = now();
+  const fromEpoch = serverView(c.group.id).activeEpoch;
+  const strays = strayCommits(commitSequence(commitLines(c.group.id, prevEnd ?? runStart)), fromEpoch);
+  const mark = rowMessageMark(id, `K${i}`);
+  const receiving = window === 'after-receive';
+  const fault = KILL3_WINDOWS[window] ?? 'delay 0 once';
+  const f = receiving ? null : await armFault(seat.cx, [{ match: '/api/mls/send', method: 'POST', fault }]);
+  let gesture = null;
+  let moment = null;
+  if (receiving) {
+    await send(other.cx, `${id} run ${i + 1} received [${mark}]`);
+    moment = await outcome(shownCount(seat.cx, mark).then((n) => (n > 0 ? n : Promise.reject(new Error('never shown on W1')))));
+  } else {
+    // NOT awaited for the held windows: the composer's send ends on a POST that the hold keeps open.
+    gesture = outcome(send(seat.cx, `${id} run ${i + 1} sent [${mark}]`));
+    moment = await outcome(KILL3_WINDOWS[window] ? f.awaitHeld(1, 45_000) : f.awaitFired(0, 1, 45_000));
+  }
+  if (!moment.ok) return { run: i + 1, window, premise: `the ${window} moment never came: ${moment.error}` };
+  await sleep(delayMs);
+  const dead = await deadReport(seat.w);
+  const dying = consoleDump({ page: { cx: seat.cx } }).page ?? '';
+  const killed = await killSeat(seat, 'browser');
+  const sendGesture = gesture ? await gesture : null;
+  const revived = await reviveSeat(seat, 'browser', `${id}:W1#${i + 1}`);
+  revived.listedMs = await openRevived(seat, c.group.name);
+  const serverEpoch = serverView(c.group.id).activeEpoch;
+  const caughtUpMs = await awaitClientEpoch(seat.cx, c.group.id, serverEpoch, 30_000);
+  // A MESSAGE THAT NEVER REACHED THE SERVER IS RESENT OR SHOWN UNSENT. That is read BEFORE the next
+  // send, because the queued and in-flight states show on the last own message only. The poll waits
+  // for the first of the two, and its bound is an abort: what neither arrived nor said so by then is
+  // judged a silent loss.
+  const unsent = window === 'send-before-server' ? await awaitDeliveredOrUnsent(seat.cx, other.cx, mark) : null;
+  const { outShown, inShown } = await trafficBothWays(c, seat, other, i);
+  // READ LAST, after the traffic both ways: a resend the revival owes has had its moment by then.
+  const killedShown = (await receivedOn(receiving ? seat.cx : other.cx, mark)).count;
+  const seq = runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch);
+  const judged = kill3Outcome({ window, killedShown, outShown, inShown, accepts: accepts(seq), moved: serverView(c.group.id).activeEpoch - fromEpoch, caughtUpMs, unsentLabel: unsent?.label ?? null });
+  judged.assertions.push(strayCommitsOwn(strays, i === 0 ? 'before the first run armed anything' : `between run ${i} and run ${i + 1}`));
+  const consoles = keepConsoles(id, { [`W1-run${i + 1}-dying`]: dying, [`W1-run${i + 1}-revived`]: consoleDump({ page: { cx: seat.cx } }).page ?? '' });
+  const run = { run: i + 1, window, delayMs, cookieWaitMs, killed, revived, dead, sendGesture, unsent, strays, consoles, endAt: now(), ...judged };
+  console.log(`[${id}] run ${i + 1}: ${window} +${delayMs} ms -> ${judged.outcome}${judged.assertions.every((a) => a.ok) ? '' : ' (FAILING)'}`);
+  return run;
+}
+
+/** The unsent state `marker`'s own bubble shows (one of `UNSENT_LABELS`), or null; and how many own bubbles carry it. */
+const UNSENT_ON = (marker) => `JSON.stringify((function () {
+  var labels = ${JSON.stringify(UNSENT_LABELS)};
+  var rows = [].slice.call(document.querySelectorAll('[data-own="true"]')).filter(function (r) { return (r.innerText || '').indexOf(${JSON.stringify(marker)}) !== -1; });
+  var label = null;
+  rows.forEach(function (r) { labels.forEach(function (l) { if (label === null && (r.innerText || '').indexOf(l) !== -1) label = l; }); });
+  return { rows: rows.length, label: label };
+})())`;
+
+/**
+ * Polls until the killed message is on W2 or W1's own bubble says it is unsent, the abort 30 s. The
+ * last reading either way, with how long it took.
+ */
+async function awaitDeliveredOrUnsent(senderCx, peerCx, marker, abortMs = 30_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const delivered = (await receivedOn(peerCx, marker)).count;
+    const own = JSON.parse(await evaluate(senderCx, UNSENT_ON(marker)));
+    if (delivered > 0 || own.label !== null || Date.now() - t0 > abortMs) return { delivered, ownRows: own.rows, label: delivered > 0 ? null : own.label, ms: Date.now() - t0 };
+    await sleep(500);
+  }
+}
+
 /** What W1's open member panel shows: its count line and the user ids it offers to remove. */
 const PANEL = String.raw`JSON.stringify({ members: (document.body.innerText.match(/MEMBRES\s*\(\d+\)/i) || [''])[0], buttons: [].slice.call(document.querySelectorAll('[data-remove-member]')).map(function (e) { return e.getAttribute('data-remove-member'); }) })`;
 
@@ -207,11 +289,22 @@ async function openRevived(seat, name) {
 }
 
 const ACTIONS = {
-  /** KILL-1..3: alternating windows, a drawn delay inside each. */
+  /** KILL-1 and KILL-2: alternating windows, a drawn delay inside each. */
   async runs(c) {
     const runs = [];
     for (let i = 0; i < spec.runs; i++) runs.push(await killRun(c, i, { window: windowOf(i), delayMs: delayOf(spec), prevEnd: runs.at(-1)?.endAt ?? null }));
     return { runs, offline: [spec.devices[0]], judge: () => [...killRunsOwn(runs), tailStraysOwn(c, runs)] };
+  },
+
+  /** KILL-3: a send or a receive, the browser killed after it, four windows in rotation. */
+  async sends(c) {
+    const runs = [];
+    for (let i = 0; i < spec.runs; i++) {
+      const run = await kill3Run(c, i, { window: kill3WindowOf(i), delayMs: delayOf(spec), prevEnd: runs.at(-1)?.endAt ?? null });
+      if (run.premise) return { premise: [`run ${run.run}: ${run.premise}`], offline: ['W1'], detail: { runs } };
+      runs.push(run);
+    }
+    return { runs, offline: ['W1'], judge: () => [...kill3WindowsOwn(runs), ...killRunsOwn(runs, { windows: false }), tailStraysOwn(c, runs)] };
   },
 
   /** KILL-4: one un-killed run measures the stage + checkpoint window; each kill lands at a fraction of it. */
@@ -323,7 +416,7 @@ const ACTIONS = {
   },
 };
 
-const ACTION_OF = { 'KILL-1': 'runs', 'KILL-2': 'runs', 'KILL-3': 'runs', 'KILL-4': 'stage', 'KILL-5': 'welcome', 'RM-3': 'removal' };
+const ACTION_OF = { 'KILL-1': 'runs', 'KILL-2': 'runs', 'KILL-3': 'sends', 'KILL-4': 'stage', 'KILL-5': 'welcome', 'RM-3': 'removal' };
 
 /** Set up, act, judge. */
 async function play() {
