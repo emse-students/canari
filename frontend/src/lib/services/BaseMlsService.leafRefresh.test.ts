@@ -8,6 +8,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   scheduleOutboundMlsPersist: vi.fn(),
 }));
 
+import 'fake-indexeddb/auto';
 import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY, addressedKeyMaterial, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';

@@ -54,15 +54,26 @@ import {
 import {
   MAX_BURN_GENERATIONS,
   OwedSendBurnFailedError,
-  commitPersisted,
   forgetSendRatchetEntries,
   noteFrameEmitted,
+  readEmitted,
   resetSendRatchetLedger,
   sendRatchetDebt,
   sendRatchetEntries,
   sendRatchetKey,
-  snapshotEmitted,
+  stagePersisted,
 } from '$lib/mls-client/sendRatchetLedger';
+import {
+  closeStateLedgers,
+  hydrateStateLedgers,
+  restageStateLedgers,
+  restageWholeStateLedgerView,
+  stateLedgersHydrated,
+  STATE_LEDGER,
+  takeStagedStateLedgers,
+  type StateLedgerChanges,
+} from '$lib/mls-client/stateLedgers';
+import { adoptLegacyLedgers } from '$lib/mls-client/stateLedgerMigration';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
@@ -178,9 +189,9 @@ import type {
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import {
-  commitPendingHistoryMarks,
+  forgetSeenCipherCaches,
   noteFrameConsumed,
-  snapshotPendingHistoryMarks,
+  stagePendingHistoryMarks,
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
@@ -780,11 +791,17 @@ export abstract class BaseMlsService implements IMlsService {
     // BEFORE the impl, not after: `_initImpl` itself checkpoints on several of its recovery paths
     // (fresh start, identity rotation), and those writes need the key too.
     this.currentDeviceKeyB64 = deviceKeyB64;
-    const p = this._initImpl(userId, deviceKeyB64, state, opts).then(() =>
-      // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send racing
-      // the repair would be encrypted at the very generation the repair exists to move past.
-      this.reconcileSendRatchets()
-    );
+    // A state is about to be loaded: whatever this document knew of the ledgers describes another
+    // copy of it, until `openStateLedgers` reads what the loaded one carries.
+    closeStateLedgers(userId);
+    const p = this._initImpl(userId, deviceKeyB64, state, opts)
+      // The ledgers the opened state carries, before anything reads one or sends.
+      .then(() => this.openStateLedgers())
+      .then(() =>
+        // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send
+        // racing the repair would be encrypted at the very generation the repair exists to move past.
+        this.reconcileSendRatchets()
+      );
     this.initPromise = p;
     try {
       await p;
@@ -907,6 +924,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.userId = userId;
     this.delivery.userId = userId;
     await this.resolveDeviceId(userId);
+    closeStateLedgers(userId);
     try {
       await this.loadStateWithKey(deviceKeyB64, state);
     } catch (e) {
@@ -927,7 +945,9 @@ export abstract class BaseMlsService implements IMlsService {
     // ratchet burn happens before anything can send - a recovery opens a snapshot that may sit
     // behind sends the app made but never checkpointed (killed after them, PIN changed elsewhere),
     // and without the burn the next send re-used a spent generation.
-    const ready = this.afterStateOpened().then(() => this.reconcileSendRatchets());
+    const ready = this.afterStateOpened()
+      .then(() => this.openStateLedgers())
+      .then(() => this.reconcileSendRatchets());
     this.initPromise = ready;
     try {
       await ready;
@@ -3559,6 +3579,11 @@ export abstract class BaseMlsService implements IMlsService {
     // Left true, the abandonment of a device would report itself as a loss.
     this.stateWasExpected = false;
     await this.loadStateWithKey(deviceKeyB64, undefined);
+    // THE FRESH STATE HOLDS NONE OF THE LEDGERS THIS DOCUMENT KNOWS, and the seen marks still
+    // describe frames this account has read: carried into it, as `localStorage` carried them across
+    // a rotation before they moved into the state. Not the send counts - they describe the ratchets
+    // of the device being abandoned (reset below). A rotation inside the load has no view yet.
+    restageWholeStateLedgerView(this.userId, [STATE_LEDGER.sendPersisted]);
     try {
       // ENDS THE DOCUMENT ON REFUSAL, inside the transaction that refuses it: a flight of this
       // document already past its start check must find the latch set at its own put.
@@ -3572,15 +3597,21 @@ export abstract class BaseMlsService implements IMlsService {
       );
       throw e;
     }
+    // The counters describe the ratchets of the device being abandoned, whose state was discarded
+    // for a fresh one starting at generation zero. Carried over, they would burn against sends
+    // that, from the peers' side, this device has never made. Awaited HERE, before the socket
+    // follows the identity: nothing from the reopen on waits behind a store.
+    await resetSendRatchetLedger(this.userId).catch((e) =>
+      console.warn(
+        '[MLS] Send ledger not cleared after the rotation - its counts name groups the fresh state does not hold, and the next load forgets them:',
+        String(e).slice(0, 160)
+      )
+    );
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
     // THE SOCKET FOLLOWS THE IDENTITY, AT THE ONE MOMENT THE IDENTITY CHANGES. The login opens its
     // socket beside the state load that rotates here, so a socket opened (or opening) under the old
     // id is reopened under the new one - queued BEFORE the retirement below, which waits for it.
     this.reopenGatewaySocketAfterRotation(oldDeviceId);
-    // The counters describe the ratchets of the device being abandoned, whose state was discarded
-    // for a fresh one starting at generation zero. Carried over, they would burn against sends
-    // that, from the peers' side, this device has never made.
-    resetSendRatchetLedger(this.userId);
     this.owedSendBurns.clear();
     this.unprovenSendRatchets.clear();
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
@@ -4246,11 +4277,37 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * `latch` is this document's write latch ({@link stateWritesEnded}); a platform whose store can
    * refuse a write reads it AT THE PUT, and rejects `MlsStateWriteRefusedError('ended')` on it.
+   *
+   * `ledgers` are the app's staged ledger changes (`stateLedgers.ts`). The platform APPLIES THEM TO
+   * THE LIVE CLIENT BEFORE IT EXPORTS - synchronously, on the web, in the turn this is called in -
+   * so the state written carries them beside the ratchets they describe, and so does every later
+   * export of that client, whoever makes it.
    */
   protected abstract writeCheckpoint(
     deviceKeyB64: string,
-    latch: MlsStateWriteLatch
+    latch: MlsStateWriteLatch,
+    ledgers?: StateLedgerChanges
   ): Promise<void>;
+
+  /**
+   * Every ledger the opened state carries (`mls-core/src/app_ledgers.rs`), read once, right after it
+   * opened. Platform-specific: the web asks the WASM client, native the live manager.
+   */
+  protected abstract readStateLedgers(): Promise<Record<string, string>>;
+
+  /**
+   * Takes the opened state's ledgers as this document's, and moves an older client's
+   * `localStorage` copies into it (`stateLedgerMigration.ts`). Runs once per opened state, before
+   * {@link reconcileSendRatchets} and before anything reads a ledger or sends.
+   *
+   * The in-memory seen sets go first: an earlier login of this document may have marked frames
+   * whose advance the state being opened never received.
+   */
+  private async openStateLedgers(): Promise<void> {
+    forgetSeenCipherCaches(this.userId);
+    hydrateStateLedgers(this.userId, await this.readStateLedgers());
+    await adoptLegacyLedgers(this.userId);
+  }
 
   /**
    * Advances this device's send ratchet by `count` generations without emitting anything.
@@ -4262,14 +4319,20 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract skipSendGenerations(groupId: string, count: number): Promise<number>;
 
   /**
-   * Checkpoints the live state AND records how much of this device's send ratchet it makes durable.
+   * Checkpoints the live state WITH the ledgers that describe it, in the same write.
    *
-   * CONCRETE, FOR THE REASON {@link sendMessage} IS. The count is read BEFORE the write is started
-   * and committed only AFTER it resolves, and that order is the entire guarantee: a send landing
-   * during the write is then counted as unpersisted and costs one burnt generation too many on the
-   * next load, where the opposite order costs one too few and reproduces exactly the fault this
-   * exists to close. Leaving the pairing to each call site would be the eighteen-call-sites lesson
-   * of `sendMessage`, re-learnt on the seam that guards the ratchet instead of the one that moves it.
+   * CONCRETE, FOR THE REASON {@link sendMessage} IS: leaving the pairing to each call site would be
+   * the eighteen-call-sites lesson of `sendMessage`, re-learnt on the seam that guards the ratchet
+   * instead of the one that moves it.
+   *
+   * TWO LEDGERS DESCRIBE THE STATE AND BOTH TRAVEL INSIDE IT (KILL-2, 2026-10-26): the send ledger's
+   * `persisted` counts and the history marks are staged and handed to the platform, which applies
+   * them to the client before it exports (`stateLedgers.ts`). They were written to `localStorage`
+   * AFTER the write until then - the survivable order of two stores, and a window as long as the
+   * seconds `localStorage` waits before reaching the disk. One write has no order to choose.
+   *
+   * `emitted` is read BEFORE the export: a send landing after the read is counted as unpersisted and
+   * costs one burnt generation too many on the next load, never one too few.
    *
    * THE LATCH IS READ TWICE ({@link stateWritesEnded}): here, so an ended document captures
    * nothing, and at the put, where it decides. `endsDocumentOnRefusal` is the rotation's: its write
@@ -4277,39 +4340,72 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
     if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
-    const emitted = snapshotEmitted(this.userId);
-    // A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed
-    // (or still running) when the count is read is not in the state this checkpoint exports, so
-    // committing `persisted = emitted` for that ratchet would erase the only record of the debt: the
-    // settle merges into the epoch, a checkpoint lands, a reload finds nothing owed and re-issues
-    // generation 0. Left out at SNAPSHOT time; a burn that lands during the write is only over-counted
-    // on the next load, which is free.
+    // Before the state opened there is no ledger to stage: the state being written is the one the
+    // load is building (a fresh start, a rotation), and the opening reads what it carries.
+    const ledgers = stateLedgersHydrated(this.userId)
+      ? this.stageCheckpointLedgers(await this.emittedForCheckpoint())
+      : undefined;
+    // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
+    // applies the ledgers and exports in this same turn, so every mark staged describes an advance
+    // the export holds.
+    try {
+      await this.writeCheckpoint(
+        this.currentDeviceKeyB64,
+        {
+          isEnded: () => this.stateWritesEnded === true,
+          endOnRefusal: options?.endsDocumentOnRefusal
+            ? () => {
+                this.stateWritesEnded = true;
+              }
+            : undefined,
+        },
+        ledgers
+      );
+    } catch (e) {
+      // The next checkpoint carries them. A client that already took them re-applies the same value,
+      // a no-op; one that never got them (a native call refused before it ran) takes them then.
+      if (ledgers) restageStateLedgers(this.userId, ledgers);
+      throw e;
+    }
+  }
+
+  /**
+   * The `emitted` counts a checkpoint may declare durable - NONE when they cannot be read.
+   *
+   * Declaring nothing is the direction that is free (the next load over-burns), and the state itself
+   * must still be written: refusing the checkpoint over a counter would lose every ratchet advance
+   * since the last one. Logged as the error it is - the store that refused the read is the one every
+   * send needs before it posts (`noteFrameEmitted`).
+   */
+  private async emittedForCheckpoint(): Promise<Record<string, number>> {
+    try {
+      return await readEmitted(this.userId);
+    } catch (e) {
+      console.error(
+        '[MLS_LEDGER] The send counts could not be read for this checkpoint - it declares no send durable, so the next load burns everything counted:',
+        String(e).slice(0, 160)
+      );
+      return {};
+    }
+  }
+
+  /**
+   * Stages what this checkpoint's state holds, and takes the whole batch for the platform.
+   *
+   * A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed (or
+   * still running) when the count is read is not in the state this checkpoint exports, so staging
+   * `persisted = emitted` for that ratchet would erase the only record of the debt: the settle merges
+   * into the epoch, a checkpoint lands, a reload finds nothing owed and re-issues generation 0.
+   *
+   * The history marks: every group marked since the last checkpoint (`stagePendingHistoryMarks`).
+   * Their ratchet advances are all in the live client by now, so the export about to be taken holds
+   * them - and the marks the walk makes from here on wait for the next one.
+   */
+  private stageCheckpointLedgers(emitted: Record<string, number>): StateLedgerChanges | undefined {
     for (const key of this.sendRatchetsNotDurable()) delete emitted[key];
-    // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
-    // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
-    const replayMarks = snapshotPendingHistoryMarks(this.userId);
-    await this.writeCheckpoint(this.currentDeviceKeyB64, {
-      isEnded: () => this.stateWritesEnded === true,
-      endOnRefusal: options?.endsDocumentOnRefusal
-        ? () => {
-            this.stateWritesEnded = true;
-          }
-        : undefined,
-    });
-    commitPersisted(this.userId, emitted);
-    // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
-    //
-    // The send ledger above declares what this checkpoint made durable. The history replay's marks
-    // owed exactly the same declaration and did not get it: they became durable only in the thunk at
-    // the END of the archive walk, so a checkpoint landing mid-walk - and one lands on any structural
-    // mutation, because `flushEncryptedInternal` is not gated by the bulk-ingest depth - made the
-    // ratchet durable while the marks were still in memory. A page killed there re-accuses frames it
-    // had really read. Proved by insertion order on TAB-3b: six accused row keys all sat at the END
-    // of a 3 511-entry set, so two whole runs had written nothing durable at all.
-    //
-    // AFTER the write, never before, for the reason spelt out on `commitPendingHistoryMarks`: the two
-    // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
-    commitPendingHistoryMarks(replayMarks);
+    stagePersisted(this.userId, emitted);
+    stagePendingHistoryMarks(this.userId);
+    return takeStagedStateLedgers(this.userId);
   }
 
   /**
@@ -4382,10 +4478,24 @@ export abstract class BaseMlsService implements IMlsService {
     this.owedSendBurns.clear();
     this.unprovenSendRatchets.clear();
     if (this.freshStart) {
-      resetSendRatchetLedger(this.userId);
+      await resetSendRatchetLedger(this.userId).catch((e) =>
+        console.warn(
+          '[MLS] Send ledger not cleared on a fresh start - its counts name groups this state does not hold, and the next load forgets them:',
+          String(e).slice(0, 160)
+        )
+      );
       return;
     }
-    const entries = sendRatchetEntries(this.userId);
+    // AN UNREADABLE LEDGER IS NO INFORMATION, as it always was: nothing is burnt this load, which is
+    // where this client stood before the ledger existed - said, because a silent empty read and a
+    // real one are the same value with different causes.
+    const entries = await sendRatchetEntries(this.userId).catch((e: unknown) => {
+      console.warn(
+        '[MLS] Send ledger unreadable - nothing will be burnt this load:',
+        String(e).slice(0, 160)
+      );
+      return [];
+    });
     if (entries.length === 0) return;
 
     const restored = new Map<string, number | 'not-held' | 'unknown'>();
@@ -4451,7 +4561,12 @@ export abstract class BaseMlsService implements IMlsService {
         );
       }
     }
-    forgetSendRatchetEntries(this.userId, forget);
+    await forgetSendRatchetEntries(this.userId, forget).catch((e) =>
+      console.warn(
+        `[MLS] Send ledger: ${forget.length} dead entr(ies) not forgotten - the next load judges them again:`,
+        String(e).slice(0, 160)
+      )
+    );
     const blind = [...restored.values()].filter((r) => r === 'unknown').length;
     if (blind > 0) {
       console.warn(
@@ -7707,7 +7822,13 @@ export abstract class BaseMlsService implements IMlsService {
     // would leave every failed POST as an under-count, which is the direction that re-issues a spent
     // generation. It is what a reload recovers the advance from when the checkpoint below does not
     // land in time - the whole reason that checkpoint is allowed not to be awaited.
-    noteFrameEmitted(this.userId, groupId, epoch);
+    //
+    // AWAITED, AND THAT IS WHAT "DURABLE" MEANS (KILL-2, 2026-10-26): resolved once its IndexedDB
+    // transaction committed. A synchronous `localStorage` write returned at once and reached the disk
+    // seconds later, so a browser killed in between had posted a frame no reload knew about. One small
+    // transaction per send, against a checkpoint that costs 1.7 s on a phone. A count that does not
+    // commit refuses the post (`SendCountNotDurableError`).
+    await noteFrameEmitted(this.userId, groupId, epoch);
     // BEST-EFFORT, AND DELIBERATELY NOT AWAITED. It shortens the window; the ledger write above is
     // what CLOSES it. Awaiting here would put a checkpoint on the latency of every message - 1.7 s
     // on the phone - to buy a guarantee that is already held, so the trade is refused.

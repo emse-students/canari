@@ -4,44 +4,57 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
-const commitPendingHistoryMarks = vi.hoisted(() => vi.fn());
-const snapshotPendingHistoryMarks = vi.hoisted(() =>
-  vi.fn((userId: string) => ({ userId, groups: [] }))
-);
+// The history marks are staged by `history.ts`; here they are a stand-in that stages ONE known mark,
+// so a case can follow it into the write.
+const stagePendingHistoryMarks = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/history', () => ({
-  commitPendingHistoryMarks,
-  snapshotPendingHistoryMarks,
+  stagePendingHistoryMarks,
+  forgetSeenCipherCaches: vi.fn(),
   noteFrameConsumed: vi.fn(),
 }));
 
+import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
+import { closeMlsDb } from '$lib/utils/hex';
+import { noteFrameEmitted } from '$lib/mls-client/sendRatchetLedger';
+import {
+  hydrateStateLedgers,
+  readStateLedger,
+  resetStateLedgersForTests,
+  stageStateLedger,
+  STATE_LEDGER,
+  takeStagedStateLedgers,
+  type StateLedgerChanges,
+} from '$lib/mls-client/stateLedgers';
 import { BaseMlsService } from './BaseMlsService';
 
 /**
- * ONE WRITE, TWO LEDGERS, AND THE ORDER IS THE WHOLE PROPERTY.
+ * ONE WRITE, AND THE LEDGERS THAT DESCRIBE THE STATE TRAVEL INSIDE IT (KILL-2, 2026-10-26).
  *
  * `persistCheckpoint` is the single place this device's state becomes durable, so it is the single
- * place that may DECLARE something durable. Two ledgers depend on that declaration: the send ledger
- * (what this device has already put on the wire) and the history replay's marks (which archive frames
- * it has already consumed). The second was bound to the wrong event until 2026-09-08 - it became
- * durable only in the thunk at the END of the archive walk, so a checkpoint landing mid-walk made the
- * ratchet durable while the marks were still in memory, and a page killed there re-accused frames it
- * had really read.
+ * place that may declare something durable. Two ledgers depend on that declaration: the send ledger's
+ * `persisted` counts and the history replay's marks. Until 2026-10-26 they were written to
+ * `localStorage` AFTER the write - the survivable order of two stores, and a window as long as the
+ * seconds `localStorage` waits before it reaches the disk. A browser killed in it kept the ratchet
+ * and lost the marks, and the next walk accused a frame it had read of being lost.
  *
- * These cases defend the seam rather than either ledger's arithmetic: that the declaration happens at
- * all, that it happens AFTER the write, and that a write which FAILED declares nothing. The last is
- * the one that matters most and is the easiest to lose in a refactor - the two orderings are not
- * symmetric. A ledger ahead of a ratchet skips a message for good; a ratchet ahead of a ledger only
- * re-accuses one.
+ * These cases defend the seam: the ledgers are staged BEFORE the write and handed TO it, in the same
+ * call; a write that fails keeps them for the next one; and nothing is staged before the state opened.
  */
+const U = 'u';
+const SEEN = STATE_LEDGER.seen('g');
+
 function makeCtx(overrides: Record<string, unknown> = {}) {
   return {
-    userId: 'u',
+    userId: U,
     currentDeviceKeyB64: 'k',
     writeCheckpoint: vi.fn().mockResolvedValue(undefined),
     // The real exclusion of the ratchets whose repair is still owed (none here).
     owedSendBurns: new Map(),
     unprovenSendRatchets: new Set(),
     sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
+    stageCheckpointLedgers: BaseMlsService.prototype['stageCheckpointLedgers'],
+    emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
     ...overrides,
   };
 }
@@ -51,13 +64,27 @@ const persist = (ctx: unknown): Promise<void> =>
     BaseMlsService.prototype as unknown as { persistCheckpoint(): Promise<void> }
   ).persistCheckpoint.call(ctx);
 
-describe('BaseMlsService.persistCheckpoint', () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.clearAllMocks();
-  });
+/** The ledgers the write was handed - its third argument. */
+const handed = (ctx: { writeCheckpoint: ReturnType<typeof vi.fn> }, call = 0) =>
+  ctx.writeCheckpoint.mock.calls[call][2] as StateLedgerChanges | undefined;
 
-  it('declares the replay marks durable once the checkpoint has been written', async () => {
+describe('BaseMlsService.persistCheckpoint', () => {
+  beforeEach(async () => {
+    await closeMlsDb();
+    globalThis.indexedDB = new IDBFactory();
+    resetStateLedgersForTests();
+    hydrateStateLedgers(U, {});
+    vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    stagePendingHistoryMarks.mockImplementation((userId: string) => {
+      stageStateLedger(userId, SEEN, JSON.stringify(['fp-read']));
+      return 1;
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('hands the marks and the send counts TO the write that makes the ratchet durable', async () => {
+    await noteFrameEmitted(U, 'g', 3);
     const ctx = makeCtx();
 
     await persist(ctx);
@@ -65,70 +92,98 @@ describe('BaseMlsService.persistCheckpoint', () => {
     // With this document's write latch, read at the put (`BaseMlsService.deviceRevoked.test.ts`).
     expect(ctx.writeCheckpoint).toHaveBeenCalledWith(
       'k',
-      expect.objectContaining({ isEnded: expect.any(Function) })
+      expect.objectContaining({ isEnded: expect.any(Function) }),
+      {
+        [SEEN]: JSON.stringify(['fp-read']),
+        [STATE_LEDGER.sendPersisted]: JSON.stringify({ 'g@3': 1 }),
+      }
     );
-    expect(commitPendingHistoryMarks).toHaveBeenCalledWith({ userId: 'u', groups: [] });
+    expect(stagePendingHistoryMarks).toHaveBeenCalledWith(U);
   });
 
-  it('declares them AFTER the write, never before', async () => {
-    // The direction the whole seam rests on. Declaring first would make the ledger durable while the
-    // ratchet advance it describes might never land - and that reload SKIPS the frame rather than
-    // re-reading it, which is the one failure this design refuses to trade for.
-    const order: string[] = [];
+  it('stages them BEFORE the write starts - a mark made while it runs is not in it', async () => {
+    // The native checkpoint releases the manager once it has exported (2026-10-13), so a replay page
+    // can decrypt and mark while the seal and the write run. That mark describes an advance this
+    // write does not hold; it stays staged for the next checkpoint.
     const ctx = makeCtx({
       writeCheckpoint: vi.fn().mockImplementation(async () => {
-        order.push('write');
+        stageStateLedger(U, STATE_LEDGER.seen('later'), '["fp-later"]');
       }),
-    });
-    commitPendingHistoryMarks.mockImplementation(() => {
-      order.push('commit');
     });
 
     await persist(ctx);
 
-    expect(order).toEqual(['write', 'commit']);
+    expect(handed(ctx)).not.toHaveProperty(STATE_LEDGER.seen('later'));
+    expect(takeStagedStateLedgers(U)).toEqual({ [STATE_LEDGER.seen('later')]: '["fp-later"]' });
   });
 
-  it('declares NOTHING when the checkpoint write fails', async () => {
-    // A failed write left the ratchet where it was. Marking the frames consumed anyway would tell
-    // the next load to skip frames whose generation was never spent.
-    const ctx = makeCtx({
+  it('keeps every ledger it handed to a write that FAILED, for the next checkpoint', async () => {
+    // A failed write left the state where it was; the client may or may not have taken the values.
+    // Re-applying one it took is a no-op, so the next checkpoint carries them all.
+    stagePendingHistoryMarks.mockImplementationOnce((userId: string) => {
+      stageStateLedger(userId, SEEN, JSON.stringify(['fp-read']));
+      return 1;
+    });
+    stagePendingHistoryMarks.mockImplementation(() => 0);
+    const failing = makeCtx({
       writeCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
     });
 
-    await expect(persist(ctx)).rejects.toThrow('quota exceeded');
-    expect(commitPendingHistoryMarks).not.toHaveBeenCalled();
+    await expect(persist(failing)).rejects.toThrow('quota exceeded');
+
+    const next = makeCtx();
+    await persist(next);
+    expect(handed(next)).toEqual({ [SEEN]: JSON.stringify(['fp-read']) });
   });
 
-  it('names the account it is checkpointing, so another session is never declared for', async () => {
-    await persist(makeCtx({ userId: 'someone-else' }));
-
-    expect(snapshotPendingHistoryMarks).toHaveBeenCalledWith('someone-else');
-    expect(commitPendingHistoryMarks).toHaveBeenCalledWith({ userId: 'someone-else', groups: [] });
-  });
-
-  it('declares the marks that stood BEFORE the write started, not those made while it ran', async () => {
-    // The native checkpoint releases the manager once it has exported (2026-10-13), so a replay page
-    // can decrypt and mark while the seal and the write run. Those marks describe an advance this
-    // write does not hold; only the set captured before it may be declared.
-    const order: string[] = [];
-    const before = { userId: 'u', groups: [] };
-    snapshotPendingHistoryMarks.mockImplementationOnce(() => {
-      order.push('snapshot');
-      return before;
-    });
-    const ctx = makeCtx({
+  it('restages the CURRENT value, not the failed batch, when a key moved since', async () => {
+    const failing = makeCtx({
       writeCheckpoint: vi.fn().mockImplementation(async () => {
-        order.push('write');
+        stageStateLedger(U, SEEN, JSON.stringify(['fp-read', 'fp-newer']));
+        throw new Error('quota exceeded');
       }),
     });
-    commitPendingHistoryMarks.mockImplementation(() => {
-      order.push('commit');
-    });
+
+    await expect(persist(failing)).rejects.toThrow('quota exceeded');
+
+    expect(takeStagedStateLedgers(U)).toEqual({ [SEEN]: JSON.stringify(['fp-read', 'fp-newer']) });
+  });
+
+  it('stages nothing before the state opened - the load reads what the state carries', async () => {
+    resetStateLedgersForTests();
+    const ctx = makeCtx();
 
     await persist(ctx);
 
-    expect(order).toEqual(['snapshot', 'write', 'commit']);
-    expect(commitPendingHistoryMarks).toHaveBeenCalledWith(before);
+    expect(handed(ctx)).toBeUndefined();
+    expect(stagePendingHistoryMarks).not.toHaveBeenCalled();
+  });
+
+  it('still writes the state when the send counts cannot be read, declaring no send durable', async () => {
+    // Refusing the checkpoint over a counter would lose every ratchet advance since the last one;
+    // declaring nothing costs the next load an over-burn, which is free.
+    await closeMlsDb();
+    const broken = new IDBFactory();
+    broken.open = () => {
+      throw new DOMException('Internal error', 'UnknownError');
+    };
+    globalThis.indexedDB = broken;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx();
+
+    await persist(ctx);
+
+    expect(handed(ctx)).toEqual({ [SEEN]: JSON.stringify(['fp-read']) });
+    expect(readStateLedger(U, STATE_LEDGER.sendPersisted)).toBeUndefined();
+    expect(error).toHaveBeenCalled();
+  });
+
+  it('never declares durable a ratchet whose burn is still owed', async () => {
+    await noteFrameEmitted(U, 'g', 5);
+    const ctx = makeCtx({ owedSendBurns: new Map([['g', new Map([[5, 1]])]]) });
+
+    await persist(ctx);
+
+    expect(handed(ctx)).not.toHaveProperty(STATE_LEDGER.sendPersisted);
   });
 });

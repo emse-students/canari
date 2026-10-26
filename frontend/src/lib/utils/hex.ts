@@ -408,6 +408,49 @@ async function writeMlsState(
   });
 }
 
+/**
+ * Reads one small record of `CanariDBMls_<userId>` that is NOT the state - on BOTH runtimes (the
+ * native app's WebView has the same IndexedDB). Today that is the send ledger's `emitted` counts
+ * (`sendRatchetLedger.ts`), which must be durable before a frame leaves, earlier than any checkpoint.
+ */
+export async function readMlsDbRecord<T>(userId: string, key: string): Promise<T | undefined> {
+  const db = await openMlsDb(userId);
+  return new Promise<T | undefined>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    tx.oncomplete = () => resolve(req.result as T | undefined);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Read-modify-writes one record of `CanariDBMls_<userId>` in ONE transaction, and resolves only once
+ * that transaction has COMMITTED - the moment IndexedDB has handed the write to the disk, which a
+ * process killed right after keeps (unlike `localStorage`, committed seconds later). `update`
+ * returning undefined deletes the record. One transaction is also what makes two documents of one
+ * profile increment the same record without losing either increment.
+ */
+export async function updateMlsDbRecord<T>(
+  userId: string,
+  key: string,
+  update: (previous: T | undefined) => T | undefined
+): Promise<void> {
+  const db = await openMlsDb(userId);
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    const req = store.get(key);
+    req.onsuccess = () => {
+      const next = update(req.result as T | undefined);
+      if (next === undefined) store.delete(key);
+      else store.put(next, key);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error(`the ${key} transaction aborted`));
+  });
+}
+
 /** Removes a legacy plain MLS snapshot if present (pre-option-2 installs). */
 export async function purgeLegacyPlainMlsState(userId: string): Promise<void> {
   if (isTauriRuntime()) return;

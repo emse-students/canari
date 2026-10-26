@@ -17,15 +17,16 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 const ledgerTrace: string[] = [];
 vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
   MAX_BURN_GENERATIONS: 2000,
-  commitPersisted: vi.fn(),
-  noteFrameEmitted: () => {
+  noteFrameEmitted: async () => {
     ledgerTrace.push('ledger');
   },
-  forgetSendRatchetEntries: vi.fn(),
+  forgetSendRatchetEntries: vi.fn().mockResolvedValue(undefined),
+  readEmitted: async () => ({}),
   sendRatchetDebt: vi.fn(),
-  sendRatchetEntries: () => [],
-  resetSendRatchetLedger: vi.fn(),
-  snapshotEmitted: () => ({}),
+  sendRatchetEntries: async () => [],
+  sendRatchetKey: (groupId: string, epoch: number) => `${groupId}@${epoch}`,
+  resetSendRatchetLedger: vi.fn().mockResolvedValue(undefined),
+  stagePersisted: vi.fn(),
 }));
 
 import { BaseMlsService } from './BaseMlsService';
