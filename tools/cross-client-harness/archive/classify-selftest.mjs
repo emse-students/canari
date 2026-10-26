@@ -27,6 +27,7 @@ import {
   FRESH_DEVICE_RESTORE_NARRATION,
   FRESH_DEVICE_SESSION_NARRATION,
   GROUP_CREATION_NARRATION,
+  REVOKED_REFUSALS,
   REMOVE_NARRATION,
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
@@ -60,6 +61,9 @@ function cxOf(entries) {
 const CASES = [
   // [level, line, expected bucket]
   ['log', '[14:24:25] [OUTBOX] 1 entry still queued', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] a frame of 92c16968… is applied while the commit of b1ecb448… awaits its answer', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] a frame of 92c16968… waits for the commit of 92c16968… - put back, applied after it', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] refused to lend the MLS mutex for 92c16968: not the holder - only the commit holding it may lend it', 'unexplained'],
   ['log', '[14:59:42] [QUEUE] the commit of 59333a90... released the MLS lock - draining the 1 frame(s) it held back', 'notable'],
   ['log', '[14:24:25] [OUTBOX] 12 entries still queued', 'notable'],
   ['log', '[14:24:25] [OUTBOX] ef8eca5e… skipped, backing off for 4452ms (attempt 2)', 'notable'],
@@ -1569,7 +1573,7 @@ const FORGIVE_CASES = [
       ['log', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 7 },
+    { clean: true, unmatched: 10 },
   ],
   [
     "a revoked device's MLS client torn down, forgiven (alpha.5 DEV-2)",
@@ -1578,7 +1582,23 @@ const FORGIVE_CASES = [
       ['info', '[14:59:08.014] [WS] Paused - disconnect sent, socket released until the next foreground.'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 8 },
+    { clean: true, unmatched: 11 },
+  ],
+  [
+    "a revoked device's requests refused once its session ended, forgiven (alpha.5 DEV-3)",
+    [
+      ['info', '[15:46:38.652] [AUTH] 401 on GET /api/mls/messages - renewing the token and sending the same request once more'],
+      ['info', '[15:46:38.788] [A] refresh✗latched (cookie already proven dead by this device revocation - not asking again)'],
+      ['info', '[15:46:39.091] [SYNC] WASM purge skipped - the server list could not be fetched'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 10 },
+  ],
+  [
+    "control: a revoked device's undrained backlog at ERROR is not narration",
+    [['error', '[15:46:38.785] [PENDING] Pending fetch failed after 0 message(s) - the backlog for x is UNDRAINED and stays queued until the next reconnect: SessionEndedByDeviceRevocationError']],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 13 },
   ],
   [
     'control: the same teardown on a device nobody revoked stays dirt',
@@ -1590,13 +1610,19 @@ const FORGIVE_CASES = [
     'control: the revoked device signing out TWICE is not narrated (the known P3)',
     [['info', '[14:59:08.216] [A] logout✓200 79ms']],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 10 },
+    { clean: false, unmatched: 13 },
   ],
   [
     "a fresh device's restore of unproven messages, forgiven on the minted seat",
     [['info', '[14:58:45.518] [AUTHORSHIP] 25 restored message(s) in b86896fc… relayed by 223bc34e carry no author proof - kept, marked unverified']],
     FRESH_DEVICE_RESTORE_NARRATION,
-    { clean: true, unmatched: 0 },
+    { clean: true, unmatched: 1 },
+  ],
+  [
+    "a minted device's hidden batch of rows that are not arrivals, forgiven",
+    [['info', '[15:40:02.017] [NOTIF] Batch into "c0ef269d…" added 1 while hidden, none of them an inbound message - nothing to raise.']],
+    FRESH_DEVICE_RESTORE_NARRATION,
+    { clean: true, unmatched: 1 },
   ],
   [
     'control: the same restore on a seat that was not minted stays dirt',
@@ -1608,7 +1634,7 @@ const FORGIVE_CASES = [
     'control: a restore that REFUSED a forged message is never narration',
     [['error', '[14:58:45.518] [AUTHORSHIP] REFUSED a replayed message 1a2b3c4d relayed by 223bc34e in b86896fc…: signed by x']],
     FRESH_DEVICE_RESTORE_NARRATION,
-    { clean: false, unmatched: 1 },
+    { clean: false, unmatched: 2 },
   ],
   [
     'a restore retired with asks still queued, and a sign-out as an ERROR, are not forgiven',
@@ -1617,7 +1643,7 @@ const FORGIVE_CASES = [
       ['error', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 10 },
+    { clean: false, unmatched: 13 },
   ],
   [
     "the adder's own memberAdded notice is forgiven at debug (#2412)",
@@ -1806,6 +1832,12 @@ const REFUSAL_CASES = [
   ['a refresh 401 with a query string is forgiven', 'http://localhost:8081/api/auth/refresh?clientVersion=0.16.3', 401, [{ path: /^\/api\/auth\/refresh(\?|$)/, status: [401] }], true],
   // NARROW IN BOTH DIRECTIONS, which is the whole safety of a pair rule.
   ['the same path with another status is NOT forgiven', 'http://localhost:8081/api/users/' + 'a'.repeat(64), 500, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
+  // A REVOKED DEVICE'S REFUSALS (alpha.5 DEV-2/3/6), given to the revoked seat only.
+  ['a revoked device asking for its own KeyPackage: 404, forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/key-package', 404, REVOKED_REFUSALS, true],
+  ['its revocation check answered 401, forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/revoked', 401, REVOKED_REFUSALS, true],
+  ['its pending fetch answered 401, forgiven', 'https://dev.example/api/mls/messages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6?limit=500&caps=addressed-history-1', 401, REVOKED_REFUSALS, true],
+  ['control: a 500 on its KeyPackage is NOT forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/key-package', 500, REVOKED_REFUSALS, false],
+  ['control: a 401 on a send is NOT forgiven', 'https://dev.example/api/mls/send', 401, REVOKED_REFUSALS, false],
   ['the same status on another path is NOT forgiven', 'http://localhost:8081/api/mls/send', 404, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
 ];
 for (const [what, url, status, rule, shouldBeClean] of REFUSAL_CASES) {
