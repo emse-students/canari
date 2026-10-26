@@ -31,6 +31,7 @@
 import {
   apiPost,
   awaitMessage,
+  clearOverlays,
   client,
   countMessage,
   evaluate,
@@ -48,7 +49,6 @@ import {
   openChannelAccess,
   openCommunity,
   openInviteLink,
-  saveChannelAccess,
   selectedChannel,
   setChannelWritePolicy,
 } from '../comm.mjs';
@@ -177,7 +177,7 @@ await step('restrict writing to administrators', async () => {
   await openSalon(w1);
   await openChannelAccess(w1);
   await setChannelWritePolicy(w1, 'admins');
-  await saveChannelAccess(w1);
+  await clearOverlays(w1);
 });
 const storedPolicy = channelId ? channelWritePolicy(channelId) : null;
 

@@ -4,6 +4,7 @@ import { InvalidUserIdError } from './user-id';
 import { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import { User } from './entities/user.entity';
+import { UserRowGoneError } from './user-write';
 
 /**
  * Blocking is exercised by `user-blocks.service.spec.ts`; here it only has to be present. An
@@ -60,15 +61,32 @@ describe('UsersService.search type guard', () => {
  * once an encrypted copy exists, and regenerating the key on every read.
  */
 describe('UsersService notepad', () => {
+  /**
+   * One stored row: `update` writes the columns it names into it (0 rows once `gone`), and `query`
+   * plays the key's `COALESCE` statement in PostgreSQL's `[rows, count]` shape.
+   */
   function makeService(user: Partial<User>) {
     const stored = { id: 'u1', ...user } as User;
-    const save = jest.fn().mockImplementation((u: User) => Promise.resolve(u));
+    let gone = false;
+    const save = jest.fn();
+    const update = jest.fn(async (_where: { id: string }, patch: Partial<User>) => {
+      if (gone) return { affected: 0 };
+      Object.assign(stored, patch);
+      return { affected: 1 };
+    });
+    const query = jest.fn(async (_sql: string, [, minted]: [string, string]) => {
+      if (gone) return [[], 0];
+      stored.notesKey = stored.notesKey ?? minted;
+      return [[{ notesKey: stored.notesKey }], 1];
+    });
     const userRepository = {
-      findOne: jest.fn().mockResolvedValue(stored),
+      findOne: jest.fn(async () => ({ ...stored })),
       save,
+      update,
+      query,
     } as unknown as Repository<User>;
     const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
-    return { service, stored, save };
+    return { service, stored, save, update, query, erase: () => (gone = true) };
   }
 
   it('returns the ciphertext and hides the legacy plaintext once one exists', async () => {
@@ -88,21 +106,116 @@ describe('UsersService notepad', () => {
   });
 
   it('drops the plaintext when a ciphertext is saved - keeping it defeats the change', async () => {
-    const { service, stored } = makeService({ notes: 'my bank pin' });
+    const { service, stored, update, save } = makeService({ notes: 'my bank pin', admin: false });
     await service.setNotes('u1', 'BBBB');
     expect(stored.notesCiphertext).toBe('BBBB');
     expect(stored.notes).toBeNull();
+    // The two notepad columns and nothing else: no other column can ride a notepad write.
+    expect(update).toHaveBeenCalledWith({ id: 'u1' }, { notesCiphertext: 'BBBB', notes: null });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a notepad write to a row that is gone, and writes nothing', async () => {
+    const { service, erase, save } = makeService({});
+    erase();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(service.setNotes('u1', 'BBBB')).rejects.toBeInstanceOf(UserRowGoneError);
+    expect(save).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('generates a 32-byte hex key once, then returns the same one', async () => {
-    const { service, save } = makeService({});
+    const { service, query, save } = makeService({});
     const key = await service.getOrCreateNotesKey('u1');
     expect(key).toMatch(/^[0-9a-f]{64}$/);
-    expect(save).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0]).toContain('COALESCE("notesKey"');
 
     // A second read must not rotate the key: every stored note would be lost.
     await expect(service.getOrCreateNotesKey('u1')).resolves.toBe(key);
-    expect(save).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('answers the key another first call stored, not the one it minted', async () => {
+    const { service, stored } = makeService({});
+    const findOne = jest.spyOn(
+      (service as unknown as { userRepository: Repository<User> }).userRepository,
+      'findOne'
+    );
+    // This call read the row before the other call's key landed.
+    findOne.mockImplementationOnce(async () => {
+      const answer = { ...stored };
+      stored.notesKey = 'k'.repeat(64);
+      return answer;
+    });
+    await expect(service.getOrCreateNotesKey('u1')).resolves.toBe('k'.repeat(64));
+    expect(stored.notesKey).toBe('k'.repeat(64));
+  });
+
+  it('mints no key for a row that is gone', async () => {
+    const { service, erase } = makeService({});
+    erase();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(service.getOrCreateNotesKey('u1')).rejects.toBeInstanceOf(UserRowGoneError);
+    warn.mockRestore();
+  });
+});
+
+/** The admin flag is ONE column update: nothing read, nothing else written. */
+describe('UsersService.setAdmin', () => {
+  it('updates the flag alone, keyed by the id, and answers 404 for a row that is gone', async () => {
+    const update = jest
+      .fn()
+      .mockResolvedValueOnce({ affected: 1 })
+      .mockResolvedValueOnce({ affected: 0 });
+    const findOne = jest.fn();
+    const save = jest.fn();
+    const userRepository = { update, findOne, save } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await service.setAdmin('u1', false);
+    expect(update).toHaveBeenCalledWith({ id: 'u1' }, { admin: false });
+    await expect(service.setAdmin('u2', true)).rejects.toBeInstanceOf(UserRowGoneError);
+    expect(findOne).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+/** A profile write names the fields it was given, and answers the row as it now stands. */
+describe('UsersService.update', () => {
+  it('writes only the given fields, never a save of the row read', async () => {
+    const stored = { id: 'u1', bio: 'old', admin: false } as User;
+    const update = jest.fn(async (_w: unknown, patch: Partial<User>) => {
+      Object.assign(stored, patch);
+      return { affected: 1 };
+    });
+    const save = jest.fn();
+    const userRepository = {
+      update,
+      save,
+      findOne: jest.fn(async () => ({ ...stored })),
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    await expect(service.update('u1', { bio: 'new' })).resolves.toMatchObject({ bio: 'new' });
+    expect(update).toHaveBeenCalledWith({ id: 'u1' }, { bio: 'new' });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a row that is gone, and writes nothing', async () => {
+    const save = jest.fn();
+    const userRepository = {
+      update: jest.fn().mockResolvedValue({ affected: 0 }),
+      save,
+      findOne: jest.fn(),
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(service.update('u1', { bio: 'new' })).rejects.toBeInstanceOf(UserRowGoneError);
+    expect(save).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -133,15 +246,17 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     posts: ['ALUMNI' as const],
   };
 
-  function makeService(existing: Partial<User> | null) {
+  function makeService(existing: Partial<User> | null, affected = 1) {
     const save = jest.fn().mockImplementation(async (u: User) => u);
+    const update = jest.fn().mockResolvedValue({ affected });
     const userRepository = {
       findOne: jest.fn().mockResolvedValue(existing),
       create: jest.fn().mockImplementation((u: Partial<User>) => u),
       save,
+      update,
     } as unknown as Repository<User>;
     const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
-    return { service, save };
+    return { service, save, update };
   }
 
   it('creates an account carrying the profile and the derived promo/formation', async () => {
@@ -162,14 +277,19 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       promo: 2025,
       formation: 'ISMIN',
     };
-    const { service, save } = makeService(stored);
+    const { service, save, update } = makeService(stored);
     const user = await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
       miconnectUuid: 'uuid-1',
       campus: 'saint-etienne',
       cursus: [],
       posts: ['EMSE'],
     });
-    expect(save).toHaveBeenCalled();
+    // The changed claims as one column update; the row read is never saved back.
+    expect(save).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({ id: 's1' }, expect.not.objectContaining({ admin: true }));
+    expect(Object.keys(update.mock.calls[0][1]).sort()).toEqual(
+      ['campus', 'cursus', 'formation', 'miconnectUuid', 'posts', 'promo'].sort()
+    );
     expect(user).toMatchObject({
       campus: 'saint-etienne',
       cursus: [],
@@ -189,9 +309,21 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       promo: 2025,
       formation: 'ISMIN',
     };
-    const { service, save } = makeService(stored);
+    const { service, save, update } = makeService(stored);
     await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
     expect(save).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses, typed, a row read and gone before its update - and re-creates nothing', async () => {
+    const stored = { id: 's1', displayName: 'Old', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service, save } = makeService(stored, 0);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(
+      service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile)
+    ).rejects.toBeInstanceOf(UserRowGoneError);
+    expect(save).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

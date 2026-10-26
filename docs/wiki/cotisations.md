@@ -292,6 +292,16 @@ End-user (paying) surfaces:
 All money moves through core-service using the association's **Stripe Connect** account;
 social-service never calls Stripe directly. Online sales require completed Stripe Connect onboarding.
 
+### A renewal updates two columns, never saves the tag it read (2026-10-25)
+
+Every path below ends in `grantOrRenew`. When the tag is already held, the renewal is ONE `UPDATE`
+of that row by id: `expiresAt` when given, and `metadata` merged in SQL (`"metadata" || patch`), so
+two renewals keep both their keys. A `save` of the tag read would write back what changed since the
+read and re-insert a tag revoked in between. A tag revoked between the read and the renewal is
+granted afresh as a NEW row carrying this grant's issuer - the grant ordered after the revoke - and
+the line says so at warn. Proven by social-service's `users/user-grant-write-gone.integration.spec.ts`
+([core-service](services/core-service.md#a-user-write-updates-columns-never-saves-the-row-it-read-2026-10-25)).
+
 ### A. Membership product (recommended)
 
 1. User opens `/shop`, buys the membership product (`ProductPurchaseButton` -> Stripe Checkout).

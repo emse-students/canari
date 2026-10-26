@@ -27,6 +27,15 @@ describe('describeCommunityRefusal', () => {
     );
   });
 
+  it('names a salon grant of someone no longer in the community, apart from a race', () => {
+    expect(describeCommunityRefusal('CHANNEL_GRANTEE_NOT_MEMBER')).toBe(
+      m.chat_channel_grantee_not_member_error()
+    );
+    expect(m.chat_channel_grantee_not_member_error()).not.toBe(
+      m.chat_channel_access_changed_error()
+    );
+  });
+
   it('names a role change raced by another edit of the member, as a retry', () => {
     expect(describeCommunityRefusal('MEMBER_CHANGED_MEANWHILE')).toBe(
       m.chat_community_member_changed_error()

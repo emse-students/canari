@@ -27,6 +27,7 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
   BLOCK_LIMIT_REACHED: m.refusal_block_limit_reached,
   NOT_BLOCKED: m.refusal_not_blocked,
   ADMIN_SELF_DEMOTE: m.refusal_admin_self_demote,
+  ADMIN_SELF_CHANGE: m.refusal_admin_self_change,
   USER_SEARCH_FILTER_REQUIRED: m.refusal_user_search_filter_required,
   USER_SEARCH_TOO_LONG: m.refusal_user_search_too_long,
   CALLS_DISABLED: m.call_calls_disabled,
