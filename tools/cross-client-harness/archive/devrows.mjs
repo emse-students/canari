@@ -87,6 +87,7 @@ import {
   OIDC_LOGIN_NARRATION,
   OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_RETURN_NARRATION,
+  REVOKED_REFUSALS,
   REVOKED_SIGN_OUT_NARRATION,
   SIBLING_MINT_NARRATION,
   consoleLines,
@@ -497,7 +498,7 @@ try {
     // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
     // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
     if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
-    refusals[d] = MINT_REFUSALS;
+    refusals[d] = (act.revoked ?? []).includes(d) ? [...MINT_REFUSALS, ...REVOKED_REFUSALS] : MINT_REFUSALS;
   }
   const observers = await observersOf(seats, { logs, refusals, provoked: act.records ?? {}, offline: act.offline ?? [] });
   await finishObserved(
