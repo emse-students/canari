@@ -1712,7 +1712,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             await service.evictSeats('group-1', 'user-2', { settles: 1 });
             fetchSpy.mockResolvedValueOnce(entitled(false));
 
-            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            await expect(admitUser2()).resolves.toMatchObject({
+              accepted: true,
+              refusedAdmits: [{ userId: 'user-2', deviceId: 'device-2', reason: 'not_entitled' }],
+            });
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
@@ -1720,7 +1723,12 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             await service.evictSeats('group-1', 'user-2', 'begin');
             fetchSpy.mockResolvedValueOnce(entitled(true));
 
-            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            await expect(admitUser2()).resolves.toMatchObject({
+              accepted: true,
+              refusedAdmits: [
+                { userId: 'user-2', deviceId: 'device-2', reason: 'departure_in_progress' },
+              ],
+            });
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
@@ -1908,13 +1916,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
       const sent = fanOut();
 
-      await commit(
+      const answer = await commit(
         {
           admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
           excludeDeviceIds: ['user-1:device-1', 'user-2:phone-2', 'user-3:laptop-3'],
         },
         'user-1'
       );
+
+      // Every admit recorded: the answer names no refusal at all.
+      expect(answer).not.toHaveProperty('refusedAdmits');
 
       // user-3 is a member this commit does not admit: it must receive the commit.
       expect(sent).toHaveBeenCalledWith(
@@ -1937,13 +1948,18 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
       const sent = fanOut();
 
-      await commit(
-        {
-          admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
-          excludeDeviceIds: ['user-2:phone-2'],
-        },
-        'user-1'
-      );
+      await expect(
+        commit(
+          {
+            admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
+            excludeDeviceIds: ['user-2:phone-2'],
+          },
+          'user-1'
+        )
+      ).resolves.toMatchObject({
+        accepted: true,
+        refusedAdmits: [{ userId: 'user-2', deviceId: 'phone-2', reason: 'already_active' }],
+      });
 
       expect(deviceGroupRepo.find).toHaveBeenCalledWith({
         where: [{ userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1', status: 'active' }],
@@ -1954,6 +1970,38 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect.objectContaining({ excludeDeviceIds: [] }),
         undefined,
         []
+      );
+    });
+
+    it('answers an admit of a device with no key package - revoked mid-Add - as refused, and admits the rest (DEV-3)', async () => {
+      tables({
+        keyPackages: [ownKey, { userId: 'user-2', deviceId: 'phone-2' }],
+        devices: [ownDevice],
+      });
+      fanOut();
+
+      // The committer's next step is a Welcome to each admitted device; the one it is told about
+      // here would be refused `WELCOME_TARGET_UNKNOWN`, so it must not have to send it to find out.
+      await expect(
+        commit(
+          {
+            admits: [
+              { userId: 'user-2', deviceId: 'phone-2' },
+              { userId: 'user-2', deviceId: 'revoked-2' },
+            ],
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({
+        accepted: true,
+        newEpoch: expect.any(Number),
+        refusedAdmits: [{ userId: 'user-2', deviceId: 'revoked-2', reason: 'no_key_package' }],
+      });
+      expect(membershipInsertBuilder.values).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-2', deviceId: 'phone-2' })
+      );
+      expect(membershipInsertBuilder.values).not.toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'revoked-2' })
       );
     });
 

@@ -52,7 +52,12 @@ function makeCtx(verdict: KeyPackageVerdict) {
     runCommitTransaction: vi.fn(
       async (_g: string, stage: (intent: Uint8Array) => Promise<typeof staged>) => {
         const s = await stage(INTENT);
-        return { welcome: s.welcome, ratchetTree: new Uint8Array([4]), addedDeviceIds: [] };
+        return {
+          welcome: s.welcome,
+          ratchetTree: new Uint8Array([4]),
+          addedDeviceIds: [],
+          notAdmitted: [],
+        };
       }
     ),
   };
@@ -198,7 +203,7 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
           _opts?: { excludeDeviceIds?: string[]; exportTree?: boolean }
         ) => {
           const s = await stage(INTENT);
-          return { welcome: s.welcome, ratchetTree: new Uint8Array([4]) };
+          return { welcome: s.welcome, ratchetTree: new Uint8Array([4]), notAdmitted: [] };
         }
       ),
     };

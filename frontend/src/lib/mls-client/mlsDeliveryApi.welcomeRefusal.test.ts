@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MlsDeliveryApi, WelcomeTargetNotMemberError } from './mlsDeliveryApi';
+import {
+  MlsDeliveryApi,
+  WelcomeTargetNotMemberError,
+  WelcomeTargetUnknownError,
+  admitRefusalMakesWelcomeUndeliverable,
+  isTerminalWelcomeRefusal,
+} from './mlsDeliveryApi';
 
 /**
  * A Welcome the server refuses because the roster does not name its target is TYPED at the throw,
@@ -34,5 +40,45 @@ describe('sendWelcome and the refusal of its target', () => {
 
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(WelcomeTargetNotMemberError);
+  });
+
+  it('throws WelcomeTargetUnknownError on a 404 carrying WELCOME_TARGET_UNKNOWN - a revoked target', async () => {
+    const body = JSON.stringify({
+      statusCode: 404,
+      code: 'WELCOME_TARGET_UNKNOWN',
+      message: 'this Welcome has no target device',
+      error: 'welcome_target_unknown',
+    });
+    const err = await send(api(new Response(body, { status: 404 }))).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(WelcomeTargetUnknownError);
+    expect(isTerminalWelcomeRefusal(err)).toBe(true);
+    expect(err).toMatchObject({ groupId: 'group-1', targetUserId: 'bob', targetDeviceId: 'd-b' });
+  });
+
+  it('keeps a 404 without that code an ordinary failure - an edge page is not this refusal', async () => {
+    const err = await send(api(new Response('<html>not found</html>', { status: 404 }))).catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(isTerminalWelcomeRefusal(err)).toBe(false);
+  });
+});
+
+describe('which refused admits make a Welcome undeliverable - an allowlist', () => {
+  it('names `no_key_package` alone', () => {
+    expect(admitRefusalMakesWelcomeUndeliverable('no_key_package')).toBe(true);
+    for (const reason of [
+      'not_enrolled',
+      'already_active',
+      'not_entitled',
+      'departure_in_progress',
+      'committer',
+      'unresolved_identity',
+      'a-reason-added-later',
+    ]) {
+      expect(admitRefusalMakesWelcomeUndeliverable(reason)).toBe(false);
+    }
   });
 });
