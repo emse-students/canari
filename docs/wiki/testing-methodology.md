@@ -1403,11 +1403,12 @@ reads clean.
 
 A settings panel is a `position: fixed` backdrop over the whole page. The gestures that act INSIDE
 one - `revokeChannelAccess`, `setMemberRole`, `cyclePermissionCell` - deliberately leave it up,
-because their callers usually have more to do in there; only `Save` genuinely ends the interaction,
-which is why `saveChannelAccess` is the one that clears. That is correct, and it means the
-obligation to close lands on the check.
+because their callers usually have more to do in there. The access panel's old `Save` was the one
+gesture that ended the interaction and cleared it; since #1171 every control writes on its own, the
+Save is gone, and its helper `saveChannelAccess` was deleted with it (2026-10-26). That leaves the
+obligation to close on the check, every time.
 
-Five of the twelve call sites had quietly dropped it. The comment on `saveChannelAccess` records
+Five of the twelve call sites had quietly dropped it. The comment on `saveChannelAccess` recorded
 this exact aftermath being paid for once already - "COMM-9/10 saved the roster, tried to post, and
 died on `no stable element` for a composer that was plainly in the DOM" - and the fix went to the
 single gesture that had failed. Its sibling `revokeChannelAccess` needs no save, ends inside the

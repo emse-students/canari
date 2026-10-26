@@ -97,11 +97,10 @@ export async function withSeatLock<T>(
  * first, under the group's seat lock, so the result is the set of `userId:deviceId` keys it may
  * write a row for. TWO KNOWN EXCEPTIONS:
  *
- * - The demotion (`MessagingService.deactivateDeviceMembership`), deliberately: it upserts a
- *   `pending` row and removes its route itself - the stale-device cron demotes precisely a device
- *   with no recent key package, so requiring one would make it a no-op. An erasure's pass cuts such
- *   a row with the rest of its group (`eraseSeats`); one written after the final pass names a device
- *   with no key package, which `cleanupStaleDevices` collects.
+ * - The demotion (`MessagingService.deactivateDeviceMembership`), deliberately: it only UPDATES a
+ *   row that exists to `pending` and removes its route itself - it never inserts one, so it admits
+ *   nobody - and the stale-device cron demotes precisely a device with no recent key package, so
+ *   requiring one would make it a no-op.
  * - `MembersController.addGroupMember` (a group invite, and the opening of a 1:1 DM), a
  *   pre-existing writer not yet converted: it reads the key packages outside any lock and writes the
  *   roster row, its interval and `pending` seats with no seat lock. So an erased account CAN be

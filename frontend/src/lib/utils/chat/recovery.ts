@@ -1,10 +1,21 @@
-import type { ExternalJoinOutcome, GroupMeta, IMlsService } from '$lib/mls-client/IMlsService';
+import type {
+  ExternalJoinOutcome,
+  GroupMeta,
+  IMlsService,
+  UserGroupRow,
+  DeviceMembershipRow,
+} from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
-import { classifyServerStatus, isDistributionGroupMeta } from './groupLifecycle';
+import {
+  classifyServerStatus,
+  decideAbsentGroupFate,
+  isDistributionGroupMeta,
+  readStillUserMember,
+} from './groupLifecycle';
 import { markGroupNotReady, clearGroupNotReady, readNotReadySince } from './notReadyRegistry';
 import { reconcileGroup } from './historyReconcile';
 import { pendingGroupExitIds } from './pendingGroupExits';
@@ -14,6 +25,8 @@ import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { isNeverAdmitted } from './admissionState';
+import { readGroupSweepSnapshot } from './groupSweep';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -258,6 +271,7 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
       conversations: deps.conversations,
       contactKey: entry[0],
       groupId,
+      userId: deps.userId,
       deleteConversation: deps.deleteConversation,
       log: deps.log,
     });
@@ -279,12 +293,29 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
  * published yet", fell through to the welcome_request fallback, and was re-asked every minute for as
  * long as the group existed - a 403 and a broadcast per minute, ending only if somebody else deleted
  * the group. GRP-6 caught it on 2026-08-24 because it watches for thirty seconds after a leave.
+ *
+ * A NEVER-ADMITTED ROW IS REMOVED, NEVER RETIRED - the decision discovery takes for the same row
+ * (`discoverMissingGroups`, "the ask was declined or expired"). An ask no member answered left no
+ * past and no exclusion to explain, and a `removed` row is a conversation the user sees listed:
+ * retiring it was the ADM-2 symptom (2026-10-25).
  */
 async function stopRecovering(groupId: string, reason: string, deps: RecoveryDeps): Promise<void> {
   cancelReAdd(groupId);
   clearGroupNotReady(deps.userId, groupId);
   const entry = findByGroupId(deps.conversations, groupId);
   if (!entry || entry[1].lifecycle === 'removed') return;
+  if (isNeverAdmitted(entry[1])) {
+    deps.log(`[READD] ${groupId.slice(0, 8)}... ${reason} - a never-admitted ask ended, removing`);
+    await purgeLocalConversationRecord({
+      conversations: deps.conversations,
+      contactKey: entry[0],
+      groupId,
+      userId: deps.userId,
+      deleteConversation: deps.deleteConversation,
+      log: deps.log,
+    });
+    return;
+  }
   deps.log(`[READD] ${groupId.slice(0, 8)}... ${reason} - marking removed`);
   await retireConversation({
     conversations: deps.conversations,
@@ -328,7 +359,9 @@ export interface ReAddOptions {
  *  5. Group tombstoned (`deletedAt`) -> mark the conversation removed, stop.
  *  6. A member ALREADY OWES us a Welcome (`pending`, with a Welcome queued or an add in flight) ->
  *     wait for it, ask nobody, stop; a link's seat awaiting admission -> ask a member, stop. The
- *     external join below is not ours to make while an Add is in flight for our own leaf.
+ *     external join below is not ours to make while an Add is in flight for our own leaf. NO row for
+ *     this device -> the account's seat decides: none on a believable list -> stop (no row created,
+ *     no join, no ask).
  *  7. Try the self-service external-commit join (Phase 4).
  *  8. The server REFUSED it as a non-member (`NotAGroupMemberError`) -> mark the conversation
  *     removed, stop. This is a terminating ANSWER and not a failed attempt, which is the difference
@@ -519,7 +552,7 @@ export async function requestReAdd(
   // the self-service door is shut for them - the server refuses the base and the commit. Told here,
   // before anything is tried, the device asks a member and waits; the member it
   // reaches is shown "X asks to join" (`handleWelcomeRequest`).
-  const reading = await readWelcomeOwed(groupId, deps, opts);
+  let reading = await readWelcomeOwed(groupId, deps, opts);
   if (reading === null) {
     // The discriminator could not be read, so neither path is known to be ours. The watchdog owns
     // the cadence and re-invokes; guessing here is the exact move this block exists to stop.
@@ -527,6 +560,63 @@ export async function requestReAdd(
       `[READD] ${groupId.slice(0, 8)}... membership status unreadable - skipping this round`
     );
     return;
+  }
+  // NO ROW FOR THIS DEVICE: WHETHER THE ACCOUNT HOLDS A SEAT DECIDES, AND IT IS READ, NOT LEARNT BY
+  // FAILING (ADM-2, 2026-10-25). This branch used to fall through to the self-service join as if the
+  // row were `active`, so a pass entered after an ask was DECLINED - its device row deleted with the
+  // seat - re-created the placeholder and tried an external join the server refused with a 403,
+  // leaving the conversation listed as `removed`. The account's seat is on the list discovery reads,
+  // and that list says so before anything is built or published.
+  if (reading === 'no-device-row') {
+    const seat = await readAccountSeat(groupId, deps);
+    if (seat.kind === 'unknown') return;
+    if (seat.kind === 'none') {
+      // THE LIST ENDS ONLY WHAT IT CAN SPEAK FOR: a group this device holds no conversation for (a
+      // registry-only candidate), or a never-admitted row - an ask that ended. A row this device was
+      // ever IN is decided on a per-group read, never on list absence alone - the reader and the
+      // reducer discovery uses for the same row ({@link endOnTheGroupsOwnAnswer}).
+      const convo = findByGroupId(deps.conversations, groupId)?.[1];
+      if (convo !== undefined && !isNeverAdmitted(convo)) {
+        if ((await endOnTheGroupsOwnAnswer(groupId, convo, meta, deps)) === 'done') return;
+      } else {
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... the server lists no seat for this account in the group - ` +
+            `nothing to join, no member to ask (an ask declined or expired, or a removal); recovery ends`
+        );
+        await stopRecovering(groupId, 'the server lists no seat for this account', deps);
+        return;
+      }
+    } else {
+      // The account is seated. The list carries this device's seat too when the server has one, read
+      // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no
+      // seat there, this device's door is its own, as an `active` row's.
+      const listed = seat.row.deviceMembership;
+      if (listed) {
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... no row for this device on the first read, the account's list ` +
+            `names one (${listed.status}) - reading that seat`
+        );
+        const fromList = classifyOwnSeat(
+          groupId,
+          {
+            id: '',
+            userId: deps.userId,
+            deviceId: deps.mlsService.getDeviceId(),
+            groupId,
+            status: listed.status,
+            welcomeQueued: listed.welcomeQueued,
+            addInFlight: listed.addInFlight,
+            awaitingAdmission: listed.awaitingAdmission,
+          },
+          listed.admitted ? '(the list does not carry the epoch)' : null,
+          opts.welcomeHandled === true,
+          deps
+        );
+        // The same verdict as the first read's: a seat that does not answer skips the round.
+        if (fromList === null) return;
+        reading = fromList;
+      }
+    }
   }
   if (reading === 'awaiting-admission') {
     await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
@@ -673,8 +763,9 @@ export async function requestReAdd(
     //
     // SO THE SEAT IS PROMOTED HERE, whichever it was - the deterministic end of the row - but ONLY
     // ON PROOF THAT OUR LEAF IS IN THE TREE WE HOLD. The server cannot check that: a self-report
-    // promotes any existing seat that is not kicked and not awaiting admission (`promoteReportedSeat`),
-    // so the proof is ours to carry. Holding the state is not it - an evicted group stays held
+    // promotes an existing seat that is not kicked and whose owner is a member - an admitted roster
+    // seat, or in a key-distribution group an entitlement social-service gives
+    // (`promoteReportedSeat`) - and it cannot read the tree, so the proof is ours to carry. Holding the state is not it - an evicted group stays held
     // (`isGroupActive`) - and a held, active group is: `active` is then the truth, and a `pending`
     // row left behind is served to every member as a work item, so the next one online would Add a
     // leaf already in the tree and its duplicate-leaf repair would kick the live one (the reason the
@@ -890,14 +981,15 @@ export async function requestReAdd(
  * would hand the invited population the external join, which is the race, not the fix.
  *
  * @returns the reading ({@link WelcomeOwedReading}) - `awaiting-admission` included, the invitation
- *   link's seat that only a member's Add answers - or `null` when the memberships could not be read
- *   or this device's pending row did not answer.
+ *   link's seat that only a member's Add answers - `no-device-row` when the server holds no row for
+ *   this device in the group, or `null` when the memberships could not be read or this device's
+ *   pending row did not answer.
  */
 async function readWelcomeOwed(
   groupId: string,
   deps: RecoveryDeps,
   opts: ReAddOptions = {}
-): Promise<WelcomeOwedReading | null> {
+): Promise<WelcomeOwedReading | 'no-device-row' | null> {
   try {
     const rows = await deps.mlsService.getDeviceMemberships(
       deps.userId,
@@ -907,7 +999,41 @@ async function readWelcomeOwed(
     // 2026-09-27 has the same two doors - an admitter's Welcome, or the device's own external
     // commit.
     const row = rows.find((r) => r.groupId === groupId);
-    const readPast = opts.welcomeHandled === true;
+    // NO ROW IS NOT AN `active` ROW, though the shared reading folds both into `not-pending`: an
+    // `active` row says this device joined once, no row says nothing about the account at all - the
+    // seat of a declined or expired ask, or of a removal, is gone with its device rows. The seam
+    // asks the account's seat before choosing a door ({@link readAccountSeat}).
+    if (row === undefined) return 'no-device-row';
+    const admittedAt =
+      row.admittedAtEpoch !== undefined && row.admittedAtEpoch !== null
+        ? `at epoch ${row.admittedAtEpoch}`
+        : null;
+    return classifyOwnSeat(groupId, row, admittedAt, opts.welcomeHandled === true, deps);
+  } catch (e) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... getDeviceMemberships threw: ${String(e).slice(0, 120)}`
+    );
+    return null;
+  }
+}
+
+/**
+ * Reads THIS DEVICE'S seat ({@link readWelcomeOwedFromRow}) and says what it read - the one place
+ * both sources of that seat go through: `getDeviceMemberships`' row, and the account list's
+ * `deviceMembership` when the first had none ({@link requestReAdd}). So an anomaly accuses and skips
+ * the round whichever source carried it, and a stranded seat is named the same way.
+ *
+ * @param admittedAt how a commit admitted the seat (`at epoch N`), or null when none did.
+ * @returns the reading, or `null` for a `pending` row that does not answer - the caller skips.
+ */
+function classifyOwnSeat(
+  groupId: string,
+  row: DeviceMembershipRow,
+  admittedAt: string | null,
+  readPast: boolean,
+  deps: RecoveryDeps
+): WelcomeOwedReading | null {
+  {
     const reading = readWelcomeOwedFromRow(row, { ignoreQueuedWelcome: readPast });
     if (reading === null) {
       // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
@@ -935,11 +1061,11 @@ async function readWelcomeOwed(
       // way (`readWelcomeOwedFromRow`). And a seat a commit ADMITTED (`admittedAtEpoch`) is named,
       // because its leaf is already in the tree and the external commit replaces it.
       const admitted =
-        row?.admittedAtEpoch !== undefined && row.admittedAtEpoch !== null
-          ? ` (a commit admitted this seat at epoch ${row.admittedAtEpoch}; the external commit replaces that leaf)`
+        admittedAt !== null
+          ? ` (a commit admitted this seat ${admittedAt}; the external commit replaces that leaf)`
           : '';
       deps.log(
-        readPast && row?.welcomeQueued === true
+        readPast && row.welcomeQueued === true
           ? `[READD] ${groupId.slice(0, 8)}... the row still lists a queued Welcome, read past: this device has just spent one for the group` +
               ` - serving ourselves${admitted}`
           : `[READD] ${groupId.slice(0, 8)}... roster seat with NO queued Welcome and NO add in flight` +
@@ -947,12 +1073,81 @@ async function readWelcomeOwed(
       );
     }
     return reading;
-  } catch (e) {
-    deps.log(
-      `[READD] ${groupId.slice(0, 8)}... getDeviceMemberships threw: ${String(e).slice(0, 120)}`
-    );
-    return null;
   }
+}
+
+/**
+ * Whether THIS ACCOUNT holds a seat in `groupId`, read off the server's list of the account's groups
+ * (`GET /mls/users/:id/groups`, the list discovery reads) - asked only when the server holds no row
+ * for this device, where the device rows cannot answer it.
+ *
+ * `unknown` IS NOT A "NO": the list could not be read, or it may not be believed (the guard every
+ * destructive reading of absence takes, {@link readGroupSweepSnapshot}). The pass is skipped and the
+ * watchdog re-asks on its cadence. Only a believable list without the group says `none`, which ends
+ * the recovery on that proof.
+ */
+async function readAccountSeat(
+  groupId: string,
+  deps: RecoveryDeps
+): Promise<{ kind: 'seated'; row: UserGroupRow } | { kind: 'none' } | { kind: 'unknown' }> {
+  const snapshot = await readGroupSweepSnapshot(deps.mlsService, deps.userId, deps.log);
+  if (!snapshot.absenceIsEvidence) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... no row for this device, and whether the account holds a seat ` +
+        `could not be read (${snapshot.unusableReason}) - skipping this round`
+    );
+    return { kind: 'unknown' };
+  }
+  const row = snapshot.serverGroups.find((g) => g.groupId === groupId);
+  return row ? { kind: 'seated', row } : { kind: 'none' };
+}
+
+/**
+ * Decides a conversation this device was once IN, absent from the account's list, on the group's
+ * own answer: ONE reader of the roster ({@link readStillUserMember}) and ONE reducer
+ * (`decideAbsentGroupFate`), both shared with discovery, so the two reach the same verdict on the
+ * same answer. The group is live (`meta`, read by this pass and not tombstoned), so its roster is
+ * the one question left.
+ *
+ * TERMINATED ON THE PROOF: the roster's typed 403 `NOT_A_MEMBER` is an exclusion, and the row is
+ * retired - `active` or `pending` alike. Leaving a `pending` row standing ended this pass but not the
+ * next: every conversation is a watchdog candidate and the cooldown had been cleared, so each sweep
+ * re-ran the whole pass for ever (re-review of #2493).
+ *
+ * @returns `proceed` when the roster still names us (the list was stale) and the pass goes on to its
+ *   join; `done` when the row was retired, or the roster did not answer and the round is skipped.
+ */
+async function endOnTheGroupsOwnAnswer(
+  groupId: string,
+  convo: Conversation,
+  meta: GroupMeta,
+  deps: RecoveryDeps
+): Promise<'proceed' | 'done'> {
+  const isStillUserMember = await readStillUserMember(
+    deps.mlsService,
+    groupId,
+    deps.userId,
+    deps.log
+  );
+  const fate = decideAbsentGroupFate({
+    lifecycle: convo.lifecycle,
+    serverStatus: { kind: 'active', meta },
+    isStillUserMember,
+  });
+  if (fate.action === 'markRemoved') {
+    await stopRecovering(groupId, fate.reason, deps);
+    return 'done';
+  }
+  if (isStillUserMember === true) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... absent from the account's list, but the group's roster names us - the list was stale; going on`
+    );
+    return 'proceed';
+  }
+  deps.log(
+    `[READD] ${groupId.slice(0, 8)}... absent from the account's list and the roster unanswered (${fate.reason}) - nothing decided, skipping this round`
+  );
+  return 'done';
 }
 
 /**

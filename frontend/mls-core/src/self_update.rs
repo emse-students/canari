@@ -174,7 +174,11 @@ impl MlsManager {
             .get(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
         let Some(leaf) = group.own_leaf_node() else {
-            log::warn!("[LEAF_REFRESH] {group_id}: no own leaf in the tree - no key to name it by");
+            // Not warned here: this is read on every durable send, and the caller
+            // (`leafRefresh.refreshLeafIfDue`) reports the state ONCE per group and epoch, as a defect.
+            log::debug!(
+                "[LEAF_REFRESH] {group_id}: no own leaf in the tree - no key to name it by"
+            );
             return Ok(None);
         };
         // Its TLS encoding: the only public spelling openmls gives the key, and a stable one.

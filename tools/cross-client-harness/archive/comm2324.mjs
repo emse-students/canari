@@ -31,7 +31,6 @@ import {
   inPanel,
   openChannelAccess,
   openCommunity,
-  saveChannelAccess,
   selectedChannel,
   setChannelPrivate,
 } from '../comm.mjs';
@@ -104,11 +103,13 @@ await step('flip the visibility', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
   if ((await selectedChannel(w1)) !== salon) throw new Error('the salon did not open');
   await openChannelAccess(w1);
-  const moved = await setChannelPrivate(w1, !startPrivate);
+  const { moved, landed } = await setChannelPrivate(w1, !startPrivate);
   if (!moved) throw new Error('the toggle was already where the check wanted it');
+  if (!landed) throw new Error('the server refused the visibility flip');
   // The owner is not granted here any more: since 2026-09-27 the SERVER grants whoever makes a salon
   // private, as it grants whoever creates one private, and the panel offers no allowlist until then.
-  return saveChannelAccess(w1);
+  // THE TOGGLE IS THE WRITE since #1171: there is no save to press after it.
+  return landed;
 });
 
 // THE MEMBER COMMITS ITS OWN ADD, so the entitlement above buys nothing until the owner LOADS the
@@ -129,9 +130,9 @@ const routed = !startPrivate
     })
   : null;
 
-// A FRESH PANEL, BECAUSE THE SAVE CLOSED THE OLD ONE. Reading the state at the end of the flip
-// answered `{isPrivate: null, allowed: [], writePolicy: null}` on every run: `saveChannelAccess`
-// ends with `clearOverlays`, deliberately, so the read found no toggle and reported the instrument
+// A FRESH PANEL, BECAUSE THE ROUTING STEP LEFT THE OLD ONE. Reading the state at the end of the flip
+// answered `{isPrivate: null, allowed: [], writePolicy: null}` on every run while the panel's old
+// Save ended with `clearOverlays`, so the read found no toggle and reported the instrument
 // rather than the app - and `panelAgrees` then compared null with a boolean and failed a switch that
 // had worked. Reading BEFORE the save would have been worse than useless: it would have echoed the
 // click this check just made, not the app's answer. A reopened panel refetches, so what it states is

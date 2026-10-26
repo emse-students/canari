@@ -1370,6 +1370,27 @@ whole with `409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the vis
 allowlist and the write policy are left as the other edit wrote them, and a departure the first
 evictions began is settled `cancelled` like any abandoned one.
 
+### A member write updates columns, never saves the row it read (2026-10-25)
+
+**A member write must never insert a row.** A TypeORM `save` of a stale entity inserts it again,
+every column included, when the row was deleted in between - and also reverts every column a
+concurrent writer changed since the read. So a write to an existing row (`channel_members`,
+`association_members`, `channel_workspaces`) is ONE column-scoped `UPDATE` keyed by the row's `id`,
+and `affected !== 1` refuses the call with nothing written:
+
+- `setNotificationLevel` merges its one key in SQL (`notifLevels || jsonb_build_object`), so two
+  devices setting two salons keep both; 0 rows is `403`.
+- `updateWorkspaceMemberRole` and the association `updateMemberRole` are CONDITIONED on what their
+  bound was judged against (`AND "roleIds" = :judged`, `AND permissions = :judged`): 0 rows - the
+  member was re-roled or removed since - is `409 MEMBER_CHANGED_MEANWHILE`, which the client names.
+- `updateWorkspaceImage` and `updateWorkspaceHistoryVisibility` write their one column; 0 rows is `404`.
+- The successor an account erasure promotes is chosen again under `withCommunityRemovalLock`, from
+  rows read `FOR UPDATE` in id order, since every removal deletes through that lock.
+
+Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
+`association-member-write-gone.integration.spec.ts`, each committing the other write between the read
+and the update. `save` stays for a row the call itself creates.
+
 ### An access rewrite names the revision it edited (2026-10-25)
 
 **The lock only protected the server's own read, never the client's.** The settings panel reads a
@@ -1439,7 +1460,41 @@ with reason `invite_withdrawn`), so the `404` leaves nothing half-made.
 
 **Lock order.** Salon rows are locked before membership rows everywhere: the grant (salon, then the
 grantee's membership), a departure (all the community's private salons, `ORDER BY id`, then the
-membership delete), and `hardDeleteWorkspace` (salons deleted before memberships).
+membership delete), and `hardDeleteWorkspace` (salons deleted before memberships). An access-list
+rewrite takes the removal lock, then its salon, then the community's membership rows, share-locked.
+
+### Every writer that ADDS to an allowlist asks membership under a lock a kick also takes (2026-10-25)
+
+**The lesson: a check re-asked under a lock must cover what the save ADDS, not only what it
+removes.** An access-list rewrite re-checked its stale revision and the members it dropped under the
+community removal lock, and never asked whether the people it granted were still members. A kick
+that strips no salon does not move the revision, so a kick committed while the rewrite waited on the
+lock was invisible to it - and the kick's own re-read sees only a grant committed BEFORE it. Found by
+cross-client row RM-5.
+
+**The rewrite asks it, twice, in the order every removal check already uses.** Early, before the
+salon's group is minted or any eviction begins, an unlocked preview (`assertGranteesAreMembers`
+beside the early `assertActorMayRemoveMembers`) refuses a grant of a non-member outright. Under the
+lock, the community's membership rows are read ONCE, share-locked, and handed to both checks: the
+actor's first (a kicked actor is answered `403`), then the grantees. Anyone absent refuses the whole
+save `409 CHANNEL_GRANTEE_NOT_MEMBER` with `current`, nothing written; the locked answer is the
+authority. Matched case-blind (an allowlist entry is lowercased, a membership row keeps its id as
+written). Only the names the save adds are judged - every name, when the salon becomes private.
+The panel reads the access again on that code, clears its pending pick, refreshes the member list it
+offers, then names the refusal (`chat_channel_grantee_not_member_error`); an older client shows its
+generic line. Not retryable as sent.
+
+**The other writers, audited - each already asked membership under a lock the kick serialises
+with:** `grantPrivateChannelAccess` (an admin's join, an invitation into a private salon) re-reads
+the salon `FOR UPDATE` and the grantee's membership `FOR SHARE`, and the kick locks salons before
+deleting the membership; a private `createChannel` names only its creator, who is the actor
+`assertActorMayRemoveMembers` re-reads under the removal lock. Strips, the per-member `DELETE`,
+leaving a salon and the erasure only remove; nothing outside social-service writes `allowedUsers`.
+A kick already strips every private salon naming its target from a row-locked re-read under the
+same lock, so no separate sweep is added: with every adder checked there, it would heal a state
+nothing produces. Pinned by `removal-bound.integration.spec.ts` (the kick committed while the
+rewrite is parked on the removal lock, the reverse order, a mixed-case membership id, and a flip
+whose actor was kicked while it waited).
 
 Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
 change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed

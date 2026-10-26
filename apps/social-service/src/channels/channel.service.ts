@@ -53,6 +53,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   INVITE_ROLE_NOT_GRANTABLE,
+  MEMBER_CHANGED_MEANWHILE,
   permissionsCover,
   PIN_REQUIRES_MODERATION,
   REMOVAL_EXCEEDS_ACTOR,
@@ -168,6 +169,14 @@ export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
  * stands, and the edit may be made again against it.
  */
 export const CHANNEL_ACCESS_CHANGED = 'CHANNEL_ACCESS_CHANGED';
+
+/**
+ * 409 code: an access-list rewrite refused because someone it ADDS is no longer a member of the
+ * community - asked under the community's removal lock, so a kick or a departure that committed
+ * while the rewrite waited is seen. Nothing was written; the body's `current` is the access as it
+ * stands. Not retryable as sent: the same list names the same non-member.
+ */
+export const CHANNEL_GRANTEE_NOT_MEMBER = 'CHANNEL_GRANTEE_NOT_MEMBER';
 
 /**
  * A salon's access as the settings panel reads and edits it, revision included - the one shape the
@@ -1322,27 +1331,81 @@ export class ChannelService implements OnApplicationBootstrap {
     );
     if (adminIds.length > 0) return false;
 
-    const roles = await this.roleRepo.find({ where: { workspaceId } });
-    const adminRole = roles
-      .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
-      .sort((a, b) => b.priority - a.priority)[0];
+    // THE PROMOTION IS DECIDED AGAIN UNDER THE REMOVAL LOCK, from rows read FOR UPDATE: every
+    // departure deletes through that lock, so the successor chosen there is a member when it is
+    // written, and nothing can change its row before the commit.
+    const outcome = await this.withCommunityRemovalLock(workspaceId, (m) =>
+      this.promoteSuccessorAdmin(m, workspaceId, leavingUserId)
+    );
+    if (outcome === 'no_members') {
+      await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * The promotion half of {@link repairOneWorkspaceAfterAccountDeletion}, run inside
+   * {@link withCommunityRemovalLock} on `m`: the community's membership rows are read FOR UPDATE,
+   * the leaving account excluded, and the successor is written as ONE column update of its row -
+   * never a save, which would insert a membership deleted since the read. Nothing here calls
+   * another service.
+   *
+   * @returns `no_members` when nobody else is left (the caller deletes the community, outside the
+   *   lock), `governed` when another admin exists meanwhile, `no_admin_role` when no role can be
+   *   granted, `promoted` otherwise.
+   */
+  private async promoteSuccessorAdmin(
+    m: EntityManager,
+    workspaceId: string,
+    leavingUserId: string
+  ): Promise<'no_members' | 'governed' | 'no_admin_role' | 'promoted'> {
+    const memberRows = m.getRepository(ChannelMember);
+    // Locked in ONE order (by id): a community's hard delete removes these rows without the removal
+    // lock, and lockers that agree on an order cannot each hold a row the other waits on.
+    const members = (
+      await memberRows.find({
+        where: { workspaceId },
+        order: { id: 'ASC' },
+        lock: { mode: 'pessimistic_write' },
+      })
+    ).filter((r) => r.userId !== leavingUserId);
+    if (members.length === 0) {
+      this.logger.log(
+        `[WORKSPACE] successor search found nobody left workspace=${workspaceId} reason=account_deletion`
+      );
+      return 'no_members';
+    }
+
+    const roles = await m.getRepository(ChannelRole).find({ where: { workspaceId } });
+    const adminRoles = roles.filter((r) =>
+      r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+    );
+    const adminRoleIds = new Set(adminRoles.map((r) => r.id));
+    if (members.some((r) => (r.roleIds ?? []).some((id) => adminRoleIds.has(id)))) {
+      this.logger.log(
+        `[WORKSPACE] successor not needed, an admin remains workspace=${workspaceId} reason=account_deletion`
+      );
+      return 'governed';
+    }
+    const adminRole = adminRoles.sort((a, b) => b.priority - a.priority)[0];
     if (!adminRole) {
       // Nothing to promote anyone INTO. Reported rather than swallowed: a community whose roles no
       // longer include MANAGE_WORKSPACE is a data fault this route cannot fix by itself.
       this.logger.error(
         `[WORKSPACE] cannot promote a successor workspace=${workspaceId} - no role carries MANAGE_WORKSPACE`
       );
-      return false;
+      return 'no_admin_role';
     }
 
     // RANK FIRST, then what the roles grant, then the user id. Priority keeps a Moderateur above a
     // custom role; `createRole` places every custom role just above the base role, so among those
     // ties the number of distinct permissions held decides, and the user id leaves nothing to chance.
     const byId = new Map(roles.map((r) => [r.id, r]));
-    const powerOf = (m: ChannelMember): number =>
-      new Set((m.roleIds ?? []).flatMap((id) => byId.get(id)?.permissions ?? [])).size;
-    const rankOf = (m: ChannelMember): number =>
-      Math.max(0, ...(m.roleIds ?? []).map((id) => byId.get(id)?.priority ?? 0));
+    const powerOf = (row: ChannelMember): number =>
+      new Set((row.roleIds ?? []).flatMap((id) => byId.get(id)?.permissions ?? [])).size;
+    const rankOf = (row: ChannelMember): number =>
+      Math.max(0, ...(row.roleIds ?? []).map((id) => byId.get(id)?.priority ?? 0));
     const successor = members
       .slice()
       .sort(
@@ -1350,12 +1413,18 @@ export class ChannelService implements OnApplicationBootstrap {
           rankOf(b) - rankOf(a) || powerOf(b) - powerOf(a) || a.userId.localeCompare(b.userId)
       )[0];
 
-    successor.roleIds = [adminRole.id];
-    await this.memberRepo.save(successor);
+    const updated = await memberRows.update({ id: successor.id }, { roleIds: [adminRole.id] });
+    if (updated.affected !== 1) {
+      // The row is held FOR UPDATE in this transaction, so this is a broken premise, not a race.
+      this.logger.error(
+        `[WORKSPACE] successor row NOT updated under its row lock workspace=${workspaceId} user=${successor.userId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new Error(`successor membership not updated in workspace ${workspaceId}`);
+    }
     this.logger.warn(
       `[WORKSPACE] promoted a successor admin workspace=${workspaceId} user=${successor.userId.slice(0, 8)} role="${adminRole.name}" members=${members.length} reason=account_deletion`
     );
-    return false;
+    return 'promoted';
   }
 
   constructor(
@@ -2673,6 +2742,25 @@ export class ChannelService implements OnApplicationBootstrap {
     };
   }
 
+  /**
+   * Writes `columns` of one community as ONE column-scoped UPDATE, never a save of the row read
+   * earlier: a save of a stale entity re-inserts a deleted row and reverts every column a concurrent
+   * writer changed. 0 rows updated means the community is gone, answered 404.
+   */
+  private async updateWorkspaceColumns(
+    workspaceId: string,
+    columns: Partial<Pick<Workspace, 'imageMediaId' | 'historyVisibility'>>,
+    what: string
+  ): Promise<void> {
+    const updated = await this.workspaceRepo.update({ id: workspaceId }, columns);
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `[WORKSPACE] ${what} NOT set, community gone since its read workspace=${workspaceId} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new NotFoundException('Workspace not found');
+    }
+  }
+
   /** Updates the workspace's cover image and broadcasts a workspace.updated event to all members. */
   async updateWorkspaceImage(workspaceId: string, actorUserId: string, mediaId: string) {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
@@ -2694,8 +2782,7 @@ export class ChannelService implements OnApplicationBootstrap {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
 
-    workspace.imageMediaId = mediaId;
-    await this.workspaceRepo.save(workspace);
+    await this.updateWorkspaceColumns(workspaceId, { imageMediaId: mediaId }, 'image');
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     await this.redis.publishChannelEvent(
@@ -2740,8 +2827,7 @@ export class ChannelService implements OnApplicationBootstrap {
       throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
     }
 
-    workspace.historyVisibility = historyVisibility;
-    await this.workspaceRepo.save(workspace);
+    await this.updateWorkspaceColumns(workspaceId, { historyVisibility }, 'historyVisibility');
     // Logged at info: it changes what every future joiner may read, it is rare, and it is the only
     // trace of who opened or closed a community's past.
     this.logger.log(
@@ -3012,14 +3098,28 @@ export class ChannelService implements OnApplicationBootstrap {
             (u) => !nextAllowed.includes(u.trim().toLowerCase())
           )
         : [];
+    // WHO THIS SAVE ADDS: every name of a salon becoming private (`gained` below says why), else the
+    // names the row does not hold yet. Only these are judged as grantees - an entry already on the
+    // row is not re-judged by an edit that does not add it.
+    const addedTo = (current: Channel): string[] => {
+      const held = new Set(current.isPrivate ? current.allowedUsers || [] : []);
+      return nextAllowed.filter((u) => !held.has(u));
+    };
     // Answered BEFORE any call to chat-delivery (the group minted below, the first evictions), so a
-    // refused rewrite mints and cuts nothing; asked again under the lock before the save.
+    // refused rewrite mints and cuts nothing - the actor first, then whoever it grants. A PREVIEW,
+    // read without a lock: asked again under the lock before the save, where it is the authority.
+    const earlyMembers = await this.memberRepo.find({
+      where: { workspaceId: channel.workspaceId },
+    });
     await this.assertActorMayRemoveMembers(
       channel.workspaceId,
       actorUserId,
-      losingSight(wasPrivate ? [] : await this.getWorkspaceMemberIds(channel.workspaceId)),
-      'skip'
+      losingSight(wasPrivate ? [] : earlyMembers.map((member) => member.userId)),
+      'skip',
+      undefined,
+      earlyMembers
     );
+    this.assertGranteesAreMembers(channel, actorUserId, addedTo(channel), earlyMembers, false);
 
     // BEFORE THE SAVE, and allowed to abort it - the same asymmetry as a community departure. Going
     // private without a group would leave the salon's seeds nowhere to go; the people this save
@@ -3045,20 +3145,24 @@ export class ChannelService implements OnApplicationBootstrap {
           if (locked.accessRevision !== channel.accessRevision) {
             this.refuseStaleAccessRewrite(locked, actorUserId, channel.accessRevision);
           }
-          const communityMemberIds = wasPrivate
-            ? []
-            : (
-                await m.getRepository(ChannelMember).find({
-                  where: { workspaceId: channel.workspaceId },
-                })
-              ).map((member) => member.userId);
+          // THE COMMUNITY'S MEMBERSHIP ROWS, READ ONCE AND SHARE-LOCKED, for both checks below. A
+          // kick that committed while this waited on the removal lock cut no salon when it read none
+          // naming its target, so the revision above did not move: only a membership read here sees
+          // it. The actor first (a kicked actor is a 403), then whoever this save adds - without
+          // that, a non-member would be saved onto the allowlist.
+          const lockedMembers = await m.getRepository(ChannelMember).find({
+            where: { workspaceId: channel.workspaceId },
+            lock: { mode: 'pessimistic_read' },
+          });
           await this.assertActorMayRemoveMembers(
             channel.workspaceId,
             actorUserId,
-            losingSight(communityMemberIds),
+            losingSight(wasPrivate ? [] : lockedMembers.map((member) => member.userId)),
             'skip',
-            m
+            m,
+            lockedMembers
           );
+          this.assertGranteesAreMembers(locked, actorUserId, addedTo(locked), lockedMembers, true);
           locked.isPrivate = isPrivate;
           locked.allowedUsers = nextAllowed;
           if (writePolicy) {
@@ -3217,6 +3321,41 @@ export class ChannelService implements OnApplicationBootstrap {
       code: CHANNEL_ACCESS_CHANGED,
       message: 'The salon access changed meanwhile, retry.',
       current: channelAccessState(current),
+    });
+  }
+
+  /**
+   * Refuses an access rewrite that ADDS someone who is not a member of the salon's community: the
+   * typed `409 CHANNEL_GRANTEE_NOT_MEMBER`, carrying the access of `channel`.
+   *
+   * Judged against `members`, the caller's read of the community's membership rows - so the one
+   * read serves this and {@link assertActorMayRemoveMembers} alike. `locked` says which read it is:
+   * the early PREVIEW, read without a lock so a crafted grant of a non-member is refused before a
+   * group is minted or an eviction begins; or the AUTHORITY, rows share-locked inside the community
+   * removal lock's transaction, so a kick or departure that committed while the rewrite waited is
+   * seen and none can commit before the save does. Matched case-blind, because an allowlist entry
+   * is lowercased and a membership row keeps its id as written.
+   */
+  private assertGranteesAreMembers(
+    channel: Channel,
+    actorUserId: string,
+    granteeIds: readonly string[],
+    members: readonly ChannelMember[],
+    locked: boolean
+  ): void {
+    if (granteeIds.length === 0) return;
+    const memberIds = new Set(members.map((r) => r.userId.trim().toLowerCase()));
+    const absent = granteeIds.filter((u) => !memberIds.has(u.trim().toLowerCase()));
+    if (absent.length === 0) return;
+    this.logger.warn(
+      `[CHANNEL_ACCESS] refused - the rewrite grants ${absent.length} non-member(s) ` +
+        `channel=${channel.id} by=${actorUserId.slice(0, 8)} first=${absent[0].slice(0, 8)} ` +
+        `revision=${channel.accessRevision} locked=${locked}`
+    );
+    throw new ConflictException({
+      code: CHANNEL_GRANTEE_NOT_MEMBER,
+      message: 'Someone this list grants is not a member of the community.',
+      current: channelAccessState(channel),
     });
   }
 
@@ -3625,6 +3764,10 @@ export class ChannelService implements OnApplicationBootstrap {
    * `m` it is the early answer a removal gives before it calls chat-delivery, asked again under the
    * lock.
    *
+   * GIVEN `communityRows`, the caller's own read of the community's membership rows (share-locked
+   * through `m` when given), the actor and every target are found in them and no second read of
+   * the community is made - an access-list rewrite reads them once for this and its grantee check.
+   *
    * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when a target holds more than the actor
    */
   private async assertActorMayRemoveMembers(
@@ -3632,14 +3775,17 @@ export class ChannelService implements OnApplicationBootstrap {
     actorUserId: string,
     targetUserIds: readonly string[],
     absentTarget: 'refuse' | 'skip',
-    m?: EntityManager
+    m?: EntityManager,
+    communityRows?: readonly ChannelMember[]
   ): Promise<void> {
     const members = m ? m.getRepository(ChannelMember) : this.memberRepo;
     const lock = m ? { lock: { mode: 'pessimistic_read' as const } } : {};
-    const actorMember = await members.findOne({
-      where: { workspaceId, userId: actorUserId },
-      ...lock,
-    });
+    const actorMember = communityRows
+      ? communityRows.find((r) => r.userId === actorUserId)
+      : await members.findOne({
+          where: { workspaceId, userId: actorUserId },
+          ...lock,
+        });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     const actorPermissions = await this.permissionsOfMember(actorMember, m);
@@ -3653,7 +3799,7 @@ export class ChannelService implements OnApplicationBootstrap {
     // TWO QUERIES WHATEVER THE NUMBER OF TARGETS: the community's membership rows, then the roles
     // they name - a salon made private compares the whole community. Matched case-blind, because an
     // allowlist entry is lowercased and a membership row keeps its id as written.
-    const rows = await members.find({ where: { workspaceId }, ...lock });
+    const rows = communityRows ?? (await members.find({ where: { workspaceId }, ...lock }));
     const memberOf = new Map(rows.map((r) => [r.userId.trim().toLowerCase(), r]));
     const roleIds = [
       ...new Set(targetUserIds.flatMap((u) => memberOf.get(u.trim().toLowerCase())?.roleIds ?? [])),
@@ -3806,9 +3952,27 @@ export class ChannelService implements OnApplicationBootstrap {
       }
     }
 
-    // Replace all existing roles with the single specified role.
-    targetMember.roleIds = [role.id];
-    await this.memberRepo.save(targetMember);
+    // Replace all existing roles with the single specified role - as ONE column update of the row
+    // judged above, never a save of it: a member write must never insert a row, and a save of a
+    // stale entity re-inserts a deleted one and reverts what a concurrent writer changed. The
+    // UPDATE is CONDITIONED on the roles the bound was judged against (`simple-array` is stored
+    // comma-joined), so 0 rows means the row is not the one judged - gone, or re-roled since.
+    const updated = await this.memberRepo
+      .createQueryBuilder()
+      .update(ChannelMember)
+      .set({ roleIds: [role.id] })
+      .where('id = :memberId', { memberId: targetMember.id })
+      .andWhere('"roleIds" = :judged', { judged: (targetMember.roleIds ?? []).join(',') })
+      .execute();
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `[WORKSPACE] role NOT set, membership changed or gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new ConflictException({
+        code: MEMBER_CHANGED_MEANWHILE,
+        message: 'This member changed meanwhile, retry.',
+      });
+    }
 
     this.logger.log(
       `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`
@@ -5238,6 +5402,11 @@ export class ChannelService implements OnApplicationBootstrap {
    * Sets the calling member's notification level for one channel. Validates that the user is a
    * workspace member and can access the channel. Storing `all` keeps the map explicit (it is the
    * default when absent, but an explicit entry lets the client show the chosen value).
+   *
+   * ONE UPDATE OF ONE KEY, NEVER A SAVE OF THE ROW READ. A member write must never insert a row: a
+   * save of the entity read above inserts it again when the membership was deleted meanwhile. The
+   * key is merged into the stored map by the database, so two devices setting two salons cannot
+   * erase each other either. 0 rows updated means the membership is gone, and is refused as such.
    */
   async setNotificationLevel(
     channelId: string,
@@ -5258,8 +5427,22 @@ export class ChannelService implements OnApplicationBootstrap {
     // Use the DB-canonical `channel.id` (loaded above) rather than the raw request
     // param as the map key, so a remote-controlled value never becomes an object
     // property name (remote property injection, CWE-250/915).
-    member.notifLevels = { ...member.notifLevels, [channel.id]: level };
-    await this.memberRepo.save(member);
+    const result = await this.memberRepo
+      .createQueryBuilder()
+      .update(ChannelMember)
+      .set({
+        notifLevels: () =>
+          `COALESCE("notifLevels", '{}'::jsonb) || jsonb_build_object(CAST(:channelKey AS text), CAST(:level AS text))`,
+      })
+      .where('id = :memberId', { memberId: member.id })
+      .setParameters({ channelKey: channel.id, level })
+      .execute();
+    if (result.affected !== 1) {
+      this.logger.warn(
+        `[CHANNEL_PUSH] level NOT set, membership gone since its read channel=${channelId} user=${userId.slice(0, 8)} affected=${result.affected ?? 'unknown'}`
+      );
+      throw new ForbiddenException('Not a member of this workspace');
+    }
     this.logger.log(`[CHANNEL_PUSH] level set channel=${channelId} user=${userId} level=${level}`);
     return { channelId, level };
   }
