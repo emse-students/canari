@@ -37,6 +37,7 @@ import {
   forgetPagedHistoryAnswer,
   incompleteHistoryPages,
   noteHistoryAsked,
+  recordedHistoryAsk,
 } from './pagedHistoryAnswer';
 
 /**
@@ -213,6 +214,8 @@ const historyRequest = new Map<
      * when the member is answered, never one line per device ({@link noteHistoryHeldNothing}).
      */
     heldNothing: string[];
+    /** Whether the walk being held by a request that named no device was already said. */
+    stallSaid: boolean;
   }
 >();
 
@@ -223,6 +226,18 @@ const historyRequest = new Map<
  * late answer to an ask of ours that was superseded, and is said. Bounded by the asks a session makes.
  */
 const ownHistoryRequestIds = new Set<string>();
+
+/**
+ * Seeds {@link ownHistoryRequestIds} from the DURABLE record of this device's history ask
+ * (`noteHistoryAsked`), when an answer quotes it: an ask sent before a restart is still ours, and a
+ * late answer to it keeps its line. Called by the frame handler BEFORE the page is recorded, since
+ * recording a complete answer deletes that record.
+ */
+export function adoptRecordedHistoryAsk(workspaceId: string, requestId: string): void {
+  if (!requestId || ownHistoryRequestIds.has(requestId) || !isGraineReady()) return;
+  const { userId } = requireGraineRuntime('cannot read the recorded history ask');
+  if (recordedHistoryAsk(userId, workspaceId) === requestId) ownHistoryRequestIds.add(requestId);
+}
 
 /**
  * The key group each asked session went out on, and the epoch it was sealed at.
@@ -1279,6 +1294,7 @@ export async function requestCommunityHistory(
     groupId,
     epoch,
     heldNothing: [],
+    stallSaid: false,
   });
   ownHistoryRequestIds.add(requestId);
   // DURABLE beside it, so a page of the answer absorbed after a restart is still known as ours.
@@ -1422,10 +1438,24 @@ export function noteHistoryHeldNothing(
   const memberDone = inFlight.unanswered !== null && inFlight.unanswered.size === 0;
   const namedDone = inFlight.pending !== null && inFlight.pending.size === 0;
   // ONE LINE PER MEMBER ANSWERED, NOT PER DEVICE (RM-4, 2026-10-26): each device's answer is recorded
-  // durably as it lands, and what moves the walk is the last one - which names them all. A member
-  // whose devices never all answer is visible at the next ask, which names only the devices still
-  // unrecorded.
-  if (!memberDone && !namedDone) return;
+  // durably as it lands, and what moves the walk is the last one - which names them all. A request
+  // that named devices moves once they have answered, and they were online when it was sent.
+  if (!memberDone && !namedDone) {
+    // A REQUEST THAT NAMED NO DEVICE moves only once every device of the member on the tree has
+    // answered, and an offline one may never: the walk is held here until the next start. Said ONCE,
+    // at the first answer that leaves it so, since nothing else would say the walk stopped.
+    if (inFlight.pending === null && !inFlight.stallSaid) {
+      inFlight.stallSaid = true;
+      console.info(
+        `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
+          `recorded; the request named no device, so the walk waits for ` +
+          (inFlight.unanswered === null
+            ? `a tree that could not be read - nothing moves it before the next start`
+            : `${inFlight.unanswered.size} more device(s) of ${answerer} on the key group, offline ones included`)
+      );
+    }
+    return;
+  }
   historyRequest.delete(workspaceId);
   console.info(
     `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} at distribution ` +

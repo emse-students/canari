@@ -27,7 +27,7 @@ import {
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
-import { handleDistributionFrame } from './frameHandler';
+import { handleDistributionFrame, resetEmptyBundleNotes } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
@@ -1734,11 +1734,18 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    resetEmptyBundleNotes();
 
-    await handleDistributionFrame({
+    const emptyBundle = {
       ...holdsNothingFrame(),
       plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-h' })),
-    });
+    };
+    await handleDistributionFrame(emptyBundle);
+    // A second answer of the same old answerer reaches this seat too: said once per session.
+    await handleDistributionFrame(emptyBundle);
+    expect(
+      debug.mock.calls.flat().filter((l) => String(l).includes('Bob sent an empty bundle'))
+    ).toHaveLength(1);
 
     expect(saved).toHaveLength(0);
     expect(repaired).toHaveLength(0);
