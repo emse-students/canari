@@ -777,15 +777,48 @@ export interface RefusedAdmit {
 }
 
 /**
- * The refusals after which a Welcome to that device CANNOT be delivered - an ALLOWLIST, because
- * acting on one drops the Welcome. `no_key_package` alone: `POST /api/mls/welcome` resolves its
- * target by that very row and refuses it `WELCOME_TARGET_UNKNOWN`, and a revoked id never registers
- * again. NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
- * `registerMember` before its Welcome, which then lands. Every other reason, and any reason added
- * later, leaves the Welcome to be sent and answered as before.
+ * The refusals after which a Welcome to that device CANNOT be delivered, each with why - an
+ * ALLOWLIST, because acting on one drops the Welcome. Read off the delivery service's own gates
+ * (`resolveWelcomeTarget` and `lockWelcomeSeat`, which `POST /api/mls/welcome` holds every Welcome
+ * to), never guessed:
+ *
+ * - `no_key_package`: the Welcome's target is resolved by that very row, so it is refused
+ *   `WELCOME_TARGET_UNKNOWN`, and a revoked id never registers again.
+ * - `unresolved_identity`: a placeholder id, which no KeyPackage row can carry (registration refuses
+ *   one), so the same `WELCOME_TARGET_UNKNOWN`.
+ * - `not_entitled`: a key group's member gate answered that this person is not a member of its
+ *   community or salon, and the Welcome's target is asked the same question - `403
+ *   WELCOME_TARGET_NOT_MEMBER`. A grant written later is admitted by a member's next Add, a commit
+ *   with a Welcome of its own; this one stays refused.
+ * - `departure_in_progress`: the person's departure from the key group is being written; the
+ *   Welcome's seat claim is re-read under the seat lock and refused for it, and once the departure
+ *   lands the person is not entitled at all.
+ *
+ * NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
+ * `registerMember` before its Welcome, which then lands. NOT `already_active`: the device is routed
+ * already and the Welcome stores and lands (a re-Add). NOT `committer`: never a Welcome target. Any
+ * reason added later leaves the Welcome to be sent and answered as before.
  */
+const UNDELIVERABLE_WELCOME_BECAUSE: Readonly<Partial<Record<AdmitRefusalReason, string>>> = {
+  no_key_package: 'no device is registered under it - revoked, or its account erased',
+  unresolved_identity: 'its identity is an unresolved placeholder no device registers under',
+  not_entitled: 'the key group refused the person as not entitled to it',
+  departure_in_progress: 'the person is leaving the key group',
+};
+
+/**
+ * Why a Welcome to a device refused for `reason` cannot be delivered, for the decision line - or
+ * `null` when it can: any reason {@link UNDELIVERABLE_WELCOME_BECAUSE} does not name.
+ */
+export function whyWelcomeUndeliverable(reason: AdmitRefusalReason): string | null {
+  return Object.hasOwn(UNDELIVERABLE_WELCOME_BECAUSE, reason)
+    ? (UNDELIVERABLE_WELCOME_BECAUSE[reason] ?? null)
+    : null;
+}
+
+/** Whether a Welcome to a device the gate refused for `reason` can never be delivered. */
 export function admitRefusalMakesWelcomeUndeliverable(reason: AdmitRefusalReason): boolean {
-  return reason === 'no_key_package';
+  return whyWelcomeUndeliverable(reason) !== null;
 }
 
 /**
