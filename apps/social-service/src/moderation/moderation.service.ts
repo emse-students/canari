@@ -702,38 +702,48 @@ export class ModerationService {
     moderatorId: string,
     action: 'reviewed' | 'dismissed'
   ): Promise<ContentReport> {
+    // The three review columns of the row, never a save of a report read first: a save writes back
+    // every column changed since the read (an anonymised party included) and re-inserts a report
+    // deleted since. 0 rows means the report is gone.
+    const updated = await this.reportRepo.update(
+      { id: reportId },
+      { status: action, reviewedBy: moderatorId, reviewedAt: new Date() }
+    );
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `[REPORT] review refused: report=${reportId.slice(0, 8)} gone affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new NotFoundException('Report not found');
+    }
+    this.logger.log(
+      `[REPORT] report=${reportId.slice(0, 8)} ${action} by=${moderatorId.slice(0, 8)}`
+    );
     const report = await this.reportRepo.findOne({ where: { id: reportId } });
     if (!report) throw new NotFoundException('Report not found');
-
-    report.status = action;
-    report.reviewedBy = moderatorId;
-    report.reviewedAt = new Date();
-    return this.reportRepo.save(report);
+    return report;
   }
 
   // ── User mute/unmute ──────────────────────────────────────────────────────
 
   /** Mutes a user: they can still read but cannot post, react, or comment. */
   async muteUser(userId: string, mutedBy: string, reason?: string): Promise<UserModeration> {
-    const columns = { isMuted: true, mutedBy, mutedAt: new Date(), mutedReason: reason ?? null };
-    const record = await this.muteRepo.findOne({ where: { userId } });
-    if (record) {
-      // The mute columns of the row read, never a save of it: a save re-inserts a row deleted since.
-      const updated = await this.muteRepo.update({ id: record.id }, columns);
-      if (updated.affected === 1) {
-        this.logger.log(`[MUTE] user=${userId.slice(0, 8)} muted by=${mutedBy.slice(0, 8)}`);
-        return Object.assign(record, columns);
-      }
-      // Deleted between the read and the write: this mute is ordered after that deletion, so it is
-      // a NEW record holding only what this call says.
-      this.logger.warn(
-        `[MUTE] user=${userId.slice(0, 8)} record gone since its read - created afresh`
-      );
-    }
-    this.logger.log(
-      `[MUTE] user=${userId.slice(0, 8)} muted by=${mutedBy.slice(0, 8)} (new record)`
-    );
-    return this.muteRepo.save(this.muteRepo.create({ userId, ...columns }));
+    // ONE statement keyed by the user's unique index, never a read then a save: there is no copy
+    // of the record to go stale, and two first mutes cannot both insert.
+    const rows = (await this.muteRepo.query(
+      `INSERT INTO user_moderation ("userId", "isMuted", "mutedBy", "mutedAt", "mutedReason")
+       VALUES ($1, true, $2, $3, $4)
+       ON CONFLICT ("userId") DO UPDATE SET
+         "isMuted" = true,
+         "mutedBy" = EXCLUDED."mutedBy",
+         "mutedAt" = EXCLUDED."mutedAt",
+         "mutedReason" = EXCLUDED."mutedReason"
+       RETURNING *`,
+      [userId, mutedBy, new Date(), reason ?? null]
+    )) as UserModeration[];
+    const record = rows[0];
+    if (!record) throw new Error(`muteUser: no row returned for ${userId.slice(0, 8)}`);
+    this.logger.log(`[MUTE] user=${userId.slice(0, 8)} muted by=${mutedBy.slice(0, 8)}`);
+    return this.muteRepo.create(record);
   }
 
   /**

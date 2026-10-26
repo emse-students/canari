@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { PlatformConfig, type CallsMode, type LivesMode } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
@@ -97,14 +98,18 @@ export class PlatformService implements OnModuleInit {
   async updateConfig(dto: UpdatePlatformConfigDto, actor: string): Promise<PlatformConfigPublic> {
     const by = actor.slice(0, 8);
     await this.ensureDefaults();
+    // Read for the guards and the "from -> to" lines only. What is written is the columns this
+    // request names, as ONE `UPDATE` of the row - never a save of the row read: a save writes back
+    // every column another administrator changed since this read, a kill switch included.
     const row = await this.repo.findOneOrFail({ where: { id: 1 } });
+    const changes: QueryDeepPartialEntity<PlatformConfig> = {};
 
     if (dto.maintenanceEnabled !== undefined) {
-      row.maintenanceEnabled = dto.maintenanceEnabled;
+      changes.maintenanceEnabled = dto.maintenanceEnabled;
     }
     if (dto.maintenanceMessage !== undefined) {
       const trimmed = dto.maintenanceMessage?.trim() ?? '';
-      row.maintenanceMessage = trimmed.length > 0 ? trimmed : null;
+      changes.maintenanceMessage = trimmed.length > 0 ? trimmed : null;
     }
     if (dto.minClientVersion !== undefined) {
       const wanted = dto.minClientVersion.trim();
@@ -145,10 +150,10 @@ export class PlatformService implements OnModuleInit {
           `minClientVersion ${row.minClientVersion} -> ${wanted} (deployed ${deployed ?? 'unknown'}) by=${by}`
         );
       }
-      row.minClientVersion = wanted;
+      changes.minClientVersion = wanted;
     }
     if (dto.paymentProvider !== undefined) {
-      row.paymentProvider = dto.paymentProvider;
+      changes.paymentProvider = dto.paymentProvider;
     }
     if (dto.callsMode !== undefined) {
       // THE KILL SWITCH MOVING IS WORTH A LINE OF ITS OWN, at warn like the min-version raise: every
@@ -157,7 +162,7 @@ export class PlatformService implements OnModuleInit {
       if (dto.callsMode !== row.callsMode) {
         this.logger.warn(`callsMode ${row.callsMode} -> ${dto.callsMode} by=${by}`);
       }
-      row.callsMode = dto.callsMode;
+      changes.callsMode = dto.callsMode;
     }
     if (dto.livesMode !== undefined) {
       // Same reason as the calls switch: every live on the estate turns on it, so who opened or
@@ -165,13 +170,23 @@ export class PlatformService implements OnModuleInit {
       if (dto.livesMode !== row.livesMode) {
         this.logger.warn(`livesMode ${row.livesMode} -> ${dto.livesMode} by=${by}`);
       }
-      row.livesMode = dto.livesMode;
+      changes.livesMode = dto.livesMode;
     }
 
+    if (Object.keys(changes).length > 0) {
+      const updated = await this.repo.update({ id: 1 }, changes);
+      if (updated.affected !== 1) {
+        // `ensureDefaults` made the row above, and nothing deletes it: a miss is a broken estate.
+        this.logger.error(
+          `Platform config update found no row affected=${updated.affected ?? 'unknown'}`
+        );
+        throw new Error('platform_config row missing');
+      }
+    }
+    const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider} callsMode=${row.callsMode} livesMode=${row.livesMode}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode}`
     );
-    const saved = await this.repo.save(row);
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
         this.logger.warn(`paymentProvider -> disabled by=${by}`);

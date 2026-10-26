@@ -1,12 +1,14 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { FindOptionsWhere, IsNull, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { AssociationMember } from './entities/association-member.entity';
 import { Association } from './entities/association.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
@@ -144,7 +146,15 @@ export class UserProfileService {
     return match;
   }
 
-  /** Updates a role history entry owned by the user. */
+  /**
+   * Updates a role history entry owned by the user.
+   *
+   * The columns the edit names, as ONE `UPDATE` keyed by the entry AND its owner AND, when the edit
+   * sets one year only, the other year as the range check read it - never a save of the entry read:
+   * a save writes back every column another edit changed since the read, and re-inserts an entry
+   * deleted since. 0 rows: the entry is gone or no longer the caller's (404), or another edit moved
+   * the judged year first (409, so a range checked against a stale year is never written).
+   */
   async updateRoleHistory(
     userId: string,
     entryId: string,
@@ -159,13 +169,42 @@ export class UserProfileService {
     this.assertYearRange(startYear, endYear);
 
     if (dto.associationId) await this.assertAssociationExists(dto.associationId);
-    if (dto.roleTitle !== undefined) entry.roleTitle = dto.roleTitle.trim();
-    if (dto.associationId !== undefined) entry.associationId = dto.associationId;
-    if (dto.startYear !== undefined) entry.startYear = dto.startYear;
-    if (dto.endYear !== undefined) entry.endYear = dto.endYear;
-    if (dto.sortOrder !== undefined) entry.sortOrder = dto.sortOrder;
+    const changes: QueryDeepPartialEntity<AssociationRoleHistory> = {};
+    if (dto.roleTitle !== undefined) changes.roleTitle = dto.roleTitle.trim();
+    if (dto.associationId !== undefined) changes.associationId = dto.associationId;
+    if (dto.startYear !== undefined) changes.startYear = dto.startYear;
+    if (dto.endYear !== undefined) changes.endYear = dto.endYear;
+    if (dto.sortOrder !== undefined) changes.sortOrder = dto.sortOrder;
 
-    await this.roleHistoryRepo.save(entry);
+    if (Object.keys(changes).length > 0) {
+      // A stored year bounds the write only when the range check JUDGED it: the request sets the
+      // other year and leaves this one as read. A title-only edit judged nothing, and an edit setting
+      // both years replaces both, so neither can be broken by a year moved meanwhile.
+      const where: FindOptionsWhere<AssociationRoleHistory> = { id: entryId, userId };
+      if (dto.startYear === undefined && dto.endYear !== undefined) {
+        where.startYear = entry.startYear ?? IsNull();
+      }
+      if (dto.endYear === undefined && dto.startYear !== undefined) {
+        where.endYear = entry.endYear ?? IsNull();
+      }
+      const updated = await this.roleHistoryRepo.update(where, changes);
+      if (updated.affected !== 1) {
+        const now = await this.roleHistoryRepo.findOne({ where: { id: entryId } });
+        if (!now || now.userId !== userId) {
+          this.logger.warn(
+            `[UserProfile] role history update refused: id=${entryId.slice(0, 8)} gone since its read`
+          );
+          throw new NotFoundException('Role history entry not found');
+        }
+        this.logger.warn(
+          `[UserProfile] role history update refused: id=${entryId.slice(0, 8)} judged year changed since its read`
+        );
+        throw new ConflictException('Role history entry changed meanwhile - reload and retry');
+      }
+      this.logger.log(
+        `[UserProfile] role history updated id=${entryId.slice(0, 8)} fields=${Object.keys(changes).join(',')}`
+      );
+    }
     const match = (await this.listRoleHistory(userId)).find((r) => r.id === entryId);
     if (!match) throw new NotFoundException('Role history entry not found after update');
     return match;

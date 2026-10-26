@@ -1,11 +1,14 @@
 /**
- * A WRITE TO A USER'S TAG OR MODERATION RECORD NEVER SAVES THE ROW IT READ, AGAINST A REAL POSTGRESQL.
+ * A WRITE TO A USER'S TAG, MODERATION RECORD, REPORT OR ROLE HISTORY NEVER SAVES THE ROW IT READ,
+ * AGAINST A REAL POSTGRESQL.
  *
- * A renewal of a tag and an unmute write the COLUMNS they own, keyed by the row; a TypeORM `save` of
- * the entity read earlier is not that - it writes back every column changed since the read, and
- * inserts the row again when it was deleted meanwhile. Each case lets a concurrent writer commit
- * between the service's read and its write - the writer runs from inside the service's own read, so
- * the interleaving is deterministic (never a sleep).
+ * A grant or renewal of a tag and a mute are ONE `INSERT ... ON CONFLICT` statement; an unmute, a
+ * report review and a role history edit write the COLUMNS they own, keyed by the row. A TypeORM
+ * `save` of the entity read earlier is not that - it writes back every column changed since the
+ * read, and inserts the row again when it was deleted meanwhile; and a read then an insert lets two
+ * first writes both insert. Each case lets a concurrent writer commit between the service's read and
+ * its write - the writer runs from inside the service's own repository call, so the interleaving is
+ * deterministic (never a sleep).
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
@@ -16,7 +19,7 @@
  * `channel-unread-clear.integration.spec.ts` for why that order), dropped at the end.
  */
 import * as crypto from 'crypto';
-import { Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource, Repository } from 'typeorm';
 import { UserTag } from './entities/user-tag.entity';
@@ -24,11 +27,15 @@ import { UserTagService } from './user-tag.service';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import { ModerationService } from '../moderation/moderation.service';
+import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
+import { UserProfileService } from '../associations/user-profile.service';
+import type { AssociationMember } from '../associations/entities/association-member.entity';
+import type { Association } from '../associations/entities/association.entity';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
-maybe('a tag or moderation write against PostgreSQL', () => {
+maybe('a tag, moderation, report or role history write against PostgreSQL', () => {
   const schema = `grant_write_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -36,11 +43,14 @@ maybe('a tag or moderation write against PostgreSQL', () => {
   let mutes: Repository<UserModeration>;
   let tagService: UserTagService;
   let moderation: ModerationService;
+  let reports: Repository<ContentReport>;
+  let history: Repository<AssociationRoleHistory>;
+  let profiles: UserProfileService;
 
   /**
    * Runs `hook` once, at the first moment a concurrent writer can land between the service's read
    * of `repo` and its write: right after its next `findOne` has answered, or right before its
-   * next `update`/`save` when it reads nothing first. Every spy is gone before `hook` runs, so
+   * next `update`/`save`/`query` when it reads nothing first. Every spy is gone before `hook` runs, so
    * the hook's own calls are real. Answers whether it ran, so a case proves its interleaving.
    */
   const interleave = <T extends object>(
@@ -63,7 +73,7 @@ maybe('a tag or moderation write against PostgreSQL', () => {
         return answer;
       }) as never)
     );
-    for (const m of ['update', 'save'] as const) {
+    for (const m of ['update', 'save', 'query'] as const) {
       const write = target[m].bind(repo);
       spies.push(
         jest.spyOn(repo, m).mockImplementation((async (...args: unknown[]) => {
@@ -97,7 +107,7 @@ maybe('a tag or moderation write against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [UserTag, UserModeration, ContentReport],
+      entities: [UserTag, UserModeration, ContentReport, AssociationRoleHistory],
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
@@ -108,7 +118,16 @@ maybe('a tag or moderation write against PostgreSQL', () => {
     tags = ds.getRepository(UserTag);
     mutes = ds.getRepository(UserModeration);
     tagService = new UserTagService(tags);
-    moderation = new ModerationService(ds.getRepository(ContentReport), mutes);
+    reports = ds.getRepository(ContentReport);
+    moderation = new ModerationService(reports, mutes);
+    history = ds.getRepository(AssociationRoleHistory);
+    // The association reads only LABEL a role history row and check an id exists; the rows judged
+    // here are the role history's, so those two answer from a stub.
+    const assoStub = {
+      exists: async () => true,
+      createQueryBuilder: () => ({ where: () => ({ getMany: async () => [] }) }),
+    } as unknown as Repository<Association>;
+    profiles = new UserProfileService({} as Repository<AssociationMember>, assoStub, history);
     // No budget here: every integration spec has one, `jest-integration-budget.cjs`.
   });
 
@@ -168,5 +187,147 @@ maybe('a tag or moderation write against PostgreSQL', () => {
       mutedBy: null,
       mutedReason: null,
     });
+  });
+
+  it('two first grants of one tag leave ONE row and neither fails', async () => {
+    const userId = crypto.randomUUID();
+    const ran = interleave(tags, () => grant(userId, 'inner', { inner: 1 }));
+    await grant(userId, 'outer', { outer: 2 });
+    expect(ran()).toBe(true);
+    expect(await tags.count({ where: { userId } })).toBe(1);
+    expect((await tagOf(userId))?.metadata).toEqual({ inner: 1, outer: 2 });
+  });
+
+  it('two first mutes of one user leave ONE record holding the later mute', async () => {
+    const userId = crypto.randomUUID();
+    const ran = interleave(mutes, () => moderation.muteUser(userId, 'inner', 'first'));
+    await moderation.muteUser(userId, 'outer', 'second');
+    expect(ran()).toBe(true);
+    expect(await mutes.count({ where: { userId } })).toBe(1);
+    expect(await mutes.findOne({ where: { userId } })).toMatchObject({
+      isMuted: true,
+      mutedBy: 'outer',
+      mutedReason: 'second',
+    });
+  });
+
+  const report = (): Promise<ContentReport> =>
+    reports.save(
+      reports.create({
+        reporterId: crypto.randomUUID(),
+        contentType: 'post',
+        contentId: crypto.randomUUID(),
+        reason: 'spam',
+        reportedUserId: crypto.randomUUID(),
+      })
+    );
+
+  it('a review writes its three columns and keeps a party rewritten since its read', async () => {
+    const filed = await report();
+    const ran = interleave(reports, () =>
+      reports.update({ id: filed.id }, { reporterId: '[deleted]', reportedUserId: '[deleted]' })
+    );
+    const reviewed = await moderation.reviewReport(filed.id, 'moderator', 'reviewed');
+    expect(ran()).toBe(true);
+    expect(await reports.findOne({ where: { id: filed.id } })).toMatchObject({
+      status: 'reviewed',
+      reviewedBy: 'moderator',
+      reporterId: '[deleted]',
+      reportedUserId: '[deleted]',
+    });
+    expect(reviewed.reporterId).toBe('[deleted]');
+  });
+
+  it('a review of a report deleted since is refused and leaves no report', async () => {
+    const filed = await report();
+    const ran = interleave(reports, () => reports.delete({ id: filed.id }));
+    const outcome = await moderation.reviewReport(filed.id, 'moderator', 'dismissed').then(
+      () => 'reviewed',
+      (e: unknown) => e
+    );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(NotFoundException);
+    expect(await reports.findOne({ where: { id: filed.id } })).toBeNull();
+  });
+
+  const entry = (userId: string): Promise<AssociationRoleHistory> =>
+    history.save(
+      history.create({
+        userId,
+        associationId: crypto.randomUUID(),
+        roleTitle: 'Tresorier',
+        startYear: 2022,
+        endYear: 2023,
+      })
+    );
+
+  it('a role history edit of an entry deleted since is refused and leaves no entry', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const ran = interleave(history, () => history.delete({ id: row.id }));
+    const outcome = await profiles
+      .updateRoleHistory(userId, row.id, { roleTitle: 'President' })
+      .then(
+        () => 'updated',
+        (e: unknown) => e
+      );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(NotFoundException);
+    expect(await history.findOne({ where: { id: row.id } })).toBeNull();
+  });
+
+  it('a role history edit judged against years changed since is refused and keeps them', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const ran = interleave(history, () =>
+      history.update({ id: row.id }, { startYear: 2024, endYear: 2025 })
+    );
+    // Judged against the years it read (2022-2023), an end of 2023 is a valid range; against the
+    // years now held (from 2024) it is not.
+    const outcome = await profiles.updateRoleHistory(userId, row.id, { endYear: 2023 }).then(
+      () => 'updated',
+      (e: unknown) => e
+    );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(ConflictException);
+    expect(await history.findOne({ where: { id: row.id } })).toMatchObject({
+      startYear: 2024,
+      endYear: 2025,
+    });
+  });
+
+  it('a title-only edit across years moved since writes its title and keeps the years', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const ran = interleave(history, () =>
+      history.update({ id: row.id }, { startYear: 2024, endYear: 2025 })
+    );
+    const updated = await profiles.updateRoleHistory(userId, row.id, { roleTitle: 'President' });
+    expect(ran()).toBe(true);
+    expect(updated).toMatchObject({ roleTitle: 'President', startYear: 2024, endYear: 2025 });
+  });
+
+  it('an edit setting both years across years moved since writes its own range', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const ran = interleave(history, () =>
+      history.update({ id: row.id }, { startYear: 2024, endYear: 2025 })
+    );
+    const updated = await profiles.updateRoleHistory(userId, row.id, {
+      startYear: 2019,
+      endYear: 2020,
+    });
+    expect(ran()).toBe(true);
+    expect(updated).toMatchObject({ startYear: 2019, endYear: 2020 });
+  });
+
+  it('a role history edit with nobody racing it writes its columns', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const updated = await profiles.updateRoleHistory(userId, row.id, {
+      roleTitle: 'President',
+      endYear: 2024,
+    });
+    expect(updated).toMatchObject({ roleTitle: 'President', startYear: 2022, endYear: 2024 });
   });
 });

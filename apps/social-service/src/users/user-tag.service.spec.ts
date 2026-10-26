@@ -9,6 +9,21 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
+      // The grant's one `INSERT ... ON CONFLICT ... RETURNING`, played as a first grant.
+      query: jest.fn((_sql: string, p: unknown[]) =>
+        Promise.resolve([
+          {
+            id: 'tag-1',
+            userId: p[0],
+            tagName: p[1],
+            issuingAssocId: p[2],
+            grantedBy: p[3],
+            expiresAt: p[4],
+            metadata: JSON.parse(p[5] as string),
+            inserted: true,
+          },
+        ])
+      ),
       manager: { query: jest.fn() },
     };
     // A transaction runs against the same mock, so a test can assert what happened inside it.
