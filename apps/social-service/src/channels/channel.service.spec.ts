@@ -66,13 +66,13 @@ describe('ChannelService security hardening', () => {
       // A community setting is one column update of the row; 1 row found.
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
-        // The deletion takes the community removal lock (`query`) and, for a community its last
-        // member left, reads who is still a member (`find`, answered by `memberRepo.find`).
+        // The deletion takes the community removal lock (`query`) and asks its premise again
+        // through the member and role repositories.
         transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
           cb({
             delete: hardDeletes,
             query: jest.fn(() => Promise.resolve([])),
-            find: (_entity: unknown, options: unknown) => memberRepo.find(options),
+            getRepository: (entity: unknown) => (entity === ChannelRole ? roleRepo : memberRepo),
           })
         ),
       },

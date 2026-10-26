@@ -1277,27 +1277,33 @@ included. What holds, exactly:
   change now DEMOTES (a role that lost `workspace.manage` since the early read makes a promotion a
   demotion), and, if it does, the last-admin postcondition. A target re-roled since the early read
   is refused `409 MEMBER_CHANGED_MEANWHILE`.
-- **A revoke of `workspace.manage` on a role** (`setRoleBasePermission`) takes the lock before the
-  role row, recomputes the admin set with the role's new permissions, and is refused when it would
-  be empty while the community has members. A grant, or a revoke of any other permission, takes no
-  removal lock: it cannot shrink the admin set, and a role change in flight share-locks the role
-  rows it decided on.
+- **Every edit of what a role grants** (`setRoleBasePermission`) and **every role creation**
+  (`createRole`) write under the lock, taken before the role row. There the actor's row and roles
+  are read again, and the actor's right to manage roles and its bound (`actorMayGrantRole`) are
+  asked of them. A revoke of `workspace.manage` also recomputes the admin set with the role's new
+  permissions, and is refused when it would be empty while the community has members.
 - **An account erasure** decides under the lock too, see below.
-- **An admission** (an invite link, a salon invitation that creates a membership) asks under the
-  lock that the community still has members, and a salon invitation also asks there that the
-  inviter still holds a right to invite. A community with no members therefore admits nobody, and
-  stays empty until it is deleted.
-- **A community's deletion** (`hardDeleteWorkspace`) opens its transaction with the lock, so an
-  admission, a departure or a role change commits before it (and is deleted with the community) or
-  waits and finds it gone.
+- **An admission** (an invite link accepted, a salon invitation that creates a membership) asks
+  under the lock that the community still has members, and a salon invitation also asks there that
+  the inviter still holds a right to invite. **An invite link is written under the lock too**
+  (`createWorkspaceInvite`), after the actor's right to invite and the community's members are
+  asked again there. A community with no members therefore admits nobody, and stays empty until it
+  is deleted.
+- **A community's deletion** (`hardDeleteWorkspace`) checks the membership it was called for under
+  the lock BEFORE its first call to another service (the key groups), and again in the transaction
+  that deletes the rows, which opens with the lock: an admission, a departure or a role change
+  commits before it (and is deleted with the community) or waits and finds it gone.
 
-**One lock order: the removal lock, then salon rows, then member rows, then role rows.** A
-departure locks its community's private salons (`ORDER BY id`) BEFORE its guard reads member and
-role rows; a salon grant (`grantPrivateChannelAccess`) locks the salon before the grantee's row; a
-deletion deletes salons before members. So no two of them can each hold what the other waits on.
-The member rows read under the lock take no row lock of their own: every writer of a member row
-holds the removal lock, and under READ COMMITTED a statement run after taking it sees the previous
-holder's commit. Proven on PostgreSQL by `last-admin.integration.spec.ts`: each race commits (or
+**One lock order: the removal lock, then salon rows, then member and role rows.** A departure locks
+its community's private salons (`ORDER BY id`) BEFORE its guard reads member and role rows; a salon
+grant (`grantPrivateChannelAccess`) locks the salon before the grantee's row; a role change
+share-locks the role rows it decides on before its member `UPDATE`; a deletion deletes salons
+before members. So no two of them can each hold what the other waits on. The member rows read under
+the lock take no row lock of their own: every departure, every role change (an erasure's promotion
+included) and every admission holds the removal lock, and under READ COMMITTED a statement run after
+taking it sees the previous holder's commit. Other member-row writes (a voucher, a sort order, a
+read mark) take no removal lock; none deletes a row or touches `roleIds`, so none changes the
+answer asked here. Proven on PostgreSQL by `last-admin.integration.spec.ts`: each race commits (or
 starts) the second operation from a hook inside the first - after one of its reads, or inside its
 first call to chat-delivery - and, where the second must be waiting on a lock before the first goes
 on, waits for PostgreSQL to report it waiting, never for a clock. Every race case there fails on the
@@ -1443,8 +1449,8 @@ and `affected !== 1` refuses the call with nothing written:
   member was re-roled or removed since - is `409 MEMBER_CHANGED_MEANWHILE`, which the client names.
 - `updateWorkspaceImage` and `updateWorkspaceHistoryVisibility` write their one column; 0 rows is `404`.
 - The successor an account erasure promotes is chosen under the community removal lock, in the
-  departure that deletes the account's row; every writer of a member row holds that lock, so the
-  rows it reads are current without a row lock (see
+  departure that deletes the account's row; every departure and every role change holds that lock,
+  so the rows it reads are current for that choice without a row lock (see
   [the last-admin section](#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18)).
 
 Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and

@@ -175,6 +175,30 @@ maybe('the last admin against PostgreSQL', () => {
     return () => ran;
   };
 
+  /**
+   * Runs `hook` once, right after the service's first read of `userId`'s own membership row in
+   * `ws` - an early check of what that member may do - has answered, so `hook` commits between that
+   * check and the write it guards. Answers whether it ran.
+   */
+  const afterActorRead = (
+    ws: string,
+    userId: string,
+    hook: () => Promise<unknown>
+  ): (() => boolean) => {
+    let ran = false;
+    const original = members.findOne.bind(members) as (o: ReadOptions) => Promise<unknown>;
+    const spy = jest.spyOn(members, 'findOne').mockImplementation((async (o: ReadOptions) => {
+      const answer = await original(o);
+      if (o?.where?.workspaceId === ws && o?.where?.userId === userId) {
+        spy.mockRestore();
+        ran = true;
+        await hook();
+      }
+      return answer;
+    }) as never);
+    return () => ran;
+  };
+
   /** Runs `hook` once, right after the first role read by name `name` has answered. */
   const afterRoleRead = (name: string, hook: () => Promise<unknown>): (() => boolean) => {
     let ran = false;
@@ -609,6 +633,109 @@ maybe('the last admin against PostgreSQL', () => {
       spy.mockRestore();
     }
     expect(await q(`SELECT 1 FROM channel_workspaces WHERE id = $1`, [ws])).toHaveLength(0);
+  });
+
+  it('a role edit whose actor lost the right to make it meanwhile is refused, and the role is unchanged', async () => {
+    const { ws, roles } = await community();
+    const ran = afterActorRead(ws, 'a1', () =>
+      service.updateWorkspaceMemberRole(ws, 'a1', 'Membre', 'a2')
+    );
+    const outcome = await settle(
+      service.setRoleBasePermission(roles.base, 'a1', 'member.invite', true)
+    );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(ForbiddenException);
+    const [role] = await q(`SELECT permissions FROM channel_roles WHERE id = $1`, [roles.base]);
+    expect(String((role as { permissions: string }).permissions)).not.toContain('member.invite');
+  });
+
+  it('a role creation whose actor lost the right to make it meanwhile is refused, and no role is written', async () => {
+    const { ws } = await community();
+    const ran = afterActorRead(ws, 'a1', () =>
+      service.updateWorkspaceMemberRole(ws, 'a1', 'Membre', 'a2')
+    );
+    const outcome = await settle(
+      service.createRole({
+        workspaceId: ws,
+        name: 'Accueil',
+        permissions: ['member.invite'],
+        actorUserId: 'a1',
+      } as Parameters<ChannelService['createRole']>[0])
+    );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(ForbiddenException);
+    expect(
+      await q(`SELECT 1 FROM channel_roles WHERE "workspaceId" = $1 AND name = 'Accueil'`, [ws])
+    ).toHaveLength(0);
+  });
+
+  it('an invite link asked before an erasure closed the community is refused after it, and the deletion completes', async () => {
+    // The link's early check passes while the erased account is still the community's admin; the
+    // erasure's closing step commits before the link is written, and the deletion follows.
+    const { ws } = await community();
+    const erased = `x-${ws.slice(0, 8)}`;
+    await q(`DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" <> 'a1'`, [ws]);
+    await q(
+      `UPDATE channel_members SET "userId" = $1 WHERE "workspaceId" = $2 AND "userId" = 'a1'`,
+      [erased, ws]
+    );
+    const close = (
+      service as unknown as {
+        closeCommunityOfLastMember: (w: string, u: string) => Promise<boolean>;
+      }
+    ).closeCommunityOfLastMember.bind(service);
+    const ran = afterActorRead(ws, erased, () => close(ws, erased));
+    const minted = await settle(service.createWorkspaceInvite(ws, erased));
+    expect(ran()).toBe(true);
+    expect(minted).toBeInstanceOf(ForbiddenException);
+    expect(await q(`SELECT 1 FROM workspace_invites WHERE "workspaceId" = $1`, [ws])).toHaveLength(
+      0
+    );
+    expect(await service.removeAccountFromWorkspaces(erased)).toBe(1);
+    expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
+  });
+
+  it('an erasure whose deletion premise is broken refuses before anything outside the service is deleted', async () => {
+    // A member row appears after the erasure closed the community as its last member's: the
+    // deletion must refuse under the lock before its first call to chat-delivery.
+    const { ws } = await community();
+    const erased = `x-${ws.slice(0, 8)}`;
+    await q(`DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" <> 'a1'`, [ws]);
+    await q(
+      `UPDATE channel_members SET "userId" = $1 WHERE "workspaceId" = $2 AND "userId" = 'a1'`,
+      [erased, ws]
+    );
+    const target = service as unknown as {
+      closeCommunityOfLastMember: (w: string, u: string) => Promise<boolean>;
+    };
+    const original = target.closeCommunityOfLastMember.bind(service);
+    const spy = jest
+      .spyOn(target, 'closeCommunityOfLastMember')
+      .mockImplementation(async (w: string, u: string) => {
+        const closed = await original(w, u);
+        if (closed) {
+          await members.save(members.create({ workspaceId: ws, userId: 'n1', roleIds: [] }));
+        }
+        return closed;
+      });
+    const answer = global.fetch;
+    const delivery = jest.fn(
+      async () => new Response(JSON.stringify({ evicted: false }), { status: 200 })
+    );
+    global.fetch = delivery as unknown as typeof fetch;
+    // The broken premise is reported at error, as it must be; this case expects exactly that.
+    const errors = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      expect(await settle(service.removeAccountFromWorkspaces(erased))).toBe(
+        'ERASURE_WORKSPACE_REPAIR_FAILED'
+      );
+    } finally {
+      global.fetch = answer;
+      errors.mockRestore();
+      spy.mockRestore();
+    }
+    expect(delivery).not.toHaveBeenCalled();
+    expect(await leftOf(ws)).toEqual({ workspaces: 1, members: 2, salons: 0 });
   });
 
   it('one admin demoting the other while they stay admin is allowed', async () => {

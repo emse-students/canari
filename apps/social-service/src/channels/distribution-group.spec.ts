@@ -61,12 +61,13 @@ describe('ChannelService - the community distribution group', () => {
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       manager: {
-        // The deletion takes the community removal lock (`query`) and reads who is still a member.
+        // The deletion takes the community removal lock (`query`) and asks its premise again
+        // through the member and role repositories.
         transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
           cb({
             delete: jest.fn().mockResolvedValue({ affected: 1 }),
             query: jest.fn().mockResolvedValue([]),
-            find: jest.fn().mockResolvedValue([]),
+            getRepository: (entity: unknown) => (entity === ChannelRole ? roleRepo : memberRepo),
           })
         ),
       },
@@ -440,7 +441,8 @@ describe('ChannelService - the community distribution group', () => {
           cb({
             delete: jest.fn().mockResolvedValue({ affected: 1 }),
             query,
-            find: jest.fn().mockResolvedValue([]),
+            getRepository: (entity: unknown) =>
+              entity === ChannelRole ? repos.roleRepo : repos.memberRepo,
           })
       );
       global.fetch = answerWith({ deleted: true }) as unknown as typeof fetch;
