@@ -268,6 +268,44 @@ triggers fire `requestCommunityHistory` for one epoch with nothing deduplicating
 To do: name the two callers (the log context shows a key-group epoch move to 5 just before), and make
 an ask for an epoch that already has one in flight to the same member a no-op.
 
+## P3 - "Made private" is logged for a privacy flip the removal bound then refuses (RM-6, `1.4.1-alpha.6`, 2026-10-26)
+
+`updateChannelAccess` (`channel.service.ts`) logs `[CHANNEL_ACCESS] made private by <actor>, granting
+them channel=<salon>` when it adds the actor to the list it is about to compute. The removal bound
+is checked after that. On RM-6, the moderator's flip was refused `403 REMOVAL_EXCEEDS_ACTOR`: the salon
+stayed public and no group was minted. The server log still says the salon was made private.
+
+A line that states an outcome before the outcome is decided is false whenever the write is refused,
+so it cannot be narrated. Log the grant after the save, with the save's result, or reword it as the
+intent ("flip to private by ... would grant them").
+
+## P3 - A refused Welcome's leaf stays in a private salon's tree, and the next Add reads it as "already holds a leaf" (RM-5, `1.4.1-alpha.6`, 2026-10-26)
+
+RM-5 cycle 1: the grant landed before the kick. The granter's Add put the subject's two devices in the
+salon's distribution group, and the server refused both Welcomes:
+
+```
+[COMMIT] 357b4af8... the gate did not record the admit of <subject>:<device> (not_entitled) - its Welcome is sent and answered as before
+[WELCOME] 357b4af8... Welcome REFUSED for <subject>...: the roster does not name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray sweep collects it
+```
+
+That much is designed. But 25 s later (cycle 2) and 2.5 min later (cycle 5), the granter's next grant
+to the same subject decided:
+
+```
+[21:56:26.961] [GRAINE] ADMIT <subject> into salon 114d3327 of c2886ebf: all 2 device(s) already hold a leaf - no commit
+```
+
+The leaves the Welcome never reached were still in the tree, and the Add treated them as members
+that need nothing. The subject was kicked at the end of every cycle, so nothing was exposed in this
+run. But if a grant had stood, those devices would have had a leaf and no Welcome: in the tree,
+but unable to read.
+
+To read:
+
+- when the stray sweep runs for a salon group;
+- whether `ADMIT ... already hold a leaf` should check the seat (`active`) rather than the leaf.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
