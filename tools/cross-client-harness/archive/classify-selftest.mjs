@@ -59,6 +59,7 @@ function cxOf(entries) {
 const CASES = [
   // [level, line, expected bucket]
   ['log', '[14:24:25] [OUTBOX] 1 entry still queued', 'notable'],
+  ['log', '[14:59:42] [QUEUE] the commit of 59333a90... released the MLS lock - draining the 1 frame(s) it held back', 'notable'],
   ['log', '[14:24:25] [OUTBOX] 12 entries still queued', 'notable'],
   ['log', '[14:24:25] [OUTBOX] ef8eca5e… skipped, backing off for 4452ms (attempt 2)', 'notable'],
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
@@ -1401,7 +1402,7 @@ const FORGIVE_CASES = [
       ['log', '[DevicePanel] 2 live session(s)'],
       ['log', '[DevicePanel] Found 4 device(s)'],
       ['log', '[DevicePanel] Deleting device f0a3bb2c…'],
-      ['log', '[DevicePanel] Deleted device f0a3bb2c… (groups cleaned: 9, keyPackages: 3)'],
+      ['log', '[DevicePanel] Deleted device web-f0a3…'],
     ],
     DEVICE_PANEL_NARRATION,
     // TWO NEEDLES GO DRY HERE AND THAT IS THE MEASUREMENT, not a slack expectation: `Loading devices
