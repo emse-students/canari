@@ -506,7 +506,9 @@ try {
   const refusals = {};
   for (const d of spec.mint) {
     // The single logout line is forgiven on a revoked seat ONLY while the live console holds exactly one.
-    logs[d] = (act.revoked ?? []).includes(d) ? [...REVOKED_NARRATION, revokedLogoutOnce(() => consoleLines(cx(d)))] : MINT_NARRATION;
+    // `seats.seat[d].cx`, not `cx(d)`: that helper is local to `play()`, and the judge runs out here
+    // (#2523 wrote `cx(d)`, and DEV-2's first alpha.6 run died on `cx is not defined`).
+    logs[d] = (act.revoked ?? []).includes(d) ? [...REVOKED_NARRATION, revokedLogoutOnce(() => consoleLines(seats.seat[d].cx))] : MINT_NARRATION;
     // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
     // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
     if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
