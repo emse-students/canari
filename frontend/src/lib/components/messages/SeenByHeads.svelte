@@ -31,7 +31,10 @@
   let allNames = $derived(readers.map(nameOf).join(', '));
 </script>
 
-<span class="msg-status msg-status-read inline-flex items-center gap-0.5" role="status">
+<!-- `relative` IS THE CONTAINMENT: `sr-only` is absolute, and with no positioned ancestor inside the
+     transcript it was placed against the thread panel - below the list, giving that overflow-hidden
+     panel scrollable overflow a focus or scrollIntoView then walked, pushing the header off-screen. -->
+<span class="msg-status msg-status-read relative inline-flex items-center gap-0.5" role="status">
   <span class="inline-flex items-center gap-0.5" aria-hidden="true">
     {#each readers.slice(0, MAX_HEADS) as userId (userId)}
       <Avatar {userId} size="xs" shape="circle" />
