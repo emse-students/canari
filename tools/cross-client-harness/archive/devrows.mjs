@@ -91,7 +91,7 @@ import {
   REVOKED_SIGN_OUT_NARRATION,
   revokedLogoutOnce,
   signOutCount,
-  SIBLING_MINT_NARRATION,
+  mintedKeyPackageVettedNarration,
   consoleLines,
   logcatSince,
 } from '../watch.mjs';
@@ -499,8 +499,16 @@ try {
   // A ROW THAT MINTS tells the owner (W1) and every contact (W2) of the new device - the subject of
   // DEV-1 and the premise of every other DEV row, so both seats name their device-notice narration.
   const minting = spec.mint.length > 0;
+  // THE MINTED IDS, per seat: the owner vets each one (`[TRUST] ... vetted: pinned`, DEV-2 of alpha.6),
+  // and a minted seat vets its sibling - scoped to these ids, never forgiven by tag.
+  const mintedIds = Object.fromEntries(Object.entries(act.minted ?? {}).filter(([, m]) => m?.deviceId).map(([d, m]) => [d, m.deviceId]));
   const logs = {
-    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : []), ...(act.narration ?? [])],
+    W1: [
+      ...GROUP_CREATION_NARRATION,
+      ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []),
+      ...(minting ? [...OWNER_DEVICE_NOTICE_NARRATION, ...mintedKeyPackageVettedNarration(Object.values(mintedIds))] : []),
+      ...(act.narration ?? []),
+    ],
     ...(minting && spec.devices.includes('W2') ? { W2: CONTACT_DEVICE_NOTICE_NARRATION } : {}),
   };
   const refusals = {};
@@ -511,7 +519,12 @@ try {
     logs[d] = (act.revoked ?? []).includes(d) ? [...REVOKED_NARRATION, revokedLogoutOnce(() => consoleLines(seats.seat[d].cx))] : MINT_NARRATION;
     // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
     // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
-    if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
+    if (spec.mint.length > 1) {
+      const siblings = Object.entries(mintedIds)
+        .filter(([s]) => s !== d)
+        .map(([, id]) => id);
+      logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...mintedKeyPackageVettedNarration(siblings)];
+    }
     refusals[d] = (act.revoked ?? []).includes(d) ? [...MINT_REFUSALS, ...REVOKED_REFUSALS] : MINT_REFUSALS;
   }
   const observers = await observersOf(seats, { logs, refusals, provoked: act.records ?? {}, offline: act.offline ?? [] });

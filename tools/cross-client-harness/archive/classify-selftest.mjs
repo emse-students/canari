@@ -32,7 +32,7 @@ import {
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
   PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
-  SIBLING_MINT_NARRATION,
+  mintedKeyPackageVettedNarration,
   admissionJoinerNarration,
   admissionMemberNarration,
   bigRowNarration,
@@ -1332,6 +1332,7 @@ const benignFirst = await report({
  */
 /** The admission cases' group: its prefix is what the lines print. */
 const ADM_G = '21a3145f-088e-4214-9692-63455cc27ac9';
+const MINTED_DEV = 'web-472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpp81eo-ioeg';
 const FORGIVE_CASES = [
   [
     'frames refused for lack of a row: forgiven where a row names the narration',
@@ -1894,19 +1895,37 @@ const FORGIVE_CASES = [
     { clean: false, unmatched: 3 },
   ],
   [
-    "a minted sibling's KeyPackage vetted, at debug, forgiven",
-    [['debug', '[10:01:02] [TRUST] KeyPackage for 472df672... vetted: pinned']],
-    SIBLING_MINT_NARRATION,
+    "the owner's (or a sibling's) vetting of the minted device, at debug, forgiven - redacted or whole",
+    [
+      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: pinned'],
+      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpp81eo-ioeg vetted: pinned'],
+    ],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
     { clean: true, unmatched: 0 },
   ],
   [
-    'control: the same vetting at warn, or another outcome, stays dirt',
-    [
-      ['warning', '[10:01:02] [TRUST] KeyPackage for 472df672... vetted: pinned'],
-      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672... vetted: mismatch'],
-    ],
-    SIBLING_MINT_NARRATION,
-    { clean: false, unmatched: 1, warnings: 1 },
+    'control: the same vetting at warn is not forgiven - it stays a counted warning',
+    [['warning', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: pinned']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: true, unmatched: 1, warnings: 1 },
+  ],
+  [
+    'control: another outcome stays dirt',
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: mismatch']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: false, unmatched: 1, warnings: 0 },
+  ],
+  [
+    'control: another device of the owner stays dirt',
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvzz00aa-bbbb vetted: pinned']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: false, unmatched: 1, warnings: 0 },
+  ],
+  [
+    "control: another user's device stays dirt",
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 9a8b7c6d:web-9a8b7c6d…-mvpp81eo-ioeg vetted: pinned']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: false, unmatched: 1, warnings: 0 },
   ],
   [
     "RM-6's refused privacy flip, by its code at debug, forgiven",

@@ -473,6 +473,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/ownedpaths-selftest.mjs
 	@bun tools/cross-client-harness/archive/expectations-selftest.mjs
 	@bun tools/cross-client-harness/archive/serverwindow-selftest.mjs
+	@bun tools/cross-client-harness/archive/commitreport-selftest.mjs
 	@bun tools/cross-client-harness/archive/epochfork-selftest.mjs
 	@bun tools/cross-client-harness/archive/consoleorigin-selftest.mjs
 	@bun tools/cross-client-harness/archive/phone-ios-selftest.mjs

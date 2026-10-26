@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-107 scripts.
+108 scripts.
 
 | script | what it is |
 |---|---|
@@ -42,6 +42,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `checks.mjs` | THE MANIFEST: which script covers which phase, and what each phase needs to be meaningful. |
 | `cleanup.mjs` | Deletes the communities, the salons AND the throwaway GROUPS a CRASHED check left on THE ESTATE |
 | `comm.mjs` | The vocabulary the COMM phase is written in: communities, channels, invitations, roles. |
+| `commitreport.mjs` | THE HOURLY COMMIT-LOG REPORT, READ ONCE PER CAMPAIGN RUN AND NEVER IN A ROW'S WINDOW. |
 | `consoleorigin.mjs` | WHICH ORIGIN EMITTED A CONSOLE LINE - so the browser report can call a foreign one foreign. |
 | `debris.mjs` | THE ONE ALLOWLIST OF THROWAWAY GROUP NAMES, shared by every sweep that may delete one. |
 | `deploy.mjs` | WAS THE ESTATE REDEPLOYED OR RESTARTED WHILE THE CHECK WAS RUNNING? - the one cause of transport |
@@ -245,7 +246,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-60 scripts.
+61 scripts.
 
 | script | what it is |
 |---|---|
@@ -257,6 +258,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/cc-selftest.mjs` | THE CC ROWS' OWN JUDGEMENTS, PINNED (`ccrows.mjs`). |
 | `archive/checks-selftest.mjs` | Asserts that every phase DECLARES the devices its scripts actually drive. |
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
+| `archive/commitreport-selftest.mjs` | Pins `commitreport.mjs`: the run's one read of the hourly commit report - campaign-owned groups |
 | `archive/consoleorigin-selftest.mjs` | Pins `consoleorigin.mjs` and its use in `report()`: a console line another origin emitted (the |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
 | `archive/deploy-selftest.mjs` | A ROW DEV WAS REDEPLOYED UNDER IS ABSENT, NOT FAILING - AND THE GATE ASKS DEV, NOT DOCKER. |
@@ -314,7 +316,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-45 scripts.
+46 scripts.
 
 | script | what it is |
 |---|---|
@@ -332,6 +334,7 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/gateway.mjs` | Proves that each client's GATEWAY SOCKET is up - the pre-flight gate the campaign was missing. |
 | `archive/grainestore.mjs` | The Graine seed store as the CLIENT holds it, read from the browser's own IndexedDB. |
 | `archive/grouplink.mjs` | THE GROUP LINK AND ITS ASK - the gestures of the admission rows (`archive/admit.mjs`). |
+| `archive/hourlyread.mjs` | THE RUN'S ONE READ OF THE HOURLY COMMIT REPORT - once per campaign run, after its last row. |
 | `archive/idb.mjs` | Reading the app's OWN IndexedDB from outside it - one implementation of the awkward part. |
 | `archive/idcheck.mjs` | Does anything STAGED carry a real identity? Run it before every commit that touches this rig. |
 | `archive/identity.mjs` | Fingerprints each client's IDENTITY - the pre-flight gate that says the two Chrome profiles are |
@@ -366,4 +369,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-305 scripts in total.
+308 scripts in total.

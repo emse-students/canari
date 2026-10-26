@@ -2343,12 +2343,30 @@ export const PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION = [
 ];
 
 /**
- * WHAT A MINTED DEVICE SAYS WHEN A SIBLING IS MINTED BESIDE IT - DEV-4 mints W3 and W6 at once, so
- * each is the owner's "other device" for the other: it vets the sibling's KeyPackage, and tells the
- * owner-alert once at first sight ({@link OWNER_DEVICE_NOTICE_NARRATION}, which the caller adds).
- * Read on DEV-4 of `1.4.1-alpha.4` (2026-10-25), on W6.
+ * WHAT ONE OF THE OWNER'S DEVICES SAYS WHEN IT VETS A DEVICE THE ROW MINTED: `[TRUST] KeyPackage for
+ * <owner>:<device> vetted: pinned`, at `debug`, for exactly the `deviceIds` given.
+ *
+ * Two readers, one line. The OWNER (W1) vets every device a DEV row mints for it - read on DEV-2 of
+ * `1.4.1-alpha.6` (2026-10-26) - and a MINTED seat vets its sibling when a row mints two (DEV-4 of
+ * `1.4.1-alpha.4`, on W6). The caller passes the minted ids the seat may vet: its own id never, and
+ * nothing else.
+ *
+ * SCOPED TO THE DEVICE, NOT THE TAG (coordinator, 2026-10-26). The client prints the user id's first
+ * eight characters and the device id as the log redactor leaves it (`web-<8 hex>…-<tail>`), so the
+ * needle is built from the minted id itself: a vetting of another device, of another user's device,
+ * or any outcome but `pinned` stays dirt. Throws on an id of another shape rather than forgive by tag.
+ *
+ * @param {string[]} deviceIds the minted device ids this seat may vet, as `mintdevice.mjs` printed them
  */
-export const SIBLING_MINT_NARRATION = [atLevels(['debug'], /^\[TRUST\] KeyPackage for \S+ vetted: pinned$/)];
+export function mintedKeyPackageVettedNarration(deviceIds) {
+  return deviceIds.map((id) => {
+    // `<kind>-<user id>-<two-part tail>`; the user id is the account's hex id, whatever its length.
+    const m = /^(web|tauri)-([0-9a-f]{8})([0-9a-f-]+)-([0-9a-z]+-[0-9a-z]+)$/.exec(String(id));
+    if (!m) throw new Error(`mintedKeyPackageVettedNarration: a minted device id of an unexpected shape (${String(id).slice(0, 14)}...)`);
+    const [, kind, user8, rest, tail] = m;
+    return atLevels(['debug'], new RegExp(String.raw`^\[TRUST\] KeyPackage for ${user8}:${kind}-${user8}(?:…|\.\.\.|${rest})-${tail} vetted: pinned$`));
+  });
+}
 
 /**
  * WHAT THE OWNER'S OTHER DEVICES SAY WHEN ONE MORE OF THEIRS ENROLS - the DEV rows' subject, on W1.

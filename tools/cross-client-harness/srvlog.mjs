@@ -23,6 +23,7 @@
  * anything nginx terminates before the app is out of scope.
  */
 import { pathToFileURL } from 'node:url';
+import { COMMIT_REPORT_TAG } from './commitreport.mjs';
 import { isForeign404, ownedPaths } from './ownedpaths.mjs';
 
 /** The application containers. Infrastructure (redis, postgres, garage) is deliberately out. */
@@ -708,16 +709,8 @@ const NOTABLE = [
   // and those lines are the entire reason the reports were written.
   /\[CRON\] reportStrandedDeviceMemberships: no pending membership older than /,
   /\[CRON\] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree/,
-  // THE FIFTH HOURLY REPORT (`reportCommitLogHealth`), same rule: match the lines that say "nothing
-  // to report" and never the tag. The rate line is a LOG carrying the distribution whatever the
-  // verdict, and the clean hole sentence is the other; the WARN (`were re-keyed`) and the ERROR
-  // (`HOLE in their commit log`) are the findings and stay unclassified on purpose.
-  // The rate line's last clause follows a `; `, never a `, ` (`app.controller.ts`): the rule spelt it
-  // with a comma from #1397 on and matched NO real line, so every hourly report that landed in a
-  // row's window read unexplained - CC-3 on alpha.4, 2026-10-25. `srvclassify-selftest` now holds
-  // the server's own spelling, and `1 group(s) at >= 8` stays a finding.
-  /\[CRON\] reportCommitLogHealth: commit rate over the last hour - (no group committed|\d+ commit\(s\) in \d+ group\(s\); .*; 0 group\(s\) at >= \d+ by one device)$/,
-  /\[CRON\] reportCommitLogHealth: every commit log is contiguous /,
+  // THE FIFTH HOURLY REPORT (`reportCommitLogHealth`) is not here: it is lifted out of every row's
+  // window before anything is classified, and judged once per run (`commitreport.mjs`).
   // THE TURN METER'S HOURLY READING (#2187, `calls.service.ts`, `turn-usage-meter.service.ts`), same
   // rule: the two spellings that say "under budget" and nothing else. `BUDGET REACHED` (an error),
   // the unreadable budget and the UNAVAILABLE meter (warns) are the findings and stay unmatched.
@@ -1364,17 +1357,6 @@ const ROW_RULES = [
     rows: [],
   },
 
-  // ── the hourly commit-rate report naming ONE busy group: KILL-1's own repeat ──────────────────
-  // KILL-1 kills W1 around its own commit twenty times in one group, so an hourly report landing in
-  // its window names exactly that group: `1 group(s) at >= 8 by one device` (alpha.4, 2026-10-25).
-  // ONE group only - two busy groups is not this row's burst - and dirt in every other row.
-  {
-    name: 'one busy group in the hourly commit rate',
-    tag: /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \d+ commit\(s\) in \d+ group\(s\);.*; [1-9]\d* group\(s\) at >= \d+ by one device$/,
-    shape: /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \d+ commit\(s\) in \d+ group\(s\); per group p50=\d+ p90=\d+ max=\d+; busiest single committer per group p50=\d+ p90=\d+ max=\d+; 1 group\(s\) at >= \d+ by one device$/,
-    rows: ['KILL-1'],
-  },
-
   // ── #2287 (and #2329's server face): the background Welcome route ─────────────────────────────
   // A phone in the background answering a newcomer's join. DEV-7 arms it; anywhere else it means a
   // newcomer's external join failed for a reason no row named.
@@ -1679,6 +1661,12 @@ for (const service of SERVICES) {
     continue;
   }
 
+  // THE HOURLY COMMIT REPORT IS NO ROW'S (`commitreport.mjs`): it describes the whole estate over the
+  // last hour, so the row the clock strikes in is not its subject (DEV-6, alpha.6, 2026-10-26). Lifted
+  // out before anything is judged, counted here, and judged once per run by `archive/hourlyread.mjs`.
+  const hourly = lines.filter((l) => COMMIT_REPORT_TAG.test(l));
+  lines = lines.filter((l) => !COMMIT_REPORT_TAG.test(l));
+
   // PARTITION BEFORE CLASSIFYING. `foreign` is kept whole and reported; only `lines` is judged.
   const foreign = lines.filter(isThirdParty);
   lines = lines.filter((l) => !isThirdParty(l));
@@ -1775,6 +1763,8 @@ for (const service of SERVICES) {
     // REPORTED, NEVER SILENT: a collapse that is not stated is indistinguishable from a window that
     // was quiet, and the whole point of the rule above is that a suppressed count misleads.
     ...(dumpLines && { dumpLinesCollapsed: dumpLines }),
+    // NOT GATING HERE, NEVER SILENT: the run's `hourlyread.mjs` is where these are judged.
+    ...(hourly.length && { hourlyCommitReportCount: hourly.length }),
     ...(severe.length && { severeCount: severe.length, severe: severe.slice(0, 40) }),
     ...(errors.length && { errorCount: errors.length, errors: errors.slice(0, 40) }),
     ...(warnings.length && { warningCount: warnings.length, warnings: warnings.slice(0, 20) }),
