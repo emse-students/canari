@@ -10,24 +10,32 @@
 import {
   ADMIT_ROWS,
   OLD_REF,
+  admitRefusedFor,
   admittedOwn,
   baseWithheldRepeats,
+  connectionOpens,
   declinedOwn,
   gateRefusals,
   isAwaitingRefusal,
   isPowerOfTen,
   memberRoutes,
+  nestInstant,
   noAskOwn,
   oldBuildOwn,
   oldMemberOwn,
   outsiderOwn,
+  perConnection,
   probeOwn,
   raceOwn,
   rateLimitedOwn,
+  refusalInstants,
+  refusedCommits,
+  refusedWholeOwn,
   reinviteOwn,
   routeEnrolments,
   seatState,
   staleAddOwn,
+  undatedAdmissions,
 } from '../admitrows.mjs';
 
 let failures = 0;
@@ -92,6 +100,12 @@ ok('the Add won: admitted, listed throughout the end -> all hold', allOk(raceOwn
 ok('the Decline won: absent, never listed -> all hold', allOk(raceOwn({ outcomes: both, after: seatState(view(), J), listedTrail: [false, false] })));
 ok('listed then not: an admitted person stripped', failing(raceOwn({ outcomes: both, after: seatState(view(), J), listedTrail: [false, true, false] })) === 1);
 ok('admitted on the server, not listed: the two sides disagree', failing(raceOwn({ outcomes: both, after: seatState(admitted, J), listedTrail: [false, false] })) === 1);
+const refusedClean = { gateRefused: 1, admitRefused: 1, epochMoved: 0, welcomes: 0, undated: 0 };
+ok('the Decline won and the Add was refused whole -> all hold', allOk(raceOwn({ outcomes: both, after: seatState(view(), J), listedTrail: [false, false], refusal: refusedClean })));
+ok('the Decline won, the refused commit advanced the epoch -> fails', failing(raceOwn({ outcomes: both, after: seatState(view(), J), listedTrail: [false], refusal: { ...refusedClean, epochMoved: 1 } })) === 1);
+ok('the Decline won, a Welcome queued for the joiner -> fails', failing(raceOwn({ outcomes: both, after: seatState(view(), J), listedTrail: [false], refusal: { ...refusedClean, welcomes: 1 } })) === 1);
+ok('the Add won: the refusal facts are not asked of it', allOk(raceOwn({ outcomes: both, after: seatState(admitted, J), listedTrail: [true], refusal: { gateRefused: 0, admitRefused: 0, epochMoved: 1, welcomes: 1, undated: 0 } })));
+ok('an undated admission fails on either branch (ADM-3c)', failing(raceOwn({ outcomes: both, after: seatState(admitted, J), listedTrail: [true], refusal: { ...refusedClean, undated: 1 } })) === 1);
 
 // ── ADM-4 ────────────────────────────────────────────────────────────────────────────────────────
 console.log('ADM-4 probeOwn');
@@ -116,6 +130,15 @@ ok('a line per retry fails', failing(rateLimitedOwn([1, 2, 3])) === 1);
 ok('no line at all fails', failing(rateLimitedOwn([])) === 1);
 ok('ADM-6: admitted by the shim, no error -> all hold', allOk(oldMemberOwn({ admitted: seatState(admitted, J), listed: true, admissionErrors: 0, addedBy: 'A1 (the shim)' })));
 ok('ADM-6: an [ADMISSION] ERROR fails', failing(oldMemberOwn({ admitted: seatState(admitted, J), listed: true, admissionErrors: 1, addedBy: 'W1' })) === 1);
+ok('ADM-6: one refusal per connection holds', allOk(oldMemberOwn({ admitted: seatState(admitted, J), listed: true, admissionErrors: 0, addedBy: 'W1', refusalsPerConnection: [0, 1, 1] })));
+ok('ADM-6: two refusals in one connection is a wedge', failing(oldMemberOwn({ admitted: seatState(admitted, J), listed: true, admissionErrors: 0, addedBy: 'W1', refusalsPerConnection: [1, 2] })) === 1);
+ok('perConnection: a refusal goes to the connection open at its instant', perConnection([5, 15, 16, 25], [10, 20]).join() === '1,2,1');
+ok('perConnection: no opening is one bucket; openings are sorted', perConnection([1, 2], []).join() === '2' && perConnection([15], [20, 10]).join() === '0,1,0');
+const NEST_AT = '10/25/2026, 9:17:22 PM';
+ok('nestInstant: a Nest line is read in UTC, at the end of its second', nestInstant(`[Nest] 1  - ${NEST_AT}     WARN [MessagingService] x`) === Date.parse('2026-10-25T21:17:22.999Z') && nestInstant('no stamp') === null);
+const A1U = 'aaaaaaaa' + 'f'.repeat(56);
+const opened = (at, user = A1U, device = 'dev-a1') => `${at}  INFO chat_gateway::handlers: New WebSocket connection: User=${user}, Device=${device}, addressed_history=false, join_ask=false`;
+ok('connectionOpens: this user and device only', connectionOpens([opened('2026-10-25T21:17:22.500000Z'), opened('2026-10-25T21:18:00Z', A1U, 'other'), opened('2026-10-25T21:18:00Z', 'e'.repeat(64))], A1U, 'dev-a1').join() === String(Date.parse('2026-10-25T21:17:22.500Z')));
 const out7 = (over = {}) => outsiderOwn({ base: { status: 403 }, uninvited: 0, notices: 0, after: seatState(view(), J), ...over });
 ok('ADM-7: refused, silent, absent -> all hold', allOk(out7()));
 ok('ADM-7: the base served fails', failing(out7({ base: { status: 200 } })) === 1);
@@ -142,17 +165,38 @@ ok('the first ask never declined fails', failing(a9({ declined: seatState(waitin
 
 // ── ADM-10 ───────────────────────────────────────────────────────────────────────────────────────
 console.log('ADM-10 staleAddOwn');
-const a10 = (over = {}) => staleAddOwn({ held: { ok: true }, declined: absent, trail: ['absent', 'absent'], after: absent, listed: false, gateRefused: 1, routeEnrolled: 0, ...over });
-ok('held, declined, refused at the gate, nothing enrolled -> all hold', allOk(a10()));
+const a10 = (over = {}) => staleAddOwn({ held: { ok: true }, declined: absent, trail: ['absent', 'absent'], after: absent, listed: false, ...refusedClean, routeEnrolled: 0, ...over });
+ok('held, declined, refused whole at the gate, nothing enrolled -> all hold', allOk(a10()));
 ok('the member-add route enrolling after the Decline fails (alpha.4)', failing(a10({ routeEnrolled: 1 })) === 1);
 ok('no gate refusal fails', failing(a10({ gateRefused: 0 })) === 1);
+ok('the commit not refused whole (no REJECT admit_refused) fails', failing(a10({ admitRefused: 0 })) === 1);
+ok('the refused commit advancing the epoch fails', failing(a10({ epochMoved: 1 })) === 1);
+ok('a Welcome queued for the refused person fails', failing(a10({ welcomes: 2 })) === 1);
+ok('an undated admission of the joiner fails (ADM-3c)', failing(a10({ undated: 1 })) === 1);
+ok('the joiner left with a seat fails: not in no tree', failing(a10({ after: { state: 'absent', active: 1 } })) === 1);
+ok('refusedWholeOwn alone: five assertions, all hold on a clean refusal', refusedWholeOwn({ ...refusedClean, after: absent }).length === 5 && allOk(refusedWholeOwn({ ...refusedClean, after: absent })));
 ok('one admitted sample fails', failing(a10({ trail: ['absent', 'admitted', 'absent'] })) === 1);
 ok('the commit never held fails', failing(a10({ held: { ok: false, error: 'timeout' } })) === 1);
 const JU = 'bbbbbbbb' + 'c'.repeat(56);
-const gate = (reason, user = 'bbbbbbbb', group = G) => `WARN [MessagingService] [ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${group} user=${user} reason=${reason} baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`;
-ok('gateRefusals: departed_since_base about the joiner in the group counts', gateRefusals([gate('departed_since_base')], G, JU) === 1);
-ok('gateRefusals: another NOT_ENROLLED reason does not', gateRefusals([gate('never_invited')], G, JU) === 0);
-ok('gateRefusals: another user or another group does not', gateRefusals([gate('departed_since_base', 'dddddddd'), gate('departed_since_base', 'bbbbbbbb', 'other-group')], G, JU) === 0);
+const SINCE = 'departed_since_decision decidedAtSeatGeneration=3 decidedBy=invitation seat=none';
+const UNDATED = 'departed_and_undated decidedBy=base_epoch seat=awaiting';
+const gate = (reason, user = 'bbbbbbbb', group = G, trace = 'commit-7be79bc7', committer = 'aaaaaaaa') =>
+  `[Nest] 1  - ${NEST_AT}     WARN [MessagingService] [ADD_MEMBER][${trace}] NOT_ENROLLED group=${group} user=${user} reason=${reason} committer=${committer} - the commit is refused whole`;
+ok('gateRefusals: both Decline reasons about the joiner in the group count', gateRefusals([gate(SINCE), gate(UNDATED)], G, JU) === 2);
+ok('gateRefusals: blocked and committer_not_on_roster do not', gateRefusals([gate('blocked'), gate('committer_not_on_roster')], G, JU) === 0);
+ok('gateRefusals: another user or another group does not', gateRefusals([gate(SINCE, 'dddddddd'), gate(SINCE, 'bbbbbbbb', 'other-group')], G, JU) === 0);
+ok('gateRefusals: the pre-#2505 line (its admits dropped) does not', gateRefusals([`WARN [MessagingService] [ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_decision committer=aaaaaaaa - its admits dropped, the leaf has no seat`], G, JU) === 0);
+const reject = (reason = 'admit_refused', users = 'bbbbbbbb', group = G) =>
+  `[Nest] 1  - ${NEST_AT}     WARN [MessagingService] [COMMIT][commit-7be79bc7] REJECT ${reason} group=${group} baseEpoch=4 users=${users} - the commit would give them a leaf no seat holds; nothing advanced`;
+const rc = refusedCommits([reject(), reject('committer_not_on_roster', 'cccccccc'), reject('admit_refused', 'bbbbbbbb', 'other-group'), 'noise'], G);
+ok('refusedCommits: this group only, with trace, reason, base epoch and users', rc.length === 2 && rc[0].trace === 'commit-7be79bc7' && rc[0].baseEpoch === 4 && rc[0].users.join() === 'bbbbbbbb' && rc[1].reason === 'committer_not_on_roster');
+ok('admitRefusedFor: admit_refused naming the joiner counts, among several users', admitRefusedFor([reject(), reject('admit_refused', 'dddddddd,bbbbbbbb')], G, JU) === 2);
+ok('admitRefusedFor: committer_not_on_roster, another user or group does not', admitRefusedFor([reject('committer_not_on_roster'), reject('admit_refused', 'dddddddd'), reject('admit_refused', 'bbbbbbbb', 'other-group')], G, JU) === 0);
+const enrolled = (by, kind = 'ENROLLED by commit', user = 'bbbbbbbb') => `LOG [MessagingService] [ADD_MEMBER][commit-1a2b3c4d] ${kind} group=${G} user=${user} committer=aaaaaaaa decidedBy=${by}`;
+ok('undatedAdmissions: ENROLLED and ADMITTED_UNDATED by base_epoch count', undatedAdmissions([enrolled('base_epoch'), `${enrolled('base_epoch', 'ADMITTED_UNDATED')} decidedAtSeatGeneration=2 seat=awaiting - an Add with no invitation generation answered an ask`], G, JU) === 2);
+ok('undatedAdmissions: decidedBy=invitation, or another user, does not', undatedAdmissions([enrolled('invitation'), enrolled('base_epoch', 'ENROLLED by commit', 'dddddddd')], G, JU) === 0);
+const ri = refusalInstants([gate(SINCE, 'bbbbbbbb', G, 'commit-11111111'), gate(UNDATED, 'cccccccc', G, 'commit-11111111'), gate('blocked', 'bbbbbbbb', G, 'commit-22222222'), gate(SINCE, 'bbbbbbbb', G, 'commit-33333333', 'eeeeeeee')], G, A1U);
+ok('refusalInstants: one per refused commit of this committer, whatever its reasons', ri.length === 2 && ri.every((t) => t === nestInstant(NEST_AT)));
 const done = (user = JU, group = G) => `LOG [MembersController] [ADD_MEMBER][add-member-c3adcdfe] DONE group=${group} user=${user} devices=6`;
 ok('routeEnrolments: a DONE about the joiner in the group counts, case-folded', routeEnrolments([done(JU.toUpperCase())], G, JU) === 1);
 ok('routeEnrolments: a DONE about another user or group does not', routeEnrolments([done('e'.repeat(64)), done(JU, 'other-group')], G, JU) === 0);

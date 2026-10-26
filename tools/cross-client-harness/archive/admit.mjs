@@ -17,8 +17,10 @@ import {
   ADMISSION_ENDINGS,
   ADMIT_ROWS,
   OLD_REF,
+  admitRefusedFor,
   admittedOwn,
   baseWithheldRepeats,
+  connectionOpens,
   declinedOwn,
   gateRefusals,
   memberRoutes,
@@ -26,13 +28,16 @@ import {
   oldBuildOwn,
   oldMemberOwn,
   outsiderOwn,
+  perConnection,
   probeOwn,
   raceOwn,
   rateLimitedOwn,
+  refusalInstants,
   reinviteOwn,
   routeEnrolments,
   seatState,
   staleAddOwn,
+  undatedAdmissions,
 } from '../admitrows.mjs';
 import { apiAt, apiGet, apiPost, evaluate, goto, send } from '../chat.mjs';
 import { psql, srvLines } from '../estate.mjs';
@@ -160,6 +165,26 @@ async function answerWhereShown(asks, by, userId, choice) {
   return true;
 }
 
+/** The Welcomes queued for `user` in `group` - a commit refused whole queues none. */
+const queuedWelcomes = (group, user) => Number(psql(`SELECT count(*) FROM queued_message WHERE "groupId" = '${group}' AND "recipientId" = '${user}' AND "isWelcome" = true`));
+
+/**
+ * WHAT A COMMIT REFUSED WHOLE LEFT BEHIND (#2505), about `user` in `group`: the gate's lines naming
+ * them, the epoch's movement since `epochBefore`, the Welcomes queued for them, and any admission
+ * nobody dated (the ADM-3c rule). The epoch is read before the held commit is released.
+ */
+function refusalFacts(c, user, epochBefore) {
+  const lines = srvLines('chat-delivery-service', c.startSince);
+  return {
+    lines,
+    gateRefused: gateRefusals(lines, c.group.id, user),
+    admitRefused: admitRefusedFor(lines, c.group.id, user),
+    epochMoved: serverView(c.group.id).activeEpoch - epochBefore,
+    welcomes: queuedWelcomes(c.group.id, user),
+    undated: undatedAdmissions(lines, c.group.id, user),
+  };
+}
+
 const ACTIONS = {
   /** ADM-1: waiting, refused the base, asked everywhere, admitted by one member, the ask gone everywhere. */
   async 'ADM-1'(c) {
@@ -235,6 +260,7 @@ const ACTIONS = {
     // THE DECLINE LANDS AND SETTLES WHILE THE ADD IS HELD: that order is the whole row.
     await answerWhereShown(asks, decline, c.user[spec.joiner], 'decline');
     const declined = await seatReaches(c, c.user[spec.joiner], 'absent', 60_000);
+    const epochBefore = serverView(c.group.id).activeEpoch;
     await fa.release();
     // THE RELEASED COMMIT IS DECIDED FIRST, then the group settles BY ROUNDS (`awaitSettled`): the
     // joiner's state is sampled on every round, so "never admitted" covers the whole settlement and
@@ -252,8 +278,7 @@ const ACTIONS = {
     const records = await fa.disarm();
     const after = seatState(serverView(c.group.id), joinerUser);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 5_000)) !== null;
-    const lines = srvLines('chat-delivery-service', c.startSince);
-    const gateRefused = gateRefusals(lines, c.group.id, joinerUser);
+    const { lines, ...refusal } = refusalFacts(c, joinerUser, epochBefore);
     const routeEnrolled = routeEnrolments(lines, c.group.id, joinerUser);
     // AN ADMITTED SAMPLE IS A FINDING SETTLED OR NOT; a group that never settled with none is unjudged.
     const unjudged = !decided.ok
@@ -265,8 +290,8 @@ const ACTIONS = {
       members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
       records: { [approve]: records.records },
       unjudged,
-      detail: { asks, trail, settleMs: settled.ms, settled: settled.settled, rounds: settled.rounds.length },
-      judge: () => staleAddOwn({ held, declined, trail, after, listed, gateRefused, routeEnrolled }),
+      detail: { asks, trail, settleMs: settled.ms, settled: settled.settled, rounds: settled.rounds.length, refusal },
+      judge: () => staleAddOwn({ held, declined, trail, after, listed, ...refusal, routeEnrolled }),
     };
   },
 
@@ -283,6 +308,7 @@ const ACTIONS = {
     const outcomes = {};
     outcomes[spec.race.approve] = await outcome(fa.awaitHeld(1, 45_000));
     outcomes[spec.race.decline] = await outcome(fd.awaitHeld(1, 45_000));
+    const epochBefore = serverView(c.group.id).activeEpoch;
     const releasedAt = now();
     await Promise.all([fa.release(), fd.release()]);
     const J = seats.seat[spec.joiner].cx;
@@ -294,11 +320,13 @@ const ACTIONS = {
     const ra = await fa.disarm();
     const rd = await fd.disarm();
     const after = seatState(serverView(c.group.id), c.user[spec.joiner]);
+    // WHEN THE DECLINE WON, THE ADD WAS REFUSED WHOLE: judged by `raceOwn` only on that branch.
+    const { lines: _lines, ...refusal } = refusalFacts(c, c.user[spec.joiner], epochBefore);
     return {
       members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
       records: { [spec.race.approve]: ra.records, [spec.race.decline]: rd.records },
-      detail: { asks, releasedAt, final: after },
-      judge: () => raceOwn({ outcomes, after, listedTrail }),
+      detail: { asks, releasedAt, final: after, refusal },
+      judge: () => raceOwn({ outcomes, after, listedTrail, refusal }),
     };
   },
 
@@ -362,11 +390,21 @@ const ACTIONS = {
     }
     const admitted = await seatReaches(c, u, 'admitted', 60_000);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 90_000)) !== null;
-    const admissionErrors = srvLines('chat-delivery-service', c.startSince).filter((l) => l.includes('[ADMISSION]') && /\bERROR\b/.test(l) && l.includes(c.group.id)).length;
+    const lines = srvLines('chat-delivery-service', c.startSince);
+    const admissionErrors = lines.filter((l) => l.includes('[ADMISSION]') && /\bERROR\b/.test(l) && l.includes(c.group.id)).length;
+    // THE OLD MEMBER'S REFUSED COMMITS, PER CONNECTION: the gate names a committer by user, and A1
+    // shares W1's user, so a refusal is A1's only between A1's own connection openings - W1, a new
+    // client, is never refused for an Add it decided. A device id the old page does not expose leaves
+    // the count unjudged, never zero.
+    const oldDevice = await deviceIdOf(seats.seat[spec.old].cx, c.user[spec.old]);
+    const refusalsPerConnection = oldDevice
+      ? perConnection(refusalInstants(lines, c.group.id, c.user[spec.old]), connectionOpens(srvLines('chat-gateway', c.startSince), c.user[spec.old], oldDevice))
+      : [];
     return {
       members: [...c.members, spec.joiner],
-      detail: { follow: w.follow, base: w.base?.status, addedBy },
-      judge: () => oldMemberOwn({ admitted, listed, admissionErrors, addedBy }),
+      unjudged: oldDevice ? [] : [`${spec.old}'s device id is unreadable, so its refused commits per connection are not counted`],
+      detail: { follow: w.follow, base: w.base?.status, addedBy, refusalsPerConnection },
+      judge: () => oldMemberOwn({ admitted, listed, admissionErrors, addedBy, refusalsPerConnection }),
     };
   },
 
