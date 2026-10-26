@@ -1332,7 +1332,7 @@ const benignFirst = await report({
  */
 /** The admission cases' group: its prefix is what the lines print. */
 const ADM_G = '21a3145f-088e-4214-9692-63455cc27ac9';
-const MINTED_DEV = 'web-472df672-1111-2222-3333-444455556666-mvpp81eo-ioeg';
+const MINTED_DEV = 'web-472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpp81eo-ioeg';
 const FORGIVE_CASES = [
   [
     'frames refused for lack of a row: forgiven where a row names the narration',
@@ -1898,7 +1898,7 @@ const FORGIVE_CASES = [
     "the owner's (or a sibling's) vetting of the minted device, at debug, forgiven - redacted or whole",
     [
       ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: pinned'],
-      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672-1111-2222-3333-444455556666-mvpp81eo-ioeg vetted: pinned'],
+      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpp81eo-ioeg vetted: pinned'],
     ],
     mintedKeyPackageVettedNarration([MINTED_DEV]),
     { clean: true, unmatched: 0 },

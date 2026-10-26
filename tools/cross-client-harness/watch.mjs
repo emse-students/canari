@@ -2360,7 +2360,8 @@ export const PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION = [
  */
 export function mintedKeyPackageVettedNarration(deviceIds) {
   return deviceIds.map((id) => {
-    const m = /^(web|tauri)-([0-9a-f]{8})([0-9a-f-]{28})-([0-9a-z]+-[0-9a-z]+)$/.exec(String(id));
+    // `<kind>-<user id>-<two-part tail>`; the user id is the account's hex id, whatever its length.
+    const m = /^(web|tauri)-([0-9a-f]{8})([0-9a-f-]+)-([0-9a-z]+-[0-9a-z]+)$/.exec(String(id));
     if (!m) throw new Error(`mintedKeyPackageVettedNarration: a minted device id of an unexpected shape (${String(id).slice(0, 14)}...)`);
     const [, kind, user8, rest, tail] = m;
     return atLevels(['debug'], new RegExp(String.raw`^\[TRUST\] KeyPackage for ${user8}:${kind}-${user8}(?:…|\.\.\.|${rest})-${tail} vetted: pinned$`));

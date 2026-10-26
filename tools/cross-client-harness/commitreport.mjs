@@ -45,8 +45,8 @@ export function lineInstant(line) {
   return Number.isNaN(t) ? null : t;
 }
 
-/** The user id a device id carries (`web-<uuid>-<tail>`), or null. */
-const userOfDevice = (device) => /^(?:web|tauri)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-/.exec(String(device))?.[1] ?? null;
+/** The user id a device id carries (`web-<user id>-<two-part tail>`), or null. */
+const userOfDevice = (device) => /^(?:web|tauri)-([0-9a-f-]+)-[0-9a-z]+-[0-9a-z]+$/.exec(String(device))?.[1] ?? null;
 
 /**
  * The verdict of the run's hourly commit reports.

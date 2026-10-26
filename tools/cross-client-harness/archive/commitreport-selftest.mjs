@@ -12,8 +12,8 @@ const check = (label, actual, expected) => {
   } else console.log(`ok   ${label}`);
 };
 
-const OWNER = '472df672-1111-2222-3333-444455556666';
-const STRANGER = '9a8b7c6d-1111-2222-3333-444455556666';
+const OWNER = '472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const STRANGER = '9a8b7c6dbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const OUR_GROUP = 'aaaaaaaa-0000-4000-8000-000000000001';
 const KEY_GROUP = 'bbbbbbbb-0000-4000-8000-000000000002';
 const NEST = (level) => `[Nest] 1  - 10/26/2026, 9:00:00 PM   ${level} [AppController] `;
