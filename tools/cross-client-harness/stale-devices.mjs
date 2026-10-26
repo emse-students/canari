@@ -36,18 +36,22 @@ const log = (s) => console.log(`[stale-devices] ${s}`);
 
 if (ESTATE !== 'dev' && ESTATE !== 'local') throw new Error(`[stale-devices] estate ${ESTATE} is refused - dev and local only`);
 
-/** The device id a seat's page holds for `userId`, or null when the seat does not answer. */
+/**
+ * What a seat's page holds for `userId`: `{reached: true, id}` - `id` null when that page holds no
+ * device for the account (signed out, never enrolled: nothing there to protect) - or
+ * `{reached: false}` when the seat did not answer, which is the case that refuses the plan.
+ */
 async function seatDevice(port, userId) {
   try {
     const cx = await client(port, APP_TAB, { focus: false });
     try {
-      return (await evaluate(cx, `localStorage.getItem(${JSON.stringify(`mls_device_id_${userId}`)}) || ''`)) || null;
+      return { reached: true, id: (await evaluate(cx, `localStorage.getItem(${JSON.stringify(`mls_device_id_${userId}`)}) || ''`)) || null };
     } finally {
       cx.close();
     }
   } catch (e) {
     log(`${port}: unreadable (${e.message.split('\n')[0]})`);
-    return null;
+    return { reached: false };
   }
 }
 
@@ -60,9 +64,10 @@ const live = [];
 const unread = [];
 for (const [seat, key] of Object.entries(ACCOUNT_OF)) {
   if (!PORTS[seat]) continue;
-  const id = await seatDevice(PORTS[seat], userOf[key]);
-  if (id) live.push(id);
-  else if (seat.startsWith('W')) unread.push(seat);
+  const seen = await seatDevice(PORTS[seat], userOf[key]);
+  if (seen.id) live.push(seen.id);
+  else if (!seen.reached && seat.startsWith('W')) unread.push(seat);
+  else if (seen.reached) log(`${seat} holds no device for its account - nothing there to protect`);
 }
 
 const owned = ledger()
