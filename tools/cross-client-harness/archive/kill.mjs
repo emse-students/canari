@@ -99,11 +99,18 @@ async function deadReport(w) {
  * @param {string} label the run's console label, `<seat>-run<n>`
  * @param {string} dying the dying page's console, read before the kill
  * @param {() => Promise<any>} revive the revival
+ * @param {{refreshAtKill?: string}|null} killed what `killSeat` said about the kill
  */
-async function revivingKeepsDying(label, dying, revive) {
+async function revivingKeepsDying(label, dying, revive, killed = null) {
   try {
     return await revive();
   } catch (e) {
+    // THE COOKIE'S PLACE AT THE KILL NAMES THE CAUSE (`refreshCookieAtKill`). A refresh cookie that
+    // memory held and the file did not is the product's known P2 (an HttpOnly cookie is not durable
+    // across an unclean kill, backlog), never this rig's fault, and the error says so first.
+    const at = killed?.refreshAtKill;
+    if (at === 'not-on-disk' || at === 'older-on-disk') e.message = `product finding, known P2 (cookie not durable across an unclean kill: ${at}) - ${e.message}`;
+    else if (at) e.message = `${e.message} [refresh cookie at the kill: ${at}]`;
     const kept = keepConsoles(id, { [`${label}-dying`]: dying, ...(e?.revivedConsole ? { [`${label}-revived`]: e.revivedConsole } : {}) });
     for (const [which, path] of Object.entries(kept ?? {})) console.log(`[${id}] ${label}: the revival failed - ${which} console kept at ${path}`);
     throw e;
@@ -182,7 +189,7 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   // THE DYING PAGE'S CONSOLE, read before the kill takes it: the row's end keeps only the last page.
   const dying = consoleDump({ page: { cx: seat.cx } }).page ?? '';
   const killed = await killSeat(seat, spec.kill);
-  const { revived, serverEpoch, caughtUpMs } = await revivingKeepsDying(`${killer}-run${i + 1}`, dying, () => reviveAndSettle(c, seat, spec.kill, `${id}:${killer}#${i + 1}`, fromEpoch));
+  const { revived, serverEpoch, caughtUpMs } = await revivingKeepsDying(`${killer}-run${i + 1}`, dying, () => reviveAndSettle(c, seat, spec.kill, `${id}:${killer}#${i + 1}`, fromEpoch), killed);
   const seq = runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch);
   const { outShown, inShown } = await trafficBothWays(c, seat, other, i);
   const judged = runOutcome({ window: window ?? 'stage', seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown });
@@ -231,7 +238,7 @@ async function kill3Run(c, i, { window, delayMs, prevEnd }) {
   const dying = consoleDump({ page: { cx: seat.cx } }).page ?? '';
   const killed = await killSeat(seat, 'browser');
   const sendGesture = gesture ? await gesture : null;
-  const revived = await revivingKeepsDying(`W1-run${i + 1}`, dying, () => reviveSeat(seat, 'browser', `${id}:W1#${i + 1}`));
+  const revived = await revivingKeepsDying(`W1-run${i + 1}`, dying, () => reviveSeat(seat, 'browser', `${id}:W1#${i + 1}`), killed);
   revived.listedMs = await openRevived(seat, c.group.name);
   const serverEpoch = serverView(c.group.id).activeEpoch;
   const caughtUpMs = await awaitClientEpoch(seat.cx, c.group.id, serverEpoch, 30_000);

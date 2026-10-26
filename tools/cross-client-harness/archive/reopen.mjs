@@ -15,12 +15,14 @@
  * `cx` and `w` are REPLACED in place, so every later step and the invariant read the living page; the
  * dead page's observation is returned to the caller, which records it.
  */
-import { existsSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 import { connect, evaluate, listTargets } from '../cdp.mjs';
 import { APP_TAB, awaitAppReady, client } from '../chat.mjs';
 import { armIfPhone } from '../device.mjs';
-import { storageLost } from '../killrows.mjs';
+import { chromeExpiresToUnixS, refreshCookieAtKill, storageLost } from '../killrows.mjs';
 import { BROWSERS, killBrowser, startBrowser } from '../launch.mjs';
 import { SITE } from '../site.mjs';
 import { consoleDump, watch } from '../watch.mjs';
@@ -84,6 +86,36 @@ async function failedRevival(cx, message) {
   return Object.assign(new Error(`${message} [revived page: ${state}]`), { revivedConsole });
 }
 
+/** The refresh cookie's expiry in the browser's MEMORY (Unix seconds), or null when it holds none. */
+async function refreshInMemory(cx) {
+  const host = new URL(SITE).hostname;
+  const { cookies } = await cx.send('Network.getAllCookies');
+  return cookies.find((c) => c.name === 'canari_refresh' && c.domain === host)?.expires ?? null;
+}
+
+/**
+ * The refresh cookie's expiry in the profile's cookie FILE (Unix seconds), or null when the file
+ * holds none. Read only while the browser is dead: Chrome keeps the file locked while it runs. It is
+ * read from a copy so that nothing this rig opens is ever the browser's own file.
+ */
+function refreshOnDisk(device) {
+  const host = new URL(SITE).hostname;
+  const dir = mkdtempSync(join(tmpdir(), 'canari-jar-'));
+  try {
+    const copy = join(dir, 'Cookies');
+    copyFileSync(join(BROWSERS[device.toLowerCase()].profile, 'Default', 'Network', 'Cookies'), copy);
+    const db = new Database(copy, { readonly: true });
+    try {
+      const row = db.query("SELECT expires_utc FROM cookies WHERE name = 'canari_refresh' AND host_key = ?").get(host);
+      return chromeExpiresToUnixS(row?.expires_utc ?? null);
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const appTabs = async (port) => (await listTargets(port).catch(() => [])).filter((t) => t.type === 'page' && String(t.url).includes(APP_TAB));
 
 /** The swipe from recents: the recents screen, then the app's card thrown upward. */
@@ -134,9 +166,19 @@ export async function killSeat(seat, how) {
     // the CDP session that enabled `Fetch` RELEASES every request it holds: the held commit and its
     // answer reached the page, which merged them in the milliseconds before the process died. KILL-2
     // ran ten "answer unseen" runs that way and every one of them saw its answer (2026-10-25).
+    // WHERE THE REFRESH COOKIE WAS WHEN THE BROWSER DIED (`refreshCookieAtKill`): memory before the
+    // kill, the file after it and before the relaunch. This settles without a clock whether a revival
+    // that lands on the sign-in page is the product's known P2 or something else.
+    const memoryExpiresS = await refreshInMemory(seat.cx).catch(() => null);
     const deadInMs = await killBrowser(seat.target.device.toLowerCase());
     seat.cx.close?.();
-    return { how, killedAt, deadInMs };
+    let refreshAtKill;
+    try {
+      refreshAtKill = refreshCookieAtKill({ memoryExpiresS, diskExpiresS: refreshOnDisk(seat.target.device) });
+    } catch (e) {
+      refreshAtKill = `unread: ${String(e?.message ?? e).slice(0, 120)}`;
+    }
+    return { how, killedAt, deadInMs, refreshAtKill };
   }
   const phone = await import('../phone.mjs');
   // `useDevice` in `phone.mjs`: the kill lands on the phone this seat names.
