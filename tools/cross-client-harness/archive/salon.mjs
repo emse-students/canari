@@ -43,7 +43,7 @@ import { awaitUserRouting, channelIdOf, communityChannels, communityMemberIds, c
 import { closeSeats, displayNameOf, observersOf, openSeats, userOf } from '../mlsrow.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName } from '../rowkit.mjs';
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
 import { PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION, atLevels } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
@@ -397,7 +397,7 @@ try {
   // THE ROW'S COMMUNITY NARRATES ITSELF on every seat, scoped to its own ids (`salonNarration`); the
   // access race's loser is RM-4's own subject, at `debug` only.
   const scope = out.detail?.workspaceId ? { workspaceId: out.detail.workspaceId, ...communityChannels(out.detail.workspaceId) } : null;
-  const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds))] : [])] : [];
+  const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds)), atLevels(['debug'], salonRaceReread(scope.channelIds))] : [])] : [];
   const logs = Object.fromEntries(spec.devices.map((d) => [d, narration]));
   // ... and the manager's panel narrates that same refusal, by its code and at `debug` only: any other
   // code, or the same words at `warn`, stays dirt (alpha.4 rerun, 2026-10-25).
@@ -406,6 +406,9 @@ try {
   }
   // RM-6's 403 IS ITS SUBJECT: the manager's flip refused on the salon's own access path, nothing wider.
   const refusals = id === 'RM-6' && out.detail?.channelId ? { [spec.manager]: [{ path: new RegExp(`^/api/channels/${out.detail.channelId}/access$`), status: [403] }] } : {};
+  // RM-4's 409 IS ITS SUBJECT TOO: the access race's loser, on either racing admin's seat - only one
+  // loses, and `accessRaceOwn` asserts which (alpha.5, 2026-10-26).
+  if (id === 'RM-4' && scope) for (const d of Object.keys(spec.race)) refusals[d] = salonRaceRefusals(scope.channelIds);
   const observers = await observersOf(seats, { provoked: out.records ?? {}, logs, refusals });
   await finishObserved(
     id,

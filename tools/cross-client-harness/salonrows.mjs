@@ -278,7 +278,7 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
     R(String.raw`^\[WELCOME\] ${kg}\.\.\. is a KEY-DISTRIBUTION group \(server row\) - installing it as a seed carrier$`),
     R(String.raw`^\[QUEUE\] Welcome for key group ${kg}\.\.\. - not announced to the conversation layer$`),
     R(String.raw`^\[GRAINE\] ADMIT salon grantee [0-9a-f]{8} to ${ch} \(community ${ws}\)$`),
-    R(String.raw`^\[GRAINE\] salon ${ch} of ${ws}: a Welcome is owed to this device \(queued, or an add in flight\) - not joining by external commit, the admitter's Welcome is the door$`),
+    R(String.raw`^\[GRAINE\] salon ${ch} of ${ws}: a Welcome is owed to this device \((?:welcome-queued|add-in-flight)\) - not joining by external commit, the admitter's Welcome is the door$`),
     R(String.raw`^\[WORKSPACE\] my role in ${ws} is now "[^"]+" \(canManage=(?:true|false) canManageChannels=(?:true|false) canModerate=(?:true|false)\)$`),
     R(String.raw`^\[channelSettings\.(?:loadChannelAccess|refreshAccess)\] channel_${ch}…$`),
     R(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser\] \{"channelId":"channel_${ch}…","userId":"[0-9a-f]{8}…"\}$`),
@@ -296,4 +296,26 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
  */
 export function salonRaceRefusal(channelIds) {
   return new RegExp(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser failed\] ChannelApiError: \{"code":"CHANNEL_ACCESS_CHANGED",.*"channelId":"${anyOf(channelIds)}…"`);
+}
+
+/**
+ * ... and the loser's panel reading the access again before it names the refusal
+ * (`ChannelSettingsPanel.svelte` `accessWriteRefused`), at `debug`, for that one code. Read on
+ * alpha.5's RM-4 (2026-10-26). `CHANNEL_GRANTEE_NOT_MEMBER` takes the same branch and is NOT this
+ * row's race, so it stays dirt.
+ */
+export function salonRaceReread(channelIds) {
+  return new RegExp(String.raw`^\[channelSettings\.accessWriteRefused reading the access again\] \{"channelId":"channel_${anyOf(channelIds)}…","code":"CHANNEL_ACCESS_CHANGED"\}$`);
+}
+
+/**
+ * The race loser's `409` on the salon's access path, as a refusal `observersOf` forgives on either
+ * racing seat - only one of them loses, and the row asserts which (`accessRaceOwn`). Any other status,
+ * or the same status on another path, stays dirt.
+ *
+ * @param {string[]} channelIds the row's channels, whole
+ */
+export function salonRaceRefusals(channelIds) {
+  const ids = channelIds.map((c) => String(c).replace(/^channel_/, '')).join('|') || '(?!)';
+  return [{ path: new RegExp(`^/api/channels/(?:${ids})/access$`), status: [409] }];
 }

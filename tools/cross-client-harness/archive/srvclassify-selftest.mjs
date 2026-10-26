@@ -777,6 +777,15 @@ const comm = [
   ['the standing of a new community creator', `${NEST}[ChannelService] [WORKSPACE] creator standing workspace=00000000-0000-4000-8000-000000000001 manage=true moderate=true manageChannels=true`, 'notable'],
   ['a role granted to a member', `${NEST}[ChannelService] [WORKSPACE] role set workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb role="Administrateur" by=aaaaaaaa`, 'notable'],
   ['control: a role set but not announced is a failure, not narration', `${NEST}[ChannelService] [WORKSPACE] role set but not announced workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb: boom`, 'unexplained'],
+  // alpha.5's salon rows (RM-4..6, 2026-10-26): an entitlement's FIRST verdict of true, and a role's
+  // permission edited then announced. A false verdict, a flip, and holders left untold stay visible.
+  ['a first entitlement verdict', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=true (first evaluation)`, 'notable'],
+  ['... for a salon too', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement channel=d4baea46-7971-4739-a2ad-de419dd462bc user=f7a9bb80 entitled=true (first evaluation)`, 'notable'],
+  ['control: a first verdict of false stays visible', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=false (first evaluation)`, 'unexplained'],
+  ['control: a flip stays visible', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=true (was false)`, 'unexplained'],
+  ["a role's permission granted", `${NEST}[ChannelService] [ROLE] granted channel.manage role=72f19c26-9f8f-470c-9357-59acffa9efa6 by=f7a9bb80 perms=4`, 'notable'],
+  ['... and its holders told', `${NEST}[ChannelService] [ROLE] standing announced role=72f19c26-9f8f-470c-9357-59acffa9efa6 holders=1 verdicts=1`, 'notable'],
+  ['control: holders left untold stay visible', `${NEST}[ChannelService] [ROLE] permissions saved but holders not told role=72f19c26-9f8f-470c-9357-59acffa9efa6 holders=1: boom`, 'unexplained'],
   ['a departure begun by its first eviction', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=1`, 'notable'],
   ['control: a cut that named no departure stays visible', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=none`, 'unexplained'],
   ['the admission a key group commit asked for', `${NEST}[MessagingService] [COMMIT][commit-16f0f945] ADMITS_ASKED group=00000000-0000-4000-8000-000000000002 channel=00000000-0000-4000-8000-000000000003 people=1 entitled=1`, 'notable'],
