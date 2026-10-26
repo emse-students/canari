@@ -177,6 +177,45 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
+
+A member joins a community mid-session, so the client starts a full listing of that community's
+salons. Another member creates a salon while the listing is in flight. The member hears of the new
+salon live (`onChannelMemberJoined` in `ChatBackgroundService.svelte` logs `Joined channel ...` after
+`addChannelToWorkspace` and the conversation row are written). Then the listing returns without the
+salon, because it was read before the salon existed. Its clean-up removes the salon from the list.
+The server still lists it, so it comes back at the next full listing (a reload or a reconnect).
+
+The line is in `frontend/src/lib/composables/useChannelWorkspaces.svelte.ts`, `pruneAfterLoad`:
+
+```ts
+const bornAfterTheRequest = (id: string) => (locallyCreatedChannels.get(id) ?? 0) > epochAtRequest;
+```
+
+Only a salon created ON THIS DEVICE after the request is spared. A salon heard of live is not in
+`locallyCreatedChannels`, so it lands in `staleLocalChannelIds`. The loop then runs
+`ctx.conversations.delete(staleId)` and `removeChannelFromWorkspaces(staleId)` with no log line. The
+later `removed N salon row(s)` count covers only the second pass, so nothing records this removal.
+Communities carry the same guard by `createdEpoch` for the same reason; salons heard of live never
+got one.
+
+**Why the web seats passed and the phone did not.** They run the same code, and timing decides which
+salons are lost. The phone's in-session listing took 6.4 s, and the creation fell inside it. The web
+seats had joined earlier, so their listings had ended before the salon was created. The rig gesture
+was ruled out: the community was open with its sidebar shown and listed only `général`. The DOM was
+re-read by hand.
+
+**The deciding rows.** LIST-RACE-1 is a RED/GREEN pair on a web seat and on the phone:
+1. Hold the per-community listing GET once.
+2. Have another member create a salon while the GET is held.
+3. Release the GET, then read whether the salon is listed, counting rounds rather than clock time.
+4. Run the same steps without the hold as the control.
+
+RED runs on `1.4.1-alpha.6` and must show the salon lost. GREEN replays the pair on the pre-release
+that carries the fix, together with BIG-3-noI1 and the COMM rows. The fix, in review, gives salons
+created on this device AND salons heard of live one shared epoch record. A live deletion wins, and
+every removal is logged.
+
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
 This is a finding, not design. It is open until it is known why the frame arrives late.
