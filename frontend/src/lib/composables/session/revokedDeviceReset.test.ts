@@ -55,6 +55,7 @@ vi.mock('$lib/utils/deviceReset', async (importOriginal) => ({
 }));
 
 const { refresh, getToken, setToken, setSessionExpiredHandler } = await import('$lib/stores/auth');
+const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
 const { MlsDeliveryApi } = await import('$lib/mls-client/mlsDeliveryApi');
 const { answerDeviceRevokedFrame, settleSessionEndByRevocationImpl } =
   await import('./sessionAuth');
@@ -79,13 +80,30 @@ const fetchMock = vi.fn(async (url: string | URL | Request) => {
   if (u.includes('/revoked')) return Response.json({ statusCode: 401 }, { status: 401 });
   return new Response('', { status: 200 });
 });
-const revokedRefusal = () =>
-  Promise.resolve(
-    Response.json(
-      { statusCode: 401, code: 'DEVICE_REVOKED_BY_OWNER', message: 'revoked' },
-      { status: 401 }
-    )
-  );
+/**
+ * This install's device id. A new one per case: a COMPLETED reset is remembered per device for the
+ * module's life (that is the property one case pins), so each case revokes a device of its own.
+ */
+let localDevice = '';
+let deviceSeq = 0;
+
+/** core-service's refusal, naming the revoked device and its account (this one unless overridden). */
+const refusalNaming =
+  (userId = 'alice', deviceId?: string) =>
+  () =>
+    Promise.resolve(
+      Response.json(
+        {
+          statusCode: 401,
+          code: 'DEVICE_REVOKED_BY_OWNER',
+          message: 'revoked',
+          userId,
+          deviceId: deviceId ?? localDevice,
+        },
+        { status: 401 }
+      )
+    );
+const revokedRefusal = () => refusalNaming()();
 const expiredRefusal = () => Promise.resolve(Response.json({ statusCode: 401 }, { status: 401 }));
 
 /** A session context whose account starts as `userId` (empty: a cold start, no login yet). */
@@ -121,7 +139,7 @@ function session(userId = 'alice') {
     fetchImpl: fetchMock as unknown as typeof fetch,
   });
   const mls = {
-    resolveDeviceId: async () => 'device-1',
+    resolveDeviceId: async () => localDevice,
     isDeviceRevoked: (u: string, d: string) => api.isDeviceRevoked(u, d),
   };
   // As the app shell wires it: the session-expired reaction settles a revocation first, reading the
@@ -146,6 +164,8 @@ beforeEach(() => {
   removeMlsState.mockClear();
   factoryHeld = null;
   currentUserId.mockReturnValue('alice');
+  localDevice = `device-${++deviceSeq}`;
+  localStorage.setItem(ACCOUNT_KEY.deviceId('alice'), localDevice);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
@@ -207,6 +227,53 @@ describe('a device revoked by its owner while offline (DEV-3)', () => {
     expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
     // The account reset is the refused credential's - never an empty one.
     expect(removeMlsState).toHaveBeenCalledWith('alice');
+  });
+});
+
+describe('a reset that already ran', () => {
+  it('a discoverer arriving after it completed erases nothing again', async () => {
+    refreshAnswer = revokedRefusal;
+    const s = session();
+    await refresh().catch(() => {});
+    await expect(s.settled()).resolves.toBe(true);
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+
+    // The wipe removed the stored id; a late frame of the same revocation names the same device.
+    localStorage.setItem(ACCOUNT_KEY.deviceId('alice'), localDevice);
+    await answerDeviceRevokedFrame(s.ctx, s.cb, s.mls);
+    // And the verdict replayed to a handler registered late.
+    await settleSessionEndByRevocationImpl(s.ctx, s.cb, 'alice');
+
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(s.logs()).toContain('Revoked-device reset already done for this device');
+  });
+});
+
+describe('a revocation that is not THIS device', () => {
+  it('a session bound to an id this install rotated away from - signs out, resets nothing', async () => {
+    // The session was opened as device D1; the install has rotated to its current id since.
+    refreshAnswer = refusalNaming('alice', 'device-rotated-away');
+    const s = session();
+
+    await answerDeviceRevokedFrame(s.ctx, s.cb, s.mls);
+    await expect(s.settled()).resolves.toBe(false);
+
+    expect(wipeDeviceToFactory).not.toHaveBeenCalled();
+    expect(s.logs()).toContain('not this device');
+    // The frame's own check is told the truth: the device asked about is not revoked.
+    expect(s.logs()).toContain('server disagrees');
+  });
+
+  it("another account's device - signs out, resets nothing", async () => {
+    refreshAnswer = refusalNaming('bob');
+    const s = session();
+
+    await refresh().catch(() => {});
+    await expect(s.settled()).resolves.toBe(false);
+
+    expect(wipeDeviceToFactory).not.toHaveBeenCalled();
+    expect(removeMlsState).not.toHaveBeenCalled();
+    expect(s.logs()).toContain('not this device');
   });
 });
 

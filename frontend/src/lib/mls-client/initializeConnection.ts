@@ -3,6 +3,7 @@ import { GatewayOpenAbandonedError } from './gatewaySocketOpen';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
+import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -208,9 +209,8 @@ export async function openGatewayConnection(
     return true;
   } catch (wsErr: unknown) {
     // A SIGN-OUT STOPPED IT: nothing failed, so nothing is logged as a failure, and it is re-thrown
-    // like an expiry so no caller schedules a backoff reconnect into a session being ended. Matched by
-    // its type NAME, as the expiry below is, because `auth` is imported lazily here.
-    if (wsErr instanceof Error && wsErr.name === 'SignOutInProgressError') {
+    // like an expiry so no caller schedules a backoff reconnect into a session being ended.
+    if (wsErr instanceof SignOutInProgressError) {
       setIsWsConnected(false);
       log('Gateway connection stopped - a sign-out is in progress.');
       throw wsErr;
@@ -224,11 +224,15 @@ export async function openGatewayConnection(
     }
     const msg = String(wsErr);
     setIsWsConnected(false);
+    // A DEAD SESSION IS AN ANSWER, NOT AN UNREACHABLE GATEWAY: re-thrown so callers stop retrying
+    // instead of scheduling backoff reconnects, and said as what it is - never as a gateway failure.
+    // By TYPE, never by name: the revocation's subclass carries a name of its own (DEV-3, 2026-10-25).
+    if (wsErr instanceof SessionExpiredError) {
+      log(`Gateway connection stopped - the session has ended: ${msg}`);
+      throw wsErr;
+    }
     log(`Gateway inaccessible: ${msg}`);
     console.error('[WS] Gateway connection failed:', msg);
-    // Session expired is a permanent auth failure - re-throw so callers can
-    // stop retrying instead of scheduling backoff reconnects.
-    if (wsErr instanceof Error && wsErr.name === 'SessionExpiredError') throw wsErr;
     // THE REOPEN AFTER A ROTATION FAILED ON A HANDED-IN HANDSHAKE - the login's. No disconnect
     // handler was registered to hear it (that happens above, after the settle), and the login has
     // no ladder of its own, so the reconnect is scheduled HERE rather than left to the watchdog. The

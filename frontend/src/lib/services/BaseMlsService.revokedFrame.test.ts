@@ -86,9 +86,17 @@ describe('MlsDeliveryApi.isDeviceRevoked', () => {
 
     it('reads a renewal refused BY THIS REVOCATION as revoked', async () => {
       const a = deadSession(async () => {
-        throw new SessionEndedByDeviceRevocationError();
+        throw new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd1' });
       });
       await expect(a.isDeviceRevoked('u1', 'd1')).resolves.toBe(true);
+    });
+
+    it('reads a renewal refused by the revocation of ANOTHER device as not revoked', async () => {
+      // The session was bound to an id this install has rotated away from (or another account's).
+      const a = deadSession(async () => {
+        throw new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd-old' });
+      });
+      await expect(a.isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
     });
 
     it('reads any other dead session as not revoked', async () => {
@@ -103,7 +111,7 @@ describe('MlsDeliveryApi.isDeviceRevoked', () => {
       const a = new MlsDeliveryApi({
         historyUrl: 'https://example.test',
         getToken: async () => {
-          throw new SessionEndedByDeviceRevocationError();
+          throw new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd1' });
         },
         fetchImpl: fetchFn as unknown as typeof fetch,
       });

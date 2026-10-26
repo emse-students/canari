@@ -73,7 +73,7 @@ import {
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
-  isSessionEndedByDeviceRevocation,
+  revokedDeviceOfEndedSession,
   signOutGeneration,
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
@@ -704,20 +704,33 @@ export async function releaseDeletedAccountImpl(
 let revokedDeviceWipe: Promise<void> | null = null;
 
 /**
+ * The devices (`userId:deviceId`) a revoked-device reset has COMPLETED for in this page. A fact, not a
+ * window: a discoverer arriving after the reset finished - a late `device_revoked` frame, a replay of
+ * the session-expired verdict to a handler registered late - finds its device here and erases nothing
+ * a second time. The page holds nothing else of that device by then; a reload starts empty, and so do
+ * the stores the reset deleted.
+ */
+const revokedDevicesReset = new Set<string>();
+
+/** This install's device id for `userId`, as the store every rotation rewrites holds it. */
+function storedDeviceIdOf(userId: string): string | null {
+  return userId ? localStorage.getItem(ACCOUNT_KEY.deviceId(userId)) : null;
+}
+
+/**
  * Returns a revoked device to a fresh install, whatever discovered the revocation.
  *
  * ONE CONSEQUENCE FOR ONE FACT. Four places learn that this device is revoked - the PIN check at
  * login, a `device_revoked` frame on a live session, a vault or biometric login asking the server,
  * and the session-expired reaction when the refresh refusal says the session died BY this
- * revocation (`isSessionEndedByDeviceRevocation`, the only one left once the revocation has ended
+ * revocation (`revokedDeviceOfEndedSession`, the only one left once the revocation has ended
  * the session) - and the wipe must not differ between them.
  *
  * ONE RUN, WHATEVER THE ORDER OF ARRIVAL. The frame and the refusal are two discoverers of one
  * revocation and usually arrive together: the frame's own check is what meets the refusal. A call
- * while a wipe runs joins it, so the order never matters and nothing is erased twice in parallel. It
- * is deterministic, not a timing hope: the refusal starts the wipe synchronously inside the refresh
- * that rejects, and the check that rejection answers resumes on microtasks - before the wipe, which
- * waits on storage, can have finished. It did: the frame path skipped the MLS
+ * while a wipe runs joins it; a call after it completed finds its device in
+ * {@link revokedDevicesReset} and erases nothing again - so neither the order nor the lateness of a
+ * discoverer matters. It did: the frame path skipped the MLS
  * teardown that the login path performs first, and it is the frame path that runs while the
  * service is live and could still write a key back.
  *
@@ -737,10 +750,17 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
     cb.log('[SECURITY] Revoked-device reset already running - joined, not run twice.');
     return revokedDeviceWipe;
   }
+  // Read BEFORE the run: the reset deletes the very key that names the device.
+  const device = `${ctx.getUserId()}:${storedDeviceIdOf(ctx.getUserId()) ?? ''}`;
+  if (revokedDevicesReset.has(device)) {
+    cb.log('[SECURITY] Revoked-device reset already done for this device - nothing erased again.');
+    return;
+  }
   cb.log('[SECURITY] Revoked-device reset starting.');
   revokedDeviceWipe = runRevokedDeviceWipe(ctx, cb);
   try {
     await revokedDeviceWipe;
+    revokedDevicesReset.add(device);
   } finally {
     revokedDeviceWipe = null;
   }
@@ -822,7 +842,8 @@ export async function answerDeviceRevokedFrame(
 
 /**
  * The session-expired reaction's half of a revocation: when the refresh refusal said the session
- * died BECAUSE ITS OWNER REVOKED THIS DEVICE (`isSessionEndedByDeviceRevocation`), runs the ONE
+ * died BECAUSE ITS OWNER REVOKED THIS DEVICE (`revokedDeviceOfEndedSession`, naming this device and
+ * `account`), runs the ONE
  * revocation reset - joined if the `device_revoked` frame already began it - and answers `true`.
  * Any other dead session answers `false` and resets nothing: an expired or signed-out session keeps
  * its stores, by the user's decision.
@@ -842,10 +863,22 @@ export async function settleSessionEndByRevocationImpl(
   cb: ChatSessionCallbacks,
   account: string
 ): Promise<boolean> {
-  if (!isSessionEndedByDeviceRevocation()) return false;
+  const revoked = revokedDeviceOfEndedSession();
+  if (!revoked) return false;
   if (!account) {
     cb.log(
-      '[SECURITY] Session ended by this device revocation, but no account is known on this device - nothing to reset.'
+      '[SECURITY] Session ended by a device revocation, but no account is known on this device - nothing to reset.'
+    );
+    return false;
+  }
+  // ONLY THIS DEVICE OF THIS ACCOUNT: the session may be bound to an id this install has rotated
+  // away from (its revocation says nothing about the current one), and a refusal naming another
+  // account is not this device's either. Either is the plain sign-out that keeps the stores.
+  const local = storedDeviceIdOf(account);
+  if (revoked.userId !== account || revoked.deviceId !== local) {
+    cb.log(
+      `[SECURITY] Session ended by the revocation of ${revoked.userId.slice(0, 8)}:${revoked.deviceId.slice(0, 16)} - ` +
+        `not this device (${account.slice(0, 8)}:${(local ?? 'none').slice(0, 16)}) - signing out, nothing reset.`
     );
     return false;
   }

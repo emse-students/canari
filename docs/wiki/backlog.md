@@ -488,6 +488,17 @@ The redirect wanted is `/login` with no second sign-out: either the seam carries
 or the revocation gets its own path to `/login`. Until the fix lands, both lines stay dirt on DEV-2
 and DEV-3.
 
+## A revoked device whose refresh cannot name its revocation
+
+A design limit of the refusal record of [sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25),
+not a defect: the record answers only for a session the revocation itself ended and that is still
+inside its credential's life. Three cases fall outside it and leave through the plain sign-out,
+which keeps the local stores until the next sign-in: a device that stays away longer than its
+refresh credential lives, a session bound to no device id, and a session the revocation could not
+end (the delete answered `503`). What covers all three is the device check on the next sign-in, which
+asks with a fresh session and resets the device there. Owed: one rig row reading that next-sign-in
+reset, so the cover is observed rather than read from code.
+
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 
 `awaitOwnKeyPackagePublished` (`BaseMlsService.ts`) reads `fetchDeviceKeyPackage(self)` before an

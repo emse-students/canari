@@ -623,7 +623,7 @@
    * the login page so they can sign in again.
    *
    * ONE DEAD SESSION IS ANSWERED DIFFERENTLY: one the server ended BECAUSE ITS OWNER REVOKED THIS
-   * DEVICE (`isSessionEndedByDeviceRevocation`, latched from the refresh refusal's code). That device
+   * DEVICE (`revokedDeviceOfEndedSession`, latched from the refresh refusal, naming this device). That device
    * is returned to a fresh install - the same reset the `device_revoked` frame runs, joined if it is
    * already running - before the redirect. Read from the latch, not from whoever called: the
    * notifier, a login that met the dead session, and a late handler's replay all land here, and the

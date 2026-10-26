@@ -334,6 +334,8 @@ maybe('the push-ending outbox against PostgreSQL', () => {
 
     await expect(sessions.rotate(phone.sessionId, phone.tokenId)).resolves.toEqual({
       status: 'device-revoked',
+      userId: 'user-1',
+      deviceId: 'phone-1',
     });
     await expect(sessions.rotate(tab.sessionId, tab.tokenId)).resolves.toEqual({
       status: 'unknown',
