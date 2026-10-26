@@ -441,6 +441,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/checks-selftest.mjs
 	@bun tools/cross-client-harness/archive/logcatclassify-selftest.mjs
 	@bun tools/cross-client-harness/archive/devices-selftest.mjs
+	@bun tools/cross-client-harness/archive/phonefocus-selftest.mjs
 	@bun tools/cross-client-harness/archive/debris-selftest.mjs
 	@bun tools/cross-client-harness/archive/gate-selftest.mjs
 	@bun tools/cross-client-harness/archive/instrument-selftest.mjs

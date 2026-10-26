@@ -25,6 +25,7 @@ import { GENERIC_BODIES } from './notif-bodies.mjs';
  * two gated self-tests. The duplicate it used to keep silently drove the wrong phone; see
  * `serial.mjs` for the measurement.
  */
+import { focusOf, raiseDecision } from './phonefocus.mjs';
 import { attached, serial } from './serial.mjs';
 import { spawnPin } from './pinspawn.mjs';
 
@@ -396,9 +397,18 @@ export async function ensure({ port, wifi, timeoutMs = 20_000, keepIntent = fals
     while (!pid() && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
     if (!pid()) return { ok: false, how, reason: 'app would not start' };
 
-    // Foreground it unconditionally rather than testing first: raising an app already in front costs
-    // nothing here, and `foregrounded()` reads a dumpsys line whose format has changed under us
-    // before.
+    // RAISED ONLY WHEN IT IS NOT ALREADY IN FRONT (2026-10-26). This used to raise unconditionally
+    // on the belief that raising an app already in front costs nothing. Measured on the Mi 9T, it
+    // costs a whole resume: `am start` on the running singleTask activity pauses and resumes it, so
+    // the app logs `[LIFECYCLE] App in background`, pauses its socket, flushes a checkpoint, reloads
+    // `mls.bin` (840 ms) and reconnects. Every invariant arms the phone through here, so every row
+    // with A1 in it carried that trip as unexplained dirt (BIG-1-noI1, alpha.5), and a row timing
+    // anything on the phone measured through it. `focusState()` reads `mCurrentFocus`, which names
+    // the activity on this device (checked the same day). When it cannot tell - focus `null`, no
+    // line, a changed dump format - this THROWS `PhoneFocusUnknown` and the row stops saying so:
+    // raising anyway would be the old unconditional `am start` as a silent fallback (coordinator,
+    // same day). The catch below turns it into `ok: false` with that message as the reason, which
+    // `armIfPhone` raises as "the phone is not measurable".
     //
     // `keepIntent` IS THE ONE CASE WHERE THAT IS WRONG, AND IT IS NOT A NO-OP. `launch()` is
     // `am start -n <pkg>/.MainActivity`: a plain MAIN intent with no data. `MainActivity` is
@@ -412,7 +422,7 @@ export async function ensure({ port, wifi, timeoutMs = 20_000, keepIntent = fals
     // the intent the row exists to measure. Every symptom pointed at the product: the listener
     // registered, `getCurrent()` returned nothing, the app sat on `/posts`. Driven by hand, with no
     // `ensure` in between, the same build read the URL on attempt 1 in 38 ms, every time.
-    if (!keepIntent) {
+    if (!keepIntent && raiseDecision(focusState()) === 'raise') {
       launch();
       await new Promise((r) => setTimeout(r, 1500));
     }
@@ -747,7 +757,28 @@ export async function killAndProveDead(timeoutMs = 20_000) {
   );
 }
 
-export const foregrounded = () => /fr\.emse\.canari/.test(sh('dumpsys window | grep mCurrentFocus'));
+/**
+ * The focus as `focusOf` reads it: `front`, `behind` or `unknown`, with the dump it was read from.
+ * `grep` exits 1 on no match, so an unreadable dump arrives as a throw and is answered `unknown`.
+ *
+ * @returns {{focus: 'front' | 'behind' | 'unknown', dump: string}}
+ */
+function focusState() {
+  let dump;
+  try {
+    dump = sh('dumpsys window | grep mCurrentFocus');
+  } catch (e) {
+    return { focus: 'unknown', dump: `dumpsys failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  return { focus: focusOf(dump), dump };
+}
+
+/**
+ * Whether the app has the focus, for the rows that OBSERVE it (a push row's "not in front at the
+ * send" premise). Nothing focused is "not in front", a true statement for that question. A caller
+ * that ACTS on the answer reads `focusState()` and refuses `unknown` - `ensure()` below.
+ */
+export const foregrounded = () => focusState().focus === 'front';
 
 /**
  * Whether the DEVICE's own lock screen is up - which is not a question about this app, and is the
