@@ -28,6 +28,7 @@ import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
 import { UsersService } from '../users/users.service';
+import { UserRowGoneError } from '../users/user-write';
 import { PlatformService } from '../platform/platform.service';
 import {
   AuthSessionsService,
@@ -50,6 +51,7 @@ import {
 } from '../account-erasure/account-erasure.service';
 import type { User } from '../users/entities/user.entity';
 import { RestoreCredentialsService } from './restore/restore-credentials.service';
+import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 interface OidcCallbackDto {
@@ -606,14 +608,28 @@ export class AuthController {
     // deletion can commit between here and there.
     this.refuseDuringErasure(userinfo.sub, await this.accountErasure.erasureState(userinfo.sub));
 
-    // 4. Upsert local user
-    const user = await this.usersService.findOrCreateFromOidc(
-      userinfo.sub,
-      userinfo.name || null,
-      userinfo.firstName || null,
-      userinfo.lastName || null,
-      parseProfileClaims(userinfo)
-    );
+    // 4. Upsert local user. A row that was read and is gone before its update was deleted by the
+    // account's erasure (the one thing that deletes a user row): the answer is the erasure's
+    // refusal, read again now, and the row is not re-created.
+    const user = await this.usersService
+      .findOrCreateFromOidc(
+        userinfo.sub,
+        userinfo.name || null,
+        userinfo.firstName || null,
+        userinfo.lastName || null,
+        parseProfileClaims(userinfo)
+      )
+      .catch(async (err: unknown) => {
+        if (!(err instanceof UserRowGoneError)) throw err;
+        this.refuseDuringErasure(
+          userinfo.sub,
+          await this.accountErasure.erasureState(userinfo.sub)
+        );
+        this.logger.error(
+          `[AUTH] sign-in refused: user=${userinfo.sub.slice(0, 8)} row deleted during the sign-in with no erasure recorded`
+        );
+        throw err;
+      });
 
     await this.refuseDuringMaintenance(user);
 
@@ -663,7 +679,16 @@ export class AuthController {
     // The session first: the access token names it (`sid`), so what it registers is bound to this
     // login.
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
-    const access_token = this.signAccessToken(user.id, !!user.admin, session.sessionId);
+    // The admin flag is read AFTER the session exists, never taken from the row read before it: a
+    // role change that commits after that earlier read either lands before this read (and is read
+    // here) or after the session exists (and the sessions it ends include this one).
+    const admin = await this.usersService.isUserAdmin(user.id);
+    if (admin !== !!user.admin) {
+      this.logger.log(
+        `[AUTH] admin flag changed during the sign-in user=${user.id.slice(0, 8)} admin=${admin}`
+      );
+    }
+    const access_token = this.signAccessToken(user.id, admin, session.sessionId);
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
     // The race the check before the mint cannot close: a `DELETE /users/me` that committed after it.
@@ -693,7 +718,7 @@ export class AuthController {
         lastName: user.lastName || '',
         promo: user.promo ?? null,
         bio: user.bio ?? null,
-        admin: !!user.admin,
+        admin,
       },
     };
   }
@@ -838,6 +863,21 @@ export class AuthController {
     }
 
     const result = await this.authSessions.rotate(sessionId, payload.jti, client);
+    if (result.status === 'device-revoked') {
+      // A CODE, NOT A SENTENCE: the device answers this refusal with a full local reset instead of
+      // a sign-out that keeps its stores, and it may only branch on a typed field. `statusCode`
+      // keeps Nest's envelope, so a client older than the code reads the 401 it always read.
+      // AND IT NAMES THE DEVICE AND THE ACCOUNT, so a client resets only when both are its own.
+      this.clearRefreshCookie(res);
+      throw new UnauthorizedException({
+        statusCode: 401,
+        ...refusalBody(
+          RefusalCode.DEVICE_REVOKED_BY_OWNER,
+          'This device was revoked by its owner - its session has ended',
+          { userId: result.userId, deviceId: result.deviceId }
+        ),
+      });
+    }
     if (result.status === 'replayed' || result.status === 'unknown') {
       this.clearRefreshCookie(res);
       throw new UnauthorizedException(

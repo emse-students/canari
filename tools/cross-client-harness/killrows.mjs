@@ -18,8 +18,106 @@
 
 import { TAURI_HTTP_BLOCKED } from './rowkit.mjs';
 
-/** KILL-3 and KILL-4 hold A1's commit POST, which the Tauri app sends below the WebView: refused, `pending` on the board. */
-export const KILL_BLOCKED = { 'KILL-3': TAURI_HTTP_BLOCKED, 'KILL-4': TAURI_HTTP_BLOCKED };
+/** KILL-4 holds A1's commit POST, which the Tauri app sends below the WebView: refused, `pending` on the board. */
+export const KILL_BLOCKED = { 'KILL-4': TAURI_HTTP_BLOCKED };
+
+/**
+ * KILL-3's four windows, each a different durable write a crash can outrun.
+ *
+ * - `send-before-server`: the message POST is held, so it never reaches the server.
+ * - `send-after-accept`: the server stored the message, and the answer never came back.
+ * - `after-send`: the send answered, and the browser dies inside the lazy checkpoint. Only the send
+ *   ledger (`sendRatchetLedger`, a synchronous localStorage write) covers the generation spent.
+ * - `after-receive`: W2's message was decrypted and shown, and the browser dies before the checkpoint
+ *   that makes its seen-mark durable (`markHistoryFrameConsumed`).
+ */
+export const KILL3_WINDOWS = {
+  'send-before-server': 'hold once',
+  'send-after-accept': 'hold-answer once',
+  'after-send': null,
+  'after-receive': null,
+};
+
+/**
+ * THE UNSENT STATES W1's OWN BUBBLE MAY SHOW, as the French interface prints them
+ * (`MessageMetadata.svelte`, `messages/fr.json`):
+ * - `msg_en_attente` (queued in the outbox);
+ * - `common_sending_label` (in flight);
+ * - `msg_echec` (failed);
+ * - `msg_non_confirme` (no answer).
+ * Read on the bubble before any later send: the queued and in-flight states show on the LAST own
+ * message only.
+ */
+export const UNSENT_LABELS = ['En attente\u2026', 'Envoi\u2026', '\u00c9chec', 'Non confirm\u00e9'];
+
+/** The window run `i` of KILL-3 plays, in rotation, so twelve runs are three of each. */
+export const kill3WindowOf = (i) => Object.keys(KILL3_WINDOWS)[i % 4];
+
+/**
+ * One KILL-3 run, judged on the two seats after the revival.
+ *
+ * - `killedShown`: the killed message, counted where it should land. For a send window that is W2.
+ *   For `after-receive` it is the revived W1.
+ * - `outShown` / `inShown`: the next message each way, which is what a rolled-back ratchet loses.
+ *   A rolled-back sender re-uses a generation, and the peer drops that frame as a duplicate.
+ * - `accepts` / `moved`: what the gate decided in the run. A plain send commits nothing, so a commit
+ *   here is a heal, and a heal on the normal path is a defect.
+ *
+ * WHEN THE MESSAGE NEVER REACHED THE SERVER (`send-before-server`), the outbox holds it, and the
+ * revived page either resends it once or shows it unsent (`unsentLabel`: one of
+ * {@link UNSENT_LABELS} on W1's own bubble). A message that neither arrives nor says it did not is a
+ * silent loss, and it fails. A second copy is never acceptable.
+ *
+ * @param {object} p
+ * @param {keyof typeof KILL3_WINDOWS} p.window
+ * @param {number} p.killedShown
+ * @param {number} p.outShown
+ * @param {number} p.inShown
+ * @param {number} p.accepts
+ * @param {number} p.moved
+ * @param {number|null} p.caughtUpMs
+ * @param {string|null} [p.unsentLabel] the unsent state W1's own bubble showed, read before any later send
+ */
+export function kill3Outcome({ window, killedShown, outShown, inShown, accepts, moved, caughtUpMs, unsentLabel = null }) {
+  const mustLand = window !== 'send-before-server';
+  return {
+    outcome: killedShown === 1 ? 'delivered once' : killedShown === 0 ? (unsentLabel ? `shown unsent (${unsentLabel})` : 'silently lost') : 'duplicated',
+    assertions: [
+      ...(mustLand
+        ? []
+        : [
+            {
+              what: `delivered, or shown unsent on W1 - never silently lost (${killedShown === 1 ? 'delivered' : unsentLabel ? `unsent: ${unsentLabel}` : 'NEITHER'})`,
+              ok: killedShown === 1 || (killedShown === 0 && unsentLabel !== null),
+            },
+          ]),
+      {
+        what: `the killed message shows ${mustLand ? 'exactly once' : 'at most once'} (${killedShown})`,
+        ok: mustLand ? killedShown === 1 : killedShown <= 1,
+      },
+      { what: `the revived seat caught up to the server (${caughtUpMs ?? 'never'} ms)`, ok: caughtUpMs !== null },
+      {
+        what: `no commit came of a plain send and a kill (${accepts} accept(s), the epoch moved ${moved})`,
+        ok: accepts === 0 && moved === 0,
+      },
+      {
+        what: `the ratchet survived: the next message out shows once (${outShown}) and one in shows once (${inShown})`,
+        ok: outShown === 1 && inShown === 1,
+      },
+    ],
+  };
+}
+
+/** KILL-3's coverage: every window played at least once. */
+export function kill3WindowsOwn(runs) {
+  const sides = new Set(runs.map((r) => r.window));
+  return [
+    {
+      what: `every window played (${[...sides].join(', ') || 'none'})`,
+      ok: Object.keys(KILL3_WINDOWS).every((w) => sides.has(w)),
+    },
+  ];
+}
 
 /** The two sides of the server a kill can land on, and the fault that holds the commit there. */
 export const WINDOWS = { 'before-server': 'hold once', 'after-accept': 'hold-answer once' };
@@ -51,11 +149,23 @@ export const KILL_ROWS = {
       'signed W1 out (2026-10-25) - a product P2 of its own, not this row\'s subject',
   },
   'KILL-3': {
-    devices: ['A1', 'W2'],
-    kill: 'swipe',
-    runs: 10,
+    devices: ['W1', 'W2'],
+    kill: 'browser',
+    runs: 12,
     maxDelayMs: 800,
-    what: 'A1 swiped away from recents during a commit it is making, 10 runs: as KILL-1 on reopen',
+    what:
+      "W1's whole browser killed a short time after a SEND, or after a RECEIVE, 12 runs over four windows (`KILL3_WINDOWS`). " +
+      'Pass conditions after the relaunch:\n' +
+      '- the killed message shows once (one that never reached the server is resent once or shown unsent on W1 - never silently lost);\n' +
+      '- no commit comes of it;\n' +
+      '- the next message each way arrives.',
+    note:
+      'Moved from A1 to a web seat on 2026-10-26 (coordinator). The swipe needed a hold on the Tauri commit POST, which no rig tool can make. ' +
+      'The hazard under study is web-side anyway: the send ratchet and the seen-marks live in localStorage, and the checkpoint is lazy. ' +
+      'Prod, 2026-08-06: a reload 300 ms after a send lost the next message (`SecretReuseError`); the send ledger is the fix that closes that window. ' +
+      'Each kill waits for the refresh cookie to reach disk first, as KILL-2 does. ' +
+      'The draw is 0..800 ms, inside the ~1.7 s checkpoint the persister docblock gives. ' +
+      'Each relaunch is a PIN, so twelve runs, three per window',
   },
   'KILL-4': {
     devices: ['A1', 'W2'],

@@ -499,19 +499,19 @@ export const PHASES = {
     scripts: ['offline.mjs --row OFF-3', 'offline.mjs --row NET-1', 'offline.mjs --row NET-2', 'offline.mjs --row NET-3', 'offline.mjs --row RM-8'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
-  // A PROCESS THAT DIES WITH A COMMIT IN FLIGHT (KILL-1, KILL-2, KILL-5, RM-3), browsers only. KILL-1
-  // is twenty tab closes and KILL-2 ten browser relaunches, each with its PIN. KILL-3 and KILL-4 are
-  // NOT here: they are class B, played on A1 - `bun archive/kill.mjs --row KILL-3|KILL-4`.
+  // A PROCESS THAT DIES WITH A COMMIT OR A MESSAGE IN FLIGHT (KILL-1, KILL-2, KILL-3, KILL-5, RM-3),
+  // browsers only. KILL-1 is twenty tab closes, KILL-2 ten browser relaunches and KILL-3 twelve, each
+  // with its PIN. KILL-4 is NOT here: it is class B, played on A1 - `bun archive/kill.mjs --row KILL-4`.
   KILL: {
     title: '1.4.1 - a tab, a browser or a remover killed with a commit in flight',
-    scripts: ['kill.mjs --row KILL-1', 'kill.mjs --row KILL-2', 'kill.mjs --row KILL-5', 'kill.mjs --row RM-3'],
+    scripts: ['kill.mjs --row KILL-1', 'kill.mjs --row KILL-2', 'kill.mjs --row KILL-3', 'kill.mjs --row KILL-5', 'kill.mjs --row RM-3'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
-  // A GROUP LINK AND ITS ASK (ADM-1..4, ADM-8), browsers only. ADM-5..7 are NOT here: they need A1 on
+  // A GROUP LINK AND ITS ASK (ADM-1..4, ADM-8..10), browsers only. ADM-5..7 are NOT here: they need A1 on
   // the v1.4.0 APK, installed by the operator - `bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7`.
   ADMIT: {
     title: '1.4.1 - a group link: the ask, Add or Decline, and what a waiting seat may not do',
-    scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8'],
+    scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8', 'admit.mjs --row ADM-9', 'admit.mjs --row ADM-10'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
   // A NEW DEVICE OF THE OWNER (DEV-1..4, DEV-6), browsers only: every row mints on W3 (and W6); DUP-7

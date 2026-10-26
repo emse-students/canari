@@ -715,33 +715,44 @@ export class ModerationService {
 
   /** Mutes a user: they can still read but cannot post, react, or comment. */
   async muteUser(userId: string, mutedBy: string, reason?: string): Promise<UserModeration> {
-    let record = await this.muteRepo.findOne({ where: { userId } });
+    const columns = { isMuted: true, mutedBy, mutedAt: new Date(), mutedReason: reason ?? null };
+    const record = await this.muteRepo.findOne({ where: { userId } });
     if (record) {
-      record.isMuted = true;
-      record.mutedBy = mutedBy;
-      record.mutedAt = new Date();
-      record.mutedReason = reason ?? null;
-    } else {
-      record = this.muteRepo.create({
-        userId,
-        isMuted: true,
-        mutedBy,
-        mutedAt: new Date(),
-        mutedReason: reason ?? null,
-      });
+      // The mute columns of the row read, never a save of it: a save re-inserts a row deleted since.
+      const updated = await this.muteRepo.update({ id: record.id }, columns);
+      if (updated.affected === 1) {
+        this.logger.log(`[MUTE] user=${userId.slice(0, 8)} muted by=${mutedBy.slice(0, 8)}`);
+        return Object.assign(record, columns);
+      }
+      // Deleted between the read and the write: this mute is ordered after that deletion, so it is
+      // a NEW record holding only what this call says.
+      this.logger.warn(
+        `[MUTE] user=${userId.slice(0, 8)} record gone since its read - created afresh`
+      );
     }
-    return this.muteRepo.save(record);
+    this.logger.log(
+      `[MUTE] user=${userId.slice(0, 8)} muted by=${mutedBy.slice(0, 8)} (new record)`
+    );
+    return this.muteRepo.save(this.muteRepo.create({ userId, ...columns }));
   }
 
-  /** Unmutes a user, re-enabling posting and reactions. */
+  /**
+   * Unmutes a user, re-enabling posting and reactions: ONE column update keyed by the user, never a
+   * save of a record read first - a record gone since answers 404 and nothing is written.
+   */
   async unmuteUser(userId: string): Promise<UserModeration> {
+    const cleared = { isMuted: false, mutedBy: null, mutedAt: null, mutedReason: null };
+    const updated = await this.muteRepo.update({ userId }, cleared);
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `[MUTE] unmute refused: no moderation record user=${userId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new NotFoundException('Moderation record not found');
+    }
+    this.logger.log(`[MUTE] user=${userId.slice(0, 8)} unmuted`);
     const record = await this.muteRepo.findOne({ where: { userId } });
     if (!record) throw new NotFoundException('Moderation record not found');
-    record.isMuted = false;
-    record.mutedBy = null;
-    record.mutedAt = null;
-    record.mutedReason = null;
-    return this.muteRepo.save(record);
+    return record;
   }
 
   /** Returns whether a user is currently muted (false if no record exists). */

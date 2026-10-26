@@ -1203,7 +1203,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 | delivery | `PIN_INCORRECT` | 403 | wrong current PIN, or the lost compare-and-swap | PIN change |
 | delivery | `PIN_NOT_SET` | 400 | PIN change on an account with no PIN | PIN change |
 | core | `BLOCK_SELF`, `BLOCK_TARGET_NOT_FOUND`, `BLOCK_LIMIT_REACHED` (+`max`), `NOT_BLOCKED` | 400/404/422/404 | the block list | settings, blocked people |
-| core | `ADMIN_SELF_DEMOTE` | 403 | an administrator removes their own right | no screen calls it yet |
+| core | `ADMIN_SELF_DEMOTE`, `ADMIN_SELF_CHANGE` | 403 | an administrator removes, or otherwise writes, their own right | no screen calls it yet |
 | core | `USER_SEARCH_FILTER_REQUIRED`, `USER_SEARCH_TOO_LONG` (+`max`) | 400 | the directory with no filter, a search past 200 characters | `/directory` |
 
 `MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` were coded in
@@ -1374,7 +1374,7 @@ group names nobody. The client removes exactly those leaves
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
-| POST | `/api/mls/welcome` | Deliver Welcome message to a device |
+| POST | `/api/mls/welcome` | Deliver Welcome message to a device. A target device no key package names (revoked, or never registered) is `404 WELCOME_TARGET_UNKNOWN` (`error: 'welcome_target_unknown'`), one `warn` decision line; a target off the roster is `403 WELCOME_TARGET_NOT_MEMBER`. Until 2026-10-25 the first was a bare `Error`, a 500 with a stack (DEV-3) |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |

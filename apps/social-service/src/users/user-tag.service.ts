@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
@@ -103,13 +104,13 @@ export class UserTagService {
       where: { userId: data.userId, tagName: data.tagName },
     });
     if (existing) {
-      existing.expiresAt = data.expiresAt !== undefined ? data.expiresAt : existing.expiresAt;
-      if (data.metadata) existing.metadata = { ...existing.metadata, ...data.metadata };
-      const saved = await repo.save(existing);
-      this.logger.log(
-        `[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${saved.expiresAt?.toISOString() ?? 'never'})`
+      const renewed = await this.renewColumns(repo, existing, data);
+      if (renewed) return renewed;
+      // Revoked between the read and the renewal: this call is a grant ordered after that revoke,
+      // so it creates a NEW row carrying ITS issuer - never the revoked row written back.
+      this.logger.warn(
+        `[UserTag] ${data.tagName} of ${data.userId.slice(0, 8)} revoked since its read - granted afresh`
       );
-      return saved;
     }
     const tag = repo.create({
       userId: data.userId,
@@ -122,6 +123,45 @@ export class UserTagService {
     const saved = await repo.save(tag);
     this.logger.log(`[UserTag] Granted ${data.tagName} to ${data.userId} by ${data.grantedBy}`);
     return saved;
+  }
+
+  /**
+   * Renews `existing` by updating ONLY the columns a renewal owns - `expiresAt` when given, and
+   * `metadata` merged in SQL so two renewals keep both their keys - keyed by the row's id. Never a
+   * save of the row read: a save writes back every column changed since the read and re-inserts a
+   * row deleted since.
+   *
+   * @returns the row as written, or `null` when it is gone (0 rows updated) and nothing was written.
+   */
+  private async renewColumns(
+    repo: Repository<UserTag>,
+    existing: UserTag,
+    data: GrantTagData
+  ): Promise<UserTag | null> {
+    const set: QueryDeepPartialEntity<UserTag> = {};
+    if (data.expiresAt !== undefined) set.expiresAt = data.expiresAt;
+    if (data.metadata) set.metadata = () => `"metadata" || CAST(:metadataPatch AS jsonb)`;
+    if (Object.keys(set).length === 0) {
+      this.logger.debug(
+        `[UserTag] ${data.tagName} for ${data.userId} already held, nothing to renew`
+      );
+      return existing;
+    }
+    const result = await repo
+      .createQueryBuilder()
+      .update(UserTag)
+      .set(set)
+      .where('id = :id', { id: existing.id })
+      .setParameter('metadataPatch', JSON.stringify(data.metadata ?? {}))
+      .returning(['expiresAt', 'metadata'])
+      .execute();
+    const row = (result.raw as Array<Pick<UserTag, 'expiresAt' | 'metadata'>>)[0];
+    if (result.affected !== 1 || !row) return null;
+    const renewed = Object.assign(existing, row);
+    this.logger.log(
+      `[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${renewed.expiresAt?.toISOString() ?? 'never'})`
+    );
+    return renewed;
   }
 
   /**

@@ -42,7 +42,7 @@ import { evaluate, reloadAndWait } from './cdp.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, srvLines } from './estate.mjs';
 import { closeOverlays } from './groupnav.mjs';
-import { behindServer, invariantVerdict, settledRounds } from './invariantverdict.mjs';
+import { behindServer, invariantVerdict, settleDecision, settledRounds } from './invariantverdict.mjs';
 import { ESTATE } from './site.mjs';
 import { consoleEntries, watch } from './watch.mjs';
 
@@ -190,16 +190,23 @@ async function readClient(slot, group, markers, provoked) {
  * connection may itself commit (`behindServer`). The bound is an ABORT, never a verdict: a group that
  * never settled is unjudged, and the pass says why (`unsettled`).
  *
+ * `sample`, when given, is read on every round and kept on it. A row that must judge a state the
+ * settlement covers (ADM-10: the joiner never admitted) reads it on the same rounds, not by a clock.
+ *
+ * @param {{cx: object, target: {device?: string, port: number}}[]} members
+ * @param {string} group
+ * @param {number} [abortMs]
+ * @param {(() => object) | null} [sample]
  * @returns {Promise<{ms: number, settled: boolean, rounds: {serverEpoch: number|null, behind: string[]}[]}>}
  */
-async function awaitSettled(members, group, abortMs = 60_000) {
+export async function awaitSettled(members, group, abortMs = 60_000, sample = null) {
   const started = Date.now();
   const rounds = [];
   for (;;) {
     const epochs = {};
     for (const s of members) epochs[s.target.device ?? String(s.target.port)] = JSON.parse(await evaluate(s.cx, EPOCHS)).epochs;
     const serverEpoch = serverView(group).activeEpoch;
-    rounds.push({ serverEpoch, behind: behindServer(epochs, group, serverEpoch) });
+    rounds.push({ serverEpoch, behind: behindServer(epochs, group, serverEpoch), ...(sample ? sample() : {}) });
     const ms = Date.now() - started;
     if (settledRounds(rounds)) return { ms, settled: true, rounds };
     if (ms > abortMs) return { ms, settled: false, rounds };
@@ -284,7 +291,31 @@ export async function checkInvariant({ group, targets, members, conversation, fr
     return { pass: label, ...verdict };
   };
 
-  const passes = [await judge('after the action')];
+  /**
+   * One pass, judged only once the group has SETTLED (`awaitSettled`): the server and every member at
+   * one epoch for two rounds in a row. BOTH passes wait, not only the one after the reload. A commit
+   * the row set in motion lands while the first pass reads - DEV-6 judged its group in the instant
+   * between the server accepting a removal and the members applying it, and recorded two seats a
+   * commit behind that each applied it within milliseconds (2026-10-25). Settling is proven by
+   * rounds, never by a clock: the bound is an abort, never a verdict.
+   *
+   * WHAT AN UNSETTLED GROUP MEANS DIFFERS BY PASS. After the action, a member that never caught up
+   * IS invariant 1's finding, so the pass is judged anyway on what the last round saw - the wait only
+   * gave the commit in flight its chance. After the reload, an unsettled group is unjudged as before:
+   * the reload itself may still be committing, and `composeVerdict` makes the row INCONCLUSIVE.
+   */
+  const settledJudge = async (label, { judgeUnsettled }) => {
+    const settled = await awaitSettled(slots.filter((s) => s.member), group);
+    const decision = settleDecision(label, settled, { judgeUnsettled });
+    const pass = decision.judge ? await judge(label) : decision.unjudged;
+    if (decision.approximation) pass.approximations.push(decision.approximation);
+    pass.settleRounds = settled.rounds.length;
+    pass.settleMs = settled.ms;
+    pass.settled = settled.settled;
+    return pass;
+  };
+
+  const passes = [await settledJudge('after the action', { judgeUnsettled: true })];
   if (reload) {
     const notReloaded = [];
     for (const s of slots) {
@@ -299,21 +330,7 @@ export async function checkInvariant({ group, targets, members, conversation, fr
         await openConversation(s.cx, conversationOf(s.target.device));
       }
     }
-    const label = 'after a reload of every web client';
-    const settled = await awaitSettled(slots.filter((s) => s.member), group);
-    // A GROUP THAT NEVER SETTLED IS NOT JUDGED: the abort is a timer, and a timer may not decide a
-    // verdict. The pass carries the reason and `composeVerdict` makes the row INCONCLUSIVE.
-    const last = settled.rounds.at(-1);
-    const second = settled.settled
-      ? await judge(label)
-      : {
-          pass: label,
-          ok: false,
-          failures: [],
-          approximations: [],
-          unsettled: `the group never settled after the reload (${settled.ms} ms, ${settled.rounds.length} round(s); last: server at ${last?.serverEpoch}, behind: ${last?.behind.join(' ') || 'nobody'})`,
-        };
-    second.settleMs = settled.ms;
+    const second = await settledJudge('after a reload of every web client', { judgeUnsettled: false });
     if (notReloaded.length) {
       second.approximations.push({ invariant: 0, what: `not reloaded (a phone reload re-locks the PIN and replaces the document under Tauri IPC): ${notReloaded.join(' ')}` });
     }

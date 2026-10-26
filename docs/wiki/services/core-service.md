@@ -106,7 +106,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/oidc/callback` | none | Exchange Authentik auth code for JWT + refresh cookie; upsert local user |
-| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay |
+| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay; a session an owner's DEVICE REVOCATION ended is refused `401 DEVICE_REVOKED_BY_OWNER` ([sessions](../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)) |
 | POST | `/api/auth/logout` | cookie | Delete the session row, then clear the cookie |
 | GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
@@ -127,7 +127,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
 | GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
 | GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
-| POST | `/api/users` | global admin | Create user manually |
+| POST | `/api/users` | global admin | Create user manually; an id that has a row, or whose erasure is running, is a `409` |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
 | PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
 | GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
@@ -135,7 +135,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
 | DELETE | `/api/users/me` | JWT | Deactivate at once and queue a guaranteed erasure in every service ([account-erasure](../account-erasure.md)) |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
-| PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
+| PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (`{ admin: boolean }`, else `400`); never one's own (`ADMIN_SELF_DEMOTE`/`ADMIN_SELF_CHANGE`, `403`); a removal ends every session of the person |
 
 #### One request for a list the client already holds
 
@@ -503,6 +503,49 @@ can recognise a session that is not theirs; they are shown to nobody else, never
 authorization, and die with the row. The IP is taken from the **last** `X-Forwarded-For` entry, not
 the first: nginx appends the connecting address to whatever the client sent, so the head of that
 list is attacker-controlled and only the tail is what nginx actually saw.
+
+### A user write updates columns, never saves the row it read (2026-10-25)
+
+**A write to an existing `users` row is ONE column-scoped `UPDATE` keyed by its id**
+(`updateUserColumns`, `users/user-write.ts`), and `affected !== 1` throws the typed
+`UserRowGoneError` (a 404): nothing written, nothing inserted. A TypeORM `save` of a `User` read
+earlier is not that: it diffs the stale copy against the row as it stands and writes back every
+column a concurrent writer changed since the read, and it inserts the row again, every column
+included, when it was deleted in between. The sites: the notepad save, the profile `PATCH`, the admin
+flag (one `UPDATE` of `admin` and no read at all), the sign-in's refresh of its claims, and an admin
+profile edit (inside its audit transaction, so a row gone rolls the audit back).
+
+- **The notepad key** is minted by `UPDATE ... SET "notesKey" = COALESCE("notesKey", $key) ...
+  RETURNING "notesKey"`: PostgreSQL makes the second of two concurrent first calls wait and re-read
+  the row, so both answer the first key, and a note is never encrypted under a key a later write
+  replaced.
+- **The sign-in** keeps its insert for a subject with no row. Only an account erasure deletes a user
+  row, so a row read and gone before the update is answered with the erasure's own refusal
+  (`ACCOUNT_ERASURE_PENDING`/`_BLOCKED`, read again on `UserRowGoneError`) and is never re-created.
+- **A role change ends the sessions that carried it.** The admin flag travels in each access token
+  (`/api/auth/verify` hands it on as `X-Global-Admin`), so removing it ends every session of the
+  person (`revokeOthers(id, null)`): each token is answered anonymous at `/api/auth/verify` from that
+  moment (the three self-verifying families are on [sessions](../sessions.md)), and the next sign-in
+  mints tokens from the row as it stands. The revoke runs on EVERY removal, a removal of a flag
+  already off included, so a retry after a failure between the update and the revoke still ends the
+  sessions. A sign-in reads the flag AFTER its session exists (`isUserAdmin`) and signs that value,
+  never the row it read before: a role change committed in between is either read there or ends
+  that session too. Nobody writes their own flag, either way. The session store is its own
+  `SessionsModule`, imported by the auth and the user routes alike.
+- **An administrator's `create` is an insert**, `ON CONFLICT DO NOTHING`: an id that has a row is a
+  `409` (`UserIdTakenError`), as is one whose erasure is running; a save would overwrite the row.
+- **`save` stays for a row the call itself creates** (the first sign-in, a session, a block).
+- **An empty set writes nothing**: `updateUserColumns` answers at once rather than handing TypeORM an
+  `UPDATE` with no column.
+
+Proven on PostgreSQL by `users/user-write-gone.integration.spec.ts` (CI step "User writes against
+PostgreSQL"): every write above, with an admin revoke or an erasure committed between its read and its
+write from inside the service's own repository call, plus two first key calls, a flag removal read
+back at `verify`, and a `create` over an existing id. The same rule holds in social-service for
+memberships
+([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)), a tag's renewal
+([cotisations](../cotisations.md#a-renewal-updates-two-columns-never-saves-the-tag-it-read-2026-10-25))
+and an unmute, proven by `users/user-grant-write-gone.integration.spec.ts` there.
 
 ### The admin announcement, shown once per account
 

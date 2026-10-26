@@ -112,6 +112,12 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   { label: 'restore_credentials', sql: `DELETE FROM restore_credentials WHERE "userId" = $1` },
   // The refresh tokens die here, so no session can be renewed from this moment.
   { label: 'auth_sessions', sql: `DELETE FROM auth_sessions WHERE "userId" = $1` },
+  // The record of which ended sessions an owner's device revocation ended (migration 017) names the
+  // account; with the sessions gone and the account erased, no refresh can ever read it.
+  {
+    label: 'device_revoked_sessions',
+    sql: `DELETE FROM device_revoked_sessions WHERE "userId" = $1`,
+  },
   // A push ending still owed names the account; chat-delivery's own part of the erasure deletes
   // every push registration the account holds, so nothing is left for it to end. AFTER the
   // sessions: a logout racing this transaction waits on the session row, then finds it gone and

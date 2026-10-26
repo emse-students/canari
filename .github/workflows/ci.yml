@@ -701,6 +701,16 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- session-push-end.integration
 
+      # A USER WRITE UPDATES ITS COLUMNS AND NEVER SAVES THE ROW IT READ: each user write with a
+      # concurrent writer committed between its read and its write. Its own tables, in a throwaway
+      # schema, so the boot's database is all it needs (docs/wiki/services/core-service.md).
+      - name: User writes against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- user-write-gone.integration
+
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================

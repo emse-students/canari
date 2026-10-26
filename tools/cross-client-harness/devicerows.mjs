@@ -229,9 +229,15 @@ export function raceEnrolOwn({ minted, seated, ownerCaughtUpMs }) {
   ];
 }
 
-/** DEV-6: the new device lists the group and reads what was written before the revoked one existed. */
-export function originalArrivalOwn({ revoked, listed, earlyShown }) {
+/**
+ * DEV-6: the first device was SEATED and then revoked; the new device lists the group and reads what
+ * was written before the revoked one existed. The seating is asserted because a revocation of a
+ * device that never held a seat proves nothing - and the server's "minted device before it is seated"
+ * line is forgiven in this row only on that assertion's word.
+ */
+export function originalArrivalOwn({ firstSeatedMs, revoked, listed, earlyShown }) {
   return [
+    { what: `the first device was seated in the group (${firstSeatedMs === null || firstSeatedMs === undefined ? 'never' : `${firstSeatedMs} ms`})`, ok: firstSeatedMs !== null && firstSeatedMs !== undefined },
     { what: `the first device was revoked (${revoked ? 'yes' : 'no'})`, ok: revoked },
     { what: `the new device lists the group (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
     { what: `it reads the message written at the owner's ORIGINAL arrival (${earlyShown})`, ok: earlyShown === 1 },

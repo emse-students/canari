@@ -64,6 +64,12 @@ export const RefusalCode = {
    * a member is a new commit with a Welcome of its own.
    */
   WELCOME_TARGET_NOT_MEMBER: 'WELCOME_TARGET_NOT_MEMBER',
+  /**
+   * 404 - a Welcome addressed to a device no key package names: never registered, or deleted since
+   * (an owner's revocation purges it) (`POST mls/welcome`). Terminal for that Welcome: the device
+   * is gone, and re-sending the same bytes cannot make it exist.
+   */
+  WELCOME_TARGET_UNKNOWN: 'WELCOME_TARGET_UNKNOWN',
 } as const;
 
 /** A stable refusal code of this service. */

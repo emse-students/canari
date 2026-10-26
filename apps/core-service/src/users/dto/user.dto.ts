@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -93,6 +94,15 @@ export class UpdateUserDto {
   @MaxLength(500)
   @IsOptional()
   bio?: string;
+}
+
+/**
+ * Payload of `PATCH /users/:id/admin`. A real boolean, or a 400: a string `'false'` would be truthy
+ * to every check made on it.
+ */
+export class SetAdminDto {
+  @IsBoolean()
+  admin!: boolean;
 }
 
 /** Payload for updating the caller's private personal notepad. */

@@ -120,11 +120,12 @@ ok('DEV-4: one never seated fails', failing(raceEnrolOwn({ ...race, seated: { W3
 ok('DEV-4: the owner behind the server fails', failing(raceEnrolOwn({ ...race, ownerCaughtUpMs: null })) === 1);
 
 // ── DEV-6 ───────────────────────────────────────────────────────────────────────────────────────
-const arrival = { revoked: true, listed: true, earlyShown: 1 };
+const arrival = { firstSeatedMs: 4000, revoked: true, listed: true, earlyShown: 1 };
 ok('DEV-6: revoked, listed, the early message read passes', allOk(originalArrivalOwn(arrival)));
 ok('DEV-6: the early message missing fails (#2254 back)', failing(originalArrivalOwn({ ...arrival, earlyShown: 0 })) === 1);
 ok('DEV-6: the early message twice fails', failing(originalArrivalOwn({ ...arrival, earlyShown: 2 })) === 1);
 ok('DEV-6: no revoke fails - the row did not happen', failing(originalArrivalOwn({ ...arrival, revoked: false })) === 1);
+ok('DEV-6: a first device never seated fails - its revocation proves nothing', failing(originalArrivalOwn({ ...arrival, firstSeatedMs: null })) === 1);
 ok('DEV-6: not listed fails', failing(originalArrivalOwn({ ...arrival, listed: false })) >= 1);
 
 // ── DEV-7 ───────────────────────────────────────────────────────────────────────────────────────
