@@ -109,6 +109,7 @@ describe('erasure policy', () => {
     // A restore key could otherwise sign the erased account's subject back in (WP-RESTORE-1).
     expect(sql).toContain('DELETE FROM restore_credentials WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM session_push_endings WHERE "userId" = $1');
+    expect(sql).toContain('DELETE FROM device_revoked_sessions WHERE "userId" = $1');
     expect(CORE_ERASURE_STATEMENTS[CORE_ERASURE_STATEMENTS.length - 1].sql).toBe(
       'DELETE FROM users WHERE id = $1'
     );

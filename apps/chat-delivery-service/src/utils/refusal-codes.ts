@@ -72,6 +72,12 @@ export const RefusalCode = {
    */
   MEMBER_NOT_ADMITTED: 'MEMBER_NOT_ADMITTED',
   /**
+   * 404 - a Welcome addressed to a device no key package names: never registered, or deleted since
+   * (an owner's revocation purges it) (`POST mls/welcome`). Terminal for that Welcome: the device
+   * is gone, and re-sending the same bytes cannot make it exist.
+   */
+  WELCOME_TARGET_UNKNOWN: 'WELCOME_TARGET_UNKNOWN',
+  /**
    * 409 - a commit that would give a leaf to a person the gate may not admit (a departure or a
    * Decline recorded after the Add was decided, a block, a committer with no admitted seat) was
    * refused WHOLE: nothing advanced, nobody got a leaf. `userIds` names them; rebuild the commit

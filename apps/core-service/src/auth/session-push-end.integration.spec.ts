@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { AuthSession } from './entities/auth-session.entity';
+import { DeviceRevokedSession } from './entities/device-revoked-session.entity';
 import { AuthSessionsService } from './auth-sessions.service';
 import { SessionPushEndService } from './session-push-end.service';
 import { RestoreCredentialsService } from './restore/restore-credentials.service';
@@ -32,6 +33,11 @@ const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(
   join(__dirname, '..', 'migrations', '016_session_push_endings.sql'),
+  'utf8'
+);
+/** The sessions an owner's device revocation ended, read back by a refused refresh. */
+const REVOKED_MIGRATION = readFileSync(
+  join(__dirname, '..', 'migrations', '017_device_revoked_sessions.sql'),
   'utf8'
 );
 /** The restore keys (WP-RESTORE-1): a restore is the one session end outside AuthSessionsService. */
@@ -55,7 +61,7 @@ maybe('the push-ending outbox against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [AuthSession],
+      entities: [AuthSession, DeviceRevokedSession],
       synchronize: true,
       extra: { options: `-c search_path=${schema}` },
     });
@@ -63,6 +69,10 @@ maybe('the push-ending outbox against PostgreSQL', () => {
     // Applied TWICE: the deploy ledger replays a file whose successor failed.
     await ds.query(MIGRATION);
     await ds.query(MIGRATION);
+    // The revocation record's table is the MIGRATION's, not `synchronize`'s: dropped, then 017 run.
+    await ds.query(`DROP TABLE device_revoked_sessions`);
+    await ds.query(REVOKED_MIGRATION);
+    await ds.query(REVOKED_MIGRATION);
     // 013 references `users`, which only its id matters to; applied twice, like 016.
     await ds.query(`CREATE TABLE users (id VARCHAR(255) PRIMARY KEY)`);
     await ds.query(RESTORE_MIGRATION);
@@ -71,7 +81,11 @@ maybe('the push-ending outbox against PostgreSQL', () => {
       jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
     }
     outbox = new SessionPushEndService(ds);
-    sessions = new AuthSessionsService(ds.getRepository(AuthSession), outbox);
+    sessions = new AuthSessionsService(
+      ds.getRepository(AuthSession),
+      outbox,
+      ds.getRepository(DeviceRevokedSession)
+    );
   }, 60_000);
 
   afterAll(async () => {
@@ -82,6 +96,7 @@ maybe('the push-ending outbox against PostgreSQL', () => {
 
   beforeEach(async () => {
     await ds.query(`DELETE FROM session_push_endings`);
+    await ds.query(`DELETE FROM device_revoked_sessions`);
     await ds.query(`DELETE FROM restore_challenges_spent`);
     await ds.query(`DELETE FROM auth_sessions`);
     axios.delete = jest.fn().mockResolvedValue({ data: { removed: 0 } });
@@ -306,6 +321,31 @@ maybe('the push-ending outbox against PostgreSQL', () => {
     await expect(sessions.isLive(revoked, 'user-1')).resolves.toBe(false);
     // Idempotent: the retry a failed delete makes ends nothing more.
     await expect(sessions.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(0);
+  });
+
+  it("a refresh after an owner's device revocation is refused as device-revoked; a logout's stays unknown", async () => {
+    axios.delete.mockRejectedValue(Object.assign(new Error('fail'), { response: { status: 503 } }));
+    const phone = await sessions.create('user-1');
+    await sessions.bindDevice('user-1', phone.sessionId, 'phone-1');
+    const tab = await sessions.create('user-1');
+
+    await sessions.endDeviceSessions('user-1', 'phone-1', null);
+    await sessions.revoke(tab.sessionId);
+
+    await expect(sessions.rotate(phone.sessionId, phone.tokenId)).resolves.toEqual({
+      status: 'device-revoked',
+      userId: 'user-1',
+      deviceId: 'phone-1',
+    });
+    await expect(sessions.rotate(tab.sessionId, tab.tokenId)).resolves.toEqual({
+      status: 'unknown',
+    });
+    // Swept once no refresh token naming the session can verify any more, and not before.
+    await sessions.deleteExpired();
+    expect(await ds.query(`SELECT "sessionId" FROM device_revoked_sessions`)).toHaveLength(1);
+    await ds.query(`UPDATE device_revoked_sessions SET "endedAt" = now() - interval '8 days'`);
+    await sessions.deleteExpired();
+    expect(await ds.query(`SELECT "sessionId" FROM device_revoked_sessions`)).toEqual([]);
   });
 
   it('a session reads live until it is revoked, logged out or replaced - the verify check', async () => {

@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
-import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
@@ -94,74 +93,47 @@ export class UserTagService {
   constructor(@InjectRepository(UserTag) private readonly repo: Repository<UserTag>) {}
 
   /**
-   * Creates the tag or, if `(userId, tagName)` already exists, updates `expiresAt`
-   * (and metadata) without changing `issuingAssocId` or `grantedBy`.
+   * Creates the tag or, if `(userId, tagName)` already exists, updates `expiresAt` (when given) and
+   * merges `metadata`, without changing `issuingAssocId` or `grantedBy`.
    * Pass `manager` to run within an existing transaction (e.g. alongside a sibling-tier revoke).
+   *
+   * ONE STATEMENT, `INSERT ... ON CONFLICT ("userId", "tagName") DO UPDATE`, never a read then a
+   * write: there is no copy of the row to go stale, two first grants cannot both insert, two renewals
+   * keep both their metadata keys (`||` merges in SQL), and a tag revoked concurrently is either
+   * still there to renew or gone and granted anew - each a serial order, never the revoked row
+   * written back. The unique index on the pair is the entity's `@Unique`.
    */
   async grantOrRenew(data: GrantTagData, manager?: EntityManager): Promise<UserTag> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
-    const existing = await repo.findOne({
-      where: { userId: data.userId, tagName: data.tagName },
-    });
-    if (existing) {
-      const renewed = await this.renewColumns(repo, existing, data);
-      if (renewed) return renewed;
-      // Revoked between the read and the renewal: this call is a grant ordered after that revoke,
-      // so it creates a NEW row carrying ITS issuer - never the revoked row written back.
-      this.logger.warn(
-        `[UserTag] ${data.tagName} of ${data.userId.slice(0, 8)} revoked since its read - granted afresh`
+    const rows = (await repo.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy", "expiresAt", metadata)
+       VALUES ($1, $2, $3, $4, $5, CAST($6 AS jsonb))
+       ON CONFLICT ("userId", "tagName") DO UPDATE SET
+         "expiresAt" = CASE WHEN CAST($7 AS boolean) THEN EXCLUDED."expiresAt" ELSE user_tags."expiresAt" END,
+         metadata = user_tags.metadata || EXCLUDED.metadata
+       RETURNING *, (xmax = 0) AS inserted`,
+      [
+        data.userId,
+        data.tagName,
+        data.issuingAssocId ?? null,
+        data.grantedBy,
+        data.expiresAt ?? null,
+        JSON.stringify(data.metadata ?? {}),
+        data.expiresAt !== undefined,
+      ]
+    )) as Array<UserTag & { inserted: boolean }>;
+    const row = rows[0];
+    if (!row) throw new Error(`grantOrRenew: no row returned for ${data.tagName}`);
+    const { inserted, ...columns } = row;
+    const tag = repo.create(columns);
+    if (inserted) {
+      this.logger.log(`[UserTag] Granted ${data.tagName} to ${data.userId} by ${data.grantedBy}`);
+    } else {
+      this.logger.log(
+        `[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${tag.expiresAt?.toISOString() ?? 'never'})`
       );
     }
-    const tag = repo.create({
-      userId: data.userId,
-      tagName: data.tagName,
-      issuingAssocId: data.issuingAssocId ?? null,
-      grantedBy: data.grantedBy,
-      expiresAt: data.expiresAt ?? null,
-      metadata: data.metadata ?? {},
-    });
-    const saved = await repo.save(tag);
-    this.logger.log(`[UserTag] Granted ${data.tagName} to ${data.userId} by ${data.grantedBy}`);
-    return saved;
-  }
-
-  /**
-   * Renews `existing` by updating ONLY the columns a renewal owns - `expiresAt` when given, and
-   * `metadata` merged in SQL so two renewals keep both their keys - keyed by the row's id. Never a
-   * save of the row read: a save writes back every column changed since the read and re-inserts a
-   * row deleted since.
-   *
-   * @returns the row as written, or `null` when it is gone (0 rows updated) and nothing was written.
-   */
-  private async renewColumns(
-    repo: Repository<UserTag>,
-    existing: UserTag,
-    data: GrantTagData
-  ): Promise<UserTag | null> {
-    const set: QueryDeepPartialEntity<UserTag> = {};
-    if (data.expiresAt !== undefined) set.expiresAt = data.expiresAt;
-    if (data.metadata) set.metadata = () => `"metadata" || CAST(:metadataPatch AS jsonb)`;
-    if (Object.keys(set).length === 0) {
-      this.logger.debug(
-        `[UserTag] ${data.tagName} for ${data.userId} already held, nothing to renew`
-      );
-      return existing;
-    }
-    const result = await repo
-      .createQueryBuilder()
-      .update(UserTag)
-      .set(set)
-      .where('id = :id', { id: existing.id })
-      .setParameter('metadataPatch', JSON.stringify(data.metadata ?? {}))
-      .returning(['expiresAt', 'metadata'])
-      .execute();
-    const row = (result.raw as Array<Pick<UserTag, 'expiresAt' | 'metadata'>>)[0];
-    if (result.affected !== 1 || !row) return null;
-    const renewed = Object.assign(existing, row);
-    this.logger.log(
-      `[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${renewed.expiresAt?.toISOString() ?? 'never'})`
-    );
-    return renewed;
+    return tag;
   }
 
   /**

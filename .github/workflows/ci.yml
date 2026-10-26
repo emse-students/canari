@@ -711,6 +711,15 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- user-write-gone.integration
 
+      # A PLATFORM CONFIG WRITE UPDATES THE COLUMNS IT NAMES: two administrators editing different
+      # settings keep both. Its own table, in a throwaway schema (docs/wiki/services/core-service.md).
+      - name: Platform config writes against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- platform-config-write.integration
+
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================

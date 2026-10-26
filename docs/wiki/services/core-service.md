@@ -106,7 +106,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/oidc/callback` | none | Exchange Authentik auth code for JWT + refresh cookie; upsert local user |
-| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay |
+| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay; a session an owner's DEVICE REVOCATION ended is refused `401 DEVICE_REVOKED_BY_OWNER` ([sessions](../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)) |
 | POST | `/api/auth/logout` | cookie | Delete the session row, then clear the cookie |
 | GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
@@ -544,8 +544,18 @@ write from inside the service's own repository call, plus two first key calls, a
 back at `verify`, and a `create` over an existing id. The same rule holds in social-service for
 memberships
 ([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)), a tag's renewal
-([cotisations](../cotisations.md#a-renewal-updates-two-columns-never-saves-the-tag-it-read-2026-10-25))
-and an unmute, proven by `users/user-grant-write-gone.integration.spec.ts` there.
+([cotisations](../cotisations.md#a-grant-or-renewal-is-one-statement-never-a-save-of-the-tag-it-read-2026-10-25)),
+a mute and an unmute, a report's review and a role history edit
+([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)),
+proven by `users/user-grant-write-gone.integration.spec.ts` there.
+
+**The platform config is the same rule on its one row.** `updateConfig` reads the row for its guards
+and its "from -> to" lines, then writes ONE `UPDATE` of the columns the request names and answers
+the row re-read: two administrators editing different settings keep both, where a save of the row
+read wrote back the other's setting (a kill switch included). The row is never deleted, so 0 rows
+updated is an estate error, logged at error and thrown. Proven by
+`platform/platform-config-write.integration.spec.ts` (CI step "Platform config writes against
+PostgreSQL").
 
 ### The admin announcement, shown once per account
 

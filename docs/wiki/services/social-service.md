@@ -1391,6 +1391,24 @@ Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
 `association-member-write-gone.integration.spec.ts`, each committing the other write between the read
 and the update. `save` stays for a row the call itself creates.
 
+**The same holds for a user's moderation record, a report and a role history entry:**
+
+- `muteUser` is ONE `INSERT ... ON CONFLICT ("userId") DO UPDATE` (the column's unique index), with
+  no read first, so two first mutes leave one record; `unmuteUser` is one `UPDATE` by user, `404` on
+  0 rows.
+- `reviewReport` writes its three review columns by id with no read first, and re-reads the row for
+  its answer: a party rewritten since stays as written, and 0 rows is `404`.
+- `updateRoleHistory` is CONDITIONED on the year its range check judged: an edit setting one year
+  only bounds its `UPDATE` with the OTHER year as read (`IS NULL` for none); a title-only edit, or
+  one setting both years, judged no stored year and is bounded by id and owner only. 0 rows answers
+  `404` when the entry is gone or no longer the caller's, and `409` when the judged year changed
+  meanwhile.
+- A tag's grant or renewal is one statement as well
+  ([cotisations](../cotisations.md#a-grant-or-renewal-is-one-statement-never-a-save-of-the-tag-it-read-2026-10-25)).
+
+Proven by `users/user-grant-write-gone.integration.spec.ts`, with the concurrent write committed
+from inside the service's own repository call.
+
 ### An access rewrite names the revision it edited (2026-10-25)
 
 **The lock only protected the server's own read, never the client's.** The settings panel reads a

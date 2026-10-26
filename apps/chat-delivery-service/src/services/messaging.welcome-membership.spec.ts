@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -430,10 +430,15 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     expect(envelope).toContain('q-first');
   });
 
-  it('refuses a target device that does not exist', async () => {
+  it('refuses a target device that does not exist with a typed 404, never a 500', async () => {
     keyPackageRepo.findOne.mockResolvedValue(null);
 
-    await expect(service.sendWelcome(undefined, body)).rejects.toThrow(/not found/);
+    const refusal = await service.sendWelcome(undefined, body).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(NotFoundException);
+    expect((refusal as NotFoundException).getResponse()).toMatchObject({
+      code: 'WELCOME_TARGET_UNKNOWN',
+      error: 'welcome_target_unknown',
+    });
     expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
     expect(redis.sadd).not.toHaveBeenCalled();
   });
