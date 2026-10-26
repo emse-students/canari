@@ -1425,6 +1425,49 @@ const ROW_RULES = [
     shape: /\[KEY_DISTRIBUTION\] departure (CANCELLED before its roster write scope=\S+ user=\S+ departure=\S+ reason=\S+ - rolled back, retryable|ABANDONED reason=\S+ begun=\d+: .* - settling what it began)$/,
     rows: ['RM-1', 'RM-4', 'RM-5'],
   },
+  // RM-5'S RACE, READ ON `1.4.1-alpha.6` (2026-10-26): W1 kicks the subject while W2 grants them the
+  // private salon, five cycles. When the kick lands first the grant is refused because the subject is no
+  // longer a member (cycles 3 and 4: `409 CHANNEL_GRANTEE_NOT_MEMBER`, `by=` the granter, `first=` the
+  // subject). Each kick names its target and cuts their private salons. The cycle's rejoin cancels the
+  // departure the kick began, on both services. The kicked subject's next salon read is refused as
+  // not a reader. Each rule takes only the outcome RM-5 plays: another outcome or reason stays dirt.
+  {
+    name: 'access rewrite refused, grantee not a member',
+    tag: /\[CHANNEL_ACCESS\] refused/,
+    shape: /\[CHANNEL_ACCESS\] refused - the rewrite grants 1 non-member\(s\) channel=\S+ by=\S+ first=\S+ revision=\d+ locked=true$/,
+    rows: ['RM-5'],
+  },
+  {
+    name: 'a member kicked',
+    tag: /\[WORKSPACE\] kick /,
+    shape: /\[ChannelService\] \[WORKSPACE\] kick workspace=\S+ target=\S+ by=\S+$/,
+    rows: ['RM-5'],
+  },
+  {
+    name: "a kick cuts the target's private salons",
+    tag: /\[CHANNEL_GRAINE\] private salons to cut /,
+    shape: /\[ChannelService\] \[CHANNEL_GRAINE\] private salons to cut workspace=\S+ user=\S+ reason=kicked salons=\d+\/\d+$/,
+    rows: ['RM-5'],
+  },
+  {
+    name: "a kick's departure cancelled by the rejoin",
+    tag: /\[KEY_DISTRIBUTION\] (departure outcome|abandoned departure settled) |\[DISTRIBUTION_GROUP\] (cancel|departure cancelled) /,
+    shape: new RegExp(
+      [
+        String.raw`\[ChannelService\] \[KEY_DISTRIBUTION\] departure outcome group=\S+ user=\S+ departure=\d+ outcome=cancelled$`,
+        String.raw`\[ChannelService\] \[KEY_DISTRIBUTION\] abandoned departure settled scope=workspace:\S+ user=\S+ departure=\d+ reason=kicked outcome=cancelled settled=true$`,
+        String.raw`\[DistributionGroup\] \[DISTRIBUTION_GROUP\] cancel workspace=\S+ user=\S+ departure=\d+ settled=true$`,
+        String.raw`\[MessagingService\] \[DISTRIBUTION_GROUP\] departure cancelled group=\S+ user=\S+ departure=\d+ settled=true$`,
+      ].join('|')
+    ),
+    rows: ['RM-5'],
+  },
+  {
+    name: 'the kicked member is not a reader of the salon',
+    tag: /\[DISTRIBUTION_GROUP\] entitlement channel=\S+ user=\S+ entitled=false/,
+    shape: /\[InternalDistributionEntitlementController\] \[DISTRIBUTION_GROUP\] entitlement channel=\S+ user=[0-9a-f]{8} entitled=false \(first evaluation\) - not a reader of the salon$/,
+    rows: ['RM-5'],
+  },
   {
     name: 'salon grant refused',
     tag: /\[CHANNEL\] grant refused/,
@@ -1576,16 +1619,28 @@ export function settleFirstLooks(unexplained) {
   // saying so - the settling silently settled nothing, which is the failure mode a count-based rule
   // has and a per-line rule does not (a rule that matches nothing at least leaves its population
   // visible). `none` is what `published=false` always prints, so requiring it costs no coverage.
-  const FIRST_LOOK =
-    /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false base=none active=\d+ user=\S+ devices=0/;
+  // TWO SPELLINGS OF ONE LOOK, counted apart: chat-delivery's `read` and social-service's
+  // `[CHANNEL_GRAINE] served` twin for a salon. Each is a singleton per group or stays where it is;
+  // RM-4 of `1.4.1-alpha.6` left the served twin unexplained beside its settled `read`.
+  const FIRST_LOOKS = [
+    ['read', /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false base=none active=\d+ user=\S+ devices=0/],
+    ['served', /\[CHANNEL_GRAINE\] served channel=\S+ user=\S+ group=(\S+) published=false base=none active=\d+ devices=0$/],
+  ];
+  const keyOf = (l) => {
+    for (const [kind, re] of FIRST_LOOKS) {
+      const m = re.exec(l);
+      if (m) return `${kind}:${m[1]}`;
+    }
+    return null;
+  };
   const seen = new Map();
   for (const l of unexplained) {
-    const m = FIRST_LOOK.exec(l);
-    if (m) seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+    const k = keyOf(l);
+    if (k) seen.set(k, (seen.get(k) ?? 0) + 1);
   }
   return unexplained.filter((l) => {
-    const m = FIRST_LOOK.exec(l);
-    return !!m && seen.get(m[1]) === 1;
+    const k = keyOf(l);
+    return !!k && seen.get(k) === 1;
   });
 }
 
