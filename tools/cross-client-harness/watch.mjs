@@ -2626,6 +2626,30 @@ export const REMOVE_NARRATION = [
 ];
 
 /**
+ * WHAT A LARGE-GROUP ROW (`archive/big.mjs`) MAKES ITS SEATS SAY - forgiven to the BIG rows only,
+ * at `debug` only, read on the alpha.5 BIG-1/BIG-2 runs (2026-10-26, coordinator's list).
+ *
+ * ANY SEAT: a bulk Add lands as one batch, and the drain that ingests it commits its progress
+ * markers once its checkpoint is sealed. `PAGE_BOOT_NARRATION` forgives the same words to a seat
+ * that reloaded; a BIG row produces them on seats that did not.
+ *
+ * A1 ONLY (`bigRowNarration`): the phone opening the row's conversation sets its edge-swipe
+ * exclusions and clears them on leaving, and its share targets follow the conversation list when a
+ * new group arrives - ALL of them present (`N of N`); one missing stays dirt. A browser seat draws
+ * none of these, so on one they are a finding. The same words at warn or error are never forgiven.
+ */
+export const BIG_ANY_SEAT_NARRATION = [atLevels(['debug'], /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/)];
+
+/** The phone's own lines in a BIG row - see `BIG_ANY_SEAT_NARRATION`. */
+export const BIG_A1_NARRATION = [
+  atLevels(['debug'], /^\[GESTURE\] (?:left|right)-edge exclusion (?:over \d+\.\.\d+ px|cleared)$/),
+  atLevels(['debug'], /^\[ShareTargets\] (\d+) of \1 present \(conversations changed\)$/),
+];
+
+/** The BIG-row narration a seat is given: every seat the bulk-ingest line, A1 its own lines too. */
+export const bigRowNarration = (device) => (device === 'A1' ? [...BIG_ANY_SEAT_NARRATION, ...BIG_A1_NARRATION] : [...BIG_ANY_SEAT_NARRATION]);
+
+/**
  * AN ADD CANCELLED BECAUSE ANOTHER DEVICE HOLDS THE GROUP'S ADD LOCK (`groupCreation.ts`,
  * `notAdded('add-lock-busy')`) - forgiven per row, on the seat that lost CC-1's lock race and
  * nowhere else. Anywhere else an Add the lock cancelled is a lost gesture and stays dirt.
