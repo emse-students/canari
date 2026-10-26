@@ -124,6 +124,46 @@ export function settledRounds(rounds) {
 }
 
 /**
+ * WHAT A PASS DOES WITH ITS SETTLEMENT (`awaitSettled`'s answer): whether it is judged, the pass that
+ * stands in for it when it is not, and the approximation the pass must carry when it is.
+ *
+ * The rules:
+ * - A settled group is judged.
+ * - An unsettled one is judged only when `judgeUnsettled` (the pass after the action: a member that
+ *   never caught up IS invariant 1's finding). It then carries a note that it was judged unsettled.
+ * - Otherwise (after the reload) the pass is unjudged and `composeVerdict` makes the row
+ *   INCONCLUSIVE.
+ * - A group that settled only after the FIRST reading was still moving when the pass began. The pass
+ *   says how many rounds it took, so a reader knows the state it judged is not the state the action
+ *   left - `settleMs` alone does not say that.
+ *
+ * Pure, pinned by `archive/invariant-selftest.mjs`.
+ *
+ * @param {string} label the pass
+ * @param {{settled: boolean, ms: number, rounds: {serverEpoch: number|null, behind: string[]}[]}} settled
+ * @param {{judgeUnsettled: boolean}} opts
+ * @returns {{judge: boolean, approximation: {invariant: number, what: string}|null, unjudged: object|null}}
+ */
+export function settleDecision(label, settled, { judgeUnsettled }) {
+  const n = settled.rounds.length;
+  const last = settled.rounds.at(-1);
+  const where = `${settled.ms} ms, ${n} round(s); last: server at ${last?.serverEpoch}, behind: ${last?.behind.join(' ') || 'nobody'}`;
+  if (!settled.settled && !judgeUnsettled) {
+    return {
+      judge: false,
+      approximation: null,
+      unjudged: { pass: label, ok: false, failures: [], approximations: [], unsettled: `the group never settled ${label} (${where})` },
+    };
+  }
+  const approximation = !settled.settled
+    ? { invariant: 0, what: `judged UNSETTLED ${label} (${where}): what a member had not caught up to is its finding` }
+    : n > 2
+      ? { invariant: 0, what: `settled only after ${n} rounds (${settled.ms} ms) ${label}: the group was still moving at the first reading, and the pass judged the state it settled to` }
+      : null;
+  return { judge: true, approximation, unjudged: null };
+}
+
+/**
  * Judge one invariant pass.
  *
  * @param {object} obs

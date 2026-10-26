@@ -7,7 +7,7 @@
  *
  *   bun archive/invariant-selftest.mjs
  */
-import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict, settledRounds } from '../invariantverdict.mjs';
+import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict, settleDecision, settledRounds } from '../invariantverdict.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -222,6 +222,21 @@ ok('two clean rounds at one epoch: settled', settledRounds([{ serverEpoch: 3, be
 ok('one clean round is not settled', !settledRounds([{ serverEpoch: 3, behind: [] }]));
 ok('the RM-8 sample (W1 one commit behind) is not settled', !settledRounds([{ serverEpoch: 2, behind: [] }, { serverEpoch: 3, behind: ['W1'] }]));
 ok('two clean rounds at different epochs: still moving', !settledRounds([{ serverEpoch: 2, behind: [] }, { serverEpoch: 3, behind: [] }]));
+
+// What a pass does with its settlement (`settleDecision`): judged, unjudged, and the note it carries.
+const R = (serverEpoch, behind = []) => ({ serverEpoch, behind });
+const quick = { settled: true, ms: 500, rounds: [R(3), R(3)] };
+const slow = { settled: true, ms: 4000, rounds: [R(2, ['W1']), R(3, ['W1']), R(3), R(3)] };
+const never = { settled: false, ms: 60000, rounds: [R(2, ['W1']), R(3, ['W1'])] };
+const dq = settleDecision('after the action', quick, { judgeUnsettled: true });
+ok('settled at the first two readings: judged, no note', dq.judge && dq.approximation === null && dq.unjudged === null);
+const ds = settleDecision('after the action', slow, { judgeUnsettled: true });
+ok('settled only after more rounds: judged, and the pass says how many', ds.judge && /settled only after 4 rounds/.test(ds.approximation?.what ?? ''));
+const dn = settleDecision('after the action', never, { judgeUnsettled: true });
+ok('never settled after the action: judged anyway, noted UNSETTLED with who was behind', dn.judge && /judged UNSETTLED/.test(dn.approximation?.what ?? '') && /behind: W1/.test(dn.approximation.what));
+const dr = settleDecision('after a reload of every web client', never, { judgeUnsettled: false });
+ok('never settled after the reload: unjudged, the reason carried, nothing failed', !dr.judge && dr.unjudged?.unsettled?.startsWith('the group never settled after a reload') && dr.unjudged.failures.length === 0);
+ok('... and settled after the reload: judged', settleDecision('after a reload of every web client', quick, { judgeUnsettled: false }).judge);
 
 console.log(failures ? `[invariant] ${failures} FAILURE(S)` : '[invariant] clean - every invariant fails on its own fault, and every approximation is named');
 process.exit(failures ? 1 : 0);
