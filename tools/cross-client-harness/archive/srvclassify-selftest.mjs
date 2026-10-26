@@ -1096,6 +1096,9 @@ check(
     ['a departure abandoned, settling what it began', W('ChannelService', `[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=1: The departure could not be completed, retry. - settling what it began`), 'RM-5', 'FLOOR-1'],
     ['a salon grant refused', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=not_allowed`), 'RM-5', 'RM-4'],
     ['a salon gone before its roster write', W('ChannelService', `[CHANNEL] salon gone before its roster write channel=c-1 user=bbbbbbbb`), null, 'RM-5'],
+    ['a Welcome carried by reference in an admission row', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 6148B, budget 3734B'), 'ADM-3', 'DUP-1'],
+    ['... and in a device row', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 4608B, budget 3716B'), 'DEV-2', 'RM-4'],
+    ['... and in a large-group variant', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: 9001B, budget 3716B'), 'BIG-1-noI1', 'CC-1'],
   ];
   for (const [name, line, row, other] of FAMILY) {
     if (row) check(`R6 expected   ${name} (${row})`, verdictIn(line, row), 'expected');
@@ -1122,12 +1125,18 @@ check(
     ['the pre-#2505 refusal that dropped admits and kept the commit', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10'],
     ['an undated admission of a seat that was not awaiting', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] ADMITTED_UNDATED group=${G} user=bbbbbbbb committer=aaaaaaaa decidedBy=base_epoch decidedAtSeatGeneration=2 seat=none - an Add with no invitation generation answered an ask`), 'ADM-6'],
     ['the member-add route refusing for an undeclared reason', W('MembersController', `[ADD_MEMBER][add-member-c3adcdfe] REFUSED not_admitted group=${G} user=bbbbbbbb reason=banned caller=aaaaaaaa - no accepted commit admitted them; nothing written`), 'ADM-10'],
+    ['a Welcome carried by reference with no sizes', D('MessagingService', '[PUSH_SEND][welcome-send-9c1d2e3f] welcome carried by reference: ?B'), 'ADM-1'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
 
   // A MINTED DEVICE LINE WITH ONE GROUP BEING ADDED is not the all-pending starting state: no row rule
   // claims it, so it falls to the general classifier (stranded is not 0) and stays dirt in DEV-4 too.
   check('R6 unclaimed   a minted device line with one group being added (in DEV-4)', verdictIn(L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=true)'), 'DEV-4'), 'unclaimed');
+
+  // THE OTHER BY-REFERENCE REASONS ARE NOT THIS RULE'S: a key-material frame or a long text stays with
+  // the general classifier, in an admission row too.
+  check('R6 unclaimed   key material carried by reference (in ADM-3)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] key-material carried by reference: 9000B, budget 3734B'), 'ADM-3'), 'unclaimed');
+  check('R6 unclaimed   a long frame carried by reference (in DEV-2)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] long frame carried by reference: 5000B, budget 3734B'), 'DEV-2'), 'unclaimed');
 
   // NEVER JUDGED PER ROW: an ERROR line gates as it always did, in the row of its family too.
   check('R6 [ADMISSION] at ERROR is never a row line', verdictIn(E('MessagingService', `[ADMISSION] group=${G} user=aaaaaaaa holds 1 active device(s) under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`), 'ADM-1'), 'unclaimed');

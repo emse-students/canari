@@ -1337,6 +1337,19 @@ const ROW_RULES = [
     rows: ['DEV-7'],
   },
 
+  // ── A WELCOME TOO LARGE FOR THE PUSH, CARRIED BY REFERENCE (`push-payload.ts` `decideProtoCarriage`) ──
+  // A Welcome is never inlined: its ratchet tree makes it 4-6 KB against a ~3.7 KB budget, so the
+  // device fetches it by `queuedMessageId`, and `messaging.service.ts` says so at DEBUG. A decision on
+  // an expected branch, read in alpha.5's ADM rows (2026-10-26) - expected in the rows that admit a
+  // person or a device, dirt in a row that sends no Welcome. Only `welcome`: `key-material` and
+  // `long-frame` are other decisions this rule does not read.
+  {
+    name: 'welcome carried by reference',
+    tag: /\[PUSH_SEND\]\[[^\]]+\] welcome carried by reference/,
+    shape: /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] welcome carried by reference: \d+B, budget \d+B$/,
+    rows: ['ADM-*', 'DEV-*', 'BIG-*'],
+  },
+
   // ── #2269: commit settlement and revocation ───────────────────────────────────────────────────
   // OUR OWN commit resubmitted after its answer was lost: the settlement's whole point, and a defect
   // in any row that lost no answer.

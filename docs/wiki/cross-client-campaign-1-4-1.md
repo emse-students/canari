@@ -334,7 +334,7 @@ assumes what the one before proved.
 | --- | --- | --- | --- |
 | 0 | R1, R2, R3, R4, R6, R8 - code and selftests, one pull request each (`make test-harness` green) | lead, desk | ~1.5 days |
 | 1 | `main` clean, R7: cut the pre-release, wait for dev green, install it on A1 (R2 debug, same commit) and I1 | lead | ~1.5 h |
-| 2 | R5 fixtures on dev; `bun rows.mjs`, `bun cleanup.mjs`, `bun identity.mjs` (now safe: R1) | lead | ~1 h |
+| 2 | R5 fixtures on dev; `bun rows.mjs`, `bun cleanup.mjs`, `bun stale-devices.mjs` (the browser devices DEV rows minted and left - read, then `--purge --expect N`; alpha.5 found seven, each a `[PENDING] ... vouching` line in every ADM row), `bun identity.mjs` (now safe: R1) | lead | ~1 h |
 | 3 | FLOOR | lead | 40 min |
 | 4 | CC, DUP, OFF, GAP-1..3, RM-1..8, TOK-1..2, NET - the `U` rows, unattended | rig | ~10 h, one night |
 | 5 | KILL-3/4, OFF-5, ADM-5..7 (old APK installed, then R2's new one back), DEV-7, BIG | lead + bench | ~6 h |
