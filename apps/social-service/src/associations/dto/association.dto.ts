@@ -454,7 +454,7 @@ export class CreateProductDto {
 
   /** Reduced price in cents for cotisants (defaults to `amountCents` when omitted). */
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   amountCentsMember?: number;
 
@@ -581,7 +581,7 @@ export class UpdateProductDto {
 
   /** Reduced price in cents for cotisants. Pass `null` to charge cotisants the same as everyone. */
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   amountCentsMember?: number | null;
 

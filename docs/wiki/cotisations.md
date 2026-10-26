@@ -203,40 +203,61 @@ the XOR REPLACES the held tier, a buyer may only buy a sibling tier that is a ri
 Decided by the user on 2026-10-26: a holder of a lower tier pays only the complement to rise, and a
 holder of the highest tier is not offered membership.
 
-**The complement IS the admin's preferential price - nothing is computed.** It is the existing
-`memberPriceTag` + `amountCentsMember` pair above ("Tarif preferentiel depuis" in the tier editor):
-the Cercle admin set it in production on 2026-10-26 on the alcohol tier (full price 30 EUR,
-preferential 15 EUR from the other tier). A rise to a tier with NO preferential price configured is
-charged in FULL; setting it is the admin's job, and making that visible is the admin screen's. An
-automatic `target - held` was designed and dropped the same day: it would have duplicated or
-contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE function that picks
-the amount, called by the checkout (`resolvePurchase`) and the shop listing alike, and the checkout
-row freezes it: settlement records the row's amount, never a re-read of the product.
+**The complement IS the admin's preferential price - nothing is computed.** It is the stored pair
+`memberPriceTag` (which sibling tier qualifies) + `amountCentsMember` (what its holders pay) on the
+dearer tier - the pair the admin screen presents as one sentence, "a holder of [tier] who moves to X
+pays [N] EUR instead of the full price". The Cercle set it in production on 2026-10-26 on the
+alcohol tier (full price 30 EUR, 15 EUR for holders of the other tier). A rise to a tier with NO pair
+set is charged in FULL; setting it is the admin's job, and making that visible is the admin
+screen's. An automatic `target - held` was designed and dropped the same day: it would have
+duplicated or contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE
+function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike,
+and the checkout row freezes it: settlement records the row's amount, never a re-read of the product.
+
+**`memberPriceTag` names a TIER, read at use time.** The column stores a tag string, and a `dated`
+association's tags change every academic year - an exact match on the saved string would have
+stopped the preferential price at the first rollover. `linkedTierKey` reads the string as the
+sibling tier whose tag STEM it carries (with or without a year suffix), and the buyer qualifies when
+they hold that tier's CURRENT tag. Save time enforces what read time assumes: the tag must name
+another tier of the same association, and `amountCentsMember` must be above zero and below the full
+price (checked only when a request touches one of the three columns, so an older row still saves its
+other edits). Renaming a tier's `variantKey` re-points the siblings linked to it in the same
+transaction. A link that still names no tier (a row from before these rules) applies no
+preferential price and logs at WARN.
 
 **What the server refuses (`assertTierIsARise`, on every `membership` checkout).** Rank comes from
 DATA with no stored ordinal and no migration: `variantLevel` is null in production and only ever
 sorted the shop. `tierRelation` compares the target's PRODUCT price (`amountCents`, never what the
-holder paid) with the product of the tier the buyer holds ACTIVE (`heldTierOf`, the same
-enumeration as `isBuyerCotisant`, on sale or not):
+holder paid) with the held tier's. A buyer holding several tier tags is ranked against ONE of them,
+picked deterministically by `pickHeldTier`: an unrankable one first, else the dearest, ties broken
+by key (named tiers in code-point order, the base tier last). The verdict is taken BEFORE the
+purchase records are read, so the code does not depend on how the held tier was obtained:
 
 | Relation | When | Checkout |
 |---|---|---|
-| `held` | the target IS the held tier (same `variantKey`) | 409 `PRODUCT_ALREADY_PURCHASED` - now even with no purchase record, since a manual grant or a claimed legacy row holds the tier as surely |
-| `lower` | target price `<=` held price, a different tier | 409 `TIER_NOT_A_RISE` - equal counts, a sideways swap would be paid in full for nothing |
-| `higher` | target price `>` held price | allowed, at `fixedPriceFor`'s amount; the XOR swaps at settlement |
-| `none` | nothing held, or either tier is gridded or free-amount | allowed, exactly as before - no rank is guessed |
+| `none` | nothing held | sold as before |
+| `higher` | target price `>` held price | sold, at `fixedPriceFor`'s amount; the XOR swaps at settlement |
+| `held` | the target IS the held tier | 409 `PRODUCT_ALREADY_PURCHASED`, paid for or granted |
+| `lower` | target price `<=` held price | 409 `TIER_NOT_A_RISE` - equal counts |
+| `unranked` | a tier is held and either side has no fixed price (grid, free amount, a tag whose product is gone) | 409 `TIER_NOT_RANKABLE` - no rank is guessed |
+
+**Two attempts, one tier.** Opening a checkout of a tier first settles the buyer's open attempts of
+EVERY sibling tier (`productsToSettleBefore`): cancelled at the provider, or recorded if already
+paid - so a buyer never holds payable requests for two tiers. And the settlement re-ranks: a tier
+paid while it is no longer `none` or `higher` against what the buyer holds NOW is recorded as a
+payment but NOT granted, so the XOR cannot replace the held tier, and it is logged at ERROR - a
+refund is owed.
 
 A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The manual
 paths (`grantCotisant`, the cash grant) are a manager's decision and are NOT ranked: a manager may
-still downgrade someone on purpose. Lydia's own floor (50 cents, `LYDIA_MIN_AMOUNT_CENTS` in
-core-service) still answers `AMOUNT_OUT_OF_RANGE` before any request is issued, so a preferential
-price set below it is refused rather than charged.
+still downgrade someone on purpose. The provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in
+core-service) still answers `AMOUNT_OUT_OF_RANGE` before any request is issued.
 
-**What the shop gets.** `/products/all` annotates every product with `viewerTierRelation` (the
-table's relation, `none` for a non-tier) and `viewerDueCents`: what a checkout would charge THIS
-viewer now - null for `held`/`lower`, the grid's cell for a gridded product, null for a free amount.
-Purchase caps and tag gates are not folded into it. The client displays it and never recomputes
-money; `paymentRefusal.ts` words `TIER_NOT_A_RISE` from its code.
+**What the listings get.** `/products/all` and the per-association listing annotate every product
+with `viewerTierRelation` (the table's relation, `none` for a non-tier or a guest) and
+`viewerDueCents`: what a checkout would charge THIS viewer now - null for a refused tier, the grid's
+cell for a gridded product, null for a free amount. Purchase caps and tag gates are not folded into
+it. The client displays it and never recomputes money; `paymentRefusal.ts` words each refusal code.
 
 **Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
 30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real

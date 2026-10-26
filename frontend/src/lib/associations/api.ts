@@ -1746,17 +1746,18 @@ export interface AssociationProduct {
   viewerActiveTier?: string | null;
   /**
    * Where this cotisation tier stands against the tier the viewer holds ACTIVE for the same
-   * association: `held` (that very tier), `higher` (a rise - buyable), `lower` (not a rise: same or
-   * lower product price - the server refuses it, `TIER_NOT_A_RISE`), `none` (not a tier, nothing
-   * held, or a gridded / free-amount tier the server does not rank). Set only by `listAllProducts`.
+   * association: `none` (not a tier, or nothing held - buyable), `higher` (a rise - buyable),
+   * `held` (that very tier - refused, `PRODUCT_ALREADY_PURCHASED`), `lower` (same or lower product
+   * price - refused, `TIER_NOT_A_RISE`), `unranked` (a tier is held and one of the two has no fixed
+   * price - refused, `TIER_NOT_RANKABLE`). Set by the shop and per-association listings.
    */
-  viewerTierRelation?: 'held' | 'lower' | 'higher' | 'none';
+  viewerTierRelation?: 'none' | 'higher' | 'held' | 'lower' | 'unranked';
   /**
    * Cents a checkout would charge THIS viewer now - the admin's preferential price
    * (`amountCentsMember`) when the viewer qualifies, else the full price, or the grid's cell. Null
-   * when the product is not buyable at a price the server can name (held / lower tier, a grid that
-   * does not sell this combination, a free amount). Display it; never recompute money client-side.
-   * Purchase caps and tag gates are NOT folded in. Set only by `listAllProducts`.
+   * when the product is not buyable at a price the server can name (a refused tier, a grid that does
+   * not sell this combination, a free amount). Display it; never recompute money client-side.
+   * Purchase caps and tag gates are NOT folded in. Set by the shop and per-association listings.
    */
   viewerDueCents?: number | null;
   /**

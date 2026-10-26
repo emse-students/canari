@@ -135,6 +135,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'Your current membership tier cannot be compared with this one',
+          'TIER_NOT_RANKABLE',
+          409
+        )
+      )
+    ).toBe(m.shop_tier_not_rankable());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'A checkout of this product is already being opened.',
           'CHECKOUT_IN_PROGRESS',
           409
