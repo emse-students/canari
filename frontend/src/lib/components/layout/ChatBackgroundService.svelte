@@ -998,9 +998,12 @@
         const communityIsNew = globalChannels.isCommunityUnknownToEvent(event);
         const workspace = globalChannels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
+        // The server's casing (`validateChannelName` keeps it), so a salon shows the same on a
+        // device that heard of it live as on one that listed it after a reload.
+        const channelName = event.channelName || 'canal';
         globalChannels.addChannelToWorkspace(workspace.id, {
           id: channelConversationId,
-          name: (event.channelName || 'canal').toLowerCase(),
+          name: channelName,
           isPrivate,
         });
         if (!globalConvs.conversations.has(channelConversationId)) {
@@ -1011,7 +1014,7 @@
               lifecycle: 'active',
               identity: {
                 contactName: channelConversationId,
-                displayName: (event.channelName || 'canal').toLowerCase(),
+                displayName: channelName,
               },
             })
           );
