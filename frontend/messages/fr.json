@@ -1928,6 +1928,8 @@
   "asso_achats_source_product": "Boutique",
   "asso_achats_source_form": "Formulaire",
   "asso_achats_payment_cash": "Espèces / manuel",
+  "asso_achats_not_granted": "Non accordé",
+  "asso_achats_not_granted_hint": "Payé, mais la cotisation n'a pas été accordée : elle n'était pas une montée par rapport à celle que l'acheteur détenait. Remboursez-le ou accordez la cotisation à la main.",
   "asso_achats_payment_online": "En ligne",
   "asso_achats_count_label": [
     {
@@ -3240,8 +3242,8 @@
   "shop_tier_not_a_rise": "Vous avez déjà une cotisation au moins équivalente à celle-ci.",
   "shop_tier_not_rankable": "Votre cotisation actuelle ne peut pas être échangée contre celle-ci en ligne. Contactez l'association.",
   "shop_payment_routing_changed": "Le compte de paiement de l'association vient de changer. Rien n'a été débité : réessayez.",
-  "shop_checkout_in_progress": "Un paiement de ce produit est déjà en train de s'ouvrir. Vous pourrez réessayer dans trois minutes au plus.",
-  "shop_previous_checkout_open": "Votre demande de paiement précédente pour ce produit est encore ouverte. Réessayez quand elle aura expiré, au plus tard 35 minutes après son lancement.",
+  "shop_checkout_in_progress": "Un autre de vos paiements est déjà en train de s'ouvrir. Vous pourrez réessayer dans trois minutes au plus.",
+  "shop_previous_checkout_open": "Une de vos demandes de paiement précédentes est encore ouverte. Réessayez quand elle aura expiré, au plus tard 35 minutes après son lancement.",
   "shop_return_checking": "Vérification du paiement...",
   "shop_return_paid": "Paiement confirmé : votre achat est enregistré.",
   "shop_return_waiting": "Votre paiement n'est pas encore confirmé. Cela peut prendre un moment : revenez dans quelques minutes.",

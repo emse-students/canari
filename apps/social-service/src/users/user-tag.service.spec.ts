@@ -28,6 +28,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     };
     // A transaction runs against the same mock, so a test can assert what happened inside it.
     repo.manager.getRepository = jest.fn(() => repo);
+    repo.manager.findOne = jest.fn((_entity: unknown, opts: unknown) => repo.findOne(opts));
+    repo.manager.delete = jest.fn((_entity: unknown, where: unknown) => repo.delete(where));
     repo.manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(repo.manager));
     const service = new UserTagService(repo as unknown as Repository<UserTag>);
     return { service, repo };
@@ -319,7 +321,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('rejects when cotisation is not enabled (no mode set)', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ slug: 'bde', cotisationMode: null }]);
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: null }, []);
 
       await expect(service.grantCotisant('asso1', 'user1', 'admin1')).rejects.toThrow(
         'Cotisation is not enabled'
@@ -328,7 +330,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('rejects when the association does not exist', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([]);
+      mockCatalogue(repo, null, []);
 
       await expect(service.grantCotisant('missing', 'user1', 'admin1')).rejects.toThrow(
         'Association not found'
@@ -384,20 +386,70 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
+  // A paid form's grant is ranked like a settlement: it never swaps out a dearer tier by the XOR.
+  describe('grantCotisantIfARise', () => {
+    const priced = [
+      { name: 'Sans alcool', variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null },
+      { name: 'Avec alcool', variantKey: 'avec-alcool', amountCents: 3000, priceMatrix: null },
+    ];
+    const holding = (repo: { findOne: jest.Mock }, tagName: string | null) =>
+      repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
+        Promise.resolve(where.tagName === tagName ? { tagName, expiresAt: null } : null)
+      );
+
+    it('refuses a cheaper tier than the one held, and grants and revokes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-avec-alcool');
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'lower' });
+      expect(repo.query).not.toHaveBeenCalled();
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('grants a rise, and swaps the cheaper tier out', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-sans-alcool');
+
+      const outcome = await service.grantCotisantIfARise(
+        'asso1',
+        'user1',
+        'system',
+        'avec-alcool',
+        {}
+      );
+
+      expect(outcome).toMatchObject({ granted: { tagName: 'cotisant:cercle-avec-alcool' } });
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-sans-alcool',
+      });
+    });
+  });
+
   // WP-COT-9: MANAGE_MEMBERS is per-association, so the tag id alone must not be enough to reach
   // a row - an admin of one association could otherwise revoke any other association's cotisant.
   describe('revoke', () => {
-    it('scopes the delete to the issuing association', async () => {
+    it("scopes the delete to the issuing association, under the holder's tier lock", async () => {
       const { service, repo } = makeService();
+      repo.findOne.mockResolvedValue({ id: 'tag1', userId: 'user1', issuingAssocId: 'asso1' });
 
       await service.revoke('tag1', 'asso1');
 
+      expect(repo.findOne).toHaveBeenCalledWith({ where: { id: 'tag1', issuingAssocId: 'asso1' } });
       expect(repo.delete).toHaveBeenCalledWith({ id: 'tag1', issuingAssocId: 'asso1' });
+      const locks = (repo.manager.query as jest.Mock).mock.calls
+        .filter(([sql]) => String(sql).includes('pg_advisory_xact_lock'))
+        .map(([, params]) => params);
+      expect(locks).toEqual([['tier:asso1'], ['tier:asso1:user1']]);
     });
 
     it('throws 404 when the tag belongs to another association', async () => {
       const { service, repo } = makeService();
-      repo.delete.mockResolvedValue({ affected: 0 });
+      repo.findOne.mockResolvedValue(null);
 
       await expect(service.revoke('tag-of-other-asso', 'asso1')).rejects.toThrow('Tag not found');
     });

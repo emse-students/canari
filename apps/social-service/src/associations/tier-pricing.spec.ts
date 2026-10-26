@@ -1,4 +1,10 @@
-import { fixedPriceFor, linkedTierKey, pickHeldTier, tierRelation } from './tier-pricing';
+import {
+  fixedPriceFor,
+  linkedTierKey,
+  pickHeldTier,
+  tierRelation,
+  tierRelationOf,
+} from './tier-pricing';
 
 describe('tierRelation - a tier is ranked by its PRODUCT price, against the tier held', () => {
   const sans = { variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null };
@@ -37,6 +43,27 @@ describe('tierRelation - a tier is ranked by its PRODUCT price, against the tier
     expect(tierRelation(sans, held(grid))).toBe('unranked');
     expect(tierRelation(sans, held(free))).toBe('unranked');
     expect(tierRelation(sans, { variantKey: 'gone', product: null })).toBe('unranked');
+  });
+});
+
+describe('tierRelationOf - a tier among SEVERAL held is held, whichever one ranks', () => {
+  const sans = { variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null };
+  const avec = { variantKey: 'avec-alcool', amountCents: 3000, priceMatrix: null };
+
+  it('answers held for the cheaper of two held tiers, not lower', () => {
+    expect(
+      tierRelationOf(sans, ['avec-alcool', 'sans-alcool'], {
+        variantKey: 'avec-alcool',
+        product: avec,
+      })
+    ).toBe('held');
+  });
+
+  it('ranks like tierRelation otherwise', () => {
+    expect(
+      tierRelationOf(avec, ['sans-alcool'], { variantKey: 'sans-alcool', product: sans })
+    ).toBe('higher');
+    expect(tierRelationOf(avec, [], null)).toBe('none');
   });
 });
 

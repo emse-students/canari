@@ -37,6 +37,10 @@ const maybe = URL ? describe : describe.skip;
 const ASSO = '00000000-0000-4000-8000-0000000000a2';
 const TIER_A = '00000000-0000-4000-8000-0000000000c1';
 const TIER_B = '00000000-0000-4000-8000-0000000000c2';
+/** Retagged by its own test ('c' -> 'c2'), so no other test depends on its key. */
+const TIER_C = '00000000-0000-4000-8000-0000000000c3';
+/** Repriced by its own test, so no other test depends on its price. */
+const TIER_D = '00000000-0000-4000-8000-0000000000c4';
 const TAG_A = 'cotisant:cercle-it-a';
 const TAG_B = 'cotisant:cercle-it-b';
 
@@ -49,15 +53,57 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   let buyerSeq = 0;
   const error = jest.spyOn(Logger.prototype, 'error');
 
-  const options = (synchronize: boolean, entities: Function[]) => ({
+  const options = (
+    synchronize: boolean,
+    entities: Function[],
+    pool: Record<string, unknown> = {}
+  ) => ({
     type: 'postgres' as const,
     url: URL,
     entities,
     synchronize,
     uuidExtension: 'pgcrypto' as const,
     installExtensions: false,
-    extra: { options: `-c search_path=${schema},public` },
+    extra: { options: `-c search_path=${schema},public`, ...pool },
   });
+  const ENTITIES = (): Function[] => [
+    ProductCheckout,
+    PurchaseRecord,
+    AssociationProduct,
+    UserTag,
+    Association,
+    AssociationAudience,
+    Space,
+  ];
+
+  /** The service under test on `source`, with its other services stubbed out. */
+  function makeServices(source: DataSource) {
+    const tagService = new UserTagService(source.getRepository(UserTag));
+    const products = Object.assign(Object.create(ProductsService.prototype) as object, {
+      logger: new Logger('ProductsService'),
+      checkoutRepo: source.getRepository(ProductCheckout),
+      productRepo: source.getRepository(AssociationProduct),
+      assoRepo: source.getRepository(Association),
+      purchaseRecordService: new PurchaseRecordService(source.getRepository(PurchaseRecord)),
+      userTagService: tagService,
+      config: { get: () => undefined },
+      httpService: {
+        post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
+      },
+      // Payments are routed and ready: what is under test is the rank, not the routing.
+      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      activePaymentProvider: () => Promise.resolve('lydia'),
+      routeWith: () =>
+        Promise.resolve({
+          ready: true,
+          delegated: false,
+          connectAccountId: 'vendor-test',
+          targetAssociationId: ASSO,
+          provider: 'lydia',
+        }),
+    }) as unknown as ProductsService;
+    return { products, tagService };
+  }
 
   beforeAll(async () => {
     for (const level of ['log', 'warn', 'debug'] as const) {
@@ -97,9 +143,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
     // Two tiers at the SAME price: whichever settles second is not a rise over the first, so a
     // correct serialisation grants exactly one of them, whatever the order.
-    for (const [id, variantKey] of [
-      [TIER_A, 'a'],
-      [TIER_B, 'b'],
+    for (const [id, variantKey, amountCents] of [
+      [TIER_A, 'a', 1500],
+      [TIER_B, 'b', 1500],
+      [TIER_C, 'c', 2000],
+      [TIER_D, 'd', 2000],
     ] as const) {
       await ds.getRepository(AssociationProduct).save(
         ds.getRepository(AssociationProduct).create({
@@ -108,7 +156,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
           name: `Tier ${variantKey}`,
           type: 'membership',
           variantKey,
-          amountCents: 1500,
+          amountCents,
           currency: 'eur',
           isActive: true,
           grantedTagName: `cotisant:cercle-it-${variantKey}`,
@@ -116,30 +164,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       );
     }
 
-    tags = new UserTagService(ds.getRepository(UserTag));
-    service = Object.assign(Object.create(ProductsService.prototype) as object, {
-      logger: new Logger('ProductsService'),
-      checkoutRepo: ds.getRepository(ProductCheckout),
-      productRepo: ds.getRepository(AssociationProduct),
-      assoRepo: ds.getRepository(Association),
-      purchaseRecordService: new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
-      userTagService: tags,
-      config: { get: () => undefined },
-      httpService: {
-        post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
-      },
-      // Payments are routed and ready: what is under test is the rank, not the routing.
-      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
-      activePaymentProvider: () => Promise.resolve('lydia'),
-      routeWith: () =>
-        Promise.resolve({
-          ready: true,
-          delegated: false,
-          connectAccountId: 'vendor-test',
-          targetAssociationId: ASSO,
-          provider: 'lydia',
-        }),
-    }) as unknown as ProductsService;
+    ({ products: service, tagService: tags } = makeServices(ds));
   });
 
   afterAll(async () => {
@@ -212,15 +237,17 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   }
 
   /**
-   * Reads `pg_locks` until `n` sessions wait on an advisory lock, or a bounded number of reads has
-   * gone by; answers the last count. A read loop, never a clock.
+   * Reads `pg_locks` until `n` sessions wait on an advisory lock (`anyLock`: on any lock, a row lock
+   * included), or a bounded number of reads has gone by; answers the last count. A read loop, never
+   * a clock.
    */
-  async function waitersReach(n: number): Promise<number> {
+  async function waitersReach(n: number, anyLock = false): Promise<number> {
     let waiting = 0;
     for (let i = 0; i < 10_000 && waiting < n; i++) {
       const [row] = (
         await admin.query(
-          `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+          `SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted` +
+            (anyLock ? '' : ` AND locktype = 'advisory'`)
         )
       ).rows as { n: number }[];
       waiting = row.n;
@@ -307,5 +334,121 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
     const rows = await ds.query(`SELECT id FROM product_checkouts WHERE "userId" = $1`, [buyer]);
     expect(rows).toHaveLength(0);
+  });
+
+  it('two tabs opening two SIBLING tiers at once: one attempt opens, the other is refused', async () => {
+    const buyer = newBuyer();
+
+    await admin.query('BEGIN');
+    await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `tier:${ASSO}:${buyer}`,
+    ]);
+    // Both pass the sibling settle and the preparation before the lock - nothing is open yet.
+    const first = settled(service.createCheckoutSession(ASSO, TIER_A, buyer));
+    expect(await waitersReach(1)).toBe(1);
+    const second = settled(service.createCheckoutSession(ASSO, TIER_B, buyer));
+    expect(await waitersReach(2)).toBe(2);
+    await admin.query('COMMIT');
+    const outcomes = await Promise.all([first, second]);
+
+    const refused = outcomes.filter((o) => o.error !== null);
+    expect(refused).toHaveLength(1);
+    expect(((refused[0].error as ConflictException).getResponse() as { code: string }).code).toBe(
+      'CHECKOUT_IN_PROGRESS'
+    );
+    const open = await ds.query(
+      `SELECT "productId" FROM product_checkouts WHERE "userId" = $1 AND status = 'open'`,
+      [buyer]
+    );
+    expect(open).toHaveLength(1);
+  });
+
+  it('every locked path runs on ONE pool connection: a pool of one does not wait for a second', async () => {
+    // A read on another pool connection while the tier lock's transaction holds the only one could
+    // never be served: with a connection timeout it fails, without one it hangs for good.
+    const single = new DataSource(
+      options(false, ENTITIES(), { max: 1, connectionTimeoutMillis: 5_000 })
+    );
+    await single.initialize();
+    try {
+      const { products, tagService } = makeServices(single);
+      const buyer = newBuyer();
+      const { checkoutId } = await products.createCheckoutSession(ASSO, TIER_A, buyer);
+      await (products as any).settlePaidCheckout(checkoutId);
+      expect(await heldTags(buyer)).toEqual([TAG_A]);
+      // A form's ranked grant (the same tier: a renewal), then a manual one, then a revocation.
+      expect(await tagService.grantCotisantIfARise(ASSO, buyer, 'form', 'a', {})).toHaveProperty(
+        'granted'
+      );
+      const granted = await tagService.grantCotisant(ASSO, buyer, 'manager', 'b');
+      await tagService.revoke(granted.id, ASSO);
+      expect(await heldTags(buyer)).toEqual([]);
+    } finally {
+      await single.destroy();
+    }
+  });
+
+  it('a retag and a settlement of the same tier never leave the OLD tag behind', async () => {
+    const holder = newBuyer();
+    const buyer = newBuyer();
+    const oldTag = 'cotisant:cercle-it-c';
+    await ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
+      [holder, oldTag, ASSO]
+    );
+    const c = await openAttempt(buyer, TIER_C);
+
+    // Hold the existing holder's tag row, so the retag stops INSIDE its transaction, at its bulk
+    // UPDATE - after it saved the renamed tier and before it commits.
+    await admin.query('BEGIN');
+    await admin.query(`SELECT 1 FROM user_tags WHERE "userId" = $1 AND "tagName" = $2 FOR UPDATE`, [
+      holder,
+      oldTag,
+    ]);
+    const retag = settled(service.update(ASSO, TIER_C, { variantKey: 'c2' } as never, false));
+    const retagWaits = await waitersReach(1, true);
+    // The settlement must wait for the retag's commit: deriving the tag before it would write the
+    // old name AFTER the rename, which the rename never sees.
+    const paid = settled(settle(c.id));
+    const bothWait = await waitersReach(2, true);
+    // Committed BEFORE asserting: a failed wait must not leave the retag blocked on this row lock.
+    await admin.query('COMMIT');
+    const [r, p] = await Promise.all([retag, paid]);
+    expect(retagWaits).toBe(1);
+    expect(bothWait).toBe(2);
+
+    expect(r.error).toBeNull();
+    expect(p.error).toBeNull();
+    expect(await heldTags(buyer)).toEqual(['cotisant:cercle-it-c2']);
+    expect(await heldTags(holder)).toEqual(['cotisant:cercle-it-c2']);
+  });
+
+  it('a price edited between opening and settlement: the payment is MARKED paid and not granted', async () => {
+    const buyer = newBuyer();
+    await ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
+      [buyer, TAG_B, ASSO]
+    );
+    // Opened as a rise (2000 over 1500) ...
+    const d = await openAttempt(buyer, TIER_D);
+    // ... then the association lowers the tier below the one held, before the payment lands.
+    await ds.query(`UPDATE association_products SET "amountCents" = 1000 WHERE id = $1`, [TIER_D]);
+    try {
+      await settle(d.id);
+    } finally {
+      await ds.query(`UPDATE association_products SET "amountCents" = 2000 WHERE id = $1`, [
+        TIER_D,
+      ]);
+    }
+
+    expect(await heldTags(buyer)).toEqual([TAG_B]);
+    const records = await ds.query(
+      `SELECT status FROM purchase_records WHERE "userId" = $1 AND "productId" = $2`,
+      [buyer, TIER_D]
+    );
+    expect(records).toEqual([{ status: 'paid_not_granted' }]);
+    expect(
+      await new PurchaseRecordService(ds.getRepository(PurchaseRecord)).countPaidNotGranted()
+    ).toBeGreaterThan(0);
   });
 });

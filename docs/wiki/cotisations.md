@@ -223,7 +223,8 @@ another tier of the same association, and `amountCentsMember` must be above zero
 price (checked only when a request touches one of the three columns, so an older row still saves its
 other edits). Renaming a tier's `variantKey` re-points the siblings linked to it in the same
 transaction. A link that still names no tier (a row from before these rules) applies no
-preferential price and logs at WARN.
+preferential price and logs at WARN - judged only when the viewer's tiers were read: a guest
+holds nothing, so the link is not judged on every public page view.
 
 **What the server refuses (`assertTierIsARise`, on every `membership` checkout).** Rank comes from
 DATA with no stored ordinal and no migration: `variantLevel` is null in production and only ever
@@ -237,38 +238,63 @@ purchase records are read, so the code does not depend on how the held tier was 
 |---|---|---|
 | `none` | nothing held | sold as before |
 | `higher` | target price `>` held price | sold, at `fixedPriceFor`'s amount; the XOR swaps at settlement |
-| `held` | the target IS the held tier | 409 `PRODUCT_ALREADY_PURCHASED`, paid for or granted |
+| `held` | the target is a held tier - ANY of them, the cheaper of two included (`tierRelationOf`) | 409 `PRODUCT_ALREADY_PURCHASED`, paid for or granted |
 | `lower` | target price `<=` held price | 409 `TIER_NOT_A_RISE` - equal counts |
 | `unranked` | a tier is held and either side has no fixed price (grid, free amount, a tag whose product is gone) | 409 `TIER_NOT_RANKABLE` - no rank is guessed |
 
 **Two attempts, one tier.** Opening a checkout of a tier first settles the buyer's open attempts of
 EVERY sibling tier (`productsToSettleBefore`): cancelled at the provider, or recorded if already
-paid - so a buyer never holds payable requests for two tiers. And the settlement re-ranks: a tier
-paid while it is no longer `none` or `higher` against what the buyer holds NOW is recorded as a
-payment but NOT granted, so the XOR cannot replace the held tier, and it is logged at ERROR - a
-refund is owed.
+paid. That runs before the lock, so two tabs could both pass it; under the lock the opening also
+refuses `CHECKOUT_IN_PROGRESS` while ANY open attempt of a sibling tier exists
+(`assertNoSiblingAttemptOpen`) - the partial unique index covers only the same product.
 
-**One lock per buyer per association decides the order.** Every path that ranks, grants or swaps a
-buyer's tiers runs in a transaction that first takes
-`pg_advisory_xact_lock(hashtextextended('tier:<associationId>:<userId>', 0))` (`lockBuyerTiers` in
-`users/buyer-tier-lock.ts`, the one implementation) - the one-key 64-bit form the chat service
-already uses for its seat locks, namespaced by the `tier:` prefix. The second comer blocks until the
-first COMMITS, and reads the buyer's tiers only after it holds the lock, so under READ COMMITTED it
-sees the first one's grant: two concurrent settlements of sibling tiers grant exactly one. No clock,
-no retry: the lock is released by the commit or rollback alone. A hash collision between two buyers
-could only make them wait for each other. Settlement takes this lock BEFORE its row lock
-(`FOR UPDATE`), the order every path follows.
+**Paid and not granted is a durable state, `paid_not_granted`.** The settlement re-ranks: a tier
+paid while it is no longer `none` or `higher` against what the buyer holds NOW is not granted, so
+the XOR cannot replace the held tier. The payment is recorded with status `paid_not_granted` on
+`purchase_records` (a varchar with no CHECK - no migration), logged at ERROR, listed with a "Not
+granted" mark in the association's purchases and its export (it is money received), never counted
+as having bought the product, and counted every hour by `PaidNotGrantedScheduler` (:29, `count=0`
+at log, ERROR while non-zero). A refund or a manual grant is owed; nothing yet clears the mark once
+that is done. The settlement ranks on the prices of NOW, so an admin who lowers or grids the target
+between the opening and the payment also lands here: ranking against what the opening decided would
+need that decision stored on the checkout row, a column `product_checkouts` does not have.
 
-| Path | Takes the lock |
+**One lock per buyer per association decides the order, behind one per association.** Every
+per-buyer path takes, in `lockBuyerTiers` (`users/buyer-tier-lock.ts`, the one implementation),
+`pg_advisory_xact_lock_shared` on `tier:<associationId>` and then `pg_advisory_xact_lock` on
+`tier:<associationId>:<userId>` (the one-key `hashtextextended(key, 0)` form the chat service already
+uses). A tier retag takes the association key EXCLUSIVE (`lockAssociationTiers`) and never a buyer
+key. THE ORDER, for every path: **association lock -> buyer lock -> checkout row (`FOR UPDATE`) ->
+`user_tags`**. The second comer on a buyer blocks until the first COMMITS; every path reads the
+products, the tier keys and the buyer's tags only AFTER both locks, so under READ COMMITTED it sees
+the earlier commit. No clock, no retry; a hash collision could only make two keys wait for each
+other.
+
+| Path | Takes |
 | --- | --- |
-| Checkout opening (rank, amount, attempt row) | yes |
-| Settlement (re-rank, grant, XOR) | yes |
-| Cash sale (`grantProductPurchase`) | yes |
-| `grantCotisant` - the roster picker, a paid form's grant | yes |
-| Legacy claim (`grantCotisantUnlessHeld`: "already holds one" is re-read under the lock) | yes |
-| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | yes |
-| Tier retag on a product edit (`planTierRetag`) | no - one bulk rename across every holder of a tier, with no single buyer to key on |
-| Tag revocation | no - it removes, never grants or swaps |
+| Checkout opening (rank, amount, attempt row) | association shared + buyer |
+| Settlement (re-rank, grant, XOR) | association shared + buyer |
+| Cash sale (`grantProductPurchase`; the product re-read after the locks) | association shared + buyer |
+| `grantCotisant` - the roster picker; tiers and tag derived after the locks | association shared + buyer |
+| A paid form's grant (`grantCotisantIfARise`: ranked like a settlement, refused -> `paid_not_granted`) | association shared + buyer |
+| Legacy claim (`grantCotisantUnlessHeld`: "already holds one" read under the locks) | association shared + buyer |
+| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | association shared + buyer |
+| Tag revocation (`revoke`: the holder read from the row, then the delete) | association shared + buyer |
+| Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
+
+**The retag is ONE transaction under the exclusive lock**: it re-reads the product, checks the key,
+saves the renamed tier, re-points the sibling `memberPriceTag` links it reads INSIDE, and renames
+every holder's tag. A per-buyer path that derived the OLD tag before the rename and wrote it after
+would leave a tag the rename never saw; the shared lock makes it wait for the rename's commit. The
+manual grants, the cash sale and the raw tag grant are a manager's decision and are NOT ranked: a
+manager may still downgrade someone on purpose.
+
+**Every read inside a locked transaction goes through that transaction's `manager`.** A read on
+another pool connection would hold the lock while waiting for a free connection: ten such
+transactions fill the default pool (10), each waits for an eleventh, and the service hangs for good.
+`TypeOrmModule` also sets `extra.connectionTimeoutMillis: 10_000` in `app.module.ts`: node-postgres
+waits forever by default (0), and 10 s is far above any query here, so a request that cannot get a
+connection fails alone instead of everything hanging.
 
 **Nothing that calls another service runs under the lock**, so a slow peer can never hold a buyer
 waiting. A checkout opening is split in two: `preparePurchase` fetches the active payment provider,
@@ -278,15 +304,17 @@ product by id and recomputes the routing with the provider already fetched; if t
 target association no longer matches, it refuses `409 PAYMENT_ROUTING_CHANGED` - no retry, nothing
 opened, and trying again uses the new account.
 
-`product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL, asserting the wait
+`product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL, asserting every wait
 through `pg_locks` rather than a timer: two concurrent settlements; a settlement and a checkout
 opening each blocked on a held lock, then re-reading the grant made under it; a manual grant and a
-settlement queued on one buyer's lock, ending on exactly one tier. With the lock removed, each fails.
+settlement on one buyer, ending on one tier; two tabs opening two sibling tiers, one refused; a
+retag and a settlement of the same tier, never leaving the old tag; a price lowered between opening
+and payment, marked `paid_not_granted`; and every locked path run on a pool of ONE connection. With
+the lock, the sibling check or the manager-bound read removed, the matching case fails.
 
-A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The manual
-paths (`grantCotisant`, the cash grant) are a manager's decision and are NOT ranked: a manager may
-still downgrade someone on purpose. The provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in
-core-service) still answers `AMOUNT_OUT_OF_RANGE` before any request is issued.
+A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The
+provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in core-service) still answers `AMOUNT_OUT_OF_RANGE`
+before any request is issued.
 
 **What the listings get.** `/products/all` and the per-association listing annotate every product
 with `viewerTierRelation` (the table's relation, `none` for a non-tier or a guest) and
