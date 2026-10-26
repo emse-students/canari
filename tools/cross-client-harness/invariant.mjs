@@ -42,7 +42,7 @@ import { evaluate, reloadAndWait } from './cdp.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, srvLines } from './estate.mjs';
 import { closeOverlays } from './groupnav.mjs';
-import { behindServer, invariantVerdict, settledRounds } from './invariantverdict.mjs';
+import { behindServer, invariantVerdict, settleDecision, settledRounds } from './invariantverdict.mjs';
 import { ESTATE } from './site.mjs';
 import { consoleEntries, watch } from './watch.mjs';
 
@@ -299,16 +299,10 @@ export async function checkInvariant({ group, targets, members, conversation, fr
    */
   const settledJudge = async (label, { judgeUnsettled }) => {
     const settled = await awaitSettled(slots.filter((s) => s.member), group);
-    const last = settled.rounds.at(-1);
-    const pass = settled.settled || judgeUnsettled
-      ? await judge(label)
-      : {
-          pass: label,
-          ok: false,
-          failures: [],
-          approximations: [],
-          unsettled: `the group never settled ${label} (${settled.ms} ms, ${settled.rounds.length} round(s); last: server at ${last?.serverEpoch}, behind: ${last?.behind.join(' ') || 'nobody'})`,
-        };
+    const decision = settleDecision(label, settled, { judgeUnsettled });
+    const pass = decision.judge ? await judge(label) : decision.unjudged;
+    if (decision.approximation) pass.approximations.push(decision.approximation);
+    pass.settleRounds = settled.rounds.length;
     pass.settleMs = settled.ms;
     pass.settled = settled.settled;
     return pass;
