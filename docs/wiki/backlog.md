@@ -149,12 +149,6 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   after "Welcome complete: re-queued 1 buffered message(s)" and before "[HISTORY] ... holds 1 frame(s)
   it can never read - reconciling". The frame predates the membership, so under the no-past-for-new-
   members decision it is not a loss: drop it at INFO with its reason, once.
-- **A freshly minted device asks the server three times whether its own KeyPackage exists while it
-  already knows its first publication is running.** DEV-1, W3: census "0 proven" and a generate round
-  in flight, yet each of the three key-group external joins does `GET /api/mls/devices/<user>/<device>/key-package`
-  and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
-  KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
-  before the first round (never learn by failing what a fact could tell).
 - **Restored notices carry no proof and no mark (the `[AUTHORSHIP] ... carry no author proof` lines of
   DEV-1).** Every one checked is a system notice row (`sender 'system'`), never a user message: the
   count equals the system rows of each batch. Two classes. (a) Device-local rows relayed into other

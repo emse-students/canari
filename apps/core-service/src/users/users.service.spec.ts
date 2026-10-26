@@ -315,6 +315,23 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('does not write when jsonb handed the cursus keys back in its own order', async () => {
+    const stored = {
+      id: 's1',
+      displayName: 'A B',
+      firstName: 'A',
+      lastName: 'B',
+      ...profile,
+      // jsonb orders keys shorter first: promo before formation.
+      cursus: [{ promo: 2025, formation: 'ISMIN' }],
+      promo: 2025,
+      formation: 'ISMIN',
+    };
+    const { service, update } = makeService(stored);
+    await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('refuses, typed, a row read and gone before its update - and re-creates nothing', async () => {
     const stored = { id: 's1', displayName: 'Old', ...profile, promo: 2025, formation: 'ISMIN' };
     const { service, save } = makeService(stored, 0);
