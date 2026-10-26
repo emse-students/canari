@@ -38,6 +38,18 @@ export const KILL3_WINDOWS = {
   'after-receive': null,
 };
 
+/**
+ * THE UNSENT STATES W1's OWN BUBBLE MAY SHOW, as the French interface prints them
+ * (`MessageMetadata.svelte`, `messages/fr.json`):
+ * - `msg_en_attente` (queued in the outbox);
+ * - `common_sending_label` (in flight);
+ * - `msg_echec` (failed);
+ * - `msg_non_confirme` (no answer).
+ * Read on the bubble before any later send: the queued and in-flight states show on the LAST own
+ * message only.
+ */
+export const UNSENT_LABELS = ['En attente\u2026', 'Envoi\u2026', '\u00c9chec', 'Non confirm\u00e9'];
+
 /** The window run `i` of KILL-3 plays, in rotation, so twelve runs are three of each. */
 export const kill3WindowOf = (i) => Object.keys(KILL3_WINDOWS)[i % 4];
 
@@ -51,8 +63,10 @@ export const kill3WindowOf = (i) => Object.keys(KILL3_WINDOWS)[i % 4];
  * - `accepts` / `moved`: what the gate decided in the run. A plain send commits nothing, so a commit
  *   here is a heal, and a heal on the normal path is a defect.
  *
- * WHEN THE MESSAGE NEVER REACHED THE SERVER, it may be resent once or reported unsent, and which of
- * the two is recorded. A second copy is never acceptable.
+ * WHEN THE MESSAGE NEVER REACHED THE SERVER (`send-before-server`), the outbox holds it, and the
+ * revived page either resends it once or shows it unsent (`unsentLabel`: one of
+ * {@link UNSENT_LABELS} on W1's own bubble). A message that neither arrives nor says it did not is a
+ * silent loss, and it fails. A second copy is never acceptable.
  *
  * @param {object} p
  * @param {keyof typeof KILL3_WINDOWS} p.window
@@ -62,12 +76,21 @@ export const kill3WindowOf = (i) => Object.keys(KILL3_WINDOWS)[i % 4];
  * @param {number} p.accepts
  * @param {number} p.moved
  * @param {number|null} p.caughtUpMs
+ * @param {string|null} [p.unsentLabel] the unsent state W1's own bubble showed, read before any later send
  */
-export function kill3Outcome({ window, killedShown, outShown, inShown, accepts, moved, caughtUpMs }) {
+export function kill3Outcome({ window, killedShown, outShown, inShown, accepts, moved, caughtUpMs, unsentLabel = null }) {
   const mustLand = window !== 'send-before-server';
   return {
-    outcome: killedShown === 1 ? 'delivered once' : killedShown === 0 ? 'not delivered' : 'duplicated',
+    outcome: killedShown === 1 ? 'delivered once' : killedShown === 0 ? (unsentLabel ? `shown unsent (${unsentLabel})` : 'silently lost') : 'duplicated',
     assertions: [
+      ...(mustLand
+        ? []
+        : [
+            {
+              what: `delivered, or shown unsent on W1 - never silently lost (${killedShown === 1 ? 'delivered' : unsentLabel ? `unsent: ${unsentLabel}` : 'NEITHER'})`,
+              ok: killedShown === 1 || (killedShown === 0 && unsentLabel !== null),
+            },
+          ]),
       {
         what: `the killed message shows ${mustLand ? 'exactly once' : 'at most once'} (${killedShown})`,
         ok: mustLand ? killedShown === 1 : killedShown <= 1,
@@ -133,7 +156,7 @@ export const KILL_ROWS = {
     what:
       "W1's whole browser killed a short time after a SEND, or after a RECEIVE, 12 runs over four windows (`KILL3_WINDOWS`). " +
       'Pass conditions after the relaunch:\n' +
-      '- the killed message shows once (at most once when it never reached the server);\n' +
+      '- the killed message shows once (one that never reached the server is resent once or shown unsent on W1 - never silently lost);\n' +
       '- no commit comes of it;\n' +
       '- the next message each way arrives.',
     note:

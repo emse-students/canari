@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn,REFRESH_COOKIE_TTL_S, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, REFRESH_COOKIE_TTL_S, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -39,8 +39,11 @@ ok('delivered once, nothing committed, the ratchet alive -> all hold', allOk(k3(
 ok('the next message out lost (a rolled-back ratchet) fails', failing(k3({ outShown: 0 }).assertions) === 1);
 ok('a stored message lost after the kill fails', failing(k3({ window: 'send-after-accept', killedShown: 0 }).assertions) === 1);
 ok('a received message shown twice after the revival fails', failing(k3({ window: 'after-receive', killedShown: 2 }).assertions) === 1);
-ok('a message that never reached the server may be absent', allOk(k3({ window: 'send-before-server', killedShown: 0 }).assertions));
-ok('... but never twice', failing(k3({ window: 'send-before-server', killedShown: 2 }).assertions) === 1);
+ok('a message that never reached the server may be absent if W1 shows it unsent', allOk(k3({ window: 'send-before-server', killedShown: 0, unsentLabel: UNSENT_LABELS[2] }).assertions));
+ok('... and resent once is fine', allOk(k3({ window: 'send-before-server', killedShown: 1 }).assertions));
+ok('... but absent with no unsent state is a SILENT LOSS, and fails', failing(k3({ window: 'send-before-server', killedShown: 0 }).assertions) === 1 && k3({ window: 'send-before-server', killedShown: 0 }).outcome === 'silently lost');
+ok('the unsent labels are the four states, in the French interface', UNSENT_LABELS.length === 4 && UNSENT_LABELS.includes('\u00c9chec'));
+ok('... but never twice', failing(k3({ window: 'send-before-server', killedShown: 2 }).assertions) >= 1);
 ok('a commit coming of a plain send is a heal, and fails', failing(k3({ accepts: 1, moved: 1 }).assertions) === 1);
 ok('a row that skipped a window fails its coverage', failing(kill3WindowsOwn([{ window: 'after-send' }, { window: 'after-receive' }])) === 1);
 ok('every window played -> coverage holds', allOk(kill3WindowsOwn(Object.keys(KILL3_WINDOWS).map((window) => ({ window })))));
