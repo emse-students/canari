@@ -318,8 +318,10 @@ const ACTIONS = {
     await Promise.all([fa.release(), fd.release()]);
     const J = seats.seat[spec.joiner].cx;
     const listedTrail = [];
+    const stateTrail = [];
     for (let i = 0; i < 30; i++) {
       listedTrail.push((await awaitListed(J, c.group.name, 1_000)) !== null);
+      stateTrail.push(seatState(serverView(c.group.id), c.user[spec.joiner]).state);
       await sleep(1_000);
     }
     const ra = await fa.disarm();
@@ -331,7 +333,7 @@ const ACTIONS = {
       members: after.state === 'admitted' ? [...c.members, spec.joiner] : c.members,
       records: { [spec.race.approve]: ra.records, [spec.race.decline]: rd.records },
       detail: { asks, releasedAt, final: after, refusal },
-      judge: () => raceOwn({ outcomes, after, listedTrail, refusal }),
+      judge: () => raceOwn({ outcomes, after, listedTrail, stateTrail, refusal }),
     };
   },
 
