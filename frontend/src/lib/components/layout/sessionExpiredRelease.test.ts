@@ -32,7 +32,7 @@ const source = readFileSync(
 
 /** The body of `handleSessionExpired`, from its signature to the next function declaration. */
 const handlerBody = (() => {
-  const start = source.indexOf('async function handleSessionExpired()');
+  const start = source.indexOf('async function handleSessionExpired(');
   expect(start).toBeGreaterThan(-1);
   const rest = source.slice(start + 1);
   const end = rest.search(/\n {2}(?:async )?function /);
@@ -66,14 +66,15 @@ describe('a session loss releases every waiting caller, not only the first', () 
     // Only a logout may be deduplicated, and it must stay deduplicated: `clearAuth` revokes the
     // refresh cookie server-side, and a second `goto` mid-navigation is a wasted round trip.
     expect(after).toMatch(/_sessionExpiredHandled = true;/);
-    expect(after).toMatch(/await clearAuth\(\)/);
+    expect(after).toMatch(/await endExpiredSession\(/);
+    expect(after).toMatch(/signOut: clearAuth/);
     expect(after).toMatch(/goto\(resolve\(internalPath\(loginPath\)\)/);
     expect(handlerBody.slice(0, guard)).not.toMatch(/clearAuth/);
   });
 
   it('reads the page the user was going to BEFORE the logout awaits, and carries it to /login', () => {
     const target = handlerBody.indexOf('loginAfterSessionExpiry(');
-    const clear = handlerBody.indexOf('await clearAuth()');
+    const clear = handlerBody.indexOf('await endExpiredSession(');
     expect(target).toBeGreaterThan(-1);
     // `navigating.to` is gone once the awaited logout lets the pending navigation settle: the read
     // after it is the bare `/login` that dropped a tapped post push (Mi 9T, 2026-10-08).
@@ -155,18 +156,20 @@ describe('the PIN modal is released by a proof, never by a clock', () => {
  * the sign-out would run first and the reset would find the account it was owed already gone.
  */
 describe('a session the revocation ended resets the device first', () => {
-  it('settles the revocation before the sign-out, with the refused account', () => {
+  it('hands the revocation settlement, with the refused account, to the one sign-out decision', () => {
+    const call = handlerBody.indexOf('await endExpiredSession(');
     const settle = handlerBody.indexOf('globalSession.settleSessionEndByRevocation(');
-    const signOut = handlerBody.indexOf('await clearAuth()');
-    expect(settle).toBeGreaterThan(-1);
-    expect(signOut).toBeGreaterThan(settle);
-    expect(handlerBody.slice(settle, signOut)).toContain(
-      "globalSession.userId || currentUserId() || ''"
-    );
+    expect(call).toBeGreaterThan(-1);
+    expect(settle).toBeGreaterThan(call);
+    expect(handlerBody.slice(settle)).toContain("globalSession.userId || currentUserId() || ''");
   });
 
   it('accuses a failed reset instead of swallowing it', () => {
-    expect(handlerBody).toContain(
+    const decision = readFileSync(
+      join(process.cwd(), 'src/lib/composables/session/endExpiredSession.ts'),
+      'utf8'
+    );
+    expect(decision).toContain(
       '[SECURITY] The revoked-device reset FAILED - local data may remain'
     );
   });

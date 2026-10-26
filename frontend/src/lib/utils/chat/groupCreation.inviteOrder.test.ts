@@ -197,6 +197,51 @@ describe('inviteMembersToGroup - a person the server did not admit', () => {
     expect(d.order.some((s) => s.startsWith('welcome:'))).toBe(false);
   });
 
+  it('narrates a Decline that won the race as an info line, never a warning', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      throw admitRefused(devices.map((x) => x.userId));
+    }) as never;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('abandoned'))).toEqual(
+      []
+    );
+    expect(
+      info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('abandoned before its stage (not-admitted)'))
+    ).toHaveLength(1);
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it('still warns when the Add went out without a seat generation: a read failure, not a lost race', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => {
+      throw new Error('roster unreadable');
+    }) as never;
+    d.mlsService.addMembersBulk = vi.fn(async (_g: string, devices: { userId: string }[]) => {
+      throw admitRefused(devices.map((x) => x.userId));
+    }) as never;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(
+      warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('abandoned before'))
+    ).toHaveLength(1);
+    expect(info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('abandoned'))).toEqual(
+      []
+    );
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
   it('stops on a refusal naming nobody the Add offered: no progress, no rebuild', async () => {
     const d = inviteDeps();
     d.mlsService.addMembersBulk = vi.fn(async () => {
@@ -263,6 +308,29 @@ describe('inviteMembersToGroup - answering a join ask', () => {
       reason: 'removed-meanwhile',
     });
     expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('narrates an ask settled before the Add as an info line, never a warning', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }],
+      seatGeneration: 5,
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering });
+
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('abandoned'))).toEqual(
+      []
+    );
+    expect(
+      info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes('(removed-meanwhile): the ask of joe was settled'))
+    ).toHaveLength(1);
+    warn.mockRestore();
+    info.mockRestore();
   });
 
   it('stages nothing when the seat now awaits under ANOTHER ask', async () => {

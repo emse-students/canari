@@ -411,6 +411,10 @@ async function processBulkAddition(
 
   log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
 
+  // Whether this Add went out WITH a seat generation (see `rosterPremise`). Without one the server
+  // cannot date the departures it checks, so its refusal is a client-side read failure and not a race.
+  let seatGenerationCarried = false;
+
   // Same reason as the 1-to-1 path: the server's refusal at `addGroupMember` is authoritative, but
   // it lands after the Welcomes have gone out. Anyone a block stands between is dropped from the
   // batch here, and the rest of the invitation proceeds - one blocked person must not cancel an
@@ -504,6 +508,7 @@ async function processBulkAddition(
         resumed,
         answering
       );
+      seatGenerationCarried = premise.seatGeneration !== undefined;
       const raced = await addDevicesRebuildingOnRace(
         mlsService,
         conversation.id,
@@ -650,8 +655,15 @@ async function processBulkAddition(
     // that could not be READ is a rebuild that could not be justified - retried like a lost race.
     if (e instanceof AddAbortedError) {
       log(`[SYNC] the Add was abandoned before its stage (${e.why}) - nobody added`);
-      console.warn(`[SYNC] processBulkAddition: ${e.message}`);
-      // Refused to admit everyone it named: a Decline, a departure or a block came first.
+      // Refused to admit everyone it named: a Decline, a departure or a block came first. With a seat
+      // generation carried that is the designed outcome of a race the member lost on purpose: an info
+      // line with the same facts. WITHOUT one (the roster read failed, or an old resumed entry) the
+      // server's refusal of an undated departure is a client-side read failure, so it still warns.
+      const designed =
+        (e.why === 'removed-meanwhile' || e.why === 'not-admitted') &&
+        (seatGenerationCarried || e.seatGenerationKnown);
+      if (designed) console.info(`[SYNC] processBulkAddition: ${e.message}`);
+      else console.warn(`[SYNC] processBulkAddition: ${e.message}`);
       if (e.why === 'removed-meanwhile' || e.why === 'not-admitted') {
         return notAdded('removed-meanwhile');
       }
@@ -755,7 +767,8 @@ async function rosterPremise(
       throw new AddAbortedError(
         groupId,
         'removed-meanwhile',
-        `the ask of ${answering.userId} was settled before the Add was built`
+        `the ask of ${answering.userId} was settled before the Add was built`,
+        firstRead.seatGeneration !== null && firstRead.seatGeneration !== undefined
       );
     }
   }

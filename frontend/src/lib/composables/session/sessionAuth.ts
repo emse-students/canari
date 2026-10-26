@@ -837,7 +837,7 @@ export async function answerDeviceRevokedFrame(
   // unconditionally: it clears the auth and goes to /login. Nothing is lost by the change,
   // because the message it replaces was displayed in a modal the app abandoned two seconds
   // later anyway.
-  cb.onSessionExpired?.();
+  cb.onSessionExpired?.({ alreadySignedOut: true });
 }
 
 /**
@@ -870,6 +870,19 @@ export async function settleSessionEndByRevocationImpl(
       '[SECURITY] Session ended by a device revocation, but no account is known on this device - nothing to reset.'
     );
     return false;
+  }
+  // A RESET ALREADY RUNNING OR DONE IS CHECKED BEFORE THE IDENTITY COMPARISON below, because the reset
+  // deletes the very key that comparison reads (`mls_device_id_<userId>`): a refusal arriving mid-wipe
+  // would read `none`, log a false "not this device" and sign out a second time while the wipe runs.
+  // The wipe is started only by a discoverer that confirmed THIS device's revocation, so joining it
+  // is the answer; its own `clearAuth` is the sign-out.
+  if (revokedDeviceWipe) {
+    await wipeRevokedDevice(ctx, cb);
+    return true;
+  }
+  if (revokedDevicesReset.has(`${revoked.userId}:${revoked.deviceId}`)) {
+    cb.log('[SECURITY] Revoked-device reset already done for this device - nothing erased again.');
+    return true;
   }
   // ONLY THIS DEVICE OF THIS ACCOUNT: the session may be bound to an id this install has rotated
   // away from (its revocation says nothing about the current one), and a refusal naming another

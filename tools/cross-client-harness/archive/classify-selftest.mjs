@@ -36,6 +36,8 @@ import {
   admissionJoinerNarration,
   admissionMemberNarration,
   REVOKED_SIGN_OUT_NARRATION,
+  revokedLogoutOnce,
+  signOutCount,
   PAGE_BOOT_NARRATION,
   REFUSED_FOR_LACK_OF_ROW_NARRATION,
   stripStamp,
@@ -1573,7 +1575,7 @@ const FORGIVE_CASES = [
       ['log', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 10 },
+    { clean: true, unmatched: 12 },
   ],
   [
     "a revoked device's MLS client torn down, forgiven (alpha.5 DEV-2)",
@@ -1582,7 +1584,7 @@ const FORGIVE_CASES = [
       ['info', '[14:59:08.014] [WS] Paused - disconnect sent, socket released until the next foreground.'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 11 },
+    { clean: true, unmatched: 13 },
   ],
   [
     "a revoked device's requests refused once its session ended, forgiven (alpha.5 DEV-3)",
@@ -1592,13 +1594,13 @@ const FORGIVE_CASES = [
       ['info', '[15:46:39.091] [SYNC] WASM purge skipped - the server list could not be fetched'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: true, unmatched: 10 },
+    { clean: true, unmatched: 12 },
   ],
   [
     "control: a revoked device's undrained backlog at ERROR is not narration",
     [['error', '[15:46:38.785] [PENDING] Pending fetch failed after 0 message(s) - the backlog for x is UNDRAINED and stays queued until the next reconnect: SessionEndedByDeviceRevocationError']],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 13 },
+    { clean: false, unmatched: 15 },
   ],
   [
     'control: the same teardown on a device nobody revoked stays dirt',
@@ -1610,7 +1612,44 @@ const FORGIVE_CASES = [
     'control: the revoked device signing out TWICE is not narrated (the known P3)',
     [['info', '[14:59:08.216] [A] logout✓200 79ms']],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 13 },
+    { clean: false, unmatched: 15 },
+  ],
+  [
+    "a revoked device's pending fetch ended by its own revocation, and the redirect that signs out no more, forgiven",
+    [
+      ['info', '[14:59:07.900] [PENDING] Pending fetch ended after 0 message(s): this device was revoked by its owner, nothing remains to drain'],
+      ['log', '[14:59:08.100] [AUTH] Session expired - the revoked-device reset already signed out; redirecting to /login.'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 15 },
+  ],
+  [
+    'control: the same two lines on a device nobody revoked stay dirt, and the pending fetch at error is never forgiven',
+    [
+      ['info', '[14:59:07.900] [PENDING] Pending fetch ended after 0 message(s): this device was revoked by its owner, nothing remains to drain'],
+      ['log', '[14:59:08.100] [AUTH] Session expired - the revoked-device reset already signed out; redirecting to /login.'],
+      ['error', '[14:59:07.900] [PENDING] Pending fetch failed after 0 message(s) - the backlog for u:d is UNDRAINED and stays queued until the next reconnect:'],
+    ],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 20 },
+  ],
+  [
+    'a revoked device that signed out ONCE: its one logout line is forgiven where it was counted',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    [...REVOKED_SIGN_OUT_NARRATION, revokedLogoutOnce(() => ['[14:59:08.216] [A] logout✓200 79ms'])],
+    { clean: true, unmatched: 15 },
+  ],
+  [
+    'control: a SECOND logout that arrives later is counted at classification time - neither line is forgiven',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    [...REVOKED_SIGN_OUT_NARRATION, revokedLogoutOnce(() => ['[14:59:08.216] [A] logout✓200 79ms', '[14:59:09.001] [A] logout✗ 12ms: TypeError - signed out locally'])],
+    { clean: false, unmatched: 16 },
+  ],
+  [
+    'control: the counted-once needle is not part of the revoked narration, so the row must earn it',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 15 },
   ],
   [
     "a fresh device's restore of unproven messages, forgiven on the minted seat",
@@ -1643,7 +1682,7 @@ const FORGIVE_CASES = [
       ['error', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
     ],
     REVOKED_SIGN_OUT_NARRATION,
-    { clean: false, unmatched: 13 },
+    { clean: false, unmatched: 15 },
   ],
   [
     "the adder's own memberAdded notice is forgiven at debug (#2412)",
@@ -1717,7 +1756,7 @@ const FORGIVE_CASES = [
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
-    { clean: true, unmatched: 5 },
+    { clean: true, unmatched: 7 },
   ],
   [
     'control: the same three lines in a row where no gate refusal is expected (ADM-2) stay dirt',
@@ -1739,7 +1778,51 @@ const FORGIVE_CASES = [
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 098bfb7f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 6 },
+    { clean: false, unmatched: 8 },
+  ],
+  [
+    "a Decline that won the race, narrated by the approver at info with the group named, in a row that plays it (ADM-3), forgiven",
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…']],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
+    { clean: true, unmatched: 9 },
+  ],
+  [
+    'control: that line in a row that plays no refusal (ADM-2), for another group, or at warn, stays dirt',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    'an ask settled before the Add, narrated at info with the group named, in a row that plays it (ADM-10), forgiven',
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: true, unmatched: 8 },
+  ],
+  [
+    'control: that line in a row that plays no refusal stays dirt',
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    'control: the settled-ask line naming ANOTHER group, or at warn, stays dirt in ADM-10',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 9, warnings: 1 },
+  ],
+  [
+    'control: the same line naming ANOTHER group, or logged at warn (a read failure), stays dirt in ADM-10',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 9, warnings: 1 },
   ],
   [
     'control: an Add abandoned for a reason nobody declared, or the refusal at warn, is not forgiven in ADM-10',
@@ -1748,7 +1831,7 @@ const FORGIVE_CASES = [
       ['warning', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 7, warnings: 1 },
+    { clean: false, unmatched: 9, warnings: 1 },
   ],
   [
     "the joiner's wait and both endings in the row's group, forgiven",
@@ -1921,6 +2004,17 @@ const CUT_LINE =
   const ok = Object.keys(d).join() === 'W1' && d.W1 === 'info [WS RCV] routine\nerror boom';
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'consoles'.padEnd(12)} a non-PASS row keeps each client's whole console, routine lines included`);
   if (!ok) failures++;
+}
+
+// THE SIGN-OUT COUNTER reads zero, one and two - the row asserts exactly one.
+{
+  const okCount =
+    signOutCount(['[A] logout✓200 61ms', '[A] other']) === 1 &&
+    signOutCount(['[A] logout✓200 61ms', '[A] logout✗ 12ms: lost']) === 2 &&
+    signOutCount(['[A] logout✓200 61ms', '[A] logout✓200 59ms']) === 2 &&
+    signOutCount([]) === 0;
+  console.log(`${okCount ? 'ok  ' : 'FAIL'} ${'logouts'.padEnd(12)} the sign-out counter reads zero, one and two`);
+  if (!okCount) failures++;
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');

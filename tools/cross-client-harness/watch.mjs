@@ -2300,6 +2300,11 @@ export function admissionMemberNarration(group, { admitted = false, declined = f
       ? [
           atLevels(['log', 'info'], new RegExp(String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`)),
           atLevels(['log', 'info'], /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/),
+          // The same refusal as the member's console line (a Decline won the race and a seat generation was
+          // carried): per group, at info only - at warn it is the client-side read failure and stays dirt.
+          atLevels(['info'], new RegExp(String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`)),
+          // ...and the approver's Add stopped because the ask was settled first (another member declined, or the asker withdrew).
+          atLevels(['info'], new RegExp(String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`)),
           atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`)),
         ]
       : []),
@@ -2447,9 +2452,10 @@ export const FRESH_DEVICE_RESTORE_NARRATION = [
  * (`1.4.1-alpha.3`, 2026-10-25). `clearAuthUnderway` ends every per-account store in turn and each one
  * says what it forgot; on any device that was NOT revoked these lines are a sign-out nobody asked for.
  *
- * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. DEV-2's W3 logged it TWICE - the wipe's `clearAuth`
- * and then the session-expired redirect's (the backlog's P3, "A revoked device signs out twice"). Both
- * stay dirt until that is fixed, rather than being forgiven by a needle that cannot count.
+ * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. A revoked device signs out ONCE (the wipe's `clearAuth`; the
+ * session-expired redirect is told `alreadySignedOut`) and a needle cannot count, so the line is forgiven by
+ * {@link revokedLogoutOnce} ONLY while the live console holds exactly one (`devrows.mjs`); a
+ * second one stays dirt AND fails the row's counting assertion.
  */
 export const REVOKED_SIGN_OUT_NARRATION = [
   atLevels(['debug'], /^\[TRUST\] device-event consumer removed$/),
@@ -2463,6 +2469,10 @@ export const REVOKED_SIGN_OUT_NARRATION = [
   // The MLS client torn down and its socket released (alpha.5 DEV-2): the revocation's own teardown.
   atLevels(['log', 'info'], /^\[WS\] MLS client destroyed - its socket is released and no open may follow$/),
   atLevels(['log', 'info'], /^\[WS\] Paused - disconnect sent, socket released until the next foreground\.$/),
+  // The pending fetch ended by this device's own revocation (the server deleted the backlog): a designed end.
+  atLevels(['info'], /^\[PENDING\] Pending fetch ended after \d+ message\(s\): this device was revoked by its owner, nothing remains to drain$/),
+  // The session-expired handler was told the reset already signed out: it redirects and signs out no more.
+  atLevels(['log', 'info'], /^\[AUTH\] Session expired - the revoked-device reset already signed out; redirecting to \S+\.$/),
   // Its requests refused once the session ended, the renewal latched dead, the purge that needs the
   // server's list skipped (alpha.5 DEV-2/3/6).
   atLevels(['log', 'info'], /^\[AUTH\] 401 on GET \/api\/\S+ - renewing the token and sending the same request once more$/),
@@ -2481,6 +2491,23 @@ export const REVOKED_REFUSALS = [
   { path: /^\/api\/mls\/messages\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+(\?|$)/, status: [401] },
   { path: /^\/api\/channels\/unread-counts$/, status: [401] },
 ];
+
+/**
+ * The ONE sign-out line of a revoked device, forgiven only where it is COUNTED as one - and counted
+ * when the classifier ASKS, not from a snapshot: `readLines` is read at each match, so a second logout
+ * arriving after the row's own verdict is still counted and the first is no longer forgiven.
+ *
+ * @param {() => string[]} readLines the seat's console lines, read live
+ */
+export function revokedLogoutOnce(readLines) {
+  const re = /^\[A\] logout✓\d+ \d+ms$/;
+  return atLevels(['log', 'info'], { test: (s) => re.test(s) && signOutCount(readLines()) === 1, toString: () => String(re) + ' (counted once)' });
+}
+
+/** How many sign-outs a console holds: `[A] logout✓<status>` AND `[A] logout✗` (refused or lost), the sign-outs the app sent. */
+export function signOutCount(lines) {
+  return lines.filter((l) => /\[A\] logout[✓✗]/.test(l)).length;
+}
 
 /**
  * WHAT THE AUTH STORE SAYS WHILE A DEVICE ERASES ITSELF - two lines, and only for a revoked device.
