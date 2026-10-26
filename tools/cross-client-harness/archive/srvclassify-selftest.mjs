@@ -932,8 +932,22 @@ check(
   'a device deletion is reported',
   matches(
     NOTABLE_RULES,
-    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc reason=owner sessionsEnded=1 groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
   ),
+  true
+);
+check(
+  '... but not one the server could not signal',
+  matches(
+    NOTABLE_RULES,
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc reason=owner sessionsEnded=1 groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=false'
+  ),
+  false
+);
+check(
+  'a session ended, its push binding read and its registrations deleted, is reported',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [InternalController] [PUSH_SESSION_END] binding read user=f7a9bb80 device=web-abc registered=false session=none') &&
+    matches(NOTABLE_RULES, '[Nest] 1 - LOG [InternalController] [PUSH_SESSION_END] user=f7a9bb80 session=e4ab0cde device=unnamed ifBoundTo=n/a removedBySession=0 removedStale=0'),
   true
 );
 check(
@@ -1137,6 +1151,12 @@ check(
   // the general classifier, in an admission row too.
   check('R6 unclaimed   key material carried by reference (in ADM-3)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] key-material carried by reference: 9000B, budget 3734B'), 'ADM-3'), 'unclaimed');
   check('R6 unclaimed   a long frame carried by reference (in DEV-2)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] long frame carried by reference: 5000B, budget 3734B'), 'DEV-2'), 'unclaimed');
+  // A REVOKED SESSION'S TOKEN REFUSED: the revocation rows' own.
+  {
+    const refused = D('AuthController', 'Access refused again: session sid=e24f05df-47fc-4b42-92ed-627d08b86a5f has ended');
+    check('R6 expected   a revoked session refused (DEV-3)', verdictIn(refused, 'DEV-3'), 'expected');
+    check('R6 dirt       a revoked session refused (in ADM-1)', verdictIn(refused, 'ADM-1'), 'out-of-row');
+  }
   // TWO RULES READ ONE LINE: the one naming the row judges it (ADM-3's Decline winning, alpha.5).
   {
     const withdrawn = L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`);

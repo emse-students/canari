@@ -974,6 +974,11 @@ const NOTABLE = [
   // `BaseMlsService.resumeFramesHeldByCommit`). A commit's own tail: reported for the reason a commit
   // is, never routine. It is printed only when work is runnable, so a count of 0 is not its shape.
   /^\[QUEUE\] the commit of [0-9a-f]{8}\.\.\. released the MLS lock - draining the [1-9]\d* frame\(s\) it held back$/,
+  // ...and the loan itself (`mlsPerGroupScheduler.ts`, #2471): another group's frame applied under a
+  // commit's pending answer, or its own group's put back until the commit is answered. The two
+  // designed branches only - `refused to lend` and `released while its loan was still open` are faults.
+  /^\[MLS_LOCK\] a frame of \S+ is applied while the commit of \S+ awaits its answer$/,
+  /^\[MLS_LOCK\] a frame of \S+ waits for the commit of \S+ - put back, applied after it$/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
@@ -2432,6 +2437,8 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
  * summary per restore, and whether these messages should carry proofs) is the lead's, after the stable.
  */
 export const FRESH_DEVICE_RESTORE_NARRATION = [
+  // A hidden page's batch of rows that are not arrivals (the mint's own tab is in the background).
+  atLevels(['log', 'info'], /^\[NOTIF\] Batch into "[0-9a-f]{8}…" added \d+ while hidden, none of them an inbound message - nothing to raise\.$/),
   atLevels(['log', 'info'], /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/),
 ];
 
@@ -2456,6 +2463,23 @@ export const REVOKED_SIGN_OUT_NARRATION = [
   // The MLS client torn down and its socket released (alpha.5 DEV-2): the revocation's own teardown.
   atLevels(['log', 'info'], /^\[WS\] MLS client destroyed - its socket is released and no open may follow$/),
   atLevels(['log', 'info'], /^\[WS\] Paused - disconnect sent, socket released until the next foreground\.$/),
+  // Its requests refused once the session ended, the renewal latched dead, the purge that needs the
+  // server's list skipped (alpha.5 DEV-2/3/6).
+  atLevels(['log', 'info'], /^\[AUTH\] 401 on GET \/api\/\S+ - renewing the token and sending the same request once more$/),
+  atLevels(['log', 'info'], /^\[A\] refresh\u2717latched \(cookie already proven dead by this device revocation - not asking again\)$/),
+  atLevels(['log', 'info'], /^\[SYNC\] WASM purge skipped - the server list could not be fetched$/),
+];
+
+/**
+ * THE REQUESTS A REVOKED DEVICE HAS REFUSED, read on alpha.5's DEV-2, DEV-3 and DEV-6: its own
+ * KeyPackage gone (404), the revocation check and its last reads answered 401 once its session ended.
+ * Given to the revoked seat only, beside `MINT_REFUSALS`.
+ */
+export const REVOKED_REFUSALS = [
+  { path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/key-package$/, status: [404] },
+  { path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/revoked$/, status: [401] },
+  { path: /^\/api\/mls\/messages\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+(\?|$)/, status: [401] },
+  { path: /^\/api\/channels\/unread-counts$/, status: [401] },
 ];
 
 /**

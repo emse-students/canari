@@ -751,7 +751,15 @@ const NOTABLE = [
   // a window wants to see. The gateway line is matched on its CONTROL-frame spelling only (it said
   // "stays in DB queue" for a frame with no queue row until 2026-09-27) - the MLS spelling of an
   // offline recipient is a different fact and keeps its own treatment.
-  /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ groupsCleaned=\d+ /,
+  // ITS 1.4.1 SPELLING (#2450) puts `reason=` and `sessionsEnded=` before the counts, so the first
+  // rule (`device=\S+ groupsCleaned=`) matched nothing on alpha.5 and every revocation read
+  // unexplained. Pinned to `signalled=true`: a device the server could not tell stays the finding.
+  /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ reason=\S+ sessionsEnded=\d+ groupsCleaned=\d+ keyPackagesDeleted=\d+ oneTimeKeyPackagesDeleted=\d+ queuedMessagesDeleted=\d+ signalled=true$/,
+  // A SESSION ENDED, AND THE PUSH REGISTRATIONS IT LEAVES (`internal.controller.ts`): core-service
+  // asks for every session it ends deliberately - a logout, an owner revoking a device. The binding
+  // read and the delete's own account, both on their success spelling; reported, as a removal is.
+  /\[InternalController\] \[PUSH_SESSION_END\] binding read user=[0-9a-f]{8} device=\S+ registered=(true|false) session=\S+$/,
+  /\[InternalController\] \[PUSH_SESSION_END\] user=[0-9a-f]{8} session=[0-9a-f]{8} device=\S+ ifBoundTo=\S+ removedBySession=\d+ removedStale=\d+$/,
   /\[PubSub\] \S+ not connected to this gateway - control frame not delivered \(it has no queue row/,
   // THE MLS SPELLING OF AN OFFLINE RECIPIENT - its own rule, never the control-frame one above. A
   // frame for a device not on this gateway stays in its queue row and is fetched on reconnect: the
@@ -1432,6 +1440,14 @@ const ROW_RULES = [
     tag: /\[CHANNEL\] grant refused/,
     shape: /\[CHANNEL\] grant refused channel=\S+ user=\S+ outcome=(gone|public|not_member|not_allowed)$/,
     rows: ['RM-5'],
+  },
+  // A REVOKED DEVICE'S TOKEN REFUSED (`auth.controller.ts`): its session ended with the revocation,
+  // and its next request is told so. The revocation rows' own consequence, dirt anywhere else.
+  {
+    name: 'a revoked session refused',
+    tag: /\[AuthController\] Access refused again: session sid=/,
+    shape: /\[AuthController\] Access refused again: session sid=[0-9a-f-]+ has ended$/,
+    rows: ['DEV-2', 'DEV-3', 'DEV-6'],
   },
   // A salon deleted between its read and its roster write. No row provokes it.
   {
