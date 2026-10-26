@@ -166,16 +166,93 @@ export const admitRefusedFor = (lines, group, user) =>
   refusedCommits(lines, group).filter((r) => r.reason === 'admit_refused' && r.users.includes(String(user).toLowerCase().slice(0, 8))).length;
 
 /**
+ * THE OTHER WAY A COMMIT IS REFUSED WHOLE: the Add carried the person's Welcome inline, and the
+ * server refuses it as `REJECT welcome_target_not_admitted` BEFORE it reaches the `admit_refused` line
+ * (`messaging.service.ts`, the inline-Welcome check precedes it and throws). The target is the full
+ * user id; matched by `user`'s 8-hex prefix as the other lines are.
+ *
+ * @returns {{trace: string, target: string}[]}
+ */
+export function welcomeRefusals(lines, group) {
+  const out = [];
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] REJECT welcome_target_not_admitted group=(\S+) target=([^:\s]+):\S+ - /.exec(l);
+    if (m && m[2] === group) out.push({ trace: m[1], target: m[3].toLowerCase() });
+  }
+  return out;
+}
+
+/** How many commits were refused whole for carrying `user`'s Welcome. */
+export const welcomeRefusedFor = (lines, group, user) => welcomeRefusals(lines, group).filter((r) => r.target.startsWith(String(user).toLowerCase().slice(0, 8))).length;
+
+/**
+ * Every commit START in `group`: its trace, the device that sent it and the epoch it was built on -
+ * the only line of a commit that names the committing DEVICE (the gate names a user).
+ *
+ * @returns {Map<string, {device: string, baseEpoch: number}>}
+ */
+export function commitStarts(lines, group) {
+  const out = new Map();
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] START group=(\S+) device=(\S+) baseEpoch=(\d+)/.exec(l);
+    if (m && m[2] === group) out.set(m[1], { device: m[3], baseEpoch: Number(m[4]) });
+  }
+  return out;
+}
+
+/** The traces of the commits refused whole for `user`, by either path (`admit_refused`, inline Welcome). */
+export function refusedTracesFor(lines, group, user) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  return [
+    ...new Set([
+      ...refusedCommits(lines, group)
+        .filter((r) => r.reason === 'admit_refused' && r.users.includes(prefix))
+        .map((r) => r.trace),
+      ...welcomeRefusals(lines, group)
+        .filter((r) => r.target.startsWith(prefix))
+        .map((r) => r.trace),
+    ]),
+  ];
+}
+
+/**
+ * WHAT A REFUSED COMMIT ADVANCED - the narrow reading of "nothing advanced". An `ACCEPT` of a refused
+ * trace itself, or an `ACCEPT` from the SAME base epoch whose trace names `user` (its `ADMITS`,
+ * `ENROLLED` or `ADMITTED_UNDATED` line): the refused Add accepted after all, under another request.
+ * The group's epoch as a whole is NOT read: a leaf refresh or a rebuilt Add without the person moves
+ * it, and neither says the refusal failed.
+ */
+export function advancedFor(lines, group, user) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  const refused = refusedTracesFor(lines, group, user);
+  const starts = commitStarts(lines, group);
+  const bases = new Set(refused.map((t) => starts.get(t)?.baseEpoch).filter((b) => b !== undefined));
+  const naming = new Set();
+  for (const l of lines ?? []) {
+    const m = /\[(?:ADD_MEMBER|COMMIT)\]\[(commit-[0-9a-f]+)\] (?:ADMITS|ENROLLED by commit|ADMITTED_UNDATED) group=(\S+) (.*)$/.exec(l);
+    if (m && m[2] === group && new RegExp(`(user=|devices=(?:\\S*,)?)${prefix}`).test(m[3])) naming.add(m[1]);
+  }
+  let n = 0;
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] ACCEPT group=(\S+) newEpoch=(\d+)/.exec(l);
+    if (!m || m[2] !== group) continue;
+    if (refused.includes(m[1]) || (bases.has(Number(m[3]) - 1) && naming.has(m[1]))) n++;
+  }
+  return n;
+}
+
+/**
  * AN ADMISSION NOBODY DATED, about `user` in `group`: `ENROLLED by commit ... decidedBy=base_epoch`
  * (a new person enrolled by an Add ordered by its base epoch alone) or `ADMITTED_UNDATED` (an
  * awaiting seat lifted that way). After a Decline, either is the person let back in by an Add that
  * cannot say it came after - the ADM-3c rule (a re-ask with a killed committer, or a v1.4.0 committer).
+ * `kinds` narrows it to one of the two sentences.
  */
-export function undatedAdmissions(lines, group, user) {
+export function undatedAdmissions(lines, group, user, kinds = ['ENROLLED by commit', 'ADMITTED_UNDATED']) {
   const prefix = String(user).toLowerCase().slice(0, 8);
   return (lines ?? []).filter((l) => {
-    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] (?:ENROLLED by commit|ADMITTED_UNDATED) group=(\S+) user=([0-9a-f]+) .*decidedBy=base_epoch/.exec(l);
-    return m !== null && m[1] === group && m[2] === prefix;
+    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] (ENROLLED by commit|ADMITTED_UNDATED) group=(\S+) user=([0-9a-f]+) .*decidedBy=base_epoch/.exec(l);
+    return m !== null && kinds.includes(m[1]) && m[2] === group && m[3] === prefix;
   }).length;
 }
 
@@ -203,37 +280,37 @@ export function perConnection(rejectAt, openedAt) {
 }
 
 /**
- * The instant of a Nest line (`10/25/2026, 9:17:22 PM     LOG [...]`), in ms, or null. The services
- * run in UTC and Nest prints whole seconds, so the instant is the END of its second: a refusal is never
- * placed before a connection that opened within the same second, which could only invent a wedge.
+ * The instant docker received a line (`srvLines(..., {timestamps: true})`), in ms, or null. Docker's
+ * clock is the one both services' lines share, in UTC and sub-second; Nest's own stamp is neither.
  */
-export function nestInstant(line) {
-  const m = /(\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2} [AP]M)/.exec(String(line));
+export function dockerInstant(line) {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?Z\s/.exec(String(line));
   if (!m) return null;
-  const t = Date.parse(`${m[1]} UTC`);
-  return Number.isNaN(t) ? null : t + 999;
+  return Date.parse(`${m[1]}${(m[2] ?? '.000').slice(0, 4).padEnd(4, '0')}Z`);
 }
 
-/** The instants the gateway opened a connection for `user`'s `device` (tracing's ISO prefix). */
+/** The instants the gateway opened a connection for `user`'s `device`, read from docker-stamped lines. */
 export function connectionOpens(gatewayLines, user, device) {
   const out = [];
   for (const l of gatewayLines ?? []) {
-    const m = /^(\S+Z)\s.*New WebSocket connection: User=([^,\s]+), Device=([^,\s]+)/.exec(l);
-    if (m && m[2].toLowerCase() === String(user).toLowerCase() && m[3] === device) out.push(Date.parse(m[1]));
+    const m = /New WebSocket connection: User=([^,\s]+), Device=([^,\s]+)/.exec(l);
+    const at = dockerInstant(l);
+    if (m && at !== null && m[1].toLowerCase() === String(user).toLowerCase() && m[2] === device) out.push(at);
   }
   return out;
 }
 
 /**
- * The instants of the commits `committer` (by its 8-hex prefix) had refused WHOLE in `group`: one per
- * commit trace, whatever person or reason its `NOT_ENROLLED` lines named.
+ * The instants of the commits `device` had refused WHOLE in `group`, by either path, read from
+ * docker-stamped lines: one per trace, the device read from the trace's own `START` line. By DEVICE,
+ * so another device of the same user (W1 beside A1) is never counted as this one.
  */
-export function refusalInstants(lines, group, committer) {
-  const prefix = String(committer).toLowerCase().slice(0, 8);
+export function deviceRefusals(lines, group, device) {
+  const starts = commitStarts(lines, group);
   const seen = new Map();
   for (const l of lines ?? []) {
-    const m = /\[ADD_MEMBER\]\[(commit-[0-9a-f]+)\] NOT_ENROLLED group=(\S+) .*committer=([0-9a-f]+) .*- the commit is refused whole$/.exec(l);
-    if (m && m[2] === group && m[3] === prefix && !seen.has(m[1])) seen.set(m[1], nestInstant(l));
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] REJECT (?:admit_refused|committer_not_on_roster|welcome_target_not_admitted) group=(\S+) /.exec(l);
+    if (m && m[2] === group && starts.get(m[1])?.device === device && !seen.has(m[1])) seen.set(m[1], dockerInstant(l));
   }
   return [...seen.values()];
 }
@@ -332,23 +409,31 @@ export function raceOwn({ outcomes, after, listedTrail, refusal = null }) {
     { what: `both answers were given (${Object.entries(outcomes).map(([d, o]) => `${d} ${o.ok ? 'ok' : o.error}`).join('; ')})`, ok: Object.keys(outcomes).length === 2 },
     { what: `one side won and the server and the joiner agree (${after.state}, ${after.active} seat(s), ${listedAtEnd ? 'listed' : 'not listed'})`, ok: consistent },
     { what: `an admitted person was never stripped (${listedTrail.map((v) => (v ? 'L' : '-')).join('')})`, ok: !stripped },
-    ...(refusal ? [{ what: `no Add after the Decline admitted the joiner undated (${refusal.undated} base_epoch line(s))`, ok: refusal.undated === 0 }] : []),
-    ...(after.state === 'absent' && refusal ? refusedWholeOwn({ ...refusal, after }) : []),
+    // WHEN THE DECLINE WON, the Add was refused whole and nothing let the person back in undated. An
+    // Add that WON may be dated by its base epoch alone (it raced nothing that settled before it).
+    ...(after.state === 'absent' && refusal
+      ? [...refusedWholeOwn({ ...refusal, after }), { what: `no Add after the Decline admitted the joiner undated (${refusal.undated} base_epoch line(s))`, ok: refusal.undated === 0 }]
+      : []),
   ];
 }
 
 /**
- * A commit REFUSED WHOLE (#2505): the gate named the person, the commit was answered `admit_refused`,
- * and nothing advanced - the group's epoch did not move and no Welcome was queued for the person.
- * "In no tree" is read through the SERVER's proxy (no roster row, no active seat): no client exposes
- * its ratchet tree to the rig, and a commit that did not advance the epoch put nobody in one.
+ * A commit REFUSED WHOLE (#2505): the gate named the person, the commit was refused by one of its two
+ * lines (`admit_refused`, or `welcome_target_not_admitted` when the Add carried the person's Welcome
+ * inline - that one fires first and the other never does), and nothing advanced (`advancedFor`: no
+ * accept of the refused trace, nor of another trace from its base naming the person).
+ *
+ * The queued-Welcome count is read once, at the row's end: weak evidence (a row delivered and deleted
+ * in between would read 0), kept as a cross-check; the log lines carry the verdict. "In no tree" is
+ * read through the SERVER's proxy (no roster row, no active seat): no client exposes its ratchet tree
+ * to the rig, and a commit that advanced nothing put nobody in one.
  */
-export function refusedWholeOwn({ gateRefused, admitRefused, epochMoved, welcomes, after }) {
+export function refusedWholeOwn({ gateRefused, admitRefused, welcomeRefused = 0, advanced, welcomes, after }) {
   return [
     { what: `the commit gate named the person (${gateRefused} NOT_ENROLLED line(s))`, ok: gateRefused > 0 },
-    { what: `the commit was refused whole (${admitRefused} REJECT admit_refused line(s))`, ok: admitRefused > 0 },
-    { what: `the refused commit advanced no epoch (moved by ${epochMoved})`, ok: epochMoved === 0 },
-    { what: `no Welcome was queued for the person (${welcomes})`, ok: welcomes === 0 },
+    { what: `the commit was refused whole (${admitRefused} REJECT admit_refused, ${welcomeRefused} REJECT welcome_target_not_admitted)`, ok: admitRefused + welcomeRefused > 0 },
+    { what: `the refused commit advanced nothing (${advanced} ACCEPT of it or of its base naming the person)`, ok: advanced === 0 },
+    { what: `no Welcome is queued for the person at the end (${welcomes}; a cross-check, the lines carry the verdict)`, ok: welcomes === 0 },
     { what: `the person is in no tree - server proxy: no roster row, no active seat (${after.state}, ${after.active})`, ok: after.state === 'absent' && after.active === 0 },
   ];
 }
@@ -374,11 +459,11 @@ export function reinviteOwn({ declined, rewaiting, asks, admitted, listed }) {
  * `routeEnrolled` the member-add route's `DONE` lines about the joiner after the Decline - the two
  * doors the alpha.4 run proved distinct.
  */
-export function staleAddOwn({ held, declined, trail, after, listed, gateRefused, admitRefused, epochMoved, welcomes, undated, routeEnrolled }) {
+export function staleAddOwn({ held, declined, trail, after, listed, gateRefused, admitRefused, welcomeRefused, advanced, welcomes, undated, routeEnrolled }) {
   return [
     { what: `the Add's commit was held before the Decline (${held.ok ? 'held' : held.error})`, ok: held.ok === true },
     { what: `the Decline settled first (${declined.state})`, ok: declined.state === 'absent' },
-    ...refusedWholeOwn({ gateRefused, admitRefused, epochMoved, welcomes, after }),
+    ...refusedWholeOwn({ gateRefused, admitRefused, welcomeRefused, advanced, welcomes, after }),
     { what: `no Add admitted the joiner undated (${undated} base_epoch line(s))`, ok: undated === 0 },
     { what: `the member-add route enrolled nobody after the Decline (${routeEnrolled} DONE line(s))`, ok: routeEnrolled === 0 },
     { what: `the joiner was never admitted after the release (${trail.map((s) => s[0]).join('')})`, ok: !trail.includes('admitted') },
@@ -410,16 +495,23 @@ export function rateLimitedOwn(repeats) {
 }
 
 /**
- * ADM-6: admitted, by whichever device, and no [ADMISSION] ERROR. `refusalsPerConnection` is the old
- * member's refused commits counted per connection (`perConnection`): one per connection is a v1.4.0
- * client meeting the gate once and moving on; two inside one connection is a stage it did not clear.
+ * ADM-6: admitted, by whichever device, and no [ADMISSION] ERROR. When the v1.4.0 shim admitted, its
+ * Add names no invitation generation, so the lift is `ADMITTED_UNDATED` (`shimUndated`) - the line
+ * the row's srvlog rule expects, asserted rather than only forgiven.
+ *
+ * `refusalsPerConnection` is the old member's refused commits per connection (`perConnection`). This
+ * row declines nobody, so it provokes no refusal: with none, the check is NOT made (an empty count
+ * would pass vacuously) and the row says so; only a refusal that happened is judged, at most one per
+ * connection.
  */
-export function oldMemberOwn({ admitted, listed, admissionErrors, addedBy, refusalsPerConnection = [] }) {
+export function oldMemberOwn({ admitted, listed, admissionErrors, addedBy, shim = false, shimUndated = 0, refusalsPerConnection = [] }) {
+  const refusals = refusalsPerConnection.reduce((a, n) => a + n, 0);
   return [
     { what: `the joiner was admitted (${admitted.state}, ${admitted.active} seat(s)) by ${addedBy}`, ok: admitted.state === 'admitted' && admitted.active > 0 },
     { what: `the joiner lists the conversation (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
     { what: `no [ADMISSION] ERROR on the server (${admissionErrors})`, ok: admissionErrors === 0 },
-    { what: `the old member was refused at most once per connection (${refusalsPerConnection.join(',') || 'none'})`, ok: refusalsPerConnection.every((n) => n <= 1) },
+    ...(shim ? [{ what: `the shim's undated Add lifted the ask as ADMITTED_UNDATED (${shimUndated} line(s))`, ok: shimUndated > 0 }] : []),
+    ...(refusals > 0 ? [{ what: `the old member was refused at most once per connection (${refusalsPerConnection.join(',')})`, ok: refusalsPerConnection.every((n) => n <= 1) }] : []),
   ];
 }
 

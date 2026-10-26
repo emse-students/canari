@@ -208,6 +208,7 @@ ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
       return true;
     }
   })());
+  ok('a stamped log window asks docker for its own instants, and only when asked', devLogsCommand('core-service', '900s', { timestamps: true }).endsWith('docker logs --timestamps --since 900s "$c" 2>&1') && !devLogsCommand('core-service', '900s').includes('--timestamps'));
   ok('so is a --since that is not one', (() => {
     try {
       devLogsCommand('core-service', '1h; reboot');

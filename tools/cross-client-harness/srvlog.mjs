@@ -1250,12 +1250,13 @@ const ROW_RULES = [
     rows: ['ADM-3', 'ADM-6', 'ADM-10'],
   },
   // The refused Add carried the person's Welcome: refused before it is stored. The new client sends
-  // the Welcome with the Add's commit, so the rows that meet the refusal may meet this one with it.
+  // the Welcome with the Add's commit, so the rows that meet the refusal may meet this one with it -
+  // INSTEAD of the `admit_refused` line, which the server never reaches once this one fires.
   {
     name: 'a Welcome for a person the commit may not admit',
     tag: /\[COMMIT\]\[commit-[0-9a-f]+\] REJECT welcome_target_not_admitted /,
     shape: /\[COMMIT\]\[commit-[0-9a-f]+\] REJECT welcome_target_not_admitted group=\S+ target=\S+:\S+ - the Welcome it carries is for a person this commit may not admit$/,
-    rows: ['ADM-3', 'ADM-10'],
+    rows: ['ADM-3', 'ADM-6', 'ADM-10'],
   },
   // An awaiting seat lifted by an Add that names no invitation generation (an older client's Add,
   // ordered by its base epoch alone): WARN, so its rate is counted. ADM-6's v1.4.0 member is that
