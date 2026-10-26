@@ -353,8 +353,12 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
     ]);
 
     // The commit still lands - the route's refusal never undid one either - but no seat is written,
-    // and no device row that would queue frames for a device whose Welcome is refused.
-    await expect(addCommit(1)).resolves.toMatchObject({ accepted: true });
+    // and no device row that would queue frames for a device whose Welcome is refused. The answer
+    // names the dropped admit, so the committer is told rather than left to learn it by failing.
+    await expect(addCommit(1)).resolves.toMatchObject({
+      accepted: true,
+      refusedAdmits: [{ ...INVITEE, reason: 'not_enrolled' }],
+    });
 
     expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
     await expect(refusalOf(welcome())).resolves.toEqual({

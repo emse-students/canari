@@ -707,7 +707,9 @@ window with a durable row and a lock:
   lock.** Every such writer reads the device's `KeyPackage` row `FOR SHARE` under the seat lock first
   (`heldKeyPackages`): `writeClaimedSeat` (the committer's seat, an activation, the group's creator -
   which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`;
-  the admit is dropped and the commit accepted, since the leaf belongs to an account that is going),
+  the admit is dropped and the commit accepted, since the leaf belongs to an account that is going or
+  a device revoked while the Add was in flight, and the accept names it in `refusedAdmits` so the
+  committer owes and sends it no Welcome - [mls-protocol](mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)),
   both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
   demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
   it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
