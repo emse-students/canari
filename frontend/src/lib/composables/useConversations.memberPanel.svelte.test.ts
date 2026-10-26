@@ -90,6 +90,10 @@ function makeServer() {
         .map(([deviceId, row]) => ({ userId: row.userId, deviceId }))
     ),
     getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [...roster].map((userId) => ({ userId })),
+      seatGeneration: 0,
+    })),
   };
   return { mls, roster };
 }

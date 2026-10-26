@@ -55,6 +55,12 @@ export interface CommitSubmission {
   admits?: Array<{ userId: string; deviceId: string }>;
   removes?: CommitRemoval[];
   /**
+   * The seat generation the member's invitation this Add carries read with its roster baseline
+   * ({@link CommitInvitation.seatGeneration}) - sent so the gate orders a Decline or a removal
+   * against when the member decided. Absent for every other commit.
+   */
+  invitationSeatGeneration?: number;
+  /**
    * An Add's Welcome, base64. Kept because the Welcome is a SEPARATE request made after the
    * accept: a commit accepted only through a later resubmission has nobody left to send it.
    */
@@ -90,10 +96,16 @@ export interface CommitIntent {
  *   baseline a later re-plan compares against, so a person taken off it meanwhile (removed, or a
  *   join ask declined) is never brought back. ABSENT when that roster could not be read: a re-plan
  *   then has no premise to stand on and is abandoned, never guessed.
+ * - `seatGeneration`: the group's seat generation the server read BEFORE that roster
+ *   (`getGroupRosterAtGeneration`) - when the member decided, as the counter every Decline and
+ *   removal moves. Sent with the Add (`invitationSeatGeneration`), and kept here so a re-plan sends
+ *   the gesture's own number, never a later one. ABSENT when the roster was not read, or the server
+ *   predates the number.
  */
 export interface CommitInvitation {
   users: string[];
   rostered?: string[];
+  seatGeneration?: number;
 }
 
 /**
@@ -110,10 +122,22 @@ export function invitationOf(record: StagedRecord): CommitInvitation | null {
     const rostered = Array.isArray(inv.rostered)
       ? inv.rostered.filter((u): u is string => typeof u === 'string')
       : undefined;
-    return users.length > 0 ? { users, ...(rostered ? { rostered } : {}) } : null;
+    const seatGeneration = seatGenerationOf(inv.seatGeneration);
+    return users.length > 0
+      ? {
+          users,
+          ...(rostered ? { rostered } : {}),
+          ...(seatGeneration !== undefined ? { seatGeneration } : {}),
+        }
+      : null;
   } catch {
     return null;
   }
+}
+
+/** A recorded seat generation, or `undefined` when the value is not one (a non-negative integer). */
+function seatGenerationOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /** Encodes an intent for the stage (opaque bytes to the platform). */
@@ -179,6 +203,9 @@ export function composeSubmission(record: StagedRecord): CommitSubmission | null
       : undefined,
     intent.self
   );
+  // When the member decided, for the gate's Decline and removal order - only an invitation's Add.
+  const invitationSeatGeneration =
+    admits.length > 0 ? seatGenerationOf(intent.invitation?.seatGeneration) : undefined;
   return {
     groupId: intent.groupId,
     baseEpoch: record.baseEpoch,
@@ -186,6 +213,7 @@ export function composeSubmission(record: StagedRecord): CommitSubmission | null
     groupInfo: toBase64(record.groupInfo),
     ...(intent.excludeDeviceIds ? { excludeDeviceIds: intent.excludeDeviceIds } : {}),
     ...(admits.length > 0 ? { admits } : {}),
+    ...(invitationSeatGeneration !== undefined ? { invitationSeatGeneration } : {}),
     ...(intent.removes ? { removes: intent.removes } : {}),
     ...(record.welcome ? { welcome: toBase64(record.welcome) } : {}),
   };

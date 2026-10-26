@@ -86,6 +86,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A Welcome whose target the roster does not name is a typed `WelcomeTargetNotMemberError`, and
   // the settlement that sent it stops owing it; no screen words it.
   'WELCOME_TARGET_NOT_MEMBER',
+  // A member-add call naming a person no accepted commit admitted is a typed
+  // `MemberNotAdmittedError`: the invite withholds the Welcome and reports the person not added.
+  'MEMBER_NOT_ADMITTED',
   // A Welcome to a device no key package names (revoked, or never registered) is terminal for that
   // Welcome; the sender's own commit answer already said the device was not admitted.
   'WELCOME_TARGET_UNKNOWN',

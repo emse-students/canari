@@ -258,11 +258,12 @@ on PostgreSQL with the whole erasure run between a claim and its check
 written while the erasure runs cannot outlive it either**: the account's key packages are deleted
 first, in a transaction of their own, and every writer that admits a device reads its device's key
 package `FOR SHARE` under the seat lock, so the delete waits for a writer holding one and a later
-writer finds none and writes nothing - with two known exceptions, the demotion (below) and
-`addGroupMember` (a group invite, a new 1:1 DM), which takes no seat lock and reads no key package
-under one: **a peer holding a valid token can re-enrol an erased account by its id, roster row
-included, even after the final pass** ([backlog](backlog.md), P2 "addGroupMember can enrol an erased
-account after the final erasure pass"). Every group the account's rows still name is then cut under
+writer finds none and writes nothing - with two known exceptions, the demotion (below) and the
+creation bootstrap of `addGroupMember` (a caller enrolling ITSELF into an empty roster), which takes
+no seat lock and reads no key package under one. Since ADM-3 (2026-10-25) that route enrols nobody
+else: for any other person it writes device rows through `writePendingSeats` under the seat lock, or
+refuses ([backlog](backlog.md), P2 "addGroupMember can enrol an erased account after the final
+erasure pass", narrowed). Every group the account's rows still name is then cut under
 its own seat lock, its rows and its routes together, so a run that stops anywhere leaves each uncut
 group still named for the retry; an eviction after the erasure writes no row naming the account.
 **The ordering alone does not hold during the first pass**: a device of the account that reconnects

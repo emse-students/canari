@@ -163,22 +163,24 @@ one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026
 rule - a member's device refuses to Add a user absent from its tree - so it holds only for members
 running a build that carries it. A member on an older build still Adds from the `pending` row the
 link wrote, with no human asked: that is the behaviour this rule replaces, and nothing on the server
-can tell it from a member's Add. The server honours it as one: the Welcome that older client stores
-lifts the joiner's `awaitingAdmission` (a commit older than `admits` declares nobody, so the Welcome
-is the one door that sees its Add), and without that lift the joiner would sit `active` under a flag
-refusing every commit of theirs.
+can tell it from a member's Add. The server honours it as one: that older client's commit declares
+the joiner in its `admits` (every client at the floor does, #1151, `v0.18.28`), and the accepted
+commit lifts the joiner's `awaitingAdmission`. **The Welcome-sent-apart lift is GONE since ADM-3
+(2026-10-25)**: it existed for a commit older than `admits`, which no client at the floor sends, and
+it was the door through which a Decline the gate had honoured was undone
+([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 **When the floor is raised (user, 2026-10-24):** once BOTH stores serve the version carrying #2358 -
 never at the deploy, never on a date. Until then an older client gets the tolerated 409
 `awaiting_admission` path (the external-join base refused as a wait, not a 403, so it asks a member
-instead of retiring the conversation), and an older member's automatic Add is honoured through the
-Welcome lift. That tolerance is the shim; its removal condition is that floor, and there is no
+instead of retiring the conversation), and an older member's automatic Add is honoured through its
+commit's `admits`. That tolerance is the shim; its removal condition is that floor, and there is no
 calendar date.
 **The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
 serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
 outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
 every one of those paths, so the build does not run without it.
-**Removal:** nothing - this entry closes when the floor passes; the lift by Welcome stays, since it
-is also how every current Add's Welcome lands.
+**Removal:** nothing - this entry closes when the floor passes; the lift by the accepted commit is
+how every Add admits, and stays.
 **A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
 every existing row to `false`, so a person who accepted a link before the deploy and had not entered
 yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
@@ -318,19 +320,24 @@ returned - `processBulkAddition` and `performDirectAdd` in `frontend/src/lib/uti
 the pending-invitation and `welcome_request` Adds in `frontend/src/lib/utils/chat/actions.ts`.
 **Shim (2026-10-25):** the commit gate enrols the people an Add admits IN THE TRANSACTION THAT
 ACCEPTS IT (`enrolAdmittedPeople`, [mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)),
-so against a current server the call after the accept writes nothing - but it is NOT quite a no-op:
-the route still answers `403 USER_BLOCKED` for a blocked person (`UserBlockedError`, which the
-caller reads), and it still enrols a person the commit refused as `departed_since_base` when the
-Add was answered directly. That cuts both ways: it rescues the one re-invite the gate cannot tell
-from a stale Add (with a span lost - the refused admits left no `admittedAtEpoch` row, so a frame sent
-between the accept and this call or the Welcome is not queued for the invitee's devices), and it
-re-enrols the departed person of a stale Add answered directly, as before the gate's check existed.
-So the gate's guard - a departure or a member's Decline holds against an Add built before it -
-holds only on the paths that skip this call (a settlement, an outbox replay); on a direct accept the
-Decline or departure is still undone, until the call goes
-([backlog](backlog.md#p3---remove-registermember-from-the-add-client-paths-then-the-decline-and-departure-guards-hold-everywhere-review-of-2419-2026-10-25)). It stays for a
-store build live before production deploys, whose server does not enrol: dropping it there would
-lose the enrolment of every Add, not only of the settled ones.
+so against a current server the call after the accept ENROLS NOBODY (ADM-3, 2026-10-25): it writes
+the device rows of a person the commit admitted, and answers `409 MEMBER_NOT_ADMITTED` for anyone
+else (absent, or a seat still awaiting a member) - typed client-side as `MemberNotAdmittedError`,
+on which the caller withholds the Welcome. And the gate refuses WHOLE a commit that would admit a
+person it may not (`{accepted: false, reason: 'admit_refused'}`), so no such commit gives anyone a leaf. So a departure or a
+member's Decline holds against an Add decided before it on EVERY path, the direct accept included
+([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
+It stays for a store build live before production deploys, whose server does not enrol with the
+commit: dropping it there would lose the enrolment of every Add.
+**The one re-invite this used to rescue:** a re-invite right after a Decline, at an unchanged epoch,
+by a client that sends no `invitationSeatGeneration` (older than ADM-3), is ordered by the base
+epoch and refused; the member re-invites after the next commit. A current client sends the
+generation it read and is a fresh invite.
+**Why the refusal is an answer in the body, not a status:** a client older than ADM-3 (read in the
+`v1.4.0` tag) clears its staged commit on a `200 {accepted: false}` and reports the Add failed, never
+retrying it in a loop; a thrown 4xx from `POST /api/mls/commit` would leave that stage in place. So
+`admit_refused` takes the shape `WelcomeSeatGone` already answers, and an older client loses nothing
+but that one Add.
 **Transitional loss, accepted:** an Add the PRE-DEPLOY server accepted with its answer lost, and
 settled after the deploy as a `duplicate`, is never enrolled - the duplicate is answered before any
 transaction, and the enrolment ran with an advance that predates it. Its Welcome is refused

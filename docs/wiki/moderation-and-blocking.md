@@ -302,7 +302,10 @@ mutations:
 | `POST /api/calls/initiate`, `POST /api/calls/ring`, `GET /api/calls/room-token` | chat-delivery | `403 { code: 'USER_BLOCKED' }` |
 
 `addGroupMember` is the choke point for **both** paths a block closes. Without a `GroupMember` row
-the target's devices never receive a pending membership, so no Welcome is ever built for them. It is
+the target's devices never receive a pending membership, so no Welcome is ever built for them. Since
+ADM-3 (2026-10-25) the roster row of a new person is written by the accepted commit alone
+(`enrolAdmittedPeople`), which refuses a person a block stands between and the committer
+(`NOT_ENROLLED reason=blocked`); the route keeps its block check and answers it first. It is
 scoped to adding a **new** member: an existing member's later devices enter through `registerDevice`,
 which fans that user's existing groups out on its own and never comes through here - so healing a
 shared group keeps working across a block, which is the intent.

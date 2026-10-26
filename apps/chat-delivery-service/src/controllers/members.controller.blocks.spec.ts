@@ -14,6 +14,14 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { writePendingSeats } from '../utils/group-membership';
+
+// The admitted-person path writes device seats under the seat lock; what it decides is pinned against
+// Postgres (`add-enrolment.integration.spec.ts`). Here only WHETHER it is reached matters.
+jest.mock('../utils/group-membership', () => ({
+  ...jest.requireActual('../utils/group-membership'),
+  writePendingSeats: jest.fn(),
+}));
 
 /**
  * `POST /mls/groups/:groupId/members` IS the enforcement point of a block.
@@ -116,19 +124,27 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
   });
 
   it('lets the add through when no block stands between the two', async () => {
+    // Through to the admitted-person path: device seats written, nobody enrolled (ADM-3).
+    jest.mocked(writePendingSeats).mockResolvedValue('written');
     await expect(
       controller.addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
     ).resolves.toEqual({ status: 'added' });
-    expect(transaction).toHaveBeenCalled();
+    expect(writePendingSeats).toHaveBeenCalledWith(expect.anything(), GROUP, TARGET, [], false, {
+      requireAdmitted: true,
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it('never refuses an account adding itself, which is the group-creation bootstrap', async () => {
     // `isBlockedBetween` short-circuits on a === b, so the creator registering itself into its own
     // empty group cannot be refused by a block row that could not exist in the first place.
+    groupMemberRepo.count.mockResolvedValue(0);
     await expect(
       controller.addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
     ).resolves.toEqual({ status: 'added' });
     expect(blockQuery).not.toHaveBeenCalled();
+    // The one enrolment this route still writes: the creator, into its empty roster.
+    expect(transaction).toHaveBeenCalled();
   });
 
   it.each([

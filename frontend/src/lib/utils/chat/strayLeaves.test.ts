@@ -41,11 +41,13 @@ const mls = () =>
 const answered = (
   rosters: Record<string, string[]>,
   refused: string[] = [],
-  revoked: Record<string, string[]> = {}
+  revoked: Record<string, string[]> = {},
+  awaiting: Record<string, string[]> = {}
 ): GroupRosterBatch => ({
   rosters: new Map(Object.entries(rosters)),
   refused: new Set(refused),
   revoked: new Map(Object.entries(revoked)),
+  awaiting: new Map(Object.entries(awaiting)),
 });
 
 beforeEach(() => {
@@ -213,6 +215,36 @@ describe('removeStrayLeaves', () => {
     const said = lines.join(' | ');
     expect(said).not.toContain('their leaves stay');
     expect(said).toContain('already gone from the tree');
+  });
+});
+
+/**
+ * A SEAT STILL AWAITING A MEMBER'S ANSWER ADMITS NOBODY: an Add decided before a Decline can merge a
+ * leaf for a person whose seat is a new, unanswered ask. That leaf is stray, read from both the batch
+ * (`awaiting`) and the fresh roster (`awaitingAdmission`).
+ */
+describe('removeStrayLeaves - awaiting seats', () => {
+  it('removes a leaf held under a seat that still awaits admission', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'joe:web-1'];
+    batch = answered({ g1: ['alice', 'bob', 'joe'] }, [], {}, { g1: ['joe'] });
+    getGroupUserMembers.mockResolvedValue([
+      { userId: 'alice' },
+      { userId: 'bob' },
+      { userId: 'joe', awaitingAdmission: true },
+    ]);
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
+    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['joe']);
+  });
+
+  it('keeps the leaf when the fresh read finds the seat admitted meanwhile', async () => {
+    // Another member's Add answered the ask between the batch and the fresh read.
+    trees.g1 = ['alice:web-1', 'joe:web-1'];
+    batch = answered({ g1: ['alice', 'joe'] }, [], {}, { g1: ['joe'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'joe' }]);
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    expect(removeMember).not.toHaveBeenCalled();
   });
 });
 

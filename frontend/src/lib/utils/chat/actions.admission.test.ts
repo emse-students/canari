@@ -135,6 +135,24 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     expect(mlsService.addMember).not.toHaveBeenCalled();
   });
 
+  it('asks a member about a seat still awaiting one, even when the tree holds a leaf of theirs', async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:p1', 'stranger:old']),
+    });
+
+    await run('g-adm-leaf', mlsService, 'stranger', { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
+      groupId: 'g-adm-leaf',
+      requesterUserId: 'stranger',
+      requesterDeviceId: 'dev-1',
+      askId: 'ask-stranger',
+    });
+  });
+
   it("asks nobody about a person whose seat is not an invitation link's ask", async () => {
     // A member's invite between its roster write and its Add, or a seat older than the rule: the
     // server does not name it an ask, so nobody is asked in that person's name - and a Decline would
@@ -369,7 +387,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
 
   it('adds a pending device of a user who already holds a leaf', async () => {
     const mlsService = makeMls({
-      ...pendingFor('peer', 'new-phone'),
+      ...pendingFor('peer', 'new-phone', false),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
     });
 
@@ -382,10 +400,27 @@ describe('processPendingInvitations - a new user is never added automatically', 
     );
   });
 
+  it('a seat still awaiting a member asks a member, even when the tree holds a leaf of theirs', async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = makeMls({
+      ...pendingFor('peer', 'new-phone'),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
+      groupId: 'g1',
+      requesterUserId: 'peer',
+      requesterDeviceId: 'new-phone',
+    });
+  });
+
   it('refuses on a tree it cannot read, and keeps the row for the next sweep', async () => {
     const log = vi.fn();
     const mlsService = makeMls({
-      ...pendingFor('peer', 'new-phone'),
+      ...pendingFor('peer', 'new-phone', false),
       getGroupMemberIdentities: vi.fn().mockRejectedValue(new Error('GroupNotFound')),
     });
 

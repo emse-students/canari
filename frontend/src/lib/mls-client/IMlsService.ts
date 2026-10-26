@@ -15,6 +15,7 @@ import type {
   GroupExclusions,
   GroupRosterBatch,
   GroupUserMemberRow,
+  GroupRosterAtGeneration,
   JoinDeclineOutcome,
   PendingInvitationRow,
   RefusedAdmit,
@@ -1409,6 +1410,13 @@ export interface IMlsService {
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupUserMembers(groupId: string, opts?: { fresh?: boolean }): Promise<GroupUserMemberRow[]>;
+  /**
+   * The roster of `groupId` with the seat generation the server read before it - a member's
+   * invitation's baseline, the number its Add carries so a Decline or a removal made after the member
+   * decided holds against it. `seatGeneration: null` from a server older than it. Throws like
+   * {@link getGroupUserMembers}.
+   */
+  getGroupRosterAtGeneration(groupId: string): Promise<GroupRosterAtGeneration>;
   /**
    * The windows during which each current member of `groupId` was out of it, from
    * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot

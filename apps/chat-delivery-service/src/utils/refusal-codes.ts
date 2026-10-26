@@ -65,6 +65,13 @@ export const RefusalCode = {
    */
   WELCOME_TARGET_NOT_MEMBER: 'WELCOME_TARGET_NOT_MEMBER',
   /**
+   * 409 - `POST mls/groups/:groupId/members` named a person no accepted commit admitted: absent from
+   * the roster, or still awaiting a member's admission. The route enrols nobody (the accepted commit
+   * is the one writer of a new person); a Decline or a departure came before the Add, or no Add
+   * landed. Terminal for that call: the person needs a new Add, and the Welcome is withheld.
+   */
+  MEMBER_NOT_ADMITTED: 'MEMBER_NOT_ADMITTED',
+  /**
    * 404 - a Welcome addressed to a device no key package names: never registered, or deleted since
    * (an owner's revocation purges it) (`POST mls/welcome`). Terminal for that Welcome: the device
    * is gone, and re-sending the same bytes cannot make it exist.

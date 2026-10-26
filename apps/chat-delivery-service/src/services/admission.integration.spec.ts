@@ -259,6 +259,11 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     // as a no-op on a table that has it.
     await q(MIGRATION_038);
     await q(MIGRATION_039);
+    // core-service's table, as its migration shapes it: an awaiting seat a commit admits is asked
+    // for a block like any newcomer (`enrolAdmittedPeople`).
+    await q(
+      `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
+    );
     service = new MessagingService(
       ds.getRepository(QueuedMessage),
       ds.getRepository(GroupMember),
@@ -448,11 +453,12 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
   });
 
   /**
-   * (2) A MEMBER WHOSE CLIENT PREDATES `admits` STILL ADMITS: it Adds from the `pending` row with a
-   * commit that declares nobody, then sends the Welcome apart. The Welcome it stores lifts the ask, so
-   * the joiner's device turns active under no flag and commits like any member.
+   * (2) A WELCOME SENT APART ADMITS NOBODY (ADM-3). Only the accepted commit admits a new person, by
+   * the `admits` it declares - which every client at the version floor sends - so a commit that
+   * declares nobody, followed by a Welcome, leaves the ask standing: the Welcome is refused, nothing
+   * is stored, and the joiner can neither report itself active nor commit.
    */
-  it("an old client's Add - a commit with no admits, then a separate Welcome - admits the joiner", async () => {
+  it('a commit with no admits, then a separate Welcome, does NOT admit the joiner', async () => {
     await acceptLink();
     // Before any Welcome, the joiner may not report itself active: a 409, never a 403.
     await expect(
@@ -464,34 +470,28 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
     expect(await awaiting(JOINER)).toBe(true);
     await expect(
-      service.sendWelcome(MEMBER.userId, {
-        groupId: GROUP,
-        targetUserId: JOINER.userId,
-        targetDeviceId: JOINER.deviceId,
-        senderUserId: MEMBER.userId,
-        welcomePayload: 'V0VMQ09NRQ==',
-      })
-    ).resolves.toEqual({ status: 'queued' });
+      refusalOf(
+        service.sendWelcome(MEMBER.userId, {
+          groupId: GROUP,
+          targetUserId: JOINER.userId,
+          targetDeviceId: JOINER.deviceId,
+          senderUserId: MEMBER.userId,
+          welcomePayload: 'V0VMQ09NRQ==',
+        })
+      )
+    ).resolves.toMatchObject({ status: 403 });
 
-    expect(await awaiting(JOINER)).toBe(false);
+    expect(await awaiting(JOINER)).toBe(true);
+    const [queued]: { n: string }[] = await q(
+      `SELECT COUNT(*) AS n FROM queued_message WHERE "groupId" = $1 AND "recipientId" = $2`,
+      [GROUP, JOINER.userId]
+    );
+    expect(Number(queued.n)).toBe(0);
     await expect(
       service.activateDeviceMembership(JOINER.userId, JOINER.deviceId, GROUP, {
         authority: 'report',
       })
-    ).resolves.toMatchObject({ ok: true });
-    // A member now: a commit of theirs is accepted.
-    await expect(
-      service.validateCommit(
-        {
-          groupId: GROUP,
-          deviceId: JOINER.deviceId,
-          baseEpoch: 4,
-          proto: memberCommitFrame(GROUP, 4n),
-          senderId: JOINER.userId,
-        },
-        JOINER.userId
-      )
-    ).resolves.toMatchObject({ accepted: true });
+    ).resolves.toMatchObject({ ok: false, reason: 'awaiting_admission' });
   });
 
   it('a person still awaiting a member may not Welcome a device of their own to lift their ask', async () => {
@@ -1047,23 +1047,21 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       );
     });
 
-    it('settles an admission through the Welcome door (an old client: a bare commit, then a Welcome)', async () => {
+    it('settles nothing through a Welcome sent apart: that door admits nobody (ADM-3)', async () => {
       await acceptLink();
-      const askId = await joinerSeatId();
       await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
+
+      await service
+        .sendWelcome(MEMBER.userId, {
+          groupId: GROUP,
+          targetUserId: JOINER.userId,
+          targetDeviceId: JOINER.deviceId,
+          senderUserId: MEMBER.userId,
+          welcomePayload: 'V0VMQ09NRQ==',
+        })
+        .catch(() => undefined);
+
       expect(await framesOf('group.join_ask.settled')).toEqual([]);
-
-      await service.sendWelcome(MEMBER.userId, {
-        groupId: GROUP,
-        targetUserId: JOINER.userId,
-        targetDeviceId: JOINER.deviceId,
-        senderUserId: MEMBER.userId,
-        welcomePayload: 'V0VMQ09NRQ==',
-      });
-
-      expect(await framesOf('group.join_ask.settled')).toEqual(
-        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
-      );
     });
 
     it('never tells the asker about their own ask, even with an active device once admitted', async () => {
