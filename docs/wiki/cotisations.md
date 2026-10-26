@@ -87,10 +87,27 @@ Decided by the user: the key (`variantKey`) is a TECHNICAL id that no person typ
 `POST /api/associations/:id/products` accepts `deriveVariantKey: true` on a `membership` product sent
 WITHOUT a `variantKey`; `ProductsService.create` then derives the key from `name` with
 `variantKeyFromLabel` (`cotisation-tag.util.ts`): lowercase, ASCII-folded, every other run of
-characters one hyphen, `palier` for a label with no letter or digit, and `-2`, `-3`... until it is
-free among the association's tiers (the base tier's null key never collides). Everything after is
-unchanged: `deriveCotisationTag` names the tag from that key, the sibling XOR and the base tier
-(`variantKey: null`) are untouched.
+characters one hyphen, a year-shaped tail dropped, `palier` for a label with no letter or digit, and
+`-2`, `-3`... until it is free among the association's tiers (the base tier's null key never
+collides). Everything after is unchanged: `deriveCotisationTag` names the tag from that key, the
+sibling XOR and the base tier (`variantKey: null`) are untouched.
+
+- **Two creates at once get two keys.** Nothing in the table makes a key unique, so the sibling read
+  and the insert run in ONE transaction under `lockAssociationTiers`
+  (`association-tier-lock.ts`: `pg_advisory_xact_lock(hashtextextended('tier:<associationId>', 0))`),
+  every read on that transaction's manager. The second create waits for the first to commit and
+  then sees its row. Everything that may call another service (payment routing) runs BEFORE the
+  lock. `tier-key-derivation.integration.spec.ts` holds it against a real PostgreSQL, and fails
+  with the lock removed. A unique index would be a migration, proposed in
+  [backlog](backlog.md#p3---post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026-10-26).
+- **The key fits the tag.** A tag is `varchar(100)`, and the dated form
+  `cotisant:<slug>-<key>-YYYY-YYYY` is the longest, so `variantKeyCap(slug)` is 100 minus that
+  form's fixed part minus room for a `-999` suffix, at most 60. A slug that leaves no room is
+  refused with a 400 rather than truncated into a tag that no longer derives.
+- **No key ends in a year.** A dated tag already ends in the academic year, so a key such as
+  `cotisation-2026-2027` would make one tier's tag read like the dated tag of a `cotisation` tier.
+  "Cotisation 2026-2027" derives `cotisation` (then `cotisation-2` if taken); a year INSIDE a label
+  ("Gala 2026 VIP") stays.
 
 - **Older clients keep working**: an explicit `variantKey` is still honoured on create and update.
   Sending both is refused (400), and so is `deriveVariantKey` on a non-membership product.

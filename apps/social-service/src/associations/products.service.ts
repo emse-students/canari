@@ -38,7 +38,14 @@ import {
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { deriveCotisationTag, tierVariantKeys, variantKeyFromLabel } from './cotisation-tag.util';
+import {
+  type CotisationMode,
+  deriveCotisationTag,
+  tierVariantKeys,
+  variantKeyCap,
+  variantKeyFromLabel,
+} from './cotisation-tag.util';
+import { lockAssociationTiers } from './association-tier-lock';
 import {
   isDelegating,
   resolvePaymentTarget,
@@ -628,18 +635,24 @@ export class ProductsService {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
       if (deriveVariantKey) {
-        rest.variantKey = await this.deriveFreeVariantKey(associationId, dto.name);
+        // The key and its tag are decided under the association's tier lock, at the very end:
+        // here only the refusal that needs no lock - a slug leaving no room for any named tier.
+        if (variantKeyCap(asso.slug) < 1) {
+          throw new BadRequestException(
+            'The association slug is too long to name a cotisation tier within the tag length'
+          );
+        }
       } else {
         await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+        const derived = deriveCotisationTag(
+          asso.slug,
+          asso.cotisationMode,
+          new Date(),
+          rest.variantKey ?? null
+        );
+        grantedTagName = derived.tagName;
+        tagExpiresAt = derived.expiresAt;
       }
-      const derived = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        rest.variantKey ?? null
-      );
-      grantedTagName = derived.tagName;
-      tagExpiresAt = derived.expiresAt;
     }
 
     // A grid is validated against the association's own tiers, so it is parsed here rather than
@@ -681,7 +694,45 @@ export class ProductsService {
           `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated}) - it goes on sale by itself once they are`
       );
     }
+    if (deriveVariantKey && asso.cotisationMode) {
+      return this.toSafeProduct(
+        await this.saveTierWithDerivedKey(product, asso.slug, asso.cotisationMode, dto.name)
+      );
+    }
     return this.toSafeProduct(await this.productRepo.save(product));
+  }
+
+  /**
+   * Inserts a new named tier whose key is derived from its label, under the association's tier
+   * lock: the sibling keys are read and the row inserted in ONE transaction, every read on its
+   * manager, so two concurrent creates of the same label get distinct keys (the second waits for
+   * the first to commit, then sees its row). Everything that may call another service ran before.
+   */
+  private async saveTierWithDerivedKey(
+    product: AssociationProduct,
+    slug: string,
+    mode: CotisationMode,
+    name: string
+  ): Promise<AssociationProduct> {
+    return this.productRepo.manager.transaction(async (manager) => {
+      await lockAssociationTiers(manager, product.associationId);
+      const siblings = await manager.find(AssociationProduct, {
+        where: { associationId: product.associationId, type: 'membership' },
+      });
+      const key = variantKeyFromLabel(
+        name,
+        siblings.map((p) => p.variantKey ?? null),
+        variantKeyCap(slug)
+      );
+      const derived = deriveCotisationTag(slug, mode, new Date(), key);
+      product.variantKey = key;
+      product.grantedTagName = derived.tagName;
+      product.tagExpiresAt = derived.expiresAt;
+      this.logger.log(
+        `[COTISATION] derived tier key for association=${product.associationId.slice(0, 8)}: "${key}" (${siblings.length} existing tier(s))`
+      );
+      return manager.save(AssociationProduct, product);
+    });
   }
 
   /**
@@ -817,24 +868,6 @@ export class ProductsService {
       newTagName: newTag.tagName,
       newExpiresAt: newTag.expiresAt,
     };
-  }
-
-  /**
-   * The key a new named tier labelled `name` gets: `variantKeyFromLabel` over the keys the
-   * association's tiers already hold, so it is free by construction and never the base (null) key.
-   */
-  private async deriveFreeVariantKey(associationId: string, name: string): Promise<string> {
-    const siblings = await this.productRepo.find({
-      where: { associationId, type: 'membership' },
-    });
-    const key = variantKeyFromLabel(
-      name,
-      siblings.map((p) => p.variantKey ?? null)
-    );
-    this.logger.log(
-      `[COTISATION] derived tier key for association=${associationId.slice(0, 8)}: "${key}" (${siblings.length} existing tier(s))`
-    );
-    return key;
   }
 
   /**

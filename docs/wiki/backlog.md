@@ -189,6 +189,16 @@ are in the private operations notes until each ships: token liveness for the ser
 the access token themselves, and closing an open socket when its session ends (a separate pull
 request).
 
+## P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)
+
+A tier key derived from its label is kept unique by an association-level advisory lock around the
+sibling read and the insert ([cotisations](cotisations.md#a-new-tiers-key-is-derived-from-its-label-server-2026-10-26)).
+Nothing in the schema enforces it: an explicit key from an older client still goes through a
+read-then-insert check without that lock. Proposed for after the 1.5.0 stable, needing the user's
+yes because it is a migration: a partial unique index on `(associationId, variantKey)` for
+`membership` products (plus one for the base tier's null key), after counting the duplicates it
+would refuse.
+
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
 Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since

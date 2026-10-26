@@ -573,10 +573,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     it('derives a new tier key from its label when asked, free among the sibling tiers', async () => {
       const { service, assoRepo, productRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
-      productRepo.find.mockResolvedValue([
-        product({ id: 'base', type: 'membership', variantKey: null }),
-        product({ id: 'other', type: 'membership', variantKey: 'avec-alcool' }),
-      ] as never);
+      const { manager } = productRepo;
+      const steps: string[] = [];
+      manager.query.mockImplementation((sql: string, params: unknown[]) => {
+        steps.push(`${sql} ${JSON.stringify(params)}`);
+        return Promise.resolve([]);
+      });
+      // The siblings are read on the TRANSACTION's manager, after the lock - never on the pool.
+      manager.find.mockImplementation(() => {
+        steps.push('find');
+        return Promise.resolve([
+          product({ id: 'base', type: 'membership', variantKey: null }),
+          product({ id: 'other', type: 'membership', variantKey: 'avec-alcool' }),
+        ]);
+      });
+      manager.save = jest.fn((_entity: unknown, row: unknown) => {
+        steps.push('save');
+        return Promise.resolve(row);
+      });
 
       const created = await service.create(
         'asso1',
@@ -587,6 +601,25 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(created.variantKey).toBe('avec-alcool-2');
       expect(created.grantedTagName).toBe('cotisant:bde-avec-alcool-2');
       expect(created).not.toHaveProperty('deriveVariantKey');
+      expect(steps).toEqual([
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["tier:asso1"]',
+        'find',
+        'save',
+      ]);
+      expect(productRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('refuses a derived tier when the slug leaves no room for a key in the tag', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated', slug: 's'.repeat(80) }));
+
+      await expect(
+        service.create(
+          'asso1',
+          { name: 'Avec alcool', type: 'membership', deriveVariantKey: true },
+          false
+        )
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('still honours an explicit variantKey (older clients) and refuses it with deriveVariantKey', async () => {

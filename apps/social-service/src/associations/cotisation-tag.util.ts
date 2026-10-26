@@ -53,31 +53,63 @@ export function deriveCotisationTag(
 /** Longest key `variantKeyFromLabel` produces, before any collision suffix. */
 const VARIANT_KEY_MAX = 60;
 
+/** Room kept for a collision suffix (`-2` ... `-999`), so a suffixed key still fits the tag. */
+const VARIANT_KEY_SUFFIX_ROOM = 4;
+
+/** The tag column's length (`user_tags.tagName`, `association_products.grantedTagName`). */
+const TAG_NAME_MAX = 100;
+
 /** The key of a tier whose label holds no letter or digit at all (an emoji, punctuation). */
 const VARIANT_KEY_EMPTY_LABEL = 'palier';
 
+/** Ligatures NFD does not decompose, folded to the letters they stand for. */
+const LIGATURES: ReadonlyArray<[string, string]> = [
+  [String.fromCharCode(0x153), 'oe'],
+  [String.fromCharCode(0xe6), 'ae'],
+  [String.fromCharCode(0xdf), 'ss'],
+];
+
+/**
+ * The longest key, collision suffix excluded, that keeps a tier's tag within the tag column in
+ * BOTH modes: the dated form (`cotisant:<slug>-<key>-YYYY-YYYY`) is the longer one, so the budget is
+ * measured on it, through `deriveCotisationTag` itself. Below 1, no named tier fits this slug.
+ */
+export function variantKeyCap(slug: string): number {
+  // `cotisant:<slug>-YYYY-YYYY`, plus the hyphen a key is joined with.
+  const fixedPart = deriveCotisationTag(slug, 'dated').tagName.length + 1;
+  return Math.min(VARIANT_KEY_MAX, TAG_NAME_MAX - fixedPart - VARIANT_KEY_SUFFIX_ROOM);
+}
+
 /**
  * Derives a new tier's `variantKey` from the label a person typed: lowercase, ASCII-folded
- * (`"Cotisation Alcoolisée"` -> `"cotisation-alcoolisee"`), every run of other characters one
- * hyphen, and unique among `taken` (the association's existing keys) by a `-2`, `-3`... suffix.
+ * (accents dropped, ligatures spelled out), every run of other characters one hyphen, a year-shaped
+ * tail removed, at most `cap` characters, and unique among `taken` (the association's existing
+ * keys) by a `-2`, `-3`... suffix.
+ *
+ * The year tail goes because a dated tag already ENDS in the academic year: a key of
+ * `cotisation-2026-2027` would make a tier's tag read like the dated tag of a `cotisation` tier, so
+ * "Cotisation 2026-2027" derives `cotisation` (then `cotisation-2` when that one is taken).
  *
  * The key is a TECHNICAL id (it names the tier's tag and is what Le Cercle reads as `tier`), so a
  * person never types it; it is derived once, at creation, and never follows a later label edit -
  * renaming a forfait must not move its cotisants to another tag.
  */
-export function variantKeyFromLabel(label: string, taken: Iterable<string | null>): string {
-  const folded = label
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/œ/g, 'oe')
-    .replace(/æ/g, 'ae')
-    .replace(/ß/g, 'ss')
+export function variantKeyFromLabel(
+  label: string,
+  taken: Iterable<string | null>,
+  cap: number = VARIANT_KEY_MAX
+): string {
+  if (cap < 1) throw new RangeError(`variantKeyFromLabel: no room for a key (cap ${cap})`);
+  let lowered = label.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  for (const [ligature, letters] of LIGATURES) lowered = lowered.split(ligature).join(letters);
+  const folded = lowered
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, VARIANT_KEY_MAX)
+    .replace(/(?:^|-)\d{4}(?:-\d{4})*$/, '')
+    .replace(/-+$/, '')
+    .slice(0, cap)
     .replace(/-+$/, '');
-  const base = folded || VARIANT_KEY_EMPTY_LABEL;
+  const base = folded || VARIANT_KEY_EMPTY_LABEL.slice(0, cap);
   const used = new Set(taken);
   if (!used.has(base)) return base;
   let n = 2;
