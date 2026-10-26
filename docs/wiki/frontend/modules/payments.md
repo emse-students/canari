@@ -99,7 +99,7 @@ The whole mechanism is [below](#a-product-checkout-is-a-row-one-per-attempt-2026
 
 | Component | Role |
 |---|---|
-| `shop/ProductCard.svelte` | Product listing card |
+| `shop/ProductCard.svelte`, `shop/MembershipCard.svelte` | A non-tier product card; ONE membership card with a row per tier still offered (`offeredTiers`: the held tier and lower ones are not, and the highest-tier holder gets no card). Amounts are the server's `viewerDueCents`, formatted by `formatMoney` (Intl); a technical name such as `balance_topup` is replaced by a localized type label. The paid return banner names a top-up or a membership by the product type; the confirm answer carries no amount and no delivery state, so a top-up says the credit follows |
 | `shop/ProductPurchaseButton.svelte` | Buy button with loading state and success toast |
 
 ## Routes

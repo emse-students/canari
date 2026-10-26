@@ -18,18 +18,15 @@
     type PartnershipCard,
   } from '$lib/associations/api';
   import { currentUserId } from '$lib/stores/user';
-  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
-  import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
+  import ProductCard from '$lib/components/shop/ProductCard.svelte';
+  import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
+  import { nonTierProducts, offeredTiers } from '$lib/shop/productCards';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
-  import CardTile from '$lib/components/shared/CardTile.svelte';
-  import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { associationAccent } from '$lib/associations/accent';
-  import AmountPicker from '$lib/components/shop/AmountPicker.svelte';
-  import { customAmountLabel } from '$lib/associations/customAmountLabel';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -47,6 +44,8 @@
   let loading = $state(true);
   let error = $state('');
   let customAmounts = $state<Record<string, number>>({});
+  /** The type of the product the payer paid for, so the banner can say what the payment bought. */
+  let returnProductType = $state<AssociationProduct['type'] | null>(null);
   const SHOP_TABS = ['products', 'partnerships'] as const;
   type ShopTab = (typeof SHOP_TABS)[number];
   /** What the page says about the checkout attempt the payer came back from, if any. */
@@ -67,6 +66,7 @@
    */
   async function followCheckout(target: NonNullable<ReturnType<typeof checkoutReturnTarget>>) {
     checkoutReturn = 'checking';
+    returnProductType = products.find((p) => p.id === target.productId)?.type ?? null;
     try {
       for (let attempt = 0; attempt < MAX_CHECKOUT_POLLS && !destroyed; attempt++) {
         const answer = await confirmProductCheckout(
@@ -99,9 +99,20 @@
     }
   }
 
+  /**
+   * What a paid return says. The confirm answer carries only the attempt's STATUS - no amount and no
+   * delivery state - so a top-up says the payment was received and the credit follows, never that
+   * it landed.
+   */
+  function paidText(): string {
+    if (returnProductType === 'balance_topup') return m.shop_return_topup_paid();
+    if (returnProductType === 'membership') return m.shop_return_membership_paid();
+    return m.shop_return_paid();
+  }
+
   const CHECKOUT_RETURN_TEXT: Record<CheckoutReturnView, () => string> = {
     checking: () => m.shop_return_checking(),
-    paid: () => m.shop_return_paid(),
+    paid: paidText,
     waiting: () => m.shop_return_waiting(),
     declined: () => m.shop_return_declined(),
     notCompleted: () => m.shop_return_not_completed(),
@@ -119,26 +130,13 @@
 
   const isLoggedIn = $derived(!!currentUserId());
 
-  /** Orders membership tiers base-first then by ascending variantLevel; leaves other pairs untouched (stable sort). */
-  function compareTiers(a: AssociationProduct, b: AssociationProduct): number {
-    if (a.type === 'membership' && b.type === 'membership') {
-      const rankA = a.variantKey === null ? -1 : (a.variantLevel ?? 0);
-      const rankB = b.variantKey === null ? -1 : (b.variantLevel ?? 0);
-      if (rankA !== rankB) return rankA - rankB;
-    }
-    return 0;
-  }
-
-  /** Products grouped by associationId, membership tiers sorted base-first. */
+  /** Products grouped by associationId. */
   const grouped = $derived.by(() => {
     const map = new SvelteMap<string, AssociationProduct[]>();
     for (const p of products) {
       const list = map.get(p.associationId) ?? [];
       list.push(p);
       map.set(p.associationId, list);
-    }
-    for (const [id, list] of map) {
-      map.set(id, [...list].sort(compareTiers));
     }
     return map;
   });
@@ -189,60 +187,6 @@
       else console.warn('[shop] checkout return names no attempt, nothing to confirm');
     }
   });
-
-  /** Returns a human-readable price label for a product. */
-  function priceLabel(p: AssociationProduct): string {
-    // A grid answers first and alone: while one is set the product's own amount decides nothing,
-    // server-side included, so printing it here would name a figure no checkout would charge.
-    const gridded = gridPriceLabel(p);
-    if (gridded !== null) return gridded;
-    if (p.amountCents !== null) {
-      return `${(p.amountCents / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
-    }
-    if (p.allowCustomAmount) {
-      return customAmountLabel(p);
-    }
-    return m.shop_price_free();
-  }
-
-  /** Returns a badge label for the product type. */
-  function typeLabel(type: AssociationProduct['type']): string {
-    return type === 'membership'
-      ? m.shop_type_membership()
-      : type === 'balance_topup'
-        ? m.shop_type_topup()
-        : m.shop_type_other();
-  }
-
-  /** Returns the reduced cotisant price label, or null when the product has no member pricing. */
-  function memberPriceLabel(p: AssociationProduct): string | null {
-    if (p.amountCentsMember == null) return null;
-    return `${(p.amountCentsMember / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
-  }
-
-  /** Sibling tier whose grantedTagName matches this product's memberPriceTag (tier-upgrade pricing), if any. */
-  function upgradeSibling(
-    p: AssociationProduct,
-    siblings: AssociationProduct[]
-  ): AssociationProduct | null {
-    if (!p.memberPriceTag) return null;
-    return siblings.find((s) => s.grantedTagName === p.memberPriceTag) ?? null;
-  }
-
-  /**
-   * Returns true when the viewer actually qualifies for `amountCentsMember`: either the
-   * asso-wide cotisant reduction (no memberPriceTag), or holding the specific sibling tier
-   * tag a tier-upgrade price is linked to. Mirrors the server-side check in resolvePurchase.
-   */
-  function qualifiesForMemberPrice(p: AssociationProduct, siblings: AssociationProduct[]): boolean {
-    // A grid replaces the member price rather than competing with it - the cotisation criterion is
-    // where a gridded product says what a cotisant pays.
-    if (p.viewerPrice?.kind === 'grid') return false;
-    if (p.amountCentsMember == null) return false;
-    if (!p.memberPriceTag) return p.viewerIsCotisant === true;
-    const sibling = upgradeSibling(p, siblings);
-    return sibling != null && p.viewerActiveTier === sibling.variantKey;
-  }
 </script>
 
 <PageContainer width="grid">
@@ -302,7 +246,9 @@
         {:else}
           {#each [...grouped.entries()] as [assocId, assocProducts] (assocId)}
             {@const asso = associations.get(assocId)}
-            {#if asso}
+            {@const tiers = offeredTiers(assocProducts)}
+            {@const others = nonTierProducts(assocProducts)}
+            {#if asso && (tiers.length > 0 || others.length > 0)}
               <section class="space-y-4">
                 <!-- Association header -->
                 <div class="flex items-center gap-3">
@@ -324,106 +270,18 @@
                   </div>
                 </div>
 
-                <!-- Products grid -->
+                <!-- One membership card with the tiers inside, then one card per other product -->
                 <div class={CARD_GRID}>
-                  {#each assocProducts as product (product.id)}
-                    {@const sibling = upgradeSibling(product, assocProducts)}
-                    {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
-                    <CardTile
-                      iconUrl={product.iconUrl}
-                      fallbackIcon={productFallbackIcon(product.type)}
+                  {#if tiers.length > 0}
+                    <MembershipCard {tiers} accentColor={associationAccent(asso)} />
+                  {/if}
+                  {#each others as product (product.id)}
+                    <ProductCard
+                      {product}
                       accentColor={associationAccent(asso)}
-                      badgeText={product.badgeText}
-                    >
-                      <div class="flex flex-col gap-3 p-5">
-                        <!-- Type badge -->
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                          <div class="flex flex-wrap items-center gap-1.5">
-                            <span
-                              class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
-                              'membership'
-                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                : product.type === 'balance_topup'
-                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                                  : 'bg-cn-surface-alt text-text-muted'}"
-                            >
-                              {typeLabel(product.type)}
-                            </span>
-                            {#if product.membersOnly}
-                              <span
-                                class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                              >
-                                {m.shop_members_only_badge()}
-                              </span>
-                            {/if}
-                            {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
-                              <span
-                                class="bg-cn-accent/15 text-cn-accent rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                              >
-                                {m.shop_current_tier_badge()}
-                              </span>
-                            {/if}
-                          </div>
-                          {#if memberEligible && memberPriceLabel(product)}
-                            <span class="text-right text-sm font-bold">
-                              <span class="text-text-muted font-normal line-through"
-                                >{priceLabel(product)}</span
-                              >
-                              <span class="text-emerald-600 dark:text-emerald-400"
-                                >{memberPriceLabel(product)}</span
-                              >
-                              <span class="text-text-muted block text-xs font-normal sm:inline"
-                                >{sibling
-                                  ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
-                                  : m.shop_member_price_suffix()}</span
-                              >
-                            </span>
-                          {:else}
-                            <span class="text-cn-accent text-sm font-bold"
-                              >{priceLabel(product)}</span
-                            >
-                          {/if}
-                        </div>
-
-                        <div>
-                          <p class="text-text-main font-semibold">{product.name}</p>
-                          {#if product.description}
-                            <p class="text-text-muted mt-1 line-clamp-2 text-xs">
-                              {product.description}
-                            </p>
-                          {/if}
-                        </div>
-
-                        <!-- Custom amount: chips and an in-app keypad, no native input -->
-                        {#if product.allowCustomAmount && product.amountCents === null}
-                          <AmountPicker
-                            bind:valueCents={customAmounts[product.id]}
-                            minCents={product.customAmountMinCents}
-                            currency={product.currency}
-                          />
-                        {/if}
-
-                        <ProductPurchaseButton
-                          {product}
-                          customAmountCents={customAmounts[product.id]}
-                          disabled={(product.membersOnly && !product.viewerIsCotisant) ||
-                            gridRefuses(product)}
-                          class="w-full"
-                        />
-                        {#if gridRefuses(product)}
-                          <p class="text-xs text-amber-700 dark:text-amber-400">
-                            {m.shop_price_unavailable_hint()}
-                          </p>
-                        {:else if gridPriceIsProvisional(product, isLoggedIn)}
-                          <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
-                        {/if}
-                        {#if product.membersOnly && !product.viewerIsCotisant}
-                          <p class="text-xs text-amber-700 dark:text-amber-400">
-                            {m.shop_members_only_hint()}
-                          </p>
-                        {/if}
-                      </div>
-                    </CardTile>
+                      bind:customAmountCents={customAmounts[product.id]}
+                      signedIn={isLoggedIn}
+                    />
                   {/each}
                 </div>
               </section>

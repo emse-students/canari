@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import { formatMoney } from '$lib/shop/money';
 import type { AssociationProduct } from '$lib/associations/api';
 
 /**
@@ -9,11 +10,10 @@ import type { AssociationProduct } from '$lib/associations/api';
 export function customAmountLabel(
   p: Pick<AssociationProduct, 'customAmountMinCents' | 'customAmountMaxCents' | 'currency'>
 ): string {
-  const currency = p.currency.toUpperCase();
-  const min = p.customAmountMinCents ? (p.customAmountMinCents / 100).toFixed(2) : null;
-  const max = p.customAmountMaxCents ? (p.customAmountMaxCents / 100).toFixed(2) : null;
-  if (min !== null && max !== null) return m.shop_price_libre({ min, max, currency });
-  if (min !== null) return m.shop_price_libre_min({ min, currency });
-  if (max !== null) return m.shop_price_libre_max({ max, currency });
+  const min = p.customAmountMinCents ? formatMoney(p.customAmountMinCents, p.currency) : null;
+  const max = p.customAmountMaxCents ? formatMoney(p.customAmountMaxCents, p.currency) : null;
+  if (min !== null && max !== null) return m.shop_price_libre({ min, max });
+  if (min !== null) return m.shop_price_libre_min({ min });
+  if (max !== null) return m.shop_price_libre_max({ max });
   return m.shop_price_libre_open();
 }

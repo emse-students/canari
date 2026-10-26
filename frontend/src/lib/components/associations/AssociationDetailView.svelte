@@ -29,9 +29,7 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS, type PageWidth } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
-  import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
-  import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
@@ -65,9 +63,9 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
-  import AmountPicker from '$lib/components/shop/AmountPicker.svelte';
-  import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
-  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
+  import ProductCard from '$lib/components/shop/ProductCard.svelte';
+  import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
+  import { nonTierProducts, offeredTiers } from '$lib/shop/productCards';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
 
@@ -154,6 +152,8 @@
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
   let shopCustomAmounts = $state<Record<string, number>>({});
+  /** The cotisation tiers this viewer may still buy, shown as ONE card. */
+  const shopTiers = $derived(offeredTiers(products));
 
   /** What decides which conditional sections exist: ONE rule, shared by the hub and the route guard. */
   const content = $derived({
@@ -599,68 +599,16 @@
           </a>
         </div>
         <div class={CARD_GRID}>
-          {#each products as product (product.id)}
-            <CardTile
-              iconUrl={product.iconUrl}
-              fallbackIcon={productFallbackIcon(product.type)}
+          {#if shopTiers.length > 0}
+            <MembershipCard tiers={shopTiers} accentColor={cardAccentColor} />
+          {/if}
+          {#each nonTierProducts(products) as product (product.id)}
+            <ProductCard
+              {product}
               accentColor={cardAccentColor}
-              badgeText={product.badgeText}
-            >
-              <div class="flex h-full flex-col gap-3 p-5">
-                <div class="min-w-0 flex-1">
-                  <p class="text-text-main text-sm font-semibold">{product.name}</p>
-                  {#if product.description}
-                    <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
-                  {/if}
-                  <p class="text-text-muted mt-1 text-xs">
-                    <!--
-                      A grid answers first and alone: while one is set the product's own amount
-                      decides nothing, so printing it would name a figure no checkout charges.
-                    -->
-                    {#if gridPriceLabel(product) !== null}
-                      {gridPriceLabel(product)}
-                    {:else if product.amountCents}
-                      {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
-                    {:else if product.allowCustomAmount}
-                      {m.asso_product_custom_price()}
-                    {:else}
-                      {m.asso_product_free_price()}
-                    {/if}
-                    <span
-                      class="bg-cn-border/40 text-2xs ml-2 rounded-full px-1.5 py-0.5 font-bold uppercase"
-                    >
-                      {product.type === 'membership'
-                        ? m.asso_product_membership_type()
-                        : product.type === 'balance_topup'
-                          ? m.asso_product_topup_type()
-                          : m.asso_product_other_type()}
-                    </span>
-                  </p>
-                  {#if product.allowCustomAmount && product.amountCents === null}
-                    <div class="mt-2">
-                      <AmountPicker
-                        bind:valueCents={shopCustomAmounts[product.id]}
-                        minCents={product.customAmountMinCents}
-                        currency={product.currency}
-                      />
-                    </div>
-                  {/if}
-                </div>
-                {#if gridRefuses(product)}
-                  <p class="text-xs text-amber-700 dark:text-amber-400">
-                    {m.shop_price_unavailable_hint()}
-                  </p>
-                {:else if gridPriceIsProvisional(product, userId !== null)}
-                  <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
-                {/if}
-                <ProductPurchaseButton
-                  {product}
-                  customAmountCents={shopCustomAmounts[product.id]}
-                  disabled={gridRefuses(product)}
-                  class="w-full"
-                />
-              </div>
-            </CardTile>
+              bind:customAmountCents={shopCustomAmounts[product.id]}
+              signedIn={userId !== null}
+            />
           {/each}
         </div>
       </div>

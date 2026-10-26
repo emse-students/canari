@@ -1,5 +1,6 @@
 import type { AssociationProduct } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
+import { formatMoney } from '$lib/shop/money';
 
 /**
  * Rendering a price the SERVER resolved for the person looking at the screen.
@@ -37,7 +38,7 @@ export function gridPriceLabel(product: AssociationProduct): string | null {
   const price = product.viewerPrice;
   if (price?.kind !== 'grid') return null;
   if (price.amountCents === null) return m.shop_price_unavailable();
-  return `${(price.amountCents / 100).toFixed(2)} ${product.currency.toUpperCase()}`;
+  return formatMoney(price.amountCents, product.currency);
 }
 
 /**
