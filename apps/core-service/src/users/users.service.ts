@@ -19,7 +19,12 @@ import {
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
 import { UserBlocksService } from './user-blocks.service';
-import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect-profile';
+import {
+  EMPTY_PROFILE,
+  legacyColumns,
+  sameCursus,
+  type MiconnectProfile,
+} from './miconnect-profile';
 import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { assertMintableUserId } from './user-id';
@@ -252,7 +257,7 @@ export class UsersService implements OnModuleInit {
     const sameProfile = (u: User) =>
       u.miconnectUuid === profile.miconnectUuid &&
       u.campus === profile.campus &&
-      JSON.stringify(u.cursus ?? []) === JSON.stringify(profile.cursus) &&
+      sameCursus(u.cursus ?? [], profile.cursus) &&
       JSON.stringify(u.posts ?? []) === JSON.stringify(profile.posts) &&
       (u.promo ?? null) === promo &&
       (u.formation ?? null) === formation;

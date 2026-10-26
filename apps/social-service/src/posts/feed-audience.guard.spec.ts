@@ -1,6 +1,7 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { FeedAudienceGuard } from './feed-audience.guard';
 import { IN_FEED_AUDIENCE_SQL } from '../spaces/reader-spaces';
+import { PostsService } from './posts.service';
 
 /**
  * THE GATE THAT WAS MISSING: in the audience (WP6b: admin, a space, or a membership), or not.
@@ -90,6 +91,19 @@ describe('FeedAudienceGuard', () => {
     await expect(guard.canActivate(contextWith({ 'x-user-id': 'me' }))).rejects.toThrow(
       ForbiddenException
     );
+  });
+});
+
+describe('PostsService.isInFeedAudience', () => {
+  it('answers the predicate and logs nothing per read', async () => {
+    const service = Object.create(PostsService.prototype) as PostsService;
+    const debug = jest.fn();
+    Object.assign(service, {
+      logger: { debug, log: debug, warn: debug },
+      postRepo: { manager: { query: () => Promise.resolve([{ inAudience: true }]) } },
+    });
+    await expect(service.isInFeedAudience('user-1')).resolves.toBe(true);
+    expect(debug).not.toHaveBeenCalled();
   });
 });
 

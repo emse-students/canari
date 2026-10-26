@@ -849,9 +849,9 @@ export class PostsService {
 
   /** Whether `userId` may use the feed at all - the gate's question, for `GET /posts/audience`. */
   async isInFeedAudience(userId: string): Promise<boolean> {
-    const inAudience = await readInFeedAudience(this.postRepo.manager, userId);
-    this.logger.debug(`[FEED_GATE] audience of ${userId.slice(0, 8)}: ${inAudience}`);
-    return inAudience;
+    // No line per read: the answer IS the response body, and a refusal is already logged once by
+    // `FeedAudienceGuard` where the decision that has a consequence is made.
+    return readInFeedAudience(this.postRepo.manager, userId);
   }
 
   /**
