@@ -18,7 +18,7 @@
 import { subjectFor } from './accounts.mjs';
 import { assertCampaignOwned, ledger, recordCreated } from './campaign.mjs';
 import { RACE_HOLD_MS } from './ccrows.mjs';
-import { client, evaluate, until } from './chat.mjs';
+import { client, evaluate, parkConversation, until } from './chat.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, redis, srvLines } from './estate.mjs';
 import { armFault } from './fault.mjs';
@@ -190,8 +190,23 @@ export function lastGroupMintedBy(rowId) {
   return mine.length ? { name: mine[mine.length - 1].name, id: mine[mine.length - 1].id } : null;
 }
 
-/** Waits until a client's sidebar names `name` (a joiner received its Welcome); the elapsed ms or null. */
+/**
+ * Waits until a client's sidebar names `name` (a joiner received its Welcome); the elapsed ms or null.
+ *
+ * **A SIDEBAR THAT IS NOT ON SCREEN NAMES NOTHING, SO A MOBILE SEAT IS PARKED FIRST** (2026-10-26).
+ * The phone layout gives the whole screen to an open conversation, and BIG-1 leaves A1 inside its
+ * own group after reading the first message there. BIG-2 then waited 180 s for a name in a list that
+ * was not in the DOM and went INVALID ("A1 never listed"), while A1's console had its Welcome ready
+ * 35 s in. `parkConversation` presses the mobile back control and is a no-op on a desktop layout, so
+ * the question asked stays the one this function names, on either layout.
+ */
 export async function awaitListed(cx, name, timeoutMs = 60_000) {
+  const shown = await evaluate(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`).catch(() => false);
+  if (!shown) {
+    const parked = await parkConversation(cx);
+    // A desktop layout keeps its list beside the conversation: nothing to park, nothing to say.
+    if (parked !== 'already outside a conversation' && !parked.includes('offers no back control')) console.log(`  fix  awaitListed(${name}): ${parked}`);
+  }
   try {
     return await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, timeoutMs, 250);
   } catch {
