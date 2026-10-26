@@ -755,6 +755,16 @@ const NOTABLE = [
   // rule (`device=\S+ groupsCleaned=`) matched nothing on alpha.5 and every revocation read
   // unexplained. Pinned to `signalled=true`: a device the server could not tell stays the finding.
   /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ reason=\S+ sessionsEnded=\d+ groupsCleaned=\d+ keyPackagesDeleted=\d+ oneTimeKeyPackagesDeleted=\d+ queuedMessagesDeleted=\d+ signalled=true$/,
+  // A WELCOME CARRIED BY REFERENCE (`push-payload.ts` `decideProtoCarriage`): a Welcome is NEVER
+  // inlined in a push, by KIND and not by size - the device fetches it by `queuedMessageId` - and
+  // `messaging.service.ts` says so at DEBUG. First scoped to the admission, device and large rows
+  // (#2519); alpha.5's DUP-2, DUP-6 and DUP-7 then sent Welcomes of 2184 and 2812 B, UNDER the
+  // 3734 B budget, and read out-of-row: every row that adds anyone sends one, so it is reported
+  // everywhere, never a row's. Only `welcome`: `key-material` and `long-frame` are other decisions.
+  /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] welcome carried by reference: \d+B, budget \d+B$/,
+  // AN AVATAR FETCHED FOR A PUSH (`push.controller.ts` `logAvatarOutcome`): `served` and `absent`
+  // (no photo) are the two outcomes logged at info; every failure is a warn and stays the finding.
+  /\[PushController\] \[PUSH_AVATAR\] outcome=(served status=200|absent status=404) ms=\d+ device=(true|false) target=[0-9a-f]{8}$/,
   // A SESSION ENDED, AND THE PUSH REGISTRATIONS IT LEAVES (`internal.controller.ts`): core-service
   // asks for every session it ends deliberately - a logout, an owner revoking a device. The binding
   // read and the delete's own account, both on their success spelling; reported, as a removal is.
@@ -1373,19 +1383,6 @@ const ROW_RULES = [
         .join('|')
     ),
     rows: ['DEV-7'],
-  },
-
-  // ── A WELCOME TOO LARGE FOR THE PUSH, CARRIED BY REFERENCE (`push-payload.ts` `decideProtoCarriage`) ──
-  // A Welcome is never inlined: its ratchet tree makes it 4-6 KB against a ~3.7 KB budget, so the
-  // device fetches it by `queuedMessageId`, and `messaging.service.ts` says so at DEBUG. A decision on
-  // an expected branch, read in alpha.5's ADM rows (2026-10-26) - expected in the rows that admit a
-  // person or a device, dirt in a row that sends no Welcome. Only `welcome`: `key-material` and
-  // `long-frame` are other decisions this rule does not read.
-  {
-    name: 'welcome carried by reference',
-    tag: /\[PUSH_SEND\]\[[^\]]+\] welcome carried by reference/,
-    shape: /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] welcome carried by reference: \d+B, budget \d+B$/,
-    rows: ['ADM-*', 'DEV-*', 'BIG-*'],
   },
 
   // ── #2269: commit settlement and revocation ───────────────────────────────────────────────────
