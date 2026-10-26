@@ -294,12 +294,15 @@ social-service never calls Stripe directly. Online sales require completed Strip
 
 ### A renewal updates two columns, never saves the tag it read (2026-10-25)
 
-Every path below ends in `grantOrRenew`. When the tag is already held, the renewal is ONE `UPDATE`
-of that row by id: `expiresAt` when given, and `metadata` merged in SQL (`"metadata" || patch`), so
-two renewals keep both their keys. A `save` of the tag read would write back what changed since the
-read and re-insert a tag revoked in between. A tag revoked between the read and the renewal is
-granted afresh as a NEW row carrying this grant's issuer - the grant ordered after the revoke - and
-the line says so at warn. Proven by social-service's `users/user-grant-write-gone.integration.spec.ts`
+Every path below ends in `grantOrRenew`, and it reads nothing first: it is ONE
+`INSERT ... ON CONFLICT ("userId", "tagName") DO UPDATE` (the entity's `@Unique` index). A tag not
+held is inserted with this grant's issuer; a tag held has `expiresAt` replaced when given and
+`metadata` merged in SQL (`user_tags.metadata || EXCLUDED.metadata`), so two renewals keep both their
+keys. `RETURNING (xmax = 0)` tells the two apart for the log line. A `save` of the tag read would
+write back what changed since the read and re-insert a tag revoked in between; a read then an insert
+would let two first grants both insert. Here a revoke is ordered before or after the statement,
+never inside it, and of two first grants the second renews the first. Proven by social-service's
+`users/user-grant-write-gone.integration.spec.ts`
 ([core-service](services/core-service.md#a-user-write-updates-columns-never-saves-the-row-it-read-2026-10-25)).
 
 ### A. Membership product (recommended)
