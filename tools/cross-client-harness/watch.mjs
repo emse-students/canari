@@ -285,7 +285,17 @@ const BENIGN = [
   // spared instead of deleting them in silence. It is EXPECTED here specifically - COMM-12 builds
   // two communities back to back, which is the race - and its absence proves nothing either way,
   // since a run where no listing happened to be in flight is a run with nothing to spare.
-  /^\[WORKSPACE-LOAD\] kept \d+ (community\(ies\)|salon\(s\)) created after this listing was requested/,
+  // Since 2026-10-26 it is one session-log line per salon or community (naming the stores that held
+  // it), and it covers one HEARD OF live during the listing too. Its two siblings are the same ledger
+  // reading a removal made live in that window: the listing declining to draw it back, and the prune
+  // finishing a removal whose purge was still running. The PRUNE of what nothing heard is said at
+  // `warn`, once per salon, and stays dirt: it is the visible end of a removal this client missed.
+  // One more line of the same fix: a community first drawn from an event under a slug the server
+  // does not use, folded into the listed one.
+  /^\[WORKSPACE-LOAD\] kept (salon|community) \S+ \([a-z ,]+\): not listed by the server, but created or heard of on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ not restored: listed by the server, but removed on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ \([a-z ,]+\) removed on this device after the listing was asked - its removal is finished here \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] community \S+, drawn from an event, is \S+ on the server - one entry, under the server's id$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
