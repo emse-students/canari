@@ -2764,10 +2764,9 @@ export abstract class BaseMlsService implements IMlsService {
         // gives up at once on a transport failure (nobody answered: no smaller page can help), which
         // is the expected end of an offline start - one line, by its class, no stack.
         const where = `the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect`;
-        if (
-          e instanceof SessionEndedByDeviceRevocationError &&
-          e.names(this.userId, this.deviceId)
-        ) {
+        const revokedHere =
+          e instanceof SessionEndedByDeviceRevocationError && e.names(this.userId, this.deviceId);
+        if (revokedHere) {
           // A DESIGNED END, NOT A FAULT: the owner revoked THIS device, the server deleted its
           // backlog, and the wipe that follows erases the device. Nothing is left to drain and no
           // reconnect would drain it, so neither an error line nor "stays queued" is true.
@@ -2786,7 +2785,8 @@ export abstract class BaseMlsService implements IMlsService {
         }
         // WHAT THIS FAILURE HOLDS UP, made visible: a drain waiter (a parked seed ask, an admission
         // observation) is woken only by a pull that ENDS whole, so it waits for the next one.
-        const waiting = this.pendingGroupDrainWaiters();
+        // Not on a revoked device: no pull will ever complete there, so the line would promise one.
+        const waiting = revokedHere ? 0 : this.pendingGroupDrainWaiters();
         if (waiting > 0) {
           console.info(
             `[PENDING] ${waiting} drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes`

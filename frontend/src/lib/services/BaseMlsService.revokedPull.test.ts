@@ -48,12 +48,15 @@ describe('a pending fetch refused because the device was revoked', () => {
       svc,
       new SessionEndedByDeviceRevocationError({ userId: 'user-a', deviceId: 'dev-1' })
     );
+    // Two waiters would normally be announced; on a revoked device no pull will ever complete.
+    Object.assign(svc, { pendingGroupDrainWaiters: () => 2 });
     await svc.fetchPendingMessages();
 
     expect(error).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
     const lines = info.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(lines.filter((l: string) => l.includes('revoked by its owner'))).toHaveLength(1);
+    expect(info).toHaveBeenCalledTimes(1);
     expect(lines.join('\n')).not.toContain('stays queued');
   });
 
