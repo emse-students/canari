@@ -494,6 +494,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/devrows-selftest.mjs
 	@bun tools/cross-client-harness/archive/salon-selftest.mjs
 	@bun tools/cross-client-harness/archive/big-selftest.mjs
+	@bun tools/cross-client-harness/archive/listrace-selftest.mjs
 	@bun tools/cross-client-harness/archive/handrow-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
