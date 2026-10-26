@@ -149,6 +149,9 @@ No row verdict depends on it; it stays here until it is explained.
 | BIG-1 | `campaign-big`: four users, twelve devices (W1-W8 + A1 + I1), created with one bulk Add | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 | BIG-2 | 30 rapid messages from three senders while two commits land in the middle | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 | BIG-3 | A community of twelve seats: a removal, then a new user | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
+| BIG-1-noI1 | BIG-1 without I1 (W1-W8 + A1), recorded under its own id while the iPhone reads no rows | W1-W8 +A1 - B | `PASS-DIRTY` - `1.4.1-alpha.5`: own 20/20 and the invariant held; dirt named (an old group's unsigned history, the phone arming trip fixed by #2533, the A1 history-coverage walk - a P3) |
+| BIG-2-noI1 | BIG-2 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, the desktop thread panel scrolled under a sr-only status label (fixed by #2535); replayed on `1.4.1-alpha.6` |
+| BIG-3-noI1 | BIG-3 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, a salon heard of live was lower-cased until a reload (fixed by #2538); replayed on `1.4.1-alpha.6` |
 
 ## TOK - a token expiring in the middle of an operation
 
