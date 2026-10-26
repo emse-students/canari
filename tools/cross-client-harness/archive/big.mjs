@@ -37,7 +37,7 @@ import {
 import { clientBuild, errorDetail, finishObserved, keepConsoles, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence } from '../settlerows.mjs';
-import { GROUP_CREATION_NARRATION, consoleDump, consoleLines } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, bigRowNarration, consoleDump, consoleLines } from '../watch.mjs';
 import { addMembers } from './addmember.mjs';
 
 const argv = process.argv.slice(2);
@@ -284,7 +284,9 @@ try {
   const { verdict, failures } = composeVerdict({ own: out.own ?? [], invariant: out.invariant ?? null, premise: out.premise ?? [] });
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
-  const observers = await observersOf(seats, { logs: { W1: [...GROUP_CREATION_NARRATION] } });
+  // EVERY SEAT ITS BIG-ROW NARRATION (`bigRowNarration`: A1 its own lines too), W1 its group creation.
+  const logs = Object.fromEntries(spec.devices.map((d) => [d, [...bigRowNarration(d), ...(d === 'W1' ? GROUP_CREATION_NARRATION : [])]]));
+  const observers = await observersOf(seats, { logs });
   await finishObserved(
     id,
     verdict,

@@ -35,6 +35,7 @@ import {
   SIBLING_MINT_NARRATION,
   admissionJoinerNarration,
   admissionMemberNarration,
+  bigRowNarration,
   REVOKED_SIGN_OUT_NARRATION,
   revokedLogoutOnce,
   signOutCount,
@@ -1718,6 +1719,43 @@ const FORGIVE_CASES = [
     ],
     REMOVE_NARRATION,
     { clean: false, unmatched: 2 },
+  ],
+  // ── the BIG rows' narration (2026-10-26): every seat the bulk-ingest line, A1 its own lines ──
+  [
+    "a BIG row's A1: the bulk-ingest landing, its edge exclusions and all share targets, at debug",
+    [
+      ['debug', '[18:15:07.722] [MLS] Bulk ingest checkpoint landed - committing its progress markers.'],
+      ['debug', '[18:15:06.769] [2026-10-26T17:15:06.769Z] [GESTURE] right-edge exclusion over 643..2152 px'],
+      ['debug', '[18:15:06.772] [2026-10-26T17:15:06.772Z] [GESTURE] left-edge exclusion cleared'],
+      ['debug', '[18:14:39.930] [2026-10-26T17:14:39.930Z] [ShareTargets] 5 of 5 present (conversations changed)'],
+    ],
+    bigRowNarration('A1'),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "a BIG row's browser seat: the bulk-ingest landing is forgiven",
+    [['debug', '[18:19:07.905] [MLS] Bulk ingest checkpoint landed - committing its progress markers.']],
+    bigRowNarration('W2'),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "control: the phone's lines on ANOTHER seat stay dirt",
+    [
+      ['debug', '[18:15:06.769] [2026-10-26T17:15:06.769Z] [GESTURE] right-edge exclusion over 643..2152 px'],
+      ['debug', '[18:14:39.930] [2026-10-26T17:14:39.930Z] [ShareTargets] 5 of 5 present (conversations changed)'],
+    ],
+    bigRowNarration('W2'),
+    { clean: false, unmatched: 1 },
+  ],
+  [
+    'control: a share target missing, and the same words at warn or error, stay dirt on A1',
+    [
+      ['debug', '[18:14:39.930] [2026-10-26T17:14:39.930Z] [ShareTargets] 4 of 5 present (conversations changed)'],
+      ['warning', '[18:15:06.769] [2026-10-26T17:15:06.769Z] [GESTURE] right-edge exclusion over 643..2152 px'],
+      ['error', '[18:15:07.722] [MLS] Bulk ingest checkpoint landed - committing its progress markers.'],
+    ],
+    bigRowNarration('A1'),
+    { clean: false, unmatched: 3, warnings: 1 },
   ],
   // ── the admission narrations (#2500): scoped to the row's group and to the endings it plays ──
   [
