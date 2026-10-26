@@ -174,6 +174,19 @@ vulnerabilities:
       - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
     statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
 
+  # --- curl 8.22.0-r0, in the same four Alpine 3.24 images (2026-10-26) -------------------------
+  # CVE-2026-92392 (HTTP/2 upload use-after-free), fixed by Alpine in 8.23.0-r0. Reported as `curl`
+  # in adminer, nginx:1.31.8-alpine and nginx:stable-alpine, and as `libcurl` in postgres:18-alpine.
+  # Measured with Trivy 0.75.0 on 2026-10-26: adminer:latest and nginx:1.31.8-alpine are still the
+  # pinned digests, nginx:stable-alpine and postgres:18-alpine (a newer digest than the pin) were
+  # rescanned and carry the same 8.22.0-r0, so there was no patched digest to move to. Scoped by purl,
+  # so a later curl build is NOT covered and the rescan retires each half the day its pin moves.
+  - id: CVE-2026-92392
+    purls:
+      - "pkg:apk/alpine/curl@8.22.0-r0"
+      - "pkg:apk/alpine/libcurl@8.22.0-r0"
+    statement: "curl 8.22.0-r0 (adminer, nginx:1.31.8-alpine, nginx:stable-alpine) and libcurl 8.22.0-r0 (postgres:18-alpine): HTTP/2 upload use-after-free in a client library none of these servers uses to send uploads - nginx and postgres do not call curl on request data, and adminer's curl is a PHP build dependency; which processes load it was not verified. No patched upstream image yet (Alpine ships 8.23.0-r0); remove when the pins are rebuilt."
+
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
   # (`AUTHENTIK_TAG`), not this file. Measured on 2026.8.0, two kinds of entry:
