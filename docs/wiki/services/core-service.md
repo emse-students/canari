@@ -544,7 +544,7 @@ write from inside the service's own repository call, plus two first key calls, a
 back at `verify`, and a `create` over an existing id. The same rule holds in social-service for
 memberships
 ([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)), a tag's renewal
-([cotisations](../cotisations.md#a-renewal-updates-two-columns-never-saves-the-tag-it-read-2026-10-25)),
+([cotisations](../cotisations.md#a-grant-or-renewal-is-one-statement-never-a-save-of-the-tag-it-read-2026-10-25)),
 a mute and an unmute, a report's review and a role history edit
 ([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)),
 proven by `users/user-grant-write-gone.integration.spec.ts` there.

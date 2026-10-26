@@ -292,7 +292,7 @@ End-user (paying) surfaces:
 All money moves through core-service using the association's **Stripe Connect** account;
 social-service never calls Stripe directly. Online sales require completed Stripe Connect onboarding.
 
-### A renewal updates two columns, never saves the tag it read (2026-10-25)
+### A grant or renewal is one statement, never a save of the tag it read (2026-10-25)
 
 Every path below ends in `grantOrRenew`, and it reads nothing first: it is ONE
 `INSERT ... ON CONFLICT ("userId", "tagName") DO UPDATE` (the entity's `@Unique` index). A tag not

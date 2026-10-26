@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { FindOptionsWhere, IsNull, Repository } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { AssociationMember } from './entities/association-member.entity';
 import { Association } from './entities/association.entity';
@@ -149,11 +149,11 @@ export class UserProfileService {
   /**
    * Updates a role history entry owned by the user.
    *
-   * The columns the edit names, as ONE `UPDATE` keyed by the entry AND its owner AND the two years
-   * the range check was judged against - never a save of the entry read: a save writes back every
-   * column another edit changed since the read, and re-inserts an entry deleted since. 0 rows: the
-   * entry is gone or no longer the caller's (404), or another edit moved its years first (409, so a
-   * range checked against stale years is never written).
+   * The columns the edit names, as ONE `UPDATE` keyed by the entry AND its owner AND, when the edit
+   * sets one year only, the other year as the range check read it - never a save of the entry read:
+   * a save writes back every column another edit changed since the read, and re-inserts an entry
+   * deleted since. 0 rows: the entry is gone or no longer the caller's (404), or another edit moved
+   * the judged year first (409, so a range checked against a stale year is never written).
    */
   async updateRoleHistory(
     userId: string,
@@ -177,15 +177,17 @@ export class UserProfileService {
     if (dto.sortOrder !== undefined) changes.sortOrder = dto.sortOrder;
 
     if (Object.keys(changes).length > 0) {
-      const updated = await this.roleHistoryRepo.update(
-        {
-          id: entryId,
-          userId,
-          startYear: entry.startYear ?? IsNull(),
-          endYear: entry.endYear ?? IsNull(),
-        },
-        changes
-      );
+      // A stored year bounds the write only when the range check JUDGED it: the request sets the
+      // other year and leaves this one as read. A title-only edit judged nothing, and an edit setting
+      // both years replaces both, so neither can be broken by a year moved meanwhile.
+      const where: FindOptionsWhere<AssociationRoleHistory> = { id: entryId, userId };
+      if (dto.startYear === undefined && dto.endYear !== undefined) {
+        where.startYear = entry.startYear ?? IsNull();
+      }
+      if (dto.endYear === undefined && dto.startYear !== undefined) {
+        where.endYear = entry.endYear ?? IsNull();
+      }
+      const updated = await this.roleHistoryRepo.update(where, changes);
       if (updated.affected !== 1) {
         const now = await this.roleHistoryRepo.findOne({ where: { id: entryId } });
         if (!now || now.userId !== userId) {
@@ -195,7 +197,7 @@ export class UserProfileService {
           throw new NotFoundException('Role history entry not found');
         }
         this.logger.warn(
-          `[UserProfile] role history update refused: id=${entryId.slice(0, 8)} years changed since its read`
+          `[UserProfile] role history update refused: id=${entryId.slice(0, 8)} judged year changed since its read`
         );
         throw new ConflictException('Role history entry changed meanwhile - reload and retry');
       }

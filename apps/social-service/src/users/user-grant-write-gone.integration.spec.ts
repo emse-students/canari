@@ -296,6 +296,31 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     });
   });
 
+  it('a title-only edit across years moved since writes its title and keeps the years', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const ran = interleave(history, () =>
+      history.update({ id: row.id }, { startYear: 2024, endYear: 2025 })
+    );
+    const updated = await profiles.updateRoleHistory(userId, row.id, { roleTitle: 'President' });
+    expect(ran()).toBe(true);
+    expect(updated).toMatchObject({ roleTitle: 'President', startYear: 2024, endYear: 2025 });
+  });
+
+  it('an edit setting both years across years moved since writes its own range', async () => {
+    const userId = crypto.randomUUID();
+    const row = await entry(userId);
+    const ran = interleave(history, () =>
+      history.update({ id: row.id }, { startYear: 2024, endYear: 2025 })
+    );
+    const updated = await profiles.updateRoleHistory(userId, row.id, {
+      startYear: 2019,
+      endYear: 2020,
+    });
+    expect(ran()).toBe(true);
+    expect(updated).toMatchObject({ startYear: 2019, endYear: 2020 });
+  });
+
   it('a role history edit with nobody racing it writes its columns', async () => {
     const userId = crypto.randomUUID();
     const row = await entry(userId);

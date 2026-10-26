@@ -1398,11 +1398,13 @@ and the update. `save` stays for a row the call itself creates.
   0 rows.
 - `reviewReport` writes its three review columns by id with no read first, and re-reads the row for
   its answer: a party rewritten since stays as written, and 0 rows is `404`.
-- `updateRoleHistory` is CONDITIONED on the years its range check judged
-  (`start_year`/`end_year` as read, `IS NULL` for none): 0 rows answers `404` when the entry is gone
-  or no longer the caller's, and `409` when its years changed meanwhile.
+- `updateRoleHistory` is CONDITIONED on the year its range check judged: an edit setting one year
+  only bounds its `UPDATE` with the OTHER year as read (`IS NULL` for none); a title-only edit, or
+  one setting both years, judged no stored year and is bounded by id and owner only. 0 rows answers
+  `404` when the entry is gone or no longer the caller's, and `409` when the judged year changed
+  meanwhile.
 - A tag's grant or renewal is one statement as well
-  ([cotisations](../cotisations.md#a-renewal-updates-two-columns-never-saves-the-tag-it-read-2026-10-25)).
+  ([cotisations](../cotisations.md#a-grant-or-renewal-is-one-statement-never-a-save-of-the-tag-it-read-2026-10-25)).
 
 Proven by `users/user-grant-write-gone.integration.spec.ts`, with the concurrent write committed
 from inside the service's own repository call.
