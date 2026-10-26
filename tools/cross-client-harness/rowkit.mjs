@@ -93,7 +93,7 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
  */
 export const invariantDetail = (inv) =>
   inv
-    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs } : {}), ...(p.unsettled ? { unsettled: p.unsettled } : {}) }))
+    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs, settled: p.settled, settleRounds: p.settleRounds } : {}), ...(p.unsettled ? { unsettled: p.unsettled } : {}) }))
     : null;
 
 /**
