@@ -66,8 +66,14 @@ describe('ChannelService security hardening', () => {
       // A community setting is one column update of the row; 1 row found.
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
-        transaction: jest.fn((cb: (m: { delete: typeof hardDeletes }) => Promise<void>) =>
-          cb({ delete: hardDeletes })
+        // The deletion takes the community removal lock (`query`) and, for a community its last
+        // member left, reads who is still a member (`find`, answered by `memberRepo.find`).
+        transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: hardDeletes,
+            query: jest.fn(() => Promise.resolve([])),
+            find: (_entity: unknown, options: unknown) => memberRepo.find(options),
+          })
         ),
       },
     };
@@ -131,6 +137,7 @@ describe('ChannelService security hardening', () => {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       increment: jest.fn(() => Promise.resolve()),
+      delete: jest.fn(() => Promise.resolve({ affected: 0 })),
     };
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
@@ -141,7 +148,7 @@ describe('ChannelService security hardening', () => {
     };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo, inviteRepo })),
     });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -2641,8 +2648,12 @@ describe('ChannelService security hardening', () => {
     repos.memberRepo.save.mockImplementation((m: unknown) => Promise.resolve(m));
     repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1' });
     repos.roleRepo.find.mockResolvedValue(GOVERNED_ROLES);
-    repos.roleRepo.findOne.mockImplementation(({ where }: { where: { name: string } }) =>
-      Promise.resolve(GOVERNED_ROLES.find((r) => r.name === where.name) ?? null)
+    // By name for the early read, by id for the re-read under the removal lock.
+    repos.roleRepo.findOne.mockImplementation(
+      ({ where }: { where: { name?: string; id?: string } }) =>
+        Promise.resolve(
+          GOVERNED_ROLES.find((r) => (where.id ? r.id === where.id : r.name === where.name)) ?? null
+        )
     );
     repos.channelRepo.find.mockResolvedValue([{ id: 'ch1' }]);
     return rows;

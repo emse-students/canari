@@ -553,16 +553,16 @@ export class ChannelService implements OnApplicationBootstrap {
   /**
    * THE LAST-ADMIN POSTCONDITION, ASKED WHERE IT HOLDS: inside {@link withCommunityRemovalLock}'s
    * transaction `m`, before the write that would break it. Every exit from the admin set - leaving,
-   * being kicked, being demoted - writes under that lock, so the answer read here is the one that
-   * holds when the write commits. The early checks ({@link assertRemovalKeepsAnAdmin}, the
+   * being kicked, a role change, a revoke - writes under that lock, so the answer read here is the
+   * one that holds when the write commits. The early checks ({@link assertRemovalKeepsAnAdmin}, the
    * demotion's) answer before anything is asked of another service; they cannot see an exit that
    * commits after them, and this one can.
    *
-   * A PLAIN READ, NO ROW LOCK. The removal lock is what serialises every writer that can shrink
-   * the admin set, and under READ COMMITTED a statement run after taking it sees the previous
-   * holder's commit. A row lock here would add nothing but a lock order: this runs as a departure's
-   * guard, BEFORE that departure locks its salon rows, while a salon grant and a community's hard
-   * delete take salon rows first and member rows after - the two orders deadlock.
+   * A PLAIN READ, NO ROW LOCK. The removal lock is what serialises every writer of a member row and
+   * every revoke that can shrink the admin set, and under READ COMMITTED a statement run after
+   * taking it sees the previous holder's commit. (A grant of `workspace.manage` takes no removal
+   * lock; it can only add an admin.) Run as a departure's guard, it comes after that departure
+   * locked its salon rows - the order a salon grant and a community's deletion take them in.
    *
    * A removal that leaves nobody at all is allowed, as above; a demotion always leaves its target a
    * member, so that escape is not its own.
@@ -1197,12 +1197,16 @@ export class ChannelService implements OnApplicationBootstrap {
       ...held.flatMap((c) => this.channelCuts(c, [userId])),
     ];
     await this.departDistributionGroups(cuts, reason, workspaceId, async (m) => {
-      if (guard) await guard(m);
-      // THE PRIVATE SALONS ARE READ AGAIN, ROW-LOCKED. `held` and its cuts came from a read before
-      // the lock; a grant committed since (`grantPrivateChannelAccess`) names the user on a salon
-      // whose group this departure never cut, and the strip below would leave them on its roster
-      // with no membership. Refused whole and retryable; a grant still in flight waits for this
-      // transaction and then finds no membership.
+      // THE PRIVATE SALONS ARE READ AGAIN, ROW-LOCKED, BEFORE THE GUARD. A guard reads member and
+      // role rows (share-locked for a kick, updated for an erasure's successor), and a salon grant
+      // (`grantPrivateChannelAccess`) locks the salon row before the member row: taking the salons
+      // first here keeps one order everywhere - removal lock, salon rows, member rows - so the two
+      // cannot each hold what the other waits on.
+      //
+      // And they are read again because `held` and its cuts came from a read before the lock: a
+      // grant committed since names the user on a salon whose group this departure never cut, and
+      // the strip below would leave them on its roster with no membership. Refused whole and
+      // retryable; a grant still in flight waits for this transaction and then finds no membership.
       const normalised = userId.trim().toLowerCase();
       const heldIds = new Set(held.map((c) => c.id));
       const late = (
@@ -1223,6 +1227,7 @@ export class ChannelService implements OnApplicationBootstrap {
           message: 'The departure could not be completed, retry.',
         });
       }
+      if (guard) await guard(m);
       await this.stripFromChannels(m, held, userId);
       await m.getRepository(ChannelMember).delete({ workspaceId, userId });
     });
@@ -1240,8 +1245,23 @@ export class ChannelService implements OnApplicationBootstrap {
    * outright. One ending, one code path, so a table added to the list below is added for all four.
    * Attached media are left to the retention sweep, which collects them within its window once
    * nothing accesses them again.
+   *
+   * THE TRANSACTION OPENS WITH THE COMMUNITY REMOVAL LOCK ({@link COMMUNITY_REMOVAL_LOCK_SQL}), then
+   * deletes salon rows before member rows - the one order every writer here takes them in (removal
+   * lock, salons, members). So an admission, a departure or a role change either commits before the
+   * deletion and is deleted with the community, or waits and finds it gone; none can deadlock it.
+   *
+   * @param remaining who may still be a member when the rows are deleted, asked under the lock:
+   *   `anyone` for an administrator's deletion, `nobody` when the last member has left (a community
+   *   with no members admits nobody, so that holds), or `{ only }` for an erasure whose account is
+   *   the last member left and whose doors were closed first ({@link closeCommunityOfLastMember}).
+   *   Anyone else found there is a broken premise: nothing is deleted and the error is thrown.
    */
-  private async hardDeleteWorkspace(workspaceId: string, reason: string): Promise<void> {
+  private async hardDeleteWorkspace(
+    workspaceId: string,
+    reason: string,
+    remaining: 'anyone' | 'nobody' | { only: string }
+  ): Promise<void> {
     const channels = await this.channelRepo.find({
       where: { workspaceId },
       select: { id: true, isPrivate: true, distributionGroupId: true },
@@ -1273,6 +1293,19 @@ export class ChannelService implements OnApplicationBootstrap {
     ].filter((g): g is string => !!g);
 
     await this.workspaceRepo.manager.transaction(async (mgr) => {
+      await mgr.query(COMMUNITY_REMOVAL_LOCK_SQL, [workspaceId]);
+      if (remaining !== 'anyone') {
+        const found = (await mgr.find(ChannelMember, { where: { workspaceId } })).filter(
+          (r) => remaining === 'nobody' || r.userId !== remaining.only
+        );
+        if (found.length > 0) {
+          this.logger.error(
+            `[WORKSPACE] hard delete REFUSED under the removal lock workspace=${workspaceId} ` +
+              `reason=${reason} unexpectedMembers=${found.length} - an admission reached a closed community`
+          );
+          throw new Error(`community ${workspaceId} gained members before its deletion`);
+        }
+      }
       if (groupIds.length > 0) await mgr.query(DELETE_GROUP_DEPARTURES_SQL, [groupIds]);
       await mgr.delete(ChannelMessage, { workspaceId });
       // SALON ROWS BEFORE MEMBERSHIP ROWS, the order a private-salon grant locks them in
@@ -1299,18 +1332,19 @@ export class ChannelService implements OnApplicationBootstrap {
    * THE ORDER IS WHAT MAKES THE RETRY WORK. This used to delete every membership row first and
    * repair afterwards from a list captured in memory, swallowing a failed repair - so a community
    * whose repair failed was left without an admin, or empty, and the retry found no membership left
-   * to point at it. Now, per community: the community is repaired AS IF the account were already
-   * gone, and only then does the account leave it - through {@link removeFromWorkspace}, the same
-   * departure every other path takes, the community's key group and its private salons included. A
-   * failure at any step leaves the row, so the next attempt starts that community over; a repair
-   * that already happened is a no-op the second time. A repair that deleted the community leaves
-   * nothing to leave. Failures are collected and THROWN after every community has been tried, so
-   * one stuck community neither strands the others nor reports success.
+   * to point at it. Now, per community ({@link removeAccountFromOneWorkspace}), the account's row is
+   * the LAST thing to go: the community is repaired, or deleted, under the removal lock in the same
+   * transaction that deletes the row, and the account leaves through {@link removeFromWorkspace},
+   * the same departure every other path takes, the community's key group and its private salons
+   * included. A failure at any step leaves the row, so the next attempt starts that community over;
+   * a repair that already happened is a no-op the second time. Failures are collected and THROWN
+   * after every community has been tried, so one stuck community neither strands the others nor
+   * reports success.
    *
    * This is the one path where the postcondition cannot be a refusal - the account is being
    * deleted and there is nothing left to refuse - so it is the one place a repair exists, and it
    * is deterministic rather than a heuristic:
-   *  - no members left: the community is deleted, exactly as if the last member had left;
+   *  - the account is the last member: the community is deleted, exactly as if it had left;
    *  - members but no admin: the highest-priority remaining role holder is promoted, ties broken by
    *    the lowest user id. Deleting other people's community because one person deleted their
    *    account would be far worse, and leaving it ungoverned is the state everything else here
@@ -1341,25 +1375,7 @@ export class ChannelService implements OnApplicationBootstrap {
     let transient = false;
     for (const workspaceId of workspaceIds) {
       try {
-        const deleted = await this.repairOneWorkspaceAfterAccountDeletion(
-          workspaceId,
-          deletedUserId
-        );
-        if (!deleted) {
-          // The successor is promoted in the departure's own transaction, under the removal lock.
-          await this.removeFromWorkspace(
-            workspaceId,
-            deletedUserId,
-            'account_deleted',
-            async (m) => {
-              await this.promoteSuccessorAdmin(m, workspaceId, deletedUserId);
-            }
-          );
-          // Everyone else left while the account was being taken out: nobody to govern it.
-          if ((await this.getWorkspaceMemberIds(workspaceId)).length === 0) {
-            await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
-          }
-        }
+        await this.removeAccountFromOneWorkspace(workspaceId, deletedUserId);
       } catch (err) {
         failed.push(workspaceId);
         transient ||= isTransientFailure(err);
@@ -1417,42 +1433,94 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * Repairs one community for the departure of `leavingUserId`, whose membership row still exists
-   * and is treated as gone. Idempotent: a community that already has another admin is left alone.
+   * Takes the erased account `erasedUserId` out of one community, which either survives it - with an
+   * admin - or is deleted with it.
    *
-   * @returns true when the repair deleted the community outright (nobody else was in it), so there
-   *   is nothing left for the account to leave.
+   * EVERY DECISION IS TAKEN UNDER THE REMOVAL LOCK, AND THE ACCOUNT'S ROW GOES LAST:
+   *  - the account is the community's last member ({@link closeCommunityOfLastMember}, under the
+   *    lock): its doors are closed and the community is deleted, the account's row with it. A
+   *    deletion that fails leaves the row, so the erasure's retry finds the community again.
+   *  - otherwise the account departs ({@link removeFromWorkspace}) with {@link promoteSuccessorAdmin}
+   *    as its guard, so the successor is chosen and written in the transaction that deletes the
+   *    account's row. When everyone else left meanwhile, the guard refuses the departure - the row
+   *    stays - and the community is taken again from the top, now as its last member's.
+   *
+   * Each pass that starts over was caused by a membership change committed in between; after
+   * {@link DEPARTURE_ATTEMPTS} of them the error is thrown, and the erasure queue retries it.
    */
-  private async repairOneWorkspaceAfterAccountDeletion(
+  private async removeAccountFromOneWorkspace(
     workspaceId: string,
-    leavingUserId: string
-  ): Promise<boolean> {
-    const members = (await this.memberRepo.find({ where: { workspaceId } })).filter(
-      (m) => m.userId !== leavingUserId
-    );
-    if (members.length === 0) {
-      await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
-      return true;
+    erasedUserId: string
+  ): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      if (await this.closeCommunityOfLastMember(workspaceId, erasedUserId)) {
+        await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members', {
+          only: erasedUserId,
+        });
+        return;
+      }
+      try {
+        await this.removeFromWorkspace(workspaceId, erasedUserId, 'account_deleted', async (m) => {
+          if ((await this.promoteSuccessorAdmin(m, workspaceId, erasedUserId)) === 'no_members') {
+            throw new ErasedAccountLeftAlone(workspaceId);
+          }
+        });
+        return;
+      } catch (e) {
+        if (!(e instanceof ErasedAccountLeftAlone) || attempt >= DEPARTURE_ATTEMPTS) throw e;
+        this.logger.warn(
+          `[WORKSPACE] erasure departure refused - everyone else left meanwhile workspace=${workspaceId} ` +
+            `user=${erasedUserId.slice(0, 8)} attempt=${attempt}/${DEPARTURE_ATTEMPTS} - taken again`
+        );
+      }
     }
+  }
 
-    // THE PROMOTION IS NOT DECIDED HERE: it is the erasure's departure guard
-    // ({@link promoteSuccessorAdmin}), decided under the removal lock in the same transaction that
-    // deletes the account's row, so no other exit can commit between the decision and the delete.
-    return false;
+  /**
+   * Under the removal lock: when `erasedUserId` is the community's only member, closes every door a
+   * newcomer could come in by before the community is deleted - its invite links are deleted (an
+   * accept finds no link) and the account's roles are emptied (a salon invitation is re-checked
+   * against the inviter's roles under the same lock). The deletion that follows calls another
+   * service first, outside the lock; with the doors closed, nobody can join in that window and be
+   * deleted with the community. Idempotent, so a retried erasure passes here again.
+   *
+   * @returns true when the account is the only member and the doors are closed; false when anyone
+   *   else is a member, and nothing was written
+   */
+  private async closeCommunityOfLastMember(
+    workspaceId: string,
+    erasedUserId: string
+  ): Promise<boolean> {
+    return this.withCommunityRemovalLock(workspaceId, async (m) => {
+      const rows = await m.getRepository(ChannelMember).find({ where: { workspaceId } });
+      if (rows.some((r) => r.userId !== erasedUserId)) return false;
+      await m.getRepository(WorkspaceInvite).delete({ workspaceId });
+      await m
+        .getRepository(ChannelMember)
+        .update({ workspaceId, userId: erasedUserId }, { roleIds: [] });
+      this.logger.log(
+        `[WORKSPACE] erased account is the last member, community closed before its deletion ` +
+          `workspace=${workspaceId} user=${erasedUserId.slice(0, 8)} rows=${rows.length}`
+      );
+      return true;
+    });
   }
 
   /**
    * The promotion half of an erasure's repair, run as its departure guard inside the community
-   * removal lock on `m`, before the account's row is deleted in the same transaction. The rows are
-   * read with no row lock (see {@link assertExitKeepsAnAdminLocked}: the removal lock serialises
-   * every departure, and a guard that locked member rows before the departure's salon rows would
-   * invert their order). The leaving account is excluded, and the successor is written as ONE
-   * column update of its row - never a save, which would insert a membership deleted since the read.
-   * Nothing here calls another service.
+   * removal lock on `m`, after the departure locked its salon rows and before the account's row is
+   * deleted in the same transaction. The member and role rows are read with no row lock: the
+   * removal lock serialises every writer of them. The leaving account is excluded, and the successor
+   * is written as ONE column update of its row - never a save, which would insert a membership
+   * deleted since the read. Nothing here calls another service.
    *
-   * @returns `no_members` when nobody else is left (the caller deletes the community after the
-   *   departure), `governed` when another admin exists, `no_admin_role` when no role can be
-   *   granted, `promoted` otherwise.
+   * `no_admin_role` lets the departure go on: no role carries `workspace.manage`, so the leaving
+   * account was no admin and its departure changes nothing about who governs. That community was
+   * ungoverned before the erasure, a fault this path reports at error and cannot repair.
+   *
+   * @returns `no_members` when nobody else is left (the caller refuses the departure and deletes
+   *   the community instead), `governed` when another admin exists, `no_admin_role` when no role
+   *   can be granted, `promoted` otherwise.
    */
   private async promoteSuccessorAdmin(
     m: EntityManager,
@@ -1508,8 +1576,9 @@ export class ChannelService implements OnApplicationBootstrap {
 
     const updated = await memberRows.update({ id: successor.id }, { roleIds: [adminRole.id] });
     if (updated.affected !== 1) {
-      // Every departure deletes under the removal lock this transaction holds, so only a community
-      // being hard-deleted can take the row away: the departure is abandoned and retried.
+      // Every writer of a member row - a departure, a role change, a community's deletion - holds
+      // the removal lock this transaction holds, so this is a broken premise: the departure is
+      // abandoned, and the erasure's retry takes the community again.
       this.logger.error(
         `[WORKSPACE] successor row NOT updated under the removal lock workspace=${workspaceId} user=${successor.userId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
       );
@@ -2975,7 +3044,7 @@ export class ChannelService implements OnApplicationBootstrap {
     );
 
     if (remainingMemberIds.length === 0) {
-      await this.hardDeleteWorkspace(workspaceId, 'last_member_left');
+      await this.hardDeleteWorkspace(workspaceId, 'last_member_left', 'nobody');
     }
 
     return { success: true };
@@ -3037,7 +3106,7 @@ export class ChannelService implements OnApplicationBootstrap {
     const memberIds = await this.getWorkspaceMemberIds(workspaceId);
     const slug = workspace.slug;
 
-    await this.hardDeleteWorkspace(workspaceId, 'admin_deleted');
+    await this.hardDeleteWorkspace(workspaceId, 'admin_deleted', 'anyone');
 
     await this.redis.publishChannelEvent(
       'workspace.deleted',
@@ -3674,11 +3743,8 @@ export class ChannelService implements OnApplicationBootstrap {
       actorMember.roleIds?.length > 0
         ? await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } })
         : [];
-    const hasPerm = actorRoles.some(
-      (r) =>
-        r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
+    const hasPerm = actorRoles.some((r) =>
+      r.permissions.some((p) => INVITING_PERMISSIONS.includes(p))
     );
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
 
@@ -3739,10 +3805,23 @@ export class ChannelService implements OnApplicationBootstrap {
         // member already in is not an admission to the community.
         admissionVoucher,
       });
-      // Admitted under the removal lock, into a community that still has members.
+      // Admitted under the removal lock, into a community that still has members, by an inviter who
+      // still holds the right to invite there: both read above before any lock, and a departure or a
+      // role change of the inviter may have committed since.
       const row = targetMember;
       await this.withCommunityRemovalLock(channel.workspaceId, async (m) => {
         await this.assertCommunityHasMembersLocked(m, channel.workspaceId, 'salon_invite');
+        const inviterNow = await m.getRepository(ChannelMember).findOne({
+          where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
+        });
+        const inviterPermissions = inviterNow ? await this.permissionsOfMember(inviterNow, m) : [];
+        if (!inviterPermissions.some((p) => INVITING_PERMISSIONS.includes(p))) {
+          this.logger.warn(
+            `[INVITE] REFUSED under the removal lock - the inviter may no longer invite ` +
+              `workspace=${channel.workspaceId} by=${input.actorUserId.slice(0, 8)} member=${inviterNow !== null}`
+          );
+          throw new ForbiddenException('Missing INVITE_USERS permission');
+        }
         await m.getRepository(ChannelMember).save(row);
       });
       this.logger.log(
@@ -4001,7 +4080,7 @@ export class ChannelService implements OnApplicationBootstrap {
     // An admin removing themselves as the last member is the same disappearance as leaving, and
     // gets the same answer rather than a community nobody belongs to.
     if (remainingMemberIds.length === 0) {
-      await this.hardDeleteWorkspace(workspaceId, 'last_member_kicked');
+      await this.hardDeleteWorkspace(workspaceId, 'last_member_kicked', 'nobody');
     }
 
     return { success: true };
@@ -4067,42 +4146,79 @@ export class ChannelService implements OnApplicationBootstrap {
     // UPDATE is CONDITIONED on the roles the bound was judged against (`simple-array` is stored
     // comma-joined), so 0 rows means the row is not the one judged - gone, or re-roled since.
     //
-    // A DEMOTION WRITES UNDER THE REMOVAL LOCK, like every other exit from the admin set, and asks
-    // the last-admin postcondition again there: two exits that each passed the early check above
-    // cannot both commit. Only a target who IS an admin can leave the admin set, so every other
-    // role change writes without the lock; the conditioned UPDATE refuses a target re-roled since.
-    const demotes =
-      targetPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) &&
-      !role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
-    const writeRole = async (members: Repository<ChannelMember>) => {
-      const updated = await members
-        .createQueryBuilder()
-        .update(ChannelMember)
-        .set({ roleIds: [role.id] })
-        .where('id = :memberId', { memberId: targetMember.id })
-        .andWhere('"roleIds" = :judged', { judged: (targetMember.roleIds ?? []).join(',') })
-        .execute();
-      if (updated.affected !== 1) {
+    // EVERY ROLE CHANGE WRITES UNDER THE REMOVAL LOCK, and decides again there from what holds now.
+    // The reads above came before any lock: a role may have gained or lost `workspace.manage` since
+    // (so whether this change DEMOTES is not known from them), and the actor's own permissions may
+    // have shrunk. Under the lock the actor's, the target's and the new role's permissions are read
+    // again - the role rows `FOR SHARE`, so no permission edit lands between this decision and the
+    // commit - and the bound and the last-admin postcondition are asked of THAT state. Every other
+    // writer of a member's roles (a demotion, an erasure's promotion, a departure) holds the same
+    // lock, so the member rows read here are current without a row lock of their own.
+    const written = await this.withCommunityRemovalLock(workspaceId, async (m) => {
+      const memberRows = m.getRepository(ChannelMember);
+      const judged = (targetMember.roleIds ?? []).join(',');
+      const [targetNow, actorNow, roleNow] = [
+        await memberRows.findOne({ where: { workspaceId, userId: targetUserId } }),
+        await memberRows.findOne({ where: { workspaceId, userId: actorUserId } }),
+        await m.getRepository(ChannelRole).findOne({
+          where: { id: role.id },
+          lock: { mode: 'pessimistic_read' },
+        }),
+      ];
+      if (
+        !targetNow ||
+        targetNow.id !== targetMember.id ||
+        (targetNow.roleIds ?? []).join(',') !== judged
+      ) {
         this.logger.warn(
-          `[WORKSPACE] role NOT set, membership changed or gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+          `[WORKSPACE] role NOT set, membership changed or gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
         );
         throw new ConflictException({
           code: MEMBER_CHANGED_MEANWHILE,
           message: 'This member changed meanwhile, retry.',
         });
       }
-    };
-    if (demotes) {
-      await this.withCommunityRemovalLock(workspaceId, async (m) => {
+      if (!actorNow) throw new ForbiddenException('Not a member of this workspace');
+      if (!roleNow) throw new NotFoundException('Role not found');
+      const actorNowPermissions = await this.permissionsOfMember(actorNow, m);
+      const targetNowPermissions = await this.permissionsOfMember(targetNow, m);
+      if (!roleGrantsRoleManagement(actorNowPermissions)) {
+        throw new ForbiddenException('Missing MANAGE_ROLES permission');
+      }
+      if (
+        !actorMayGrantRole(actorNowPermissions, roleNow.permissions) ||
+        !actorMayGrantRole(actorNowPermissions, targetNowPermissions)
+      ) {
+        this.refuseRoleChangeBeyondActor(`assign role=${roleNow.name}`, workspaceId, actorUserId);
+      }
+      const demotes =
+        targetNowPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) &&
+        !roleNow.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
+      if (demotes) {
         await this.assertExitKeepsAnAdminLocked(m, workspaceId, targetUserId, 'demoted');
-        await writeRole(m.getRepository(ChannelMember));
-      });
-    } else {
-      await writeRole(this.memberRepo);
-    }
+      }
+      const updated = await memberRows
+        .createQueryBuilder()
+        .update(ChannelMember)
+        .set({ roleIds: [roleNow.id] })
+        .where('id = :memberId', { memberId: targetMember.id })
+        .andWhere('"roleIds" = :judged', { judged })
+        .execute();
+      if (updated.affected !== 1) {
+        // The row was read under the lock every writer of it holds, so this is a broken premise.
+        this.logger.error(
+          `[WORKSPACE] role NOT set under the removal lock workspace=${workspaceId} target=${targetUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+        );
+        throw new ConflictException({
+          code: MEMBER_CHANGED_MEANWHILE,
+          message: 'This member changed meanwhile, retry.',
+        });
+      }
+      return roleNow;
+    });
 
     this.logger.log(
-      `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`
+      `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${written.name}" by=${actorUserId.slice(0, 8)}`
     );
 
     // TOLD TO THE PERSON IT IS ABOUT, and only to them.
@@ -4131,11 +4247,11 @@ export class ChannelService implements OnApplicationBootstrap {
         {
           workspaceId,
           userId: targetUserId,
-          roleName: role.name,
-          permissions: role.permissions,
-          canManage: role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
-          canManageChannels: roleGrantsChannelManagement(role.permissions),
-          canModerate: roleGrantsModeration(role.permissions),
+          roleName: written.name,
+          permissions: written.permissions,
+          canManage: written.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+          canManageChannels: roleGrantsChannelManagement(written.permissions),
+          canModerate: roleGrantsModeration(written.permissions),
           changedBy: actorUserId,
         },
         [targetUserId]
@@ -6296,6 +6412,25 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.announceRolePermissions(saved);
 
     return { roleId: saved.id, roleName: saved.name, permissions: saved.permissions };
+  }
+}
+
+/** The permissions any one of which lets a member invite someone into a salon of the community. */
+const INVITING_PERMISSIONS: readonly string[] = [
+  CHANNEL_PERMISSIONS.INVITE_MEMBERS,
+  CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
+  CHANNEL_PERMISSIONS.MANAGE_CHANNEL,
+];
+
+/**
+ * An erasure's departure refused under the removal lock because everyone else left the community
+ * meanwhile: the account is now its last member, and the community is deleted instead
+ * (`removeAccountFromOneWorkspace`). Typed, so the erasure never reads it from a message.
+ */
+class ErasedAccountLeftAlone extends Error {
+  constructor(workspaceId: string) {
+    super(`erased account is the last member of workspace ${workspaceId}`);
+    this.name = 'ErasedAccountLeftAlone';
   }
 }
 

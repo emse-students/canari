@@ -378,7 +378,9 @@
       // witness to the race, not a fix.
     } catch (e) {
       Log.d('communityAdmin.handleRolePermissionToggle failed', e);
-      rolesError = m.common_save_error();
+      // A coded refusal is named - revoking `workspace.manage` from the last admins' role is
+      // refused `WORKSPACE_WOULD_HAVE_NO_ADMIN` - and only an uncoded failure reads as a save error.
+      rolesError = describeCommunityRefusal(refusalCode(e)) ?? m.common_save_error();
     } finally {
       const updated = { ...roleSaving };
       delete updated[roleId];
@@ -400,7 +402,9 @@
       await loadCommunityMembers();
     } catch (e) {
       Log.d('communityAdmin.handleMemberRoleUpdate failed', e);
-      membersError = m.common_save_error();
+      // Demoting the last admin, a role beyond the actor or a member changed meanwhile each come
+      // with a code, which names the reason; only an uncoded failure reads as a save error.
+      membersError = describeCommunityRefusal(refusalCode(e)) ?? m.common_save_error();
     } finally {
       const updated = { ...memberRoleSaving };
       delete updated[userId];

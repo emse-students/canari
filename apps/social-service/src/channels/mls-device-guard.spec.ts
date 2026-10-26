@@ -60,9 +60,14 @@ describe('the MLS device guard on an invitation', () => {
     };
     const workspaceRepo = { findOne: jest.fn().mockResolvedValue({ id: WORKSPACE, slug: 'ws' }) };
     const memberRepo = {
-      findOne: jest
-        .fn()
-        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: ACTOR, roleIds: ['r-admin'] }),
+      // The inviter is a member (read early, and again under the removal lock); the target is not.
+      findOne: jest.fn(({ where }: { where: { userId: string } }) =>
+        Promise.resolve(
+          where.userId === ACTOR
+            ? { workspaceId: WORKSPACE, userId: ACTOR, roleIds: ['r-admin'] }
+            : null
+        )
+      ),
       find: jest.fn().mockResolvedValue([]),
       create: jest.fn((x: Record<string, unknown>) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve(x)),

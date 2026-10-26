@@ -61,8 +61,13 @@ describe('ChannelService - the community distribution group', () => {
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       manager: {
-        transaction: jest.fn((cb: (m: { delete: jest.Mock }) => Promise<void>) =>
-          cb({ delete: jest.fn().mockResolvedValue({ affected: 1 }) })
+        // The deletion takes the community removal lock (`query`) and reads who is still a member.
+        transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: jest.fn().mockResolvedValue({ affected: 1 }),
+            query: jest.fn().mockResolvedValue([]),
+            find: jest.fn().mockResolvedValue([]),
+          })
         ),
       },
     };
@@ -431,8 +436,12 @@ describe('ChannelService - the community distribution group', () => {
       ]);
       const query = jest.fn().mockResolvedValue([]);
       repos.workspaceRepo.manager.transaction.mockImplementation(
-        (cb: (m: { delete: jest.Mock; query: jest.Mock }) => Promise<void>) =>
-          cb({ delete: jest.fn().mockResolvedValue({ affected: 1 }), query })
+        (cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: jest.fn().mockResolvedValue({ affected: 1 }),
+            query,
+            find: jest.fn().mockResolvedValue([]),
+          })
       );
       global.fetch = answerWith({ deleted: true }) as unknown as typeof fetch;
 
