@@ -16,27 +16,49 @@ import {
   MAX_ROW_KEYS_PER_LEDGER,
 } from './seenLedgerBounds';
 import {
-  commitPendingHistoryMarks,
   markHistoryFrameConsumed,
   resetSeenCipherCacheForTests,
-  snapshotPendingHistoryMarks,
+  stagePendingHistoryMarks,
 } from './history';
+import {
+  hydrateStateLedgers,
+  readStateLedger,
+  resetStateLedgersForTests,
+  STATE_LEDGER,
+  takeStagedStateLedgers,
+} from '$lib/mls-client/stateLedgers';
 
 const USER = 'user-bounds';
-const key = (group: string) => `history_seen_cipher:${USER}:${group}`;
+
+/** The ledgers the MLS state on disk carries. */
+let disk: Map<string, string>;
+
 const persisted = (group: string): string[] | null => {
-  const raw = localStorage.getItem(key(group));
-  return raw === null ? null : JSON.parse(raw);
+  const raw = disk.get(STATE_LEDGER.seen(group));
+  return raw === undefined ? null : JSON.parse(raw);
 };
+/** Every seen ledger the state on disk carries. */
+const ledgersOnDisk = () => [...disk.keys()].filter((k) => k.startsWith(STATE_LEDGER.seenPrefix));
+
 /** A checkpoint whose write lands at once - the only thing that makes a mark durable. */
-const checkpoint = () => commitPendingHistoryMarks(snapshotPendingHistoryMarks(USER));
+const checkpoint = () => {
+  stagePendingHistoryMarks(USER);
+  for (const [k, v] of Object.entries(takeStagedStateLedgers(USER) ?? {})) {
+    if (v === null) disk.delete(k);
+    else disk.set(k, v);
+  }
+};
 
 const fp = (n: number) => `${n.toString(36)}:${(n * 7919).toString(36)}`;
 const row = (n: number) => `${1786655250000 + n}-0`;
 
 beforeEach(() => {
-  localStorage.clear();
+  disk = new Map();
   resetSeenCipherCacheForTests();
+  resetStateLedgersForTests();
+  hydrateStateLedgers(USER, {});
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 describe('namespaces', () => {
@@ -101,31 +123,29 @@ describe('ledgers per user', () => {
     expect(persisted('g0')).not.toBeNull();
     expect(persisted('g2')).not.toBeNull();
     expect(persisted('overflow')).not.toBeNull();
-    const ledgers = Object.keys(localStorage).filter((k) =>
-      k.startsWith(`history_seen_cipher:${USER}:`)
-    );
-    expect(ledgers).toHaveLength(MAX_LEDGERS_PER_USER);
+    expect(ledgersOnDisk()).toHaveLength(MAX_LEDGERS_PER_USER);
   });
 
   it('adopts ledgers written before the index existed', () => {
+    const old: Record<string, string> = {};
     for (let g = 0; g < MAX_LEDGERS_PER_USER; g++) {
-      localStorage.setItem(key(`old${g}`), JSON.stringify([fp(g)]));
+      old[STATE_LEDGER.seen(`old${g}`)] = JSON.stringify([fp(g)]);
     }
+    for (const [k, v] of Object.entries(old)) disk.set(k, v);
+    hydrateStateLedgers(USER, old);
     markHistoryFrameConsumed(USER, 'fresh', fp(1));
     checkpoint();
     expect(persisted('fresh')).not.toBeNull();
-    const ledgers = Object.keys(localStorage).filter((k) =>
-      k.startsWith(`history_seen_cipher:${USER}:`)
-    );
-    expect(ledgers).toHaveLength(MAX_LEDGERS_PER_USER);
+    expect(ledgersOnDisk()).toHaveLength(MAX_LEDGERS_PER_USER);
   });
 
   it("never counts another user's ledgers", () => {
-    localStorage.setItem('history_seen_cipher:someone-else:g', JSON.stringify([fp(1)]));
+    hydrateStateLedgers('someone-else', { [STATE_LEDGER.seen('g')]: JSON.stringify([fp(1)]) });
     for (let g = 0; g < MAX_LEDGERS_PER_USER + 1; g++) {
       markHistoryFrameConsumed(USER, `g${g}`, fp(g));
       checkpoint();
     }
-    expect(localStorage.getItem('history_seen_cipher:someone-else:g')).not.toBeNull();
+    expect(readStateLedger('someone-else', STATE_LEDGER.seen('g'))).toBeDefined();
+    expect(takeStagedStateLedgers('someone-else')).toBeUndefined();
   });
 });

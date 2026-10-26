@@ -161,7 +161,8 @@ export const KILL_ROWS = {
       '- the next message each way arrives.',
     note:
       'Moved from A1 to a web seat on 2026-10-26 (coordinator). The swipe needed a hold on the Tauri commit POST, which no rig tool can make. ' +
-      'The hazard under study is web-side anyway: the send ratchet and the seen-marks live in localStorage, and the checkpoint is lazy. ' +
+      'The hazard under study is web-side anyway: the checkpoint is lazy. Since KILL-2 (2026-10-26) the seen-marks and the send counts a checkpoint declares ' +
+      'ride INSIDE the MLS state it writes, and the send count is in IndexedDB before the frame posts - so a false loss accusation after a relaunch is now a defect, never the expected localStorage lag. ' +
       'Prod, 2026-08-06: a reload 300 ms after a send lost the next message (`SecretReuseError`); the send ledger is the fix that closes that window. ' +
       'Each kill waits for the refresh cookie to reach disk first, as KILL-2 does. ' +
       'The draw is 0..800 ms, inside the ~1.7 s checkpoint the persister docblock gives. ' +

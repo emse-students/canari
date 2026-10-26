@@ -23,18 +23,24 @@ vi.mock('$lib/utils/chat/historyReconcile', () => ({
 
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
+import {
+  hydrateStateLedgers,
+  resetStateLedgersForTests,
+  STATE_LEDGER,
+  takeStagedStateLedgers,
+  type StateLedgerChanges,
+} from '$lib/mls-client/stateLedgers';
 import { toBase64 } from '$lib/utils/hex';
 import {
-  commitPendingHistoryMarks,
   markHistoryFrameConsumed,
   replayConversationHistory,
   resetSeenCipherCacheForTests,
-  snapshotPendingHistoryMarks,
+  stagePendingHistoryMarks,
 } from './history';
 
 const USER = 'user-ckpt';
 const GROUP = 'group-ckpt';
-const KEY = `history_seen_cipher:${USER}:${GROUP}`;
+const KEY = STATE_LEDGER.seen(GROUP);
 
 const wire = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55]);
 const row = {
@@ -44,15 +50,34 @@ const row = {
   timestamp: String(1786655250946),
 };
 
-/** What a later page load would find - the only thing that survives the kill this is all about. */
-const durable = (): string[] => JSON.parse(localStorage.getItem(KEY) ?? '[]');
+/**
+ * The MLS state on disk: what the platform's checkpoint wrote, ledgers included. The only thing that
+ * survives the kill this file is about.
+ */
+let disk: Map<string, string>;
+
+/** What a later page load would find in the state. */
+const durable = (): string[] => JSON.parse(disk.get(KEY) ?? '[]');
 
 /** Lets the live path's coalesced microtask drain, so a case cannot mistake it for the fix. */
 const flush = () => Promise.resolve().then(() => undefined);
 
-/** A checkpoint whose write lands at once: the snapshot, then the declaration. */
-const checkpoint = (userId: string = USER) =>
-  commitPendingHistoryMarks(snapshotPendingHistoryMarks(userId));
+/** A checkpoint STARTS: the marks are staged and taken, as `persistCheckpoint` does before the export. */
+const checkpointStarts = (userId: string = USER): StateLedgerChanges | undefined => {
+  stagePendingHistoryMarks(userId);
+  return takeStagedStateLedgers(userId);
+};
+
+/** The checkpoint's ONE write lands: the state and the ledgers it carries, together. */
+const writeLands = (changes: StateLedgerChanges | undefined): void => {
+  for (const [key, value] of Object.entries(changes ?? {})) {
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  }
+};
+
+/** A checkpoint whose write lands at once. */
+const checkpoint = (userId: string = USER) => writeLands(checkpointStarts(userId));
 
 /** Drives one replay page and hands back its commit thunk, exactly as the caller would receive it. */
 const replayOnePage = async (
@@ -83,9 +108,12 @@ const replayOnePage = async (
 };
 
 beforeEach(() => {
-  localStorage.clear();
+  disk = new Map();
   resetSeenCipherCacheForTests();
+  resetStateLedgersForTests();
+  hydrateStateLedgers(USER, {});
   vi.clearAllMocks();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 describe('marks the replay has made but not committed', () => {
@@ -95,14 +123,12 @@ describe('marks the replay has made but not committed', () => {
     await replayOnePage({ ok: true, plaintext: null });
     await flush();
 
-    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(disk.has(KEY)).toBe(false);
   });
 
-  it('ARE made durable by a checkpoint, with no thunk run at all - the fix', async () => {
-    // This is the case that fails on the old behaviour. `persistCheckpoint` calls
-    // `commitPendingHistoryMarks` right after its write lands, so a checkpoint that fires mid-walk
-    // carries the marks accumulated up to it. Before this, the walk could be interrupted after a
-    // checkpoint and leave the ratchet durable with the ledger empty.
+  it('ARE carried by a checkpoint, with no thunk run at all', async () => {
+    // A checkpoint that fires mid-walk carries the marks accumulated up to it - in the SAME write as
+    // the ratchet advance they describe (KILL-2, 2026-10-26).
     await replayOnePage({ ok: true, plaintext: null });
 
     checkpoint();
@@ -110,107 +136,75 @@ describe('marks the replay has made but not committed', () => {
     expect(durable()).toContain(frameFingerprint(wire));
   });
 
-  it('a mark made WHILE the checkpoint writes waits for the next one', async () => {
-    // The native checkpoint releases the manager once it has exported (2026-10-13), and the web
-    // one seals in a worker: a page can decrypt and mark between the export and the write landing.
-    // That mark's ratchet advance is not in the file being written, so declaring it would make the
-    // ledger durable ahead of the ratchet - the direction that skips a frame for good.
+  it('a mark made AFTER the checkpoint staged waits for the next one', async () => {
+    // The native checkpoint releases the manager once it has exported (2026-10-13), and the web one
+    // seals in a worker: a page can decrypt and mark between the staging and the write landing. That
+    // mark's ratchet advance is not in the state being written, so it must not ride in it.
     await replayOnePage({ ok: true, plaintext: null });
-    const snapshot = snapshotPendingHistoryMarks(USER); // the checkpoint starts: export follows
+    const staged = checkpointStarts();
 
     const later = new Uint8Array([0x66, 0x77, 0x88, 0x99]);
     await replayOnePage(
       { ok: true, plaintext: null },
       { ...row, id: '1786655250947-0', content: toBase64(later), timestamp: '1786655250947' }
     );
-    commitPendingHistoryMarks(snapshot); // the write lands
+    writeLands(staged);
 
     expect(durable()).toContain(frameFingerprint(wire));
     expect(durable()).not.toContain(frameFingerprint(later));
 
-    checkpoint(); // and the next checkpoint, which does hold it, declares it
+    checkpoint(); // and the next checkpoint, which does hold it, carries it
     expect(durable()).toContain(frameFingerprint(later));
   });
 
-  it('never takes back a mark a LATER checkpoint made durable while this one wrote', async () => {
-    // Checkpoints are not all serialised (the watchdog and the registry call `persistCheckpoint`
-    // directly), so a second one can start AND land between this one's snapshot and its commit.
-    // A frame read live in between is then ALREADY durable when the late commit lands; writing the
-    // older snapshot verbatim over it would erase that mark and re-accuse a frame this device read.
-    await replayOnePage({ ok: true, plaintext: null });
-    const snapshot = snapshotPendingHistoryMarks(USER);
-
-    const live = new Uint8Array([0xaa, 0xbb, 0xcc]);
-    markHistoryFrameConsumed(USER, GROUP, frameFingerprint(live));
-    checkpoint(); // the later checkpoint, start to finish
-    expect(durable()).toContain(frameFingerprint(live)); // the premise: the live mark is durable
-    // Marked again after it, so the late commit below takes its merge path, not the clean one.
-    await replayOnePage(
-      { ok: true, plaintext: null },
-      { ...row, id: '1786655250948-0', content: toBase64(new Uint8Array([1, 2])), timestamp: '1' }
-    );
-    commitPendingHistoryMarks(snapshot);
-
-    expect(durable()).toContain(frameFingerprint(wire));
-    expect(durable()).toContain(frameFingerprint(live));
-  });
-
   it('are NOT written by the thunk - the checkpoint that precedes it is their one writer', async () => {
-    // The "no checkpoint fired" case is gone: `withMlsBulkIngest` runs the thunk only after a
-    // checkpoint that covers the walk, and withholds it when there is none. The thunk keeps the
-    // cursor and the retry counters; the marks are the checkpoint's.
+    // `withMlsBulkIngest` runs the thunk only after a checkpoint that covers the walk, and withholds
+    // it when there is none. The thunk keeps the cursor and the retry counters; the marks are the
+    // checkpoint's.
     const commit = await replayOnePage({ ok: true, plaintext: null });
     commit?.();
     await flush();
 
-    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(stagePendingHistoryMarks(USER)).toBe(1); // still pending: only a checkpoint takes them
+    expect(disk.has(KEY)).toBe(false);
   });
 
-  it('a LIVE mark made while the covering checkpoint seals is not made durable by the thunk', async () => {
-    // The exact ordering of the defect: the replay ends, checkpoint Y starts (its snapshot), a live
-    // COMMIT is decrypted and marked while Y seals - its epoch is NOT in Y's file - then Y lands and
-    // the thunk runs. The thunk used to write the shared LIVE set, so the commit's fingerprint became
-    // durable before checkpoint Z that holds its epoch; a kill before Z then skipped the commit on
-    // the cold replay, and every later frame failed `wrong-epoch`.
+  it('a LIVE mark made while the covering checkpoint seals rides the NEXT checkpoint', async () => {
+    // The ordering of the 2026-10-17 defect: the replay ends, checkpoint Y stages, a live COMMIT is
+    // decrypted and marked while Y seals - its epoch is NOT in Y's state - then Y lands and the thunk
+    // runs. Its fingerprint must reach the disk only with checkpoint Z, which holds its epoch.
     const commit = await replayOnePage({ ok: true, plaintext: null });
-    const y = snapshotPendingHistoryMarks(USER); // Y starts
+    const y = checkpointStarts();
     const liveCommit = new Uint8Array([0xc0, 0xff, 0xee]);
     markHistoryFrameConsumed(USER, GROUP, frameFingerprint(liveCommit)); // while Y seals
-    commitPendingHistoryMarks(y); // Y lands
-    commit?.(); // the helper runs the thunk now
+    writeLands(y);
+    commit?.();
     await flush();
 
     expect(durable()).toContain(frameFingerprint(wire));
     expect(durable()).not.toContain(frameFingerprint(liveCommit));
 
-    checkpoint(); // Z, which holds the commit's epoch, declares it
+    checkpoint(); // Z
     expect(durable()).toContain(frameFingerprint(liveCommit));
   });
 
-  it('belong to their own account - a checkpoint for somebody else writes nothing', async () => {
+  it('belong to their own account - a checkpoint for somebody else carries nothing', async () => {
     await replayOnePage({ ok: true, plaintext: null });
+    hydrateStateLedgers('a-different-user', {});
 
-    checkpoint('a-different-user');
-
-    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(checkpointStarts('a-different-user')).toBeUndefined();
   });
 
-  it('drain once - a second checkpoint with nothing new in between rewrites nothing', async () => {
+  it('drain once - a second checkpoint with nothing new in between stages nothing', async () => {
     await replayOnePage({ ok: true, plaintext: null });
     checkpoint();
-    const setItem = vi.spyOn(localStorage, 'setItem');
 
-    checkpoint();
-
-    expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
-    setItem.mockRestore();
+    expect(checkpointStarts()).toBeUndefined();
   });
 
-  it('does not write a set the replay never touched', () => {
+  it('does not stage a set the replay never touched', () => {
     // Registering at the top of the walk instead of at the mark would make every checkpoint rewrite
     // a set capped at five thousand entries, for nothing.
-    checkpoint();
-
-    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(checkpointStarts()).toBeUndefined();
   });
 });
