@@ -9,6 +9,7 @@ import {
 import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
+import type { OneDeviceAddResult } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -582,6 +583,14 @@ export async function processPendingInvitations(params: {
 
   let totalWelcomes = 0;
 
+  // A DEVICE THIS SWEEP LEARNED CANNOT BE ADDED IS NOT ASKED ABOUT AGAIN. The answer - a `revoked` or
+  // `unregistered` key package, or a commit gate that did not admit it - is about the DEVICE, not the
+  // group, and the rows read at the sweep's start can name it in many groups: one revoked device
+  // cost one 404 and one line per group (DEV-3, 2026-10-25, six). Each further row is retired from
+  // the same answer, counted, and said once at the end (`reportAnsweredAgain`).
+  const cannotBeAdded = new Map<string, string>();
+  const answeredAgain = new Map<string, number>();
+
   for (const [groupId, invitations] of byGroup) {
     // "Ready to invite" = conversation active AND group present in local WASM.
     // After a recovery forgetGroup, the conversation stays active but the group
@@ -632,6 +641,12 @@ export async function processPendingInvitations(params: {
       const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
 
       for (const inv of currentPending) {
+        const deviceKey = `${inv.userId}:${inv.deviceId}`;
+        if (cannotBeAdded.has(deviceKey)) {
+          answeredAgain.set(deviceKey, (answeredAgain.get(deviceKey) ?? 0) + 1);
+          retirePendingInvitation(mlsService, inv, groupId, log);
+          continue;
+        }
         const admission = await automaticAdmission({
           mlsService,
           groupId,
@@ -723,6 +738,8 @@ export async function processPendingInvitations(params: {
                       `-> cleanup; it returns by itself when it next connects`
                   : `[PENDING] Device ${inv.deviceId} cannot be added (${answer.reason}) -> cleanup`
               );
+              // Final for this id (`revoked`, `unregistered`): the rest of the sweep knows it.
+              if (!refusalIsTemporary(answer.reason)) cannotBeAdded.set(deviceKey, answer.reason);
               mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
               continue;
             }
@@ -809,6 +826,22 @@ export async function processPendingInvitations(params: {
             },
             log
           );
+
+          // THE GATE ACCEPTED THE COMMIT AND DID NOT ADMIT THE DEVICE (`notAdmitted`): its owner
+          // revoked it while this Add was in flight. The commit merged - its leaf has no seat, and the
+          // stray sweep removes it - so the state is saved, but no member is registered, no Welcome is
+          // sent and no history goes to it: the answer said so, and nothing is learned by failing
+          // (DEV-3, 2026-10-25). Its invitation is retired, and the rest of the sweep knows it.
+          if (result.notAdmitted) {
+            log(
+              `[PENDING] Device ${inv.deviceId} was not admitted by the commit gate (${result.notAdmitted}) ` +
+                `in ${groupId} -> no Welcome, cleanup`
+            );
+            await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+            cannotBeAdded.set(deviceKey, result.notAdmitted);
+            retirePendingInvitation(mlsService, inv, groupId, log);
+            continue;
+          }
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
           // NOT ADMITTED: the commit admitted them, and the server holds no seat for them now - a
@@ -971,7 +1004,33 @@ export async function processPendingInvitations(params: {
   if (totalWelcomes > 0) {
     log(`[PENDING] ${totalWelcomes} Welcome(s) sent.`);
   }
+  for (const [deviceKey, count] of answeredAgain) {
+    log(
+      `[PENDING] Device ${deviceKey.split(':')[1]} cannot be added (${cannotBeAdded.get(deviceKey)}): ` +
+        `${count} more invitation(s) of it retired this sweep from that answer, not asked again`
+    );
+  }
   return true;
+}
+
+/**
+ * Retires one pending invitation of a device that cannot be added: asks the server to delete the
+ * membership row. Best-effort - a failed delete leaves the row, and the next sweep answers it again -
+ * and said when it fails.
+ */
+function retirePendingInvitation(
+  mlsService: IMlsService,
+  inv: PendingInvitationRow,
+  groupId: string,
+  log: (msg: string) => void
+): void {
+  mlsService
+    .deleteDeviceMembership(inv.userId, inv.deviceId, groupId)
+    .catch((e: unknown) =>
+      log(
+        `[PENDING] Retiring the invitation of ${inv.deviceId} to ${groupId} failed - the next sweep answers it again: ${String(e).slice(0, 100)}`
+      )
+    );
 }
 
 /**
@@ -1716,7 +1775,7 @@ export async function handleWelcomeRequest(params: {
     };
     packageSent = invitee.keyPackage;
     const exclude = [`${requesterUserId}:${requesterDeviceId}`];
-    let result: { welcome?: Uint8Array; ratchetTree?: Uint8Array };
+    let result: OneDeviceAddResult;
     if (leafPresent === true) {
       result = await mlsService.replaceMember(groupId, invitee, exclude);
     } else {
@@ -1747,6 +1806,15 @@ export async function handleWelcomeRequest(params: {
         );
         result = await mlsService.replaceMember(groupId, invitee, exclude);
       }
+    }
+    // The commit merged but the gate did not admit the requester (revoked while this was in flight):
+    // the state is saved, and no member, Welcome or history follows (`OneDeviceAddResult`).
+    if (result.notAdmitted) {
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... was not admitted by the commit gate (${result.notAdmitted}) in ${groupId} - no Welcome`
+      );
+      await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+      return;
     }
     // NOT ADMITTED: the commit admitted them, and the server holds no seat for them now - a
     // departure since the merge, whose own Remove takes the leaf. No Welcome, no history.

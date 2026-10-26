@@ -308,6 +308,40 @@ export interface ValidateCommitResult {
   duplicate?: boolean;
   currentEpoch?: number;
   reason?: string;
+  /**
+   * The devices this commit DECLARED admitting (`admits`) that the gate did not record, each with
+   * why - on an ACCEPT only, and only when there is one. The leaf is in the tree all the same (the
+   * stray sweep collects a leaf with no seat); what the committer owes is to not act on an admission
+   * that did not happen. `no_key_package` in particular means its Welcome WILL be refused
+   * (`WELCOME_TARGET_UNKNOWN`), so the client sends none rather than learning it by failing. A
+   * `duplicate` answer carries none: the refusals were decided by the first acceptance and are not
+   * recorded, and that client meets the Welcome's own typed refusal instead.
+   */
+  refusedAdmits?: RefusedAdmit[];
+}
+
+/**
+ * Why a declared admit was not recorded - the `reason=` of its `ADMIT_REFUSED` (or `NOT_ENROLLED`)
+ * line, as a value. `committer` and `unresolved_identity` are not admits at all; `no_key_package`
+ * is a device with no KeyPackage row (revoked, erased, never registered); `already_active` is
+ * routed already; `not_entitled` / `departure_in_progress` are a key group's seat claim refusing it;
+ * `not_enrolled` is no longer answered: a person the roster refuses
+ * ({@link MessagingService.enrolAdmittedPeople}) refuses the whole commit instead.
+ */
+export type AdmitRefusalReason =
+  | 'committer'
+  | 'unresolved_identity'
+  | 'no_key_package'
+  | 'already_active'
+  | 'not_entitled'
+  | 'departure_in_progress'
+  | 'not_enrolled';
+
+/** One declared admit the commit gate did not record - see {@link ValidateCommitResult.refusedAdmits}. */
+export interface RefusedAdmit {
+  userId: string;
+  deviceId: string;
+  reason: AdmitRefusalReason;
 }
 
 /** One replayable commit returned by the `sinceEpoch` endpoint. */
@@ -2330,11 +2364,18 @@ export class MessagingService {
       // Legacy clients send no `groupInfo`; for them this is the plain advance it always was, and
       // `republishStaleBase` on a holder remains their repair.
       const newBase = typeof body.groupInfo === 'string' && body.groupInfo ? body.groupInfo : null;
+      // EVERY DECLARED ADMIT THE GATE DROPS IS ANSWERED, not only logged (`refusedAdmits`): the
+      // committer sends each admitted device a Welcome next, and one to a device it was told nothing
+      // about is learned by failing (DEV-3, 2026-10-25). Those dropped before the transaction here;
+      // those dropped inside it in `admitRefusalsInTx`, reset per attempt.
+      const admitRefusals: RefusedAdmit[] = [];
+      let admitRefusalsInTx: RefusedAdmit[] = [];
       const declaredAdmits = await this.resolveAdmittedDevices(
         groupId,
         deviceId,
         body.admits,
-        traceId
+        traceId,
+        admitRefusals
       );
       let admitted = declaredAdmits;
       // An external-commit join is the ONE path where the committing device may not be a member
@@ -2379,6 +2420,7 @@ export class MessagingService {
       try {
         await this.groupRepo.manager.transaction(async (m) => {
           admittedAsks = [];
+          admitRefusalsInTx = [];
           // THE ADMITS WRITE SEATS, SO THEY TAKE THE SEAT LOCK - first, before any row, so this
           // transaction and an eviction always take their locks in the same order. In a key group
           // each admitted person was asked of social-service before any lock, against a claim
@@ -2445,6 +2487,7 @@ export class MessagingService {
               this.logger.warn(
                 `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} reason=${refusal}`
               );
+              admitRefusalsInTx.push({ userId: a.userId, deviceId: a.deviceId, reason: refusal });
             }
             admitted = kept;
           }
@@ -2452,15 +2495,21 @@ export class MessagingService {
           // SHARE` here, in any kind of group ({@link heldKeyPackages}): a device whose account is
           // being erased gets no row, which the erasure could no longer find. The admit is DROPPED
           // and the commit still accepted, unlike an overtaken claim above: the leaf it adds belongs
-          // to an account that is going, so no one is owed a seat or a retry, and refusing the
-          // commit would stall every other change it carries for the group.
+          // to an account that is going, or to a device its owner revoked while the Add was in flight
+          // (DEV-3), so no one is owed a seat or a retry, and refusing the commit would stall every
+          // other change it carries for the group. The committer is told (`refusedAdmits`).
           const keyed = await heldKeyPackages(m, admitted);
           admitted = admitted.filter((a) => {
             if (keyed.has(`${a.userId}:${a.deviceId}`)) return true;
             this.logger.warn(
               `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} ` +
-                `reason=no_key_package (read under the seat lock - the account or device is being erased)`
+                `reason=no_key_package (read under the seat lock - the device was revoked or its account is being erased)`
             );
+            admitRefusalsInTx.push({
+              userId: a.userId,
+              deviceId: a.deviceId,
+              reason: 'no_key_package',
+            });
             return false;
           });
           // A WELCOME IS NEVER STORED FOR A GROUP THAT ENDED while this commit was in flight - the
@@ -2794,9 +2843,17 @@ export class MessagingService {
         );
       }
 
-      this.logger.log(`[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`);
+      const refusedAdmits = [...admitRefusals, ...admitRefusalsInTx];
+      this.logger.log(
+        `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}` +
+          (refusedAdmits.length > 0 ? ` refusedAdmits=${refusedAdmits.length}` : '')
+      );
 
-      return { accepted: true, newEpoch: group.activeEpoch };
+      return {
+        accepted: true,
+        newEpoch: group.activeEpoch,
+        ...(refusedAdmits.length > 0 ? { refusedAdmits } : {}),
+      };
     } finally {
       try {
         // Atomic release via Lua: avoids the GET->DEL race.
@@ -3213,7 +3270,8 @@ export class MessagingService {
   }
 
   /**
-   * The subset of a commit's declared `admits` this server will record, each dropped entry logged.
+   * The subset of a commit's declared `admits` this server will record, each dropped entry logged
+   * and pushed onto `refusals` - what the accept answers the committer (`refusedAdmits`).
    *
    * The bar is the one `sendWelcome` holds a Welcome's target to - a device with a KeyPackage row,
    * which is what exists server-side - plus two refusals: the committing device itself (it is
@@ -3224,7 +3282,8 @@ export class MessagingService {
     groupId: string,
     committerDeviceId: string,
     declared: ValidateCommitBody['admits'],
-    traceId: string
+    traceId: string,
+    refusals: RefusedAdmit[]
   ): Promise<{ userId: string; deviceId: string }[]> {
     if (!Array.isArray(declared) || declared.length === 0) return [];
     const candidates: { userId: string; deviceId: string }[] = [];
@@ -3236,9 +3295,11 @@ export class MessagingService {
         isUnresolvedIdentity(userId) ||
         isUnresolvedIdentity(deviceId)
       ) {
+        const reason = deviceId === committerDeviceId ? 'committer' : 'unresolved_identity';
         this.logger.warn(
-          `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${userId}:${deviceId} reason=${deviceId === committerDeviceId ? 'committer' : 'unresolved_identity'}`
+          `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${userId}:${deviceId} reason=${reason}`
         );
+        refusals.push({ userId, deviceId, reason });
         continue;
       }
       candidates.push({ userId, deviceId });
@@ -3271,6 +3332,7 @@ export class MessagingService {
       this.logger.warn(
         `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${key} reason=${reason}`
       );
+      refusals.push({ userId: c.userId, deviceId: c.deviceId, reason });
       return false;
     });
   }

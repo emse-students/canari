@@ -11,14 +11,31 @@ import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
 import type {
+  AdmitRefusalReason,
   GroupExclusions,
   GroupRosterBatch,
   GroupUserMemberRow,
   GroupRosterAtGeneration,
   JoinDeclineOutcome,
   PendingInvitationRow,
+  RefusedAdmit,
   SentFrame,
 } from './mlsDeliveryApi';
+
+/**
+ * What an accepted one-device Add ({@link IMlsService.addMember}, {@link IMlsService.replaceMember})
+ * leaves its caller to do.
+ *
+ * `notAdmitted` is set when the commit gate accepted the commit but did NOT record the device, for a
+ * reason that makes its Welcome undeliverable (`admitRefusalMakesWelcomeUndeliverable`) - its owner
+ * revoked it while the Add was in flight. `welcome` is then ABSENT: the commit merged, the Welcome
+ * the merge owed is already discharged, and nothing is to be sent to that device (DEV-3, 2026-10-25).
+ */
+export interface OneDeviceAddResult {
+  welcome?: Uint8Array;
+  ratchetTree?: Uint8Array;
+  notAdmitted?: AdmitRefusalReason;
+}
 import type { ForkFinding } from './integrityFindings';
 import type { CommitInvitation } from './commitSubmission';
 import type { OwedInvitationReplanner, UnrecordedInvitationTeller } from './owedInvitations';
@@ -754,7 +771,7 @@ export interface IMlsService {
     groupId: string,
     device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
-  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  ): Promise<OneDeviceAddResult>;
   /**
    * {@link addMember} for a device whose leaf is STILL in the tree: removes that leaf and adds the
    * device back in ONE commit, so no epoch has the user out of the tree (no departure, see
@@ -764,7 +781,7 @@ export interface IMlsService {
     groupId: string,
     device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
-  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  ): Promise<OneDeviceAddResult>;
   /**
    * Whether a package may be added as `userId:deviceId`, staging nothing - the same check the Add
    * runs in Rust, taken BEFORE a destructive step (the removal of a stale leaf it would replace).
@@ -824,6 +841,10 @@ export interface IMlsService {
    * loss and say why instead of letting them disappear. [[C5]] A package whose credential does
    * not name `userId:deviceId`, or carries a key other than the one pinned for that device, is one
    * of those skips (`identity-mismatch`, `signature-key-changed`).
+   *
+   * `notAdmitted` names the devices the commit added to the tree that the commit gate did NOT record,
+   * for a reason that makes their Welcome undeliverable (a device revoked while the Add was in
+   * flight): they are NOT in `addedDeviceIds`, so a caller welcoming `addedDeviceIds` sends them none.
    */
   addMembersBulk(
     groupId: string,
@@ -845,6 +866,7 @@ export interface IMlsService {
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
     skipped: SkippedDevice[];
+    notAdmitted: RefusedAdmit[];
   }>;
   /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
