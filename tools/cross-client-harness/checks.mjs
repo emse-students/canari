@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { ADMIT_ROWS } from './admitrows.mjs';
 import { BIG_ROWS } from './bigrows.mjs';
 import { LIST_RACE_ROWS } from './listracerows.mjs';
+import { CALL_WEB_ROWS } from './callrows.mjs';
 import { DEV_ROWS } from './devicerows.mjs';
 import { FLOOR_ROWS } from './floorrows.mjs';
 import { KILL_ROWS } from './killrows.mjs';
@@ -549,6 +550,13 @@ export const PHASES = {
     scripts: ['listrace.mjs --row LIST-RACE-1-W', 'listrace.mjs --row LIST-RACE-1-W-CTL'],
     needs: ['W1', 'W4', 'W8'],
   },
+  // IN-APP 1:1 AUDIO CALLS BETWEEN TWO BROWSERS (CALL-WEB-1..8, 2026-10-26). W8 is only closed and
+  // reopened (CALL-WEB-6: no device of the callee may answer); each seat is put on its own tone.
+  CALLWEB: {
+    title: '1.4.1 - in-app 1:1 audio calls between two browsers',
+    scripts: Object.keys(CALL_WEB_ROWS).map((row) => `callweb.mjs --row ${row}`),
+    needs: ['W2', 'W4', 'W5', 'W8'],
+  },
 };
 
 /**
@@ -677,6 +685,7 @@ export const ROW_TABLES = {
   'devrows.mjs': DEV_ROWS,
   'big.mjs': BIG_ROWS,
   'listrace.mjs': LIST_RACE_ROWS,
+  'callweb.mjs': CALL_WEB_ROWS,
   'floor.mjs': Object.fromEntries(Object.entries(FLOOR_ROWS).map(([k, v]) => [k.replace(/^FLOOR-/, ''), v])),
 };
 

@@ -1233,11 +1233,39 @@ const ROW_RULES = [
   },
   // ADM-4's two call probes, the row's own (`memberRoutes`: `call initiate`, `call ring` with the
   // fixed id `adm4-probe`); the 409 they meet is the assertion.
+  // `initiateCall` IS EVERY CALL'S FIRST LINE, not ADM-4's alone: the CALL-WEB rows place real calls
+  // (the first reading filed it out of row, 2026-10-26). Its ring probe stays ADM-4's own.
   {
-    name: 'ADM-4 call probes',
-    tag: /\[calls\] initiateCall |\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
-    shape: /\[calls\] initiateCall user=\S+ group=\S+$|\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
+    name: 'a call initiated',
+    tag: /\[calls\] initiateCall /,
+    shape: /\[calls\] initiateCall user=\S+ group=\S+$/,
+    rows: ['ADM-4', 'CALL-WEB-*'],
+  },
+  {
+    name: 'ADM-4 ring probe',
+    tag: /\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
+    shape: /\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
     rows: ['ADM-4'],
+  },
+  // ── a real call, CALL-WEB-1..8 (`callrows.mjs`) ─────────────────────────────────────────────────
+  // chat-delivery's half (`calls.service.ts`, `calls.controller.ts`): the invite, and the ICE servers
+  // each seat asks for. Copied from the first reading (2026-10-26, `1.4.1-alpha.6`).
+  {
+    name: 'call invite and ICE servers',
+    tag: /\[CallsService\] \[call\] invite |\[ICE\] (ice-servers request|getIceServers|Requesting Cloudflare TURN credentials|Cloudflare returned)/,
+    shape:
+      /\[CallsService\] \[call\] invite room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$|\[CallsController\] \[ICE\] ice-servers request user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] getIceServers user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] Requesting Cloudflare TURN credentials \(ttl=\d+\)$|\[CallsService\] \[ICE\] Cloudflare returned \d+ ICE server\(s\)$/,
+    rows: ['CALL-WEB-*'],
+  },
+  // call-service's half (Rust, `call_service`): a signalling socket per seat, its p2p pairing and
+  // relays, and its end. `disposition=client-close` is the only end forgiven: any other is a call
+  // the service ended, which is a finding.
+  {
+    name: 'call signalling session',
+    tag: /call_service: (Authenticated WebSocket upgrade for user |\[call\] )/,
+    shape:
+      /call_service: Authenticated WebSocket upgrade for user [0-9a-f]{64}$|call_service: \[call\] socket open peer=[0-9a-f]{64}:[0-9a-f-]{36}$|call_service: \[call\] session start room=[0-9a-f-]{36} peer=[0-9a-f]{64}:[0-9a-f-]{36} mode=p2p$|call_service: \[call\] p2p paired room=[0-9a-f-]{36} initiator=\S+ polite=\S+ resumed=(true|false)$|call_service: \[call\] p2p (offer|answer) relayed room=[0-9a-f-]{36} from=\S+ to=\S+$|call_service: \[call\] [0-9a-f]{64}:[0-9a-f-]{36} sent Close \((no payload|code=\d+ reason=)\)$|call_service: \[call\] session end room=[0-9a-f-]{36} peer=\S+ mode=p2p disposition=client-close duration_ms=\d+ paired_ms=(\d+|-) .*$|call_service: \[call\] p2p room [0-9a-f-]{36} removed - no peers remaining$/,
+    rows: ['CALL-WEB-*'],
   },
   // A FRESHLY MINTED DEVICE'S FIRST MEMBERSHIP READ (`invitations.controller.ts`): every group its
   // owner is in is pending and nobody is adding it yet - the starting state of an enrolment, before
