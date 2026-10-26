@@ -20,7 +20,9 @@ import {
   bundleTargetVerdict,
   carriesDeadPushFallback,
   installVerdict,
+  appTreeDirt,
   isBuildableRef,
+  porcelainPaths,
   linkChunkOf,
   linkModuleOf,
   reversePortFor,
@@ -170,6 +172,15 @@ ok('an upper-case or http production value in the environment is refused', !buil
 ok('v1.4.0 is a buildable ref', isBuildableRef('v1.4.0'));
 ok('an option is not', !isBuildableRef('--upload-pack=x'));
 ok('a parent path is not', !isBuildableRef('../x'));
+
+// -- the source an APK is built from: read before the build, the rig and the docs never count ------
+// `gitIn` trims, so the first line arrives without its blank index column - the alpha.5 case exactly.
+const PORCELAIN = ['M tools/cross-client-harness/checks.mjs', ' M frontend/src/lib/x.ts', '?? apps/core-service/new.ts', 'R  frontend/a.ts -> frontend/b.ts', ' M docs/wiki/x.md', ' M CHANGELOG.md'].join('\n');
+const PATHS = porcelainPaths(PORCELAIN);
+ok('every porcelain line is read as its path, a trimmed first line and a rename included', PATHS.join() === 'tools/cross-client-harness/checks.mjs,frontend/src/lib/x.ts,apps/core-service/new.ts,frontend/b.ts,docs/wiki/x.md,CHANGELOG.md');
+ok('the rig, the docs and a root markdown never reach an APK', appTreeDirt(PATHS).join() === 'frontend/src/lib/x.ts,apps/core-service/new.ts,frontend/b.ts');
+ok('control: a rig-only tree (sync.sh) is not app dirt', appTreeDirt(porcelainPaths('M tools/cross-client-harness/a.mjs')).length === 0);
+ok('control: a generated Android manifest IS app dirt when it is there BEFORE the build', appTreeDirt(porcelainPaths('M frontend/src-tauri/gen/android/app/src/main/AndroidManifest.xml')).length === 1);
 
 console.log(failures ? `[a1plan] ${failures} FAILURE(S)` : '[a1plan] clean - local unchanged, dev built without reverse or overlay, production never planned');
 process.exit(failures ? 1 : 0);

@@ -322,3 +322,24 @@ export function installVerdict(records, apkSha256, origin, { acceptDeadLiterals 
 
 /** A git ref `--ref` may name: a tag or a branch-like name, never an option or a path. */
 export const isBuildableRef = (ref) => typeof ref === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) && !ref.includes('..');
+
+/** The paths a `git status --porcelain` answer names (the new side of a rename). */
+export function porcelainPaths(porcelain) {
+  return String(porcelain)
+    .split(/\r?\n/)
+    .filter((l) => l.trim())
+    // NOT `slice(3)`: `gitIn` trims, so the first line's blank index column is gone (` M f` -> `M f`).
+    .map((l) => l.trim().replace(/^\S{1,2}\s+/, '').split(' -> ').pop().replace(/^"|"$/g, ''));
+}
+
+/**
+ * THE UNCOMMITTED PATHS THAT CAN REACH AN APK: everything but the rig (`tools/`) and the docs
+ * (`docs/`, a root `*.md`). `sync.sh` lays the open rig branches over the operator checkout, and
+ * those never reach a bundle. A change anywhere else (frontend/, apps/, a lockfile) is the code
+ * the APK would run.
+ *
+ * @param {string[]} paths `porcelainPaths`
+ */
+export function appTreeDirt(paths) {
+  return paths.filter((p) => !/^(?:tools|docs)\//.test(p) && !/^[^/]+\.md$/.test(p));
+}
