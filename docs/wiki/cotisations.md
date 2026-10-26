@@ -248,6 +248,19 @@ paid while it is no longer `none` or `higher` against what the buyer holds NOW i
 payment but NOT granted, so the XOR cannot replace the held tier, and it is logged at ERROR - a
 refund is owed.
 
+**One lock per buyer per association decides the order.** A checkout opening (rank, amount, attempt
+row) and a settlement (re-rank, grant, XOR) each run in a transaction that first takes
+`pg_advisory_xact_lock(hashtextextended('tier:<associationId>:<userId>', 0))` (`lockBuyerTiers`) -
+the one-key 64-bit form the chat service already uses for its seat locks, namespaced by the `tier:`
+prefix. The second comer blocks until the first COMMITS, and reads the buyer's tiers only after it
+holds the lock, so under READ COMMITTED it sees the first one's grant: two concurrent settlements of
+sibling tiers grant exactly one. No clock, no retry: the lock is released by the commit or rollback
+alone. A hash collision between two buyers could only make them wait for each other. The settlement
+takes this lock BEFORE its row lock (`FOR UPDATE`), the order every path follows. The manual grants
+do not take it. `product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL (two
+concurrent settlements; a settlement and a checkout opening each blocked on a held lock, then
+re-reading the grant made under it); with the lock removed, all three fail.
+
 A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The manual
 paths (`grantCotisant`, the cash grant) are a manager's decision and are NOT ranked: a manager may
 still downgrade someone on purpose. The provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in

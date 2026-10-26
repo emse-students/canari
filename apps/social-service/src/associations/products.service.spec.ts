@@ -71,6 +71,10 @@ function makeCheckoutStore(productRepo: { findOne: jest.Mock }) {
     }),
   };
   const tx = {
+    // The buyer's tier lock (`pg_advisory_xact_lock`): a no-op on one JavaScript thread; the
+    // real serialisation is proven by product-tier-lock.integration.spec.ts.
+    query: jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([])),
+    save: jest.fn((_entity: unknown, x: any) => repo.save(x)),
     findOne: jest.fn((entity: unknown, { where }: { where: Record<string, unknown> }) =>
       entity === ProductCheckout ? repo.findOne({ where }) : productRepo.findOne({ where })
     ),
@@ -2461,6 +2465,20 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const open = (id: string) => t.service.createCheckoutSession('asso1', id, 'user1');
         return { ...t, held, open };
       }
+
+      it("takes the buyer's tier lock at checkout open and at settlement, keyed on association and buyer", async () => {
+        const t = cercleBuyer();
+        const { checkoutId } = await t.open('prod-avec');
+        t.setState('paid');
+        await t.service.confirmCheckout('asso1', 'prod-avec', checkoutId, 'user1');
+        const locks = t.checkouts.tx.query.mock.calls.filter(([sql]) =>
+          String(sql).includes('pg_advisory_xact_lock(hashtextextended($1, 0))')
+        );
+        expect(locks.map(([, params]) => params)).toEqual([
+          ['tier:asso1:user1'],
+          ['tier:asso1:user1'],
+        ]);
+      });
 
       it("opening a tier cancels the buyer's open attempt of a SIBLING tier first", async () => {
         const t = cercleBuyer();

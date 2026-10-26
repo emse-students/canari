@@ -192,6 +192,16 @@ const TIER_RANK_COLUMNS = {
   priceMatrix: true,
 } as const;
 
+/** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
+interface ResolvedPurchase {
+  asso: Association;
+  product: AssociationProduct;
+  amountCents: number;
+  paymentTarget: PaymentTarget;
+  /** The paying Business's `vendor_token`: never null once the purchase is allowed. */
+  vendorToken: string;
+}
+
 /** True when a create/update request sets any column member pricing is validated on. */
 function touchesMemberPricing(dto: {
   amountCents?: number | null;
@@ -1292,43 +1302,52 @@ export class ProductsService {
       await this.settlePreviousOpenAttempt(id, userId);
     }
 
-    const { product, amountCents, paymentTarget, vendorToken } = await this.resolvePurchase(
-      associationId,
-      productId,
-      userId,
-      customAmountCents
-    );
-
-    let checkout: ProductCheckout;
+    // The rank, the amount and the attempt row are decided under the buyer's tier lock, so a
+    // settlement of a sibling tier cannot commit between the rank this checkout reads and the row
+    // it writes: whichever takes the lock second reads the other's commit.
+    let opened: { resolved: ResolvedPurchase; checkout: ProductCheckout };
     try {
-      checkout = await this.checkoutRepo.save(
-        this.checkoutRepo.create({
-          productId: product.id,
+      opened = await this.checkoutRepo.manager.transaction(async (manager) => {
+        await this.lockBuyerTiers(manager, associationId, userId);
+        const resolved = await this.resolvePurchase(
+          associationId,
+          productId,
           userId,
-          associationId: product.associationId,
-          paymentAssociationId: paymentTarget.targetAssociationId,
-          vendorToken,
-          amountCents,
-          currency: product.currency,
-          productName: product.name,
-          requestUuid: null,
-          requestId: null,
-          status: 'open',
-          expiresAt: new Date(Date.now() + PRODUCT_REQUEST_LIFETIME_SECONDS * 1000),
-          settledAt: null,
-          purchaseRecordId: null,
-        })
-      );
+          customAmountCents
+        );
+        const checkout = await manager.save(
+          ProductCheckout,
+          this.checkoutRepo.create({
+            productId: resolved.product.id,
+            userId,
+            associationId: resolved.product.associationId,
+            paymentAssociationId: resolved.paymentTarget.targetAssociationId,
+            vendorToken: resolved.vendorToken,
+            amountCents: resolved.amountCents,
+            currency: resolved.product.currency,
+            productName: resolved.product.name,
+            requestUuid: null,
+            requestId: null,
+            status: 'open',
+            expiresAt: new Date(Date.now() + PRODUCT_REQUEST_LIFETIME_SECONDS * 1000),
+            settledAt: null,
+            purchaseRecordId: null,
+          })
+        );
+        return { resolved, checkout };
+      });
     } catch (err) {
       if (isUniqueViolation(err)) {
         throw this.checkoutInProgress(
-          product.id,
+          productId,
           userId,
           'another attempt was opened at the same time'
         );
       }
       throw err;
     }
+    const { checkout } = opened;
+    const { product, amountCents, paymentTarget, vendorToken } = opened.resolved;
     this.logger.log(
       `[SHOP] checkout ${checkout.id.slice(0, 8)} opened: product=${product.id.slice(0, 8)} ` +
         `user=${userId.slice(0, 8)} amount=${amountCents} payTo=${paymentTarget.targetAssociationId.slice(0, 8)}`
@@ -1701,6 +1720,31 @@ export class ProductsService {
   }
 
   /**
+   * Serialises, for the length of `manager`'s transaction, everything that ranks or changes ONE
+   * buyer's tiers in ONE association: a checkout opening (rank + amount + attempt row) and a
+   * settlement (re-rank + grant + XOR). A transaction-scoped advisory lock - released by the commit
+   * or rollback, never by a clock - so the second comer blocks until the first commits, and then
+   * reads its commit (READ COMMITTED): the tier state is always read AFTER the lock is held.
+   *
+   * Key: `pg_advisory_xact_lock(hashtextextended('tier:<associationId>:<userId>', 0))`, the one-key
+   * 64-bit form this repo already uses for seat locks. The `tier:` prefix keeps it apart from any
+   * other advisory key; a 64-bit hash collision between two buyers could only make them wait for
+   * each other, never let two writers of one buyer through.
+   */
+  private async lockBuyerTiers(
+    manager: EntityManager,
+    associationId: string,
+    userId: string
+  ): Promise<void> {
+    await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `tier:${associationId}:${userId}`,
+    ]);
+    this.logger.debug(
+      `[SHOP] tier lock held: association=${associationId.slice(0, 8)} user=${userId.slice(0, 8)}`
+    );
+  }
+
+  /**
    * Records a PAID attempt, exactly once. The attempt row is locked (`FOR UPDATE`) and its
    * transition to `paid`, the purchase record and the granted tag commit together, so two
    * settlements racing on one payment (the callback and the payer's return, or two return reads)
@@ -1712,6 +1756,11 @@ export class ProductsService {
    */
   private async settlePaidCheckout(checkoutId: string): Promise<void> {
     const outcome = await this.checkoutRepo.manager.transaction(async (manager) => {
+      // Buyer and association never change on an attempt, so they can be read before any lock;
+      // the buyer's tier lock comes FIRST, then the row - the order every path takes.
+      const head = await manager.findOne(ProductCheckout, { where: { id: checkoutId } });
+      if (!head) throw new NotFoundException('Checkout not found');
+      await this.lockBuyerTiers(manager, head.associationId, head.userId);
       const row = await manager.findOne(ProductCheckout, {
         where: { id: checkoutId },
         lock: { mode: 'pessimistic_write' },
@@ -1917,14 +1966,7 @@ export class ProductsService {
     productId: string,
     userId: string,
     customAmountCents?: number
-  ): Promise<{
-    asso: Association;
-    product: AssociationProduct;
-    amountCents: number;
-    paymentTarget: PaymentTarget;
-    /** The paying Business's `vendor_token`: never null once the purchase is allowed. */
-    vendorToken: string;
-  }> {
+  ): Promise<ResolvedPurchase> {
     const [asso, product] = await Promise.all([
       this.assoRepo.findOne({ where: { id: associationId } }),
       this.productRepo.findOne({ where: { id: productId, associationId } }),
