@@ -1286,12 +1286,15 @@ included. What holds, exactly:
 - **An admission** (an invite link accepted, a salon invitation that creates a membership) asks
   under the lock that the community still has members, and a salon invitation also asks there that
   the inviter still holds a right to invite. **An invite link is written under the lock too**
-  (`createWorkspaceInvite`), after the actor's right to invite and the community's members are
-  asked again there. A community with no members therefore admits nobody, and stays empty until it
+  (`createWorkspaceInvite`), after the actor's right to invite is asked again there; an erasure that
+  closed a community emptied its account's roles under the same lock, which is what refuses a link
+  then (the members check that follows is redundant defence). A community with no members therefore admits nobody, and stays empty until it
   is deleted.
-- **A community's deletion** (`hardDeleteWorkspace`) checks the membership it was called for under
-  the lock BEFORE its first call to another service (the key groups), and again in the transaction
-  that deletes the rows, which opens with the lock: an admission, a departure or a role change
+- **A community's deletion** (`hardDeleteWorkspace`) asks its premise under the lock BEFORE its
+  first call to another service (the key groups): an administrator's deletion, that the deleter
+  holds `workspace.manage`; the last member's departure or an erasure, who is still a member. The
+  membership premise is asked again in the transaction that deletes the rows, which opens with the
+  lock; the deleter's right is not, since the key groups are gone by then and the rows must follow: an admission, a departure or a role change
   commits before it (and is deleted with the community) or waits and finds it gone.
 
 **One lock order: the removal lock, then salon rows, then member and role rows.** A departure locks

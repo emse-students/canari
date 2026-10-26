@@ -1234,21 +1234,26 @@ export class ChannelService implements OnApplicationBootstrap {
 
   /**
    * The precondition a community's deletion is given, asked inside a transaction `m` holding the
-   * community removal lock - once BEFORE anything outside this service is deleted, and again in the
-   * transaction that deletes the rows.
+   * community removal lock - `before_external`, BEFORE anything outside this service is deleted,
+   * and `final`, in the transaction that deletes the rows.
    *
-   * `{ deletedBy }`: that member still holds `workspace.manage`. `nobody`: the last member has left
-   * (a community with no members admits nobody, so that holds). `{ only }`: an erasure's account is
-   * the last member and its doors were closed first ({@link closeCommunityOfLastMember}). Anyone
-   * else found there is a broken premise, logged at error and thrown: nothing is deleted.
+   * `{ deletedBy }`: that member still holds `workspace.manage`, asked `before_external` only. Once
+   * the key groups are deleted the decision is taken, and the rows must follow: refusing then would
+   * leave a community whose key groups are gone. `nobody`: the last member has left (a community
+   * with no members admits nobody, so that holds). `{ only }`: an erasure's account is the last
+   * member and its doors were closed first ({@link closeCommunityOfLastMember}). Those two are asked
+   * at both points; anyone else found there is a broken premise, logged at error and thrown, and
+   * the rows are not deleted.
    */
   private async assertDeletionPremiseLocked(
     m: EntityManager,
     workspaceId: string,
     reason: string,
-    premise: DeletionPremise
+    premise: DeletionPremise,
+    phase: 'before_external' | 'final'
   ): Promise<void> {
     if (typeof premise === 'object' && 'deletedBy' in premise) {
+      if (phase === 'final') return;
       const actor = await m.getRepository(ChannelMember).findOne({
         where: { workspaceId, userId: premise.deletedBy },
       });
@@ -1290,7 +1295,8 @@ export class ChannelService implements OnApplicationBootstrap {
    * deleted with the community, or waits and finds it gone; none can deadlock it.
    *
    * @param premise what must hold for the deletion, asked under the lock before the distribution
-   *   groups are deleted and again before the rows are ({@link assertDeletionPremiseLocked})
+   *   groups are deleted; the membership half of it is asked again before the rows are
+   *   ({@link assertDeletionPremiseLocked})
    */
   private async hardDeleteWorkspace(
     workspaceId: string,
@@ -1298,7 +1304,7 @@ export class ChannelService implements OnApplicationBootstrap {
     premise: DeletionPremise
   ): Promise<void> {
     await this.withCommunityRemovalLock(workspaceId, (m) =>
-      this.assertDeletionPremiseLocked(m, workspaceId, reason, premise)
+      this.assertDeletionPremiseLocked(m, workspaceId, reason, premise, 'before_external')
     );
 
     const channels = await this.channelRepo.find({
@@ -1333,7 +1339,7 @@ export class ChannelService implements OnApplicationBootstrap {
 
     await this.workspaceRepo.manager.transaction(async (mgr) => {
       await mgr.query(COMMUNITY_REMOVAL_LOCK_SQL, [workspaceId]);
-      await this.assertDeletionPremiseLocked(mgr, workspaceId, reason, premise);
+      await this.assertDeletionPremiseLocked(mgr, workspaceId, reason, premise, 'final');
       if (groupIds.length > 0) await mgr.query(DELETE_GROUP_DEPARTURES_SQL, [groupIds]);
       await mgr.delete(ChannelMessage, { workspaceId });
       // SALON ROWS BEFORE MEMBERSHIP ROWS, the order a private-salon grant locks them in
@@ -1720,10 +1726,10 @@ export class ChannelService implements OnApplicationBootstrap {
       throw new ForbiddenException('Missing INVITE_USERS permission');
     }
 
-    // THE LINK IS READ AND WRITTEN UNDER THE COMMUNITY REMOVAL LOCK, after the actor's right and the
-    // community's members are asked again there: a link is a door, and the read above cannot see a
-    // departure or a role change of the actor, or the community's last departure, committing after
-    // it.
+    // THE LINK IS READ AND WRITTEN UNDER THE COMMUNITY REMOVAL LOCK, after the actor's right is asked
+    // again there: a link is a door, and the read above cannot see a departure or a role change of
+    // the actor committing after it. An erasure that closed the community emptied its account's
+    // roles under the same lock, so that re-read is what refuses the link then.
     return this.withCommunityRemovalLock(workspaceId, async (m) => {
       if (!(await this.actorCanInvite(workspaceId, actorUserId, m))) {
         this.logger.warn(
@@ -1731,6 +1737,8 @@ export class ChannelService implements OnApplicationBootstrap {
         );
         throw new ForbiddenException('Missing INVITE_USERS permission');
       }
+      // Redundant defence: the actor's own row was just found under the lock, so the community has
+      // a member. Kept so a link is never written for an empty community whatever the right says.
       await this.assertCommunityHasMembersLocked(m, workspaceId, 'invite_link');
       const invites = m.getRepository(WorkspaceInvite);
 
@@ -6481,8 +6489,9 @@ export class ChannelService implements OnApplicationBootstrap {
 }
 
 /**
- * What a community's deletion requires, asked under the removal lock: the deleting member still
- * holds `workspace.manage`, the last member has left, or an erased account is the only one left.
+ * What a community's deletion requires, asked under the removal lock by
+ * `assertDeletionPremiseLocked`: the deleting member holds `workspace.manage`, the last member
+ * has left, or an erased account is the only one left.
  */
 type DeletionPremise = { deletedBy: string } | 'nobody' | { only: string };
 

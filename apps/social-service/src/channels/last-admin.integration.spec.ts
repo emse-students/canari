@@ -550,6 +550,24 @@ maybe('the last admin against PostgreSQL', () => {
     expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
   });
 
+  it('a deletion whose deleter is demoted inside its first call to chat-delivery completes', async () => {
+    // The deleter's right was asked under the lock before anything outside this service was
+    // deleted; once the key groups are going, the rows follow them.
+    const { ws } = await community();
+    await privateSalon(ws, ['a1', 'a2']);
+    const answer = global.fetch;
+    const ran = insideFirstDeliveryCall(() =>
+      service.updateWorkspaceMemberRole(ws, 'a1', 'Membre', 'a2')
+    );
+    try {
+      expect(await settle(service.deleteWorkspace(ws, 'a1', 'W'))).toBe('allowed');
+    } finally {
+      global.fetch = answer;
+    }
+    expect(ran()).toBe(true);
+    expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
+  });
+
   it("an erasure's promotion and a salon grant to the successor both complete, in one lock order", async () => {
     // The erasure holds its departure open right after writing the successor's row until a grant
     // of a private salon to that successor is waiting on a lock.
