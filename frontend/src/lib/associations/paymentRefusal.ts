@@ -41,6 +41,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PRODUCT_ALREADY_PURCHASED) {
     return m.shop_already_purchased();
   }
+  if (err instanceof SocialApiError && err.code === TIER_NOT_A_RISE) {
+    return m.shop_tier_not_a_rise();
+  }
   if (err instanceof SocialApiError && err.code === CHECKOUT_IN_PROGRESS) {
     return m.shop_checkout_in_progress();
   }
@@ -73,6 +76,12 @@ export const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
  * product: decided by Canari from its purchase records, before any payment request is issued.
  */
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
+
+/**
+ * The body `code` of social-service's 409 when the buyer holds, active, a sibling cotisation tier
+ * priced at least as high as this one: buying it would replace the held tier (`product-checkout.ts`).
+ */
+export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 
 /**
  * The body `code` of the 409 a boutique checkout gets while the buyer's previous attempt of that

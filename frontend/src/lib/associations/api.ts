@@ -1745,6 +1745,21 @@ export interface AssociationProduct {
    */
   viewerActiveTier?: string | null;
   /**
+   * Where this cotisation tier stands against the tier the viewer holds ACTIVE for the same
+   * association: `held` (that very tier), `higher` (a rise - buyable), `lower` (not a rise: same or
+   * lower product price - the server refuses it, `TIER_NOT_A_RISE`), `none` (not a tier, nothing
+   * held, or a gridded / free-amount tier the server does not rank). Set only by `listAllProducts`.
+   */
+  viewerTierRelation?: 'held' | 'lower' | 'higher' | 'none';
+  /**
+   * Cents a checkout would charge THIS viewer now - the admin's preferential price
+   * (`amountCentsMember`) when the viewer qualifies, else the full price, or the grid's cell. Null
+   * when the product is not buyable at a price the server can name (held / lower tier, a grid that
+   * does not sell this combination, a free amount). Display it; never recompute money client-side.
+   * Purchase caps and tag gates are NOT folded in. Set only by `listAllProducts`.
+   */
+  viewerDueCents?: number | null;
+  /**
    * The pricing grid: the criteria this product discriminates on, and one price per combination.
    * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
    *

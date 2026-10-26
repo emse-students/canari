@@ -1322,6 +1322,201 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
+  describe('a tier is bought only as a RISE over the tier held (user, 2026-10-26)', () => {
+    // Production's two Cercle tiers: no grid, no variantLevel; the dearer one carries the admin's
+    // preferential price for holders of the cheaper one.
+    const cercle = () => asso({ id: 'asso1', slug: 'cercle', cotisationMode: 'lifetime' });
+    const sansAlcool = () =>
+      product({
+        id: 'prod-sans',
+        type: 'membership',
+        variantKey: 'sans-alcool',
+        amountCents: 1500,
+      });
+    const avecAlcool = (overrides: Partial<AssociationProduct> = {}) =>
+      product({
+        id: 'prod-avec',
+        type: 'membership',
+        variantKey: 'avec-alcool',
+        amountCents: 3000,
+        memberPriceTag: 'cotisant:cercle-sans-alcool',
+        amountCentsMember: 1500,
+        ...overrides,
+      });
+
+    /** A buyer of `target` among `tiers`, holding exactly the tags named. */
+    function buyer(target: AssociationProduct, tiers: AssociationProduct[], held: string[]) {
+      const made = makeService();
+      made.assoRepo.findOne.mockResolvedValue(cercle());
+      made.productRepo.findOne.mockResolvedValue(target);
+      made.productRepo.find.mockResolvedValue(tiers);
+      made.userTagService.hasActiveTag.mockImplementation((_u: string, tag: string) =>
+        Promise.resolve(held.includes(tag))
+      );
+      return made;
+    }
+
+    /** The typed `code` of the 409 a promise rejects with. */
+    const conflictCode = async (p: Promise<unknown>) => {
+      const err = await p.then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      return ((err as ConflictException).getResponse() as { code: string }).code;
+    };
+
+    it('quotes a holder of the linked tier the preferential price', async () => {
+      const { service } = buyer(
+        avecAlcool(),
+        [sansAlcool(), avecAlcool()],
+        ['cotisant:cercle-sans-alcool']
+      );
+      const result = await (service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+      expect(result.amountCents).toBe(1500);
+    });
+
+    it('charges the full price of a rise whose tier has NO preferential price configured', async () => {
+      // Nothing is computed from tier prices: without the admin's setting the rise costs in full.
+      const { service } = buyer(
+        avecAlcool({ memberPriceTag: null, amountCentsMember: null }),
+        [sansAlcool(), avecAlcool()],
+        ['cotisant:cercle-sans-alcool']
+      );
+      const result = await (service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+      expect(result.amountCents).toBe(3000);
+    });
+
+    it('charges the full price to a buyer holding no tier', async () => {
+      const { service } = buyer(avecAlcool(), [sansAlcool(), avecAlcool()], []);
+      const result = await (service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+      expect(result.amountCents).toBe(3000);
+    });
+
+    it('refuses a LOWER tier with TIER_NOT_A_RISE instead of silently downgrading', async () => {
+      const { service, httpService } = buyer(
+        sansAlcool(),
+        [sansAlcool(), avecAlcool()],
+        ['cotisant:cercle-avec-alcool']
+      );
+      expect(
+        await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
+      ).toBe('TIER_NOT_A_RISE');
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
+    });
+
+    it('refuses an EQUALLY priced sibling tier with TIER_NOT_A_RISE', async () => {
+      const other = product({
+        id: 'prod-other',
+        type: 'membership',
+        variantKey: 'autre',
+        amountCents: 1500,
+      });
+      const { service } = buyer(other, [sansAlcool(), other], ['cotisant:cercle-sans-alcool']);
+      expect(
+        await conflictCode((service as any).resolvePurchase('asso1', 'prod-other', 'user1'))
+      ).toBe('TIER_NOT_A_RISE');
+    });
+
+    it('refuses the tier already held with PRODUCT_ALREADY_PURCHASED, even with no purchase record', async () => {
+      // A manual grant holds the tier as surely as a purchase does.
+      const { service, purchaseRecordService } = buyer(
+        sansAlcool(),
+        [sansAlcool(), avecAlcool()],
+        ['cotisant:cercle-sans-alcool']
+      );
+      purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(0);
+      expect(
+        await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
+      ).toBe('PRODUCT_ALREADY_PURCHASED');
+    });
+
+    it('does not rank a gridded tier: it is sold at its cell, as before', async () => {
+      const gridded = product({
+        id: 'prod-grid',
+        type: 'membership',
+        variantKey: 'grille',
+        amountCents: null,
+        priceMatrix: { dimensions: [], cells: [] } as any,
+      });
+      const made = buyer(gridded, [avecAlcool(), gridded], ['cotisant:cercle-avec-alcool']);
+      const resolveGrid = jest
+        .spyOn(made.service as any, 'resolveGridPrice')
+        .mockResolvedValue(700);
+      const result = await (made.service as any).resolvePurchase('asso1', 'prod-grid', 'user1');
+      expect(result.amountCents).toBe(700);
+      expect(resolveGrid).toHaveBeenCalled();
+    });
+
+    it('keeps the sibling XOR on the rise it allows', async () => {
+      const { service, userTagService, manager } = buyer(
+        avecAlcool(),
+        [sansAlcool(), avecAlcool()],
+        ['cotisant:cercle-sans-alcool']
+      );
+      await (service as any).fulfillProductPurchase({
+        product: avecAlcool({ grantedTagName: 'cotisant:cercle-avec-alcool' }),
+        userId: 'user1',
+        amountCents: 1500,
+        paymentMethod: 'cash',
+        stripePaymentIntentId: null,
+        grantedBy: 'admin1',
+        dispatchWebhook: false,
+      });
+      expect(userTagService.revokeSiblingTierTags).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'avec-alcool',
+        manager
+      );
+    });
+
+    describe('the shop listing says where each tier stands, and what it would charge', () => {
+      async function listed(heldTags: string[], extra: AssociationProduct[] = []) {
+        const { service, productRepo, assoRepo, userTagService } = makeService();
+        const all = [sansAlcool(), avecAlcool(), ...extra];
+        const tiers = all.filter((p) => p.type === 'membership');
+        productRepo.find.mockResolvedValueOnce(all).mockResolvedValueOnce(tiers);
+        assoRepo.find.mockResolvedValue([cercle()]);
+        userTagService.listByUser.mockResolvedValue(heldTags.map((tagName) => ({ tagName })));
+        const result = await service.listAllActive('user1');
+        return (id: string) => {
+          const p = result.find((r) => r.id === id)!;
+          return { relation: p.viewerTierRelation, due: p.viewerDueCents };
+        };
+      }
+
+      it('a holder of the cheaper tier: held / higher at the preferential price', async () => {
+        const of = await listed(['cotisant:cercle-sans-alcool']);
+        expect(of('prod-sans')).toEqual({ relation: 'held', due: null });
+        expect(of('prod-avec')).toEqual({ relation: 'higher', due: 1500 });
+      });
+
+      it('a holder of the dearer tier: lower (not buyable) / held', async () => {
+        const of = await listed(['cotisant:cercle-avec-alcool']);
+        expect(of('prod-sans')).toEqual({ relation: 'lower', due: null });
+        expect(of('prod-avec')).toEqual({ relation: 'held', due: null });
+      });
+
+      it('a viewer holding nothing: none, each at its full price', async () => {
+        const of = await listed([]);
+        expect(of('prod-sans')).toEqual({ relation: 'none', due: 1500 });
+        expect(of('prod-avec')).toEqual({ relation: 'none', due: 3000 });
+      });
+
+      it('a non-tier product is none, and quoted like any product (cotisant price included)', async () => {
+        const goodies = product({
+          id: 'prod-goodies',
+          type: 'other',
+          amountCents: 500,
+          amountCentsMember: 300,
+        });
+        const of = await listed(['cotisant:cercle-avec-alcool'], [goodies]);
+        expect(of('prod-goodies')).toEqual({ relation: 'none', due: 300 });
+      });
+    });
+  });
+
   describe('getCotisantStatusBySlug (WP-COT-4, inbound Cercle check)', () => {
     it('throws NotFoundException for an unknown slug', async () => {
       const { service, assoRepo } = makeService();
@@ -1974,6 +2169,43 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(sent.cancelUrl).toContain(`checkout_id=${checkoutId}`);
       // An abandoned attempt closes at Lydia instead of staying payable for ever.
       expect(sent.expireAfterSeconds).toBe(30 * 60);
+    });
+
+    it("charges a tier rise the admin's preferential price, and settles the amount FROZEN on the row", async () => {
+      // Production's shape (2026-10-26): the alcohol tier at 30 EUR carries a preferential price of
+      // 15 EUR for holders of the other tier. The complement is that setting - nothing computed.
+      const sansAlcool = product({
+        id: 'prod-sans',
+        type: 'membership',
+        variantKey: 'sans-alcool',
+        amountCents: 1500,
+      });
+      const avecAlcool = product({
+        type: 'membership',
+        variantKey: 'avec-alcool',
+        amountCents: 3000,
+        memberPriceTag: 'cotisant:cercle-sans-alcool',
+        amountCentsMember: 1500,
+      });
+      const t = setup();
+      t.assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle', cotisationMode: 'lifetime' }));
+      t.productRepo.findOne.mockResolvedValue(avecAlcool);
+      t.productRepo.find.mockResolvedValue([sansAlcool, avecAlcool]);
+      t.userTagService.hasActiveTag.mockImplementation((_u: string, tag: string) =>
+        Promise.resolve(tag === 'cotisant:cercle-sans-alcool')
+      );
+
+      const { checkoutId, amountCents } = await t.checkout();
+      expect(amountCents).toBe(1500);
+      expect(t.calls[0].body.lineItems[0].price_data.unit_amount).toBe(1500);
+      expect(t.checkouts.rows[0]).toMatchObject({ id: checkoutId, amountCents: 1500 });
+
+      // The admin re-prices while the buyer is at Lydia: the settlement records what was ASKED.
+      t.productRepo.findOne.mockResolvedValue({ ...avecAlcool, amountCentsMember: 900 });
+      t.setState('paid');
+      await t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1');
+      expect(t.records).toHaveLength(1);
+      expect(t.records[0]).toMatchObject({ amountCents: 1500 });
     });
 
     it('cancels the still-open attempt at Lydia before issuing the next one', async () => {

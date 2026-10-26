@@ -126,6 +126,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'You already hold a membership tier worth at least this one',
+          'TIER_NOT_A_RISE',
+          409
+        )
+      )
+    ).toBe(m.shop_tier_not_a_rise());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'A checkout of this product is already being opened.',
           'CHECKOUT_IN_PROGRESS',
           409
