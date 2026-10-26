@@ -251,7 +251,8 @@ describe('a page is decoded only once no listing can still enter its salon', () 
     const convs = useConversations();
     convs.conversations.set(SALON, salon());
 
-    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+    const ctx = makeCtx() as unknown as { log: ReturnType<typeof vi.fn> };
+    const loading = convs.loadHistoryForConversation(SALON, SALON, ctx as never);
     await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
     await flushMacrotask();
     // Fetched, not decoded: a missing seed asked now would go to an unregistered key group.
@@ -261,16 +262,24 @@ describe('a page is decoded only once no listing can still enter its salon', () 
     await loading;
     expect(decodeChannelMessageRow).toHaveBeenCalledTimes(1);
     expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+    // The decision, said with what it cost the open - never a clock asserted, only its presence.
+    expect(
+      ctx.log.mock.calls
+        .flat()
+        .filter((l) => /decoded after its salon entry was decided \(held \d+ ms/.test(String(l)))
+    ).toHaveLength(1);
     gate.settleSalonListing(token, 'loaded');
   });
 
-  it('decodes at once when no listing is running', async () => {
+  it('decodes at once when no listing is running - and says nothing of an entry', async () => {
     const gate = await import('$lib/utils/graine/salonSendGate');
     gate.resetSalonSendGate();
     const convs = useConversations();
     convs.conversations.set(SALON, salon());
-    await convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+    const ctx = makeCtx() as unknown as { log: ReturnType<typeof vi.fn> };
+    await convs.loadHistoryForConversation(SALON, SALON, ctx as never);
     expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+    expect(ctx.log.mock.calls.flat().join('\n')).not.toContain('salon entry');
   });
 
   it('a listing that ends without entering it releases the page too', async () => {

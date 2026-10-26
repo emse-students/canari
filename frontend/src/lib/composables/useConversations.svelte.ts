@@ -852,9 +852,19 @@ export function useConversations() {
       // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
       // Said ONCE per salon per session: it is the decision (the page waited for an entry), and the
       // same salon re-reading on every open repeated it (5 lines in one measured row).
+      //
+      // EXPECTED, NOT AN ORDERING DEFECT (RM-4/RM-5, 2026-10-26): it is met when a salon is opened
+      // while a listing is still entering salons - a community joined by link loads its salons as
+      // the joiner lands on one, a cold start restores the last salon before its first listing. The
+      // page is fetched in parallel and only its DECODE waits; how long is the open's cost, so the
+      // line carries it (community-open-budget F3).
+      const entryWaitFrom = performance.now();
       if ((await whenSalonEntryDecided(rawId)) && !salonEntryDecisionNoted.has(rawId)) {
         salonEntryDecisionNoted.add(rawId);
-        ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
+        ctx.log(
+          `[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided ` +
+            `(held ${Math.round(performance.now() - entryWaitFrom)} ms behind a listing in flight)`
+        );
       }
       const loaded: ChatMessage[] = [];
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
