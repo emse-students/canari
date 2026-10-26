@@ -396,9 +396,15 @@ export async function ensure({ port, wifi, timeoutMs = 20_000, keepIntent = fals
     while (!pid() && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
     if (!pid()) return { ok: false, how, reason: 'app would not start' };
 
-    // Foreground it unconditionally rather than testing first: raising an app already in front costs
-    // nothing here, and `foregrounded()` reads a dumpsys line whose format has changed under us
-    // before.
+    // RAISED ONLY WHEN IT IS NOT ALREADY IN FRONT (2026-10-26). This used to raise unconditionally
+    // on the belief that raising an app already in front costs nothing. Measured on the Mi 9T, it
+    // costs a whole resume: `am start` on the running singleTask activity pauses and resumes it, so
+    // the app logs `[LIFECYCLE] App in background`, pauses its socket, flushes a checkpoint, reloads
+    // `mls.bin` (840 ms) and reconnects. Every invariant arms the phone through here, so every row
+    // with A1 in it carried that trip as unexplained dirt (BIG-1-noI1, alpha.5), and a row timing
+    // anything on the phone measured through it. `foregrounded()` reads `mCurrentFocus`, which names
+    // the activity on this device (checked the same day). When it cannot name it - a dialog, a
+    // changed dump format - this raises, which is the old behaviour and the safe side.
     //
     // `keepIntent` IS THE ONE CASE WHERE THAT IS WRONG, AND IT IS NOT A NO-OP. `launch()` is
     // `am start -n <pkg>/.MainActivity`: a plain MAIN intent with no data. `MainActivity` is
@@ -412,7 +418,7 @@ export async function ensure({ port, wifi, timeoutMs = 20_000, keepIntent = fals
     // the intent the row exists to measure. Every symptom pointed at the product: the listener
     // registered, `getCurrent()` returned nothing, the app sat on `/posts`. Driven by hand, with no
     // `ensure` in between, the same build read the URL on attempt 1 in 38 ms, every time.
-    if (!keepIntent) {
+    if (!keepIntent && !foregrounded()) {
       launch();
       await new Promise((r) => setTimeout(r, 1500));
     }
