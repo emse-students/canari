@@ -135,6 +135,12 @@
           "scheme": [
             "fr.emse.canari"
           ],
+          "host": "follow-requests"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "notifications"
         },
         {

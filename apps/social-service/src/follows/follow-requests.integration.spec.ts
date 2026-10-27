@@ -31,7 +31,7 @@ import { InternalController } from '../internal/internal.controller';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import type { PushContent } from '../push/push-content';
-import { NOTIFICATIONS_TARGET } from '../push/push-target';
+import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -175,7 +175,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     expect(await bellOf('bob')).toEqual([`${FOLLOW_REQUEST_NOTIFICATION}:ann`]);
     // Through the REAL mapping: a push with its content key, the asker's name and the typed target.
     expect(pushed).toEqual([
-      { to: 'bob', key: 'social_follow_request', actor: 'ANN', target: NOTIFICATIONS_TARGET },
+      { to: 'bob', key: 'social_follow_request', actor: 'ANN', target: FOLLOW_REQUESTS_TARGET },
     ]);
   });
 

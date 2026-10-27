@@ -1051,8 +1051,10 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
 - **Pushes**: `social_follow_request` / `social_follow_accepted`, mapped by
   `PostNotificationsService.pushContent` (pinned through the REAL mapping in
   `follow-requests.integration.spec.ts`), with their native strings in both languages on both
-  platforms. Both carry the `notifications` target until the inbox page
-  exists (WP-F4), and belong to NO category in chat-delivery: they always go out.
+  platforms. A request carries the `follow-requests` target (`fr.emse.canari://follow-requests`,
+  the inbox), an acceptance the `notifications` one (its bell row opens the accepter's profile).
+  Both file under the `follows` category in chat-delivery, which the settings screen switches
+  (WP-F4).
 - **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
   pending or accepted, both directions, and the `follow_request` bell rows between them (an
   acceptance's stays, as history) - pinned in `follow-requests.integration.spec.ts`.

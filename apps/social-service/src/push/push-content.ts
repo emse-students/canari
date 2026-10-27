@@ -593,8 +593,8 @@ export function coorganiseProposedContent(
 
 /**
  * A person asks to follow the recipient (WP-F2: every personal account is private). `actorName`
- * is the ASKER; `arg` is always empty, the body is the fixed sentence. The tap opens the
- * notifications list (`NOTIFICATIONS_TARGET`) until the request inbox exists (WP-F4).
+ * is the ASKER; `arg` is always empty, the body is the fixed sentence. The tap opens the request
+ * inbox (`FOLLOW_REQUESTS_TARGET`, WP-F4), where the answer is given.
  */
 export function followRequestContent(askerName: string, icon?: PushIcon): PushContent {
   return {

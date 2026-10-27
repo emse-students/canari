@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 import { PostNotificationsService } from '../posts/post-notifications.service';
-import { NOTIFICATIONS_TARGET } from '../push/push-target';
+import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService } from './follows.service';
@@ -276,11 +276,15 @@ export class FollowRequestsService {
         recipientId,
         type,
         // A follow notice has no post: the ACTOR's id stands in the required column, and the push
-        // carries a typed target so no `post/<id>` link is ever built from it.
+        // carries a typed target so no `post/<id>` link is ever built from it - the request inbox for
+        // a request (WP-F4), the notifications list for an acceptance (its row opens the profile).
         postId: actorId,
         actorId,
         text: '',
-        pushData: { target: NOTIFICATIONS_TARGET },
+        pushData: {
+          target:
+            type === FOLLOW_REQUEST_NOTIFICATION ? FOLLOW_REQUESTS_TARGET : NOTIFICATIONS_TARGET,
+        },
       });
     } catch (e) {
       this.logger.warn(

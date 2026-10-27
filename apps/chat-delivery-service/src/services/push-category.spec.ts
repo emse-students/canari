@@ -25,6 +25,8 @@ describe('categoryOfDataPush', () => {
     ['social_repost_personal_requested', 'posts'],
     ['social_coorganise_proposed', 'events'],
     ['social_live_started', 'posts'],
+    ['social_follow_request', 'follows'],
+    ['social_follow_accepted', 'follows'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
     ['form_paid_over_capacity', 'forms'],
@@ -86,18 +88,6 @@ describe('categoryOfDataPush', () => {
 
   it.each(LIVE_MODERATION_KEYS)(
     'never files %s: a sanction on the reader own account always goes out',
-    (contentKey) => {
-      expect(categoryOfDataPush({ type: 'social', contentKey })).toBeNull();
-    }
-  );
-
-  /**
-   * A follow request and its acceptance (WP-F2): one push to one person about their own account,
-   * which no category the reader chose describes - so none, and it always goes out. A category of
-   * its own would need a client switch first (WP-F4 may add one).
-   */
-  it.each(['social_follow_request', 'social_follow_accepted'])(
-    'never files %s: a request about the reader own account always goes out',
     (contentKey) => {
       expect(categoryOfDataPush({ type: 'social', contentKey })).toBeNull();
     }

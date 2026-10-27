@@ -138,7 +138,12 @@ ordinary review.
   Start: `FollowsService`, the controller. Proof: a spec that a removed follower drops out of the
   Suivis arm, the announce and the live push at once (the F1 readers), and that one person cannot
   read another's list.
-- **WP-F4 - the client screens, every string through Paraglide (`messages/fr.json` and `en.json`).**
+- **WP-F4 - the client screens, every string through Paraglide (`messages/fr.json` and `en.json`).
+  BUILT, draft pull request (stacked on #2605).** As built: the inbox is
+  `/notifications/follow-requests` (banner on `/notifications`, host `follow-requests`); "Mes
+  abonnes" is the profile section `followers`, with the sent requests under it; the push renderers
+  were F2's; a `follows` notification category with its switch; the rig row is FOL-REQ-1 on
+  [cross-client-testing](cross-client-testing.md). The plan as written:
   The profile button in three states (Suivre / Demande envoyee / Abonne(e)), reading `status`; the
   request inbox beside the D38b requests in the notifications screen (accept / refuse); "Mes
   abonnes" with "Retirer" in the profile; the bell rows of `follow_request` / `follow_accepted`

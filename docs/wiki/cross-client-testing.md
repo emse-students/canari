@@ -189,6 +189,19 @@ ring window. The first readings were a scratch runner; the repo row replays them
 | CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: W5 rings its whole 60 s with no busy answer (calls B16) |
 | CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
 
+## FOL - a follow request between two accounts (WP-F4)
+
+Every personal account is private (decided 2026-10-25): a follow of a person is a request the person
+answers ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+No runner yet: the row is the spec the runner implements, and nothing is recorded before the
+pre-release carrying WP-F1..F4 is on dev. Every wait is counted in rounds, never a clock. The profile
+button's state is read off its `data-follow-status`, and every list off its own rows
+(`data-follow-person`).
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| FOL-REQ-1 | W2 asks to follow W4: W2's button reads `pending` across a reload. W4 gets one `follow_request` bell row and the inbox banner. W4 accepts from `/notifications/follow-requests`: W2 reads `accepted` and gets one `follow_accepted` row. W4 removes W2 from "Mes abonnes": W2 reads `none` after a reload and is told nothing. W2 asks again: W4's inbox lists it, and NO second `follow_request` row or push reaches W4 (once per pair) | W2 W4 - U | `pending` - owed on the pre-release that carries #2589, #2601, #2605 and WP-F4 |
+
 ## TOK - a token expiring in the middle of an operation
 
 | Id | What it asks | Needs | State |
