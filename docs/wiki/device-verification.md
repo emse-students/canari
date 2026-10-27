@@ -1228,7 +1228,11 @@ the WP-L1 bench's own `live-bench` seal reads "Live indisponible" here, by desig
 1. **Watch from the other phone.** Start a live on phone A; on phone B open the Feed: the LIVE card is
    at the top, naming A. Tap it: `[LIVE] viewer joined <id> at segment N`, then picture and sound
    (after one tap on the sound button), the LIVE badge and the time on air counting. Read
-   glass-to-glass against WP-L1's 5.8-7.3 s p50 (clap in front of A's camera).
+   glass-to-glass against WP-L1's 5.8-7.3 s p50 (clap in front of A's camera), expecting about 3 s
+   more behind a Mi 9T that delivers in pairs. **The [buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)
+   (L-F1)**: watch two minutes with the Mi 9T as A; past the first delivery gap there is NO
+   `stalled at` line and no run of `seek to the live edge (stall)`, and `waiting while seeking` lines
+   are allowed (each is a seek's own wait). Record the `target buffer now N ms` the viewer settled on.
 2. **Kill the network** on B for 20 s (airplane mode): "Reconnexion..." within a few polls, never
    "Live complet". Back online: `seek to the live edge (catch-up)` and the picture at the edge, not
    replaying the gap. Then kill A's network for 20 s: B says "Le live est interrompu, il devrait
