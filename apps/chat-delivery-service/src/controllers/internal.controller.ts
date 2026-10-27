@@ -36,7 +36,7 @@ import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { ADMITTED_SEAT } from '../utils/group-membership';
 import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { parseSessionId } from '../utils/session-id';
-import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import { removeRoutesOfUser, tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
@@ -822,11 +822,8 @@ export class InternalController {
     // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that admits a device into a group reads its
     // key package `FOR SHARE` under the group's seat lock (`heldKeyPackages`), so this delete waits
     // for every such writer holding one, and a writer after it finds none and writes nothing: the
-    // discovery below reads every row they wrote. TWO KNOWN EXCEPTIONS (`heldKeyPackages` names
-    // them): the demotion, and `MembersController.addGroupMember`, which reads the key packages
-    // outside any lock and writes the roster row and `pending` seats with no seat lock - so a peer
-    // holding a valid token can re-enrol an erased account by its id even after the final pass
-    // (backlog, P2 "addGroupMember can enrol an erased account"). What this does NOT stop is the account itself
+    // discovery below reads every row they wrote. ONE KNOWN EXCEPTION (`heldKeyPackages` names it):
+    // the demotion, which only updates a row that exists. What this does NOT stop is the account itself
     // bringing a key package back - every (re)connection republishes it (`register-device`), and
     // nothing refuses a token issued before the deletion for up to an hour. That is why the run
     // ends with a sweep (below), and why termination is the FINAL PASS's, never this ordering's:
@@ -928,12 +925,29 @@ export class InternalController {
       );
     }
 
+    // ── Every route of the account, wherever it still stands ──
+    // Read off the routing sets themselves, not off a row: a run that died after a 1:1 DM's
+    // tombstone committed and before its Redis keys went left a route no row names, which this
+    // retry's discovery cannot reach. A seat admitted after the sweep's read loses its route here
+    // too; its row stays for the final pass, and a route restored from it meanwhile
+    // (`restoreRoutes`) is that pass's to cut.
+    const strayRoutes = await removeRoutesOfUser(this.redis, userId);
+    if (strayRoutes.routes > 0) {
+      this.logger.warn(
+        `[INTERNAL_DELETE] user=${who} ${strayRoutes.routes} route(s) in ${strayRoutes.sets} set(s) ` +
+          `outlived the cuts above and were removed by prefix - a run interrupted after a tombstone, ` +
+          `or a seat admitted after the sweep's read`
+      );
+    } else {
+      this.logger.log(`[INTERNAL_DELETE] user=${who} no route left in any routing set`);
+    }
+
     // ── User's own records ────────────────────────────────────────────────
     // Everything still queued FOR the account, a frame with no group included. NO DEVICE ROW IS
-    // DELETED HERE: a row is what names its group's route, and only `eraseSeats` removes both under
-    // the seat lock - deleting a row here would leave the route of a seat admitted after the sweep's
-    // read with nothing left to name it, and the gateway would keep routing to it. Such a row is
-    // left standing for the final pass's discovery, which cuts it with its route. The one row that
+    // DELETED HERE: only `eraseSeats` deletes one, under the seat lock, with its queue and its route.
+    // A row of a seat admitted after the sweep's read is left standing for the final pass's
+    // discovery (its route went with the prefix sweep above), which cuts it with any route restored
+    // from it meanwhile. The one row that
     // can follow THAT pass is the demotion's (`deactivateDeviceMembership`, the stale-device cron
     // among its callers, the one writer that inserts without reading the key package): `pending`,
     // its route removed by the demotion itself, and naming a device with no key package, which
@@ -943,7 +957,7 @@ export class InternalController {
     if (leftRows > 0) {
       this.logger.warn(
         `[INTERNAL_DELETE] ${leftRows} device row(s) of user=${who} written after the sweep's read, ` +
-          `left for the final pass to cut with their routes - a device re-admitted or demoted meanwhile`
+          `left for the final pass to cut - a device re-admitted or demoted meanwhile`
       );
     }
     const [, sentQueued] = (await manager.query(

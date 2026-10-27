@@ -328,3 +328,42 @@ export async function scanGroupRedisKeyOwners(redis: Redis): Promise<Set<string>
 
   return owners;
 }
+
+/**
+ * Removes every route of `userId` (`<userId>:<deviceId>`) from every group's routing set
+ * (`group:members:<g>`), found by scanning the sets themselves - never by a row naming the group.
+ *
+ * WHY NOT FROM THE ROWS: an account erasure that died after a 1:1 DM's tombstone committed (its
+ * rows gone) and before that DM's Redis keys went leaves a route that no row names any more, so its
+ * retry, which discovers groups through rows, would never reach it. Read where the routes live, the
+ * retry is complete whatever the previous run reached.
+ *
+ * @returns how many routes went, and from how many sets.
+ */
+export async function removeRoutesOfUser(
+  redis: Redis,
+  userId: string
+): Promise<{ routes: number; sets: number }> {
+  const prefix = `${userId}:`;
+  let routes = 0;
+  let sets = 0;
+  let cursor = '0';
+  do {
+    const [next, keys] = await redis.scan(
+      cursor,
+      'MATCH',
+      'group:members:*',
+      'COUNT',
+      REDIS_SCAN_COUNT
+    );
+    cursor = next;
+    for (const key of keys) {
+      const theirs = (await redis.smembers(key)).filter((r) => r.startsWith(prefix));
+      if (theirs.length === 0) continue;
+      await redis.srem(key, ...theirs);
+      routes += theirs.length;
+      sets += 1;
+    }
+  } while (cursor !== '0');
+  return { routes, sets };
+}

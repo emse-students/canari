@@ -2644,15 +2644,31 @@ export class MessagingService {
           // THE COMMITTER'S SEAT, whose claim held above (`committerSeat`): written here, with the
           // advance, through the one writer of an active seat - its key package read
           // first, before any device row, the order an account erasure deletes in.
+          //
+          // AN EXTERNAL JOIN WHOSE SEAT CANNOT BE WRITTEN IS REFUSED WHOLE: its leaf enters the tree
+          // with this advance, so accepting it would leave a leaf no seat holds. A pending member's
+          // commit adds no leaf - its Add did - and stands, its seat left `pending`, as above.
           if (committerSeat) {
-            committerSeat =
-              (await this.writeClaimedSeat(
-                m,
-                committer,
-                deviceId,
-                groupId,
-                'MEMBERSHIP_ACTIVE'
-              )) === null;
+            const unwritten = await this.writeClaimedSeat(
+              m,
+              committer,
+              deviceId,
+              groupId,
+              'MEMBERSHIP_ACTIVE'
+            );
+            if (unwritten !== null && frame.external) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} kind=external reason=${unwritten} ` +
+                  `- its seat cannot be written, so its leaf is not accepted; nothing advanced`
+              );
+              throw new ForbiddenException(
+                refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+                  error: 'committer_not_member',
+                })
+              );
+            }
+            committerSeat = unwritten === null;
           }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the

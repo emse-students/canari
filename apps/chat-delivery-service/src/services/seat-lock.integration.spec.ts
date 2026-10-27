@@ -127,6 +127,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     },
     smismember: async (key: string, ...members: string[]) =>
       members.map((m) => (setOf(key).has(m) ? 1 : 0)),
+    // An erasure's route sweep: one page holding every routing set.
+    scan: async () => ['0', [...sets.keys()].filter((k) => k.startsWith('group:members:'))],
     // The commit gate's Redis lock, as it stands once its 5 s have run out: never held. What
     // serialises two commits at one base must then be the database alone.
     set: async () => 'OK',
@@ -501,6 +503,68 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     expect(logged).toHaveLength(1);
   });
 
+  it("a conversation's pending member commits while someone else is removed: refused whole once, then accepted with its seat", async () => {
+    // The committer's seat is not yet `active` (`committerNeedsSeat`), so its commit writes it
+    // against a claim taken before the lock. Another member's removal moves the group's generation
+    // while the commit waits on the lock: the claim is overtaken and the commit refused whole,
+    // retryably - the rebuild every client commit path makes - and the retry, on a fresh claim, lands.
+    await q(`UPDATE dm_groups SET "activeEpoch" = 3, "deletedAt" = NULL WHERE id = $1`, [GROUP]);
+    await q(`DELETE FROM mls_commit_log`);
+    await q(
+      `UPDATE dm_device_group_memberships SET status = 'pending', "kickedAt" = NULL
+        WHERE "groupId" = $1 AND "userId" = $2`,
+      [GROUP, SENDER.userId]
+    );
+    jest
+      .spyOn(service, 'sendMessage')
+      .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+    const commit = () =>
+      service.validateCommit(
+        {
+          groupId: GROUP,
+          deviceId: SENDER.deviceId,
+          baseEpoch: 3,
+          proto: memberCommitFrame(GROUP, 3n),
+          senderId: SENDER.userId,
+        },
+        SENDER.userId
+      );
+    const statusOfSender = async (): Promise<string> => {
+      const [row]: { status: string }[] = await q(
+        `SELECT status FROM dm_device_group_memberships
+          WHERE "groupId" = $1 AND "userId" = $2 AND "deviceId" = $3`,
+        [GROUP, SENDER.userId, SENDER.deviceId]
+      );
+      return row.status;
+    };
+
+    const removing = await holder('exclusive');
+    let first: Promise<unknown>;
+    try {
+      first = commit();
+      await parked(1);
+      await removing.query(BUMP, [GROUP]);
+      await removing.query('COMMIT');
+    } finally {
+      await release(removing);
+    }
+
+    await expect(
+      first.then(
+        () => null,
+        (e: { getStatus: () => number; getResponse: () => { code?: string; seat?: string } }) => ({
+          status: e.getStatus(),
+          code: e.getResponse().code,
+          seat: e.getResponse().seat,
+        })
+      )
+    ).resolves.toEqual({ status: 409, code: 'SEAT_CLAIM_OVERTAKEN', seat: 'committer' });
+    expect(await statusOfSender()).toBe('pending');
+
+    await expect(commit()).resolves.toMatchObject({ accepted: true });
+    expect(await statusOfSender()).toBe('active');
+  });
+
   it("an account erasure cuts a group's seats and routes under the lock, and a claim taken before it never holds", async () => {
     routes.add(`${PEER.userId}:${PEER.deviceId}`);
     const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
@@ -653,11 +717,11 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(routes.has(route)).toBe(false);
     });
 
-    it("a seat admitted after the sweep's read keeps its row beside its route, and the final pass cuts both", async () => {
-      // The republish and the admit land AFTER the sweep read which groups to cut: no step of this
-      // pass sees the seat. Deleting its row without its route would leave the gateway routing to
-      // an erased account with nothing naming it, so the row stays for the final pass - run once
-      // every token expired, when no republish can follow - which cuts it under the seat lock.
+    it("a seat admitted after the sweep's read keeps its row, loses its route, and the final pass cuts the row", async () => {
+      // The republish and the admit land AFTER the sweep read which groups to cut: no cut of this
+      // pass sees the seat. Its route goes with every other route of the account, read off the
+      // routing sets by prefix; its row stays for the final pass - run once every token expired,
+      // when no republish can follow - which cuts it under the seat lock.
       const LATE = '00000000-0000-4000-8000-0000000000ea';
       const lateRoutes = setOf(`group:members:${LATE}`);
       const route = `${PEER.userId}:${PEER.deviceId}`;
@@ -693,13 +757,14 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(reads).toBe(2);
       expect(admitted).toEqual({ ok: true });
 
-      // The first pass ends with the late seat whole: its row AND its route, never one without the other.
+      // The first pass ends with the late seat's row standing for the final pass, and no route of
+      // the account anywhere: the gateway reaches no device of it.
       const standing: unknown[] = await q(
         `SELECT 1 FROM dm_device_group_memberships WHERE "userId" = $1 AND "groupId" = $2`,
         [PEER.userId, LATE]
       );
       expect(standing).toHaveLength(1);
-      expect(lateRoutes.has(route)).toBe(true);
+      expect(lateRoutes.has(route)).toBe(false);
 
       // The final pass.
       await internal().deleteUserData(PEER.userId, SECRET);
@@ -1009,8 +1074,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   });
 
   /**
-   * EVERY WRITER THAT ADMITS A DEVICE READS ITS KEY PACKAGE UNDER THE LOCK, with two known
-   * exceptions - the demotion and `addGroupMember`, see `heldKeyPackages`. An account
+   * EVERY WRITER THAT ADMITS A DEVICE READS ITS KEY PACKAGE UNDER THE LOCK, with one known
+   * exception - the demotion, which inserts nothing, see `heldKeyPackages`. An account
    * erasure deletes the key packages first, on their own, and again before its sweep. Each case is a
    * device whose key package is already gone.
    */
@@ -1066,7 +1131,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
 
     it('a pending seat is not written for it, while its owner is still enrolled', async () => {
       await expect(
-        writePendingSeats(ds.manager, GROUP, GONE.userId, [GONE.deviceId], true)
+        writePendingSeats(ds.manager, GROUP, GONE.userId, [GONE.deviceId], 'awaiting_admission')
       ).resolves.toBe('written');
 
       expect(await seatsOf(GONE)).toBe(0);
@@ -1075,6 +1140,19 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         [GROUP, GONE.userId]
       );
       expect(roster).toHaveLength(1);
+    });
+
+    it("a group's creator enrolling itself gets its roster row, admitted, and no device row", async () => {
+      await expect(
+        writePendingSeats(ds.manager, GROUP, GONE.userId, [GONE.deviceId], 'creator')
+      ).resolves.toBe('written');
+
+      expect(await seatsOf(GONE)).toBe(0);
+      const roster: { awaitingAdmission: boolean }[] = await q(
+        `SELECT "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, GONE.userId]
+      );
+      expect(roster).toEqual([{ awaitingAdmission: false }]);
     });
 
     it("a group's creator erased while its seat waits on the lock gets no seat", async () => {

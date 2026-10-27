@@ -138,7 +138,7 @@ describe('a group ends - one policy, three routes', () => {
   let sweeps: number;
   /** What happened, in order, so "Redis after the commit" is a fact rather than a hope. */
   let order: string[];
-  let redis: { del: jest.Mock; srem: jest.Mock; smembers: jest.Mock };
+  let redis: { del: jest.Mock; srem: jest.Mock; smembers: jest.Mock; scan: jest.Mock };
   let previousSecret: string | undefined;
 
   beforeEach(async () => {
@@ -191,6 +191,8 @@ describe('a group ends - one policy, three routes', () => {
       }),
       srem: jest.fn().mockResolvedValue(1),
       smembers: jest.fn().mockResolvedValue([]),
+      // The erasure's route sweep walks the routing sets: none left in these cases.
+      scan: jest.fn().mockResolvedValue(['0', []]),
     };
 
     const anyRepo = () => ({

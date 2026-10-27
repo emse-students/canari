@@ -152,10 +152,12 @@ export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster' | '
  * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
  * read finds no row - or waits, then deletes what this wrote.
  *
- * @param enrol true for an invite acceptance, which writes the roster row itself in the same
- *   transaction ({@link ensureGroupMember}) as a seat AWAITING A MEMBER'S ADMISSION - no member chose
- *   this person, the link did (`GroupMember.awaitingAdmission`); false for a device registration,
- *   which writes seats only where its owner is ALREADY on the roster.
+ * @param enrol how the roster row is written, in the same transaction ({@link ensureGroupMember}):
+ *   `'awaiting_admission'` for an invite acceptance - a seat AWAITING A MEMBER'S ADMISSION, since no
+ *   member chose this person, the link did (`GroupMember.awaitingAdmission`); `'creator'` for a
+ *   group's creator enrolling itself into its empty roster (`MembersController.addGroupMember`),
+ *   admitted; false for a device registration, which writes seats only where its owner is ALREADY
+ *   on the roster.
  * @param opts.requireAdmitted (with `enrol` false) the owner's roster row must also be ADMITTED - not
  *   awaiting a member: the member-add route, which writes the device seats of a person an accepted
  *   commit admitted and never admits anyone itself (`MembersController.addGroupMember`). Read under
@@ -168,7 +170,7 @@ export async function writePendingSeats(
   groupId: string,
   userId: string,
   deviceIds: readonly string[],
-  enrol: boolean,
+  enrol: false | 'awaiting_admission' | 'creator',
   opts: { requireAdmitted?: boolean } = {}
 ): Promise<PendingSeatsOutcome> {
   return manager.transaction(async (m) => {
@@ -180,7 +182,9 @@ export async function writePendingSeats(
     });
     if (!group || group.deletedAt) return 'group_gone';
     if (enrol) {
-      await ensureGroupMember(m, groupId, userId, { awaitingAdmission: true });
+      await ensureGroupMember(m, groupId, userId, {
+        awaitingAdmission: enrol === 'awaiting_admission',
+      });
     } else {
       const seat = await m.getRepository(GroupMember).findOne({
         where: { groupId, userId },
