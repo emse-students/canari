@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { createHash } from 'crypto';
 import { PaymentService } from './payment.service';
+import { signLydiaParams } from './lydia-signature';
 import type { PlatformService, PlatformConfigPublic } from '../platform/platform.service';
 
 function makeService(paymentProvider: 'lydia' | 'disabled') {
@@ -65,8 +65,7 @@ describe('PaymentService provider selection', () => {
 describe('PaymentService.getVerifiedCheckoutRequestState', () => {
   const KEY = 'business-key-for-test';
   const UUID = '077f2efc5b53d37086e25a19d87ceb29';
-  const signed = (amount: string) =>
-    createHash('md5').update(`amount=${amount}&request_uuid=${UUID}&${KEY}`).digest('hex');
+  const signed = (amount: string) => signLydiaParams({ amount, request_uuid: UUID }, KEY);
 
   afterEach(() => jest.restoreAllMocks());
 

@@ -1,5 +1,9 @@
 import { Logger } from '@nestjs/common';
-import { LydiaReconciliationService, RECONCILE_BATCH } from './lydia-reconciliation.service';
+import {
+  FORM_SWEEP_BUDGET_MS,
+  LydiaReconciliationService,
+  RECONCILE_BATCH,
+} from './lydia-reconciliation.service';
 import { readVerifiedRequestState } from './verified-request-state';
 import type { Submission } from './entities/submission.entity';
 import type { ProductCheckout } from '../associations/entities/product-checkout.entity';
@@ -29,6 +33,7 @@ function makeService(
     applyRequestState: jest.fn(async (_row: unknown, state: string) =>
       state === 'paid' ? 'paid' : state === 'declined' ? 'declined' : 'expired'
     ),
+    expireUnprovenCheckout: jest.fn(async () => 'expired'),
   };
   const associationsService = {
     getLydiaPayeeAccountId: jest.fn(async () =>
@@ -169,19 +174,62 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     await expect(service.reconcileCheckout(row)).resolves.toBe('settled');
     expect(read).toHaveBeenCalledWith({ sessionId: UUID }, 'vendor-snapshot', 1000);
     expect(productsService.applyRequestState).toHaveBeenCalledWith(row, 'paid', '1');
+    expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
   });
 
   it('closes a verified declined attempt', async () => {
-    const { service } = makeService();
+    const { service, productsService } = makeService();
     read.mockResolvedValue({ verification: 'verified', state: 'declined', raw: '5' });
     await expect(service.reconcileCheckout(checkout())).resolves.toBe('released');
+    expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
   });
 
-  it('applies nothing on an answer that does not verify', async () => {
+  it('applies nothing on an answer that does not verify, and closes the attempt after that one read', async () => {
     const { service, productsService } = makeService();
     read.mockResolvedValue({ verification: 'mismatch', state: 'paid', raw: '1' });
-    await expect(service.reconcileCheckout(checkout())).resolves.toBe('skipped-unverified');
+    const row = checkout();
+    await expect(service.reconcileCheckout(row)).resolves.toBe('skipped-unverified');
     expect(productsService.applyRequestState).not.toHaveBeenCalled();
+    expect(productsService.expireUnprovenCheckout).toHaveBeenCalledWith(
+      row,
+      expect.stringContaining('skipped-unverified')
+    );
+  });
+
+  it.each([
+    ['unsigned', { verification: 'unsigned', state: 'paid', raw: '1' }, 'skipped-unverified'],
+    ['unknown', { verification: 'unknown', state: 'paid', raw: '1' }, 'skipped-unverified'],
+    ['no-key (an unreadable key)', { verification: 'no-key' }, 'skipped-unverified'],
+    ['still open', { verification: 'verified', state: 'open', raw: '0' }, 'unchanged'],
+  ] as const)(
+    'closes the attempt expired after ONE read answered %s - never read again',
+    async (_name, answer, outcome) => {
+      const { service, productsService } = makeService();
+      read.mockResolvedValue(answer as never);
+      const row = checkout();
+      await expect(service.reconcileCheckout(row)).resolves.toBe(outcome);
+      expect(productsService.expireUnprovenCheckout).toHaveBeenCalledTimes(1);
+      expect(productsService.expireUnprovenCheckout).toHaveBeenCalledWith(row, expect.any(String));
+    }
+  );
+
+  it('closes the attempt when request/state is unavailable', async () => {
+    const { service, productsService } = makeService();
+    read.mockRejectedValue(new Error('core 503'));
+    await expect(service.reconcileCheckout(checkout())).resolves.toBe('unavailable');
+    expect(productsService.expireUnprovenCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the attempt when settling it threw, and still reports the failure', async () => {
+    const { service, productsService } = makeService();
+    read.mockResolvedValue({ verification: 'verified', state: 'paid', raw: '1' });
+    productsService.applyRequestState.mockRejectedValueOnce(new Error('deadlock'));
+    const row = checkout();
+    await expect(service.reconcileCheckout(row)).rejects.toThrow('deadlock');
+    expect(productsService.expireUnprovenCheckout).toHaveBeenCalledWith(
+      row,
+      expect.stringContaining('deadlock')
+    );
   });
 
   it('closes an attempt read by order_ref that Lydia does not hold, the one unsigned answer acted on', async () => {
@@ -197,10 +245,19 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     expect(productsService.applyRequestState).toHaveBeenCalledWith(row, 'not-found', 'error 2');
   });
 
-  it('never closes on a not-found for a uuid Lydia itself issued', async () => {
+  it('never closes it cancelled on a not-found for a uuid Lydia itself issued', async () => {
     const { service, productsService } = makeService();
     read.mockResolvedValue({ verification: 'unsigned', state: 'not-found', raw: 'error 2' });
     await expect(service.reconcileCheckout(checkout())).resolves.toBe('skipped-unverified');
+    expect(productsService.applyRequestState).not.toHaveBeenCalled();
+  });
+
+  it('acts on a not-found only when core called it unsigned - an unknown verdict is not one', async () => {
+    const { service, productsService } = makeService();
+    read.mockResolvedValue({ verification: 'unknown', state: 'not-found', raw: 'error 2' });
+    await expect(service.reconcileCheckout(checkout({ requestUuid: null }))).resolves.toBe(
+      'skipped-unverified'
+    );
     expect(productsService.applyRequestState).not.toHaveBeenCalled();
   });
 });
@@ -271,6 +328,22 @@ describe('LydiaReconciliationService sweeps', () => {
     await service.sweepFormPayments();
     expect(read).toHaveBeenCalledTimes(RECONCILE_BATCH);
     expect(logs.error).toHaveBeenCalledWith(expect.stringContaining('expired without a read'));
+  });
+
+  it('stops starting form reads once its budget is spent, so the expiry is never held longer', async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => submission({ id: `sub-${i}` }));
+    const { service } = makeService({ submissions: rows });
+    let now = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    read.mockImplementation(async () => {
+      now += (FORM_SWEEP_BUDGET_MS * 2) / 3;
+      return { verification: 'verified', state: 'open', raw: '0' };
+    });
+    await service.sweepFormPayments();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(logs.error).toHaveBeenCalledWith(
+      expect.stringContaining('3 ended answer(s) are expired without a read')
+    );
   });
 
   it('counts the boutique sweep apart from the forms', async () => {

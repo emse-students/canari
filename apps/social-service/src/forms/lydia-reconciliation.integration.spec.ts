@@ -236,7 +236,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     expect(records).toEqual([{ amountCents: 1500 }]);
   });
 
-  it('settles nothing on an answer that does not verify, and the expiry still runs after it', async () => {
+  it('settles nothing on an answer that does not verify, the expiry still runs after it, and the next tick asks nothing', async () => {
     lydia = { state: 'paid', raw: '1', verification: 'mismatch' };
     const formId = await paidForm();
     const id = await pendingAnswer(formId, 20, 31);
@@ -247,6 +247,10 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     expect(
       await ds.query(`SELECT 1 FROM purchase_records WHERE "formId" = $1`, [formId])
     ).toHaveLength(0);
+    // ASKED ONCE: the expiry took the row the read could not settle out of the selection.
+    expect(verifiedReads).toBe(1);
+    await sweep.sweepFormPayments();
+    expect(verifiedReads).toBe(1);
   });
 
   it('releases an answer whose request Lydia says was declined, as the return does', async () => {
@@ -298,9 +302,6 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
 
       await sweep.sweepProductCheckouts();
       expect(verifiedReads).toBe(1);
-      await ds.query(`DELETE FROM product_checkouts WHERE id = ANY($1)`, [
-        [live.id, inMargin.id, noKey.id],
-      ]);
     });
 
     it('records ONE purchase when the sweep and seven payer returns settle one attempt at once', async () => {
@@ -318,17 +319,41 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       expect(records).toHaveLength(1);
     });
 
-    it('closes a verified expired attempt, and leaves one whose answer does not verify', async () => {
+    it('closes a verified expired attempt', async () => {
       lydia = { state: 'cancelled-or-expired', raw: '6', verification: 'verified' };
       const closed = await attempt();
       await sweep.reconcileCheckout(closed);
       expect(await statusOf(closed.id)).toBe('expired');
+    });
 
+    it('closes an attempt its one read could not verify, never reads it again, and its callback still records the payment', async () => {
       lydia = { state: 'paid', raw: '1', verification: 'unsigned' };
-      const kept = await attempt();
-      await sweep.reconcileCheckout(kept);
-      expect(await statusOf(kept.id)).toBe('open');
-      await ds.query(`DELETE FROM product_checkouts WHERE id = $1`, [kept.id]);
+      const unproven = await attempt();
+      await sweep.sweepProductCheckouts();
+      expect(verifiedReads).toBe(1);
+      expect(await statusOf(unproven.id)).toBe('expired');
+      expect(
+        await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [unproven.userId])
+      ).toHaveLength(0);
+
+      // ASKED ONCE: the second tick selects nothing.
+      await sweep.sweepProductCheckouts();
+      expect(verifiedReads).toBe(1);
+      expect(sweep.takeCounts().products).toMatchObject({ examined: 1, skippedUnverified: 1 });
+
+      // Lydia's VERIFIED confirm callback asks even of the closed attempt: the money is recorded.
+      await expect(
+        products.handlePurchaseCompleted(
+          PRODUCT,
+          unproven.id,
+          unproven.requestId as string,
+          VENDOR_WITH_KEY
+        )
+      ).resolves.toEqual({ outcome: 'paid' });
+      expect(await statusOf(unproven.id)).toBe('paid');
+      expect(
+        await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [unproven.userId])
+      ).toHaveLength(1);
     });
   });
 });

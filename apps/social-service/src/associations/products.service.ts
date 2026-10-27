@@ -1207,12 +1207,7 @@ export class ProductsService {
       unproven = err instanceof Error ? err.message : String(err);
     }
     if (Date.now() >= open.expiresAt.getTime() + CHECKOUT_EXPIRY_MARGIN_MS) {
-      this.logger.error(
-        `[SHOP] checkout ${open.id.slice(0, 8)} is past its expire_time and still unproven ` +
-          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
-          `expired is still recorded by its confirm callback`
-      );
-      await this.closeCheckout(open, 'expired');
+      await this.expireUnprovenCheckout(open, unproven);
       return;
     }
     throw this.previousCheckoutOpen(open.id, unproven);
@@ -1293,9 +1288,8 @@ export class ProductsService {
         internalCoreRequestConfig()
       )
     );
-    this.logger.debug(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: read by ${'sessionId' in lookup ? 'uuid' : 'order_ref'} -> ${data?.state}`
-    );
+    const by = 'sessionId' in lookup ? 'uuid' : 'order_ref';
+    this.logger.debug(`[SHOP] checkout ${row.id.slice(0, 8)}: read by ${by} -> ${data?.state}`);
     return this.applyRequestState(row, data?.state, data?.raw);
   }
 
@@ -1346,6 +1340,31 @@ export class ProductsService {
       `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${raw ?? JSON.stringify(wireState)}) - left ${row.status}`
     );
     return row.status;
+  }
+
+  /**
+   * Closes an attempt whose request has ENDED (past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`, which
+   * the CALLER has checked) and that nothing proved paid - `unproven` says why, for the log. Closed
+   * as `expired`, at ERROR, so it stops blocking its buyer's retry and is never asked about again.
+   * Nothing is lost by it: a payment taken before the request expired is still recorded by its
+   * confirm callback, which asks even of a closed attempt (`handlePurchaseCompleted` ->
+   * `settlePaidCheckout`). Shared by the buyer's next attempt (`settlePreviousOpenAttempt`) and the
+   * reconciliation sweep, which closes every attempt its one final read did not settle.
+   * Conditional on `open` (`closeCheckout`): a `paid` written meanwhile stays, and is answered.
+   */
+  async expireUnprovenCheckout(
+    row: ProductCheckout,
+    unproven: string
+  ): Promise<ProductCheckoutStatus> {
+    const status = await this.closeCheckout(row, 'expired');
+    if (status === 'expired') {
+      this.logger.error(
+        `[SHOP] checkout ${row.id.slice(0, 8)} is past its expire_time and still unproven ` +
+          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
+          `expired is still recorded by its confirm callback`
+      );
+    }
+    return status;
   }
 
   /**

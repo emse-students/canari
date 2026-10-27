@@ -21,9 +21,10 @@ function formatCounts(counts: ReconcileCounts): string {
  * The FORM half runs in `FormReminderScheduler`'s expiry tick instead, immediately before the
  * expiry, because the order is the point: a form answer must be read while it is still `pending`.
  *
- * Two replicas run this at once during a deploy's overlap. That costs a second read of the same
- * request and nothing else: every write goes through a settle path that locks the row and moves it
- * out of the status the sweep selects on, so the second settlement finds nothing to do.
+ * Two replicas may run this at once during a deploy's overlap. Every write goes through a settle
+ * path that locks the row and moves it out of the status the sweep selects on, so a second
+ * settlement finds nothing to do - the argument the integration spec MEASURES for one sweep against
+ * seven payer returns on one row; two sweeps take the same locks, and were not measured apart.
  */
 @Injectable()
 export class LydiaReconciliationScheduler implements OnModuleInit {

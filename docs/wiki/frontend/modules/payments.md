@@ -733,7 +733,9 @@ purchase was PAID (cash or online), never inferred from a missing id.
 
 **Who triggers it.** The reconciliation sweep, for an attempt still `open` once its request has
 ended, on a VERIFIED answer only ([lydia-api](../../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for):
-`applyRequestState`, the one mapping the return and the callback use). The payer's return: the shop page polls
+`applyRequestState`, the one mapping the return and the callback use) - and an attempt its ONE read
+did not settle is closed `expired` (`expireUnprovenCheckout`), which a later callback still records
+over. The payer's return: the shop page polls
 `POST /api/associations/:id/products/:productId/checkouts/:checkoutId/confirm` while the attempt
 is open (at most 10 reads, 3 s apart, throttled per user and attempt like the form's
 `confirm-payment`) and says paid / still waiting / declined / not completed through Paraglide

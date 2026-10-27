@@ -13,10 +13,20 @@ import { CHECKOUT_EXPIRY_MARGIN_MS, productCheckoutLookup } from '../association
 
 /**
  * Most rows one sweep reads at Lydia, per kind. A bound on one tick's work (one `request/state` read
- * each, up to a minute apiece), far above what a 5-minute tick meets: every row is due ONCE, when its
- * request ends, and this platform issues a few requests a day.
+ * each, up to 90 s apiece), far above what a 5-minute tick meets: every row is READ ONCE, in the
+ * first tick past its request's end, and leaves the selection in that same tick whatever the read
+ * said - a form answer is expired by the expiry that follows the sweep, a boutique attempt is closed
+ * by the sweep itself (`reconcileCheckout`). This platform issues a few requests a day.
  */
 export const RECONCILE_BATCH = 50;
+
+/**
+ * How long the FORM half may spend reading before it stops starting new reads: it runs inside the
+ * expiry tick, ahead of the expiry, so its length is the expiry's delay. One read already started
+ * may finish (up to 90 s), so the expiry waits at most this plus one read - well inside the
+ * 5-minute tick. Rows left unread are expired as before, and said so at ERROR.
+ */
+export const FORM_SWEEP_BUDGET_MS = 60_000;
 
 /**
  * THE DEPLOY SWITCH OF THE SWEEP: `LYDIA_RECONCILE_ENABLED=true`, and nothing else, lets it ask
@@ -88,17 +98,23 @@ const COUNT_KEY: Record<ReconcileOutcome, keyof ReconcileCounts> = {
  * goes through the very function the payer's return uses. So the sweep races the callback and the
  * return on the same locks, and two settlers of one payment record it once.
  *
- * IDEMPOTENT FROM THE ROW. A row is examined only while its own status still says it waits
- * (`pending`, `open`); every settlement moves it out of that status, so a second run - or a second
- * replica running the same tick - finds nothing left to do. The time condition only says WHEN a
- * read is final, never whether it was done.
+ * ASKED ONCE, AND IDEMPOTENT FROM THE ROW. A row is examined only while its own status still says
+ * it waits (`pending`, `open`), and ONE read moves it out of that status whatever the answer: a
+ * settlement does, and what the read could not settle leaves too - a form answer is expired by the
+ * expiry that runs right after the sweep, a boutique attempt is closed `expired` by the sweep
+ * (`ProductsService.expireUnprovenCheckout`, the close the buyer's next attempt makes). So a row
+ * that cannot be settled costs one read and one ERROR or WARN line, never one per tick, and cannot
+ * starve the rows behind it. The time condition only says WHEN a read is final, never whether it
+ * was done; a second run finds nothing left to do.
  *
  * NOTHING UNVERIFIED IS ACTED ON. The read asks core to verify Lydia's signature with the Business
  * key over the row's OWN amount (`readVerifiedRequestState`). A mismatch is logged at ERROR and
- * settles nothing; no key, no signature or an unreadable request leave the row as it is. The one
- * exception is a boutique attempt read by its order_ref that Lydia answers NOT FOUND: an error answer
- * carries no signature, no request exists, no money moved - it is closed `cancelled`, exactly as the
- * return closes it.
+ * settles nothing; no key, no signature or an unreadable request settle nothing either. Closing such
+ * an attempt records nothing and loses nothing: a payment taken before the request expired is
+ * still recorded by its confirm callback, which asks even of a closed attempt. The one unsigned
+ * answer acted on is a boutique attempt read by its order_ref that Lydia answers NOT FOUND (core's
+ * verdict `unsigned`: an error answer carries no signature): no request exists, no money moved - it
+ * is closed `cancelled`, exactly as the return closes it.
  */
 @Injectable()
 export class LydiaReconciliationService {
@@ -116,9 +132,11 @@ export class LydiaReconciliationService {
 
   /**
    * Reads at Lydia every online form answer still `pending` whose request has ended, newest first,
-   * at most `RECONCILE_BATCH`, and settles each from a verified answer. Runs in the expiry tick,
-   * BEFORE the expiry (`FormReminderScheduler`), so a row is read while it is still `pending` - after
-   * the expiry it is `expired`, which nothing here reads again. Each row has its own `try`.
+   * at most `RECONCILE_BATCH` and for at most `FORM_SWEEP_BUDGET_MS`, and settles each from a
+   * verified answer. Runs in the expiry tick, BEFORE the expiry (`FormReminderScheduler`), so a row
+   * is read while it is still `pending` - and the expiry then moves every row the read left
+   * `pending` to `expired`, which nothing here reads again: one read per row. Each row has its own
+   * `try`.
    */
   async sweepFormPayments(): Promise<void> {
     // Switched off: no row selected, no call made (the scheduler said so once, at startup).
@@ -139,14 +157,25 @@ export class LydiaReconciliationService {
           `expired without a read at Lydia`
       );
     }
-    for (const row of due.slice(0, RECONCILE_BATCH)) {
+    const deadline = Date.now() + FORM_SWEEP_BUDGET_MS;
+    const batch = due.slice(0, RECONCILE_BATCH);
+    for (const [index, row] of batch.entries()) {
+      if (Date.now() >= deadline) {
+        // The expiry waits on this loop: the rest is expired unread, as a lost callback always was.
+        this.logger.error(
+          `[RECONCILE] form sweep spent its ${FORM_SWEEP_BUDGET_MS / 1000} s - ` +
+            `${batch.length - index} ended answer(s) are expired without a read at Lydia`
+        );
+        return;
+      }
       await this.count('forms', () => this.reconcileSubmission(row), `submission ${row.id}`);
     }
   }
 
   /**
    * Reads at Lydia every boutique attempt still `open` whose request has ended and whose Business
-   * holds a key to verify with, newest first, at most `RECONCILE_BATCH`. An attempt of a Business
+   * holds a key to verify with, newest first, at most `RECONCILE_BATCH`; each one read is settled or
+   * closed (`reconcileCheckout`), so the next tick reads the next ones. An attempt of a Business
    * with no key cannot be verified: it is not read at all (`openWithoutKey` counts them for the
    * summary), and stays for its buyer's next attempt or its confirm callback.
    */
@@ -227,10 +256,38 @@ export class LydiaReconciliationService {
     return this.notSettled(what, state, read.raw);
   }
 
-  /** Settles ONE boutique attempt from a verified read of its request. Exposed like the above. */
+  /**
+   * Settles ONE boutique attempt from a verified read of its request, and CLOSES it `expired` when
+   * that one read settled nothing - an unverified or unexpected answer, an unavailable read, a
+   * failure - so it is never read again (see the class docblock). The outcome counted is the read's;
+   * the close is logged at ERROR by `expireUnprovenCheckout`. Exposed like the above.
+   */
   async reconcileCheckout(row: ProductCheckout): Promise<ReconcileOutcome> {
     const lookup = productCheckoutLookup(row);
     const what = `checkout ${row.id} (${'sessionId' in lookup ? `request ${lookup.sessionId}` : 'no request id, read by order_ref'})`;
+    let outcome: ReconcileOutcome;
+    try {
+      outcome = await this.readCheckout(row, lookup, what);
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await this.productsService.expireUnprovenCheckout(row, `reconciliation failed: ${reason}`);
+      throw err;
+    }
+    if (outcome !== 'settled' && outcome !== 'released') {
+      await this.productsService.expireUnprovenCheckout(
+        row,
+        `its one reconciliation read: ${outcome}`
+      );
+    }
+    return outcome;
+  }
+
+  /** The one read of an attempt and what it settled; `reconcileCheckout` closes what it did not. */
+  private async readCheckout(
+    row: ProductCheckout,
+    lookup: ReturnType<typeof productCheckoutLookup>,
+    what: string
+  ): Promise<ReconcileOutcome> {
     if (!(row.amountCents > 0)) {
       this.logger.error(`[RECONCILE] ${what}: open with no amount - not read`);
       return 'skipped-unverified';
@@ -242,7 +299,7 @@ export class LydiaReconciliationService {
       return this.unavailable(what, err);
     }
     // The one unsigned answer acted on: no request carries the order_ref (see the class docblock).
-    if (read.verification !== 'no-key' && read.state === 'not-found' && 'orderRef' in lookup) {
+    if (read.verification === 'unsigned' && read.state === 'not-found' && 'orderRef' in lookup) {
       await this.productsService.applyRequestState(row, 'not-found', read.raw);
       return 'released';
     }
