@@ -86,12 +86,17 @@ export class FollowRequestsService {
     followerUserId: string,
     followedUserId: string
   ): Promise<{ ok: boolean; status: FollowStatus }> {
-    const { status, created } = await this.follows.recordFollowRequest(
+    const { status, created, noticeClaimed } = await this.follows.recordFollowRequest(
       followerUserId,
       followedUserId
     );
     if (created) {
-      await this.notifyQuietly(followedUserId, followerUserId, FOLLOW_REQUEST_NOTIFICATION);
+      await this.notifyQuietly(
+        followedUserId,
+        followerUserId,
+        FOLLOW_REQUEST_NOTIFICATION,
+        noticeClaimed
+      );
     }
     return { ok: true, status };
   }
@@ -261,15 +266,23 @@ export class FollowRequestsService {
   /**
    * Writes the bell row and its push - the PUSH ONCE per (asker, person, kind): the
    * `user_follow_notices` row is claimed first, and a call that finds it already there pushes
-   * nothing. A re-asked request still gets its bell row back (no push, one per pair), since the
-   * request is real again; an acceptance already told stays silent. Nothing is sent across a block
-   * that committed since the row was written. BEST-EFFORT AND
+   * nothing. A REQUEST's notice is claimed by the ask itself, in the transaction that wrote the
+   * request (`requestClaimed`), because the daily cap counts those rows and must count them
+   * exactly; an acceptance's is claimed here. A re-asked request still gets its bell row back (no
+   * push, one per pair), since the request is real again; an acceptance already told stays silent.
+   * Nothing is sent across a block that committed since the row was written - a request notice
+   * claimed by then stays claimed, so that pair is not pushed again. BEST-EFFORT AND
    * LOUD: the row of `user_follows` is the durable fact and is already committed, so a
    * notification that fails is logged and the answer stands - failing the request would make the
    * asker try again for a request that exists. A claim whose notification then failed is not
    * retried: one missed bell row, logged, against a loop that could push without end.
    */
-  private async notifyQuietly(recipientId: string, actorId: string, type: string): Promise<void> {
+  private async notifyQuietly(
+    recipientId: string,
+    actorId: string,
+    type: string,
+    requestClaimed?: boolean
+  ): Promise<void> {
     // The notice is keyed by the FOLLOW pair, whichever side is told.
     const [follower, followed] =
       type === FOLLOW_REQUEST_NOTIFICATION ? [actorId, recipientId] : [recipientId, actorId];
@@ -300,12 +313,17 @@ export class FollowRequestsService {
         );
         return;
       }
-      const claimed: unknown[] = await this.dataSource.query(
-        `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind)
-         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING kind`,
-        [follower, followed, NOTICE_KIND[type]]
-      );
-      if (claimed.length > 0) {
+      const claimed =
+        type === FOLLOW_REQUEST_NOTIFICATION
+          ? requestClaimed === true
+          : (
+              (await this.dataSource.query(
+                `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind)
+                 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING kind`,
+                [follower, followed, NOTICE_KIND[type]]
+              )) as unknown[]
+            ).length > 0;
+      if (claimed) {
         await this.notifications.createNotification(notification);
         return;
       }

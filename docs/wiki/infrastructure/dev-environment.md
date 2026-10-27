@@ -172,7 +172,9 @@ value is one it allows. A renamed column fails the pull request, not the reset. 
 named CHECK on a seeded table - from an entity's `@Check` and from the migrations, where several
 exist only - and demands a predicate for each that every row satisfies: migration 114's
 `CHK_user_follows_accepted_at` met seeded `accepted` follows with no `acceptedAt` (2026-10-27), and
-without this the first reset after the deploy would have rolled back on the box.
+without this the first reset after the deploy would have rolled back on the box. Each predicate
+also names the expression it restates, so a constraint dropped and added back under the SAME name
+with another meaning fails too, instead of passing on the old predicate.
 
 **How a tester gets in.** Authentik is one shared instance and the dev OIDC client signs real
 accounts in; the app creates the tester's own row at the first sign-in (`findOrCreateFromOidc`) -

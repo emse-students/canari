@@ -21,7 +21,7 @@ function matches(row: Row, where: Partial<Row>): boolean {
 }
 
 function fakeRepo(rows: Row[]) {
-  return {
+  const repo = {
     findOne: jest.fn(({ where }: { where: Partial<Row> }) =>
       Promise.resolve(rows.find((r) => matches(r, where)) ?? null)
     ),
@@ -49,6 +49,12 @@ function fakeRepo(rows: Row[]) {
       if (/^\s*SELECT EXISTS \(SELECT 1 FROM user_blocks/.test(sql)) {
         return Promise.resolve([{ blocked: false }]);
       }
+      // The asker's lock: one caller here, so it never waits.
+      if (/^\s*SELECT pg_advisory_xact_lock/.test(sql)) return Promise.resolve([{}]);
+      // The request notice claimed with the request: always the first one in this fake.
+      if (/^\s*INSERT INTO user_follow_notices/.test(sql)) {
+        return Promise.resolve([{ kind: 'request' }]);
+      }
       if (!/^\s*INSERT INTO user_follows/.test(sql)) throw new Error(`unexpected SQL: ${sql}`);
       const [followerUserId, followedUserId, status] = params;
       if (rows.some((r) => matches(r, { followerUserId, followedUserId }))) {
@@ -70,6 +76,8 @@ function fakeRepo(rows: Row[]) {
       return Promise.resolve({ affected });
     }),
   };
+  // `recordFollowRequest` runs its statements in one transaction; here they reach the same fake.
+  return { ...repo, manager: { transaction: <T>(fn: (tx: typeof repo) => T) => fn(repo) } };
 }
 
 describe('FollowsService', () => {

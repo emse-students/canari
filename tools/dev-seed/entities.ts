@@ -240,11 +240,36 @@ export function readSchema(repoRoot: string): Map<string, EntityTable> {
   return schema;
 }
 
-/** One named CHECK constraint, and the file whose text last added it. */
+/** One named CHECK constraint, the file whose text last added it, and its expression as written. */
 export interface CheckConstraint {
   table: string;
   name: string;
   file: string;
+  /** The predicate, through {@link normalizeCheck}; '' when it could not be read. */
+  sql: string;
+}
+
+/**
+ * A CHECK expression in one comparable spelling: no identifier quotes, whitespace collapsed, none
+ * around parentheses and commas - so the entity's `"kind" IN (...)` and a migration's
+ * `kind IN (...)` read the same, and only a change of MEANING reads different.
+ */
+export function normalizeCheck(sql: string): string {
+  return sql
+    .replace(/"/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([(),])\s*/g, '$1')
+    .trim();
+}
+
+/** The text inside the parenthesis that opens at `open`, or '' when it never closes. */
+function parenthesised(text: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')' && --depth === 0) return text.slice(open + 1, i);
+  }
+  return '';
 }
 
 /** The table a DDL statement is about: `ALTER TABLE x` or `CREATE TABLE x`, else null. */
@@ -265,7 +290,8 @@ function statementTable(statement: string): string | null {
  * breaks one rolls the whole dev reset back on the box (2026-10-27: migration 114's
  * `CHK_user_follows_accepted_at` against seeded `accepted` follows that carried no `acceptedAt`).
  * `seed.test.ts` demands a predicate for every check on a seeded table, so a NEW check fails the
- * pull request that adds it until somebody states what it means for the seed.
+ * pull request that adds it until somebody states what it means for the seed - and, since the
+ * expression is read too, so does an existing name dropped and added back with another meaning.
  *
  * An UNNAMED check cannot be tracked by name, so it is reported with a synthetic `unnamed@file`
  * name - which no predicate matches, and the test then asks for the constraint to be named.
@@ -279,8 +305,8 @@ export function readChecks(repoRoot: string): CheckConstraint[] {
     const entity = source.match(/@Entity\(\s*(?:'([^']+)')?\s*\)[\s\S]*?export\s+class\s+(\w+)/);
     if (!entity) continue;
     const table = entity[1] ?? snakeCase(entity[2]);
-    for (const m of source.matchAll(/@Check\(\s*'([^']+)'/g)) {
-      found.set(key(table, m[1]), { table, name: m[1], file });
+    for (const m of source.matchAll(/@Check\(\s*'([^']+)'\s*,\s*([`'"])([\s\S]*?)\2\s*\)/g)) {
+      found.set(key(table, m[1]), { table, name: m[1], file, sql: normalizeCheck(m[3]) });
     }
   }
 
@@ -304,15 +330,16 @@ export function readChecks(repoRoot: string): CheckConstraint[] {
         for (const m of statement.matchAll(/DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+"?(\w+)"?/gi)) {
           found.delete(key(table, m[1]));
         }
-        for (const m of statement.matchAll(/CONSTRAINT\s+"?(\w+)"?\s+CHECK\b/gi)) {
-          found.set(key(table, m[1]), { table, name: m[1], file });
+        for (const m of statement.matchAll(/CONSTRAINT\s+"?(\w+)"?\s+CHECK\s*\(/gi)) {
+          const sql = normalizeCheck(parenthesised(statement, (m.index ?? 0) + m[0].length - 1));
+          found.set(key(table, m[1]), { table, name: m[1], file, sql });
         }
         // A CHECK not preceded by `CONSTRAINT name` is unnamed.
         const named = [...statement.matchAll(/CONSTRAINT\s+"?\w+"?\s+CHECK\b/gi)].length;
         const all = [...statement.matchAll(/\bCHECK\s*\(/gi)].length;
         if (all > named) {
           const unnamed = `unnamed@${file}`;
-          found.set(key(table, unnamed), { table, name: unnamed, file });
+          found.set(key(table, unnamed), { table, name: unnamed, file, sql: '' });
         }
       }
     }

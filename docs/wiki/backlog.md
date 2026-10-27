@@ -171,6 +171,15 @@ ordinary review.
     leaks - the reader filters are server-side - but the person asked can only answer from a new
     build. A decision for the user when the stable is cut, with the share of old clients measured
     from the version header then.
+  - **P3 - a row the block severing missed comes back when the block is lifted.** The severing is
+    a best-effort cross-service call: when it does not run, the request or follow stays in
+    `user_follows`, hidden by every reader while the block stands - and visible again, as it was,
+    the moment the block is lifted. The unblock reaches social-service only as a feed-cache drop,
+    which does not name the pair. The fix is an unblock call that names the pair and deletes what
+    is left between them; until then the stale row is a pending request the person may still
+    refuse, or a follow either side may end.
+  - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
+    one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
   arming).** Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
   (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following

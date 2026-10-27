@@ -497,6 +497,85 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     expect(pushed.map((x) => x.to)).toEqual(['bob']);
   });
 
+  describe('the caps hold under concurrency: one asker, many parallel asks to distinct people', () => {
+    /** How many asks run at once - more than the pool's connections, so some wait for one. */
+    const PARALLEL = 24;
+    const strangers = Array.from({ length: PARALLEL }, (_, i) => `par${i}`);
+
+    beforeAll(async () => {
+      for (const id of strangers) {
+        await q(`INSERT INTO users (id, "displayName") VALUES ($1, $1) ON CONFLICT DO NOTHING`, [
+          id,
+        ]);
+      }
+      // Each written request holds its transaction open a moment after its counts were taken, so
+      // asks that are not serialised overlap every time instead of only when the scheduler says so.
+      await q(`
+        CREATE FUNCTION slow_ask() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM pg_sleep(0.05); RETURN NEW; END $$;
+        CREATE TRIGGER slow_ask AFTER INSERT ON user_follows
+          FOR EACH ROW WHEN (NEW."followedUserId" LIKE 'par%') EXECUTE FUNCTION slow_ask();`);
+    });
+
+    afterAll(async () => {
+      await q(`DROP TRIGGER slow_ask ON user_follows; DROP FUNCTION slow_ask()`);
+    });
+
+    /** Runs every ask at once and sorts the outcomes: written, or the refusal's code. */
+    const askAll = async () => {
+      const outcomes = await Promise.all(strangers.map((id) => refusalOf(requests.ask('ann', id))));
+      return {
+        written: outcomes.filter((o) => o === 'written').length,
+        codes: [...new Set(outcomes.filter((o) => o !== 'written').map(codeOf))],
+      };
+    };
+
+    it(`${FOLLOW_PENDING_MAX - 1} unanswered requests and ${PARALLEL} asks at once: exactly one is written`, async () => {
+      await q(
+        `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
+         SELECT gen_random_uuid(), 'ann', 'p' || i, 'pending' FROM generate_series(1, $1) i`,
+        [FOLLOW_PENDING_MAX - 1]
+      );
+      const { written, codes } = await askAll();
+      expect(written).toBe(1);
+      expect(codes).toEqual([FOLLOW_CODES.pendingLimit]);
+      const { rows } = await q(
+        `SELECT count(*)::int AS n FROM user_follows WHERE "followerUserId" = 'ann' AND status = 'pending'`
+      );
+      expect(rows[0].n).toBe(FOLLOW_PENDING_MAX);
+      expect(pushed).toHaveLength(1);
+    });
+
+    it(`${FOLLOW_ASKS_PER_DAY - 1} people told today and ${PARALLEL} asks at once: exactly one more is told`, async () => {
+      await q(
+        `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind, "createdAt")
+         SELECT 'ann', 'n' || i, 'request', now() - interval '1 hour' FROM generate_series(1, $1) i`,
+        [FOLLOW_ASKS_PER_DAY - 1]
+      );
+      const { written, codes } = await askAll();
+      expect(written).toBe(1);
+      expect(codes).toEqual([FOLLOW_CODES.dailyLimit]);
+      const { rows } = await q(
+        `SELECT count(*)::int AS n FROM user_follow_notices
+          WHERE "followerUserId" = 'ann' AND kind = 'request' AND "createdAt" > now() - interval '1 day'`
+      );
+      expect(rows[0].n).toBe(FOLLOW_ASKS_PER_DAY);
+      expect(pushed).toHaveLength(1);
+    });
+  });
+
+  it('a request hidden by a block does not count against the pending cap', async () => {
+    await q(
+      `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
+       SELECT gen_random_uuid(), 'ann', 'p' || i, 'pending' FROM generate_series(1, $1) i`,
+      [FOLLOW_PENDING_MAX - 1]
+    );
+    await requests.ask('ann', 'cid');
+    // The severing never ran: the row stays, but the asker no longer sees it, nor can withdraw it.
+    await block('cid', 'ann');
+    expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
+  });
+
   it('a block that commits DURING the ask retracts the request it wrote, and nobody is told', async () => {
     // The block lands between the insert's check and its commit: a trigger writes it in the
     // insert's own transaction, which is the interleaving a concurrent block can produce.
@@ -515,6 +594,9 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       expect(await statusOf('eve', 'bob')).toBeNull();
       expect(pushed).toEqual([]);
       expect(await bellOf('bob')).toEqual([]);
+      // Nobody was told, so the notice it claimed goes too: no daily cap charged, no push lost.
+      const { rows } = await q(`SELECT 1 FROM user_follow_notices WHERE "followerUserId" = 'eve'`);
+      expect(rows).toEqual([]);
     } finally {
       await q(`DROP TRIGGER block_during_ask ON user_follows; DROP FUNCTION block_during_ask()`);
     }

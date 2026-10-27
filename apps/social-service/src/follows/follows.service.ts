@@ -14,6 +14,7 @@ import { AssociationFollow } from './entities/association-follow.entity';
 import { UserFollow } from './entities/user-follow.entity';
 import { Association } from '../associations/entities/association.entity';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
+import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 
 /** How a follows log line names an account: its first 8 characters, never a whole account id. */
 export const short = (id: string): string => id.slice(0, 8);
@@ -39,7 +40,8 @@ export const FOLLOW_PENDING_MAX = 100;
 
 /**
  * How many NEW people one account may notify with a request per rolling day, counted from the
- * `user_follow_notices` rows it caused - exactly the pushes it made, since a pair is told once.
+ * `request` rows of `user_follow_notices` it claimed - one per person first asked, claimed in the
+ * same transaction as the request, so the count never lags behind a push still being sent.
  * The per-minute throttle bounds a burst; this bounds the day (429 FOLLOW_DAILY_LIMIT).
  */
 export const FOLLOW_ASKS_PER_DAY = 50;
@@ -49,7 +51,7 @@ const BLOCK_BETWEEN = `EXISTS (SELECT 1 FROM user_blocks b
   WHERE (b."blockerId" = $1 AND b."blockedId" = $2) OR (b."blockerId" = $2 AND b."blockedId" = $1))`;
 
 /**
- * The four conditions a NEW request needs, each as SQL over `$1` (asker), `$2` (person), `$3`
+ * The four conditions a NEW request needs (the two caps exact only under {@link ASK_LOCK_SQL}), each as SQL over `$1` (asker), `$2` (person), `$3`
  * ('pending'), `$4` ({@link FOLLOW_PENDING_MAX}), `$5` ({@link FOLLOW_ASKS_PER_DAY}) and `$6` (the
  * notice kind 'request') - {@link REQUEST_PARAMS}. Written once and used twice: as the WHERE of the
  * statement that writes the request, and as the columns of the read that names a refusal. The
@@ -61,8 +63,14 @@ const REQUEST_CONDITIONS = {
   unblocked: `NOT EXISTS (SELECT 1 FROM user_blocks b
      WHERE (b."blockerId" = $1::varchar AND b."blockedId" = $2::varchar)
         OR (b."blockerId" = $2::varchar AND b."blockedId" = $1::varchar))`,
+  // A request across a block is left out of the count, as it is left out of the asker's sent list:
+  // the cap counts only what the asker can see and withdraw.
   underPending: `(SELECT count(*) FROM user_follows p
-     WHERE p."followerUserId" = $1::varchar AND p.status = $3::varchar) < $4::int`,
+     WHERE p."followerUserId" = $1::varchar AND p.status = $3::varchar
+       AND NOT EXISTS (SELECT 1 FROM user_blocks pb
+         WHERE (pb."blockerId" = p."followerUserId" AND pb."blockedId" = p."followedUserId")
+            OR (pb."blockerId" = p."followedUserId" AND pb."blockedId" = p."followerUserId"))
+     ) < $4::int`,
   underDaily: `(EXISTS (SELECT 1 FROM user_follow_notices n
        WHERE n."followerUserId" = $1::varchar AND n."followedUserId" = $2::varchar
          AND n.kind = $6::varchar)
@@ -71,6 +79,9 @@ const REQUEST_CONDITIONS = {
             AND n."createdAt" > now() - interval '1 day') < $5::int)`,
 } as const;
 
+/** The `user_follow_notices` kind a request claims - the one the daily cap counts. */
+const REQUEST_NOTICE: FollowNoticeKind = 'request';
+
 /** The parameters of {@link REQUEST_CONDITIONS}, in order. */
 const REQUEST_PARAMS = (asker: string, person: string) => [
   asker,
@@ -78,8 +89,17 @@ const REQUEST_PARAMS = (asker: string, person: string) => [
   FOLLOW_PENDING,
   FOLLOW_PENDING_MAX,
   FOLLOW_ASKS_PER_DAY,
-  'request',
+  REQUEST_NOTICE,
 ];
+
+/**
+ * ONE ASKER'S ASKS RUN ONE AT A TIME: a transaction-scoped advisory lock keyed by the asker, taken
+ * before anything is counted. The two caps are counts, and under READ COMMITTED two statements
+ * counting at once both see the same total and both insert; with the lock, each ask's statements
+ * start after the previous ask of the same account COMMITTED, so they count its row. Asks by
+ * different accounts never wait on each other.
+ */
+const ASK_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('follow-ask:' || $1::varchar, 0))`;
 
 /** Manages follows for both associations and users. */
 @Injectable()
@@ -174,50 +194,67 @@ export class FollowsService {
 
   /**
    * Writes a `pending` request unless a row already exists, and says which: `created` is true only
-   * for the call that wrote it.
+   * for the call that wrote it, and `noticeClaimed` only when that call also claimed the pair's
+   * `request` notice - the first time this asker reaches this person, so the one ask that pushes.
    *
    * ONE `INSERT ... SELECT ... ON CONFLICT DO NOTHING`, never a read then a write: two taps at once
    * used to both read "no row", and the second save hit the unique key as a 500. The SELECT carries
-   * the two conditions a request needs, so neither is a check-then-insert: the target is a PERSON
-   * (a `users` row - an association's id, or any unknown id, is refused 404 FOLLOW_TARGET_NOT_FOUND)
-   * and no block stands between the two, in either direction (403 FOLLOW_BLOCKED; core-service's
-   * block status already tells either side, so nothing is hidden by refusing). A conflict changes
-   * nothing - an accepted follow stays accepted - and its status is then READ in a second statement,
-   * which sees the winner's committed row. When nothing was written and no row exists, the reason is
-   * read; a row withdrawn in between is asked again, the loop bounded by the outcomes a pair can be
-   * in, never by a clock. The same SELECT holds the asker to {@link FOLLOW_PENDING_MAX} unanswered
-   * requests and {@link FOLLOW_ASKS_PER_DAY} new people a day (409/429), so no account can push its
-   * name to the whole directory; and a block that commits during the ask retracts what it wrote.
+   * the conditions a request needs, so none is a check-then-insert: the target is a PERSON (a
+   * `users` row - an association's id, or any unknown id, is refused 404 FOLLOW_TARGET_NOT_FOUND),
+   * no block stands between the two, in either direction (403 FOLLOW_BLOCKED; core-service's block
+   * status already tells either side, so nothing is hidden by refusing), the asker has fewer than
+   * {@link FOLLOW_PENDING_MAX} unanswered requests (409) and has told fewer than
+   * {@link FOLLOW_ASKS_PER_DAY} new people in a day (429), so no account can push its name to the
+   * whole directory.
+   *
+   * THE TWO CAPS ARE COUNTS, SO THEY HOLD ONLY UNDER {@link ASK_LOCK_SQL}: the insert and the claim
+   * of the notice row run in ONE transaction that first takes the asker's lock, so the next ask of
+   * the same account counts both - the daily cap reads exactly the notices claimed, never a push
+   * still on its way. A conflict changes nothing - an accepted follow stays accepted - and its
+   * status is then READ in a second statement, which sees the winner's committed row. When nothing
+   * was written and no row exists, the reason is read; if every condition holds by then (a row
+   * withdrawn, or a cap freed, in between) the ask is made again, the loop bounded by the outcomes
+   * a pair can be in, never by a clock. A block that commits during the ask retracts what it wrote.
    */
   async recordFollowRequest(
     followerUserId: string,
     followedUserId: string
-  ): Promise<{ status: FollowStatus; created: boolean }> {
+  ): Promise<{ status: FollowStatus; created: boolean; noticeClaimed: boolean }> {
     this.logger.debug(`[FOLLOW] ${short(followerUserId)} asks to follow ${short(followedUserId)}`);
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const inserted: { id: string; status: FollowStatus }[] = await this.userFollowRepo.query(
-        `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
-         SELECT $7::uuid, $1::varchar, $2::varchar, $3::varchar
-          WHERE ${Object.values(REQUEST_CONDITIONS).join('\n            AND ')}
-         ON CONFLICT DO NOTHING
-         RETURNING id, status`,
-        [...REQUEST_PARAMS(followerUserId, followedUserId), randomUUID()]
-      );
-      if (inserted.length > 0) {
-        await this.retractIfBlockedSince(inserted[0].id, followerUserId, followedUserId);
-        this.logger.log(
-          `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: request recorded, pending`
+      const written = await this.userFollowRepo.manager.transaction(async (tx) => {
+        await tx.query(ASK_LOCK_SQL, [followerUserId]);
+        const inserted: { id: string }[] = await tx.query(
+          `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
+           SELECT $7::uuid, $1::varchar, $2::varchar, $3::varchar
+            WHERE ${Object.values(REQUEST_CONDITIONS).join('\n              AND ')}
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [...REQUEST_PARAMS(followerUserId, followedUserId), randomUUID()]
         );
-        return { status: FOLLOW_PENDING, created: true };
+        if (inserted.length === 0) return null;
+        const claimed: unknown[] = await tx.query(
+          `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind)
+           VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING kind`,
+          [followerUserId, followedUserId, REQUEST_NOTICE]
+        );
+        return { id: inserted[0].id, noticeClaimed: claimed.length > 0 };
+      });
+      if (written) {
+        await this.retractIfBlockedSince(written, followerUserId, followedUserId);
+        this.logger.log(
+          `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: request recorded, pending (first notice: ${written.noticeClaimed})`
+        );
+        return { status: FOLLOW_PENDING, created: true, noticeClaimed: written.noticeClaimed };
       }
       const existing = await this.userFollowStatus(followerUserId, followedUserId);
       if (existing) {
         this.logger.debug(`[FOLLOW] ${short(followerUserId)} already ${existing}: unchanged`);
-        return { status: existing, created: false };
+        return { status: existing, created: false, noticeClaimed: false };
       }
       await this.assertMayRequest(followerUserId, followedUserId);
-      this.logger.warn(
-        `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: the row that refused the insert was gone when read (attempt ${attempt})`
+      this.logger.log(
+        `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: nothing written, yet every condition holds now - a row withdrawn or a cap freed in between; asking again (attempt ${attempt})`
       );
     }
     throw new ConflictException('The follow changed while it was being recorded');
@@ -275,9 +312,11 @@ export class FollowsService {
    * block - and its push to the person who just blocked. The block is committed before the severing
    * is called, so it is visible to this read, made after the insert committed: if it stands, the
    * request this call wrote is deleted and the ask is refused as a block, before anything notifies.
+   * The notice row this call claimed goes with it: nobody was told, so it charges no daily cap and
+   * does not silence the push of an ask made after the block is lifted.
    */
   private async retractIfBlockedSince(
-    rowId: string,
+    written: { id: string; noticeClaimed: boolean },
     followerUserId: string,
     followedUserId: string
   ): Promise<void> {
@@ -287,9 +326,16 @@ export class FollowsService {
     );
     if (!row?.blocked) return;
     await this.userFollowRepo.query(`DELETE FROM user_follows WHERE id = $1 AND status = $2`, [
-      rowId,
+      written.id,
       FOLLOW_PENDING,
     ]);
+    if (written.noticeClaimed) {
+      await this.userFollowRepo.query(
+        `DELETE FROM user_follow_notices
+          WHERE "followerUserId" = $1 AND "followedUserId" = $2 AND kind = $3`,
+        [followerUserId, followedUserId, REQUEST_NOTICE]
+      );
+    }
     this.logger.warn(
       `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: a block committed during the ask - request retracted`
     );

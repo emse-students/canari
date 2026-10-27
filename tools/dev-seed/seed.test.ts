@@ -18,7 +18,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { entityFiles, parseEntityFile, readChecks, readSchema } from './entities';
+import { entityFiles, normalizeCheck, parseEntityFile, readChecks, readSchema } from './entities';
 import {
   REPO_ROOT,
   SEED_EMAIL_DOMAIN,
@@ -207,27 +207,64 @@ const CAMPUSES = ['saint-etienne', 'gardanne'];
  * in the entities and the migrations; one with no entry here fails, so a new constraint is met on
  * the pull request that adds it and never by the dev reset rolling back on the box. A column the
  * seed leaves out takes its column default, written next to the predicate that reads it.
+ *
+ * Each entry also carries the expression it was written against (`sql`, compared through
+ * `normalizeCheck`): a migration that drops a constraint and adds it back under the SAME name with
+ * a different meaning fails here too, rather than passing on a predicate that restates the old one.
  */
-const CHECK_PREDICATES: Record<string, (row: Record<string, SqlValue>) => boolean> = {
-  CHK_association_audiences_campus: oneOf('campus', CAMPUSES, true),
-  CHK_association_audiences_formation: oneOf('formation', FORMATIONS, true),
-  CHK_associations_type: oneOf('type', ['association', 'list', 'institution']),
-  CHK_platform_config_calls_mode: oneOf('calls_mode', ['off', 'audio', 'audio_video']),
-  CHK_platform_config_lives_mode: oneOf('lives_mode', ['off', 'on']),
-  CHK_spaces_campus: oneOf('campus', CAMPUSES),
-  CHK_spaces_formation: oneOf('formation', FORMATIONS),
+type CheckPredicate = { sql: string; holds: (row: Record<string, SqlValue>) => boolean };
+const CHECK_PREDICATES: Record<string, CheckPredicate> = {
+  CHK_association_audiences_campus: {
+    sql: "campus IS NULL OR campus IN ('saint-etienne', 'gardanne')",
+    holds: oneOf('campus', CAMPUSES, true),
+  },
+  CHK_association_audiences_formation: {
+    sql: "formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')",
+    holds: oneOf('formation', FORMATIONS, true),
+  },
+  CHK_associations_type: {
+    sql: "type IN ('association', 'list', 'institution')",
+    holds: oneOf('type', ['association', 'list', 'institution']),
+  },
+  CHK_platform_config_calls_mode: {
+    sql: "calls_mode IN ('off', 'audio', 'audio_video')",
+    holds: oneOf('calls_mode', ['off', 'audio', 'audio_video']),
+  },
+  CHK_platform_config_lives_mode: {
+    sql: "lives_mode IN ('off', 'on')",
+    holds: oneOf('lives_mode', ['off', 'on']),
+  },
+  CHK_spaces_campus: {
+    sql: "campus IN ('saint-etienne', 'gardanne')",
+    holds: oneOf('campus', CAMPUSES),
+  },
+  CHK_spaces_formation: {
+    sql: "formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')",
+    holds: oneOf('formation', FORMATIONS),
+  },
   // `status` defaults to 'pending' since migration 114.
-  CHK_user_follows_status: (r) =>
-    ['pending', 'accepted'].includes((r.status ?? 'pending') as string),
-  CHK_user_follows_accepted_at: (r) =>
-    (r.status ?? 'pending') !== 'accepted' || given(r.acceptedAt),
+  CHK_user_follows_status: {
+    sql: "status IN ('pending', 'accepted')",
+    holds: (r) => ['pending', 'accepted'].includes((r.status ?? 'pending') as string),
+  },
+  CHK_user_follows_accepted_at: {
+    sql: `status <> 'accepted' OR "acceptedAt" IS NOT NULL`,
+    holds: (r) => (r.status ?? 'pending') !== 'accepted' || given(r.acceptedAt),
+  },
   // `kind` defaults to 'post'.
-  posts_kind_shape: (r) => {
-    const kind = r.kind ?? 'post';
-    if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt);
-    return (
-      kind === 'reel' && typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt)
-    );
+  posts_kind_shape: {
+    sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL)
+       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL)`,
+    holds: (r) => {
+      const kind = r.kind ?? 'post';
+      if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt);
+      return (
+        kind === 'reel' &&
+        typeof r.durationMs === 'number' &&
+        r.durationMs > 0 &&
+        given(r.expiresAt)
+      );
+    },
   },
 };
 const checks = readChecks(REPO_ROOT);
@@ -277,13 +314,19 @@ describe('the SQL fits the schema the entities declare', () => {
 
       test('satisfies every CHECK the schema puts on it', () => {
         for (const check of checks.filter((c) => c.table === table)) {
-          const holds = CHECK_PREDICATES[check.name];
+          const predicate = CHECK_PREDICATES[check.name];
           expect(
-            holds,
+            predicate,
             `${table}: ${check.name} (${check.file}) has no predicate in CHECK_PREDICATES - state what it requires of a seeded row`
           ).toBeDefined();
+          expect(
+            check.sql,
+            `${table}: ${check.name} (${check.file}) no longer reads as its predicate was written - restate it`
+          ).toBe(normalizeCheck(predicate?.sql ?? ''));
           for (const row of list) {
-            expect(holds?.(row), `${table}.${String(row.id)} breaks ${check.name}`).toBe(true);
+            expect(predicate?.holds(row), `${table}.${String(row.id)} breaks ${check.name}`).toBe(
+              true
+            );
           }
         }
       });

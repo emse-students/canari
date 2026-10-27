@@ -1038,14 +1038,22 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
   the asker: `FOLLOW_PENDING_MAX` (100) unanswered requests at once (409 `FOLLOW_PENDING_LIMIT`)
   and `FOLLOW_ASKS_PER_DAY` (50) NEW people told per rolling day, counted from the notice rows
   (429 `FOLLOW_DAILY_LIMIT`; re-asking someone already told costs no push and is not counted). One
-  account cannot push its name to the whole directory (review 2026-10-27).
+  account cannot push its name to the whole directory (review 2026-10-27). **Both caps are counts,
+  so they hold only serialised**: under READ COMMITTED two statements counting at once see the same
+  total and both insert. Each ask is ONE transaction that first takes a transaction-scoped advisory
+  lock keyed by the asker, then inserts the request AND claims its `request` notice row, so the
+  next ask of the same account counts both - the daily cap reads the claims exactly, never a push
+  still on its way. Asks by different accounts never wait on each other. A request across a block
+  is not counted against the pending cap, as it is not in the asker's sent list either. Proof: the
+  PostgreSQL spec runs 24 asks at once at 99 pending and at 49 told, and exactly one is written.
 - **The block race**: an ask whose statement began before a block committed, and committed after
   the severing ran, re-reads the block once its insert committed - the block committed BEFORE the
   severing was called, so the read sees it - and deletes the row it wrote, refusing 403. The
   notification path re-reads the block too, just before it writes anything, so an acceptance racing
   a block pushes nothing. Both interleavings are forced with a trigger in the PostgreSQL spec.
 - **Told once per pair, from durable state**: the first `follow_request` (and the first
-  `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies, so
+  `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies (a
+  request's claim is made in the ask's transaction, above; a retracted ask releases it), so
   ask -> withdraw -> ask in a loop pushes once. Never a clock. A re-asked request gets its bell
   row back WITHOUT a push (deleted and rewritten, so one per pair), since the request is real
   again; a claim whose notification then failed is logged and not retried.
