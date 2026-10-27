@@ -40,6 +40,7 @@ import {
 } from './follow-requests.service';
 import { InternalController } from '../internal/internal.controller';
 import { PostNotification } from '../posts/entities/post-notification.entity';
+import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import type { PushContent } from '../push/push-content';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
@@ -94,6 +95,14 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     return rows[0]?.status ?? null;
   };
   /** The push transport, the one thing not real: what the mapping produced is the assertion. */
+  /** The feed cache: what was dropped is the assertion. */
+  const dropped: string[] = [];
+  const redis = {
+    deleteByPattern: (match: string) => {
+      dropped.push(match);
+      return Promise.resolve(1);
+    },
+  };
   const push = {
     notifyContent: (to: string, content: PushContent, data: Record<string, string>) => {
       pushed.push({ to, key: content.key, actor: content.actorName, target: data.target });
@@ -160,7 +169,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       push as never,
       {} as never
     );
-    requests = new FollowRequestsService(follows, notifications, ds);
+    requests = new FollowRequestsService(follows, notifications, ds, redis as never);
     secretBefore = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = IT_SECRET;
   });
@@ -175,6 +184,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
 
   beforeEach(async () => {
     pushed.length = 0;
+    dropped.length = 0;
     await q(`DELETE FROM user_follows; DELETE FROM user_blocks; DELETE FROM post_notifications;
              DELETE FROM user_follow_notices`);
   });
@@ -412,6 +422,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       // Every reader of a follow reads this row (WP-F1): with it gone, the Suivis arm stops here,
       // and the announce sweep and the live push are pinned in reader-spaces and lives specs.
       expect(await follows.getFollowedUserIdsForUser('ann')).toEqual([]);
+      // ...and ann's cached Suivis page goes too, as on a block.
+      expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
       expect(pushed).toEqual([]);
       await expect(requests.removeFollower('bob', 'ann')).rejects.toBeInstanceOf(NotFoundException);
       expect((await requests.ask('ann', 'bob')).status).toBe('pending');

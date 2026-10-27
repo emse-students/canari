@@ -1,6 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
+import { RedisService } from '../common/redis/redis.service';
+import { invalidatePostListCache } from '../posts/post-list-cache';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
@@ -75,7 +77,8 @@ export class FollowRequestsService {
   constructor(
     private readonly follows: FollowsService,
     private readonly notifications: PostNotificationsService,
-    @InjectDataSource() private readonly dataSource: DataSource
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly redis: RedisService
   ) {}
 
   /** Asks to follow `followedUserId`; see the class docblock for the refusals and the notice. */
@@ -178,7 +181,7 @@ export class FollowRequestsService {
     return { ok: true };
   }
 
-  // ── The caller's own lists (WP-F3) ──────────────────────────────────────────────────────────────
+  // --- The caller's own lists (WP-F3) ---
 
   /**
    * `userId`'s ACCEPTED followers, the most recently accepted first, each dated by `acceptedAt`
@@ -222,6 +225,16 @@ export class FollowRequestsService {
       throw new NotFoundException('Follower not found');
     }
     this.logger.log(`[FOLLOW-REQ] ${short(userId)} removed follower ${short(followerUserId)}`);
+    // The removed follower's Suivis page is cached with their id in its key: drop the keyspace, as
+    // the block path does, or it keeps showing this person's posts until the TTL runs out.
+    try {
+      const dropped = await invalidatePostListCache(this.redis);
+      this.logger.debug(`[FOLLOW-REQ] feed cache dropped after a removal: ${dropped} key(s)`);
+    } catch (e) {
+      this.logger.warn(
+        `[FOLLOW-REQ] feed cache not dropped after a removal: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
     return { ok: true };
   }
 

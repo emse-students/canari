@@ -1070,7 +1070,9 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
 each dated by `acceptedAt`), `DELETE me/followers/:userId` (the follow is deleted and NOBODY is
 told; the removed person may ask again, which is a new request that lands in the inbox without a
 second push - the notice is once per pair; a pending request is refused, not removed; the announce
-sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs) and `GET me/follow-requests/sent`
+sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs,
+and the feed cache is dropped as on a block, so the removed person's Suivis does not keep serving
+this account's posts for its 30-second TTL) and `GET me/follow-requests/sent`
 (the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
 lists exist as routes: no rule says who may read another person's followers, so none is open. A
 pair a block stands between is left out of every list, as of every reader.
