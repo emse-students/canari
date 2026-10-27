@@ -99,7 +99,7 @@ the user's go. WP-F5 and WP-F6 each follow in a LATER stable. **The two packages
 ordinary review.
 
 - **WP-F1 - the data model, the migration, and every reader counting accepted rows only. BUILT,
-  draft pull request #PR_F1.** Migration 112 adds `user_follows.status` (`pending` / `accepted`, a
+  draft pull request #2589.** Migration 112 adds `user_follows.status` (`pending` / `accepted`, a
   CHECK) with every existing row `accepted` (decision 3), then sets the default to `pending` so a
   writer that forgets the column fails closed; a partial index on what is pending FOR a person
   serves F2's inbox. `POST /api/posts/users/:id/follow` now writes a `pending` request and answers
