@@ -19,6 +19,7 @@ import { FOLLOW_PENDING, type FollowStatus } from '../follow-status';
 @Entity('user_follows')
 @Unique(['followerUserId', 'followedUserId'])
 @Check('CHK_user_follows_status', `"status" IN ('pending', 'accepted')`)
+@Check('CHK_user_follows_accepted_at', `"status" <> 'accepted' OR "acceptedAt" IS NOT NULL`)
 @Index('IDX_user_follows_pending_followed', ['followedUserId'], { where: `"status" = 'pending'` })
 export class UserFollow {
   @PrimaryGeneratedColumn('uuid')
@@ -37,4 +38,8 @@ export class UserFollow {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  /** When the followed person said yes (WP-F3 orders the followers list by it); null while pending. */
+  @Column({ type: 'timestamptz', nullable: true })
+  acceptedAt: Date | null;
 }

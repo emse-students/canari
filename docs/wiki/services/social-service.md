@@ -1004,6 +1004,17 @@ which records every existing follow as accepted (decision 3); the default is the
 `'pending'`, so a writer that forgets the column fails closed - and the old image, serving the
 seconds of a deploy, writes requests rather than follows.
 
+**114 also adds `acceptedAt`** (when the person said yes; existing follows backfilled from
+`createdAt`, a CHECK keeps every accepted row dated) **and `user_follow_notices`**, the durable
+"already told" of WP-F2: one row per (asker, person, kind), so a request deleted and asked again
+never notifies twice. The account erasure deletes both sides of it.
+
+**The schema on dev and production comes from this migration alone**: `synchronize` runs only
+when `NODE_ENV` is not `production`, and both estates pin `NODE_ENV: production` on
+social-service (`docker-compose.dev.yml`, `docker-compose.prod.yml`), so the entity's `pending`
+default never reaches an existing table there. A LOCAL database built by `synchronize` does get it,
+and its existing follows become requests - local only, and the dev seed writes `accepted`.
+
 **A request is ONE `INSERT ... ON CONFLICT DO NOTHING`** (`FollowsService.recordFollowRequest`),
 never a read then a write: a double tap used to read "no row" twice and 500 on the unique key. A
 conflict leaves an accepted follow accepted; `created` is true for the one call that wrote, so the
