@@ -248,6 +248,18 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
   settling one payment write ONE purchase record, for a form and for an attempt; with the attempt's row
   lock removed, the boutique case wrote more than one. Two replicas running one tick read twice and write
   once.
+- **The switch: OFF in production until the amount format is measured** (decided 2026-10-27).
+  `LYDIA_RECONCILE_ENABLED`, social-service, COMPUTED by `render-env.sh`
+  (`compute_lydia_reconcile_enabled`) like `LIVE_ENABLED`: `true` on dev, `false` on production, `true`
+  on a local estate. Anything but exactly `true` is OFF: no row is selected, Lydia is not called, and the
+  only trace is ONE startup line (`[RECONCILE] Lydia reconciliation sweep OFF ...`); the hourly line is
+  not written. Production is turned on by a commit changing that function, after the measurement below.
+- **The measurement owed before production** (one-off, the user's): on a VALIDATED sandbox Business,
+  issue one request and read it with `request/state` + `vendor_token`, then find which amount string
+  the returned `signature` is computed over (`0.50`, `0.5`, `50`). The probe runs inside the dev core
+  container (it holds the sandbox Provider token); the Business key and vendor token come from a
+  `chmod 600` file of two lines on the host, never from the command line. The command is in the pull
+  request that built the sweep (#2595). If the answer is not `0.50`, fix `lydiaStateSignedFields`.
 - **What it reports.** One line per row it reads, and once an hour
   `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= unavailable=
   errors=; boutique: ...; ended boutique attempts left open with no Business key: N`, even when all zero.

@@ -52,7 +52,11 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   let lydia = { state: 'paid', raw: '1', verification: 'verified' };
   let verifiedReads = 0;
 
+  const savedSwitch = process.env.LYDIA_RECONCILE_ENABLED;
+
   beforeAll(async () => {
+    // The switch as dev renders it: these tests are about what the sweep does when it runs.
+    process.env.LYDIA_RECONCILE_ENABLED = 'true';
     admin = new Client({ connectionString: URL });
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -137,6 +141,8 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   });
 
   afterAll(async () => {
+    if (savedSwitch === undefined) delete process.env.LYDIA_RECONCILE_ENABLED;
+    else process.env.LYDIA_RECONCILE_ENABLED = savedSwitch;
     jest.restoreAllMocks();
     await ds?.destroy();
     await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);

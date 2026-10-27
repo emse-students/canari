@@ -206,6 +206,45 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
 });
 
 describe('LydiaReconciliationService sweeps', () => {
+  const saved = process.env.LYDIA_RECONCILE_ENABLED;
+  beforeEach(() => {
+    process.env.LYDIA_RECONCILE_ENABLED = 'true';
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env.LYDIA_RECONCILE_ENABLED;
+    else process.env.LYDIA_RECONCILE_ENABLED = saved;
+  });
+
+  it.each([undefined, 'false', 'TRUE', '1'])(
+    'switched OFF (LYDIA_RECONCILE_ENABLED=%p): selects no row and asks Lydia nothing',
+    async (value) => {
+      if (value === undefined) delete process.env.LYDIA_RECONCILE_ENABLED;
+      else process.env.LYDIA_RECONCILE_ENABLED = value;
+      const { service } = makeService({
+        submissions: [submission()],
+        checkouts: [checkout()],
+      });
+      const repos = service as unknown as {
+        submissionRepo: { createQueryBuilder: jest.Mock };
+        checkoutRepo: { createQueryBuilder: jest.Mock };
+      };
+      await service.sweepFormPayments();
+      await service.sweepProductCheckouts();
+      expect(repos.submissionRepo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(repos.checkoutRepo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      expect(service.takeCounts().forms.examined).toBe(0);
+    }
+  );
+
+  it('switched ON: the same rows are read at Lydia', async () => {
+    const { service } = makeService({ submissions: [submission()], checkouts: [checkout()] });
+    read.mockResolvedValue({ verification: 'verified', state: 'open', raw: '0' });
+    await service.sweepFormPayments();
+    await service.sweepProductCheckouts();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it('isolates each row: one that throws is counted as an error, the next still settles', async () => {
     const rows = [submission({ id: 'sub-a' }), submission({ id: 'sub-b' })];
     const { service, formsService } = makeService({ submissions: rows });

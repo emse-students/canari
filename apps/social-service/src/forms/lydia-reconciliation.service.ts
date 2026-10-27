@@ -18,6 +18,17 @@ import { CHECKOUT_EXPIRY_MARGIN_MS, productCheckoutLookup } from '../association
  */
 export const RECONCILE_BATCH = 50;
 
+/**
+ * THE DEPLOY SWITCH OF THE SWEEP: `LYDIA_RECONCILE_ENABLED=true`, and nothing else, lets it ask
+ * Lydia anything. Rendered per estate by `infrastructure/deploy/render-env.sh`
+ * (`compute_lydia_reconcile_enabled`): `true` on dev, `false` on production until the amount format
+ * Lydia signs in a `request/state` answer is measured on a sandbox Business (docs/wiki/lydia-api.md
+ * section 7). An unset or misspelt value is OFF. Read on every sweep, so a test can flip it.
+ */
+export function isLydiaReconcileEnabled(): boolean {
+  return process.env.LYDIA_RECONCILE_ENABLED === 'true';
+}
+
 /** What one row's reconciliation did. Exceptions are counted apart, as `errors`. */
 export type ReconcileOutcome =
   | 'settled'
@@ -110,6 +121,8 @@ export class LydiaReconciliationService {
    * the expiry it is `expired`, which nothing here reads again. Each row has its own `try`.
    */
   async sweepFormPayments(): Promise<void> {
+    // Switched off: no row selected, no call made (the scheduler said so once, at startup).
+    if (!isLydiaReconcileEnabled()) return;
     const due = await this.submissionRepo
       .createQueryBuilder('s')
       .where(`s."paymentStatus" = 'pending'`)
@@ -138,6 +151,7 @@ export class LydiaReconciliationService {
    * summary), and stays for its buyer's next attempt or its confirm callback.
    */
   async sweepProductCheckouts(): Promise<void> {
+    if (!isLydiaReconcileEnabled()) return;
     const due = await this.dueCheckouts()
       .andWhere(this.businessKeyExists(true))
       .orderBy('c.expiresAt', 'DESC')

@@ -497,6 +497,10 @@ services:
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
       # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
+      # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
+      # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on
+      # production until the amount format Lydia signs is measured.
+      LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-false}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}

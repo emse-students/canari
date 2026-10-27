@@ -1,6 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { LydiaReconciliationService, type ReconcileCounts } from './lydia-reconciliation.service';
+import {
+  isLydiaReconcileEnabled,
+  LydiaReconciliationService,
+  type ReconcileCounts,
+} from './lydia-reconciliation.service';
 
 /** One summary's counts, in the order the line prints them. */
 function formatCounts(counts: ReconcileCounts): string {
@@ -22,12 +26,23 @@ function formatCounts(counts: ReconcileCounts): string {
  * out of the status the sweep selects on, so the second settlement finds nothing to do.
  */
 @Injectable()
-export class LydiaReconciliationScheduler {
+export class LydiaReconciliationScheduler implements OnModuleInit {
   private readonly logger = new Logger(LydiaReconciliationScheduler.name);
   /** Set while a sweep runs, so a slow one is not overlapped by the next tick in this process. */
   private running = false;
 
   constructor(private readonly reconciliation: LydiaReconciliationService) {}
+
+  /** ONE line at startup saying whether the sweep may ask Lydia anything on this estate. */
+  onModuleInit(): void {
+    if (isLydiaReconcileEnabled()) {
+      this.logger.log('[RECONCILE] Lydia reconciliation sweep ON (LYDIA_RECONCILE_ENABLED=true)');
+    } else {
+      this.logger.log(
+        '[RECONCILE] Lydia reconciliation sweep OFF (LYDIA_RECONCILE_ENABLED is not true): no request/state read, no row settled by the sweep'
+      );
+    }
+  }
 
   /** Every 5 minutes, at the expiry tick's cadence: boutique attempts whose request has ended. */
   @Cron('*/5 * * * *')
@@ -58,6 +73,8 @@ export class LydiaReconciliationScheduler {
    */
   @Cron('0 * * * *')
   async reportHourly(): Promise<void> {
+    // Switched off, the startup line is the whole report: nothing ran, nothing to count.
+    if (!isLydiaReconcileEnabled()) return;
     const { forms, products } = this.reconciliation.takeCounts();
     let withoutKey: string;
     try {
