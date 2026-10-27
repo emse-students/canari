@@ -1853,9 +1853,22 @@ export interface AssociationPurchase {
   closedOutcome?: PurchaseClosingOutcome | null;
   /** When that outcome was recorded, by the server's clock; null while open. */
   closedAt?: string | null;
-  /** True when the buyer's account was erased: the payment can be closed as refunded only. */
-  buyerErased?: boolean;
+  /**
+   * For an OPEN payment not granted, why the server would refuse to close it as granted (only a
+   * refund is left); null when it may be granted.
+   */
+  grantRefusal?: ClosingGrantRefusal | null;
+  /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
+  buyerTier?: string | null;
 }
+
+/** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise';
 
 /** The two outcomes that close a payment paid for and not granted. */
 export type PurchaseClosingOutcome = 'refunded' | 'granted';

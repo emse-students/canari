@@ -282,36 +282,52 @@ records which one happened from the purchases list ("Mark refunded" / "Mark gran
 confirmation). `POST /api/associations/:id/purchases/:purchaseId/close` with `{ outcome }`, guarded
 `MANAGE_PRODUCTS` like the rest of that list, writes ONE row in `purchase_record_closings` (migration
 113: the record id, `refunded` or `granted`, `closedByUserId`, `createdAt` from the server's own
-`now()`), unique per purchase record. `granted` grants the tier paid for IN the same transaction,
-through the manual grant path (`grantCotisantWithin`, not ranked, the XOR replacing the held tier as
-the manager decided): a boutique record's tier is its product's, a paid form's is the form's
-`cotisationVariantKey`. The record keeps `paid_not_granted` as history, the list and the export show
-the outcome beside the mark, and the hourly count reads only the marked records with NO closing row
-(`countUnclosedPaidNotGranted`). No clock closes anything. Refusals, typed: 404 for a record of
-another association, 409 `PURCHASE_NOT_CLOSABLE` (not marked), `PURCHASE_ALREADY_CLOSED` (the first
-outcome stands; under the locks a second closing reads the first one's row, and the unique index is
-the durable guarantee), `PURCHASE_TIER_GONE` (`granted` asked for a tier whose product or form no
-longer grants one, or one the association's cotisation catalogue no longer lists - checked before the
-grant, so the manual grant path's own 400s never surface; nothing written, `refunded` stays possible),
-`PURCHASE_BUYER_ERASED` (`granted` for a record whose buyer was erased, `userId = '[deleted]'`:
-granting would mint a cotisant out of the placeholder; read on the record LOCKED `FOR UPDATE`, so an
-erasure committing in between is seen; the button is hidden for that row, `refunded` stays possible).
-Only `granted` takes the buyer's tier lock; `refunded` writes no tag and takes none. Every 409
-re-reads the list in the panel, so the row shows the state that refused it. `PURCHASE_ALREADY_CLOSED`
-is answered for a unique violation of `purchase_record_closings_one_per_record` alone, by constraint
-name. Each closing writes one `[SHOP] [AUDIT]` line naming the outcome, the manager, the association
-and the buyer. The confirmation says what `granted` cannot know: for a `held` verdict it only renews
-the tier and a refund is the owed outcome, and a buyer who bought a higher tier since would be moved
-DOWN by it.
+`now()`), unique per purchase record. The record keeps `paid_not_granted` as history, the list and the
+export show the outcome beside the mark, and the hourly count reads only the marked records with NO
+closing row (`countUnclosedPaidNotGranted`). No clock closes anything. Each closing writes one `[SHOP]
+[AUDIT]` line naming the outcome, the manager, the association and the buyer.
 
-**Erasure and a granted closing queue, they do not deadlock.** The erasure anonymises
-`purchase_records` BEFORE deleting `user_tags` (`ERASURE_ROW_STATEMENTS`), the closing's order
-(record row, then tag). An erasure first is seen by the closing (`PURCHASE_BUYER_ERASED`); a closing
-first commits its tag, which the erasure's DELETE then removes.
+**`granted` performs the grant, and only a protected one (decided 2026-10-27, after review).** It
+grants the tier paid for IN the same transaction, through the manual grant path
+(`grantCotisantWithin`): a boutique record's tier is its product's, a paid form's is the form's
+`cotisationVariantKey`. But first `closingGrantVerdict` decides, under the buyer's tier lock and on
+the record LOCKED `FOR UPDATE`, and refuses with a typed 409, nothing written:
 
-**The frozen tier is deterministic.** Two tier products sharing the held key (a catalogue from before
-keys were unique per association) freeze the smallest product id and log a WARN; either names the
-same key, so the verdict cannot change. A paid form is NOT
+| Refusal | Code | Why only a refund is left |
+|---|---|---|
+| `buyer-erased` | `PURCHASE_BUYER_ERASED` | the buyer is an erased account (`[deleted]`, or `[deleted]:<id>`, `isErasedAccount`): a grant would mint a cotisant out of the placeholder |
+| `tier-gone` | `PURCHASE_TIER_GONE` | the product or form names no tier any more, the association has no mode, or the catalogue `grantCotisantWithin` validates against lacks it - so that grant's own 400s never surface |
+| `year-over` | `PURCHASE_YEAR_OVER` | a `dated` association, and the academic year of `paidAt` is over: the tier it bought cannot be granted for another year |
+| `target-held` | `PURCHASE_TARGET_ALREADY_HELD` | the buyer holds the tier paid for: granting would only renew it, and the closing row would take off the report a payment still owed a refund |
+| `not-a-rise` | `PURCHASE_NOT_A_RISE` | ranked like a checkout (`tierRelationOf`, product prices), the tier is `lower` or `unranked` against the one held: granting would move the buyer DOWN, the XOR revoking a dearer tier bought since |
+
+`none` and `higher` grant. The SAME function answers the purchases list without the lock, as advice:
+an open marked row carries `grantRefusal` and `buyerTier` (the tier the buyer holds now), shows that
+tier and the reason, and offers "Mark refunded" only when a refusal stands. `refunded` is never
+refused this way, so the report can always be drained, and takes no tier lock (it writes no tag).
+Other refusals: 404 for a record of another association (every read is scoped to the PATH's
+association), 409 `PURCHASE_NOT_CLOSABLE` (not marked), `PURCHASE_ALREADY_CLOSED` (the first outcome
+stands; the unique index is the durable guarantee, and only a violation of
+`purchase_record_closings_one_per_record`, by constraint name, is read as one). Every 409 re-reads
+the list in the panel, so the row shows the state that refused it.
+
+**The export says what is kept.** `Montant` is what was received; `Montant conserve` is 0 for a
+refunded payment, so a sum of it is the income and never counts money that went back.
+
+**Erasure and the tier paths queue, they do not deadlock.** The erasure rewrites `purchase_records`
+and `product_checkouts` BEFORE deleting `user_tags` (`ERASED_BEFORE_THE_TAGS`, asserted by
+`account-erasure.spec.ts`), the order a closing (record row, then tag) and a settlement (checkout row,
+then tag) take. An erasure first is seen by the other (`PURCHASE_BUYER_ERASED`; a checkout naming no
+account); one that runs second deletes the tag the other committed.
+
+**The frozen tier, and a buyer holding two.** Two tier products sharing the held key (a catalogue from
+before keys were unique per association) freeze the smallest product id and log a WARN. If that
+product is deleted before the settlement, the frozen key goes with it and the settlement reads
+`held-changed`: marked, reported, closed by a person. A buyer holding TWO tiers at once is refused at
+the OPENING (`TIER_NOT_RANKABLE`, WARN): ranked against one and frozen on it, the settlement would read
+the other as `held-changed` every time and take the money for nothing. Production held no such buyer
+on 2026-10-27 (every cotisant held one tier), so the refusal is cheaper than storing every held tier.
+A paid form is NOT
 covered by the freeze: it has no checkout row, and `grantCotisantIfARise` still ranks it on the
 prices of its settlement.
 

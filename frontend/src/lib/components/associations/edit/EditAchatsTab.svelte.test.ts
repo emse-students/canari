@@ -10,6 +10,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import type { Association, AssociationPurchase } from '$lib/associations/api';
 import { SocialApiError } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
+import { grantRefusalMessage } from '$lib/associations/purchaseClosing';
 import { flushMacrotask } from '../../../../test/flush';
 
 const state = vi.hoisted(() => ({
@@ -50,6 +51,8 @@ const open: AssociationPurchase = {
   notGranted: true,
   closedOutcome: null,
   closedAt: null,
+  grantRefusal: null,
+  buyerTier: null,
 };
 
 const mounted: (() => void)[] = [];
@@ -155,10 +158,20 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     error.mockRestore();
   });
 
-  it('offers only "Mark refunded" for an erased buyer', async () => {
-    const target = await render([{ ...open, buyerErased: true }]);
+  it.each(['buyer-erased', 'tier-gone', 'year-over', 'target-held', 'not-a-rise'] as const)(
+    'offers only "Mark refunded" when the server would refuse the grant (%s), and says why',
+    async (grantRefusal) => {
+      const target = await render([{ ...open, grantRefusal, buyerTier: 'Avec alcool' }]);
 
-    expect(button(target, m.asso_achats_close_refunded_button())).toBeDefined();
-    expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();
+      expect(button(target, m.asso_achats_close_refunded_button())).toBeDefined();
+      expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();
+      expect(target.textContent).toContain(grantRefusalMessage(grantRefusal));
+    }
+  );
+
+  it('shows the tier the buyer holds now beside an open payment', async () => {
+    const target = await render([{ ...open, buyerTier: 'Sans alcool' }]);
+    expect(target.textContent).toContain(m.asso_achats_buyer_tier({ tier: 'Sans alcool' }));
+    expect(button(target, m.asso_achats_close_granted_button())).toBeDefined();
   });
 });

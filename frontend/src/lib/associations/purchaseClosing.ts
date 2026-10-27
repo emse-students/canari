@@ -1,5 +1,5 @@
 import { m } from '$lib/paraglide/messages';
-import { SocialApiError } from '$lib/associations/api';
+import { SocialApiError, type ClosingGrantRefusal } from '$lib/associations/api';
 
 /** The body `code` of the 409 a closing gets when the payment is not marked "not granted". */
 export const PURCHASE_NOT_CLOSABLE = 'PURCHASE_NOT_CLOSABLE';
@@ -8,16 +8,33 @@ export const PURCHASE_NOT_CLOSABLE = 'PURCHASE_NOT_CLOSABLE';
 export const PURCHASE_ALREADY_CLOSED = 'PURCHASE_ALREADY_CLOSED';
 
 /**
- * The body `code` of the 409 a "granted" closing gets when the tier the payment was for no longer
- * exists: nothing was written, and the payment can still be recorded as refunded.
+ * The body `code` of each 409 a "granted" closing gets, by the reason the server refused it
+ * (`ClosingGrantRefusal`, the same reason the purchases list carries): nothing was written, and the
+ * payment can still be recorded as refunded.
  */
-export const PURCHASE_TIER_GONE = 'PURCHASE_TIER_GONE';
+export const GRANT_REFUSAL_CODES: Record<ClosingGrantRefusal, string> = {
+  'buyer-erased': 'PURCHASE_BUYER_ERASED',
+  'tier-gone': 'PURCHASE_TIER_GONE',
+  'year-over': 'PURCHASE_YEAR_OVER',
+  'target-held': 'PURCHASE_TARGET_ALREADY_HELD',
+  'not-a-rise': 'PURCHASE_NOT_A_RISE',
+};
 
-/**
- * The body `code` of the 409 a "granted" closing gets when the buyer's account was erased: there is
- * nobody to grant to, and only a refund can be recorded.
- */
-export const PURCHASE_BUYER_ERASED = 'PURCHASE_BUYER_ERASED';
+/** The sentence saying why a payment can only be refunded, shown on its row and on a refusal. */
+export function grantRefusalMessage(refusal: ClosingGrantRefusal): string {
+  switch (refusal) {
+    case 'buyer-erased':
+      return m.asso_achats_close_buyer_erased();
+    case 'tier-gone':
+      return m.asso_achats_close_tier_gone();
+    case 'year-over':
+      return m.asso_achats_close_year_over();
+    case 'target-held':
+      return m.asso_achats_close_target_held();
+    case 'not-a-rise':
+      return m.asso_achats_close_not_a_rise();
+  }
+}
 
 /**
  * The sentence for a refused closing of a payment paid for and not granted, classified by the typed
@@ -28,7 +45,8 @@ export function closingRefusalMessage(err: unknown): string {
   const code = err instanceof SocialApiError ? err.code : null;
   if (code === PURCHASE_ALREADY_CLOSED) return m.asso_achats_close_already();
   if (code === PURCHASE_NOT_CLOSABLE) return m.asso_achats_close_not_closable();
-  if (code === PURCHASE_TIER_GONE) return m.asso_achats_close_tier_gone();
-  if (code === PURCHASE_BUYER_ERASED) return m.asso_achats_close_buyer_erased();
-  return m.asso_achats_close_error();
+  const refusal = (Object.keys(GRANT_REFUSAL_CODES) as ClosingGrantRefusal[]).find(
+    (r) => GRANT_REFUSAL_CODES[r] === code
+  );
+  return refusal ? grantRefusalMessage(refusal) : m.asso_achats_close_error();
 }

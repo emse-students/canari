@@ -21,6 +21,14 @@
 export const DELETED_ACCOUNT = '[deleted]';
 
 /**
+ * True for an id an erasure wrote: `DELETED_ACCOUNT` itself (most tables), or `[deleted]:<row id>`
+ * (tables whose unique index needs one value per row, such as `product_checkouts`).
+ */
+export function isErasedAccount(userId: string): boolean {
+  return userId === DELETED_ACCOUNT || userId.startsWith(`${DELETED_ACCOUNT}:`);
+}
+
+/**
  * `delete` - the rows go. `anonymise` - the row stays (it also belongs to other people, or is an
  * accounting record) and the id becomes {@link DELETED_ACCOUNT}, or NULL where the column allows
  * it. `kept` - deliberately untouched, with the reason. `code` - carried out by code rather than a
@@ -418,6 +426,14 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * them). NONE OF THEM WRITES A PROPOSAL: those are {@link ERASURE_PROPOSAL_STATEMENTS}, after every
  * post lock (see `lockPostRow`).
  */
+/**
+ * The rows a tier path LOCKS before it writes a tag (a closing's purchase record, a settlement's
+ * checkout row): `ERASURE_ROW_STATEMENTS` rewrites each of them BEFORE it deletes `user_tags`, the
+ * order those paths take, so an erasure and a tier write queue instead of deadlocking. Asserted by
+ * `account-erasure.spec.ts`.
+ */
+export const ERASED_BEFORE_THE_TAGS = ['purchase_records', 'product_checkouts'] as const;
+
 export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Posts published as an association stay: the association's communication, not the member's.
   {
@@ -437,14 +453,20 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM association_follows WHERE "followerUserId" = $1`,
   },
   { label: 'push_mutes', sql: `DELETE FROM association_push_mutes WHERE "userId" = $1` },
-  // Anonymised, and BEFORE the tags: closing a payment as granted locks its purchase record and
-  // then writes a tag (`ProductsService.closePaidNotGranted`). Taking the record rows first, in the
-  // same order, makes the two queue instead of deadlocking: an erasure that runs first is seen by
-  // the closing (it refuses `granted` for an erased buyer); a closing that runs first commits its
-  // tag, which the DELETE below then removes.
+  // Anonymised, and BEFORE the tags (`ERASED_BEFORE_THE_TAGS`): closing a payment as granted locks
+  // its purchase record and then writes a tag (`ProductsService.closePaidNotGranted`), and a
+  // settlement locks its checkout row and then writes a tag (`settlePaidCheckout`). Taking those rows
+  // first, in the same order, makes each pair queue instead of deadlocking: an erasure that runs
+  // first is seen by the closing (it refuses `granted` for an erased buyer) and by the settlement (the
+  // row names no account any more); one that runs second deletes the tag the other committed.
   {
     label: 'purchase_records',
     sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
+  },
+  // Unique per row, for the partial unique index on open attempts.
+  {
+    label: 'product_checkouts',
+    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
   },
   { label: 'user_tags', sql: `DELETE FROM user_tags WHERE "userId" = $1` },
   { label: 'user_moderation', sql: `DELETE FROM user_moderation WHERE "userId" = $1` },
@@ -498,15 +520,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Its lives: ended and anonymised, for the live sweep to delete; its removals by others, deleted.
   ...LIVES_ERASURE_STATEMENTS,
 
-  // Anonymised (purchase_records above, before the tags)
+  // Anonymised (purchase_records and product_checkouts above, before the tags)
   {
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,
-  },
-  // Unique per row, for the partial unique index named above.
-  {
-    label: 'product_checkouts',
-    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
   },
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {

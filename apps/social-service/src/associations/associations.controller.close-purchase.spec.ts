@@ -17,7 +17,10 @@ import { ProductsService } from './products.service';
  * A manager of association A must not close a purchase of association B, by either route: naming B
  * in the path (the guard refuses, the manager holds no right in B), or naming A with B's purchase id
  * (the controller hands the PATH's association to the service, which looks the record up within it
- * and answers 404 - `products.service.spec.ts`).
+ * and answers 404). That second half is proven where the scoping lives: by
+ * `products.service.spec.ts`, whose record lookup answers only within the record's own association,
+ * and against PostgreSQL by `product-tier-lock.integration.spec.ts` ("association B cannot close
+ * association A's purchase").
  */
 describe('AssociationsController.closePaidNotGranted - one association closes only its own', () => {
   const A = '00000000-0000-4000-8000-00000000000a';

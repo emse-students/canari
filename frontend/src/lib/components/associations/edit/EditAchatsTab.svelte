@@ -18,7 +18,7 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
-  import { closingRefusalMessage } from '$lib/associations/purchaseClosing';
+  import { closingRefusalMessage, grantRefusalMessage } from '$lib/associations/purchaseClosing';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
@@ -333,6 +333,16 @@
                         : m.asso_achats_closed_granted()}
                     </span>
                   {:else}
+                    <span class="text-text-muted mt-1 block text-xs">
+                      {purchase.buyerTier
+                        ? m.asso_achats_buyer_tier({ tier: purchase.buyerTier })
+                        : m.asso_achats_buyer_tier_none()}
+                    </span>
+                    {#if purchase.grantRefusal}
+                      <span class="text-text-muted mt-1 block text-xs">
+                        {grantRefusalMessage(purchase.grantRefusal)}
+                      </span>
+                    {/if}
                     <span class="mt-1 flex flex-wrap gap-1">
                       <button
                         type="button"
@@ -342,8 +352,8 @@
                       >
                         {m.asso_achats_close_refunded_button()}
                       </button>
-                      <!-- An erased buyer is nobody to grant to: only a refund can close it. -->
-                      {#if !purchase.buyerErased}
+                      <!-- The server refuses such a grant: only a refund can close it. -->
+                      {#if !purchase.grantRefusal}
                         <button
                           type="button"
                           disabled={closingId === purchase.id}

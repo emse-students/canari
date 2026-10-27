@@ -122,3 +122,23 @@ export const PURCHASE_TIER_GONE = 'PURCHASE_TIER_GONE';
  * erased account shares one id, so a grant would make a cotisant of nobody. `refunded` stays open.
  */
 export const PURCHASE_BUYER_ERASED = 'PURCHASE_BUYER_ERASED';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer ALREADY holds the tier paid for:
+ * the payment bought nothing, so a refund is the outcome owed; granting would only renew the tier
+ * and take the payment off the report while the refund is still owed.
+ */
+export const PURCHASE_TARGET_ALREADY_HELD = 'PURCHASE_TARGET_ALREADY_HELD';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer holds a tier the one paid for is
+ * not a rise over (worth as much or more, or not comparable): granting would move them down. A
+ * refund is the outcome left.
+ */
+export const PURCHASE_NOT_A_RISE = 'PURCHASE_NOT_A_RISE';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the payment was for an academic year that
+ * is over (a `dated` association): the tier it bought cannot be granted any more, only refunded.
+ */
+export const PURCHASE_YEAR_OVER = 'PURCHASE_YEAR_OVER';

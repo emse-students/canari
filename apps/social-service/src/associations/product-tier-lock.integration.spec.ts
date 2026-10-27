@@ -20,7 +20,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { of } from 'rxjs';
 import { DataSource } from 'typeorm';
@@ -689,7 +689,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags('[deleted]')).toEqual([]);
 
     const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'refunded');
-    expect(closed).toMatchObject({ closedOutcome: 'refunded', buyerErased: true });
+    expect(closed).toMatchObject({ closedOutcome: 'refunded' });
   });
 
   it('an erasure committed while a granted closing waits for the row is SEEN: refused, no tag', async () => {
@@ -708,6 +708,58 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(codeOf(outcome.error)).toBe('PURCHASE_BUYER_ERASED');
     expect(await heldTags(buyer)).toEqual([]);
     expect(await heldTags('[deleted]')).toEqual([]);
+  });
+
+  it.each(['refunded', 'granted'] as const)(
+    "association B cannot close association A's purchase by naming it under its own id (%s)",
+    async (outcome) => {
+      const OTHER_ASSO = '00000000-0000-4000-8000-0000000000b9';
+      const buyer = newBuyer();
+      const record = await markedRecord(buyer, TIER_D);
+
+      const refused = await settled(service.closePaidNotGranted(OTHER_ASSO, record, 'm', outcome));
+
+      expect(refused.error).toBeInstanceOf(NotFoundException);
+      const rows = await ds.query(
+        `SELECT 1 FROM purchase_record_closings WHERE "purchaseRecordId" = $1`,
+        [record]
+      );
+      expect(rows).toHaveLength(0);
+      expect(await heldTags(buyer)).toEqual([TAG_B]);
+    }
+  );
+
+  it('GRANTED is refused PURCHASE_TARGET_ALREADY_HELD when the buyer holds that tier: the payment stays reported', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+    // The buyer was granted the tier paid for since: the payment bought nothing, a refund is owed.
+    await tags.grantCotisant(ASSO, buyer, 'manager', 'd');
+    const purchases = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
+    const before = await purchases.countUnclosedPaidNotGranted();
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
+    expect(await purchases.countUnclosedPaidNotGranted()).toBe(before);
+    expect(await heldTags(buyer)).toEqual([TAG_D]);
+  });
+
+  it('GRANTED is refused PURCHASE_NOT_A_RISE when the buyer holds a tier worth as much: never a move down', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+    // Tier C (same price as D; its key is retagged by its own test, so read it) obtained since.
+    const [{ variantKey }] = await ds.query(
+      `SELECT "variantKey" FROM association_products WHERE id = $1`,
+      [TIER_C]
+    );
+    await tags.grantCotisant(ASSO, buyer, 'manager', variantKey);
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_NOT_A_RISE');
+    expect(await heldTags(buyer)).toEqual([`cotisant:cercle-it-${variantKey}`]);
+    const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
+    expect(row).toMatchObject({ grantRefusal: 'not-a-rise', buyerTier: 'Tier c' });
   });
 
   it('the hourly count reads only the marked payments nobody has closed', async () => {
