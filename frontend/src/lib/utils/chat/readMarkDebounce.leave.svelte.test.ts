@@ -1,56 +1,19 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
 import { flushSync } from 'svelte';
-import { createReadMarkDebounce, createReadingTracker } from './readMarkDebounce';
 
 /**
- * LEAVING A CONVERSATION INSIDE ITS READ-MARK WINDOW DELIVERS THAT CONVERSATION'S MARK (2026-10-27).
+ * LEAVING A CONVERSATION INSIDE ITS READ-MARK WINDOW IS SEEN AT THE START OF THE RECEIPT EFFECT'S
+ * RUN, NEVER IN ITS TEARDOWN (2026-10-27).
  *
- * `MainChatPage`'s receipt effect used to detect the leave in its TEARDOWN, with
+ * `MainChatPage`'s receipt effect used to detect the leave in its teardown, with
  * `convs.selectedContact !== currentContact`. Svelte hands a `$state` read in a teardown the value the
- * effect last saw, so that comparison was never true: nothing was flushed, and the next
- * conversation's note raised the OLD window, whose callback (A's) stayed armed. The second case pins
- * that Svelte behaviour, the first drives the tracker the way the effect now does.
+ * effect last saw, so that comparison was never true and nothing was delivered on leave. The first
+ * case pins that Svelte behaviour; the second pins that the effect asks `readMarks.follow` FIRST,
+ * before any early return could skip it (what it then does is `readMarkDebounce.test.ts`).
  */
-vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
-
 describe('the receipt effect leaving a conversation', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("delivers A's pending mark to A's callback before B's note, at the run the selection moved", () => {
-    const readMarks = createReadMarkDebounce(2000);
-    const reading = createReadingTracker();
-    const delivered: string[] = [];
-    let selected = $state('A');
-    const stop = $effect.root(() => {
-      $effect(() => {
-        const ended = reading.left(selected);
-        if (ended) readMarks.flush();
-        const contact = selected;
-        reading.arm({ contact, salon: false });
-        readMarks.note(contact === 'A' ? 100 : 200, (at) => delivered.push(`${contact}@${at}`));
-      });
-    });
-    try {
-      flushSync();
-      expect(delivered).toEqual([]);
-
-      selected = 'B';
-      flushSync();
-      expect(delivered).toEqual(['A@100']);
-
-      vi.advanceTimersByTime(2000);
-      expect(delivered).toEqual(['A@100', 'B@200']);
-    } finally {
-      stop();
-    }
-  });
-
-  it('pins why the teardown could not see the leave: a $state read there returns the old value', () => {
+  it('cannot be seen from a teardown: a $state read there returns the value before the change', () => {
     let selected = $state('A');
     const seenInTeardown: string[] = [];
     const stop = $effect.root(() => {
@@ -67,5 +30,22 @@ describe('the receipt effect leaving a conversation', () => {
     } finally {
       stop();
     }
+  });
+
+  it("is asked of `readMarks.follow` as the receipt effect's first statement, with no return before it", () => {
+    const source = readFileSync('src/lib/components/MainChatPage.svelte', 'utf8');
+    const note = source.indexOf('readMarks.note(');
+    expect(note).toBeGreaterThan(0);
+    const effectStart = source.lastIndexOf('$effect(() => {', note);
+    const follow = source.indexOf('readMarks.follow(', effectStart);
+    expect(follow).toBeGreaterThan(effectStart);
+    expect(follow).toBeLessThan(note);
+    // Only comments and the selection read stand between the effect's opening and the call.
+    const code = source
+      .slice(effectStart + '$effect(() => {'.length, follow)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('//'));
+    expect(code).toEqual(['const selectedNow = convs.selectedContact;', 'untrack(() =>']);
   });
 });

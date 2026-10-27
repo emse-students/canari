@@ -288,8 +288,13 @@ receipt effect detected leaving a conversation with `if (convs.selectedContact !
 in its teardown, so the leave branch never ran. Nothing was flushed or cancelled when the reader
 left inside the 2 s window, and the next conversation's note joined the OLD window: `max(A, B)`,
 delivered by A's callback (for a salon, `claimChannelReadSignal` for A). The leave is now detected
-at the START of the effect's run, against the current selection (`createReadingTracker`,
-`readMarkDebounce.ts`). `readMarkDebounce.leave.svelte.test.ts` drives it and pins the stale read.
+by the effect's FIRST statement, `readMarks.follow(selected)` (`readMarkDebounce.ts`). The window
+now knows the conversation that opened it, and on a leave it is DELIVERED through that
+conversation's own callback, for a salon as for a DM. A first draft dropped a salon's window on
+leave, on the grounds that its mark is owed durably anyway. But the callback is also what sends
+`markChannelRead`, the silent signal that clears the salon's banner on the account's other devices,
+so dropping it lost that signal. `readMarkDebounce.test.ts` covers the delivery, and
+`readMarkDebounce.leave.svelte.test.ts` pins both the stale read and the call's place in the effect.
 
 **2. A `$derived` read in a teardown is RE-EVALUATED WITH THE STALE VALUES AND KEEPS THAT RUN'S
 DEPENDENCIES** when it depends on something that changed in the flush. Any derived counts, read
