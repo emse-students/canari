@@ -1057,9 +1057,11 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
   pending or accepted, both directions, and the `follow_request` bell rows between them (an
   acceptance's stays, as history) - pinned in `follow-requests.integration.spec.ts`.
 
-**The caller's own lists (WP-F3).** `GET me/followers` (accepted, newest first), `DELETE
-me/followers/:userId` (the follow is deleted and NOBODY is told; the removed person may ask again,
-which is a new request; a pending request is refused, not removed) and `GET me/follow-requests/sent`
+**The caller's own lists (WP-F3).** `GET me/followers` (accepted, the most recently ACCEPTED first,
+each dated by `acceptedAt`), `DELETE me/followers/:userId` (the follow is deleted and NOBODY is
+told; the removed person may ask again, which is a new request that lands in the inbox without a
+second push - the notice is once per pair; a pending request is refused, not removed; the announce
+sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs) and `GET me/follow-requests/sent`
 (the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
 lists exist as routes: no rule says who may read another person's followers, so none is open. A
 pair a block stands between is left out of every list, as of every reader.

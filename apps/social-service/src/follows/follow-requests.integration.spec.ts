@@ -354,10 +354,10 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await requests.accept(whom, fan);
     };
 
-    it('my followers are the ACCEPTED ones, newest first, never a pending ask, never across a block', async () => {
+    it('my followers are the ACCEPTED ones, most recently accepted first, never a pending ask, never across a block', async () => {
       await followerOf('ann', 'bob');
       await q(
-        `UPDATE user_follows SET "createdAt" = now() - interval '1 hour' WHERE "followerUserId" = 'ann'`
+        `UPDATE user_follows SET "acceptedAt" = now() - interval '1 hour' WHERE "followerUserId" = 'ann'`
       );
       await followerOf('cid', 'bob');
       await requests.ask('dan', 'bob'); // still a request
@@ -370,16 +370,35 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       expect((await requests.followers('bob', 1, 1)).map((r) => r.userId)).toEqual(['ann']);
     });
 
+    it('a follower is dated by the ACCEPTANCE, not by the ask', async () => {
+      // ann asked a day ago and was accepted now; cid asked and was accepted an hour ago.
+      await requests.ask('ann', 'bob');
+      await q(
+        `UPDATE user_follows SET "createdAt" = now() - interval '1 day' WHERE "followerUserId" = 'ann'`
+      );
+      await followerOf('cid', 'bob');
+      await q(
+        `UPDATE user_follows SET "acceptedAt" = now() - interval '1 hour' WHERE "followerUserId" = 'cid'`
+      );
+      await requests.accept('bob', 'ann');
+      const mine = await requests.followers('bob', 50, 0);
+      expect(mine.map((r) => r.userId)).toEqual(['ann', 'cid']);
+      const { rows } = await q(
+        `SELECT "acceptedAt" FROM user_follows WHERE "followerUserId" = 'ann' AND "followedUserId" = 'bob'`
+      );
+      expect(mine[0].createdAt).toEqual(rows[0].acceptedAt);
+    });
+
     it('removing a follower deletes the follow at once, tells nobody, and they may ask again', async () => {
       await followerOf('ann', 'bob');
       expect(await follows.getFollowedUserIdsForUser('ann')).toEqual(['bob']);
-      told.length = 0;
+      pushed.length = 0;
       expect(await requests.removeFollower('bob', 'ann')).toEqual({ ok: true });
       expect(await statusOf('ann', 'bob')).toBeNull();
-      // Every reader of a follow reads this row (WP-F1): with it gone, the Suivis arm, the
-      // announce and the live push stop reaching ann in the same instant.
+      // Every reader of a follow reads this row (WP-F1): with it gone, the Suivis arm stops here,
+      // and the announce sweep and the live push are pinned in reader-spaces and lives specs.
       expect(await follows.getFollowedUserIdsForUser('ann')).toEqual([]);
-      expect(told).toEqual([]);
+      expect(pushed).toEqual([]);
       await expect(requests.removeFollower('bob', 'ann')).rejects.toBeInstanceOf(NotFoundException);
       expect((await requests.ask('ann', 'bob')).status).toBe('pending');
     });

@@ -23,7 +23,11 @@ const NOTICE_KIND: Record<string, FollowNoticeKind> = {
   [FOLLOW_ACCEPTED_NOTIFICATION]: 'accepted',
 };
 
-/** One person in a follow list: who, and since when the row exists. */
+/**
+ * One person in a follow list: who, and since when. `createdAt` is when the request was made in
+ * the inbox and the sent list, and when it was ACCEPTED in the followers list - since when that
+ * person follows.
+ */
 export interface FollowListEntry {
   userId: string;
   createdAt: Date;
@@ -180,17 +184,19 @@ export class FollowRequestsService {
   // ── The caller's own lists (WP-F3) ──────────────────────────────────────────────────────────────
 
   /**
-   * `userId`'s ACCEPTED followers, newest first. Only the caller's own list exists as a route: no
-   * one reads another person's followers (no list-visibility rule has been decided, so none is
-   * open). A pair a block stands between is left out, as everywhere a follow is read.
+   * `userId`'s ACCEPTED followers, the most recently accepted first, each dated by `acceptedAt`
+   * (migration 114; a follow older than the requests is dated by its creation). Only the caller's
+   * own list exists as a route: no one reads another person's followers (no list-visibility rule
+   * has been decided, so none is open). A pair a block stands between is left out, as everywhere a
+   * follow is read.
    */
   async followers(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
     const rows: FollowListEntry[] = await this.dataSource.query(
-      `SELECT f."followerUserId" AS "userId", f."createdAt" AS "createdAt"
+      `SELECT f."followerUserId" AS "userId", f."acceptedAt" AS "createdAt"
          FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
-        ORDER BY f."createdAt" DESC, f.id
+        ORDER BY f."acceptedAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_ACCEPTED, clampLimit(limit), Math.max(0, offset)]
     );
@@ -224,8 +230,9 @@ export class FollowRequestsService {
 
   /**
    * The requests `userId` SENT that nobody has answered yet, newest first - so each can be
-   * withdrawn from a list (`DELETE users/:userId/follow`). A request across a block was never
-   * written, so there is nothing to filter here beyond what the severing already removed.
+   * withdrawn from a list (`DELETE users/:userId/follow`). An ask across a block is refused before
+   * anything is written, but a request made BEFORE a block outlives it when the cross-service
+   * severing did not run, so a pair a block stands between is left out here as in the inbox.
    */
   async outgoing(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
     const rows: FollowListEntry[] = await this.dataSource.query(

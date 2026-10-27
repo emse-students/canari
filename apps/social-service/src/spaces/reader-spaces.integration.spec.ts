@@ -33,6 +33,7 @@ import {
   type SpacePair,
 } from './reader-spaces';
 import { smallestRules } from './spaces.service';
+import { FollowRequestsService } from '../follows/follow-requests.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -187,7 +188,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
-        "createdAt" timestamp NOT NULL DEFAULT now());
+        "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -425,6 +426,25 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     // adminIcm, who can, only ASKED (pending): a request is never announced to.
     const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
     expect(rows.map((r) => r.id as string)).toEqual(['icmSe2']);
+  });
+
+  it('a REMOVED follower is announced to no more (WP-F3): the removal is the row every reader reads', async () => {
+    await client.query('BEGIN');
+    try {
+      // The service's own statement, through this file's client: `[rows, rowCount]` as the driver.
+      const viaClient = {
+        query: async (sql: string, params: unknown[]) => {
+          const r = await client.query(sql, params);
+          return r.command === 'SELECT' ? r.rows : [r.rows, r.rowCount];
+        },
+      };
+      const requests = new FollowRequestsService({} as never, {} as never, viaClient as never);
+      expect(await requests.removeFollower('icmSe', 'icmSe2')).toEqual({ ok: true });
+      const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
+      expect(rows).toEqual([]);
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   it('filters the agenda by organiser OR accepted co-organiser: rules, membership, admin', async () => {
