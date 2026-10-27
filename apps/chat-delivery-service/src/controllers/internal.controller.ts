@@ -969,7 +969,8 @@ export class InternalController {
     if (strayRoutes > 0) {
       this.logger.warn(
         `[INTERNAL_DELETE] user=${who} ${strayRoutes} route(s) no seat stands behind outlived the ` +
-          `cuts above and were removed - a run interrupted after a tombstone; ${keptRoutes} kept beside their seat`
+          `cuts above and were removed - left either by a run interrupted after a tombstone or by a ` +
+          `demotion whose route removal failed, which this line cannot tell apart; ${keptRoutes} kept beside their seat`
       );
     } else {
       this.logger.log(

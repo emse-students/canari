@@ -5214,7 +5214,16 @@ export class MessagingService {
 
     // UNCONDITIONAL, and that is the whole fusion: the row now says the device cannot decrypt this
     // group - or there is no row - so the gateway must stop routing to it and stop electing it.
-    await this.redis.srem(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+    // A failure is logged, never swallowed: the route it leaves keeps the device routable and
+    // electable, and an account erasure later meets it as a route no seat stands behind.
+    await this.redis
+      .srem(`group:members:${groupId}`, `${userId}:${deviceId}`)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `[${tag}] route NOT removed group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+            `- the device stays routable until a later removal: ${String(e)}`
+        )
+      );
 
     if ((demoted.affected ?? 0) === 0) {
       this.logger.warn(

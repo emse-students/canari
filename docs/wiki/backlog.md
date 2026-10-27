@@ -1304,6 +1304,26 @@ Owed first: one `GROUP BY` over production counting the roster of every `isGroup
 conversation, then either a bound where the roster is written or the erasure deciding by the roster
 size rather than the flag ([account-erasure](account-erasure.md)).
 
+## P3 - Two Redis facts naming an erased account are outside its erasure's trace sweep (review of #2585, 2026-10-27)
+
+`eraseUserRedisTraces` removes the erased account's FIELDS of `group:parting:<g>`, but a field's
+VALUE is the user id of whoever removed that device, so a parting entry for another person's device
+still names the erased account if it was that device's remover. It ends as every parting entry
+ends, on state: consumed by the removal commit naming the device, cleared when the device is in the
+tree again, or deleted with the group. Separately, the gateway's `addressing:left:<userId>:<deviceId>`
+(the sessions that left, kept so a late refresh cannot resurrect one) is not swept; it carries a TTL,
+so it is gone one presence TTL after the last session left. Owed: either sweep both in
+`eraseUserRedisTraces` (rewriting a parting value to a neutral remover, deleting the left key) or
+record here why their bound is enough ([account-erasure](account-erasure.md)).
+
+## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
+
+A `pending_welcome_notify` frame is removed when its `requesterUserId` equals the erased id byte for
+byte, while every MLS comparison of a user id lowercases ASCII letters. It holds because a minted id
+is in practice a lowercase 64-hex subject and the same string is written everywhere; a mixed-case
+id would need the same ASCII-lowercase comparison. The sentence sits beside the mint rule in
+[account-erasure](account-erasure.md); owed only if the mint rule ever admits a mixed-case id.
+
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
@@ -1830,8 +1850,8 @@ Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure 
 `abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
 `route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED`, `REJECT seat_claim_overtaken`
 (by `seat=committer|admit`, and how many in an ordinary conversation), `reason=no_key_package`
-(`ADMIT_REFUSED`, `REFUSED` and `REJECT committer_not_member`), `[INTERNAL_DELETE] ... removed by
-prefix` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+(`ADMIT_REFUSED`, `REFUSED` and `REJECT committer_not_member`), `[INTERNAL_DELETE] ... route(s) no
+seat stands behind outlived the cuts above and were removed` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
 unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
 (the questions are asked in parallel, one round trip) measured on dev.
 
