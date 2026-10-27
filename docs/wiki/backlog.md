@@ -1987,6 +1987,22 @@ The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT wi
 cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
 and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
 
+## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
+
+A share from another app opens "Envoyer a..." (`IncomingShareHost`), which reuses
+`ForwardMessageModal` and so `shareDestinations` with `order: 'alphabetical'`. The conversation
+list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent'`) all lead with
+the most recent conversation, so the one the member just left is at the top everywhere except
+there. Deciding: whether the forward and the share-in picker split their order, or both go to
+`'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
+
+Seen failing in a full `vitest run` on a loaded machine, and passing when the file runs alone.
+Not diagnosed: the test asserts a mount count, so a mount that has not settled yet when the
+assertion runs (a timing dependency) is the first suspect, not proven. Owed: run it under
+`--repeat` with the full sweep's load, and name the condition before touching the test.
+
 ## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
 
 Trivy's Dockerfile scan finds no non-root `USER` in any `infrastructure/local/Dockerfile.*`, and
