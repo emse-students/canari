@@ -1975,14 +1975,30 @@ suggestions (`INSendMessageIntent`).
 
 ## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
 
-A waiting share (manifest and copies) is written under Data Protection's `Complete` class on iOS,
-and a locked read deletes nothing; Android keeps its credential-encrypted storage, with the
+A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
+`CompleteUnlessOpen`, the app-side manifest's `Complete` - a locked read deletes nothing, and the
+unlock offers what the lock held back; Android keeps its credential-encrypted storage, with the
 reasoning written down. The app-level seal first sketched here was rejected, with its reasons:
-[sharing](frontend/sharing.md) ("At rest", iOS path). Nothing here compiles iOS, so the Swift, the
-Objective-C and the iOS-only Rust ride the next iOS build. **Owed on the iPhone, in order**: share a
-text and a photo with the phone unlocked; lock it; wake the app with a push (the log says
-`import (...) deferred: the device is locked`, and no `dropped`); unlock; the share is still
-offered, and the log reads `moved copy protection = NSFileProtectionComplete`.
+[sharing](frontend/sharing.md) ("At rest", iOS path item 5). Nothing here compiles iOS, so the
+Swift, the Objective-C and the iOS-only Rust ride the next iOS build.
+
+**Owed on the iPhone, with a passcode set, waiting more than 10 s after each lock** (the key is
+discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and category `share`:
+
+1. Cold launch, unlocked: the `launch sweep:` line appears, and no `deferred` line (the sweep and
+   import no longer ask UIKit before it exists).
+2. Share a text and a photo, unlocked: `moved copy protection = ...` names the expected class
+   (`NSFileProtectionCompleteUnlessOpen` for a copy), and no protection or `setAttributes` error.
+3. Share again with Canari killed, so it waits in the App Group undrained; lock, wait, send a push:
+   the launch import and sweep answer locked (`locked with the device`), and no `dropped`,
+   `unreadable` or deletion line.
+4. Unlock straight into Canari: the share is offered on the first activation.
+5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
+   and the locked push launch mounts the page: after the unlock it is offered with no new launch
+   (`a share waits (unlock), the page was told`).
+6. A large iCloud video, the phone locked during the capture: with nothing waiting, the share
+   survives; with an older share waiting, that one is not deleted (the new one is refused, said).
+7. Sign out while locked, then unlock: the old share is dropped as stale.
 
 ## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
 

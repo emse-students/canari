@@ -67,8 +67,11 @@ pub(crate) enum Claimed {
 /// locked: `EPERM` (1 on every POSIX system), read from the OS error CODE and never from a message.
 /// It is the only read failure that means "readable later": every other one is a broken file, and
 /// a broken file is still deleted, so "locked" can never become a hiding place for corruption.
-/// None of the app's own files answers `EPERM` elsewhere; if one ever did, the answer here is to
-/// leave it in place, said - never to delete a share.
+///
+/// THE CODE CANNOT SAY WHY. An `EPERM` from any other cause (a sandbox refusal, say) reads the same,
+/// and such a file is then KEPT FOREVER: put back at every claim, and its inbox never swept - each
+/// time said (`Claimed::Protected`, `SWEEP_PROTECTED`). None of the app's own files answers `EPERM`
+/// elsewhere; keeping one the member never sees is the chosen cost, never deleting a share.
 const EPERM: i32 = 1;
 
 /// Whether a read failed only because the device is locked (see [`EPERM`]).
@@ -107,12 +110,17 @@ pub(crate) fn claim_and_read(
             Ok(Claimed::Read(content))
         }
         Err(e) if is_locked_read(&e) => {
-            // Nothing can land at `path` meanwhile: no writer runs while the device is locked. One
-            // that did is never overwritten - the claim then stays under its claim name, said.
-            if path.exists() {
-                log::error!("[HANDOFF] {name} reappeared while its locked claim was held - the claim stays as {name}.{suffix}");
-            } else if let Err(back) = std::fs::rename(&claimed, &path) {
-                log::error!("[HANDOFF] the locked {name} could not be put back: {back}");
+            // A writer that landed a NEWER file at `path` meanwhile is never overwritten: the move
+            // back refuses atomically (`rename_no_replace`), and the claim then stays under its
+            // claim name, said - the next launch sweep deletes it as lost (`SWEEP_CLAIM_LOST`).
+            match rename_no_replace(&claimed, &path) {
+                Ok(()) => {}
+                Err(back) if back.kind() == std::io::ErrorKind::AlreadyExists => {
+                    log::error!("[HANDOFF] {name} reappeared while its locked claim was held - the claim stays as {name}.{suffix}");
+                }
+                Err(back) => {
+                    log::error!("[HANDOFF] the locked {name} could not be put back: {back}");
+                }
             }
             Ok(Claimed::Protected)
         }
@@ -123,6 +131,47 @@ pub(crate) fn claim_and_read(
             Err(e)
         }
     }
+}
+
+/// Moves `from` to `to` ONLY IF NOTHING IS AT `to`, in one step: `ErrorKind::AlreadyExists`
+/// otherwise, and both files are left as they were. A check (`to.exists()`) followed by a rename
+/// would overwrite a file landing between the two.
+///
+/// On Apple platforms - where a claim is put back, the device being locked - it is
+/// `renamex_np(RENAME_EXCL)`, atomic.
+#[cfg(target_vendor = "apple")]
+pub(crate) fn rename_no_replace(
+    from: &std::path::Path,
+    to: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
+    let to = std::ffi::CString::new(to.as_os_str().as_bytes())?;
+    // SAFETY: two valid NUL-terminated paths that outlive the call.
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Elsewhere (Android, and the host a `cargo test` runs on), which no Data Protection refusal and no
+/// iOS launch sweep ever reaches outside the tests: a hard link, which refuses an existing `to` atomically, then
+/// the unlink of `from`. A failed unlink leaves the claim beside the file put back - said, and the
+/// next launch sweep's to delete.
+#[cfg(not(target_vendor = "apple"))]
+pub(crate) fn rename_no_replace(
+    from: &std::path::Path,
+    to: &std::path::Path,
+) -> std::io::Result<()> {
+    std::fs::hard_link(from, to)?;
+    if let Err(e) = std::fs::remove_file(from) {
+        log::warn!(
+            "[HANDOFF] {} was put back, but its claim was not deleted: {e}",
+            to.display()
+        );
+    }
+    Ok(())
 }
 
 /// The share EPOCH, a counter in `{app_data_dir}/share_epoch` that every sign-out advances
@@ -268,6 +317,46 @@ mod tests {
         );
         assert!(!dir.join("h.json.draining").exists());
         assert_eq!(take_handoff(&dir, "h.json", "T").as_deref(), Some("{}"));
+    }
+
+    #[test]
+    fn a_file_landing_during_a_locked_claim_is_never_overwritten_by_the_put_back() {
+        let dir = scratch("reappeared");
+        std::fs::write(dir.join("h.json"), "old").expect("write");
+        // A writer lands a newer file at the name while the claim is held, then the read is refused.
+        let landing = |_: &std::path::Path| {
+            std::fs::write(dir.join("h.json"), "new").expect("landing");
+            Err(std::io::Error::from_raw_os_error(super::EPERM))
+        };
+        assert_eq!(
+            super::claim_and_read(&dir, "h.json", "draining", landing).expect("claim"),
+            super::Claimed::Protected
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("h.json")).expect("newer"),
+            "new"
+        );
+        // The older one stays under its claim name, for the launch sweep to say and delete.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("h.json.draining")).expect("claim kept"),
+            "old"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_no_replace_refuses_an_existing_target_and_moves_otherwise() {
+        let dir = scratch("no-replace");
+        std::fs::write(dir.join("a"), "a").expect("write");
+        std::fs::write(dir.join("b"), "b").expect("write");
+        let refused = super::rename_no_replace(&dir.join("a"), &dir.join("b")).expect_err("exists");
+        assert_eq!(refused.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(dir.join("a")).expect("a"), "a");
+        assert_eq!(std::fs::read_to_string(dir.join("b")).expect("b"), "b");
+        super::rename_no_replace(&dir.join("a"), &dir.join("c")).expect("moved");
+        assert!(!dir.join("a").exists());
+        assert_eq!(std::fs::read_to_string(dir.join("c")).expect("c"), "a");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

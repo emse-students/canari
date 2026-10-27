@@ -575,58 +575,30 @@ static NSString *const kCanariShareNotificationId = @"canari.share.ready";
 /// The Darwin notification the Share Extension posts when a share waits in the App Group.
 static CFStringRef const kCanariShareReadyNotification = CFSTR("fr.emse.canari.share-ready");
 
-/// Carries a share another app made INTO Canari out of the App Group, where the Share Extension left
-/// it, into the app's own handoff (`canari_ios_import_app_group_share`, commands/app_group_share.rs),
-/// then tells a live page - `canari:incoming-share`, the event Android's MainActivity dispatches. A
-/// page not loaded yet drains the file at mount instead. `why` names the call site in the log.
-static void CanariImportAppGroupShare(NSString *why) {
-  NSString *dataDir = CanariTauriDataDir();
-  NSString *cacheDir = CanariTauriCacheDir();
-  if (dataDir == nil || cacheDir == nil) {
-    NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
-    return;
+/// Whether a share manifest waits in `dir` - a STAT, never a read, so it answers while the device is
+/// locked too (Data Protection guards a file's contents, not its name). NO for a nil `dir`.
+static BOOL CanariShareManifestWaits(NSString *dir) {
+  if (dir == nil) {
+    return NO;
   }
-  // A WAITING SHARE IS LOCKED WITH THE DEVICE (`.completeFileProtection`, docs/wiki/frontend/sharing.md):
-  // while it is locked - a push waking the app in the background - the import is not even tried. The
-  // next activation imports it; nothing retries meanwhile, so nothing loops on a locked phone.
-  if (![UIApplication sharedApplication].isProtectedDataAvailable) {
-    NSLog(@"[CanariShare] import (%@) deferred: the device is locked - imported at the next activation", why);
-    return;
-  }
-  int code = canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String);
-  // The CODE is the log: the launch call runs before the Rust logger exists.
-  switch (code) {
-    case CANARI_SHARE_IMPORT_IMPORTED:
-      break;
-    case CANARI_SHARE_IMPORT_NOTHING:
-      return;
-    case CANARI_SHARE_IMPORT_BUSY:
-      NSLog(@"[CanariShare] import (%@): the Share Extension is copying - imported at the next activation", why);
-      return;
-    case CANARI_SHARE_IMPORT_DROPPED:
-      NSLog(@"[CanariShare] import (%@) ERROR: the App Group manifest was unreadable and was dropped", why);
-      return;
-    case CANARI_SHARE_IMPORT_PROTECTED:
-      NSLog(@"[CanariShare] import (%@): the share is locked with the device - imported at the next activation", why);
-      return;
-    case CANARI_SHARE_IMPORT_NO_DIRS:
-      NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
-      return;
-    case CANARI_SHARE_IMPORT_NO_GROUP:
-      NSLog(@"[CanariShare] import (%@) ERROR: the App Group container is unavailable", why);
-      return;
-    case CANARI_SHARE_IMPORT_FAILED:
-      NSLog(@"[CanariShare] import (%@) ERROR: the share could not be moved or handed over", why);
-      return;
-    default:
-      NSLog(@"[CanariShare] import (%@) ERROR: unknown code %d", why, code);
-      return;
-  }
-  [[UNUserNotificationCenter currentNotificationCenter]
-      removeDeliveredNotificationsWithIdentifiers:@[ kCanariShareNotificationId ]];
+  NSString *manifest = [dir stringByAppendingPathComponent:[NSString stringWithUTF8String:CANARI_SHARE_PENDING_FILE]];
+  return [[NSFileManager defaultManager] fileExistsAtPath:manifest];
+}
+
+/// The App Group container's path, or nil when it is unavailable.
+static NSString *CanariShareAppGroupDir(void) {
+  return [[NSFileManager defaultManager]
+             containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
+      .path;
+}
+
+/// Tells a live page a share waits in the app data directory - `canari:incoming-share`, the event
+/// Android's MainActivity dispatches - so it drains it now. A page not loaded yet drains the file at
+/// mount instead. `why` names the call site in the log.
+static void CanariTellPageOfShare(NSString *why) {
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
-    NSLog(@"[CanariShare] share imported (%@) before the WebView: the page drains it at mount", why);
+    NSLog(@"[CanariShare] a share waits (%@) before the WebView: the page drains it at mount", why);
     return;
   }
   [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:incoming-share'));"
@@ -636,7 +608,87 @@ static void CanariImportAppGroupShare(NSString *why) {
                       CanariErrorReason(error));
               }
             }];
-  NSLog(@"[CanariShare] share imported (%@), the page was told", why);
+  NSLog(@"[CanariShare] a share waits (%@), the page was told", why);
+}
+
+/// Carries a share another app made INTO Canari out of the App Group, where the Share Extension left
+/// it, into the app's own handoff (`canari_ios_import_app_group_share`, commands/app_group_share.rs),
+/// then tells a live page. YES when a share was imported (and the page told).
+///
+/// NO UIKIT HERE: the bootstrap calls it before the application object exists, where
+/// `[UIApplication sharedApplication]` is nil and any question put to it answers NO. A locked device
+/// is Rust's to answer, and it answers it safely: `CANARI_SHARE_IMPORT_PROTECTED`, nothing moved and
+/// nothing deleted (docs/wiki/frontend/sharing.md, "At rest").
+static BOOL CanariImportAppGroupShare(NSString *why) {
+  NSString *dataDir = CanariTauriDataDir();
+  NSString *cacheDir = CanariTauriCacheDir();
+  if (dataDir == nil || cacheDir == nil) {
+    NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
+    return NO;
+  }
+  int code = canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String);
+  // The CODE is the log: the launch call runs before the Rust logger exists.
+  switch (code) {
+    case CANARI_SHARE_IMPORT_IMPORTED:
+      break;
+    case CANARI_SHARE_IMPORT_NOTHING:
+      return NO;
+    case CANARI_SHARE_IMPORT_BUSY:
+      NSLog(@"[CanariShare] import (%@): the Share Extension is copying - imported at the next activation", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_DROPPED:
+      NSLog(@"[CanariShare] import (%@) ERROR: the App Group manifest was unreadable and was dropped", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_PROTECTED:
+      NSLog(@"[CanariShare] import (%@): the share is locked with the device - imported once it is unlocked", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_NO_DIRS:
+      NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_NO_GROUP:
+      NSLog(@"[CanariShare] import (%@) ERROR: the App Group container is unavailable", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_FAILED:
+      NSLog(@"[CanariShare] import (%@) ERROR: the share could not be moved or handed over", why);
+      return NO;
+    default:
+      NSLog(@"[CanariShare] import (%@) ERROR: unknown code %d", why, code);
+      return NO;
+  }
+  [[UNUserNotificationCenter currentNotificationCenter]
+      removeDeliveredNotificationsWithIdentifiers:@[ kCanariShareNotificationId ]];
+  NSLog(@"[CanariShare] share imported (%@)", why);
+  CanariTellPageOfShare(why);
+  return YES;
+}
+
+/// The import where the application object EXISTS (an activation, the extension's "share ready"),
+/// which may therefore ask whether protected data is available. While the device is locked a waiting
+/// share cannot be read: the import is not tried - the unlock imports it
+/// (`CanariOnProtectedDataAvailable`) - and the deferral is said only when a share waits, so a locked
+/// phone that has none logs nothing.
+static void CanariImportAppGroupShareIfUnlocked(NSString *why) {
+  if (![UIApplication sharedApplication].isProtectedDataAvailable) {
+    if (CanariShareManifestWaits(CanariShareAppGroupDir())) {
+      NSLog(@"[CanariShare] import (%@) deferred: the device is locked - imported once it is unlocked", why);
+    }
+    return;
+  }
+  CanariImportAppGroupShare(why);
+}
+
+/// THE UNLOCK (`UIApplicationProtectedDataDidBecomeAvailable`, which iOS also delivers to an app it
+/// resumes after the unlock): what Data Protection held back is readable now. The App Group share is
+/// imported, and a share already in the app data directory - one a drain found locked, after a
+/// locked launch - is offered to the page: no activation and no import would tell it otherwise, and
+/// the page drains only at its mount and on `canari:incoming-share`. An event, not a retry.
+static void CanariOnProtectedDataAvailable(void) {
+  if (CanariImportAppGroupShare(@"unlock")) {
+    return;
+  }
+  if (CanariShareManifestWaits(CanariTauriDataDir())) {
+    CanariTellPageOfShare(@"unlock");
+  }
 }
 
 /// Says what the launch sweep did: it runs before the Rust logger exists, so its report is the
@@ -655,6 +707,8 @@ static void CanariLogShareSweep(CanariShareSweep sweep) {
       CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED,
       CANARI_SHARE_SWEEP_LEFTOVER_FAILED,
       CANARI_SHARE_SWEEP_PROTECTED,
+      CANARI_SHARE_SWEEP_CLAIM_RESTORED,
+      CANARI_SHARE_SWEEP_CLAIM_LOST,
   };
   NSArray<NSString *> *whats = @[
     @"already ran in this process - nothing done",
@@ -665,8 +719,10 @@ static void CanariLogShareSweep(CanariShareSweep sweep) {
     @"ERROR: the share epoch is unreadable - every waiting share treated as stale",
     @"ERROR: the App Group epoch was behind the app's (a sign-out's copy had failed) - rewritten",
     @"ERROR: the App Group epoch is behind the app's and could NOT be rewritten",
-    @"ERROR: a leftover file in the App Group could not be deleted",
+    @"ERROR: a leftover claim or staging file could not be put back or deleted",
     @"a waiting share is locked with the device - its inbox was left whole",
+    @"a share a dead process had claimed was put back - it is offered again",
+    @"ERROR: a share a dead process had claimed was deleted - a newer one waits, so it is lost",
   ];
   for (NSUInteger i = 0; i < whats.count; i++) {
     if (sweep.flags & bits[i]) {
@@ -681,7 +737,7 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
                                __unused CFNotificationName name, __unused const void *object,
                                __unused CFDictionaryRef userInfo) {
   dispatch_async(dispatch_get_main_queue(), ^{
-    CanariImportAppGroupShare(@"share ready");
+    CanariImportAppGroupShareIfUnlocked(@"share ready");
   });
 }
 
@@ -709,7 +765,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   // the frontend asks for the cache at login.
   CanariDrainAppGroupFcmCache();
   // A share the Share Extension made while Canari was away - the banner's tap lands here.
-  CanariImportAppGroupShare(@"activation");
+  CanariImportAppGroupShareIfUnlocked(@"activation");
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
   // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
   CanariMirrorPushStateToAppGroup();
@@ -874,20 +930,25 @@ void canari_ios_bootstrap(void) {
   // A share into Canari: first the sweep, once per process and before any page exists to be staging
   // a copy (Android sweeps at its first onCreate for the same reason), then the import, so the
   // page's first drain finds it.
+  // NO UIKIT QUESTION HERE: the application object does not exist yet (`ffi::start_app()` creates
+  // it), so asking it whether protected data is available answers NO on every launch. A launch
+  // while the device is locked (a push) is Rust's to answer: a locked manifest leaves its inbox
+  // whole (SWEEP_PROTECTED) and its share in place (CANARI_SHARE_IMPORT_PROTECTED).
   NSString *shareDataDir = CanariTauriDataDir();
   NSString *shareCacheDir = CanariTauriCacheDir();
-  if (![UIApplication sharedApplication].isProtectedDataAvailable) {
-    // A launch while the device is locked (a push): a waiting share cannot be read, so which copies
-    // it names cannot be known - nothing is swept this process. Rust refuses the same on its own
-    // (SWEEP_PROTECTED); this is the fact that spares it the failed read.
-    NSLog(@"[CanariShare] launch sweep NOT run: the device is locked - the next process sweeps");
-  } else if (shareDataDir != nil && shareCacheDir != nil) {
+  if (shareDataDir != nil && shareCacheDir != nil) {
     CanariShareSweep sweep = canari_ios_sweep_shared_inboxes(shareDataDir.UTF8String, shareCacheDir.UTF8String);
     CanariLogShareSweep(sweep);
   } else {
     NSLog(@"[CanariShare] launch sweep NOT run: the app data or cache directory is unresolved");
   }
   CanariImportAppGroupShare(@"launch");
+  [nc addObserverForName:UIApplicationProtectedDataDidBecomeAvailable
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariOnProtectedDataAvailable();
+              }];
   CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, CanariOnShareReady,
                                   kCanariShareReadyNotification, NULL,
                                   CFNotificationSuspensionBehaviorDeliverImmediately);
