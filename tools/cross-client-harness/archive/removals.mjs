@@ -241,7 +241,13 @@ record(id, gated.verdict, { ...gated.detail, ...detail, failures });
 log(`verdict: ${gated.verdict}`);
 // THE OWNER SEATS' "NOUVEL APPAREIL" NOTICE OF THE MINTED W3, dismissed after the verdict (`devicenotice.mjs`).
 // W6 drove the device panel in its own process, so it is attached here for this alone.
-const w6 = mintedIds.length ? await client(PORTS.W6) : null;
+// An unreachable W6 is logged and never keeps the seats below from closing (review, 2026-10-27).
+let w6 = null;
+try {
+  w6 = mintedIds.length ? await client(PORTS.W6) : null;
+} catch (e) {
+  console.error(`[${id}] W6 not reached for the notice dismissal: ${String(e?.message ?? e)}`);
+}
 await dismissMintedNoticesOn([
   { seat: 'W1', cx: w1, minted: mintedIds },
   { seat: 'W6', cx: w6, minted: mintedIds },
