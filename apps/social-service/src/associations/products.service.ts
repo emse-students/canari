@@ -23,10 +23,11 @@ import {
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
+  productCheckoutLookup,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
-import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
+import { toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
@@ -1277,39 +1278,52 @@ export class ProductsService {
   }
 
   /**
-   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says. The
-   * request is named by the row's own uuid, or - for an attempt whose issuing call never answered
-   * one - by its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
-   * `paid` is settled (`settlePaidCheckout`), `declined` (state 5) and `cancelled-or-expired`
-   * (state 6: `expired` past the row's `expiresAt`, `cancelled` before it - the state alone cannot
-   * tell them apart) close the row, `not-found` on an order_ref lookup (no request carries it:
-   * request/do never reached Lydia) closes it `cancelled`, `open` and `unknown` change nothing.
-   * Returns the status the row now has, as far as this call knows. A failed read throws. The read
-   * goes to the Business the request was issued to (the row's `vendorToken` snapshot).
+   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says
+   * (`applyRequestState`). The request is named by the row's own uuid, or - for an attempt whose
+   * issuing call never answered one - by its order_ref (`productCheckoutLookup`). A failed read
+   * throws. The read goes to the Business the request was issued to (the row's `vendorToken`
+   * snapshot).
    */
   private async readAndApplyRequestState(row: ProductCheckout): Promise<ProductCheckoutStatus> {
-    const byUuid = !!row.requestUuid && LYDIA_REQUEST_UUID_RE.test(row.requestUuid);
+    const lookup = productCheckoutLookup(row);
     const { data } = await firstValueFrom(
       this.httpService.post<{ state?: string; raw?: string }>(
         coreUrl('payments/request-state'),
-        byUuid
-          ? { sessionId: row.requestUuid, connectAccountId: row.vendorToken }
-          : { orderRef: productOrderRef(row.productId, row.id), connectAccountId: row.vendorToken },
+        { ...lookup, connectAccountId: row.vendorToken },
         internalCoreRequestConfig()
       )
     );
     this.logger.debug(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: read by ${byUuid ? 'uuid' : 'order_ref'} -> ${data?.state}`
+      `[SHOP] checkout ${row.id.slice(0, 8)}: read by ${'sessionId' in lookup ? 'uuid' : 'order_ref'} -> ${data?.state}`
     );
+    return this.applyRequestState(row, data?.state, data?.raw);
+  }
+
+  /**
+   * Writes what Lydia said about the attempt's request - the ONE mapping of a state onto an attempt,
+   * shared by the payer's return, the confirm callback and the reconciliation sweep (which calls it
+   * only with an answer whose signature it verified). `paid` is settled (`settlePaidCheckout`, the
+   * one writer of `paid`), `declined` (state 5) and `cancelled-or-expired` (state 6: `expired` past
+   * the row's `expiresAt`, `cancelled` before it - the state alone cannot tell them apart) close the
+   * row, `not-found` on an order_ref lookup (no request carries it: request/do never reached Lydia)
+   * closes it `cancelled`, `open` and `unknown` change nothing. Returns the status the row now has,
+   * as far as this call knows. `raw` is the provider's code, for the log only.
+   */
+  async applyRequestState(
+    row: ProductCheckout,
+    wireState: unknown,
+    raw?: string
+  ): Promise<ProductCheckoutStatus> {
+    const lookup = productCheckoutLookup(row);
     // `not-found` is not a request state but the answer of an order_ref LOOKUP that matched no
     // request: request/do never reached Lydia. Read before the one typed mapping of the states.
-    if (data?.state === 'not-found' && !byUuid) {
+    if (wireState === 'not-found' && 'orderRef' in lookup) {
       this.logger.warn(
-        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${productOrderRef(row.productId, row.id)} - never issued, closed cancelled`
+        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${lookup.orderRef} - never issued, closed cancelled`
       );
       return this.closeCheckout(row, 'cancelled');
     }
-    const state = toRequestState(data?.state);
+    const state = toRequestState(wireState);
     if (state === 'paid') {
       this.logger.log(`[SHOP] checkout ${row.id.slice(0, 8)}: request is PAID at the provider`);
       await this.settlePaidCheckout(row.id);
@@ -1329,7 +1343,7 @@ export class ProductsService {
       return row.status;
     }
     this.logger.warn(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${data?.raw ?? JSON.stringify(data?.state)}) - left ${row.status}`
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${raw ?? JSON.stringify(wireState)}) - left ${row.status}`
     );
     return row.status;
   }

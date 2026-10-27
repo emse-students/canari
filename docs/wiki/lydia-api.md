@@ -78,8 +78,23 @@ Works with `request_uuid` alone (measured). `vendor_token` is optional and only 
 answer; `request_id + vendor_token` and `order_ref + vendor_token` also find the request (measured
 2026-10-15); an unknown id answers error 2, "Requete introuvable".
 Answer: `{state, used_ease_of_payment[, signature]}` - **no amount, no expiry date, never `order_ref`**
-(so the answer cannot say which Canari row it is about: the caller must already know). The `signature` is
-not verified by Canari (scheme undocumented; the read is server to server over TLS).
+(so the answer cannot say which Canari row it is about: the caller must already know).
+
+**The `signature`** (doc, read 2026-10-27; **the composition is not measured**): MD5, built like every
+Lydia signature (pairs sorted by key, `&`, then `&` and the key), over **`amount`** and **the id the call
+named** (`request_id`, `request_uuid` or `order_ref`), with the **Business private token**. So
+`md5("amount=<amount>&request_uuid=<uuid>&<key>")` for a read by uuid. Two consequences:
+
+- The answer carries no amount, so the signature can only be recomputed over the amount the CALLER
+  expects - which makes one comparison prove both the origin and the amount the request was issued for.
+  Canari writes the amount exactly as `request/do` sent it (`"12.50"`, `lydiaAmountString`); whether
+  Lydia signs that same string, or `"12.5"`, is the unmeasured part, and a wrong guess fails closed.
+- **The `state` is not in the signed set.** The signature proves which request and which amount the
+  answer is about, not what it says about them: the state still rests on the TLS read from Lydia's host.
+
+Canari verifies it only where it asks to (`payments/request-state` with `expectedAmountCents`, used by the
+reconciliation sweep, [section 7](#7-reconciliation---the-sweep-lydias-documentation-asks-for)); the payer's
+return and the callback's read do not verify it yet.
 
 | `state` | Meaning | Source |
 |---|---|---|
@@ -190,6 +205,10 @@ knows which one it is (Lydia does not say).
 
 ## 6. Still unknown
 
+- The exact `request/state` signature: whether the amount is signed as sent (`"12.50"`) or normalised
+  (section 2). **Settled by the first reconciliation of a real request**: a `verified` line, or a
+  `does NOT verify` ERROR on a row whose amount is right.
+
 - The default lifetime of a request with no `expire_time` (at least 47 minutes on the sandbox).
 - Whether `api_token_id` is the Business private token, and whether `business/create` ever returns the
   private token itself.
@@ -199,6 +218,45 @@ knows which one it is (Lydia does not say).
 - Whether a callback is retried after a non-2xx, and from which addresses Lydia calls.
 - Whether `expire_time` has a ceiling.
 - Whether Lydia accepts the app's deep link as `end_mobile_url` and appends anything to it.
+
+## 7. Reconciliation - the sweep Lydia's documentation asks for
+
+Lydia's documentation asks a merchant to reconcile through at least two of: the callback, `request/state`
+and `transaction/list` - and, for every request whose callback has not arrived, to call `request/state`.
+Canari had the callback and two `request/state` readers that both need a person (the payer's return, and
+a retry). A payment whose `confirm` was lost and whose payer closed the tab was recorded by nothing. **The
+sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the missing reader:
+
+- **What it reads, and when.** A form answer still `pending` whose request has ENDED (`paymentRequestedAt`
+  past `PENDING_HOLD_CUTOFF_SQL`, the hold = the request's `expire_time` + Lydia's measured expiry margin),
+  and a boutique attempt still `open` past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`. The threshold is the
+  request's own lifetime, not a chosen clock: past it the request cannot change, so ONE read is final. The
+  form half runs in the 5-minute expiry tick, **before** the expiry, because the hold ends when the request
+  does: a row is due in the very tick that would expire it, and once `expired` nothing reads it again. The
+  boutique half runs on its own 5-minute cron. At most 50 rows per kind per tick, newest first.
+- **What it does with the answer.** Only a `verified` answer is acted on: `paid` through the ONE writer
+  of each kind (`FormsService.markPaid`; `ProductsService.applyRequestState` -> `settlePaidCheckout`),
+  `declined` and `cancelled-or-expired` through the release the payer's return uses. A `mismatch` is
+  logged at ERROR and settles nothing; `unsigned`, an unknown verdict, an unreachable core or Lydia leave
+  the row as it is. A Business with no stored key is not read at all: a form answer is then expired as
+  before, a boutique attempt stays `open` (counted in the hourly line) for its buyer's next attempt or its
+  callback. The one unsigned answer acted on is a boutique attempt read by its order_ref that Lydia does not
+  hold (error 2): no request exists, no money moved, it is closed `cancelled` as the return closes it.
+- **Why it cannot double-record.** Every write goes through a settle path that locks the row and moves it
+  out of the status the sweep selects on; the sweep races the callback and the return on the same locks.
+  Measured on a real PostgreSQL (`lydia-reconciliation.integration.spec.ts`): the sweep and seven returns
+  settling one payment write ONE purchase record, for a form and for an attempt; with the attempt's row
+  lock removed, the boutique case wrote more than one. Two replicas running one tick read twice and write
+  once.
+- **What it reports.** One line per row it reads, and once an hour
+  `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= unavailable=
+  errors=; boutique: ...; ended boutique attempts left open with no Business key: N`, even when all zero.
+
+**Not covered, known:** a form answer the expiry moved to `expired` before any read (a backlog over 50 in
+one tick, logged at ERROR; Lydia unreachable in that tick; no key) - its payment is still recorded by its
+callback or its payer's return, which read `expired` rows. A form keeps no snapshot of the Business its
+request went to, so a form whose association re-linked another Business meanwhile is read with the new one
+and does not verify (ERROR). `transaction/list` is not used.
 
 ## See also
 

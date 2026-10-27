@@ -241,6 +241,42 @@ describe('PaymentController.requestState', () => {
       controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, 'wrong')
     ).rejects.toThrow('Forbidden');
   });
+
+  it('answers a VERIFIED read when the caller names the amount it expects, signature never returned', async () => {
+    const unverified = jest.fn();
+    const verified = jest
+      .fn()
+      .mockResolvedValue({ verification: 'verified', state: 'paid', raw: '1' });
+    const controller = new PaymentController({
+      getCheckoutRequestState: unverified,
+      getVerifiedCheckoutRequestState: verified,
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState(
+        { sessionId: UUID, connectAccountId: 'v', expectedAmountCents: 1250 },
+        SECRET
+      )
+    ).resolves.toEqual({ ok: true, verification: 'verified', state: 'paid', raw: '1' });
+    expect(verified).toHaveBeenCalledWith({ requestUuid: UUID }, 'v', 1250);
+    expect(unverified).not.toHaveBeenCalled();
+  });
+
+  it.each([[0], [-5], [12.5], [Number.NaN], ['1250' as unknown as number]])(
+    'refuses expectedAmountCents %p before any provider call',
+    async (expectedAmountCents) => {
+      const verified = jest.fn();
+      const controller = new PaymentController({
+        getVerifiedCheckoutRequestState: verified,
+      } as unknown as PaymentService);
+      await expect(
+        controller.requestState(
+          { sessionId: UUID, connectAccountId: 'v', expectedAmountCents },
+          SECRET
+        )
+      ).rejects.toThrow('Invalid payload');
+      expect(verified).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('PaymentController.cancelRequest', () => {

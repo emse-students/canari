@@ -7,6 +7,7 @@ import { PushService } from '../push/push.service';
 import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
 import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
+import { LydiaReconciliationService } from './lydia-reconciliation.service';
 
 /** Retention durations for unbounded-growth data tables. */
 const GC_NOTIFICATION_DAYS = 90;
@@ -24,7 +25,8 @@ export class FormReminderScheduler {
     private readonly reminderRepo: Repository<FormReminder>,
     private readonly push: PushService,
     private readonly notifications: PostNotificationsService,
-    private readonly formsService: FormsService
+    private readonly formsService: FormsService,
+    private readonly reconciliation: LydiaReconciliationService
   ) {}
 
   @Cron('* * * * *')
@@ -142,7 +144,14 @@ export class FormReminderScheduler {
   private expiringPendingPayments = false;
 
   /**
-   * Every 5 minutes - marks online payments left `pending` past the hold as `expired`.
+   * Every 5 minutes - reads at Lydia the online answers whose request has ended (the Lydia
+   * reconciliation, `LydiaReconciliationService.sweepFormPayments`), THEN marks those left
+   * `pending` past the hold as `expired`.
+   *
+   * THE ORDER IS THE POINT: the hold ends when the request does, so a row becomes due for the read
+   * in the very tick that would expire it - and once `expired` it is never read again. Read first, a
+   * payment whose callback was lost is recorded; what the read could not settle (Lydia unreachable,
+   * no key, an answer that does not verify) is then expired as before.
    *
    * NOT LOAD-BEARING FOR CAPACITY: the seat is released by the row's own age in every count, so a
    * late or missed run only delays the word the manager reads. The flag stops this process
@@ -156,6 +165,12 @@ export class FormReminderScheduler {
     }
     this.expiringPendingPayments = true;
     try {
+      // Its own `try`: a sweep that could not even select its rows must not stop the expiry.
+      try {
+        await this.reconciliation.sweepFormPayments();
+      } catch (e) {
+        this.logger.error('[RECONCILE] form sweep failed before reading any row', e);
+      }
       try {
         await this.formsService.expireStalePendingPayments();
       } catch (e) {

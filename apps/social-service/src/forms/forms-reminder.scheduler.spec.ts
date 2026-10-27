@@ -2,22 +2,53 @@ import { Logger } from '@nestjs/common';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
 
 /**
- * The 5-minute tick moves stale online answers to `expired`, THEN forgets the visitor of every guest
- * answer no longer waiting (PP5, `guest-visitor.ts`) - each in its own `try`, so one failing never
- * keeps the other from running.
+ * The 5-minute tick reads at Lydia the online answers whose request has ended (the reconciliation),
+ * THEN moves stale online answers to `expired`, THEN forgets the visitor of every guest answer no
+ * longer waiting (PP5, `guest-visitor.ts`) - each in its own `try`, so one failing never keeps the
+ * others from running.
  */
 describe('FormReminderScheduler.expireStalePendingPayments', () => {
-  function withForms(forms: Record<string, jest.Mock>) {
-    return new FormReminderScheduler({} as never, {} as never, {} as never, forms as never);
+  function withForms(
+    forms: Record<string, jest.Mock>,
+    sweepFormPayments: jest.Mock = jest.fn(async () => undefined)
+  ) {
+    return new FormReminderScheduler(
+      {} as never,
+      {} as never,
+      {} as never,
+      forms as never,
+      { sweepFormPayments } as never
+    );
   }
 
-  it('forgets settled guest visitors after the expiry, in the same tick', async () => {
+  it('reads ended requests at Lydia BEFORE the expiry, then forgets settled guest visitors', async () => {
     const calls: string[] = [];
-    await withForms({
-      expireStalePendingPayments: jest.fn(async () => void calls.push('expire')),
-      forgetSettledGuestVisitors: jest.fn(async () => void calls.push('forget')),
-    }).expireStalePendingPayments();
-    expect(calls).toEqual(['expire', 'forget']);
+    await withForms(
+      {
+        expireStalePendingPayments: jest.fn(async () => void calls.push('expire')),
+        forgetSettledGuestVisitors: jest.fn(async () => void calls.push('forget')),
+      },
+      jest.fn(async () => void calls.push('reconcile'))
+    ).expireStalePendingPayments();
+    // Control: with the sweep after the expiry, a row due for its read is already `expired`.
+    expect(calls).toEqual(['reconcile', 'expire', 'forget']);
+  });
+
+  it('still expires when the reconciliation sweep fails, and logs the failure at ERROR', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const expire = jest.fn(async () => 0);
+    await withForms(
+      { expireStalePendingPayments: expire, forgetSettledGuestVisitors: jest.fn(async () => 0) },
+      jest.fn(async () => {
+        throw new Error('db down');
+      })
+    ).expireStalePendingPayments();
+    expect(expire).toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      '[RECONCILE] form sweep failed before reading any row',
+      expect.any(Error)
+    );
+    error.mockRestore();
   });
 
   // Control (2026-10-22): the expiry's own `try` removed -> a failed expiry skipped the forget,
@@ -92,6 +123,7 @@ function scheduler(repo: ReturnType<typeof sharedRepo>, pushes: string[]) {
     repo as never,
     push as never,
     notifications as never,
+    {} as never,
     {} as never
   );
 }

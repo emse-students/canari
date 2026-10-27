@@ -2051,24 +2051,27 @@ export class FormsService {
    * Moves a `pending` row whose request the provider reports declined or cancelled / expired to
    * `cancelled`, under the row lock and only while the row still names that request (`sessionId`).
    * A row that already left `pending` (expired by the job, cancelled by a callback) is left as is.
+   * Also the release of the reconciliation sweep (`lydia-reconciliation.ts`), on a verified read.
    */
-  private async releaseSettledRefusedRow(
+  async releaseSettledRefusedRow(
     submissionId: string,
     sessionId: string,
-    state: RequestState
-  ): Promise<void> {
+    state: RequestState,
+    by = 'confirmPayment'
+  ): Promise<boolean> {
     const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
       named: (s) => s.stripeSessionId === sessionId,
     });
     if (typeof outcome === 'object') {
       this.logger.log(
-        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state} at the provider - answer released, the payer may retry`
+        `[Forms] ${by} ${submissionId}: request ${sessionId} is ${state} at the provider - answer released, the payer may retry`
       );
-    } else {
-      this.logger.log(
-        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state}, row left as is (${outcome})`
-      );
+      return true;
     }
+    this.logger.log(
+      `[Forms] ${by} ${submissionId}: request ${sessionId} is ${state}, row left as is (${outcome})`
+    );
+    return false;
   }
 
   /**

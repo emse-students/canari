@@ -374,11 +374,23 @@ export class PaymentController {
    * uuid (a timeout, a crash mid-issue) by the order_ref Canari sent it with - only Canari's own
    * product grammar (`parseLydiaOrderRef`), never a free string - and may answer `not-found`: no
    * request carries it. Exactly one of the two is accepted.
+   *
+   * `expectedAmountCents` (a whole number of cents) asks for the answer to be VERIFIED: the
+   * signature Lydia returns is checked with the Business key over that amount and the id read
+   * (`PaymentService.getVerifiedCheckoutRequestState`), and the answer carries `verification`
+   * (`verified | mismatch | unsigned | no-key`; with `no-key`, no state - Lydia was not asked).
+   * The signature itself is never returned. Without it the route answers as before, unverified.
    */
   @Post('request-state')
   @HttpCode(200)
   async requestState(
-    @Body() body: { sessionId?: string; orderRef?: string; connectAccountId?: string },
+    @Body()
+    body: {
+      sessionId?: string;
+      orderRef?: string;
+      connectAccountId?: string;
+      expectedAmountCents?: number;
+    },
     @Headers('x-internal-secret') secret?: string
   ) {
     assertInternalSecret(secret);
@@ -398,8 +410,26 @@ export class PaymentController {
       this.logger.warn('request-state refused: invalid payload');
       throw new BadRequestException('Invalid payload');
     }
+    const expected = body.expectedAmountCents;
+    if (expected !== undefined && (!Number.isSafeInteger(expected) || expected <= 0)) {
+      this.logger.warn('request-state refused: invalid expectedAmountCents');
+      throw new BadRequestException('Invalid payload');
+    }
+    const lookup = bySession
+      ? { requestUuid: body.sessionId as string }
+      : { orderRef: body.orderRef as string };
+    if (expected !== undefined) {
+      return {
+        ok: true,
+        ...(await this.paymentService.getVerifiedCheckoutRequestState(
+          lookup,
+          body.connectAccountId,
+          expected
+        )),
+      };
+    }
     const { state, raw } = await this.paymentService.getCheckoutRequestState(
-      bySession ? { requestUuid: body.sessionId as string } : { orderRef: body.orderRef as string },
+      lookup,
       body.connectAccountId
     );
     return { ok: true, state, raw };
