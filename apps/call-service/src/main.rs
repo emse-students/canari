@@ -16,15 +16,15 @@ use rtc::interceptor::Slot;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 use webrtc::media_stream::track_remote::TrackRemote;
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
     RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceConnectionState, RTCIceGatheringState,
-    RTCIceServer, RTCIceTransportPolicy, RTCPeerConnectionIceEvent, RTCSessionDescription,
-    Registry, SettingEngineBuilder,
+    RTCIceServer, RTCIceTransportPolicy, RTCPeerConnectionIceEvent, RTCPeerConnectionState,
+    RTCSessionDescription, Registry, SettingEngineBuilder,
 };
 
 mod forward;
@@ -255,6 +255,9 @@ struct Room {
 
 struct PeerContext {
     pc: Arc<dyn PeerConnection>,
+    /// Whether this peer's connection may carry media: bumped on every applied offer/answer,
+    /// set `connected` by the connection's own events. Every leg subscribed to this peer watches it.
+    gate: Arc<watch::Sender<forward::LegGate>>,
     notify_tx: mpsc::Sender<SignalMessage>,
     /// Trickle ICE from the browser may arrive before the Offer is applied.
     pending_ice_candidates: Mutex<Vec<RTCIceCandidateInit>>,
@@ -1198,7 +1201,9 @@ async fn handle_signal(
             // One SFU participant per user - a new device replaces siblings in the same room.
             evict_sibling_peers(&room, user_id).await;
 
+            let gate = Arc::new(watch::channel(forward::LegGate::default()).0);
             let handler = Arc::new(SfuPeerHandler {
+                gate: gate.clone(),
                 room: room.clone(),
                 peer_id: peer_id.clone(),
                 notify_tx: notify_tx.clone(),
@@ -1217,6 +1222,7 @@ async fn handle_signal(
                 peer_id.clone(),
                 PeerContext {
                     pc: pc.clone(),
+                    gate: gate.clone(),
                     notify_tx: notify_tx.clone(),
                     pending_ice_candidates: Mutex::new(Vec::new()),
                     ledger: ledger.clone(),
@@ -1225,7 +1231,7 @@ async fn handle_signal(
 
             let tracks = room.tracks.lock().await;
             for track in tracks.iter() {
-                match track.subscribe(&pc, peer_id).await {
+                match track.subscribe(&pc, peer_id, gate.subscribe()).await {
                     Err(e) => error!(
                         "[call] room={} peer={} failed to subscribe to an existing track: {}",
                         room_id, peer_id, e
@@ -1353,6 +1359,8 @@ async fn handle_signal(
                 );
                 return;
             }
+            // The leg parameters of this peer are settled now; its legs read them again.
+            ctx.gate.send_modify(|g| g.generation += 1);
             let sdp = match serde_json::to_string(&answer) {
                 Ok(sdp) => sdp,
                 Err(e) => {
@@ -1405,6 +1413,7 @@ async fn handle_signal(
                 );
                 return;
             }
+            ctx.gate.send_modify(|g| g.generation += 1);
             flush_pending_ice_candidates(ctx.value()).await;
             info!(
                 "[call] renegotiation answer applied room={} peer={}",
@@ -2476,6 +2485,7 @@ async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
 /// held here. The handler runs on the connection's driver task: anything slow or touching another
 /// connection is spawned rather than awaited, so one peer's work never stalls its own media.
 struct SfuPeerHandler {
+    gate: Arc<watch::Sender<forward::LegGate>>,
     room: Arc<Room>,
     peer_id: PeerId,
     notify_tx: mpsc::Sender<SignalMessage>,
@@ -2497,10 +2507,11 @@ impl SfuPeerHandler {
                 return;
             }
         };
+        // try_send: this runs on the connection's driver task, which must never wait on a slow
+        // socket writer.
         match self
             .notify_tx
-            .send(SignalMessage::IceCandidate { candidate })
-            .await
+            .try_send(SignalMessage::IceCandidate { candidate })
         {
             Ok(()) => bump(&self.ledger.ice_out),
             Err(e) => {
@@ -2579,6 +2590,16 @@ impl PeerConnectionEventHandler for SfuPeerHandler {
         }
     }
 
+    async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
+        // `Connected` means DTLS is done, so SRTP can protect: legs wait for it.
+        let connected = state == RTCPeerConnectionState::Connected;
+        self.gate.send_if_modified(|g| {
+            let changed = g.connected != connected;
+            g.connected = connected;
+            changed
+        });
+    }
+
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {
         let room = self.room.clone();
         let peer_id = self.peer_id.clone();
@@ -2587,6 +2608,14 @@ impl PeerConnectionEventHandler for SfuPeerHandler {
         tokio::spawn(publish_track(room, peer_id, ledger, track));
     }
 }
+
+/// What publishing needs of each other peer: its id, connection, ledger and leg gate.
+type Subscriber = (
+    PeerId,
+    Arc<dyn PeerConnection>,
+    Arc<CallLedger>,
+    watch::Receiver<forward::LegGate>,
+);
 
 /// A peer published a track: describe it, start pumping it, and subscribe everyone else.
 async fn publish_track(
@@ -2622,7 +2651,7 @@ async fn publish_track(
     }
 
     // Snapshotted so no map guard is held across an await.
-    let others: Vec<(PeerId, Arc<dyn PeerConnection>, Arc<CallLedger>)> = room
+    let others: Vec<Subscriber> = room
         .peers
         .iter()
         .filter(|entry| entry.key() != &peer_id)
@@ -2631,11 +2660,12 @@ async fn publish_track(
                 entry.key().clone(),
                 entry.value().pc.clone(),
                 entry.value().ledger.clone(),
+                entry.value().gate.subscribe(),
             )
         })
         .collect();
-    for (other_pid, other_pc, other_ledger) in others {
-        match published.subscribe(&other_pc, &other_pid).await {
+    for (other_pid, other_pc, other_ledger, other_gate) in others {
+        match published.subscribe(&other_pc, &other_pid, other_gate).await {
             Err(e) => {
                 error!(
                     "[call] room={} peer={} could not be subscribed to the new track: {}",

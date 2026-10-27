@@ -3040,6 +3040,14 @@ Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What
 relay-path call, two peers, audio and video, TURN as production configures it, taken by hand (the in-process half of it runs in CI since 2026-10-09: `apps/call-service/tests/relay_path.rs`)
 ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
 
+### P3 - the SFU after the webrtc 0.21 port: review leftovers (2026-10-27)
+
+Nothing live reaches the SFU media plane (no client sends mode `sfu`); each is for the day it is used ([calls](frontend/modules/calls.md#the-webrtc-021-port-built-2026-10-27)).
+
+- **A dead track is never removed from `Room.tracks`**, so a later joiner is subscribed to a publisher that left (its leg waits forever for packets).
+- **A Join racing `publish_track` can subscribe the same peer twice** to one track: the peer is inserted in `room.peers` before it takes the `tracks` lock, so both paths see it.
+- **Gathering is IPv4 only** (`0.0.0.0:0`); an IPv6-only path is untested.
+
 ### P1 (blocks `CALLS_COMPILED`, not dev) - four things owed before production calls (review of #1997, 2026-10-17)
 
 **The owner decided on 2026-10-21: the first production calls are AUDIO 1:1 ONLY, kept alive in the

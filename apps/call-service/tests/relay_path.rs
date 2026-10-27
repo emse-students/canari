@@ -24,10 +24,12 @@ use rtc::interceptor::Registry;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::rtp;
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+    RtpCodecKind,
 };
+use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 use turn::auth::{generate_auth_key, AuthHandler};
 use turn::relay::relay_static::RelayAddressGeneratorStatic;
@@ -40,7 +42,7 @@ use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
     RTCConfigurationBuilder, RTCIceConnectionState, RTCIceGatheringState, RTCIceServer,
-    RTCIceTransportPolicy, SettingEngineBuilder,
+    RTCIceTransportPolicy, RTCPeerConnectionState, SettingEngineBuilder,
 };
 use webrtc_util::vnet::net::Net;
 
@@ -110,6 +112,7 @@ async fn start_turn() -> (Server, SocketAddr) {
 
 /// What a peer reports, as channels the test waits on (event-driven: no polling, no sleeping).
 struct Peer {
+    gate: Arc<watch::Sender<forward::LegGate>>,
     gathered_tx: mpsc::Sender<()>,
     ice_tx: mpsc::Sender<RTCIceConnectionState>,
     data_tx: mpsc::Sender<String>,
@@ -126,6 +129,11 @@ impl PeerConnectionEventHandler for Peer {
 
     async fn on_ice_connection_state_change(&self, state: RTCIceConnectionState) {
         let _ = self.ice_tx.send(state).await;
+    }
+
+    async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
+        let connected = state == RTCPeerConnectionState::Connected;
+        self.gate.send_modify(|g| g.connected = connected);
     }
 
     async fn on_data_channel(&self, channel: Arc<dyn DataChannel>) {
@@ -158,28 +166,55 @@ async fn first_packet(remote: &Arc<dyn TrackRemote>) -> rtp::Packet {
 
 struct Harness {
     pc: Arc<dyn PeerConnection>,
+    gate: Arc<watch::Sender<forward::LegGate>>,
     gathered_rx: mpsc::Receiver<()>,
     ice_rx: mpsc::Receiver<RTCIceConnectionState>,
     data_rx: mpsc::Receiver<String>,
     track_rx: mpsc::Receiver<Arc<dyn TrackRemote>>,
 }
 
+/// The codecs a stock peer offers, VP8 at payload type 96.
+fn default_media() -> MediaEngine {
+    let mut media = MediaEngine::default();
+    media.register_default_codecs().expect("default codecs");
+    media
+}
+
+/// A browser that numbers VP8 differently (Firefox offers 120): the SFU must rewrite to THIS.
+fn vp8_at_120_media() -> MediaEngine {
+    let mut media = MediaEngine::default();
+    media
+        .register_codec(
+            RTCRtpCodecParameters {
+                rtp_codec: RTCRtpCodec {
+                    mime_type: "video/VP8".to_owned(),
+                    clock_rate: 90000,
+                    ..Default::default()
+                },
+                payload_type: VIEWER_VP8_PAYLOAD_TYPE,
+            },
+            RtpCodecKind::Video,
+        )
+        .expect("register VP8 at 120");
+    media
+}
+
 /// A peer built the way the SFU builds its own: default codecs, mDNS off, and RELAY as the only
 /// transport policy, which is what production sets once it holds a TURN server.
-async fn relay_peer(turn: SocketAddr, registry: Registry) -> Harness {
+async fn relay_peer(turn: SocketAddr, registry: Registry, media: MediaEngine) -> Harness {
+    let gate = Arc::new(watch::channel(forward::LegGate::default()).0);
     let (gathered_tx, gathered_rx) = mpsc::channel(1);
     let (ice_tx, ice_rx) = mpsc::channel(16);
     let (data_tx, data_rx) = mpsc::channel(4);
     let (track_tx, track_rx) = mpsc::channel(4);
     let handler = Arc::new(Peer {
+        gate: gate.clone(),
         gathered_tx,
         ice_tx,
         data_tx,
         track_tx,
     });
 
-    let mut media = MediaEngine::default();
-    media.register_default_codecs().expect("default codecs");
     let settings = SettingEngineBuilder::new()
         .with_multicast_dns_mode(rtc::ice::mdns::MulticastDnsMode::Disabled)
         .build();
@@ -204,6 +239,7 @@ async fn relay_peer(turn: SocketAddr, registry: Registry) -> Harness {
         .expect("new peer connection");
     Harness {
         pc: Arc::new(pc),
+        gate,
         gathered_rx,
         ice_rx,
         data_rx,
@@ -258,6 +294,9 @@ async fn negotiate(offerer: &mut Harness, answerer: &mut Harness) {
         .set_remote_description(answer)
         .await
         .expect("offerer remote description");
+    // What the SFU's signalling handlers do after every applied offer/answer.
+    offerer.gate.send_modify(|g| g.generation += 1);
+    answerer.gate.send_modify(|g| g.generation += 1);
 }
 
 /// Two peers whose only possible path is the TURN relay exchange a data-channel message and an
@@ -265,8 +304,8 @@ async fn negotiate(offerer: &mut Harness, answerer: &mut Harness) {
 #[tokio::test]
 async fn two_peers_connect_through_a_turn_relay_and_carry_data_and_audio() {
     let (turn, turn_addr) = start_turn().await;
-    let mut caller = relay_peer(turn_addr, Registry::new()).await;
-    let mut callee = relay_peer(turn_addr, Registry::new()).await;
+    let mut caller = relay_peer(turn_addr, Registry::new(), default_media()).await;
+    let mut callee = relay_peer(turn_addr, Registry::new(), default_media()).await;
 
     // The media half: the caller sends opus, the callee must receive a packet of it.
     let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
@@ -411,6 +450,7 @@ fn sfu_registry() -> Registry {
 
 const VIDEO_SSRC: u32 = 0x0abc_def0;
 const VP8_PAYLOAD_TYPE: u8 = 96;
+const VIEWER_VP8_PAYLOAD_TYPE: u8 = 120;
 const VIDEO_PAYLOAD: [u8; 5] = [0x10, 0x00, 0x9d, 0x01, 0x2a];
 
 /// What the SFU adds to a call, end to end over the relay: one published video track is fanned out
@@ -426,10 +466,10 @@ async fn the_sfu_fans_a_published_track_out_and_relays_a_keyframe_request_back()
     use webrtc::media_stream::track_local::TrackLocalEvent;
 
     let (turn, turn_addr) = start_turn().await;
-    let mut publisher = relay_peer(turn_addr, sfu_registry()).await;
-    let mut sfu_in = relay_peer(turn_addr, sfu_registry()).await;
-    let mut sfu_out = relay_peer(turn_addr, sfu_registry()).await;
-    let mut viewer = relay_peer(turn_addr, Registry::new()).await;
+    let mut publisher = relay_peer(turn_addr, sfu_registry(), default_media()).await;
+    let mut sfu_in = relay_peer(turn_addr, sfu_registry(), default_media()).await;
+    let mut sfu_out = relay_peer(turn_addr, sfu_registry(), default_media()).await;
+    let mut viewer = relay_peer(turn_addr, Registry::new(), vp8_at_120_media()).await;
 
     let pub_track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
         "publisher-stream".to_owned(),
@@ -496,10 +536,24 @@ async fn the_sfu_fans_a_published_track_out_and_relays_a_keyframe_request_back()
     published.spawn_publisher_pump("relay_path test".to_owned());
 
     published
-        .subscribe(&sfu_out.pc, "viewer")
+        .subscribe(&sfu_out.pc, "viewer", sfu_out.gate.subscribe())
         .await
         .expect("subscribe the viewer's leg");
-    negotiate(&mut sfu_out, &mut viewer).await;
+    // The viewer OFFERS, as a browser does, and numbers VP8 as 120. The leg was subscribed (and
+    // the publisher's packets were already flowing) before this offer existed, so a leg that read
+    // its payload type early would lock onto the default 96 and the viewer would receive nothing.
+    viewer
+        .pc
+        .add_transceiver_from_kind(
+            RtpCodecKind::Video,
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("viewer recvonly transceiver");
+    negotiate(&mut viewer, &mut sfu_out).await;
 
     let viewed = timeout(LIVENESS, viewer.track_rx.recv())
         .await
@@ -513,8 +567,8 @@ async fn the_sfu_fans_a_published_track_out_and_relays_a_keyframe_request_back()
         "the leg must carry its own SSRC, not the publisher's"
     );
     assert_eq!(
-        packet.header.payload_type, VP8_PAYLOAD_TYPE,
-        "the leg's negotiated VP8 payload type"
+        packet.header.payload_type, VIEWER_VP8_PAYLOAD_TYPE,
+        "the leg's negotiated VP8 payload type, not the publisher's"
     );
     assert_eq!(
         packet.payload.as_ref(),
