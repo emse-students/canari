@@ -113,9 +113,12 @@ object IncomingShare {
                     files.put(copied.first)
                 }
             }
-            if (text.isEmpty() && files.length() == 0) {
-                deleteDir(dir, "share $shareId kept nothing")
-                return reportRefusals(context, refused, epoch)
+            // A SHARE THAT KEPT NO FILE KEEPS NO FOLDER: no manifest entry names it, so nothing would
+            // delete it while the process lives - a text share left one empty folder each (Mi 9T,
+            // 2026-10-27). One an older build left goes with the next process (`sweepOrphansOnce`).
+            if (files.length() == 0) {
+                deleteDir(dir, if (text.isEmpty()) "share $shareId kept nothing" else "share $shareId is text only")
+                if (text.isEmpty()) return reportRefusals(context, refused, epoch)
             }
             val payload = JSONObject()
                 .put("id", shareId)
