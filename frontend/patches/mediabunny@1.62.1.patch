@@ -1,8 +1,8 @@
 diff --git a/dist/modules/src/codec-data.js b/dist/modules/src/codec-data.js
-index af4535f8c06badac6d8d016d2f0f31c2cc3e4618..60cc78e52d2067c1c868497e316746051a8c8242 100644
+index 6d063544fdea63b5b06bc6b08c874109bc2d2195..d919f82fdd49a68b6289fcb48ee4113461c4b823 100644
 --- a/dist/modules/src/codec-data.js
 +++ b/dist/modules/src/codec-data.js
-@@ -3099,3 +3099,60 @@ export const buildDtsSpecificBox = (frameInfo) => {
+@@ -3141,3 +3141,60 @@ export const buildDtsSpecificBox = (frameInfo) => {
  const getDtsChannelCount = (channelLayout) => {
      return popcount(channelLayout) + popcount(channelLayout & DTS_CHANNEL_LAYOUT_PAIR_MASK);
  };
@@ -64,19 +64,19 @@ index af4535f8c06badac6d8d016d2f0f31c2cc3e4618..60cc78e52d2067c1c868497e31674605
 +    return serializeAvcDecoderConfigurationRecord(rebuilt);
 +};
 diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
-index 1c6d843d1fc5afc8ef81858ea3bcd97a2ad768c6..c10ee7b9dddb5b265987660517a859e5f485cdf9 100644
+index b174a361128b55751f2c7c3eaae79c0ef9ec72d0..41564bb995afad887d268a91e23f233df573acb4 100644
 --- a/dist/modules/src/media-source.js
 +++ b/dist/modules/src/media-source.js
 @@ -67,7 +67,7 @@ import { EncodedPacket } from './packet.js';
  import { AudioSample, audioSampleToInterleavedFormat, toInterleavedAudioFormat, VideoSample, } from './sample.js';
  import { buildAudioEncoderConfig, buildQuantizerEncodeOptions, buildVideoEncoderConfigs, resolveQuality, validateAudioEncodingConfig, validateVideoEncodingConfig, } from './encode.js';
  import { AudioResampler } from './resample.js';
--import { determineVideoPacketType, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, } from './codec-data.js';
-+import { determineVideoPacketType, rebuildAvcDescriptionFromInBand, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, } from './codec-data.js';
+-import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
++import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, rebuildAvcDescriptionFromInBand, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
  import { Logging } from './logging.js';
- /**
-  * Base class for media sources. Media sources are used to add media samples to an output file.
-@@ -841,6 +841,15 @@ class VideoEncoderWrapper {
+ import { readEsDescriptor } from './isobmff/isobmff-reader.js';
+ import { FileSlice } from './reader.js';
+@@ -873,6 +873,15 @@ class VideoEncoderWrapper {
              });
          }
          maybeEnsureIsKeyPacket(this.source._connectedTrack, packet);

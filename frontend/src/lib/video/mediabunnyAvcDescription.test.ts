@@ -1,5 +1,5 @@
 /**
- * THE BEHAVIOUR `patches/mediabunny@1.61.4.patch` EXISTS FOR (mediabunny issue 559).
+ * THE BEHAVIOUR `patches/mediabunny@1.62.1.patch` EXISTS FOR (mediabunny issue 559).
  *
  * Firefox's WebCodecs H.264 encoder on Windows (Media Foundation) hands back an
  * AVCDecoderConfigurationRecord whose SPS and PPS each carry their first byte twice, reserved bits
