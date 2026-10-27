@@ -24,6 +24,7 @@ import {
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
+  PURCHASE_PRICING_CHANGED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -185,6 +186,27 @@ interface PreparedPurchase {
   paymentTarget: PaymentTarget;
   vendorToken: string;
   profile: { promo: number | null; formation: string | null };
+  /**
+   * Whether `profile` was FETCHED: only for a grid priced on promo or formation, as the product read
+   * before the lock had one. A grid that needs it under the lock while it was not fetched cannot be
+   * priced without a call there (`decidePurchase` refuses `PURCHASE_PRICING_CHANGED`).
+   */
+  profileFetched: boolean;
+}
+
+/**
+ * True when two routings send the money to the same place on the same terms - EVERY field of the
+ * `PaymentTarget` the request is built from (provider, account, receiving association, readiness,
+ * delegation), so one that changed in a field nobody listed is never taken for the same.
+ */
+function sameRouting(a: PaymentTarget, b: PaymentTarget): boolean {
+  return (
+    a.provider === b.provider &&
+    a.connectAccountId === b.connectAccountId &&
+    a.targetAssociationId === b.targetAssociationId &&
+    a.ready === b.ready &&
+    a.delegated === b.delegated
+  );
 }
 
 /** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
@@ -2031,18 +2053,28 @@ export class ProductsService {
           : 'Association has not completed onboarding to receive payments'
       );
     }
-    const profile = await this.pricingFacts.profileFor(
-      userId,
-      product.priceMatrix ? dimensionsNeedProfile(product.priceMatrix.dimensions) : false
-    );
-    return { associationId, productId, provider, paymentTarget, vendorToken, profile };
+    const profileFetched = product.priceMatrix
+      ? dimensionsNeedProfile(product.priceMatrix.dimensions)
+      : false;
+    const profile = await this.pricingFacts.profileFor(userId, profileFetched);
+    return {
+      associationId,
+      productId,
+      provider,
+      paymentTarget,
+      vendorToken,
+      profile,
+      profileFetched,
+    };
   }
 
   /**
    * The half of a purchase that reads only this database, so it may run under the buyer's tier
    * lock: reloads the association and the product BY ID, re-validates the routing
    * `preparePurchase` decided against them (`routeWith`, no call: same provider, the parent read by
-   * id) and refuses `PAYMENT_ROUTING_CHANGED` if it no longer holds - then ranks and prices.
+   * id) and refuses `PAYMENT_ROUTING_CHANGED` if ANY field of it changed (`sameRouting`), and
+   * `PURCHASE_PRICING_CHANGED` if the grid now needs a profile that was not fetched - then ranks and
+   * prices.
    * EVERY read goes through `manager`, the lock holder's transaction: a read on another pool
    * connection would hold the buyer's lock while waiting for a free connection. Sequential, since
    * one connection runs one query at a time.
@@ -2064,11 +2096,7 @@ export class ProductsService {
       throw new NotFoundException('Product not found or inactive');
     }
     const now = await this.routeWith(asso, prepared.provider, manager);
-    if (
-      !now.ready ||
-      now.connectAccountId !== paymentTarget.connectAccountId ||
-      now.targetAssociationId !== paymentTarget.targetAssociationId
-    ) {
+    if (!now.ready || !sameRouting(now, paymentTarget)) {
       this.logger.warn(
         `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
           'routing changed while the purchase was being prepared'
@@ -2076,6 +2104,23 @@ export class ProductsService {
       throw new ConflictException({
         code: PAYMENT_ROUTING_CHANGED,
         message: 'The payment account of this association changed while the purchase was opened.',
+      });
+    }
+
+    // The profile is the one other input fetched before the lock: a grid that now needs it, read
+    // under the lock, would otherwise be priced on the "everyone else" cell without it.
+    if (
+      product.priceMatrix &&
+      dimensionsNeedProfile(product.priceMatrix.dimensions) &&
+      !prepared.profileFetched
+    ) {
+      this.logger.warn(
+        `[SHOP] refused (${PURCHASE_PRICING_CHANGED}): product=${product.id.slice(0, 8)} - its grid ` +
+          'now prices on the profile, which was not fetched while the purchase was being prepared'
+      );
+      throw new ConflictException({
+        code: PURCHASE_PRICING_CHANGED,
+        message: 'The pricing of this product changed while the purchase was opened.',
       });
     }
 
