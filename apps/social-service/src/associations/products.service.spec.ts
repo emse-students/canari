@@ -2494,6 +2494,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.records[0]).toMatchObject({ amountCents: 1500 });
     });
 
+    // Nothing is delivered for a product deleted while its buyer was paying: the money is recorded
+    // with the marker a refund is owed on, never as an ordinary paid purchase.
+    it('a payment for a product deleted meanwhile is recorded paid_not_granted, at ERROR', async () => {
+      const t = setup();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { checkoutId } = await t.checkout();
+      t.productRepo.findOne.mockResolvedValue(null);
+      t.setState('paid');
+
+      await t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1');
+
+      expect(t.records).toHaveLength(1);
+      expect(t.records[0]).toMatchObject({ status: 'paid_not_granted', productId: 'prod1' });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('a refund is owed'));
+      expect(t.userTagService.grantOrRenew).not.toHaveBeenCalled();
+      error.mockRestore();
+    });
+
     describe('two cotisation tiers of one association never both settle', () => {
       const sans = () =>
         product({

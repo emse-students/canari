@@ -1821,8 +1821,12 @@ export class ProductsService {
           );
         }
       } else {
+        // Nothing can be delivered for a product that is gone (no tag, no top-up), so the money is
+        // recorded with the marker a refund is owed on, never as an ordinary purchase.
+        granted = false;
         this.logger.error(
-          `[SHOP] checkout ${row.id.slice(0, 8)}: product ${row.productId.slice(0, 8)} no longer exists - the purchase is recorded, no tag granted`
+          `[SHOP] checkout ${row.id.slice(0, 8)}: product ${row.productId.slice(0, 8)} no longer exists - ` +
+            'payment recorded paid_not_granted, nothing delivered; a refund is owed'
         );
       }
       const record = await this.purchaseRecordService.create(

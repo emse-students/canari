@@ -176,8 +176,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
   beforeEach(() => error.mockClear());
 
-  /** A fresh buyer per test, so no test reads another's tags. */
-  const newBuyer = () => `buyer-${++buyerSeq}`.padEnd(64, '0');
+  /**
+   * A fresh buyer per test, so no test reads another's tags. Two digits: unpadded, `buyer-1` and
+   * `buyer-10` padded to the same 64 characters - the tenth buyer was the first.
+   */
+  const newBuyer = () => `buyer-${String(++buyerSeq).padStart(2, '0')}`.padEnd(64, '0');
 
   const openAttempt = (userId: string, productId: string) =>
     ds.getRepository(ProductCheckout).save(
@@ -450,5 +453,42 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(
       await new PurchaseRecordService(ds.getRepository(PurchaseRecord)).countPaidNotGranted()
     ).toBeGreaterThan(0);
+  });
+  it("a paid form's pre-check ranks against the real tables: held, not a rise, a rise", async () => {
+    const buyer = newBuyer();
+    await ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
+      [buyer, TAG_B, ASSO]
+    );
+    expect(await tags.rankCotisationTier(ASSO, buyer, 'b')).toBe('held');
+    expect(await tags.rankCotisationTier(ASSO, buyer, 'a')).toBe('lower');
+    expect(await tags.rankCotisationTier(ASSO, buyer, 'd')).toBe('higher');
+    expect(await tags.rankCotisationTier(ASSO, newBuyer(), 'a')).toBe('none');
+  });
+
+  it('a payment for a product deleted meanwhile is recorded paid_not_granted, nothing granted', async () => {
+    const buyer = newBuyer();
+    const gone = '00000000-0000-4000-8000-0000000000c9';
+    await ds.getRepository(AssociationProduct).save(
+      ds.getRepository(AssociationProduct).create({
+        id: gone,
+        associationId: ASSO,
+        name: 'Gone',
+        type: 'other',
+        amountCents: 1500,
+        currency: 'eur',
+        isActive: true,
+      })
+    );
+    const attempt = await openAttempt(buyer, gone);
+    await ds.query(`DELETE FROM association_products WHERE id = $1`, [gone]);
+
+    await settle(attempt.id);
+
+    expect(
+      await ds.query(`SELECT status FROM purchase_records WHERE "userId" = $1`, [buyer])
+    ).toEqual([{ status: 'paid_not_granted' }]);
+    expect(await heldTags(buyer)).toEqual([]);
+    expect(refundsLogged()).toBe(1);
   });
 });
