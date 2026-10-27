@@ -10,6 +10,7 @@
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { spaceHref } from '$lib/bookings/routes';
+  import { bookingPlace } from '$lib/bookings/columns';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -62,7 +63,10 @@
       >
         {booking.space.name}
       </a>
-      <p class="text-text-muted truncate text-sm">{booking.resource.name}</p>
+      <!-- A column named like its space (D44's hidden column) is not read twice. -->
+      {#if booking.resource.name !== booking.space.name}
+        <p class="text-text-muted truncate text-sm">{booking.resource.name}</p>
+      {/if}
     </div>
     <span
       class="border-cn-border text-text-muted shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
@@ -89,7 +93,10 @@
     <div class="flex flex-wrap items-center gap-2 pt-1">
       {#if booking.mine}
         <AddEventToCalendarButton
-          event={bookingCalendarEvent(booking, `${booking.space.name} - ${booking.resource.name}`)}
+          event={bookingCalendarEvent(
+            booking,
+            bookingPlace(booking.space.name, booking.resource.name)
+          )}
           resolveIcsUrl={() => bookingIcsUrl(booking.id)}
         />
       {/if}

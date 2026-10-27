@@ -123,8 +123,11 @@
           <div class="min-w-0 flex-1">
             <p class="text-text-main truncate text-sm font-semibold">{space.name}</p>
             <p class="text-text-muted mt-0.5 text-xs">
-              {m.bookings_tab_resources_count({ count: space.resourceCount })} · {space.discoverability ===
-              'link'
+              <!-- One column is, since WP-R1, the space's hidden one (D44): no count to read. -->
+              {#if space.resourceCount !== 1}
+                {m.bookings_tab_resources_count({ count: space.resourceCount })} ·
+              {/if}
+              {space.discoverability === 'link'
                 ? m.bookings_discoverability_link()
                 : m.bookings_discoverability_listed()}
             </p>
