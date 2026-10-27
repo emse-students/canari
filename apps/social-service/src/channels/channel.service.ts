@@ -4083,6 +4083,93 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * THE ACTOR RELEASES A KEY-GROUP REMOVE IT CLAIMED AND KNOWS IT DID NOT COMMIT (channel-encryption
+   * section 10, 2026-10-27). A kick or a revoke names the actor's committing device, and every
+   * receiver leaves the scope's Remove to it. When that device's roster pass ends with the removed
+   * person still holding a leaf and NO commit of its own whose outcome is unknown - nothing staged,
+   * or a definite refusal - it says so here, and the scope's remaining members elect a committer on
+   * THIS event and on nothing else: a receiver never decides against a claim on a guess that the
+   * actor's commit failed.
+   *
+   * `channelId` null releases the COMMUNITY's key group; a salon's is released by
+   * {@link releaseChannelRemoval}. One scope per release, because the actor commits its scopes one
+   * after the other and a salon's commit may still be in flight when the community's is released.
+   *
+   * WHO MAY: the same permission as the removal itself (`assertActorMayRemoveMembers`, no target to
+   * compare - the person is no longer a member), and only about somebody the scope no longer holds:
+   * a release about a member is refused `409`. A spurious release costs one election for a person
+   * the roster already excludes, which the roster diff decides anyway - it can never remove a member.
+   *
+   * The announcement IS the release, so a failure to publish is answered `503`, not swallowed.
+   */
+  private async releaseRemoval(
+    workspaceId: string,
+    channel: Channel | null,
+    removedUserId: string,
+    actorUserId: string
+  ): Promise<{ success: true }> {
+    await this.assertActorMayRemoveMembers(workspaceId, actorUserId, [], 'skip');
+    let audience: string[];
+    if (channel) {
+      if (channelIsReadableBy(channel, removedUserId)) {
+        throw new ConflictException('This person can still read this salon - nothing to release');
+      }
+      audience = await this.channelAudience(channel);
+    } else {
+      const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+      if (!workspace) throw new NotFoundException('Workspace not found');
+      audience = await this.getWorkspaceMemberIds(workspaceId);
+      if (audience.some((u) => u.trim().toLowerCase() === removedUserId)) {
+        throw new ConflictException('This person is still a member - nothing to release');
+      }
+    }
+    try {
+      await this.redis.publishChannelEvent(
+        'channel.member.removal-released',
+        {
+          workspaceId,
+          channelId: channel?.id ?? null,
+          removedUserId,
+          releasedBy: actorUserId,
+        },
+        audience.filter((u) => u !== actorUserId)
+      );
+    } catch (e) {
+      this.logger.error(
+        `[CHANNEL] release of the removal of ${removedUserId.slice(0, 8)} workspace=${workspaceId} channel=${channel?.id ?? '-'} NOT announced: ${String(e)}`
+      );
+      throw new ServiceUnavailableException('The release could not be announced');
+    }
+    this.logger.log(
+      `[CHANNEL] removal of ${removedUserId.slice(0, 8)} released by ${actorUserId.slice(0, 8)} workspace=${workspaceId} channel=${channel?.id ?? '-'} - its remaining members elect a committer`
+    );
+    return { success: true };
+  }
+
+  /** {@link releaseRemoval} for a community's key group. */
+  async releaseWorkspaceRemoval(
+    workspaceId: string,
+    removedUserId: string,
+    actorUserId: string
+  ): Promise<{ success: true }> {
+    return this.releaseRemoval(workspaceId, null, removedUserId, actorUserId);
+  }
+
+  /** {@link releaseRemoval} for a PRIVATE salon's key group - a public salon has none. */
+  async releaseChannelRemoval(
+    channelId: string,
+    removedUserId: string,
+    actorUserId: string
+  ): Promise<{ success: true }> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+    if (!channel.isPrivate) {
+      throw new BadRequestException('A public salon has no key group of its own');
+    }
+    return this.releaseRemoval(channel.workspaceId, channel, removedUserId, actorUserId);
+  }
+
+  /**
    * The actor's right to remove each of `targetUserIds` from this workspace or one of its salons -
    * refused here, never returned. THE ONE GATE of every removal: `kickFromWorkspace`,
    * `removeMemberFromChannel`, every member an access-list rewrite takes the salon from

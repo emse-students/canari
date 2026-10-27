@@ -4,6 +4,7 @@ import {
   ConflictException,
   GoneException,
   NotFoundException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
@@ -577,6 +578,97 @@ describe('ChannelService security hardening', () => {
     await expect(service.kickFromWorkspace('ws1', 'u-bob', 'u1')).resolves.toEqual({
       success: true,
     });
+  });
+
+  // ── A released Remove (channel-encryption section 10) ──────────────────────
+  // The actor's device claimed the key-group Remove and knows it did not commit it: the remaining
+  // members elect a committer on this event only.
+
+  it('a community release reaches the remaining members, not the actor', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).resolves.toEqual({
+      success: true,
+    });
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removal-released',
+      { workspaceId: 'ws1', channelId: null, removedUserId: 'u-bob', releasedBy: 'u1' },
+      ['u-carol']
+    );
+  });
+
+  it('a release about somebody still a member is refused, and nothing is announced', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob' }]);
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      ConflictException
+    );
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a release needs the removal permission', async () => {
+    const { service, memberRepo, roleRepo, redis } = makeService();
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a salon release names the salon, refuses a public one and one the person can still read', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
+    const salon = {
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: true,
+      allowedUsers: ['u1', 'u-carol'],
+    };
+    channelRepo.findOne.mockResolvedValue(salon);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([
+      { userId: 'u1' },
+      { userId: 'u-carol' },
+      { userId: 'u-bob' },
+    ]);
+
+    await service.releaseChannelRemoval('ch1', 'u-bob', 'u1');
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removal-released',
+      { workspaceId: 'ws1', channelId: 'ch1', removedUserId: 'u-bob', releasedBy: 'u1' },
+      ['u-carol']
+    );
+
+    await expect(service.releaseChannelRemoval('ch1', 'u-carol', 'u1')).rejects.toBeInstanceOf(
+      ConflictException
+    );
+    channelRepo.findOne.mockResolvedValue({ ...salon, isPrivate: false });
+    await expect(service.releaseChannelRemoval('ch1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+  });
+
+  it('a release that cannot be announced is a 503 - the announcement is the release', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
+    redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      ServiceUnavailableException
+    );
   });
 
   it('removeMemberFromChannel reports whether the channel was private', async () => {

@@ -80,8 +80,7 @@
   } from '$lib/utils/chat/memberRemoval';
   import {
     commitDepartureIfElected,
-    forgetDeparturesLeftToActors,
-    revisitDeparturesLeftToActors,
+    commitReleasedDepartureIfElected,
   } from '$lib/utils/graine/departureCommitter';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
@@ -729,7 +728,6 @@
     forgetPostComposerMedia();
     // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
     salonGrants.clear();
-    forgetDeparturesLeftToActors();
     _loginInProgress = false;
   }
 
@@ -1100,6 +1098,22 @@
           })();
         }
       },
+      onChannelRemovalReleased: (event: {
+        workspaceId: string;
+        channelId: string;
+        removedUserId: string;
+      }) => {
+        // The actor did not commit a Remove it claimed, and said so: elect for that one scope.
+        void commitReleasedDepartureIfElected(
+          channelService,
+          {
+            workspaceId: event.workspaceId,
+            channelId: event.channelId,
+            departedUserId: event.removedUserId,
+          },
+          appendLog
+        );
+      },
       onChannelMemberKicked: (event: any) => {
         const outcome = removalOutcome({
           localUserId: globalSession.userId,
@@ -1363,8 +1377,6 @@
     function handleReconnect(trigger: ListingRetryTrigger) {
       if (!globalSession.isLoggedIn) return;
       globalChannels.retryFailedListing(channelsCtx(), trigger);
-      // A removal left to an actor whose commit never landed is decided again on this signal.
-      void revisitDeparturesLeftToActors(channelService, appendLog);
     }
 
     function handleVisibility() {

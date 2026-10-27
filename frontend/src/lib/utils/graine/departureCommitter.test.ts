@@ -2,17 +2,16 @@ import type { ChannelService } from '$lib/services/ChannelService';
 import {
   ELECTION_WINDOW,
   commitDepartureIfElected,
+  commitReleasedDepartureIfElected,
   electDepartureCommitter,
   electionWindow,
-  forgetDeparturesLeftToActors,
-  revisitDeparturesLeftToActors,
   windowOffset,
 } from './departureCommitter';
 
 /**
  * WHO COMMITS A DEPARTURE THE ACTOR CANNOT (channel-encryption section 10). Every receiver of the
  * removal broadcast runs this; exactly one device may commit, and it must be the same one whoever
- * computes it. These pin the election, the actor's claim and its revisit, and every case in which
+ * computes it. These pin the election, the actor's claim and its release, and every case in which
  * this device commits NOTHING.
  */
 
@@ -41,6 +40,8 @@ vi.mock('./runtime', () => ({
       distributionScopes: () => runtime.scopes,
       getDeviceId: () => runtime.deviceId,
       getEpoch: () => runtime.epoch,
+      // The tree and its epoch are read together under the lock; a commit merged meanwhile moves it.
+      runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
       getGroupMemberIdentities: () =>
         runtime.leaves instanceof Error
           ? Promise.reject(runtime.leaves)
@@ -75,7 +76,6 @@ const salonLeave = {
 
 beforeEach(() => {
   lines = [];
-  forgetDeparturesLeftToActors();
   vi.mocked(channels.listMembers).mockClear();
   vi.mocked(channels.listWorkspaceMembers).mockClear();
   reconcile.mockReset().mockResolvedValue(['bob']);
@@ -336,37 +336,77 @@ describe('commitDepartureIfElected', () => {
   });
 });
 
-describe('a departure left to the actor is decided again on the next signal', () => {
+describe('a departure left to the actor is decided again ONLY on its release', () => {
   const kickedByCarol = { ...salonLeave, actorUserId: 'carol', actorDeviceId: 'dev-c' };
 
-  it('elects once the actor`s commit did not land - the departed user still holds a leaf', async () => {
-    await commitDepartureIfElected(channels, kickedByCarol, log);
-    expect(reconcile).not.toHaveBeenCalled();
-
-    // A reconnect: no claim this time, and Bob is still in the tree.
-    await revisitDeparturesLeftToActors(channels, log);
-    expect(reconcile).toHaveBeenCalledOnce();
-    expect(lines.join('\n')).toContain('decided again');
-  });
-
-  it('drops it once the actor`s commit landed', async () => {
-    await commitDepartureIfElected(channels, kickedByCarol, log);
-    runtime.leaves = ['alice:dev-a', 'carol:dev-c'];
-
-    await revisitDeparturesLeftToActors(channels, log);
-    expect(reconcile).not.toHaveBeenCalled();
-    expect(lines.join('\n')).toContain('they hold no leaf here');
-
-    // And it is not decided a third time.
-    lines = [];
-    await revisitDeparturesLeftToActors(channels, log);
-    expect(lines).toEqual([]);
-  });
-
-  it('is revisited before the next removal broadcast is handled', async () => {
+  it('nothing but the release decides it again - not the next removal broadcast', async () => {
     await commitDepartureIfElected(channels, kickedByCarol, log);
     await commitDepartureIfElected(channels, { ...salonLeave, departedUserId: 'dan' }, log);
-    // Bob's owed removal was decided again first (elected here): one pass for him.
+    // Dan holds no leaf; Bob's Remove stays Carol's, whose commit may still be in flight.
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('a release elects for the one released scope, without the claim', async () => {
+    await expect(
+      commitReleasedDepartureIfElected(
+        channels,
+        { workspaceId: 'ws-1', channelId: 'chan-1', departedUserId: 'bob' },
+        log
+      )
+    ).resolves.toBe('elected-here');
     expect(reconcile).toHaveBeenCalledOnce();
+    expect(lines.join(' | ')).toContain('released by the actor');
+  });
+
+  it('a community release decides the community only, never its salons', async () => {
+    runtime.scopes = [
+      { kind: 'channel', workspaceId: 'ws-1', channelId: 'chan-1' },
+      { kind: 'workspace', workspaceId: 'ws-1' },
+    ];
+    await commitReleasedDepartureIfElected(
+      channels,
+      { workspaceId: 'ws-1', channelId: '', departedUserId: 'bob' },
+      log
+    );
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(reconcile.mock.calls[0][1]).toEqual({ kind: 'workspace', workspaceId: 'ws-1' });
+  });
+
+  it('a release about somebody already gone from the tree decides nothing', async () => {
+    runtime.leaves = ['alice:dev-a', 'carol:dev-c'];
+    await expect(
+      commitReleasedDepartureIfElected(
+        channels,
+        { workspaceId: 'ws-1', channelId: 'chan-1', departedUserId: 'bob' },
+        log
+      )
+    ).resolves.toBe('not-in-tree');
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('the tree and its epoch are read together', () => {
+  it('decides nothing from a tree whose epoch moved while it was read', async () => {
+    let reads = 0;
+    const original = runtime.epoch;
+    // The epoch reads 7 then 8: a commit merged between the two halves of the read.
+    Object.defineProperty(runtime, 'epoch', {
+      configurable: true,
+      get: () => (reads++ === 0 ? original : original + 1),
+    });
+    try {
+      await expect(commitDepartureIfElected(channels, salonLeave, log)).resolves.toEqual([
+        'unreadable',
+      ]);
+      expect(lines.join(' | ')).toContain('the epoch moved 7 -> 8');
+      expect(reconcile).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(runtime, 'epoch', {
+        configurable: true,
+        writable: true,
+        enumerable: true,
+        value: 7,
+      });
+    }
   });
 });

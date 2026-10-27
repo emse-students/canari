@@ -94,6 +94,11 @@ export interface ChatSessionCallbacks {
   selectConversation: (name: string) => void;
   onChannelMemberJoined?: (event: any) => void;
   onChannelMemberKicked?: (event: any) => void;
+  onChannelRemovalReleased?: (event: {
+    workspaceId: string;
+    channelId: string;
+    removedUserId: string;
+  }) => void;
   onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
     channelId: string;

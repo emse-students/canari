@@ -1,5 +1,10 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { diffRosterAgainstTree, reconcileDistributionGroupRoster } from './rosterReconcile';
+import {
+  diffRosterAgainstTree,
+  reconcileDistributionGroupRoster,
+  reconcileDistributionGroupRosterReported,
+} from './rosterReconcile';
+import { CommitOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
@@ -438,5 +443,56 @@ describe('reconcileDistributionGroupRoster - one pass per scope at a time', () =
 
     release();
     await community;
+  });
+});
+
+describe('the pass report - what the actor of a removal releases on', () => {
+  // The actor releases a Remove it claimed only on a PROOF that it did not commit it: the report
+  // names who holds a leaf of the tree the pass LEFT, and is null whenever that is not known.
+  const run = () =>
+    reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), () => {});
+
+  beforeEach(() => {
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+  });
+
+  it('a pass that removed bob reports he holds no leaf', async () => {
+    await expect(run()).resolves.toEqual({ removedUserIds: ['bob'], heldUserIds: ['alice'] });
+  });
+
+  it('nothing staged (an unvouched base) reports the tree as read - bob still holds a leaf', async () => {
+    removeDepartedMembers.mockRejectedValue(
+      new UnpublishedBranchError('dist-group', 'other-epoch', 'departed-member removal')
+    );
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+  });
+
+  it('a definite refusal reports the tree read again', async () => {
+    removeDepartedMembers.mockRejectedValue(new Error('epoch rejected'));
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+  });
+
+  it('a commit with an UNKNOWN outcome reports nothing known - it may yet land', async () => {
+    const lines: string[] = [];
+    removeDepartedMembers.mockRejectedValue(
+      new CommitOutcomeUnknownError('dist-group', 26, new Error('no answer'))
+    );
+    await expect(
+      reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      )
+    ).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
+    expect(lines.join(' | ')).toContain('sent and NOT answered');
+    expect(lines.join(' | ')).not.toContain('can still read it');
+  });
+
+  it('a roster it could not read reports the tree as read, nothing having been staged', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('502'));
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+  });
+
+  it('a group this device does not hold reports nothing known', async () => {
+    distributionGroupFor.mockReturnValue(null);
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
   });
 });

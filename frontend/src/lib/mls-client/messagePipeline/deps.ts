@@ -76,6 +76,16 @@ export interface MessageHandlerDeps {
     /** Channel removals only: a public channel stays readable, so nothing is lost. */
     channelIsPrivate?: boolean;
   }) => void;
+  /**
+   * The actor of a removal RELEASED the key-group Remove it claimed and did not commit
+   * (`channel.member.removal-released`): this scope's remaining members elect a committer. An empty
+   * `channelId` is the community's key group.
+   */
+  onChannelRemovalReleased?: (event: {
+    workspaceId: string;
+    channelId: string;
+    removedUserId: string;
+  }) => void;
   onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
     channelId: string;

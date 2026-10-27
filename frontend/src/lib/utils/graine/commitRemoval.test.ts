@@ -15,7 +15,7 @@ import {
  */
 
 const reconcile = vi.hoisted(() => vi.fn());
-vi.mock('./rosterReconcile', () => ({ reconcileDistributionGroupRoster: reconcile }));
+vi.mock('./rosterReconcile', () => ({ reconcileDistributionGroupRosterReported: reconcile }));
 
 const leadership = vi.hoisted(() => ({ value: 'leader' as string }));
 vi.mock('$lib/mls-client/tabLeader', () => ({ getTabLeadership: () => leadership.value }));
@@ -44,14 +44,17 @@ vi.mock('$lib/utils/chat/groupUsability', () => ({
     mls.getLocalGroups().includes(id),
 }));
 
-const channels = {} as ChannelService;
+const releaseRemoval = vi.fn();
+const channels = { releaseRemoval } as unknown as ChannelService;
 const salon = channelScope('ws-1', 'chan-1');
 let lines: string[];
 const log = (m: string) => lines.push(m);
 
 beforeEach(() => {
   lines = [];
-  reconcile.mockReset().mockResolvedValue(['bob']);
+  // The pass removed bob: he holds no leaf of the tree it left.
+  reconcile.mockReset().mockResolvedValue({ removedUserIds: ['bob'], heldUserIds: ['alice'] });
+  releaseRemoval.mockReset().mockResolvedValue(undefined);
   leadership.value = 'leader';
   runtime.ready = true;
   runtime.held = true;
@@ -61,18 +64,56 @@ beforeEach(() => {
 
 describe('commitRemovalNow', () => {
   it('runs the scope roster pass from this device when it holds the group', async () => {
-    await expect(commitRemovalNow(channels, salon, 'access revoked', log)).resolves.toEqual({
+    await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
       kind: 'ran',
       removedUserIds: ['bob'],
+      released: false,
     });
     expect(reconcile).toHaveBeenCalledExactlyOnceWith(channels, salon, log);
+    expect(releaseRemoval).not.toHaveBeenCalled();
+  });
+
+  it('RELEASES the Remove when its pass proves it did not commit it - he still holds a leaf', async () => {
+    // Nothing staged, or a definite refusal: the tree the pass left still holds him.
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+    await expect(commitRemovalNow(channels, salon, 'Bob', 'access revoked', log)).resolves.toEqual({
+      kind: 'ran',
+      removedUserIds: [],
+      released: true,
+    });
+    expect(releaseRemoval).toHaveBeenCalledExactlyOnceWith(salon, 'Bob');
+    expect(lines.join(' | ')).toContain('released to the scope');
+  });
+
+  it('releases NOTHING while a commit of its pass has an unknown outcome - it may yet land', async () => {
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: null });
+    await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
+      kind: 'ran',
+      removedUserIds: [],
+      released: false,
+    });
+    expect(releaseRemoval).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('not released');
+  });
+
+  it('says so when the release itself is refused, and never throws', async () => {
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: ['bob'] });
+    releaseRemoval.mockRejectedValue(new Error('503'));
+    await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
+      kind: 'ran',
+      removedUserIds: [],
+      released: false,
+    });
+    expect(lines.join(' | ')).toContain('the release was NOT announced');
   });
 
   it('commits nothing on a tab that is not the leader, and says so', async () => {
     for (const state of ['follower', 'undecided']) {
       leadership.value = state;
       lines = [];
-      await expect(commitRemovalNow(channels, salon, 'access revoked', log)).resolves.toEqual({
+      await expect(
+        commitRemovalNow(channels, salon, 'bob', 'access revoked', log)
+      ).resolves.toEqual({
         kind: 'not-leader',
       });
       expect(lines.join(' | ')).toContain(`not the leader tab (${state})`);
@@ -82,7 +123,7 @@ describe('commitRemovalNow', () => {
 
   it('commits nothing when this device holds no key group for the scope, and says so', async () => {
     runtime.held = false;
-    await expect(commitRemovalNow(channels, salon, 'access revoked', log)).resolves.toEqual({
+    await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
       kind: 'not-held',
     });
     expect(reconcile).not.toHaveBeenCalled();
@@ -91,7 +132,7 @@ describe('commitRemovalNow', () => {
 
   it('commits nothing before a Graine session is wired', async () => {
     runtime.ready = false;
-    await expect(commitRemovalNow(channels, salon, 'access revoked', log)).resolves.toEqual({
+    await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
       kind: 'no-runtime',
     });
     expect(reconcile).not.toHaveBeenCalled();
@@ -99,7 +140,7 @@ describe('commitRemovalNow', () => {
 
   it('never throws into the gesture: a failing pass is reported', async () => {
     reconcile.mockRejectedValue(new Error('boom'));
-    await expect(commitRemovalNow(channels, salon, 'access revoked', log)).resolves.toEqual({
+    await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
       kind: 'failed',
     });
     expect(lines.join(' | ')).toContain('the roster pass FAILED (Error: boom)');

@@ -29,6 +29,7 @@ export interface ChannelEventContext extends Pick<
   | 'addMessageToChat'
   | 'onChannelMemberJoined'
   | 'onChannelMemberKicked'
+  | 'onChannelRemovalReleased'
   | 'onChannelUpdated'
   | 'onRolePermissionsChanged'
   | 'onChannelDeleted'
@@ -75,6 +76,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     addMessageToChat,
     onChannelMemberJoined,
     onChannelMemberKicked,
+    onChannelRemovalReleased,
     onChannelUpdated,
     onRolePermissionsChanged,
     onChannelDeleted,
@@ -230,6 +232,22 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       kickedBy: data.kickedBy ?? data.removedBy,
       actorDeviceId: typeof data.actorDeviceId === 'string' ? data.actorDeviceId : undefined,
       channelIsPrivate: data.isPrivate === true,
+    });
+    return;
+  }
+
+  // THE ACTOR RELEASED A REMOVE IT CLAIMED (channel-encryption section 10): it did not commit it, and
+  // the scope's remaining members elect a committer - on this event, never on a guess.
+  if (event.type === 'channel.member.removal-released') {
+    const data = event.data || {};
+    const workspaceId = String(data.workspaceId || '');
+    const removedUserId = String(data.removedUserId || '');
+    if (!workspaceId) return unaddressable(log, event.type, 'workspaceId');
+    if (!removedUserId) return unaddressable(log, event.type, 'removedUserId');
+    onChannelRemovalReleased?.({
+      workspaceId,
+      channelId: String(data.channelId || ''),
+      removedUserId,
     });
     return;
   }

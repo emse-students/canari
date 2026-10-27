@@ -405,6 +405,24 @@ export class ChannelsController {
   }
 
   /**
+   * The actor of a private-salon revoke RELEASES the key-group Remove it claimed and could not
+   * commit (`releaseRemoval`): the salon's remaining members elect a committer on this event only.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/members/:userId/removal-released')
+  releaseChannelRemoval(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('userId') userId: string
+  ) {
+    return this.service.releaseChannelRemoval(
+      channelId,
+      userId.trim().toLowerCase(),
+      xUserId.trim().toLowerCase()
+    );
+  }
+
+  /**
    * Returns the channel's own members. `?scope=workspace` returns the whole community roster
    * instead - needed by the settings panel to offer people who are not in the channel yet.
    * `?presence=1` adds each member's `online` flag (Graine repair election).
@@ -470,6 +488,24 @@ export class ChannelsController {
       userId.trim().toLowerCase(),
       xUserId.trim().toLowerCase(),
       actorDevice
+    );
+  }
+
+  /**
+   * The actor of a community kick RELEASES the key-group Remove it claimed and could not commit
+   * (`releaseRemoval`): the community's remaining members elect a committer on this event only.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('workspaces/:workspaceId/members/:userId/removal-released')
+  releaseWorkspaceRemoval(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string
+  ) {
+    return this.service.releaseWorkspaceRemoval(
+      workspaceId,
+      userId.trim().toLowerCase(),
+      xUserId.trim().toLowerCase()
     );
   }
 

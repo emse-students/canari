@@ -675,6 +675,22 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * Releases the key-group Remove of `userId` this device claimed in `scope` and knows it did not
+   * commit (`commitRemoval.ts`): the scope's remaining members elect a committer on the event the
+   * server publishes. Throws on any answer but a 2xx - the caller logs it.
+   */
+  async releaseRemoval(scope: DistributionScope, userId: string): Promise<void> {
+    const path =
+      scope.kind === 'workspace'
+        ? `workspaces/${encodeURIComponent(scope.workspaceId)}/members/${encodeURIComponent(userId)}/removal-released`
+        : `${this.normalizeChannelId(scope.channelId)}/members/${encodeURIComponent(userId)}/removal-released`;
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${path}`, {
+      method: 'POST',
+    });
+    await this.handleError(res);
+  }
+
   async renameChannel(channelId: string, newName: string) {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}`, {

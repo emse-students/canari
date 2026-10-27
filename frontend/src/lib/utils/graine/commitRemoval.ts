@@ -6,7 +6,8 @@ import {
 } from '$lib/mls-client/distributionScope';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { reconcileDistributionGroupRoster } from './rosterReconcile';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { reconcileDistributionGroupRosterReported } from './rosterReconcile';
 import { isGraineReady, rawChannelId, requireGraineRuntime, scopeForChannel } from './runtime';
 
 /**
@@ -32,6 +33,15 @@ import { isGraineReady, rawChannelId, requireGraineRuntime, scopeForChannel } fr
  * returns its kind and logs it. The removal is then committed by a holder's next roster pass - the
  * convergent diff that existed before this, unchanged - and nothing here retries.
  *
+ * A CLAIM IT DID NOT HONOUR IS RELEASED, ON A PROOF. The removal request named this device as the
+ * committer (`committingDeviceId`), and every receiver left the scope's Remove to it. When the pass
+ * ends with the removed person still holding a leaf AND no commit of this pass whose outcome is
+ * unknown - nothing staged, a refused commit, a roster it could not read - this device KNOWS it did
+ * not remove them, and says so to the server (`releaseRemoval`), which tells the scope's remaining
+ * members to elect a committer. That event is the only thing a receiver re-decides on: a commit
+ * still in flight is never raced by an election begun on a guess. An actor whose app closed before
+ * the pass ended releases nothing, and a holder's next roster pass - the next app load - removes them.
+ *
  * NEVER THROWS, and is never awaited by the gesture: the server half has already succeeded, and the
  * removal it reports must not be reported as failed because a commit could not follow it.
  */
@@ -51,8 +61,11 @@ export function committingDeviceId(): string | undefined {
 
 /** What one actor-side removal commit did, in the terms its log line reports. */
 export type RemovalCommitOutcome =
-  /** A roster pass ran on a held group; `removedUserIds` is empty when it removed nobody. */
-  | { kind: 'ran'; removedUserIds: string[] }
+  /**
+   * A roster pass ran on a held group; `removedUserIds` is empty when it removed nobody, and
+   * `released` says whether this device released the Remove to the scope's members.
+   */
+  | { kind: 'ran'; removedUserIds: string[]; released: boolean }
   /** No Graine session is wired on this device. */
   | { kind: 'no-runtime' }
   /** This tab is not the leader: only the leader commits (`FollowerTabCommitError`). */
@@ -71,6 +84,7 @@ export type RemovalCommitOutcome =
 export async function commitRemovalNow(
   channelService: ChannelService,
   scope: DistributionScope,
+  departedUserId: string,
   why: string,
   log: (message: string) => void
 ): Promise<RemovalCommitOutcome> {
@@ -99,8 +113,15 @@ export async function commitRemovalNow(
   }
 
   try {
-    const removedUserIds = await reconcileDistributionGroupRoster(channelService, scope, log);
-    return { kind: 'ran', removedUserIds };
+    const report = await reconcileDistributionGroupRosterReported(channelService, scope, log);
+    const released = await releaseIfStillHeld(
+      channelService,
+      scope,
+      departedUserId,
+      report.heldUserIds,
+      log
+    );
+    return { kind: 'ran', removedUserIds: report.removedUserIds, released };
   } catch (e) {
     // The pass reports its own outcomes, so reaching here is a defect in a dependency: said, never
     // thrown into a gesture the server already accepted.
@@ -108,6 +129,43 @@ export async function commitRemovalNow(
       `[GRAINE] REMOVE ${label}: the roster pass FAILED (${String(e)}) - a holder's next roster pass removes them`
     );
     return { kind: 'failed' };
+  }
+}
+
+/**
+ * Releases the Remove this device claimed when its pass PROVES it did not commit it: the departed
+ * user still holds a leaf of the tree the pass left (`heldUserIds`), and no commit of that pass has
+ * an unknown outcome (`heldUserIds` is `null` then, and nothing is released). Never throws.
+ *
+ * @returns whether the release was announced.
+ */
+async function releaseIfStillHeld(
+  channelService: ChannelService,
+  scope: DistributionScope,
+  departedUserId: string,
+  heldUserIds: string[] | null,
+  log: (message: string) => void
+): Promise<boolean> {
+  const label = scopeLabel(scope);
+  const departed = departedUserId.slice(0, 8);
+  if (heldUserIds === null) {
+    log(
+      `[GRAINE] REMOVE ${departed} from ${label}: whether this pass removed them is not known - not released; a holder's next roster pass decides`
+    );
+    return false;
+  }
+  if (!heldUserIds.includes(canonicalUserId(departedUserId))) return false;
+  try {
+    await channelService.releaseRemoval(scope, departedUserId);
+    log(
+      `[GRAINE] REMOVE ${departed} from ${label}: this device did not commit it and they still hold a leaf - released to the scope's members, who elect a committer`
+    );
+    return true;
+  } catch (e) {
+    log(
+      `[GRAINE] REMOVE ${departed} from ${label}: this device did not commit it, and the release was NOT announced (${String(e)}) - a holder's next roster pass removes them`
+    );
+    return false;
   }
 }
 
@@ -129,7 +187,7 @@ export async function commitCommunityKick(
 ): Promise<RemovalCommitOutcome[]> {
   const why = `${kickedUserId.slice(0, 8)} kicked from the community`;
   const community = workspaceScope(workspaceId);
-  const outcomes = [await commitRemovalNow(channelService, community, why, log)];
+  const outcomes = [await commitRemovalNow(channelService, community, kickedUserId, why, log)];
   // Only once the community pass could run: every gate it refused on (runtime, leadership) refuses
   // the salons for the same reason, and has already said so.
   if (outcomes[0].kind !== 'ran' && outcomes[0].kind !== 'not-held') return outcomes;
@@ -141,7 +199,7 @@ export async function commitCommunityKick(
     `[GRAINE] REMOVE ${kickedUserId.slice(0, 8)}: ${salons.length} private salon(s) of ${workspaceId.slice(0, 8)} registered here - each committed in turn`
   );
   for (const salon of salons) {
-    outcomes.push(await commitRemovalNow(channelService, salon, why, log));
+    outcomes.push(await commitRemovalNow(channelService, salon, kickedUserId, why, log));
   }
   return outcomes;
 }
@@ -167,6 +225,7 @@ export async function commitSalonRevoke(
   return commitRemovalNow(
     channelService,
     scope,
+    revokedUserId,
     `access of ${revokedUserId.slice(0, 8)} revoked`,
     log
   );

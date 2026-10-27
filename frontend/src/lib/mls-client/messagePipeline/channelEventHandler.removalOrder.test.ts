@@ -26,11 +26,13 @@ const { salonGrants } = await import('$lib/utils/chat/memberRemoval');
 
 const log = vi.fn();
 const onChannelMemberKicked = vi.fn();
+const onChannelRemovalReleased = vi.fn();
 const ctx = () =>
   ({
     conversations: new Map(),
     onChannelMemberJoined: vi.fn(),
     onChannelMemberKicked,
+    onChannelRemovalReleased,
     log,
     onOutOfSync: vi.fn(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,5 +120,31 @@ describe('the removal hands on who performed it', () => {
     expect(onChannelMemberKicked).toHaveBeenCalledWith(
       expect.objectContaining({ kickedUserId: 'bob', kickedBy: 'carol', actorDeviceId: 'w1' })
     );
+  });
+});
+
+describe('a released Remove', () => {
+  it('reaches the shell with its scope - an absent channel is the community', async () => {
+    await handleChannelEvent(
+      {
+        type: 'channel.member.removal-released',
+        data: { workspaceId: 'ws-1', channelId: null, removedUserId: 'bob', releasedBy: 'carol' },
+      },
+      ctx()
+    );
+    expect(onChannelRemovalReleased).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: 'ws-1',
+      channelId: '',
+      removedUserId: 'bob',
+    });
+  });
+
+  it('is lost loudly, not silently, without the person it names', async () => {
+    await handleChannelEvent(
+      { type: 'channel.member.removal-released', data: { workspaceId: 'ws-1' } },
+      ctx()
+    );
+    expect(onChannelRemovalReleased).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('arrived with no removedUserId'));
   });
 });
