@@ -325,7 +325,7 @@ without a kick. Then assert three things within the bound:
 - a message sent in the salon is readable on the subject's seat;
 - the stale leaf is gone or reused, not duplicated.
 
-Until that row runs, this stays a P3.
+**Read on `1.5.0-alpha.2` (2026-10-27): no duplicate.** All five cycles had the grant land first; the closing grant seated both of the subject's devices (`active`, one row each), a salon message reached the subject's seat, and the subject's own roster check counted 8 leaves for 8 active devices. The stale leaf is gone or reused, so the P2 does not arise; this stays a P3 for the two reads below.
 
 To read:
 
