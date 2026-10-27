@@ -113,8 +113,8 @@ Fields Canari sends: `provider_token`, `name`, `address`, `zipcode`, `city`, `co
 ISO code). **That these seven SUFFICE is measured** (three creations accepted in production 2026-10-23;
 `provider_token` alone answers error 1). **That they are the WHOLE list is not**: it was taken from Lydia's
 API documentation during the 2026-09 migration plan, which is not kept in this repository, and no optional
-field was ever tried (the plan names an optional `webhook`). Which field, if any, names the Business's
-HOLDER is the open question of the console sign-in below (asked to Lydia). In production (measured 2026-10-23) the answer also carries `merchant_ident`, EMPTY while
+field was ever tried (the plan names an optional `webhook`). **Lydia's documentation (section 5b, read
+2026-10-27) lists exactly these seven plus `send_email` and `webhook`, and NO field names a holder**: a person is attached by `business/addcashier`, `auth/register` or `auth/login`. In production (measured 2026-10-23) the answer also carries `merchant_ident`, EMPTY while
 the Business is not validated, and `dashboard_url` is `.../console-pro/<business id>-<slug>`. That link
 answers **404 to anyone not signed in to the Lydia console**, on the sandbox and in production alike: it is
 not a sign-in link, and the console path is the one below.
@@ -188,12 +188,28 @@ knows which one it is (Lydia does not say).
 - The sandbox and production answer the same shapes as far as measured. Production was first run on
   2026-10-23: one real payment of the minimum amount, its `confirm` verified (sections 1 and 3).
 
+## 5b. What Lydia's own documentation says (read 2026-10-27)
+
+The API documentation is an apiDoc site served by the sandbox itself (`https://homologation.lydia-app.com/doc/api/`, its data in `api_data.json` and `api_project.json` next to the page), open to anyone. Lydia's account manager said our open questions were answered there. **It is the primary source for everything below; it is not copied into this repository, read it at that address.** What it settles:
+
+- **Signature (all signed calls and callbacks):** the MD5 of the `key=value` pairs sorted alphabetically, joined by `&`, followed by `&` and the private token. Parameters are signed AS SENT: if a layer escapes them, they are signed escaped. This is exactly what section 3 measured for the callback.
+- **`request/do` cannot be signed:** the doc says the `signed` field of a callback is "0 most of the time" because a call to `request/do` is not signable (a signature is reserved to another Lydia product).
+- **`request/state` answers a `signature` when a `vendor_token` is sent:** it proves the answer came from a Lydia server, and the doc advises a reply be checked.
+- **Reconciliation, in the doc's own words:** three ways to learn a request was paid - the callback URL, `request/state`, and `transaction/list` - and "at least two" should be used: a callback plus a backup that calls `request/state` for every pending request whose callback has not arrived after a few minutes, and a nightly `transaction/list` compared with our rows.
+- **`business/create`:** the documented parameters are `provider_token`, `name`, `address`, `zipcode`, `city`, `country`, `business_email`, `business_phone`, `send_email` (`yes` by default) and `webhook`. The doc lists `webhook` without marking it optional; production accepted our seven without it. The webhook receives two POST fields only, `vendor_token` and `event`, **unsigned**, with the events `BUSINESS_VALIDATED` and `BUSINESS_UNVALIDATED` (the second turns daily bank transfers off). Unsigned means it is a hint, never a proof: a safe use re-reads the Business's state from Lydia before trusting it.
+- **Who holds a Business made by the Provider:** none of the creation parameters names a holder. The doc gives three ways to attach a person: (1) `business/addcashier` with `provider_token`, `vendor_token`, `cashier_phone` (a mobile number), `permissions` (a JSON object over `access_collect`, `access_allreceipt`, `access_checkout`, `access_statement`, `access_feedback`, `access_cashier`, `access_voucher`, `access_marketing`, `access_fee`, `access_cancelrequest`, `access_canceltransaction`, `access_manage_collects`, `access_easeofpayment`) and a `signature` over `cashier_phone` and `permissions` plus the Provider private token; `notify=no` skips the text message; the cashier "will next need to register" and `access_cashier` is the right that manages cashiers; (2) `auth/register` with the `vendor_token`: creates a pro account, which gets ALL rights when no other user is associated with the Business and only collect otherwise; (3) `auth/login` with a `vendor_token`: links an existing account to the Business with the right to collect. This explains the measured 2026-10-23 failure (a phone alone attaches nothing) and makes `business/addcashier` the missing enrolment step. **Not yet tried by Canari.**
+- **`auth/vendortoken`** validates that a public vendor token and a private one match (`vendor_token`, `vendor_id`): the check an admin's pasted private key never had.
+- **Errors worth a typed answer:** `104` unknown Provider (also an unknown recipient), `102` invalid vendor token, `103` tokens do not match, `10` not authorised, `3` bad permission format or an `order_ref` already used, `444` invalid signature, `2701` blocked business, `5` no provider for a remote request (the documented name of the error a not-yet-validated Business gets on `request/do`), `106` user already exists, `198` missing information.
+- **The sandbox's own tools:** a developer back office at `https://homologation.lydia-app.com/backoffice` (sign in with the vendor token) to look at transactions and requests and simulate payments; two fake card numbers are listed there too, but section 5 measured that a real card flow is not the way in the sandbox since Lydia's update.
+- **Not in the doc:** which documents an association must give for validation, the console sign-in of a Provider-made Business (the three ways above are the only documented route), the format expected for `country`, and refund prerequisites.
+
 ## 6. Still unknown
 
 - The default lifetime of a request with no `expire_time` (at least 47 minutes on the sandbox).
 - Whether `api_token_id` is the Business private token, and whether `business/create` ever returns the
   private token itself.
-- How the holder of a Business made by `business/create` signs in to its console (section 2), and which
+- Whether `business/addcashier` (or `auth/register` with the `vendor_token`) makes a Business made by
+  `business/create` appear in a person's console (section 5b: the documented routes, never tried), and which
   documents Lydia asks of an ASSOCIATION (the e-mail names a KBIS or SIRET extract).
 - What a refund does end to end.
 - Whether a callback is retried after a non-2xx, and from which addresses Lydia calls.
