@@ -31,8 +31,8 @@ function fakeRepo(rows: Row[]) {
     count: jest.fn(({ where }: { where: Partial<Row> }) =>
       Promise.resolve(rows.filter((r) => matches(r, where)).length)
     ),
-    // The two raw statements the service sends: `recordFollowRequest`'s INSERT ... SELECT ... ON
-    // CONFLICT DO NOTHING RETURNING status, and `unfollowUser`'s DELETE ... RETURNING status (in
+    // The raw statements the service sends: `recordFollowRequest`'s INSERT ... SELECT ... ON
+    // CONFLICT DO NOTHING RETURNING status and its block re-read, and `unfollowUser`'s DELETE ... RETURNING status (in
     // the driver's `[rows, rowCount]` shape). Their real behaviour - concurrency, the person and
     // block conditions - is proven against PostgreSQL in `user-follow-status.integration.spec.ts`
     // and `follow-requests.integration.spec.ts`; this stands in for their single-caller semantics.
@@ -45,8 +45,12 @@ function fakeRepo(rows: Row[]) {
         rows.push(...keep);
         return Promise.resolve([gone.map((r) => ({ status: r.status })), gone.length]);
       }
+      // The re-read of a block after the write: none stands in this fake.
+      if (/^\s*SELECT EXISTS \(SELECT 1 FROM user_blocks/.test(sql)) {
+        return Promise.resolve([{ blocked: false }]);
+      }
       if (!/^\s*INSERT INTO user_follows/.test(sql)) throw new Error(`unexpected SQL: ${sql}`);
-      const [, followerUserId, followedUserId, status] = params;
+      const [followerUserId, followedUserId, status] = params;
       if (rows.some((r) => matches(r, { followerUserId, followedUserId }))) {
         return Promise.resolve([]);
       }

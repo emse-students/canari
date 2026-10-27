@@ -17,6 +17,7 @@ import { Association } from '../associations/entities/association.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
 import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
 import { UserFollow } from '../follows/entities/user-follow.entity';
+import { short } from '../follows/follows.service';
 import { ChannelService } from '../channels/channel.service';
 import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
@@ -107,7 +108,7 @@ export class InternalController {
     // TypeORM's Postgres driver answers a DELETE with `[rows, rowCount]`.
     const bellRows = Array.isArray(bell) && typeof bell[1] === 'number' ? bell[1] : 0;
     this.logger.log(
-      `[INTERNAL_SEVER_FOLLOWS] a=${userA} b=${userB} removed=${removed} requestNotices=${bellRows}`
+      `[INTERNAL_SEVER_FOLLOWS] a=${short(userA)} b=${short(userB)} removed=${removed} requestNotices=${bellRows}`
     );
     return { ok: true, removed };
   }
