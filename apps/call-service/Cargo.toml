@@ -12,17 +12,22 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.5.2", features = ["fs", "trace", "cors"] }
-webrtc = "0.17"
+webrtc = "0.21"
+async-trait = "0.1"
+# The sans-I/O core webrtc 0.21 is built on: its interceptor, track and RTP types are not
+# re-exported, and the SFU needs them (src/forward.rs). Same minor as webrtc, so one copy resolves.
+rtc = { version = "0.21", default-features = false }
 anyhow = "1.0.81"
 uuid = { version = "1.8.0", features = ["serde", "v4"] }
 dashmap = "6.2.1"
 jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-# time 0.3.48+ breaks rcgen <0.14 (rustc E0119); pin until webrtc pulls rcgen >=0.14.
-time = "=0.3.55"
 
 [dev-dependencies]
 # Both already in the lock through axum's `ws` feature: `tests/p2p_signalling.rs` drives the real
 # binary over real WebSockets, the way a browser does.
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
+# The in-process TURN SERVER of tests/relay_path.rs: webrtc 0.21 only ships a TURN client.
+turn = "0.17"
+webrtc-util = "0.17"
