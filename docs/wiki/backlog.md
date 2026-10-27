@@ -1984,6 +1984,26 @@ is its first compile and the iPhone readings listed under Owed on
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
 
+## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
+
+- **A text restored while an edit is open is LOST.** A refused send answered (or a share landing)
+  on the conversation being edited goes through `restoreFailedDraft` into the composer, which holds
+  the edited message's text; `cancel`, `confirm` and `reset` then put back the draft saved at
+  `begin` (`editSession.svelte.ts`), and the restored text is gone - or, on `confirm`, saved as part
+  of the edited message.
+- **The salon ledger detour stays, for durability.** A salon text resumed after the member left the
+  salon goes back to the ledger (`recordUnsentSalonText`), not straight into that salon's draft
+  through the gated writer: the ledger is persisted, the drafts are memory only, so a page closed
+  before the next visit would lose it. Simplifying it waits for drafts that outlive the page.
+- **A mention dropdown can outlive a conversation switch.** `useMentionAutocomplete` closes only on
+  input: type `@ali` in A, switch to B before the debounced search answers or with the list open,
+  and the list (A's members) stays over B's composer until the next keystroke.
+- **Drafts are never removed when a conversation is left or deleted**: the entry stays in
+  `draftByConversation` until sign-out. Memory only and per page life, so small - but a conversation
+  re-joined later shows the old text.
+
+[chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
+
 ## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
 
 `pending_share.json` holds the shared TEXT in the clear, in three places: the App Group (written by
