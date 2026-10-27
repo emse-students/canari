@@ -362,9 +362,35 @@ to the same subject decided:
 ```
 
 The leaves the Welcome never reached were still in the tree, and the Add treated them as members
-that need nothing. The subject was kicked at the end of every cycle, so nothing was exposed in this
-run. But if a grant had stood, those devices would have had a leaf and no Welcome: in the tree,
-but unable to read.
+that need nothing.
+
+**What each person sees, read from this run's consoles:**
+
+- **The granter: nothing.** The panel shows the grant as made (`200`). The refused Welcome is an
+  `error` in the console only. The later `already hold a leaf - no commit` is silent.
+- **The subject, in this run: the salon appears, then is refused.** Each time the grant reached them
+  live, their client logged `Joined channel 114d3327…` and `[CHANNEL] #114d3327… updated -
+  canWrite=true`, so the salon shows as writable. The next read of its distribution group answered
+  `403`, logged as `this user is NOT entitled to its distribution group (403) - no join is owed and
+  no retry can help`, at 21:56:01, 21:56:26 and 21:58:40. Every cycle ended with the kick, so the
+  subject was never entitled and nothing was withheld from a member.
+- **The case this run did not reach: a grant that stands after a refused Welcome.** Reading
+  `ensureJoined` (`graine/distributionGroup.ts`): the subject's device does not hold the group. Its
+  seat was never written (the Welcome was refused), so no Welcome is owed to it. Its own door is
+  therefore an external commit. Nothing waits on the admitter, so by the code it should self-heal.
+  What is unobserved is the outcome of that external commit when the tree already holds a leaf for
+  the same device (the duplicate-leaf case that GRP-4 closed for conversations). If the gate refuses
+  it, the member has the salon in their list and can never read it: a **P2**.
+
+**The row that decides it: RM-5 with a closing uncontested grant.** After the race cycles, with at
+least one cycle where the grant landed first (a refused Welcome), rejoin the subject and grant them
+without a kick. Then assert three things within the bound:
+
+- the subject's device is `active` in the salon's distribution group;
+- a message sent in the salon is readable on the subject's seat;
+- the stale leaf is gone or reused, not duplicated.
+
+**Read on `1.5.0-alpha.2` (2026-10-27): no duplicate.** All five cycles had the grant land first; the closing grant seated both of the subject's devices (`active`, one row each), a salon message reached the subject's seat, and the subject's own roster check counted 8 leaves for 8 active devices. The stale leaf is gone or reused, so the P2 does not arise; this stays a P3 for the two reads below.
 
 To read:
 
