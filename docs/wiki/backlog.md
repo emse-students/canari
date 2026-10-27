@@ -362,9 +362,35 @@ to the same subject decided:
 ```
 
 The leaves the Welcome never reached were still in the tree, and the Add treated them as members
-that need nothing. The subject was kicked at the end of every cycle, so nothing was exposed in this
-run. But if a grant had stood, those devices would have had a leaf and no Welcome: in the tree,
-but unable to read.
+that need nothing.
+
+**What each person sees, read from this run's consoles:**
+
+- **The granter: nothing.** The panel shows the grant as made (`200`). The refused Welcome is an
+  `error` in the console only. The later `already hold a leaf - no commit` is silent.
+- **The subject, in this run: the salon appears, then is refused.** Each time the grant reached them
+  live, their client logged `Joined channel 114d3327…` and `[CHANNEL] #114d3327… updated -
+  canWrite=true`, so the salon shows as writable. The next read of its distribution group answered
+  `403`, logged as `this user is NOT entitled to its distribution group (403) - no join is owed and
+  no retry can help`, at 21:56:01, 21:56:26 and 21:58:40. Every cycle ended with the kick, so the
+  subject was never entitled and nothing was withheld from a member.
+- **The case this run did not reach: a grant that stands after a refused Welcome.** Reading
+  `ensureJoined` (`graine/distributionGroup.ts`): the subject's device does not hold the group. Its
+  seat was never written (the Welcome was refused), so no Welcome is owed to it. Its own door is
+  therefore an external commit. Nothing waits on the admitter, so by the code it should self-heal.
+  What is unobserved is the outcome of that external commit when the tree already holds a leaf for
+  the same device (the duplicate-leaf case that GRP-4 closed for conversations). If the gate refuses
+  it, the member has the salon in their list and can never read it: a **P2**.
+
+**The row that decides it: RM-5 with a closing uncontested grant.** After the race cycles, with at
+least one cycle where the grant landed first (a refused Welcome), rejoin the subject and grant them
+without a kick. Then assert three things within the bound:
+
+- the subject's device is `active` in the salon's distribution group;
+- a message sent in the salon is readable on the subject's seat;
+- the stale leaf is gone or reused, not duplicated.
+
+**Read on `1.5.0-alpha.2` (2026-10-27): no duplicate.** All five cycles had the grant land first; the closing grant seated both of the subject's devices (`active`, one row each), a salon message reached the subject's seat, and the subject's own roster check counted 8 leaves for 8 active devices. The stale leaf is gone or reused, so the P2 does not arise; this stays a P3 for the two reads below.
 
 To read:
 
@@ -811,6 +837,41 @@ What was running at the same time: the rig's own replay chain, on the operator c
 different worktree. `sourcestamp-selftest` writes a file into its tree and hashes the tree twice, so
 something writing to the same tree would break it. No writer was found. If either step fails again,
 keep the full output, not the tail.
+
+## P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)
+
+Seen on dev `1.5.0-alpha.1`. W4 and W8 are two devices of ONE account, which a user with two devices
+can produce by joining from both. They external-joined the community's key group in the same second.
+
+- W8 was refused `concurrent_commit` twice, then joined at base 2.
+- W4 was refused `epoch_mismatch` three times: base 0 at group 1, base 1 at group 2, base 2 at group 3.
+  It reached `EXTERNAL_JOIN_MAX_ATTEMPTS` and logged
+  `[GRAINE] could not join the distribution group of community ... (refused)`.
+- 0.9 s later another path joined it at base 4. An application frame of epoch 4 then reached it at
+  epoch 5: `[GRAINE] frame on ... is unreadable for good (past-epoch-application) - acknowledged; its
+  seed comes back through a history request`.
+
+The row still passed, but this is a heal after a race on the normal path, which the rules count as
+a defect: the bounded retry lost to its own sibling's commits, and a frame was lost and had to be
+recovered. The give-up line had appeared in no row since 2026-08-27
+([cross-client-campaign](cross-client-campaign.md)). Evidence: the run's W4 and W8 consoles
+(`logs/consoles/LIST-RACE-1-W-2026-10-26T23-45-59-975Z-*`, W4 lines 123-171, in the rig's state
+directory). Owed: say what serialises two joins of one account into one key group. That fact
+deletes the overlap; a larger retry bound only widens it. Then re-measure with LIST-RACE-1-W, which
+reproduces the pair. Not narrated: it stays dirt until fixed.
+
+## P3 - "they can still read it" after a refusal whose commit log has just applied the departure (BIG-3-noI1, 2026-10-27)
+
+`rosterReconcile.ts` logs `[GRAINE] could not remove N departed member(s) from ...: <error> - they
+can still read it` on every failure of its Remove. On dev `1.5.0-alpha.1` the failure was
+`concurrent_commit`. The line just before it in the same console says the commit log was read and the
+concurrent commit WAS that departure (`refused concurrent_commit at epoch 7: read the commit log, 1
+commit(s) applied, now epoch 8`, with the member gone from the tree). So the line states something
+false, and a reader told "they can still read it" is sent after a leak that did not happen. Owed:
+classify the refusal against the commit log the client just read. Say "still read it" only when the
+departed member's leaves are still in the tree after that read; say "removed by another member's
+commit" when the log already removed them. Never branch on the error's message: the outcome is a
+fact the caller already holds.
 
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
@@ -3407,9 +3468,19 @@ WHERE pr.status = 'paid' AND pr."paymentMethod" = 'online'
 
 The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) and needs WP-LYDIA-1.
 
-### P3 - an admin who never joined a private salon is not told when it is deleted
+### P2 - the history rule saved by an admin is not applied from the live frame
+
+Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's card resets to the old rule right after a `200` save, and the rule applies at the next listing. The server publishes `workspace.updated` with `historyVisibility`, but `channelEventHandler.ts:276-283` forwards only `workspaceId`, `imageMediaId` and `channelsReordered`, so `handleWorkspaceUpdated` never receives it; the frame replaces the sidebar entry with the old rule a millisecond after the save, and the panel re-reads it. A post-stable chantier: the fix turns on a path that has never run live.
+
+### P3 - a read mark for a salon that no longer exists is retried forever
+
+Seen on most rows of the `1.5.0-alpha.1` replay (2026-10-27): every load on W1 and W2 posts `POST /api/channels/<id>/read-mark` for a deleted salon, gets `404`, and `salonReadMarkQueue.ts` logs `[READ] salon mark ... not delivered - kept, and asked again at the next load`. A `404` there is an ANSWER - the salon is gone - and never a reason to retry: the mark must be dropped on that status (typed by status, never by message) and the drop logged once. Today it is dirt on nearly every row; a fix-after-stable item, not something to narrate.
+
+### P3 - an admin who never joined a private salon is not told when it is created or deleted
 
 Not on the roster, so no `channel.deleted`; the sidebar keeps a stale row until the next load. **Do not widen the audience** (that is what leaked private-salon traffic to non-members); the shape that would work is a contentless `channel.gone` addressed to the community, worth doing only if the stale row is ever seen to matter.
+
+**The creation half (COMM-13 on `1.5.0-alpha.1`, 2026-10-27):** a private salon's creation is announced as `channel.member.joined` to its audience, which is `allowedUsers` alone, so an administrator who is online sees no "join as administrator" row until their next full listing - though [channel-encryption](protocols/channel-encryption.md) intends that row to be visible to them. COMM-13's premise (the unjoined row on the admin's screen) therefore never arms on a live client; it passed on `0.16.3` (2026-09-05), and what brought the row to the admin then is not established. The same contentless shape (`channel.listed`, no name beyond what the listing already serves to a manager) would close both halves.
 
 ### P2 - WP-RESTORE-1: Zero-Tap Sign-In restoration, required by Google Play from April 2027
 
