@@ -812,6 +812,28 @@ different worktree. `sourcestamp-selftest` writes a file into its tree and hashe
 something writing to the same tree would break it. No writer was found. If either step fails again,
 keep the full output, not the tail.
 
+## P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)
+
+Seen on dev `1.5.0-alpha.1`. W4 and W8 are two devices of ONE account, which a user with two devices
+can produce by joining from both. They external-joined the community's key group in the same second.
+
+- W8 was refused `concurrent_commit` twice, then joined at base 2.
+- W4 was refused `epoch_mismatch` three times: base 0 at group 1, base 1 at group 2, base 2 at group 3.
+  It reached `EXTERNAL_JOIN_MAX_ATTEMPTS` and logged
+  `[GRAINE] could not join the distribution group of community ... (refused)`.
+- 0.9 s later another path joined it at base 4. An application frame of epoch 4 then reached it at
+  epoch 5: `[GRAINE] frame on ... is unreadable for good (past-epoch-application) - acknowledged; its
+  seed comes back through a history request`.
+
+The row still passed, but this is a heal after a race on the normal path, which the rules count as
+a defect: the bounded retry lost to its own sibling's commits, and a frame was lost and had to be
+recovered. The give-up line had appeared in no row since 2026-08-27
+([cross-client-campaign](cross-client-campaign.md)). Evidence: the run's W4 and W8 consoles
+(`logs/consoles/LIST-RACE-1-W-2026-10-26T23-45-59-975Z-*`, W4 lines 123-171, in the rig's state
+directory). Owed: say what serialises two joins of one account into one key group. That fact
+deletes the overlap; a larger retry bound only widens it. Then re-measure with LIST-RACE-1-W, which
+reproduces the pair. Not narrated: it stays dirt until fixed.
+
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
 When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the
