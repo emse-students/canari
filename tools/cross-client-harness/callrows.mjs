@@ -48,6 +48,9 @@ export const CALL_WEB_ROWS = {
   'CALL-WEB-8': { scenario: 'reload', devices: ['W2', 'W4'], callee: CALLEE, what: "W4's page reloads mid-call: W2's call ends" },
 };
 
+/** The path of a call's signalling socket (`CallService.ts`, `/api/call`): its close is the call ending. */
+export const CALL_SOCKET_PATH = '/api/call';
+
 /** Rounds within which a busy callee's answer reaches the second caller (B16): 10 s, a sixth of the ring window. */
 export const BUSY_ROUNDS = 20;
 
@@ -245,7 +248,10 @@ const CONNECTED = [
   // `decrypt-failed=0` and `no-key=0` ARE THE ASSERTION: a report with a failure stays dirt.
   at(L, String.raw`\[Call\] E2E worker report \((${N} s after connected|call end, call=${H})\): .+ decrypt-failed=0 short=${N} \(empty ${N}\) no-key=0 .+`),
   at(L, String.raw`\[Call\] E2E path check \(${N} s after connected\): no media around the transform \(packets sent audio=${N} video=0 received audio=${N} video=0\)`),
-  at(L, String.raw`\[Call\] ICE gathering complete \(host=${N} srflx=${N} relay=${N} ice=connected\)`),
+  // `checking` TOO: gathering ends when TURN answers, and on a fast host pair that can be before the
+  // checks conclude (CALL-WEB-2, 2026-10-27). It is the CALL-GATHER-0 diagnostic, written once per
+  // peer connection. `failed`, `disconnected` and `closed` stay dirt - each is a call in trouble.
+  at(L, String.raw`\[Call\] ICE gathering complete \(host=${N} srflx=${N} relay=${N} ice=(checking|connected)\)`),
   at(L, String.raw`\[Call\] (iceGatheringState=(gathering|complete)|iceConnectionState=(checking|connected)|connectionState=(connecting|connected))`),
   at(L, String.raw`\[Call\] signalingState=(have-local-offer|have-remote-offer|stable)`),
   at(L, String.raw`\[Call\] remote ICE end-of-candidates`),
