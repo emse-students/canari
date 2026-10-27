@@ -185,6 +185,27 @@ the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every 
 plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
 next paragraph says.
 
+## WP-R3 as built - the poster as a thumbnail (D45, 2026-10-27)
+
+Front only. `GET spaces` already returned `poster`; the Reservations list was `SectionHub` rows,
+which carry no image, so the spaces now have their own list, `SpaceList.svelte` (a real link per row,
+the same look, a 48 px box leading it).
+
+- **`SpacePoster` gained `thumb`.** The same component decrypts the banner and the thumbnail (one
+  decryption path, one blob cache); `thumb` makes it a small square and defers its work until the
+  box is NEAR the viewport (`nearViewport`, once - the picture stays once drawn). A list of twenty
+  spaces therefore decrypts what is on screen and what is just below it, never twenty posters on
+  arrival. A failed one is an icon with no sentence in a thumbnail's room.
+- **A space with no poster keeps the calendar glyph in the same box**, so names line up. The line
+  under the name is unchanged (who runs it, the column count).
+- **Not done**: the entity tab's own list of spaces is a different list (the organiser's) and is
+  untouched.
+
+**Proof.** `SpaceList.thumb.svelte.test.ts`: three posters, nothing downloaded on mount, one
+downloaded when its row nears the viewport and it is the right one; the decrypted picture is drawn
+in its row; a space with no poster fetches nothing and keeps a glyph. Control: without the
+`nearViewport` gate, the first test fails (three downloads on mount). **Not yet seen** on a phone.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
