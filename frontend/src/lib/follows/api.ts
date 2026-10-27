@@ -17,6 +17,10 @@ export type FollowStatus = 'pending' | 'accepted';
 export const FOLLOW_TARGET_NOT_FOUND = 'FOLLOW_TARGET_NOT_FOUND';
 /** A block stands between the two, in either direction. */
 export const FOLLOW_BLOCKED = 'FOLLOW_BLOCKED';
+/** The asker already has 100 requests nobody answered (409): wait, or withdraw some. */
+export const FOLLOW_PENDING_LIMIT = 'FOLLOW_PENDING_LIMIT';
+/** The asker has asked 50 new people in the last day (429). */
+export const FOLLOW_DAILY_LIMIT = 'FOLLOW_DAILY_LIMIT';
 
 /**
  * One person in a follow list. `createdAt` is when they asked (the inbox, the sent list) or when

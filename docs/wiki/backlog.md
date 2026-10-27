@@ -152,6 +152,25 @@ ordinary review.
   Proof: component tests, `bun run check`, and a rig row (two contexts: ask, see "Demande envoyee",
   accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
   until the floor passes this stable.
+  **Left open by the 2026-10-27 review, each owed before the item it names:**
+  - **Pagination of the three lists, a PRECONDITION OF WP-F5.** The inbox, "Mes abonnes" and the
+    sent requests each load the first 100 rows (`FOLLOW_PAGE_MAX`) and no more. Harmless while a
+    follower only means Suivis; once F5 makes a follower a READER across spaces, a person must be
+    able to see and prune every one of them, so F5 does not arm until the screens page.
+  - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
+    the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
+    through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
+    that saves any switch silently re-enables `follows` - and the same holds for every category
+    added after a build shipped. The server cannot tell what the caller knew: the fix is a client
+    that sends the categories it knows (`known`) so the server keeps the rest, and it protects only
+    builds that send it - the floor (`minClientVersion`) closes the rest. Measured: not yet; the
+    window is a person who turned `follows` off on a new build and then saves a switch on an old one.
+  - **Should `minClientVersion` move with this stable?** A build older than WP-F4 reads
+    `following: true` for a PENDING request (the legacy field, [legacy-compatibility](legacy-compatibility.md)),
+    so it shows "Suivi" for an ask nobody has answered, and it has no inbox to answer one. Nothing
+    leaks - the reader filters are server-side - but the person asked can only answer from a new
+    build. A decision for the user when the stable is cut, with the share of old clients measured
+    from the version header then.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
   arming).** Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
   (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following

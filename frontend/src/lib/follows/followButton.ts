@@ -8,7 +8,13 @@
  *   asking again (every personal account is private).
  */
 import { m } from '$lib/paraglide/messages';
-import { FOLLOW_BLOCKED, FOLLOW_TARGET_NOT_FOUND, type FollowStatus } from './api';
+import {
+  FOLLOW_BLOCKED,
+  FOLLOW_DAILY_LIMIT,
+  FOLLOW_PENDING_LIMIT,
+  FOLLOW_TARGET_NOT_FOUND,
+  type FollowStatus,
+} from './api';
 
 /** What a tap on the button does, given where the reader stands. */
 export type FollowAction = 'ask' | 'withdraw' | 'unfollow';
@@ -42,5 +48,7 @@ export function followLabel(status: FollowStatus | null): string {
 export function describeFollowRefusal(code: string | null): string {
   if (code === FOLLOW_BLOCKED) return m.refusal_follow_blocked();
   if (code === FOLLOW_TARGET_NOT_FOUND) return m.refusal_follow_target_not_found();
+  if (code === FOLLOW_PENDING_LIMIT) return m.refusal_follow_pending_limit();
+  if (code === FOLLOW_DAILY_LIMIT) return m.refusal_follow_daily_limit();
   return m.profile_follow_error();
 }

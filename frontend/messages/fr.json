@@ -4439,6 +4439,8 @@
   "profile_follow_error": "Impossible de modifier l'abonnement. Réessayez.",
   "refusal_follow_blocked": "Impossible de suivre cette personne.",
   "refusal_follow_target_not_found": "Ce compte n'existe pas ou ne peut pas être suivi.",
+  "refusal_follow_pending_limit": "Trop de demandes attendent encore une réponse. Annulez-en quelques-unes pour en envoyer d'autres.",
+  "refusal_follow_daily_limit": "Vous avez envoyé beaucoup de demandes aujourd'hui. Réessayez demain.",
   "notif_follow_request_text": "demande à vous suivre.",
   "notif_follow_accepted_text": "a accepté votre demande d'abonnement.",
   "follow_requests_title": "Demandes d'abonnement",

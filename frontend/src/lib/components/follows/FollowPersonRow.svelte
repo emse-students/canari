@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * ONE PERSON IN A FOLLOW LIST (WP-F4): the request inbox, "Mes abonnés" and the sent requests all
+   * ONE PERSON IN A FOLLOW LIST (WP-F4): the request inbox, the followers list and the sent requests all
    * draw the same row - the avatar and the name, both linking to the profile, the time the row means
    * (asked, or accepted), and the list's own actions on the right.
    *

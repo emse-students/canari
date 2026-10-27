@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
-import { FOLLOW_BLOCKED, FOLLOW_TARGET_NOT_FOUND } from './api';
+import {
+  FOLLOW_BLOCKED,
+  FOLLOW_DAILY_LIMIT,
+  FOLLOW_PENDING_LIMIT,
+  FOLLOW_TARGET_NOT_FOUND,
+} from './api';
 import {
   describeFollowRefusal,
   followActionOf,
@@ -33,6 +38,8 @@ describe('the follow button', () => {
     expect(describeFollowRefusal(FOLLOW_TARGET_NOT_FOUND)).toBe(
       m.refusal_follow_target_not_found()
     );
+    expect(describeFollowRefusal(FOLLOW_PENDING_LIMIT)).toBe(m.refusal_follow_pending_limit());
+    expect(describeFollowRefusal(FOLLOW_DAILY_LIMIT)).toBe(m.refusal_follow_daily_limit());
     expect(describeFollowRefusal(null)).toBe(m.profile_follow_error());
     expect(describeFollowRefusal('SOMETHING_ELSE')).toBe(m.profile_follow_error());
   });

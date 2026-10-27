@@ -4439,6 +4439,8 @@
   "profile_follow_error": "Could not change the follow. Try again.",
   "refusal_follow_blocked": "You cannot follow this person.",
   "refusal_follow_target_not_found": "This account does not exist or cannot be followed.",
+  "refusal_follow_pending_limit": "Too many of your requests are still waiting for an answer. Cancel a few to send more.",
+  "refusal_follow_daily_limit": "You have sent a lot of requests today. Try again tomorrow.",
   "notif_follow_request_text": "asked to follow you.",
   "notif_follow_accepted_text": "accepted your follow request.",
   "follow_requests_title": "Follow requests",
