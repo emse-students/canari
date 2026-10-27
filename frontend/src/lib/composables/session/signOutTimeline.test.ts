@@ -36,11 +36,13 @@ function liveSession() {
   // the next sign-in gets is the behaviour under test.
   const clients: { pauseSocket: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }[] =
     [];
+  // The one helper that ends the native MLS session (`endNativeMlsSession`), as the app wires it.
+  const endNative = vi.fn(async (_reason: string) => {});
   const holder = createMlsHolder(() => {
     const client = { pauseSocket: vi.fn(), isWsOpen: vi.fn(() => false), destroy: vi.fn() };
     clients.push(client);
     return client as unknown as IMlsService;
-  });
+  }, endNative);
   const mls = holder.ensure() as unknown as (typeof clients)[number];
   const ensureMls = vi.fn(() => holder.ensure());
   const ctx = {
@@ -77,7 +79,7 @@ function liveSession() {
     forgetUnconfirmedSalonDraws: vi.fn(),
     setSelectedContact: vi.fn(),
   } as unknown as ChatSessionCallbacks;
-  return { ctx, cb, mls, ensureMls, clearConversations, log, clients };
+  return { ctx, cb, mls, ensureMls, clearConversations, log, clients, endNative };
 }
 
 /** A persister whose final flush lands only when the test says so. */
@@ -114,6 +116,9 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       // The restore chain ends with the session, or a queued restore would run as this account.
       expect(s.cb.invalidateRestores).toHaveBeenCalledTimes(1);
       expect(s.cb.forgetUnconfirmedSalonDraws).toHaveBeenCalledTimes(1);
+      // The native MLS session (the process-wide manager and its key) ends with the account.
+      await s.ctx.whenMlsRetired();
+      expect(s.endNative).toHaveBeenCalledWith('sign-out');
 
       // 2. The app comes back from the sign-in browser before the callback has its token.
       s.ensureMls.mockClear();
@@ -166,11 +171,16 @@ describe('a sign-out retires the account with its MLS client', () => {
       void s.ctx.whenMlsRetired().then(() => (released = true));
       await Promise.resolve();
       expect(released).toBe(false);
+      // A's native session is still needed by its final checkpoint, so it has not ended yet...
+      expect(s.endNative).not.toHaveBeenCalled();
 
       a.land();
       await s.ctx.whenMlsRetired();
       expect(released).toBe(true);
       expect(s.clients[0].destroy).toHaveBeenCalledTimes(1);
+      // ...and it has ended before B's login is released to open its own state.
+      expect(s.endNative).toHaveBeenCalledTimes(1);
+      expect(s.endNative).toHaveBeenCalledWith('sign-out');
       expect(s.ctx.isMlsRetiring()).toBe(false);
       expect(s.ctx.ensureMls()).toBe(forB);
     } finally {

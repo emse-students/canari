@@ -13,8 +13,10 @@ import {
   noPinOpensState,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  isMlsManagerAbsent,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
@@ -1057,6 +1059,14 @@ export class TauriMlsService extends BaseMlsService {
         console.log(`[MLS][Tauri] Resume reload not applied (${outcome}) - live state kept.`);
       }
     } catch (e) {
+      if (isMlsManagerAbsent(e)) {
+        // NOTHING IS LIVE TO REFRESH: the native session was ended (a sign-out, a failed install)
+        // and a resume reload never installs one. Said as what it is, not as a failed reload.
+        console.warn(
+          '[MLS][Tauri] Resume reload refused - no native MLS session is installed; nothing to refresh.'
+        );
+        return;
+      }
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
       // advance, so this must be loud even though it does not abort the resume.
       console.error('[MLS][Tauri] reloadStateFromDisk failed:', e);
@@ -1132,18 +1142,32 @@ export class TauriMlsService extends BaseMlsService {
     // is the two callers that genuinely hold bytes the native side could not have read - the
     // pre-v0.11.0 migration retry and a probe of a candidate key - and they are one-off flows.
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', {
-      userId: this.userId,
-      deviceId: this.deviceId,
-      deviceKeyB64,
-      encryptedState,
-      opts: {
-        legacyPin: legacyPin ?? null,
-        biometricPrompt: keystoreUnlockPrompt(),
-        stateOnDisk: stateOnDisk === true,
-        unattendedKeyRead: unattendedKeyRead === true,
-      },
-    });
+    try {
+      await invoke('initialiser_mls', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        deviceKeyB64,
+        encryptedState,
+        opts: {
+          legacyPin: legacyPin ?? null,
+          biometricPrompt: keystoreUnlockPrompt(),
+          stateOnDisk: stateOnDisk === true,
+          unattendedKeyRead: unattendedKeyRead === true,
+        },
+      });
+    } catch (e) {
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
+      // (by construction, on every exit that did not install); this is the same end through the one
+      // helper every path uses, so the previous account's manager and key cannot be left installed
+      // whatever the native side did. The install's own error is the one that propagates.
+      await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
+        (teardown: unknown) =>
+          console.error(
+            `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
+          )
+      );
+      throw e;
+    }
   }
 
   /**

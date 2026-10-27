@@ -53,7 +53,8 @@ use crate::commands::mls::{
     recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
     rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    soumission_en_attente, trailer_welcome, verifier_key_package, welcome_remis, welcomes_dus,
+    soumission_en_attente, terminer_session_mls, trailer_welcome, verifier_key_package,
+    welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -70,10 +71,10 @@ use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
 };
 use crate::commands::storage::{
-    clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
-    get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
-    mls_state_absent, mls_state_owner, mls_state_size, pause_mls_foreground,
-    recharger_mls_au_resume, remove_native_flag, save_mls_state, set_native_flag,
+    clear_app_data, delete_user_database, get_installer_package, get_local_storage_usage,
+    get_native_flags, load_mls_state, mls_foreground_heartbeat, mls_state_absent, mls_state_owner,
+    mls_state_size, pause_mls_foreground, recharger_mls_au_resume, remove_native_flag,
+    save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -1618,7 +1619,7 @@ pub fn run() {
             recharger_mls_au_resume,
             mls_foreground_heartbeat,
             pause_mls_foreground,
-            delete_mls_state,
+            terminer_session_mls,
             load_mls_state,
             mls_state_size,
             mls_state_absent,

@@ -146,3 +146,38 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     expect(calls('initialiser_mls')).toBe(1);
   });
 });
+
+/**
+ * A FAILED INSTALL LEAVES NO SESSION BEHIND. The native slot is process-wide and was only ever
+ * written on success, so account B's refused sign-in left account A's manager and key installed.
+ * The native install guard empties it by construction; the service ends it through the one helper
+ * too, before the refusal reaches the gate - and the install's own error is what propagates.
+ */
+describe('TauriMlsService init - a refused initialiser_mls ends the native session', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  });
+
+  afterEach(() => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  it("ends it, keeping the state files, and rethrows the install's own error", async () => {
+    disk('STATE_UNDECRYPTABLE: aead::Error', 'alice');
+    const { svc } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
+
+    expect(err).toBeInstanceOf(SavedStateOfAnotherAccountError);
+    const ends = invoke.mock.calls.filter((c) => c[0] === 'terminer_session_mls');
+    expect(ends.length).toBeGreaterThanOrEqual(1);
+    expect(ends[0][1]).toMatchObject({ reason: 'failed initialiser_mls', sweepState: false });
+    // Ended BEFORE the gate reads whose state it is: nothing of the failed install is left to read it.
+    const order = invoke.mock.calls.map((c) => c[0]);
+    expect(order.indexOf('terminer_session_mls')).toBeLessThan(order.indexOf('mls_state_owner'));
+  });
+});

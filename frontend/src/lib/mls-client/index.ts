@@ -19,6 +19,7 @@ export {
   SavedStateOfAnotherAccountError,
   noPinOpensState,
   isKeystoreKeyUnavailable,
+  isMlsManagerAbsent,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   GroupDrainAbandonedError,

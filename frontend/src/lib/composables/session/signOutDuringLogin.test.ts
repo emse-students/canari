@@ -151,7 +151,9 @@ function session(clients: IMlsService[], pin = '') {
   let userId = 'alice';
   let held: IStorage | null = null;
   let built = 0;
-  const holder = createMlsHolder(() => clients[built++]);
+  // The one helper that ends the native MLS session (`endNativeMlsSession`), as the app wires it.
+  const endNative = vi.fn(async (_reason: string) => {});
+  const holder = createMlsHolder(() => clients[built++], endNative);
   const known: Partial<SessionContext> = {
     getUserId: () => userId,
     setUserId: (v) => (userId = v),
@@ -200,6 +202,7 @@ function session(clients: IMlsService[], pin = '') {
     ctx,
     cb,
     holder,
+    endNative,
     restore,
     wentLive: () => known.setIsLoggedIn as ReturnType<typeof vi.fn>,
     shownErrors: () =>
@@ -293,6 +296,8 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.isLoggedIn()).toBe(false);
     expect(a.state.socketOpen, 'the stopped login left its gateway socket open').toBe(false);
     expect(a.known.destroy).toHaveBeenCalledTimes(1);
+    // The stopped login's native MLS session ends too, before the next sign-in is released.
+    expect(s.endNative).toHaveBeenCalled();
     expect(s.ctx.getIsLoginInProgress()).toBe(false);
     expectQuietStop(s);
     expect(logs(s.cb)).toContain('after mls-init-and-storage');
@@ -466,6 +471,8 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.timers.reconnect, 'a failed login left a reconnect rung armed').toBeNull();
     await new Promise((r) => setTimeout(r, 0));
     expect(rung, 'the rung armed by the failed login still ran').not.toHaveBeenCalled();
+    // Nor a native MLS session: the failed login's manager and key do not wait for the next one.
+    expect(s.endNative).toHaveBeenCalledWith('client reset');
   });
   it('a revocation wipe that fails after its own sign-out is accused, not filed as a stopped login', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});

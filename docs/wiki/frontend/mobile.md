@@ -2651,8 +2651,9 @@ sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
   push service hands the key to `nativeKeyGroupJoinClaim` / `Settle`; with no key it attempts no
   join, and `take_key_group_push_joins` leaves the ledger for a start that can read it. Its staged
   post-join state, `mls.bin.keygroup-join`, is sealed under the DEVICE key like `mls.bin`. The
-  sign-out sweep (`delete_mls_state`) removes both with `mls.bin`: the stage holds epoch secrets,
-  and the ledger's `joined` entries would otherwise be adopted by the next account's start.
+  state reset (`terminer_session_mls` with `sweepState`) removes both with `mls.bin`: the stage
+  holds epoch secrets, and the ledger's `joined` entries would otherwise be adopted by the next
+  account's start.
 
 `nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
 that no native reader opens the mirror, that the join ledger is written sealed with the key handed

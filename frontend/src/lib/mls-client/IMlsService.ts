@@ -397,6 +397,16 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
 }
 
 /**
+ * True when a native MLS command refused because no manager is installed in this process - never
+ * initialised, or ended by `endNativeMlsSession` (a sign-out, an account switch, a failed install, a
+ * state reset). Reads the `MLS_MANAGER_ABSENT` code of `state.rs`, the contract that crosses the Tauri
+ * boundary, never the sentence after it.
+ */
+export function isMlsManagerAbsent(error: unknown): boolean {
+  return String(error).includes('MLS_MANAGER_ABSENT');
+}
+
+/**
  * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
  * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
  * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose

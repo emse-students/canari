@@ -1776,7 +1776,8 @@ one process are the race; removing the second removes it.
   (`state.rs`), created empty by `.manage(AppState { .. })` in `lib.rs` and filled by `initialiser_mls`
   (`commands/mls.rs`) and a `reloaded` resume (`reload_into`, `commands/storage.rs`). The JNI entries
   cannot reach it: they get no `AppHandle`, and the only process-wide statics are
-  `ANDROID_JAVA_VM` and `ANDROID_CLASS_LOADER` (`lib.rs`). Nothing sets it back to `None` at sign-out.
+  `ANDROID_JAVA_VM` and `ANDROID_CLASS_LOADER` (`lib.rs`). A sign-out sets it back to `None` since
+  2026-10-27 (`end_native_session`).
 - **A process-global handle to THE SAME `Arc`.** `static LIVE_MANAGER: OnceLock<Arc<Mutex<Option<MlsManager>>>>`
   in `concurrency.rs`, set once in the builder with a clone of the `Arc` handed to `.manage`. Installed
   means `Some` inside the mutex, so the handle never needs re-installing.
@@ -1787,9 +1788,10 @@ one process are the race; removing the second removes it.
   `syncGroupCachesFromNative` and `settleAfterStateReplaced`). `None` - a cold process the FCM service
   started with no WebView - it loads `mls.bin` as today, by compare-and-swap. The decision is the
   mutex's content, read under the mutex: no flag, no clock.
-- **Teardown.** Sign-out and `delete_mls_state` set the manager to `None` under its mutex BEFORE the
-  state files are removed, so an engine that waited on it finds `None`, then finds no file, and does
-  nothing. A sign-in installs `Some` again through `initialiser_mls`.
+- **Teardown.** BUILT 2026-10-27 (`end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)):
+  a sign-out sets the manager to `None` and keeps `mls.bin`; a state reset (`terminer_session_mls`
+  with `sweepState`) does so in the same hold as the file sweep, so an engine that waited on it finds
+  `None`, then finds no file, and does nothing. A sign-in installs `Some` again through `initialiser_mls`.
 - **Lock order, one for every path:** Kotlin `MlsStateLock` (background only, outermost) ->
   `foreground_checkpoint_lock` -> the manager mutex -> `mls_bin_write_lock` (innermost). The foreground
   never takes `MlsStateLock`, and a background engine that borrows takes the checkpoint lock before the
@@ -2606,7 +2608,7 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
+**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
 ### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
 
