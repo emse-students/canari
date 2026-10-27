@@ -276,6 +276,31 @@ value changing and the getter running is imperceptible, while on Android WebView
 more aggressive GC - it is wide enough to hit regularly. A race that "cannot happen" on the machine
 it was written on is a race that happens to users.
 
+### A teardown that reads a prop can REWIRE a parent's derived, and nothing throws (2026-10-27)
+
+The crash above has a silent sibling. An effect's teardown runs against the values the effect last
+saw, and a prop read there goes through the parent's getter, which can evaluate a parent `$derived`
+**with those stale values**. That evaluation is not discarded: the derived keeps the dependencies it
+read during it. `ChatHeader`'s DM presence effect did `return () => unwatchUsers([contactName])`. On
+leaving a DM, that read walked `ChatArea`'s `conversation` prop back to `currentConvo`
+(`useConversations.svelte.ts`), which re-ran with the DM's key, so `conversations.get(dmKey)` became
+its only map dependency. The conversation now open could then receive any number of messages. The
+map and the sidebar had them, `MainChatPage`'s read marks (which read the map directly) had them, and
+the pane stayed frozen on whatever it drew first until the selection changed again. Opening a group
+right as its Welcome landed showed an empty transcript; a reload drew it.
+
+Parking on a group or a channel never reproduced it, because the effect does not run there. That
+"3 of 3 from a deleted group, failing from the DM" split was the clue. The proof was a CDP logpoint
+on `currentConvo` in the dev bundle: it evaluated with the DM's key while the selection source
+already held the group's, and the stack ran through the header effect's teardown.
+
+**A teardown names what it releases through a local captured in the effect body - never a prop, a
+`$state` or a `$derived`**: `const watched = contactName; watchUsers([watched]); return () =>
+unwatchUsers([watched]);`. It is also simply correct: the teardown must release what was acquired,
+not what the prop says now. `ChatArea.leaveDirect.svelte.test.ts` mounts the real `ChatArea` on the
+real `currentConvo`, leaves a DM, adds a message to the group and asserts it is drawn; it is red with
+the prop read.
+
 ### An uncaught error in the reactive graph is PERMANENT until a reload, so boundaries are placed by blast radius
 
 An error thrown from a template, a `$derived` or an `$effect` cleanup corrupts that subtree's signal

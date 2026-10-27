@@ -1058,8 +1058,10 @@
   });
 
   $effect(() => {
-    onMessagesScrollEl?.(chatContainer ?? null);
-    return () => onMessagesScrollEl?.(null);
+    // Captured: a teardown that reads a prop re-runs its getter against stale values (ChatHeader).
+    const report = onMessagesScrollEl;
+    report?.(chatContainer ?? null);
+    return () => report?.(null);
   });
 
   /**

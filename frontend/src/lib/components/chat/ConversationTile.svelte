@@ -92,9 +92,12 @@
 
   onMount(() => {
     // Only poll presence for real user IDs (direct conversations).
+    // The teardown names the peer it watched, captured here: a prop read in a teardown is evaluated
+    // against stale values and can rewire the parent's deriveds (see ChatHeader's presence effect).
     if (isDirect) {
-      watchUsers([contactName]);
-      return () => unwatchUsers([contactName]);
+      const watched = contactName;
+      watchUsers([watched]);
+      return () => unwatchUsers([watched]);
     }
   });
 
