@@ -22,11 +22,34 @@
  *   the commit must be the one the job checked out (`HEAD is now at <sha> chore: bump version to
  *   <version>`), and the build instant must fall inside the job's own window. A build of the same
  *   commit by any other job falls outside it.
- * - **The installed versionName is the tag's version** (`dumpsys package`); the versionCode is
- *   recorded beside it.
+ * - **The installed versionName AND versionCode are the tag's** (`dumpsys package`), as
+ *   `scripts/bump-app-version.sh` writes them: the versionName is the NUMERIC CORE (`1.5.1`, Tauri
+ *   copies `tauri.conf.json`'s version, which never carries the suffix), so it cannot tell two alphas
+ *   of one version apart - the versionCode band does (`(major*1e6 + minor*1e3 + patch)*100 + N`).
  *
  * Pure: no rig, no phone, no network - `a1tester.mjs` gathers the facts and this decides.
  */
+
+/**
+ * What the stores know a pre-release tag as, by `scripts/bump-app-version.sh`'s own rule: the full
+ * `version` (what the bump commit names), the numeric `core` (Android's versionName) and the
+ * versionCode band `(major*1e6 + minor*1e3 + patch)*100 + N`. Null for anything but `vX.Y.Z-alpha.N`
+ * with N in 1..98 - a stable included, whose rank 99 is a production build.
+ *
+ * @param {string} tag
+ * @returns {{version: string, core: string, code: number} | null}
+ */
+export function storeIdentity(tag) {
+  const m = /^v(\d+)\.(\d+)\.(\d+)-alpha\.(\d+)$/.exec(String(tag));
+  if (!m) return null;
+  const [major, minor, patch, rank] = m.slice(1).map(Number);
+  if (rank < 1 || rank > 98 || minor > 999 || patch > 999) return null;
+  return {
+    version: `${major}.${minor}.${patch}-alpha.${rank}`,
+    core: `${major}.${minor}.${patch}`,
+    code: (major * 1_000_000 + minor * 1_000 + patch) * 100 + rank,
+  };
+}
 
 /** The line `android.yml` prints once its pre-release check let a dev build through. */
 export const TARGETS_DEV = /^Android build targets dev \(/;
@@ -72,9 +95,9 @@ export function saidDev(log) {
  * @returns {{ok: boolean, reason: string, record?: object}}
  */
 export function testerBuildVerdict({ tag, release, job, log, stamp, installed, site, now = new Date().toISOString() }) {
-  const m = /^v(\d+\.\d+\.\d+-[0-9A-Za-z.]+)$/.exec(String(tag));
-  if (!m) return { ok: false, reason: `${tag} is not a pre-release tag - a stable is a production build` };
-  const version = m[1];
+  const ids = storeIdentity(tag);
+  if (!ids) return { ok: false, reason: `${tag} is not a pre-release tag - a stable is a production build` };
+  const { version, core, code } = ids;
   if (release?.isPrerelease !== true) return { ok: false, reason: `the release ${tag} is not marked a pre-release` };
   if (!String(site).startsWith('https://dev.')) return { ok: false, reason: `the rig reports on ${site}, and a tester build serves dev only` };
   if (!job || !ANDROID_JOB.test(job.name)) return { ok: false, reason: `no Android build job in the release run of ${tag}` };
@@ -90,8 +113,11 @@ export function testerBuildVerdict({ tag, release, job, log, stamp, installed, s
   if (!(at >= Date.parse(job.startedAt) && at <= Date.parse(job.completedAt))) {
     return { ok: false, reason: `the phone's bundle was built at ${stamp.builtAt}, outside the job (${job.startedAt} - ${job.completedAt})` };
   }
-  if (installed?.versionName !== version) {
-    return { ok: false, reason: `the phone has versionName ${installed?.versionName ?? '(none)'}, the tag is ${version}` };
+  if (installed?.versionName !== core) {
+    return { ok: false, reason: `the phone has versionName ${installed?.versionName ?? '(none)'}, the tag's is ${core}` };
+  }
+  if (String(installed?.versionCode ?? '') !== String(code)) {
+    return { ok: false, reason: `the phone has versionCode ${installed?.versionCode ?? '(none)'}, ${tag}'s band is ${code} - another rank of ${core}` };
   }
   return {
     ok: true,

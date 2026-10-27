@@ -55,9 +55,13 @@ console.log(`[a1tester] A1's bundle: ${stamp.commit.slice(0, 9)} built ${stamp.b
 const release = gh('release', 'view', tag, '--json', 'tagName,isPrerelease');
 const runs = gh('run', 'list', '--workflow', 'release.yml', '--limit', '30', '--json', 'databaseId,headBranch,event');
 const run = runs.find((r) => r.headBranch === tag && r.event === 'release');
+if (!run) {
+  console.error(`[a1tester] REFUSED: no release.yml run for ${tag} among the last ${runs.length} - nothing to read its Android job from`);
+  process.exit(1);
+}
 let job = null;
 let log = '';
-if (run) {
+{
   const jobs = gh('run', 'view', String(run.databaseId), '--json', 'jobs').jobs ?? [];
   const j = jobs.find((x) => ANDROID_JOB.test(x.name));
   if (j) {
@@ -65,7 +69,7 @@ if (run) {
     log = ghText('run', 'view', '--job', String(j.databaseId), '--log');
   }
 }
-console.log(`[a1tester] release ${tag}: pre-release=${release.isPrerelease}, run ${run?.databaseId ?? '(none)'}, Android job ${job ? `${job.id} ${job.conclusion}` : '(none)'}`);
+console.log(`[a1tester] release ${tag}: pre-release=${release.isPrerelease}, run ${run.databaseId}, Android job ${job ? `${job.id} ${job.conclusion}` : '(none)'}`);
 
 const v = testerBuildVerdict({ tag, release, job, log, stamp, installed, site: SITE });
 if (!v.ok) {

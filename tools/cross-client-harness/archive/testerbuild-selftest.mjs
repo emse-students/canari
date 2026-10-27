@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { appBundleVerdict } from '../estate-origins.mjs';
-import { builtCommitOf, saidDev, testerBuildVerdict } from '../testerbuild.mjs';
+import { builtCommitOf, saidDev, storeIdentity, testerBuildVerdict } from '../testerbuild.mjs';
 import { installVerdict } from '../a1plan.mjs';
 
 let failures = 0;
@@ -27,17 +27,18 @@ const DEV = 'https://dev.example.test';
 const JOB_NAME = 'Google Play / Build Android APK';
 const P = `${JOB_NAME}\tUNKNOWN STEP\t`;
 const LOG = [
-  `${P}2026-10-27T19:09:26.2643037Z HEAD is now at 0a1b2c3 chore: bump version to 9.8.7-alpha.1`,
+  `${P}2026-10-27T19:09:26.2643037Z HEAD is now at 0a1b2c3 chore: bump version to 1.5.1-alpha.1`,
   `${P}2026-10-27T19:11:05.5353346Z \u001b[36;1m  echo "Android build targets \${URL_ENVIRONMENT} (\${APP_URL})"\u001b[0m`,
   `${P}2026-10-27T19:11:05.5435619Z Android build targets dev (***)`,
 ].join('\n');
 const base = {
-  tag: 'v9.8.7-alpha.1',
+  tag: 'v1.5.1-alpha.1',
   release: { isPrerelease: true },
   job: { id: 11, run: 22, name: JOB_NAME, conclusion: 'success', startedAt: '2026-10-27T19:09:06Z', completedAt: '2026-10-27T19:21:49Z' },
   log: LOG,
   stamp: { builtAt: '2026-10-27T19:15:00.000Z', commit: '0a1b2c3d4e5f60718293a4b5c6d7e8f901234567' },
-  installed: { versionName: '9.8.7-alpha.1', versionCode: '2009870101' },
+  // THE REAL SHAPE: `bump-app-version.sh` writes the numeric core as versionName and the band as code.
+  installed: { versionName: '1.5.1', versionCode: '100500101' },
   site: DEV,
   now: '2026-10-27T20:00:00.000Z',
 };
@@ -47,8 +48,8 @@ const refused = (patch, label, re) => {
 };
 
 console.log('the log');
-ok("the job's checkout of its version bump is read", builtCommitOf(LOG, '9.8.7-alpha.1') === '0a1b2c3');
-ok('... and not for another version', builtCommitOf(LOG, '9.8.7-alpha.2') === null);
+ok("the job's checkout of its version bump is read", builtCommitOf(LOG, '1.5.1-alpha.1') === '0a1b2c3');
+ok('... and not for another version', builtCommitOf(LOG, '1.5.1-alpha.2') === null);
 ok("android.yml's dev line is read", saidDev(LOG));
 ok('COUNTER: the echoed script line alone is not the dev line', !saidDev(LOG.split('\n')[1]));
 ok('COUNTER: a production line is not the dev line', !saidDev(`${P}2026-10-27T19:11:05.5Z Android build targets production (***)`));
@@ -58,7 +59,7 @@ const good = testerBuildVerdict(base);
 ok('a pre-release built for dev, the phone on its bundle: ACCEPTED', good.ok && good.record.source === 'play-tester' && good.record.origin === DEV && good.record.head === '0a1b2c3' && good.record.dirty === false);
 ok('... and its record passes the bundle verdict pin.mjs reads', appBundleVerdict(good.record, DEV).ok);
 ok('... but never authorises an install (it carries no APK sha)', !installVerdict([good.record], 'f'.repeat(64), DEV).ok);
-refused({ tag: 'v9.8.7', release: { isPrerelease: false } }, 'a STABLE is a production build and is refused first', /not a pre-release tag/);
+refused({ tag: 'v1.5.1', release: { isPrerelease: false } }, 'a STABLE is a production build and is refused first', /not a pre-release tag/);
 refused({ release: { isPrerelease: false } }, 'a hyphenated tag on a release not marked pre-release', /not marked a pre-release/);
 refused({ release: null }, 'no release at all');
 refused({ site: 'https://prod.example.test' }, 'a rig reporting on another estate', /dev only/);
@@ -69,7 +70,20 @@ refused({ log: LOG.split('\n').filter((l) => !/HEAD is now/.test(l)).join('\n') 
 refused({ stamp: { ...base.stamp, commit: 'ffffffff00000000' } }, 'a phone running another commit', /the job built/);
 refused({ stamp: { ...base.stamp, builtAt: '2026-10-27T18:00:00.000Z' } }, 'a bundle built before the job', /outside the job/);
 refused({ stamp: { ...base.stamp, builtAt: '2026-10-27T19:30:00.000Z' } }, 'a bundle built after the job', /outside the job/);
-refused({ installed: { versionName: '1.5.0', versionCode: '1' } }, 'a phone on another versionName (the Play stable)', /versionName 1\.5\.0/);
+refused({ installed: { versionName: '1.5.0', versionCode: '100500099' } }, 'a phone on another versionName (the Play stable 1.5.0)', /versionName 1\.5\.0/);
+refused({ installed: { versionName: '1.5.1', versionCode: '100500102' } }, 'a phone on ANOTHER ALPHA of the same version (alpha.2): same versionName, another band', /versionCode 100500102/);
+refused({ installed: { versionName: '1.5.1', versionCode: '100500199' } }, 'a phone on the stable of the same version (rank 99)', /versionCode 100500199/);
+refused({ installed: { versionName: '1.5.1-alpha.1', versionCode: '100500101' } }, 'a versionName carrying the suffix - not what the bump writes', /versionName 1\.5\.1-alpha\.1/);
+
+console.log('the store identity, by the bump script');
+ok('v1.5.1-alpha.1 is 1.5.1 / 100500101', JSON.stringify(storeIdentity('v1.5.1-alpha.1')) === JSON.stringify({ version: '1.5.1-alpha.1', core: '1.5.1', code: 100500101 }));
+ok('v1.4.0-alpha.4 is 1.4.0 / 100400004 (the 2026-10 device reading)', storeIdentity('v1.4.0-alpha.4')?.code === 100400004 && storeIdentity('v1.4.0-alpha.4')?.core === '1.4.0');
+ok('alpha.1 and alpha.2 of one version are told apart', storeIdentity('v1.5.1-alpha.1').code !== storeIdentity('v1.5.1-alpha.2').code);
+ok('COUNTER: a stable has no tester identity', storeIdentity('v1.5.1') === null);
+ok('COUNTER: alpha.99 is the stable rank, refused', storeIdentity('v1.5.1-alpha.99') === null && storeIdentity('v1.5.1-alpha.0') === null);
+const bump = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../scripts/bump-app-version.sh'), 'utf8');
+ok('the band is the bump script\'s own formula', bump.includes('VERSION_CODE="$(( (major * 1000000 + minor * 1000 + patch) * 100 + rank ))"'));
+ok('... and versionName is its numeric core', bump.includes('.version = $v | .bundle.android.versionCode = $vc') && bump.includes('jq --arg v "$core"'));
 refused({ installed: { versionName: null, versionCode: null } }, 'a phone with the app absent');
 ok('COUNTER: an unknown build stays refused by the bundle verdict', appBundleVerdict(null, DEV).reason === 'unrecorded');
 

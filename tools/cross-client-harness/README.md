@@ -485,7 +485,9 @@ these hold:
 - its Android job succeeded and printed `Android build targets dev`;
 - the phone's bundle names the commit that job checked out and was built inside the job's window;
 - the versionName is the tag's.
-On acceptance it appends `source: 'play-tester'` to `a1-builds.ndjson`. A STABLE (a production build)
+On acceptance it appends `source: 'play-tester'` to `a1-builds.ndjson`. Its `bundleOk: true` is INHERITED from
+the job log's dev line, not from a bundle grep: a release APK embeds its bundle compressed, so the
+rig cannot rescan it, and `android.yml` refused anything but dev before printing that line. A STABLE (a production build)
 is refused first, an unknown build stays `unrecorded`, and a tester record carries no APK sha, so it
 never authorises a `--no-build` install.
 
