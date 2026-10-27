@@ -438,7 +438,14 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
           return r.command === 'SELECT' ? r.rows : [r.rows, r.rowCount];
         },
       };
-      const requests = new FollowRequestsService({} as never, {} as never, viaClient as never);
+      const requests = new FollowRequestsService(
+        {} as never,
+        {} as never,
+        viaClient as never,
+        {
+          deleteByPattern: () => Promise.resolve(0),
+        } as never
+      );
       expect(await requests.removeFollower('icmSe', 'icmSe2')).toEqual({ ok: true });
       const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
       expect(rows).toEqual([]);

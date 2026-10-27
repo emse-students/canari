@@ -825,7 +825,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     it('a follower the broadcaster REMOVED is not told (WP-F3): the removal is the row the push reads', async () => {
       await follow(BOB);
       await follow(CAROL);
-      const requests = new FollowRequestsService({} as never, {} as never, ds);
+      const requests = new FollowRequestsService({} as never, {} as never, ds, {
+        deleteByPattern: () => Promise.resolve(0),
+      } as never);
       expect(await requests.removeFollower(ALICE, CAROL)).toEqual({ ok: true });
       const live = await start();
       await lives.ingest(ALICE, live.id, 0, segment(0));

@@ -17,11 +17,22 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { UserFollow } from './entities/user-follow.entity';
-import { FOLLOW_CODES, FollowsService } from './follows.service';
+import {
+  FOLLOW_ASKS_PER_DAY,
+  FOLLOW_CODES,
+  FOLLOW_PENDING_MAX,
+  FollowsService,
+} from './follows.service';
 import {
   FOLLOW_ACCEPTED_NOTIFICATION,
   FOLLOW_REQUEST_NOTIFICATION,
@@ -29,6 +40,7 @@ import {
 } from './follow-requests.service';
 import { InternalController } from '../internal/internal.controller';
 import { PostNotification } from '../posts/entities/post-notification.entity';
+import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
@@ -83,6 +95,14 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     return rows[0]?.status ?? null;
   };
   /** The push transport, the one thing not real: what the mapping produced is the assertion. */
+  /** The feed cache: what was dropped is the assertion. */
+  const dropped: string[] = [];
+  const redis = {
+    deleteByPattern: (match: string) => {
+      dropped.push(match);
+      return Promise.resolve(1);
+    },
+  };
   const push = {
     notifyContent: (to: string, content: PushContent, data: Record<string, string>) => {
       pushed.push({ to, key: content.key, actor: content.actorName, target: data.target });
@@ -149,7 +169,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       push as never,
       {} as never
     );
-    requests = new FollowRequestsService(follows, notifications, ds);
+    requests = new FollowRequestsService(follows, notifications, ds, redis as never);
     secretBefore = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = IT_SECRET;
   });
@@ -164,6 +184,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
 
   beforeEach(async () => {
     pushed.length = 0;
+    dropped.length = 0;
     await q(`DELETE FROM user_follows; DELETE FROM user_blocks; DELETE FROM post_notifications;
              DELETE FROM user_follow_notices`);
   });
@@ -186,8 +207,10 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     }
     await requests.ask('ann', 'bob');
     expect(pushed.map((x) => x.key)).toEqual(['social_follow_request']);
-    // The request still reaches its person: the inbox reads `user_follows`, not the bell.
+    // The request still reaches its person: in the inbox, and as ONE bell row, written again
+    // without a push.
     expect((await requests.incoming('bob', 50, 0)).map((r) => r.userId)).toEqual(['ann']);
+    expect(await bellOf('bob')).toEqual([`${FOLLOW_REQUEST_NOTIFICATION}:ann`]);
   });
 
   it.each([
@@ -303,10 +326,11 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     expect(await bellOf('bob')).toEqual([]);
     expect(await bellOf('ann')).toEqual([]);
     await expect(requests.refuse('bob', 'ann')).rejects.toBeInstanceOf(NotFoundException);
-    // Asked again: the request stands in the inbox, and the person is not pushed a second time.
+    // Asked again: the request stands in the inbox with its bell row, and no second push.
     await requests.ask('ann', 'bob');
     expect(await statusOf('ann', 'bob')).toBe('pending');
     expect(pushed).toEqual([]);
+    expect(await bellOf('bob')).toEqual([`${FOLLOW_REQUEST_NOTIFICATION}:ann`]);
   });
 
   it('a refusal never touches an accepted follow', async () => {
@@ -398,6 +422,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       // Every reader of a follow reads this row (WP-F1): with it gone, the Suivis arm stops here,
       // and the announce sweep and the live push are pinned in reader-spaces and lives specs.
       expect(await follows.getFollowedUserIdsForUser('ann')).toEqual([]);
+      // ...and ann's cached Suivis page goes too, as on a block.
+      expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
       expect(pushed).toEqual([]);
       await expect(requests.removeFollower('bob', 'ann')).rejects.toBeInstanceOf(NotFoundException);
       expect((await requests.ask('ann', 'bob')).status).toBe('pending');
@@ -426,5 +452,94 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await requests.leave('ann', 'cid');
       expect((await requests.outgoing('ann', 50, 0)).map((r) => r.userId)).toEqual(['bob']);
     });
+  });
+
+  it(`an asker with ${FOLLOW_PENDING_MAX} unanswered requests is refused 409 FOLLOW_PENDING_LIMIT; an existing request still answers`, async () => {
+    await q(
+      `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
+       SELECT gen_random_uuid(), 'ann', 'p' || i, 'pending' FROM generate_series(1, $1) i`,
+      [FOLLOW_PENDING_MAX]
+    );
+    const refusal = await refusalOf(requests.ask('ann', 'bob'));
+    expect(refusal).toBeInstanceOf(ConflictException);
+    expect(codeOf(refusal)).toBe(FOLLOW_CODES.pendingLimit);
+    expect(await statusOf('ann', 'bob')).toBeNull();
+    expect(pushed).toEqual([]);
+    expect(await requests.ask('ann', 'p1')).toEqual({ ok: true, status: 'pending' });
+    // One answered or withdrawn, and the asker may ask again.
+    await requests.leave('ann', 'p1');
+    expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
+  });
+
+  it(`an asker who told ${FOLLOW_ASKS_PER_DAY} new people today is refused 429 FOLLOW_DAILY_LIMIT, but may re-ask someone already told`, async () => {
+    const tellMany = (age: string) =>
+      q(
+        `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind, "createdAt")
+         SELECT 'ann', 'n' || i, 'request', now() - $2::interval FROM generate_series(1, $1) i`,
+        [FOLLOW_ASKS_PER_DAY, age]
+      );
+    await tellMany('1 hour');
+    const refusal = await refusalOf(requests.ask('ann', 'bob'));
+    expect(refusal).toBeInstanceOf(HttpException);
+    expect((refusal as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect(codeOf(refusal)).toBe(FOLLOW_CODES.dailyLimit);
+    expect(await statusOf('ann', 'bob')).toBeNull();
+    // Somebody already told costs no push, so the cap does not apply to them.
+    await q(
+      `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind) VALUES ('ann', 'cid', 'request')`
+    );
+    expect(await requests.ask('ann', 'cid')).toEqual({ ok: true, status: 'pending' });
+    expect(pushed).toEqual([]);
+    // A day later the window has moved on.
+    await q(`DELETE FROM user_follow_notices WHERE "followedUserId" LIKE 'n%'`);
+    await tellMany('25 hours');
+    expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
+    expect(pushed.map((x) => x.to)).toEqual(['bob']);
+  });
+
+  it('a block that commits DURING the ask retracts the request it wrote, and nobody is told', async () => {
+    // The block lands between the insert's check and its commit: a trigger writes it in the
+    // insert's own transaction, which is the interleaving a concurrent block can produce.
+    await q(`
+      CREATE FUNCTION block_during_ask() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO user_blocks ("blockerId", "blockedId") VALUES (NEW."followedUserId", NEW."followerUserId");
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER block_during_ask AFTER INSERT ON user_follows
+        FOR EACH ROW WHEN (NEW."followerUserId" = 'eve') EXECUTE FUNCTION block_during_ask();`);
+    try {
+      const refusal = await refusalOf(requests.ask('eve', 'bob'));
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect(codeOf(refusal)).toBe(FOLLOW_CODES.blocked);
+      expect(await statusOf('eve', 'bob')).toBeNull();
+      expect(pushed).toEqual([]);
+      expect(await bellOf('bob')).toEqual([]);
+    } finally {
+      await q(`DROP TRIGGER block_during_ask ON user_follows; DROP FUNCTION block_during_ask()`);
+    }
+  });
+
+  it('an acceptance whose block landed after it is written tells nobody', async () => {
+    await requests.ask('ann', 'bob');
+    pushed.length = 0;
+    // The acceptance's UPDATE ran before the block; the push path re-reads it before sending.
+    await q(`
+      CREATE FUNCTION block_after_accept() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO user_blocks ("blockerId", "blockedId") VALUES (NEW."followerUserId", NEW."followedUserId");
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER block_after_accept AFTER UPDATE ON user_follows
+        FOR EACH ROW EXECUTE FUNCTION block_after_accept();`);
+    try {
+      expect(await requests.accept('bob', 'ann')).toEqual({ ok: true });
+      expect(pushed).toEqual([]);
+      expect(await bellOf('ann')).toEqual([]);
+    } finally {
+      await q(
+        `DROP TRIGGER block_after_accept ON user_follows; DROP FUNCTION block_after_accept()`
+      );
+    }
   });
 });

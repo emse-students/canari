@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import {
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -14,7 +16,7 @@ import { Association } from '../associations/entities/association.entity';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 
 /** How a follows log line names an account: its first 8 characters, never a whole account id. */
-const short = (id: string): string => id.slice(0, 8);
+export const short = (id: string): string => id.slice(0, 8);
 
 /** The stable codes a follow refusal carries - the client maps the code, never the message. */
 export const FOLLOW_CODES = {
@@ -22,7 +24,62 @@ export const FOLLOW_CODES = {
   targetNotFound: 'FOLLOW_TARGET_NOT_FOUND',
   /** A block stands between the two, in either direction. */
   blocked: 'FOLLOW_BLOCKED',
+  /** The asker already has {@link FOLLOW_PENDING_MAX} requests nobody has answered (409). */
+  pendingLimit: 'FOLLOW_PENDING_LIMIT',
+  /** The asker has notified {@link FOLLOW_ASKS_PER_DAY} new people in the last day (429). */
+  dailyLimit: 'FOLLOW_DAILY_LIMIT',
 } as const;
+
+/**
+ * How many requests one account may have waiting for an answer at once. A request names its
+ * asker in a push to a stranger, so an account must not be able to ask the whole directory: past
+ * this, it waits for answers or withdraws some (user-facing: 409 FOLLOW_PENDING_LIMIT).
+ */
+export const FOLLOW_PENDING_MAX = 100;
+
+/**
+ * How many NEW people one account may notify with a request per rolling day, counted from the
+ * `user_follow_notices` rows it caused - exactly the pushes it made, since a pair is told once.
+ * The per-minute throttle bounds a burst; this bounds the day (429 FOLLOW_DAILY_LIMIT).
+ */
+export const FOLLOW_ASKS_PER_DAY = 50;
+
+/** `$1`/`$2` are the two accounts; true when a block stands between them, in either direction. */
+const BLOCK_BETWEEN = `EXISTS (SELECT 1 FROM user_blocks b
+  WHERE (b."blockerId" = $1 AND b."blockedId" = $2) OR (b."blockerId" = $2 AND b."blockedId" = $1))`;
+
+/**
+ * The four conditions a NEW request needs, each as SQL over `$1` (asker), `$2` (person), `$3`
+ * ('pending'), `$4` ({@link FOLLOW_PENDING_MAX}), `$5` ({@link FOLLOW_ASKS_PER_DAY}) and `$6` (the
+ * notice kind 'request') - {@link REQUEST_PARAMS}. Written once and used twice: as the WHERE of the
+ * statement that writes the request, and as the columns of the read that names a refusal. The
+ * daily cap counts only against an ask that would notify somebody NEW: re-asking a person already
+ * told sends no push, so it is not what the cap is for.
+ */
+const REQUEST_CONDITIONS = {
+  person: `EXISTS (SELECT 1 FROM users u WHERE u.id = $2::varchar)`,
+  unblocked: `NOT EXISTS (SELECT 1 FROM user_blocks b
+     WHERE (b."blockerId" = $1::varchar AND b."blockedId" = $2::varchar)
+        OR (b."blockerId" = $2::varchar AND b."blockedId" = $1::varchar))`,
+  underPending: `(SELECT count(*) FROM user_follows p
+     WHERE p."followerUserId" = $1::varchar AND p.status = $3::varchar) < $4::int`,
+  underDaily: `(EXISTS (SELECT 1 FROM user_follow_notices n
+       WHERE n."followerUserId" = $1::varchar AND n."followedUserId" = $2::varchar
+         AND n.kind = $6::varchar)
+     OR (SELECT count(*) FROM user_follow_notices n
+          WHERE n."followerUserId" = $1::varchar AND n.kind = $6::varchar
+            AND n."createdAt" > now() - interval '1 day') < $5::int)`,
+} as const;
+
+/** The parameters of {@link REQUEST_CONDITIONS}, in order. */
+const REQUEST_PARAMS = (asker: string, person: string) => [
+  asker,
+  person,
+  FOLLOW_PENDING,
+  FOLLOW_PENDING_MAX,
+  FOLLOW_ASKS_PER_DAY,
+  'request',
+];
 
 /** Manages follows for both associations and users. */
 @Injectable()
@@ -38,7 +95,7 @@ export class FollowsService {
     private readonly assoRepo: Repository<Association>
   ) {}
 
-  // ── Association follows ───────────────────────────────────────────────────
+  // --- Association follows ---
 
   /** Follows an association. Silently ignores duplicate follows (idempotent). Throws if the association does not exist. */
   async followAssociation(followerUserId: string, associationId: string): Promise<{ ok: boolean }> {
@@ -96,7 +153,7 @@ export class FollowsService {
     }));
   }
 
-  // ── User follows ──────────────────────────────────────────────────────────
+  // --- User follows ---
   //
   // Every personal account is private (user, 2026-10-25, Q1): a follow of a PERSON is a request
   // (`pending`) until that person accepts it. Only an `accepted` row is a follow - the Suivis feed,
@@ -128,7 +185,9 @@ export class FollowsService {
    * nothing - an accepted follow stays accepted - and its status is then READ in a second statement,
    * which sees the winner's committed row. When nothing was written and no row exists, the reason is
    * read; a row withdrawn in between is asked again, the loop bounded by the outcomes a pair can be
-   * in, never by a clock.
+   * in, never by a clock. The same SELECT holds the asker to {@link FOLLOW_PENDING_MAX} unanswered
+   * requests and {@link FOLLOW_ASKS_PER_DAY} new people a day (409/429), so no account can push its
+   * name to the whole directory; and a block that commits during the ask retracts what it wrote.
    */
   async recordFollowRequest(
     followerUserId: string,
@@ -136,18 +195,16 @@ export class FollowsService {
   ): Promise<{ status: FollowStatus; created: boolean }> {
     this.logger.debug(`[FOLLOW] ${short(followerUserId)} asks to follow ${short(followedUserId)}`);
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const inserted: { status: FollowStatus }[] = await this.userFollowRepo.query(
+      const inserted: { id: string; status: FollowStatus }[] = await this.userFollowRepo.query(
         `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
-         SELECT $1::uuid, $2::varchar, $3::varchar, $4::varchar
-          WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = $3)
-            AND NOT EXISTS (SELECT 1 FROM user_blocks b
-                             WHERE (b."blockerId" = $2 AND b."blockedId" = $3)
-                                OR (b."blockerId" = $3 AND b."blockedId" = $2))
+         SELECT $7::uuid, $1::varchar, $2::varchar, $3::varchar
+          WHERE ${Object.values(REQUEST_CONDITIONS).join('\n            AND ')}
          ON CONFLICT DO NOTHING
-         RETURNING status`,
-        [randomUUID(), followerUserId, followedUserId, FOLLOW_PENDING]
+         RETURNING id, status`,
+        [...REQUEST_PARAMS(followerUserId, followedUserId), randomUUID()]
       );
       if (inserted.length > 0) {
+        await this.retractIfBlockedSince(inserted[0].id, followerUserId, followedUserId);
         this.logger.log(
           `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: request recorded, pending`
         );
@@ -172,13 +229,13 @@ export class FollowsService {
    * there and withdrawn in between - the caller asks again).
    */
   private async assertMayRequest(followerUserId: string, followedUserId: string): Promise<void> {
-    const [why]: { person: boolean; blocked: boolean }[] = await this.userFollowRepo.query(
-      `SELECT EXISTS (SELECT 1 FROM users u WHERE u.id = $2) AS person,
-              EXISTS (SELECT 1 FROM user_blocks b
-                       WHERE (b."blockerId" = $1 AND b."blockedId" = $2)
-                          OR (b."blockerId" = $2 AND b."blockedId" = $1)) AS blocked`,
-      [followerUserId, followedUserId]
-    );
+    const [why]: Record<keyof typeof REQUEST_CONDITIONS, boolean>[] =
+      await this.userFollowRepo.query(
+        `SELECT ${Object.entries(REQUEST_CONDITIONS)
+          .map(([name, sql]) => `${sql} AS "${name}"`)
+          .join(',\n                ')}`,
+        REQUEST_PARAMS(followerUserId, followedUserId)
+      );
     if (!why?.person) {
       this.logger.debug(`[FOLLOW] ${short(followedUserId)} refused: not a person`);
       throw new NotFoundException({
@@ -186,12 +243,57 @@ export class FollowsService {
         message: 'No person with this id',
       });
     }
-    if (why.blocked) {
+    if (!why.unblocked) {
       this.logger.debug(
         `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)} refused: a block stands`
       );
       throw new ForbiddenException({ code: FOLLOW_CODES.blocked, message: 'A block stands' });
     }
+    if (!why.underPending) {
+      this.logger.warn(
+        `[FOLLOW] ${short(followerUserId)} refused: ${FOLLOW_PENDING_MAX} requests already unanswered`
+      );
+      throw new ConflictException({
+        code: FOLLOW_CODES.pendingLimit,
+        message: 'Too many requests waiting for an answer',
+      });
+    }
+    if (!why.underDaily) {
+      this.logger.warn(
+        `[FOLLOW] ${short(followerUserId)} refused: ${FOLLOW_ASKS_PER_DAY} new people asked in a day`
+      );
+      throw new HttpException(
+        { code: FOLLOW_CODES.dailyLimit, message: 'Too many new requests today' },
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
+  }
+
+  /**
+   * THE BLOCK RACE, CLOSED AFTER THE WRITE: an ask whose statement started before a block
+   * committed, and committed after core-service's severing ran, would leave a request across the
+   * block - and its push to the person who just blocked. The block is committed before the severing
+   * is called, so it is visible to this read, made after the insert committed: if it stands, the
+   * request this call wrote is deleted and the ask is refused as a block, before anything notifies.
+   */
+  private async retractIfBlockedSince(
+    rowId: string,
+    followerUserId: string,
+    followedUserId: string
+  ): Promise<void> {
+    const [row]: { blocked: boolean }[] = await this.userFollowRepo.query(
+      `SELECT ${BLOCK_BETWEEN} AS blocked`,
+      [followerUserId, followedUserId]
+    );
+    if (!row?.blocked) return;
+    await this.userFollowRepo.query(`DELETE FROM user_follows WHERE id = $1 AND status = $2`, [
+      rowId,
+      FOLLOW_PENDING,
+    ]);
+    this.logger.warn(
+      `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: a block committed during the ask - request retracted`
+    );
+    throw new ForbiddenException({ code: FOLLOW_CODES.blocked, message: 'A block stands' });
   }
 
   /**

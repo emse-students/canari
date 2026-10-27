@@ -1034,12 +1034,21 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
   an unknown one is 404 `FOLLOW_TARGET_NOT_FOUND`) and no block stands, either direction (403
   `FOLLOW_BLOCKED` - core-service's block status already tells either side, so refusing hides
   nothing). A MUTED account may not ask (403): a request is a push to a person. The route is
-  throttled per CALLER (`FOLLOW_ASKS_PER_MINUTE`, all targets together).
+  throttled per CALLER (`FOLLOW_ASKS_PER_MINUTE`, all targets together), and the same SELECT caps
+  the asker: `FOLLOW_PENDING_MAX` (100) unanswered requests at once (409 `FOLLOW_PENDING_LIMIT`)
+  and `FOLLOW_ASKS_PER_DAY` (50) NEW people told per rolling day, counted from the notice rows
+  (429 `FOLLOW_DAILY_LIMIT`; re-asking someone already told costs no push and is not counted). One
+  account cannot push its name to the whole directory (review 2026-10-27).
+- **The block race**: an ask whose statement began before a block committed, and committed after
+  the severing ran, re-reads the block once its insert committed - the block committed BEFORE the
+  severing was called, so the read sees it - and deletes the row it wrote, refusing 403. The
+  notification path re-reads the block too, just before it writes anything, so an acceptance racing
+  a block pushes nothing. Both interleavings are forced with a trigger in the PostgreSQL spec.
 - **Told once per pair, from durable state**: the first `follow_request` (and the first
   `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies, so
-  ask -> withdraw -> ask in a loop pushes once. Never a clock. The request itself still shows in the
-  inbox, which reads `user_follows`; a claim whose notification then failed is logged and not
-  retried.
+  ask -> withdraw -> ask in a loop pushes once. Never a clock. A re-asked request gets its bell
+  row back WITHOUT a push (deleted and rewritten, so one per pair), since the request is real
+  again; a claim whose notification then failed is logged and not retried.
 - **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which dates
   `acceptedAt` and takes the row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
   block term is in the statement because the block severing is a best-effort cross-service call.
@@ -1063,7 +1072,9 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
 each dated by `acceptedAt`), `DELETE me/followers/:userId` (the follow is deleted and NOBODY is
 told; the removed person may ask again, which is a new request that lands in the inbox without a
 second push - the notice is once per pair; a pending request is refused, not removed; the announce
-sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs) and `GET me/follow-requests/sent`
+sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs,
+and the feed cache is dropped as on a block, so the removed person's Suivis does not keep serving
+this account's posts for its 30-second TTL) and `GET me/follow-requests/sent`
 (the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
 lists exist as routes: no rule says who may read another person's followers, so none is open. A
 pair a block stands between is left out of every list, as of every reader.

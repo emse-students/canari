@@ -335,7 +335,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/posts/:postId/comments` | Add comment |
 | PATCH | `/api/posts/:postId/pin` | Pin post (admin) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin post (admin) |
-| POST | `/api/posts/users/:userId/follow` | Ask to follow a person: a `pending` request (`{ ok, status }`); 404 `FOLLOW_TARGET_NOT_FOUND` for an id that names no person, 403 `FOLLOW_BLOCKED` across a block; throttled per caller ([social-service](../services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) |
+| POST | `/api/posts/users/:userId/follow` | Ask to follow a person: a `pending` request (`{ ok, status }`); 404 `FOLLOW_TARGET_NOT_FOUND` for an id that names no person, 403 `FOLLOW_BLOCKED` across a block, 409 `FOLLOW_PENDING_LIMIT` at 100 unanswered requests, 429 `FOLLOW_DAILY_LIMIT` at 50 new people a day; throttled per caller ([social-service](../services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) |
 | DELETE | `/api/posts/users/:userId/follow` | Unfollow, or withdraw a request |
 | GET | `/api/posts/users/:userId/follow-status` | `{ following, status }` |
 | GET | `/api/posts/me/follow-requests` | Requests waiting for the caller's answer (`limit` <= 100, `offset`) |
