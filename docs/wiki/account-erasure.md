@@ -268,9 +268,19 @@ with a token still valid republishes its key package (`register-device`), and a 
 again. So the roster rows go once every group was cut (a registration seats a device only where its
 owner is on the roster), and the run ends with a sweep - the key packages deleted again, every group
 a device row names then cut through the same `eraseSeats`, a WARN line when it found anything.
-**Then every route of the account goes, read off the routing sets themselves by its prefix**
-(`removeRoutesOfUser`), never off a row: a run that died after a 1:1 DM's tombstone committed and
-before that DM's Redis keys went left a route no row names, and the retry removes it all the same.
+**Then every route of the account no active seat stands behind goes.** The routes are FOUND off
+the routing sets themselves (`SSCAN MATCH <userId>:*` on each `group:members:<g>`,
+`findRoutesOfUser`), never off a row: a run that died after a 1:1 DM's tombstone committed and before
+that DM's Redis keys went left a route no row names, and the retry finds it all the same. Each is
+DECIDED under its group's seat lock against the account's active rows (`removeUnseatedRoutes`): a
+route with no active seat goes; a route beside one stays, so a seat admitted after the sweep's read
+stays whole for the final pass - removed alone, its route would be written back by the next send's
+reconciliation. **Every other Redis fact naming the account's devices goes too**
+(`eraseUserRedisTraces`): its members of `pending_welcome:<g>`, its fields of `group:parting:<g>`,
+its own `pending_welcome_notify:<userId>` list and every frame in another member's list naming it as
+requester, and its `user:online:<userId>:*` and `addressing:sessions:<userId>:*` keys. The user id
+is held to the user-id mint rule before anything is read (visible ASCII, no `:`), and is escaped in
+every `MATCH`, so a prefix never matches another account.
 **The same holds for every Redis key of such a DM**, its `history:` stream included: before the
 tombstone, the DMs are named in a per-account Redis set (`erasure:dms:<userId>`), the one fact still
 naming them once the tombstone deleted their rows; every run ends by deleting the keys of every DM
@@ -278,7 +288,7 @@ that set names, then the set itself (`purgeErasedDmKeys`). An interrupted run le
 retry, so no key of a tombstoned DM waits for the 90-day reaper; the set lives for one run, never
 by a timer.
 **No device row is deleted outside `eraseSeats`**: a seat admitted after the sweep's read keeps its
-row, with a WARN line, for the final pass to cut with any route restored from it meanwhile. That
+row and its route, with a WARN line, for the final pass to cut together. That
 pass starts once no token can act as the account, so it meets no republish at all: it is what
 terminates the erasure, not the ordering. The one row that can follow it is a demotion's `pending`
 row, route-less and naming a device with no key package, which `cleanupStaleDevices` collects.

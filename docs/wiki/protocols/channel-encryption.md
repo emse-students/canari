@@ -729,10 +729,12 @@ window with a durable row and a lock:
   hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
   device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
   deleted again, then every group a device row names NOW cut through the same `eraseSeats`, then
-  every route of the account removed off the routing sets by its prefix (`removeRoutesOfUser`),
-  never off a row - a 1:1 DM whose tombstone committed before a crash is named by no row, and its
-  route goes all the same. **No device row is deleted outside `eraseSeats`**: a seat admitted after
-  the sweep's read keeps its row for the FINAL PASS, which core starts
+  every route of the account FOUND off the routing sets by its prefix (`findRoutesOfUser`, never off
+  a row) and removed under that group's seat lock when no active seat of the account stands behind
+  it (`removeUnseatedRoutes`) - a 1:1 DM whose tombstone committed before a crash is named by no
+  row, and its route goes all the same. **No device row is deleted outside `eraseSeats`**: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS - a route removed
+  alone would be written back by the next send's reconciliation (`MEMBERS_CACHE_REPAIRED`) - which core starts
   once every token expired, so no republish can follow it - termination is that pass's, never the
   ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
   `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`

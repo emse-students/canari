@@ -1290,6 +1290,16 @@ pass does not find it either, since nothing of the account names it any more. Sm
 opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
 account was on.
 
+## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
+
+`dm_groups."isGroup" = false` is what an account erasure reads as "a 1:1 DM" and tombstones whole
+(`deleteUserData`), but nothing bounds such a conversation's roster to two people: the creation and
+the member routes do not read the flag. A conversation flagged one-to-one that holds more than two
+members would be ended for all of them by one member's erasure, instead of losing that member only.
+Owed first: one `GROUP BY` over production counting the roster of every `isGroup = false`
+conversation, then either a bound where the roster is written or the erasure deciding by the roster
+size rather than the flag ([account-erasure](account-erasure.md)).
+
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by

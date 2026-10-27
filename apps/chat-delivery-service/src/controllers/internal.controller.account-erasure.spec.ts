@@ -7,6 +7,7 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
+import { memoryRedis } from '../testing/memoryRedis';
 
 /**
  * THE CHAT-DELIVERY HALF OF AN ACCOUNT ERASURE, AS THE DURABLE QUEUE CALLS IT: MORE THAN ONCE.
@@ -39,6 +40,8 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       dmGroups?: string[];
       /** The DMs the account's erasure marker still names: a run that died after a tombstone. */
       marked?: string[];
+      /** Items per SCAN/SSCAN/HSCAN page, so a reader of one page only is caught. */
+      pageSize?: number;
     } = {}
   ) {
     process.env.INTERNAL_SECRET = SECRET;
@@ -131,39 +134,44 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     repos.groupMember.find.mockResolvedValue(
       (opts.dmGroups ?? []).map((groupId) => ({ groupId, userId: USER }))
     );
-    // The account's erasure marker (`erasure:dms:<user>`), as a set; every other set is a route set.
-    const marker = new Set(opts.marked ?? []);
+    // A Redis in memory, paging every scan by `pageSize`; the steps the order tests read are
+    // recorded around it: the route sweep's first SCAN, the marker's writes, a DM's key delete.
     const MARKER = `erasure:dms:${USER}`;
-    // The keys come back in one SCAN page; the route sweep is the step that walks them.
+    const store = memoryRedis(opts.pageSize ?? 2);
+    for (const [key, members] of Object.entries(opts.routed ?? {})) {
+      store.sets.set(key, new Set(members));
+    }
+    if (opts.marked?.length) store.sets.set(MARKER, new Set(opts.marked));
     const redis = {
-      scan: jest.fn(async () => {
-        steps.push('routes');
-        return ['0', Object.keys(opts.routed ?? {})];
+      ...store,
+      scan: jest.fn(async (cursor: string, ...args: (string | number)[]) => {
+        if (cursor === '0' && args.includes('group:members:*')) steps.push('routes');
+        return store.scan(cursor, ...args);
       }),
-      smembers: jest.fn(async (key: string) =>
-        key === MARKER ? [...marker] : (opts.routed?.[key] ?? [])
+      sscan: jest.fn((key: string, cursor: string, ...args: (string | number)[]) =>
+        store.sscan(key, cursor, ...args)
       ),
+      srem: jest.fn((key: string, ...members: string[]) => store.srem(key, ...members)),
       sadd: jest.fn(async (key: string, ...members: string[]) => {
-        steps.push(`mark ${members.join(',')}`);
-        members.forEach((m) => marker.add(m));
-        return members.length;
+        if (key === MARKER) steps.push(`mark ${members.join(',')}`);
+        return store.sadd(key, ...members);
       }),
-      srem: jest.fn().mockResolvedValue(1),
       del: jest.fn(async (...keys: string[]) => {
-        if (keys.includes(MARKER)) {
-          steps.push('unmark');
-          marker.clear();
-        } else {
-          steps.push(`del ${keys.join(',')}`);
-        }
-        return keys.length;
+        if (keys.includes(MARKER)) steps.push('unmark');
+        else if (keys.some((k) => k.startsWith('history:'))) steps.push(`del ${keys.join(',')}`);
+        return store.del(...keys);
       }),
     };
-    // Each group's seats are cut through the one eviction, under that group's seat lock.
+    // Each group's seats are cut through the one eviction, under that group's seat lock; a route
+    // found by the sweep is decided there too - here, no seat stands behind any of them.
     const messagingService = {
       eraseSeats: jest.fn(async (groupId: string) => {
         steps.push(`cut ${groupId}`);
         return { memberships: 1, queued: 0, toRemove: 2 };
+      }),
+      removeUnseatedRoutes: jest.fn(async (groupId: string, _u: string, routes: string[]) => {
+        await store.srem(`group:members:${groupId}`, ...routes);
+        return { removed: routes.length, kept: 0 };
       }),
     };
     const controller = new InternalController(
@@ -237,21 +245,95 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(redis.srem).not.toHaveBeenCalled();
   });
 
-  it('removes every route of the account from every routing set, one no row names any more included', async () => {
-    // A run that died after a 1:1 DM's tombstone committed and before its Redis keys went: the
-    // retry finds no row naming that DM, so the routes are found where they live, by prefix.
-    const { controller, redis } = make({
+  it('hands every route of the account it finds to the seat-locked decision, across every SCAN and SSCAN page', async () => {
+    // Pages of ONE item: a sweep that read only the first SCAN page, or the first SSCAN page of a
+    // set, would miss the routes below. A route no row names any more (a DM tombstoned before a
+    // crash) is found where it lives; whether it goes is the seat lock's decision.
+    const { controller, messagingService, redis } = make({
+      pageSize: 1,
       routed: {
-        'group:members:g-dm': [`${USER}:dev-1`, 'someone-else:dev-9'],
-        'group:members:g-other': ['someone-else:dev-8'],
+        'group:members:g-a': ['aaa-other:d0', `${USER}:dev-1`, `${USER}:dev-2`],
+        'group:members:g-b': ['zzz-other:d9'],
+        'group:members:g-c': [`${USER}:dev-3`],
       },
     });
 
     await controller.deleteUserData(USER, SECRET);
 
-    expect(redis.scan).toHaveBeenCalledWith('0', 'MATCH', 'group:members:*', 'COUNT', 500);
-    expect(redis.srem).toHaveBeenCalledTimes(1);
-    expect(redis.srem).toHaveBeenCalledWith('group:members:g-dm', `${USER}:dev-1`);
+    expect(messagingService.removeUnseatedRoutes).toHaveBeenCalledTimes(2);
+    expect(messagingService.removeUnseatedRoutes).toHaveBeenCalledWith('g-a', USER, [
+      `${USER}:dev-1`,
+      `${USER}:dev-2`,
+    ]);
+    expect(messagingService.removeUnseatedRoutes).toHaveBeenCalledWith('g-c', USER, [
+      `${USER}:dev-3`,
+    ]);
+    // Matched with SSCAN on the account's prefix, never by reading a set whole.
+    expect(redis.sscan).toHaveBeenCalledWith(
+      'group:members:g-a',
+      expect.any(String),
+      'MATCH',
+      `${USER}:*`,
+      'COUNT',
+      500
+    );
+    expect(redis.sets.get('group:members:g-b')).toEqual(new Set(['zzz-other:d9']));
+  });
+
+  it("removes every other Redis fact naming the account's devices, and nobody else's", async () => {
+    const { controller, redis } = make({ pageSize: 1 });
+    redis.sets.set('pending_welcome:g-1', new Set([`${USER}:dev-1`, 'other:d2']));
+    redis.hashes.set(
+      'group:parting:g-1',
+      new Map([
+        [`${USER}:dev-1`, '1'],
+        ['other:d2', '1'],
+      ])
+    );
+    const mine = JSON.stringify({ type: 'welcome_request', groupId: 'g-1', requesterUserId: USER });
+    const theirs = JSON.stringify({
+      type: 'welcome_request',
+      groupId: 'g-1',
+      requesterUserId: 'x',
+    });
+    redis.lists.set('pending_welcome_notify:other', [mine, theirs, mine]);
+    redis.lists.set(`pending_welcome_notify:${USER}`, [theirs]);
+    redis.hashes.set(`user:online:${USER}:dev-1`, new Map([['s', '1']]));
+    redis.hashes.set(`addressing:sessions:${USER}:dev-1`, new Map([['s', '1']]));
+    redis.hashes.set('user:online:other:d2', new Map([['s', '1']]));
+
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(redis.sets.get('pending_welcome:g-1')).toEqual(new Set(['other:d2']));
+    expect([...(redis.hashes.get('group:parting:g-1')?.keys() ?? [])]).toEqual(['other:d2']);
+    expect(redis.lists.get('pending_welcome_notify:other')).toEqual([theirs]);
+    expect(redis.lists.has(`pending_welcome_notify:${USER}`)).toBe(false);
+    expect(redis.hashes.has(`user:online:${USER}:dev-1`)).toBe(false);
+    expect(redis.hashes.has(`addressing:sessions:${USER}:dev-1`)).toBe(false);
+    expect(redis.hashes.has('user:online:other:d2')).toBe(true);
+  });
+
+  it("keeps the erasure marker when deleting a DM's keys throws, so the retry still finds them", async () => {
+    const { controller, redis } = make({ marked: ['g-dm'] });
+    const del = redis.del.getMockImplementation();
+    redis.del.mockImplementation(async (...keys: string[]) => {
+      if (keys.some((k) => k.startsWith('history:'))) throw new Error('redis down');
+      return del ? del(...keys) : 0;
+    });
+
+    await expect(controller.deleteUserData(USER, SECRET)).rejects.toThrow('redis down');
+
+    expect(redis.sets.get(`erasure:dms:${USER}`)).toEqual(new Set(['g-dm']));
+  });
+
+  it('refuses a user id outside the mint rule before it reads or deletes anything', async () => {
+    // A ':' would make `<userId>:` match another account's keys.
+    const { controller, steps } = make();
+
+    await expect(controller.deleteUserData('a:b', SECRET)).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(steps).toEqual([]);
   });
 
   it("names a DM in the account's erasure marker BEFORE its tombstone, and drops the marker only once its keys went", async () => {

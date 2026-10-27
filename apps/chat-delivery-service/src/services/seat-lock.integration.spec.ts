@@ -48,8 +48,9 @@ import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
 import { claimSeat, seatClaimHolds, withSeatLock, type SeatClaim } from '../utils/seat-eviction';
 import { writePendingSeats } from '../utils/group-membership';
-import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
+import { externalCommitFrame, memberCommitFrame, mlsFrame } from '../testing/mlsFrameFixture';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
+import { globToRegExp } from '../testing/memoryRedis';
 
 // social-service's entitlement answer, held by each case: what an HTTP call does outside the lock.
 jest.mock('../internal/distribution-entitlement', () => ({
@@ -127,8 +128,19 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     },
     smismember: async (key: string, ...members: string[]) =>
       members.map((m) => (setOf(key).has(m) ? 1 : 0)),
-    // An erasure's route sweep: one page holding every routing set.
-    scan: async () => ['0', [...sets.keys()].filter((k) => k.startsWith('group:members:'))],
+    // An erasure's Redis sweep: one page holding every set its pattern matches; the sets are the
+    // only keys held here, so a hash or list pattern matches nothing.
+    scan: async (_cursor: string, _match: string, pattern: string) => [
+      '0',
+      [...sets.keys()].filter((k) => globToRegExp(pattern).test(k)),
+    ],
+    sscan: async (key: string, _cursor: string, _match: string, pattern: string) => [
+      '0',
+      [...setOf(key)].filter((m) => globToRegExp(pattern).test(m)),
+    ],
+    del: async (...keys: string[]) => keys.filter((k) => sets.delete(k)).length,
+    // Presence: no device is online, so a transport frame is queued for nobody.
+    exists: async () => 0,
     // The commit gate's Redis lock, as it stands once its 5 s have run out: never held. What
     // serialises two commits at one base must then be the database alone.
     set: async () => 'OK',
@@ -717,11 +729,12 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(routes.has(route)).toBe(false);
     });
 
-    it("a seat admitted after the sweep's read keeps its row, loses its route, and the final pass cuts the row", async () => {
+    it("a seat admitted after the sweep's read stays whole, row and route, so a send before the final pass repairs nothing", async () => {
       // The republish and the admit land AFTER the sweep read which groups to cut: no cut of this
-      // pass sees the seat. Its route goes with every other route of the account, read off the
-      // routing sets by prefix; its row stays for the final pass - run once every token expired,
-      // when no republish can follow - which cuts it under the seat lock.
+      // pass sees the seat. Its route stays beside its row - the route sweep removes only routes no
+      // active seat stands behind - and the final pass, run once every token expired, cuts both
+      // under the seat lock. A route removed alone would be written back by the next send's
+      // reconciliation, which accuses at WARN a writer that did nothing wrong.
       const LATE = '00000000-0000-4000-8000-0000000000ea';
       const lateRoutes = setOf(`group:members:${LATE}`);
       const route = `${PEER.userId}:${PEER.deviceId}`;
@@ -757,14 +770,37 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(reads).toBe(2);
       expect(admitted).toEqual({ ok: true });
 
-      // The first pass ends with the late seat's row standing for the final pass, and no route of
-      // the account anywhere: the gateway reaches no device of it.
+      // The first pass ends with the late seat whole: its row AND its route.
       const standing: unknown[] = await q(
         `SELECT 1 FROM dm_device_group_memberships WHERE "userId" = $1 AND "groupId" = $2`,
         [PEER.userId, LATE]
       );
       expect(standing).toHaveLength(1);
-      expect(lateRoutes.has(route)).toBe(false);
+      expect(lateRoutes.has(route)).toBe(true);
+
+      // A member sends between the two passes: the reconciliation finds the routing set complete.
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'active') ON CONFLICT DO NOTHING`,
+        [SENDER.userId, SENDER.deviceId, LATE]
+      );
+      lateRoutes.add(`${SENDER.userId}:${SENDER.deviceId}`);
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      warn.mockClear();
+      const sadd = jest.spyOn(redis, 'sadd');
+      try {
+        await service.sendMessage({
+          groupId: LATE,
+          senderId: SENDER.userId,
+          senderDeviceId: SENDER.deviceId,
+          proto: mlsFrame(2, LATE, 1n),
+          durable: false,
+        });
+        expect(sadd.mock.calls.filter(([key]) => key === `group:members:${LATE}`)).toEqual([]);
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('MEMBERS_CACHE_REPAIRED'));
+      } finally {
+        sadd.mockRestore();
+      }
 
       // The final pass.
       await internal().deleteUserData(PEER.userId, SECRET);

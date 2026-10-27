@@ -34,15 +34,19 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { ADMITTED_SEAT } from '../utils/group-membership';
-import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
-import { parseSessionId } from '../utils/session-id';
 import {
+  sanitizeAccountUserId,
+  sanitizeIdentityValue,
+  sanitizeQueryValue,
+} from '../utils/sanitize';
+import { parseSessionId } from '../utils/session-id';
+import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import {
+  eraseUserRedisTraces,
+  findRoutesOfUser,
   markErasedDms,
   purgeErasedDmKeys,
-  removeRoutesOfUser,
-  tombstoneGroups,
-  totalGroupOwnedRows,
-} from '../utils/group-purge';
+} from '../utils/erasure-redis';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
@@ -816,10 +820,21 @@ export class InternalController {
    */
   @Delete('users/:userId')
   async deleteUserData(
-    @Param('userId') userId: string,
+    @Param('userId') rawUserId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
     this.assertInternalSecret(headerSecret);
+    // Every Redis step below matches on `<userId>:`, so an id outside the mint rule (a ':' above
+    // all) would match another account's keys: refused before anything is read.
+    let userId: string;
+    try {
+      userId = sanitizeAccountUserId(rawUserId, 'userId');
+    } catch (e) {
+      this.logger.warn(
+        `[INTERNAL_DELETE] REFUSED - the user id breaks the mint rule (length=${String(rawUserId ?? '').length})`
+      );
+      throw e;
+    }
 
     const who = userId.slice(0, 8);
     this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
@@ -935,22 +950,41 @@ export class InternalController {
       );
     }
 
-    // ── Every route of the account, wherever it still stands ──
-    // Read off the routing sets themselves, not off a row: a run that died after a 1:1 DM's
+    // ── Every route of the account no seat stands behind, wherever it still is ──
+    // FOUND off the routing sets themselves, not off a row: a run that died after a 1:1 DM's
     // tombstone committed and before its Redis keys went left a route no row names, which this
-    // retry's discovery cannot reach. A seat admitted after the sweep's read loses its route here
-    // too; its row stays for the final pass, and a route restored from it meanwhile
-    // (`restoreRoutes`) is that pass's to cut.
-    const strayRoutes = await removeRoutesOfUser(this.redis, userId);
-    if (strayRoutes.routes > 0) {
+    // retry's discovery cannot reach. DECIDED under each group's seat lock against the account's
+    // active rows ({@link MessagingService.removeUnseatedRoutes}): a seat admitted after the sweep's
+    // read keeps its route beside its row, both cut by the final pass - a route removed alone would
+    // be written back by the next send's reconciliation, which would accuse a writer that did no
+    // wrong.
+    const found = await findRoutesOfUser(this.redis, userId);
+    let strayRoutes = 0;
+    let keptRoutes = 0;
+    for (const [groupId, routes] of found) {
+      const r = await this.messagingService.removeUnseatedRoutes(groupId, userId, routes);
+      strayRoutes += r.removed;
+      keptRoutes += r.kept;
+    }
+    if (strayRoutes > 0) {
       this.logger.warn(
-        `[INTERNAL_DELETE] user=${who} ${strayRoutes.routes} route(s) in ${strayRoutes.sets} set(s) ` +
-          `outlived the cuts above and were removed by prefix - a run interrupted after a tombstone, ` +
-          `or a seat admitted after the sweep's read`
+        `[INTERNAL_DELETE] user=${who} ${strayRoutes} route(s) no seat stands behind outlived the ` +
+          `cuts above and were removed - a run interrupted after a tombstone; ${keptRoutes} kept beside their seat`
       );
     } else {
-      this.logger.log(`[INTERNAL_DELETE] user=${who} no route left in any routing set`);
+      this.logger.log(
+        `[INTERNAL_DELETE] user=${who} no unseated route left; ${keptRoutes} kept beside their seat`
+      );
     }
+
+    // ── Every other Redis fact naming the account's devices ──
+    // Stored welcome requests, removals waiting for their commit, pending notifications (its own,
+    // and frames naming it in another member's list), presence and sessions ({@link eraseUserRedisTraces}).
+    const traces = await eraseUserRedisTraces(this.redis, userId);
+    this.logger.log(
+      `[INTERNAL_DELETE] user=${who} Redis traces removed: pendingWelcome=${traces.pendingWelcome} ` +
+        `parting=${traces.parting} notifyFrames=${traces.notifyFrames} ownKeys=${traces.ownKeys}`
+    );
 
     // ── Every Redis key of the DMs this erasure tombstoned, this run's or an interrupted one's ──
     // Named by the account's erasure marker, never by a row: on a retry after a run died between a
@@ -963,9 +997,8 @@ export class InternalController {
     // ── User's own records ────────────────────────────────────────────────
     // Everything still queued FOR the account, a frame with no group included. NO DEVICE ROW IS
     // DELETED HERE: only `eraseSeats` deletes one, under the seat lock, with its queue and its route.
-    // A row of a seat admitted after the sweep's read is left standing for the final pass's
-    // discovery (its route went with the prefix sweep above), which cuts it with any route restored
-    // from it meanwhile. The one row that
+    // A row of a seat admitted after the sweep's read is left standing, beside its route, for the
+    // final pass's discovery, which cuts both. The one row that
     // can follow THAT pass is the demotion's (`deactivateDeviceMembership`, the stale-device cron
     // among its callers, the one writer that inserts without reading the key package): `pending`,
     // its route removed by the demotion itself, and naming a device with no key package, which
@@ -975,7 +1008,7 @@ export class InternalController {
     if (leftRows > 0) {
       this.logger.warn(
         `[INTERNAL_DELETE] ${leftRows} device row(s) of user=${who} written after the sweep's read, ` +
-          `left for the final pass to cut - a device re-admitted or demoted meanwhile`
+          `left for the final pass to cut with their routes - a device re-admitted or demoted meanwhile`
       );
     }
     const [, sentQueued] = (await manager.query(

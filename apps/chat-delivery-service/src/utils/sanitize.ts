@@ -5,6 +5,27 @@ import * as crypto from 'crypto';
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
 /**
+ * The rule a user id is minted under (core-service `src/users/user-id.ts`, the one rule): non-empty
+ * visible ASCII (U+0021 to U+007E) with no ':'. Not a UUID - the id is the identity provider's
+ * subject - so a route that acts on an account by its id holds it to this rule instead.
+ */
+const MINTABLE_USER_ID_REGEX = /^[\x21-\x39\x3b-\x7e]{1,255}$/;
+
+/**
+ * `value` as a user id that obeys the mint rule ({@link MINTABLE_USER_ID_REGEX}), or a 400. WHY: an
+ * account erasure matches Redis keys and members on `<userId>:`, and an id with a ':' would match
+ * another account's prefix.
+ */
+export function sanitizeAccountUserId(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !MINTABLE_USER_ID_REGEX.test(value)) {
+    throw new BadRequestException(
+      `${fieldName} must be non-empty visible ASCII with no ':' (the user id rule)`
+    );
+  }
+  return value;
+}
+
+/**
  * Validates that `value` is a non-empty string matching the safe query allowlist.
  * Throws `BadRequestException` with a descriptive message referencing `fieldName` on failure.
  */
