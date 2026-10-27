@@ -36,6 +36,7 @@ import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
   PurchaseRecord,
+  receivedStatus,
   type PurchasePaymentMethod,
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -1831,7 +1832,7 @@ export class ProductsService {
           productId: row.productId,
           amountCents: row.amountCents,
           paymentMethod: 'online',
-          status: granted ? 'paid' : 'paid_not_granted',
+          status: receivedStatus(granted),
           stripePaymentIntentId: paymentIntentId,
           associationId: row.associationId,
           productName: row.productName,

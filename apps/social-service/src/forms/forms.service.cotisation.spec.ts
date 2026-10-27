@@ -23,6 +23,8 @@ describe('FormsService - cotisation configuration and granting', () => {
       mayGrant?: boolean;
       /** Cotisation tiers the submitter holds, for the pricing tests. */
       heldTiers?: (string | null)[];
+      /** Fulfilment flags an earlier run already claimed: a replay finds them taken. */
+      claimed?: string[];
     } = {}
   ) {
     const formRepo: any = {
@@ -37,12 +39,16 @@ describe('FormsService - cotisation configuration and granting', () => {
       // The fulfilment flags (`claimFulfilment`): every claim is won, nothing was done before.
       update: jest.fn(() => Promise.resolve()),
       createQueryBuilder: jest.fn(() => {
+        let flag = '';
         const builder: any = {
           update: () => builder,
-          set: () => builder,
+          set: (values: Record<string, unknown>) => {
+            flag = Object.keys(values)[0] ?? '';
+            return builder;
+          },
           where: () => builder,
           andWhere: () => builder,
-          execute: () => Promise.resolve({ affected: 1 }),
+          execute: () => Promise.resolve({ affected: opts.claimed?.includes(flag) ? 0 : 1 }),
         };
         return builder;
       }),
@@ -491,6 +497,55 @@ describe('FormsService - cotisation configuration and granting', () => {
           cotisationVariantKey: null,
         },
       });
+
+      await service.markPaid('s1');
+
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid' })
+      );
+    });
+
+    // A replay whose grant an earlier run claimed (and whose record write failed) decides nothing
+    // about the tier itself: the record reads what the submitter holds NOW, so a refused tier is
+    // still marked, never recorded as an ordinary paid purchase.
+    it('a replay that runs no grant records paid_not_granted when the tier is not held', async () => {
+      const { service, userTagService, purchaseRecordService } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          title: 'Inscription',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: 'sans-alcool',
+        },
+        claimed: ['cotisationGrantedAt'],
+      });
+
+      await service.markPaid('s1', 'cs_test_1');
+
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
+      expect(userTagService.holdsCotisationTier).toHaveBeenCalledWith(
+        'user1',
+        'asso1',
+        'sans-alcool'
+      );
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
+    });
+
+    it('CONTROL: a replay that runs no grant records paid when the tier is held', async () => {
+      const { service, userTagService, purchaseRecordService } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: 'sans-alcool',
+        },
+        claimed: ['cotisationGrantedAt'],
+      });
+      userTagService.holdsCotisationTier.mockResolvedValue(true);
 
       await service.markPaid('s1');
 
