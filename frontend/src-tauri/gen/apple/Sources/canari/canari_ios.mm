@@ -642,6 +642,10 @@ static BOOL CanariImportAppGroupShare(NSString *why) {
     case CANARI_SHARE_IMPORT_PROTECTED:
       NSLog(@"[CanariShare] import (%@): the share is locked with the device - imported once it is unlocked", why);
       return NO;
+    case CANARI_SHARE_IMPORT_DROPPED_OVER_LOCKED:
+      // A LOSS, and at launch this is its only trace: the Rust logger does not exist yet.
+      NSLog(@"[CanariShare] import (%@) ERROR: the share was dropped - the share already waiting is locked with the device and was kept", why);
+      return NO;
     case CANARI_SHARE_IMPORT_NO_DIRS:
       NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
       return NO;

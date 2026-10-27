@@ -60,9 +60,14 @@ pub(crate) enum Import {
     /// The App Group manifest was taken and dropped (unreadable, from an older session than the one
     /// waiting, or with nothing to offer); said at the level its cause deserves.
     Dropped,
-    /// A manifest is under Data Protection and the device is locked: nothing was moved or deleted,
-    /// and the unlock (or the next activation after it) imports it (`handoff::Claimed::Protected`).
+    /// The device is locked - the App Group manifest, the app data's waiting one, or a protected
+    /// write there (`app_side_locked`): NOTHING WAS CONSUMED, and the unlock (or the next
+    /// activation after it) imports it (`handoff::Claimed::Protected`).
     Protected,
+    /// The App Group share WAS consumed and then DROPPED: the device locked between the readiness
+    /// check and the hand-over, and the app data's waiting share could not be read to be compared
+    /// with it - kept, and this one (or its refusal count) goes. A loss, said at ERROR on both sides.
+    DroppedOverLocked,
 }
 
 /// Serialises the imports of THIS process (the native call sites and the Tauri command): the
@@ -125,6 +130,10 @@ fn is_safe_share_id(id: &str) -> bool {
 /// device in the tests.
 type Reader<'a> = &'a dyn Fn(&Path) -> std::io::Result<String>;
 
+/// The probe of a protected write into a directory: `probe_protected_write` in the app, a stand-in
+/// for a locked device in the tests.
+type Prober<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
+
 /// Claims `{dir}/{name}` through `handoff::claim_and_read`, the one claim of every handoff. A LOCKED
 /// manifest (`Claimed::Protected`) is left in place by it, and every caller here answers that
 /// outcome without deleting anything.
@@ -179,18 +188,65 @@ fn offers_nothing(manifest: &Map<String, Value>) -> bool {
 /// class (it is the file's, not the path's). Fails closed: a manifest that cannot be protected is
 /// not written (`docs/wiki/frontend/sharing.md`, "At rest").
 fn write_pending(dir: &Path, manifest: &Map<String, Value>) -> std::io::Result<()> {
-    let staging = dir.join(format!("{PENDING_SHARE_FILE}.tmp"));
+    let staging = create_protected_staging(dir)?;
     let target = dir.join(PENDING_SHARE_FILE);
-    std::fs::write(&staging, b"")?;
-    if let Err(e) = crate::native_cache::protect_until_unlocked(&staging) {
-        log::error!("[SHARE] the share manifest could not be protected - not written: {e}");
-        let _ = std::fs::remove_file(&staging);
-        return Err(std::io::Error::other(e));
-    }
     std::fs::write(&staging, Value::Object(manifest.clone()).to_string())?;
     std::fs::rename(&staging, &target)?;
     crate::native_cache::exclude_from_backup(&target);
     Ok(())
+}
+
+/// Creates the EMPTY staging file of a manifest write and gives it `Complete`, before any byte is
+/// written (`write_pending`, `probe_protected_write`). Fails closed: a file that cannot be
+/// protected is deleted and the write refused.
+fn create_protected_staging(dir: &Path) -> std::io::Result<PathBuf> {
+    let staging = dir.join(format!("{PENDING_SHARE_FILE}.tmp"));
+    std::fs::write(&staging, b"")?;
+    if let Err(e) = crate::native_cache::protect_until_unlocked(&staging) {
+        log::error!("[SHARE] the share manifest could not be protected - not written: {e}");
+        remove_staging(&staging);
+        return Err(std::io::Error::other(e));
+    }
+    Ok(staging)
+}
+
+/// Deletes a staging file, said when it stays (the launch sweep's `STAGING_LEFTOVERS` then).
+fn remove_staging(staging: &Path) {
+    match std::fs::remove_file(staging) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("[SHARE] a staging manifest was not deleted: {e}"),
+    }
+}
+
+/// Whether a protected manifest can be WRITTEN into `dir` now: the staging file is created,
+/// protected and opened again for writing - the step a locked device refuses (`EPERM`) - and then
+/// deleted. Nothing is written into it.
+fn probe_protected_write(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let staging = create_protected_staging(dir)?;
+    let reopened = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&staging)
+        .map(drop);
+    remove_staging(&staging);
+    reopened
+}
+
+/// WHETHER THE APP DATA SIDE IS LOCKED, asked BEFORE the App Group claim so a locked device
+/// consumes nothing: its waiting manifest (read, never claimed) or a protected write there
+/// (`probe`) refused by Data Protection. Every other failure is the hand-over's to meet and say: a
+/// broken waiting manifest is replaced there, a failed write is an error there.
+fn app_side_locked(data_dir: &Path, read: Reader, probe: Prober) -> std::io::Result<bool> {
+    match read(&data_dir.join(PENDING_SHARE_FILE)) {
+        Err(e) if is_locked_read(&e) => return Ok(true),
+        Ok(_) | Err(_) => {}
+    }
+    match probe(data_dir) {
+        Ok(()) => Ok(false),
+        Err(e) if is_locked_read(&e) => Ok(true),
+        Err(e) => Err(e),
+    }
 }
 
 /// Deletes `{inbox}/{id}`, said either way.
@@ -213,16 +269,23 @@ pub(crate) fn import_group_share(
     data_dir: &Path,
     cache_dir: &Path,
 ) -> std::io::Result<Import> {
-    import_group_share_reading(group, data_dir, cache_dir, &read_handoff)
+    import_group_share_reading(
+        group,
+        data_dir,
+        cache_dir,
+        &read_handoff,
+        &probe_protected_write,
+    )
 }
 
-/// [`import_group_share`] with the manifest reader as a parameter, so a test can lock the device
-/// between the App Group claim and the app data one.
+/// [`import_group_share`] with the manifest reader and the write probe as parameters, so a test can
+/// lock the device before the claim, or between the App Group claim and the app data one.
 fn import_group_share_reading(
     group: &Path,
     data_dir: &Path,
     cache_dir: &Path,
     read: Reader,
+    probe: Prober,
 ) -> std::io::Result<Import> {
     let _process = IMPORT
         .lock()
@@ -233,6 +296,17 @@ fn import_group_share_reading(
         );
         return Ok(Import::Busy);
     };
+    // A stat, so an idle activation probes nothing.
+    if std::fs::symlink_metadata(group.join(PENDING_SHARE_FILE)).is_err() {
+        return Ok(Import::Nothing);
+    }
+    // NOTHING IS CONSUMED WHILE THE APP SIDE IS LOCKED: the share stays in the App Group, whole,
+    // until the unlock imports it. Asked BEFORE the claim; only a lock in the instant between the
+    // two still reaches the hand-over's `DroppedOverLocked`.
+    if app_side_locked(data_dir, read, probe)? {
+        log::info!("[SHARE] the app data is protected until the device is unlocked - the App Group share is imported then");
+        return Ok(Import::Protected);
+    }
     let raw = match claim(group, PENDING_SHARE_FILE, "importing", read)? {
         Claimed::Nothing => return Ok(Import::Nothing),
         Claimed::Protected => {
@@ -264,7 +338,8 @@ fn import_group_share_reading(
         }
     }
     let (files, lost) = files_in_moved_dir(&manifest, &target);
-    // READ, NOT ASSUMED: the extension wrote each copy `Complete`, and a rename keeps a file's class.
+    // READ, NOT ASSUMED: the extension wrote each copy `CompleteUnlessOpen`, and a rename keeps a
+    // file's class.
     // The first copy's class is said, so a device log shows what the move kept.
     if let Some(first) = files
         .first()
@@ -336,12 +411,13 @@ fn hand_over(
     // deleting its copies.
     let replaced = match claim(data_dir, PENDING_SHARE_FILE, "replacing", read)? {
         Claimed::Nothing => None,
-        // The device locked between the two claims. The waiting share may be the NEWER session's,
-        // and it cannot be read to tell: it is kept, and this one goes, said.
+        // The device locked between the readiness check and this claim. The waiting share cannot be
+        // read to be compared with this one: it is kept, and this one goes, said - the reason is in
+        // docs/wiki/frontend/sharing.md ("At rest"), and the code says it at launch too.
         Claimed::Protected => {
             log::error!("[SHARE] share {id} dropped: the waiting share is locked and cannot be compared with it");
             delete_share_dir(inbox, id, "a share arriving over a locked one");
-            return Ok(Import::Protected);
+            return Ok(Import::DroppedOverLocked);
         }
         Claimed::Read(raw) => parse_manifest(&raw).or_else(|| {
             log::warn!("[SHARE] the waiting share manifest is unreadable - replaced");
@@ -404,8 +480,8 @@ fn report_refusals(
     let waiting = match claim(data_dir, PENDING_SHARE_FILE, "replacing", read)? {
         Claimed::Nothing => None,
         Claimed::Protected => {
-            log::warn!("[SHARE] {refused} refusal(s) not reported: the waiting share is locked");
-            return Ok(Import::Protected);
+            log::error!("[SHARE] {refused} refusal(s) not reported: the waiting share is locked");
+            return Ok(Import::DroppedOverLocked);
         }
         Claimed::Read(raw) => parse_manifest(&raw),
     };
@@ -859,8 +935,11 @@ pub(crate) const IMPORT_NOTHING: i32 = 0;
 pub(crate) const IMPORT_BUSY: i32 = 2;
 /// The App Group manifest was unreadable or named no usable id, and was dropped.
 pub(crate) const IMPORT_DROPPED: i32 = 3;
-/// A manifest is locked by Data Protection: nothing moved, imported at the next activation.
+/// The device is locked: nothing consumed, imported once it is unlocked.
 pub(crate) const IMPORT_PROTECTED: i32 = 4;
+/// The App Group share was consumed and DROPPED over a locked waiting share (a lock in the instant
+/// after the readiness check): a loss, which `canari_ios.mm` says at ERROR.
+pub(crate) const IMPORT_DROPPED_OVER_LOCKED: i32 = 5;
 /// The app data or cache directory was not handed over.
 pub(crate) const IMPORT_NO_DIRS: i32 = -1;
 /// The App Group container is unavailable.
@@ -876,6 +955,7 @@ fn import_code(result: &std::io::Result<Import>) -> i32 {
         Ok(Import::Busy) => IMPORT_BUSY,
         Ok(Import::Dropped) => IMPORT_DROPPED,
         Ok(Import::Protected) => IMPORT_PROTECTED,
+        Ok(Import::DroppedOverLocked) => IMPORT_DROPPED_OVER_LOCKED,
         Err(_) => IMPORT_FAILED,
     }
 }
@@ -1362,12 +1442,58 @@ mod tests {
         cleanup(&group);
     }
 
+    /// A write probe that always succeeds: an unlocked device.
+    fn writable(_: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    /// A waiting share `old-1` in the app data, and a newer `new-1` in the App Group, both current.
+    fn old_waiting_new_arriving(
+        label: &str,
+        new_text: &str,
+        refused: u64,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let (group, data, cache) = scratch(label);
+        extension_share(&group, "old-1", 1, "old", &["0_a.png"], 0);
+        import_group_share(&group, &data, &cache).unwrap();
+        let names: &[&str] = if new_text.is_empty() {
+            &[]
+        } else {
+            &["0_b.png"]
+        };
+        extension_share(&group, "new-1", 1, new_text, names, refused);
+        (group, data, cache)
+    }
+
+    /// The App Group share was not consumed: its manifest and copies are where the extension left them.
+    fn assert_untouched_in_group(group: &Path, copies: bool) {
+        assert!(
+            pending(group).is_some(),
+            "the App Group manifest is still waiting"
+        );
+        assert!(!group.join("pending_share.json.importing").exists());
+        if copies {
+            assert!(group
+                .join(SHARED_INBOX)
+                .join("new-1")
+                .join("0_b.png")
+                .exists());
+        }
+    }
+
     #[test]
     fn a_locked_app_group_share_is_left_whole_by_the_import() {
         let (group, data, cache) = scratch("import-locked");
         extension_share(&group, "eeee-1", 0, "hi", &["0_a.png"], 0);
+        let group_locked = |p: &Path| {
+            if p.starts_with(&group) {
+                locked(p)
+            } else {
+                read_handoff(p)
+            }
+        };
         assert_eq!(
-            import_group_share_reading(&group, &data, &cache, &locked).unwrap(),
+            import_group_share_reading(&group, &data, &cache, &group_locked, &writable).unwrap(),
             Import::Protected
         );
         assert!(pending(&group).is_some(), "put back under its own name");
@@ -1382,12 +1508,8 @@ mod tests {
     }
 
     #[test]
-    fn a_share_arriving_over_a_locked_waiting_one_never_deletes_it() {
-        let (group, data, cache) = scratch("handover-locked");
-        extension_share(&group, "old-1", 1, "old", &["0_a.png"], 0);
-        import_group_share(&group, &data, &cache).unwrap();
-        extension_share(&group, "new-1", 1, "new", &["0_b.png"], 0);
-        // The device locks between the App Group claim and the app data one.
+    fn a_locked_waiting_share_in_the_app_data_consumes_nothing() {
+        let (group, data, cache) = old_waiting_new_arriving("data-locked", "new", 0);
         let data_locked = |p: &Path| {
             if p.starts_with(&data) {
                 locked(p)
@@ -1395,10 +1517,66 @@ mod tests {
                 read_handoff(p)
             }
         };
-
         assert_eq!(
-            import_group_share_reading(&group, &data, &cache, &data_locked).unwrap(),
+            import_group_share_reading(&group, &data, &cache, &data_locked, &writable).unwrap(),
             Import::Protected
+        );
+        // Asked BEFORE the claim: the newer share waits in the App Group for the unlock, whole.
+        assert_untouched_in_group(&group, true);
+        assert_eq!(pending(&data).unwrap()["text"], "old");
+        assert!(cache.join(SHARED_INBOX).join("old-1").exists());
+        // The unlock imports it, newest wins.
+        assert_eq!(
+            import_group_share(&group, &data, &cache).unwrap(),
+            Import::Imported
+        );
+        assert_eq!(pending(&data).unwrap()["text"], "new");
+        cleanup(&group);
+    }
+
+    #[test]
+    fn a_refused_protected_write_consumes_nothing() {
+        let (group, data, cache) = scratch("probe-locked");
+        extension_share(&group, "new-1", 1, "new", &["0_b.png"], 0);
+        let refused = |_: &Path| Err(std::io::Error::from_raw_os_error(1));
+        assert_eq!(
+            import_group_share_reading(&group, &data, &cache, &read_handoff, &refused).unwrap(),
+            Import::Protected
+        );
+        assert_untouched_in_group(&group, true);
+        // Any other write failure is an error - and still consumes nothing.
+        let broken = |_: &Path| Err(std::io::Error::from_raw_os_error(5));
+        assert!(import_group_share_reading(&group, &data, &cache, &read_handoff, &broken).is_err());
+        assert_untouched_in_group(&group, true);
+        assert!(pending(&data).is_none());
+        cleanup(&group);
+    }
+
+    #[test]
+    fn the_real_probe_writes_nothing_and_leaves_no_staging_file() {
+        let (group, data, _cache) = scratch("probe");
+        probe_protected_write(&data).unwrap();
+        assert_eq!(std::fs::read_dir(&data).unwrap().count(), 0);
+        cleanup(&group);
+    }
+
+    /// A reader that locks only the hand-over's claim of the app data manifest: the device locks in
+    /// the instant AFTER the readiness check.
+    fn locked_at_the_hand_over(p: &Path) -> std::io::Result<String> {
+        if p.ends_with("pending_share.json.replacing") {
+            locked(p)
+        } else {
+            read_handoff(p)
+        }
+    }
+
+    #[test]
+    fn a_share_dropped_over_a_locked_waiting_one_has_its_own_code() {
+        let (group, data, cache) = old_waiting_new_arriving("handover-locked", "new", 0);
+        assert_eq!(
+            import_group_share_reading(&group, &data, &cache, &locked_at_the_hand_over, &writable)
+                .unwrap(),
+            Import::DroppedOverLocked
         );
         assert_eq!(pending(&data).unwrap()["text"], "old", "kept, unread");
         assert!(cache.join(SHARED_INBOX).join("old-1").exists());
@@ -1411,29 +1589,19 @@ mod tests {
     }
 
     #[test]
-    fn refusals_over_a_locked_waiting_share_leave_it_untouched() {
-        let (group, data, cache) = scratch("refusals-locked");
-        extension_share(&group, "kept-1", 1, "kept", &["0_a.png"], 0);
-        import_group_share(&group, &data, &cache).unwrap();
-        extension_share(&group, "none-1", 1, "", &[], 3);
-        let data_locked = |p: &Path| {
-            if p.starts_with(&data) {
-                locked(p)
-            } else {
-                read_handoff(p)
-            }
-        };
-
+    fn refusals_over_a_locked_waiting_share_are_dropped_and_leave_it_untouched() {
+        let (group, data, cache) = old_waiting_new_arriving("refusals-locked", "", 3);
         assert_eq!(
-            import_group_share_reading(&group, &data, &cache, &data_locked).unwrap(),
-            Import::Protected
+            import_group_share_reading(&group, &data, &cache, &locked_at_the_hand_over, &writable)
+                .unwrap(),
+            Import::DroppedOverLocked
         );
         let m = pending(&data).unwrap();
         assert_eq!(
             (m["text"].as_str(), m["refused"].as_u64()),
-            (Some("kept"), Some(0))
+            (Some("old"), Some(0))
         );
-        assert!(cache.join(SHARED_INBOX).join("kept-1").exists());
+        assert!(cache.join(SHARED_INBOX).join("old-1").exists());
         assert!(!data.join("pending_share.json.replacing").exists());
         cleanup(&group);
     }
@@ -1475,6 +1643,7 @@ mod tests {
             import_code(&Ok(Import::Busy)),
             import_code(&Ok(Import::Dropped)),
             import_code(&Ok(Import::Protected)),
+            import_code(&Ok(Import::DroppedOverLocked)),
             import_code(&Err(std::io::Error::other("x"))),
             IMPORT_NO_DIRS,
             IMPORT_NO_GROUP,

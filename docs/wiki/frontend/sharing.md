@@ -350,8 +350,26 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    the claim then stays under its claim name. Any other failure is a broken file and is still
    deleted, so "locked" is no hiding place for corruption. **The code cannot say why**: an `EPERM`
    from another cause is treated the same, and that file is kept - put back at every claim, its
-   inbox never swept, said each time. A share arriving over a locked one is the one that goes (the
-   waiting one may be a newer session's, and cannot be read to tell), said at ERROR.
+   inbox never swept, said each time.
+   **The app consumes nothing while its side is locked.** Before it claims the App Group manifest,
+   the import reads (never claims) the app data's waiting manifest and probes a protected write
+   there (`app_side_locked`, `probe_protected_write`); either refused by Data Protection answers
+   `IMPORT_PROTECTED` with the share still whole in the App Group, and the unlock imports it with
+   the ordinary newest-wins rule, both shares readable then. Only a lock in the instant between
+   that check and the hand-over's claim still meets a locked waiting share: that answers its own
+   code, `IMPORT_DROPPED_OVER_LOCKED`, NSLogged at ERROR (at launch the only logger), never the
+   "imported once unlocked" of `IMPORT_PROTECTED`.
+   **A share arriving over a LOCKED waiting one is the one that goes - keep-old, against the usual
+   newest-wins, deliberately.** It is reached in that instant on the app side, and in the extension
+   when the phone locks during a capture (a long iCloud video) while an older share waits. Why: the
+   waiting share cannot be read, so neither its session (epoch) nor its copies can be known - to
+   replace it would delete a share the member was already told is ready ("Choisissez la
+   conversation"), unseen; dropping the new one is said to the member who is sharing right now (the
+   extension answers `.failed`, its card says the share could not be prepared), and at ERROR in both
+   logs. The alternative (leave the old claim as `.replacing`, write the new manifest, and let the
+   launch sweep delete the old as `SWEEP_CLAIM_LOST`) was rejected: once an import has carried the
+   newer share out, no manifest waits beside that claim, so the sweep PUTS IT BACK and the next
+   import replaces the newer share with the older one.
    **The sweep** leaves an inbox whose manifest is locked whole (`SWEEP_PROTECTED`): which copies it
    names cannot be read. A CLAIM a dead process left (`.draining`, `.importing`, `.replacing`, in the
    app data directory and the App Group) is a whole share nobody took: put back when no manifest
@@ -368,9 +386,11 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    page draining only at its mount and on that event. Nothing retries on a timer. Tests:
    `handoff.rs` (a locked read leaves the file, a file landing meanwhile is never overwritten, a
    broken one is deleted), `app_group_share.rs` (a locked manifest leaves both inboxes whole; a
-   locked App Group share, a share arriving over a locked one and refusals over a locked one delete
+   locked App Group share, a locked app data manifest and a refused protected write consume
+   nothing; a share or refusals arriving over a locked one answer `DroppedOverLocked` and delete
    nothing waiting; a leftover claim is put back or deleted as lost), `iosShareExtension.test.ts`
-   (the classes, the put-back, no UIKit question at bootstrap, the unlock observer).
+   (the classes, the put-back, every import code said by its own case, no UIKit question at
+   bootstrap, the unlock observer).
    **Why not an app-level seal.** The backlog's first shape sealed the text with the install's cache
    key (`CNSEAL1`). Rejected: it protected the text while the copies stayed plain, cost two crypto
    twins of the envelope (Kotlin, Swift) or the Rust library in a memory-capped extension, and an

@@ -222,15 +222,24 @@ describe('the names the extension, the app and Android share', () => {
       'BUSY',
       'DROPPED',
       'PROTECTED',
+      'DROPPED_OVER_LOCKED',
       'NO_DIRS',
       'NO_GROUP',
       'FAILED',
     ];
+    // Every code is said by its own case: at launch that line is the only logger.
+    const ios = read(resolve(APPLE, 'Sources/canari/canari_ios.mm'));
     for (const name of imports) {
       expect(asNumber(headerDefine(`IMPORT_${name}`)), name).toBe(
         asNumber(rustConst(`IMPORT_${name}`))
       );
+      expect(ios, name).toContain(`case CANARI_SHARE_IMPORT_${name}:`);
     }
+    expect([...rustGroup.matchAll(/const IMPORT_(\w+): i32/g)].map((m) => m[1]).sort()).toEqual(
+      [...imports].sort()
+    );
+    // A drop over a locked share is a loss, said at ERROR.
+    expect(ios).toMatch(/case CANARI_SHARE_IMPORT_DROPPED_OVER_LOCKED:[^;]*ERROR/);
     const sweeps = [...rustGroup.matchAll(/const SWEEP_(\w+): u32/g)].map((m) => m[1]);
     expect(sweeps.length).toBe(12);
     for (const name of sweeps) {
