@@ -4219,16 +4219,24 @@ export class ChannelService implements OnApplicationBootstrap {
     // Notify the kicked user and remaining workspace members
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     const notifyIds = [...new Set([...remainingMemberIds, targetUserId])];
-    await this.redis.publishChannelEvent(
-      'channel.member.kicked',
-      {
-        workspaceId,
-        kickedUserId: targetUserId,
-        kickedBy: actorUserId,
-        ...committingDevice(actorDeviceId),
-      },
-      notifyIds
-    );
+    // AFTER THE WRITE, AND NEVER ITS FAILURE - the same rule as `announceSalonRemoval`: the kick is
+    // committed, and a 500 here would tell the caller it did not happen.
+    try {
+      await this.redis.publishChannelEvent(
+        'channel.member.kicked',
+        {
+          workspaceId,
+          kickedUserId: targetUserId,
+          kickedBy: actorUserId,
+          ...committingDevice(actorDeviceId),
+        },
+        notifyIds
+      );
+    } catch (e) {
+      this.logger.error(
+        `[WORKSPACE] kick of ${targetUserId.slice(0, 8)} from workspace=${workspaceId} committed but NOT announced: ${String(e)} - clients converge on their next roster read`
+      );
+    }
 
     this.logger.log(
       `[WORKSPACE] kick workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`

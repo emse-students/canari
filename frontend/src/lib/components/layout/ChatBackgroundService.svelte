@@ -78,7 +78,11 @@
     removalOutcome,
     salonGrants,
   } from '$lib/utils/chat/memberRemoval';
-  import { commitDepartureIfElected } from '$lib/utils/graine/departureCommitter';
+  import {
+    commitDepartureIfElected,
+    forgetDeparturesLeftToActors,
+    revisitDeparturesLeftToActors,
+  } from '$lib/utils/graine/departureCommitter';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type {
@@ -725,6 +729,7 @@
     forgetPostComposerMedia();
     // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
     salonGrants.clear();
+    forgetDeparturesLeftToActors();
     _loginInProgress = false;
   }
 
@@ -1358,6 +1363,8 @@
     function handleReconnect(trigger: ListingRetryTrigger) {
       if (!globalSession.isLoggedIn) return;
       globalChannels.retryFailedListing(channelsCtx(), trigger);
+      // A removal left to an actor whose commit never landed is decided again on this signal.
+      void revisitDeparturesLeftToActors(channelService, appendLog);
     }
 
     function handleVisibility() {

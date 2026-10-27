@@ -566,6 +566,19 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  it('a kick whose announcement fails is still a kick, not a 500', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
+    redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(service.kickFromWorkspace('ws1', 'u-bob', 'u1')).resolves.toEqual({
+      success: true,
+    });
+  });
+
   it('removeMemberFromChannel reports whether the channel was private', async () => {
     const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
     channelRepo.findOne.mockResolvedValue({

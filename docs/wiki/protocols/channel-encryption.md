@@ -1845,22 +1845,35 @@ does not let a member commit its own removal, and the leaver's devices are unrou
 a revoke whose actor holds no leaf in a scope is the same case. So every receiver of the removal
 broadcast about somebody else - and a salon leave now broadcasts `channel.member.removed` with the
 leaver as its own actor, to the salon's audience and the leaver - reads the scope's tree and its
-roster with per-device presence and elects the same device: the first, in canonical
-`userId:deviceId` order, of the first four leaves of the tree (the departed user's excluded) whose
-user is on the roster and whose device the roster reports online. The window is a function of the
-tree alone, so only a receiver whose own leaf is in it reads the roster at all - a departure costs
-at most four roster reads, not one per member. That device runs the scope's roster pass (the same
+roster with per-device presence and elects the same device: the first, in window order, of a
+window of four leaves (the departed user's excluded) whose user is on the roster and whose device the
+roster reports online. A receiver whose tree holds no leaf of the departed user decides nothing
+(`not-in-tree`). **The window MOVES**: the tree's leaves in canonical `userId:deviceId` order, rotated
+by a hash of (departed user, epoch) and cut to four (`electionWindow`). A fixed prefix would starve
+for good on four leaves that never commit - a stale device, a revoked leaf not yet removed, an older
+client - so the window is a function of the tree, the departure and the epoch, the same on every
+receiver, and the next departure or epoch lands elsewhere. Only a receiver whose own leaf is in it
+reads the roster at all - a departure costs at most four roster reads, not one per member - and each
+of them logs `nobody elected` with the window size and epoch when none of the four is online, so a
+starved window is visible from inside it. The elected device runs the scope's roster pass (the same
 serialised pass, so a load's pass cannot double it) unless its tab is not the leader or its group
 sits in an epoch gap, which it says; every other receiver commits nothing and logs whom it left it
 to. **The actor is checked BY DEVICE**: a kick or a revoke names the actor's device when that device
 will commit (`committingDeviceId`: a Graine runtime and the leader tab), the server echoes it as
 `actorDeviceId`, and the receivers leave a scope's Remove to it exactly when that device is a leaf
-of the scope's tree - a user-level check handed it to an actor whose OTHER device held the leaf. No
-clock: two receivers reading presence a moment apart may elect two devices - the epoch gate keeps
-one commit and the other pass reads the tree again and says "already gone" - or none, and then the
-Remove waits for a holder's next roster pass. Neither is retried. **Presence says online, not able
-to commit**: an elected device that does not hold the group, or an older client predating this
-election, commits nothing, and only the backstop - a holder's next roster pass - covers it.
+of the scope's tree - a user-level check handed it to an actor whose OTHER device held the leaf.
+**The actor's claim is not trusted forever**: a Remove left to the actor is remembered, and decided
+again WITHOUT the claim on the next signal this device observes - a reconnect, a return to the
+foreground, or the next removal broadcast it handles (`revisitDeparturesLeftToActors`). If the
+departed user is gone from the tree by then the actor's commit landed and the entry is dropped;
+otherwise the election runs. So an actor whose commit staged nothing, failed, or whose app closed
+first is covered at the next such signal, and **at worst at the next app load**, whose roster pass
+is the backstop for everything here; sign-out forgets the list. No clock: two receivers reading
+presence a moment apart may elect two devices - the epoch gate keeps one commit and the other pass
+reads the tree again and says "already gone" - or none, and then the Remove waits for the next
+departure, epoch or holder's roster pass. **Presence says online, not able to commit**: an elected
+device that does not hold the group, or an older client predating this election, commits nothing,
+and only the backstop - a holder's next roster pass - covers it.
 
 **A removal and a grant of the same salon are ordered by the server's `accessRevision`**, which both
 broadcasts now carry: a removal older than a grant already seen for the same person (a leave and a

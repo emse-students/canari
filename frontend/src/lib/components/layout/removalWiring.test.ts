@@ -30,8 +30,16 @@ describe('ChatBackgroundService - a removal broadcast', () => {
     expect(handler).toMatch(/if \(!selfLeft\) \{\s*showToast\(m\.channel_removed_from_channel\(/);
   });
 
-  it('forgets the salon grants seen on sign-out', () => {
+  it('forgets the salon grants and the departures left to actors on sign-out', () => {
     const signOut = source.slice(source.indexOf('function handleSignedOut'));
     expect(signOut.slice(0, 1500)).toContain('salonGrants.clear();');
+    expect(signOut.slice(0, 1500)).toContain('forgetDeparturesLeftToActors();');
+  });
+
+  it('decides again, on a reconnect or a return to the foreground, a removal left to its actor', () => {
+    const reconnect = source.slice(source.indexOf('function handleReconnect'));
+    expect(reconnect.slice(0, 600)).toContain(
+      'void revisitDeparturesLeftToActors(channelService, appendLog);'
+    );
   });
 });
