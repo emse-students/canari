@@ -1941,6 +1941,16 @@
   "asso_cotisations_tier_create_error": "Failed to create the tier.",
   "asso_cotisations_tier_delete_confirm": "Delete the tier \"{name}\"? This action is irreversible.",
   "asso_cotisations_tier_delete_error": "Failed to delete the tier.",
+  "asso_cotisations_tier_delete_has_holders": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} member still holds this tier: give them another tier or revoke it before deleting this one.",
+        "countPlural=other": "{count} members still hold this tier: give them another tier or revoke it before deleting this one."
+      }
+    }
+  ],
   "asso_cotisations_tier_variant_key_label": "Tier identifier *",
   "asso_cotisations_tier_variant_key_hint": "Unique technical identifier (e.g. \"avec-alcool\") used to distinguish this tier.",
   "asso_cotisations_tier_variant_key_change_hint": "Changing this identifier moves this tier's cotisants over to the new one automatically: nobody loses their cotisation.",

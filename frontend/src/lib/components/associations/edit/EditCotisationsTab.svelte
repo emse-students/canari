@@ -11,6 +11,8 @@
     createProduct,
     updateProduct,
     deleteProduct,
+    SocialApiError,
+    TIER_HAS_HOLDERS,
     type Association,
     type AssociationProduct,
     type CotisantRosterItem,
@@ -509,7 +511,8 @@
   /**
    * Deletes a tier. Allowed for the base tier too - a multi-tier association typically wants the
    * auto-provisioned base gone, since holders of its un-suffixed tag report no forfait at all to
-   * consumers like Le Cercle. The server refuses to delete the last remaining tier.
+   * consumers like Le Cercle. The server refuses to delete the last remaining tier, and a tier
+   * people still hold (`TIER_HAS_HOLDERS`, worded here with their count).
    */
   async function handleDeleteTier(product: AssociationProduct) {
     if (
@@ -524,6 +527,12 @@
       tierProducts = tierProducts.filter((p) => p.id !== product.id);
       await loadCotisationTiers();
     } catch (e) {
+      // People still hold the tier: a refusal the manager acts on, named with its count.
+      if (e instanceof SocialApiError && e.code === TIER_HAS_HOLDERS && e.holderCount !== null) {
+        tiersError = m.asso_cotisations_tier_delete_has_holders({ count: e.holderCount });
+        console.warn('[Cotisations] Tier delete refused: still held by', e.holderCount);
+        return;
+      }
       tiersError = m.asso_cotisations_tier_delete_error();
       console.error('[Cotisations] Failed to delete tier:', e);
     }

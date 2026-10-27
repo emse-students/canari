@@ -1,6 +1,7 @@
 import {
   fixedPriceFor,
   linkedTierKey,
+  orphanTierTags,
   pickHeldTier,
   tierRefusal,
   tierRelation,
@@ -163,5 +164,46 @@ describe('tierRefusal - one mapping from a relation to the typed 409, for the sh
     expect(tierRefusal('held')?.code).toBe('PRODUCT_ALREADY_PURCHASED');
     expect(tierRefusal('lower')?.code).toBe('TIER_NOT_A_RISE');
     expect(tierRefusal('unranked')?.code).toBe('TIER_NOT_RANKABLE');
+  });
+});
+
+describe('orphanTierTags - a tag of a tier that no longer exists', () => {
+  const keys = ['avec', null];
+
+  it('names a deleted named tier, lifetime or dated, by the key read back from the tag', () => {
+    expect(
+      orphanTierTags(['cotisant:bde-premium', 'cotisant:bde-gold-2026-2027'], 'bde', keys)
+    ).toEqual([
+      { tagName: 'cotisant:bde-gold-2026-2027', variantKey: 'gold' },
+      { tagName: 'cotisant:bde-premium', variantKey: 'premium' },
+    ]);
+  });
+
+  it('names a deleted BASE tier with a null key, lifetime or dated', () => {
+    expect(orphanTierTags(['cotisant:bde', 'cotisant:bde-2026-2027'], 'bde', ['avec'])).toEqual([
+      { tagName: 'cotisant:bde', variantKey: null },
+      { tagName: 'cotisant:bde-2026-2027', variantKey: null },
+    ]);
+  });
+
+  it('CONTROL: a tag of an existing tier, in any year, is not an orphan', () => {
+    expect(
+      orphanTierTags(
+        [
+          'cotisant:bde',
+          'cotisant:bde-2025-2026',
+          'cotisant:bde-avec',
+          'cotisant:bde-avec-2026-2027',
+        ],
+        'bde',
+        keys
+      )
+    ).toEqual([]);
+  });
+
+  it('ignores a tag outside the association namespace, and a slug it merely prefixes', () => {
+    expect(orphanTierTags(['cotisant:bdex', 'staff:bde', 'cotisant:other'], 'bde', keys)).toEqual(
+      []
+    );
   });
 });

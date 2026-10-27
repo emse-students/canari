@@ -208,6 +208,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ),
       listByUser: jest.fn(() => Promise.resolve([])),
       listHeldCotisationTiers: jest.fn(() => Promise.resolve([])),
+      // No tag of a deleted tier unless a test says so (`OrphanTierTag[]`).
+      heldOrphanTierTags: jest.fn(() => Promise.resolve([] as unknown[])),
+      countActiveTierHolders: jest.fn(() => Promise.resolve(0)),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       revokeByName: jest.fn(() => Promise.resolve()),
       revokeSiblingTierTags: jest.fn(() => Promise.resolve()),
@@ -1510,6 +1513,63 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(
         await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
       ).toBe('PRODUCT_ALREADY_PURCHASED');
+    });
+
+    // A tier deleted while people still held it: its tag names no product, so no price. Read as
+    // holding nothing, its holder could buy a cheaper tier and the XOR would never drop the tag.
+    it('refuses any tier, TIER_NOT_RANKABLE, to a holder of a DELETED tier', async () => {
+      for (const target of [sansAlcool(), avecAlcool()]) {
+        const made = buyer(target, [sansAlcool(), avecAlcool()], []);
+        made.userTagService.heldOrphanTierTags.mockResolvedValue([
+          { tagName: 'cotisant:cercle-premium', variantKey: 'premium' },
+        ]);
+        expect(
+          await conflictCode((made.service as any).resolvePurchase('asso1', target.id, 'user1'))
+        ).toBe('TIER_NOT_RANKABLE');
+      }
+    });
+
+    describe('deleting a tier people still hold', () => {
+      /** A manager deleting `prod-sans` while `holders` people hold it. */
+      function deleting(holders: number) {
+        const made = makeService();
+        made.assoRepo.findOne.mockResolvedValue(cercle());
+        made.productRepo.findOne.mockResolvedValue(sansAlcool());
+        made.manager.count = jest.fn(() => Promise.resolve(2));
+        made.manager.remove = jest.fn(() => Promise.resolve());
+        made.userTagService.countActiveTierHolders.mockResolvedValue(holders);
+        return made;
+      }
+
+      it('is refused 409 TIER_HAS_HOLDERS with the count, under the EXCLUSIVE association lock', async () => {
+        const { service, manager, userTagService } = deleting(3);
+        const err = await service.delete('asso1', 'prod-sans').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'TIER_HAS_HOLDERS',
+          holderCount: 3,
+        });
+        expect(userTagService.countActiveTierHolders).toHaveBeenCalledWith(
+          'cercle',
+          'sans-alcool',
+          manager
+        );
+        // The retag's lock, exclusive, and nothing removed.
+        expect(manager.query).toHaveBeenCalledWith(
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          ['tier:asso1']
+        );
+        expect(manager.remove).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: goes through when nobody holds it', async () => {
+        const { service, manager } = deleting(0);
+        await service.delete('asso1', 'prod-sans');
+        expect(manager.remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'prod-sans' }));
+      });
     });
 
     it('sells a gridded tier at its cell to a buyer holding no tier', async () => {

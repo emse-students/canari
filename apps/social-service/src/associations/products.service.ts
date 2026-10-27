@@ -25,6 +25,7 @@ import {
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
   PURCHASE_PRICING_CHANGED,
+  TIER_HAS_HOLDERS,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -46,10 +47,12 @@ import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
 import {
   fixedPriceFor,
   linkedTierKey,
+  orphanTierTags,
   pickHeldTier,
   tierRefusal,
   tierRelationOf,
   type HeldTier,
+  type OrphanTierTag,
   type TierRelation,
 } from './tier-pricing';
 import {
@@ -693,11 +696,18 @@ export class ProductsService {
    * purchase is ranked against (`pickHeldTier`). Null when the association has no cotisation mode.
    * The single enumeration behind `isBuyerCotisant`, the checkout's rank check, its settlement and
    * the listings, so "is a cotisant", "holds this tier" and "what it costs" cannot drift apart.
+   *
+   * `orphans` are the viewer's tags of a tier the association no longer has
+   * (`UserTagService.heldOrphanTierTags`): ranked as a held tier with no product, so with no price,
+   * which makes every purchase of another tier `unranked` - never `none`, which would let a holder
+   * of a deleted dearer tier buy a cheaper one. They are not in `heldKeys`: a tier that is gone
+   * grants no member price and no gate, as it did before.
    */
   private async tierFactsFrom(
     asso: Pick<Association, 'slug' | 'cotisationMode'>,
     tiers: AssociationProduct[],
-    holds: (tagName: string) => boolean | Promise<boolean>
+    holds: (tagName: string) => boolean | Promise<boolean>,
+    orphans: readonly OrphanTierTag[]
   ): Promise<TierFacts | null> {
     if (!asso.cotisationMode) return null;
     const heldKeys: (string | null)[] = [];
@@ -710,12 +720,13 @@ export class ProductsService {
       );
       if (await holds(tagName)) heldKeys.push(variantKey);
     }
-    const held = pickHeldTier(
-      heldKeys.map((variantKey) => ({
+    const held = pickHeldTier([
+      ...heldKeys.map((variantKey) => ({
         variantKey,
         product: tiers.find((t) => t.variantKey === variantKey) ?? null,
-      }))
-    );
+      })),
+      ...orphans.map((o) => ({ variantKey: o.variantKey, product: null })),
+    ]);
     return { slug: asso.slug, tiers, heldKeys, held };
   }
 
@@ -754,8 +765,19 @@ export class ProductsService {
       tiersByAssoc.set(p.associationId, list);
     }
     for (const asso of assos) {
-      const facts = await this.tierFactsFrom(asso, tiersByAssoc.get(asso.id) ?? [], (tag) =>
-        activeTagNames.has(tag)
+      const tiers = tiersByAssoc.get(asso.id) ?? [];
+      // The same rows `heldOrphanTierTags` reads, from the tags already loaded: the ones this
+      // association issued, in its namespace, naming none of its tiers.
+      const orphans = orphanTierTags(
+        activeTags.filter((t) => t.issuingAssocId === asso.id).map((t) => t.tagName),
+        asso.slug,
+        tierVariantKeys(tiers)
+      );
+      const facts = await this.tierFactsFrom(
+        asso,
+        tiers,
+        (tag) => activeTagNames.has(tag),
+        orphans
       );
       if (!facts) continue;
       byAssoc.set(asso.id, {
@@ -1182,25 +1204,66 @@ export class ProductsService {
    * Refuses to delete the association's LAST membership product while cotisations are enabled:
    * with no tier left, `deriveCotisationTag` still answers but nothing grants or recognizes the
    * tag, so the whole cotisation silently stops working. Dropping the now-redundant base tier of
-   * a multi-tier association is exactly what this DOES allow (WP-COT-11).
+   * a multi-tier association is exactly what this DOES allow (WP-COT-11) - once nobody holds it.
+   *
+   * Refuses, `409 TIER_HAS_HOLDERS` with `holderCount`, to delete a tier people hold ACTIVE
+   * (`UserTagService.countActiveTierHolders`): every tier read derives a holder's tier from the
+   * products that exist, so a deleted tier's holders would keep a tag naming nothing. The count and
+   * the delete run under the association's tier lock EXCLUSIVE (`lockAssociationTiers`, the retag's
+   * lock): it waits for every per-buyer transaction in flight (a settlement, a grant) and holds the
+   * next ones back until it commits, so no grant of the tier lands between the count and the delete,
+   * and no new order of locks is introduced. A payment of the tier settling after the delete finds
+   * no product and is recorded `paid_not_granted`, like any payment for a deleted product.
    */
   async delete(associationId: string, productId: string): Promise<void> {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
     if (!product) throw new NotFoundException('Product not found');
-    if (product.type === 'membership') {
-      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-      const remaining = await this.productRepo.count({
-        where: { associationId, type: 'membership' },
-      });
-      if (asso?.cotisationMode && remaining <= 1) {
-        throw new BadRequestException(
-          'Cannot delete the last cotisation tier while cotisations are enabled'
-        );
-      }
+    if (product.type !== 'membership') {
+      await this.productRepo.remove(product);
+      return;
     }
-    await this.productRepo.remove(product);
+    await this.productRepo.manager.transaction(async (manager) => {
+      await lockAssociationTiers(manager, associationId);
+      this.logger.debug(`[COTISATION] tier delete holds association=${associationId.slice(0, 8)}`);
+      const current = await manager.findOne(AssociationProduct, {
+        where: { id: productId, associationId },
+      });
+      if (!current) throw new NotFoundException('Product not found');
+      const asso = await manager.findOne(Association, { where: { id: associationId } });
+      if (asso?.cotisationMode) {
+        const remaining = await manager.count(AssociationProduct, {
+          where: { associationId, type: 'membership' },
+        });
+        if (remaining <= 1) {
+          throw new BadRequestException(
+            'Cannot delete the last cotisation tier while cotisations are enabled'
+          );
+        }
+        const holderCount = await this.userTagService.countActiveTierHolders(
+          asso.slug,
+          current.variantKey,
+          manager
+        );
+        if (holderCount > 0) {
+          this.logger.log(
+            `[COTISATION] refused (${TIER_HAS_HOLDERS}): tier ${current.id.slice(0, 8)} of ` +
+              `association=${associationId.slice(0, 8)} has ${holderCount} active holder(s)`
+          );
+          throw new ConflictException({
+            code: TIER_HAS_HOLDERS,
+            message: 'People still hold this cotisation tier; move them to another tier first',
+            holderCount,
+          });
+        }
+      }
+      await manager.remove(current);
+      // `remove` clears the entity's id, so the log names the one asked for.
+      this.logger.log(
+        `[COTISATION] tier ${productId.slice(0, 8)} of association=${associationId.slice(0, 8)} deleted`
+      );
+    });
   }
 
   /**
@@ -2388,8 +2451,12 @@ export class ProductsService {
       where: { associationId: asso.id, type: 'membership' },
       select: TIER_RANK_COLUMNS,
     });
-    return this.tierFactsFrom(asso, tiers, (tag) =>
-      this.userTagService.hasActiveTag(userId, tag, manager)
+    const orphans = await this.userTagService.heldOrphanTierTags(userId, asso.id, tiers, manager);
+    return this.tierFactsFrom(
+      asso,
+      tiers,
+      (tag) => this.userTagService.hasActiveTag(userId, tag, manager),
+      orphans
     );
   }
 

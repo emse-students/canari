@@ -298,6 +298,7 @@ other.
 | Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | association shared + buyer |
 | Tag revocation (`revoke`: the holder read from the row, then the delete) | association shared + buyer |
 | Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
+| Tier delete (`delete` of a `membership` product: the holder count, then the delete) | association EXCLUSIVE only |
 
 **The retag is ONE transaction under the exclusive lock**: it re-reads the product, checks the key,
 saves the renamed tier, re-points the sibling `memberPriceTag` links it reads INSIDE, and renames
@@ -343,6 +344,56 @@ with `viewerTierRelation` (the table's relation, `none` for a non-tier or a gues
 `viewerDueCents`: what a checkout would charge THIS viewer now - null for a refused tier, the grid's
 cell for a gridded product, null for a free amount. Purchase caps and tag gates are not folded into
 it. The client displays it and never recomputes money; `paymentRefusal.ts` words each refusal code.
+
+### A tier deleted while people still hold it
+
+Every read above derives a holder's tier from the membership products that EXIST: a tag counts as
+tier X only because a product with key X derives it. Deleting a tier product therefore left its
+holders with a tag that named nothing - ranked as holding NO tier (`none`), they could buy any tier,
+a cheaper one included, and the sibling XOR, which revokes only the tags of existing tiers, never
+dropped it. Two halves close it (2026-10-27), and both are needed: the first stops new orphans, the
+second handles the ones already written and any path that bypasses the first.
+
+**Deleting a tier people hold is refused.** `ProductsService.delete` of a `membership` product
+answers `409 TIER_HAS_HOLDERS` with `holderCount` beside the code while anyone holds the tier ACTIVE
+(`UserTagService.countActiveTierHolders`: an unexpired row whose name is the tier's tag stem, alone or
+with an academic-year suffix, so both modes and every year count; counted whoever issued the row, so
+it never under-counts). The count and the delete run in ONE transaction under the association's tier
+lock EXCLUSIVE - the retag's lock, no new order: it waits for every per-buyer transaction in flight
+and holds the next ones back, so a grant cannot land between the count and the delete. A payment of
+the tier that settles after the delete finds no product and is `paid_not_granted`, like any payment
+for a deleted product. The Cotisations tab words the refusal with the count
+(`asso_cotisations_tier_delete_has_holders`); the manager moves the holders first - a manual grant of
+another tier swaps the tag out, a retag renames it for everybody, a revoke removes it. The old rule
+stays: the LAST tier of an association with cotisations enabled is never deletable.
+
+**A tag of a tier already gone is read by NAME, as a held tier with no price.** An orphan is an
+ACTIVE row the association itself ISSUED (`issuingAssocId`), in its cotisation namespace
+(`cotisant:<slug>` or `cotisant:<slug>-...`), that `linkedTierKey` matches to none of its current
+tiers (`orphanTierTags`, `tier-pricing.ts`; read by `UserTagService.heldOrphanTierTags` and, from tags
+already loaded, by the listings). Scoping to the issuer is what keeps another association whose slug
+merely extends this one out of it. An orphan is handed to `pickHeldTier` as a held tier whose product
+is null, and the rule for that already existed: an unrankable held tier wins, so every purchase of
+another tier is `unranked` -> `409 TIER_NOT_RANKABLE`, at the checkout, at settlement (recorded
+`paid_not_granted`), in a paid form's pre-check and its ranked grant. The legacy claim treats it as a
+tier held and grants nothing. The sibling XOR (`revokeSiblingTierTags`, the one implementation)
+revokes orphans with the other siblings, scoped to the issuer, so a manager's grant of any tier is
+the repair, and it is logged at WARN. An orphan is NOT added to `heldKeys`: a tier that is gone still
+grants no member price and opens no gate, as before.
+
+**Why refuse, not rank or revoke on purchase.** A deleted tier has no price, so no rank can be
+defended. Ranking it as `none` is the defect itself; revoking it at a purchase would let a holder of a
+deleted DEAR tier replace it with a cheap one, the paid downgrade this section exists to prevent.
+`unranked` is deterministic, costs nothing on the money path (refused before any payment request),
+and is resolved by the one person entitled to decide what the holder now holds: a manager. Who holds
+one today is a read of the orphan predicate against production, not measured.
+
+`tier-orphan-holders.integration.spec.ts` proves both halves against a real PostgreSQL: a delete
+refused with its count (an expired holder not counted), a delete with none, a delete blocked on a
+per-buyer lock then counting the grant made under it (asserted through `pg_locks`), a delete racing a
+settlement ending in exactly one of the two serial outcomes, an orphan refusing a lower tier at the
+checkout and the form pre-check, and a manager's grant revoking the orphan but not another issuer's
+row of the same name.
 
 **Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
 30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real

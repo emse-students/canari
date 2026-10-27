@@ -42,11 +42,19 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
   function mockCatalogue(
     repo: { manager: { query: jest.Mock } },
     asso: { slug: string; cotisationMode: string | null } | null,
-    tiers: { name: string; variantKey: string | null }[]
+    tiers: { name: string; variantKey: string | null }[],
+    /** The user's active tag names in the association's namespace, as `heldOrphanTierTags` reads them. */
+    namespaceTags: string[] = []
   ) {
-    repo.manager.query.mockImplementation((sql: string) =>
-      Promise.resolve(sql.includes('FROM associations') ? (asso ? [asso] : []) : tiers)
-    );
+    repo.manager.query.mockImplementation((sql: string) => {
+      if (sql.includes('FROM associations')) return Promise.resolve(asso ? [asso] : []);
+      if (sql.includes('FROM user_tags')) {
+        return Promise.resolve(
+          sql.trimStart().startsWith('SELECT') ? namespaceTags.map((tagName) => ({ tagName })) : []
+        );
+      }
+      return Promise.resolve(tiers);
+    });
   }
 
   const row = (overrides: Partial<Record<string, unknown>> = {}) => ({
@@ -438,6 +446,53 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('lower');
       expect(await service.rankCotisationTier('asso1', 'user1', 'avec-alcool')).toBe('held');
       expect(repo.manager.transaction).not.toHaveBeenCalled();
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    // A tier deleted while held: its tag names no product. Ranked as holding nothing, a paid grant
+    // of a cheaper tier went through and the XOR never dropped it.
+    it('refuses a paid grant to a holder of a DELETED tier as unranked, granting nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+      ]);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'unranked' });
+      expect(await service.rankCotisationTier('asso1', 'user1', 'avec-alcool')).toBe('unranked');
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('a manual grant swaps the tag of a DELETED tier out, scoped to the issuer', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+        'cotisant:cercle-sans-alcool',
+      ]);
+      holding(repo, null);
+
+      await service.grantCotisant('asso1', 'user1', 'admin1', 'sans-alcool');
+
+      const deletes = (repo.manager.query as jest.Mock).mock.calls.filter(([sql]) =>
+        String(sql).startsWith('DELETE FROM user_tags')
+      );
+      expect(deletes).toEqual([
+        [expect.any(String), ['user1', 'cotisant:cercle-premium', 'asso1']],
+      ]);
+    });
+
+    it('the legacy claim keeps the tag of a DELETED tier rather than swap it out', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+      ]);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantUnlessHeld('asso1', 'user1', 'legacy', 'sans-alcool', {})
+      ).toBeNull();
       expect(repo.query).not.toHaveBeenCalled();
     });
 

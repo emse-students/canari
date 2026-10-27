@@ -55,6 +55,14 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
 /**
+ * The `code` of the 409 a manager gets when deleting a cotisation tier that people still hold,
+ * active: the body carries `holderCount` beside it. Deleting it would leave their tag naming no
+ * tier, so the manager moves them first (a manual grant of another tier swaps it out, a retag
+ * renames it, a revoke removes it). The guard is `ProductsService.delete`.
+ */
+export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */

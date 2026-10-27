@@ -1973,6 +1973,16 @@
   "asso_cotisations_tier_create_error": "Erreur lors de la création du palier.",
   "asso_cotisations_tier_delete_confirm": "Supprimer le palier \"{name}\" ? Cette action est irréversible.",
   "asso_cotisations_tier_delete_error": "Erreur lors de la suppression du palier.",
+  "asso_cotisations_tier_delete_has_holders": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} cotisant détient encore ce palier : attribuez-lui un autre palier ou retirez-le avant de supprimer celui-ci.",
+        "countPlural=other": "{count} cotisants détiennent encore ce palier : attribuez-leur un autre palier ou retirez-les avant de supprimer celui-ci."
+      }
+    }
+  ],
   "asso_cotisations_tier_variant_key_label": "Identifiant du palier *",
   "asso_cotisations_tier_variant_key_hint": "Identifiant technique unique (ex : \"avec-alcool\"), utilisé pour distinguer ce palier.",
   "asso_cotisations_tier_variant_key_change_hint": "Modifier cet identifiant transfère automatiquement les cotisants de ce palier vers le nouveau : personne ne perd sa cotisation.",
