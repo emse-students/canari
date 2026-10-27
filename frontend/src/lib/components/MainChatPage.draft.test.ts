@@ -37,4 +37,30 @@ describe('MainChatPage draft wiring', () => {
     expect(source).toContain("messaging.lateDraftWriter(contact, 'refused send')");
     expect(source).toContain("messaging.lateDraftWriter(contact, 'resumed salon text')");
   });
+
+  /** `source` from the first `from` after `anchor` up to the first `to` after it. */
+  function between(anchor: string, from: string, to: string): [number, number] {
+    const at = source.indexOf(anchor);
+    expect(at).toBeGreaterThan(-1);
+    return [source.indexOf(from, at), source.indexOf(to, at)];
+  }
+
+  it('creates each gated writer BEFORE what it outlives - made inside, it would see the new account', () => {
+    // The writer captures the sign-out count when it is MADE: made inside the callback or after the
+    // await, it would capture the count of the account signed in by then, and gate nothing.
+    const [sendWriter, send] = between(
+      'function handleSendChat()',
+      "lateDraftWriter(contact, 'refused send')",
+      'sendText(text,'
+    );
+    expect(sendWriter).toBeGreaterThan(-1);
+    expect(sendWriter).toBeLessThan(send);
+    const [salonWriter, resume] = between(
+      'void untrack(async () => {',
+      "lateDraftWriter(contact, 'resumed salon text')",
+      'await messaging.resumeUnsentSends(msgCtx(), contact)'
+    );
+    expect(salonWriter).toBeGreaterThan(-1);
+    expect(salonWriter).toBeLessThan(resume);
+  });
 });
