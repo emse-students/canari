@@ -91,6 +91,18 @@ describe('categoryOfDataPush', () => {
     }
   );
 
+  /**
+   * A follow request and its acceptance (WP-F2): one push to one person about their own account,
+   * which no category the reader chose describes - so none, and it always goes out. A category of
+   * its own would need a client switch first (WP-F4 may add one).
+   */
+  it.each(['social_follow_request', 'social_follow_accepted'])(
+    'never files %s: a request about the reader own account always goes out',
+    (contentKey) => {
+      expect(categoryOfDataPush({ type: 'social', contentKey })).toBeNull();
+    }
+  );
+
   it('never files an explicitly silent frame, whatever it is', () => {
     expect(categoryOfDataPush({ type: 'channel', silent: 'true' })).toBeNull();
   });

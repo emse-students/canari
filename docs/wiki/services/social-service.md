@@ -1012,7 +1012,27 @@ request is notified once. Eight concurrent taps write one row (PostgreSQL spec).
 `GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
 too, the meaning a client older than the request screens gives it
 ([legacy-compatibility](../legacy-compatibility.md)). Answering, listing and removing followers are
-WP-F2 and WP-F3, not built.
+WP-F3, not built.
+
+**Answering a request (WP-F2), `follows/follow-requests.service.ts`.** The follow routes moved out
+of `PostsController` into `FollowRequestsController` (same URLs), in a module of its own because it
+notifies through `PostsModule` - which already imports `FollowsModule`.
+
+- **Ask**: the person asked gets ONE `follow_request` (bell row + push), from the call whose insert
+  wrote the row. **Across a block, either direction, nothing is written, nobody is told, and the
+  answer is the one a fresh request gets** - a block is never discoverable by asking. A MUTED
+  account may not ask (403): a request is a push to a person.
+- **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which takes the
+  row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
+  block term is in the statement because the block severing is a best-effort cross-service call.
+  The asker gets `follow_accepted`.
+- **Refuse**: the row is deleted, nobody is told, the asker may ask again. The request's bell row
+  goes with it, as it does on a withdraw; an acceptance keeps its history.
+- **Pushes**: `social_follow_request` / `social_follow_accepted`, with their native strings in
+  both languages on both platforms. Both carry the `notifications` target until the inbox page
+  exists (WP-F4), and belong to NO category in chat-delivery: they always go out.
+- **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
+  pending or accepted, both directions - pinned in `follow-requests.integration.spec.ts`.
 
 ### Who may touch a calendar event
 

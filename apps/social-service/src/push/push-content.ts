@@ -33,6 +33,8 @@ export type PushContentKey =
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
+  | 'social_follow_request'
+  | 'social_follow_accepted'
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
@@ -586,6 +588,37 @@ export function coorganiseProposedContent(
     arg: eventTitle,
     legacyTitle: `${associationName} propose de co-organiser un événement`,
     legacyBody: eventTitle || 'Événement à co-organiser',
+  };
+}
+
+/**
+ * A person asks to follow the recipient (WP-F2: every personal account is private). `actorName`
+ * is the ASKER; `arg` is always empty, the body is the fixed sentence. The tap opens the request
+ * inbox (`FOLLOW_REQUESTS_TARGET`), where the answer is given.
+ */
+export function followRequestContent(askerName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_follow_request',
+    icon,
+    actorName: askerName,
+    arg: '',
+    legacyTitle: `${askerName} demande à vous suivre`,
+    legacyBody: 'Appuyez pour répondre',
+  };
+}
+
+/**
+ * The person the recipient asked to follow ACCEPTED (WP-F2). `actorName` is that person; `arg` is
+ * always empty. A refusal has no counterpart: it tells nobody.
+ */
+export function followAcceptedContent(accepterName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_follow_accepted',
+    icon,
+    actorName: accepterName,
+    arg: '',
+    legacyTitle: `${accepterName} a accepté votre demande`,
+    legacyBody: 'Vous voyez maintenant ses publications',
   };
 }
 
