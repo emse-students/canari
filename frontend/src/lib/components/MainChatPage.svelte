@@ -34,6 +34,7 @@
   import {
     flushSalonReadMarks,
     forgetDmReadMark,
+    owedDmReadMarks,
     recordDmReadMark,
     recordSalonReadMark,
   } from '$lib/utils/chat/salonReadMarkQueue';
@@ -697,9 +698,9 @@
   /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
   const readMarks = createReadMarkDebounce(2000);
 
-  /** Delivers every owed salon read mark; a refusal keeps it owed (see `salonReadMarkQueue.ts`). */
-  function flushOwedSalonMarks(): Promise<number> {
-    return flushSalonReadMarks(session.userId, (id, at, serverAt) =>
+  /** Delivers `userId`'s owed salon read marks; a refusal keeps it owed (`salonReadMarkQueue.ts`). */
+  function flushOwedSalonMarks(userId: string): Promise<number> {
+    return flushSalonReadMarks(userId, (id, at, serverAt) =>
       channelService.advanceReadMark(id, at, serverAt)
     );
   }
@@ -733,6 +734,10 @@
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
+    // The account that READ, captured with the reading: the window can be delivered after a
+    // sign-out or an account switch (`readMarks.follow(null)` delivers it at once), and its marks
+    // belong to the ledger of the account that decided them.
+    const reader = session.userId;
 
     // Mark it read here and now, on this device, for good: the optimistic update goes into the
     // conversation AND onto disk. It used to be a bare in-memory `conversations.set`, so a reload
@@ -774,12 +779,12 @@
           newestServerAt = Math.max(newestServerAt, msg.serverTimestamp);
         }
       }
-      recordSalonReadMark(session.userId, currentContact, target, newestServerAt || undefined);
+      recordSalonReadMark(reader, currentContact, target, newestServerAt || undefined);
     } else {
       // A DM'S MARK IS OWED FROM HERE TOO, to the outbox: a process killed inside the debounce used to
       // take it along, after the local mark had moved, so nothing sent it again and the peer kept the
       // conversation unread for good. The next outbox registration drains it (`flushOwedDmReadMarks`).
-      recordDmReadMark(session.userId, currentContact, target);
+      recordDmReadMark(reader, currentContact, target);
     }
 
     readMarks.note(
@@ -788,7 +793,7 @@
         untrack(() => {
           if (channelReceipt) {
             // The mark was recorded durably when it was decided; this only delivers it.
-            void flushOwedSalonMarks();
+            void flushOwedSalonMarks(reader);
             // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
             // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
             // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
@@ -796,9 +801,12 @@
             // already signalled is not signalled twice.
             // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
             // own sends, and signalling those would be a self-push after every message written.
+            // Capped at `toSend`: a message that landed after the reading was decided (in the
+            // flush of a leave) was never read and keeps its banner.
             const readUpTo = newestForeignMessageAt(
               convs.conversations.get(currentContact)?.messages ?? [],
-              session.userId
+              reader,
+              toSend
             );
             if (claimChannelReadSignal(currentContact, readUpTo)) {
               void channelService.markChannelRead(currentContact);
@@ -807,14 +815,20 @@
           }
           // The mark was recorded durably when it was decided; this hands every owed one to the
           // outbox, which is durable from there. One the outbox cannot take stays owed and is logged.
-          if (!convs.conversations.get(currentContact)) {
+          // A conversation gone from the store whose mark is STILL owed lost its receipt by accident:
+          // that is the drop worth a warning. One the user left or deleted had its mark forgotten on
+          // purpose before it was retired (`retireConversation`'s caller, GRP-6), so it says nothing.
+          if (
+            !convs.conversations.get(currentContact) &&
+            currentContact in owedDmReadMarks(reader)
+          ) {
             console.warn(
               `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
                 ' between the debounce arming and its expiry, so the receipt is never sent'
             );
-            forgetDmReadMark(session.userId, currentContact);
+            forgetDmReadMark(reader, currentContact);
           }
-          void flushOwedDmReadMarks(session.userId);
+          void flushOwedDmReadMarks(reader);
         });
       },
       currentContact

@@ -40,12 +40,13 @@ describe('the receipt effect leaving a conversation', () => {
     const follow = source.indexOf('readMarks.follow(', effectStart);
     expect(follow).toBeGreaterThan(effectStart);
     expect(follow).toBeLessThan(note);
-    // Only comments and the selection read stand between the effect's opening and the call.
-    const code = source
+    // No statement before the call can return: comments stripped, the code between the effect's
+    // opening and the call holds no `return`.
+    const before = source
       .slice(effectStart + '$effect(() => {'.length, follow)
       .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '' && !line.startsWith('//'));
-    expect(code).toEqual(['const selectedNow = convs.selectedContact;', 'untrack(() =>']);
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+    expect(before).not.toMatch(/\breturn\b/);
   });
 });
