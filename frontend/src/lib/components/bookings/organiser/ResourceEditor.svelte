@@ -49,6 +49,23 @@
 
   // The editor's own copy: the parent keys this component by the resource id.
   let name = $state(untrack(() => resource.name));
+  /**
+   * The name as the server last had it. It FOLLOWS THE PROP: a renamed space renames its hidden
+   * column on the server (WP-R1), and the editor's copy must not write the former name back on a
+   * later save (review of #2590). The copy is re-seeded only when the organiser has not edited it.
+   */
+  let baseName = $state(untrack(() => resource.name));
+  $effect(() => {
+    const incoming = resource.name;
+    untrack(() => {
+      if (incoming === baseName) return;
+      if (name === baseName) name = incoming;
+      Log.d('BOOKINGS', `resource name re-seeded id=${resource.id.slice(0, 8)}`);
+      baseName = incoming;
+    });
+  });
+  /** Only a name the organiser typed is sent: a copy is never written back. */
+  const nameEdited = $derived(name.trim() !== baseName);
   let description = $state(untrack(() => resource.description ?? ''));
   let privateInfo = $state(untrack(() => resource.privateInfo ?? ''));
   let linkedUserId = $state(untrack(() => resource.linkedUserId ?? ''));
@@ -62,10 +79,10 @@
   const showTexts = $derived(!hidden || !!resource.description || !!resource.privateInfo);
 
   const fieldId = (f: string) => `resource-${resource.id}-${f}`;
-  const fieldsNow = () => JSON.stringify([name, description, privateInfo, linkedUserId]);
-  /** The fields as last loaded or saved. */
+  const fieldsNow = () => JSON.stringify([description, privateInfo, linkedUserId]);
+  /** The fields other than the name as last loaded or saved. */
   let savedFields = $state(untrack(fieldsNow));
-  const fieldsDirty = $derived(fieldsNow() !== savedFields);
+  const fieldsDirty = $derived(nameEdited || fieldsNow() !== savedFields);
 
   $effect(() => {
     onDirty(fieldsDirty || availabilityDirty);
@@ -76,10 +93,8 @@
     saving = true;
     saved = false;
     error = '';
-    // A hidden column's name is the space's, which the server keeps in step on a rename: sending
-    // this editor's copy could write a former name back.
     const fields = {
-      ...(hidden ? {} : { name: name.trim() }),
+      ...(nameEdited ? { name: name.trim() } : {}),
       description: description.trim() || null,
       privateInfo: privateInfo.trim() || null,
       linkedUserId: linkedUserId || null,
@@ -89,6 +104,7 @@
       await updateResource(resource.id, fields);
       saved = true;
       savedFields = fieldsNow();
+      if (fields.name !== undefined) baseName = fields.name;
       onChanged({ ...resource, ...fields });
     } catch (e) {
       error = describeBookingRefusal(e, m.bookings_resource_save());

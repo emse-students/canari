@@ -142,11 +142,10 @@ export function listManagedSpaces(associationId: string | null): Promise<Managed
   return call('listManagedSpaces', `/managed${query}`);
 }
 
-/** A new space with a name; every other setting starts at the server's default. */
 /**
- * A new space with its ONE default column (D44), named after it - the server writes both in one
- * transaction, with the column's first hours when `availability` is given (the creation wizard,
- * D52), so no half-made space is ever left behind.
+ * A new space with its ONE default column (D44), named after it; every other setting starts at the
+ * server's default. The server writes both in one transaction, with the column's first hours when
+ * `availability` is given (the creation wizard, D52), so no half-made space is ever left behind.
  */
 export function createSpace(
   name: string,

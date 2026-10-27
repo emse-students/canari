@@ -84,7 +84,7 @@
   let addingResource = $state(false);
   let resourceError = $state('');
   /** The space shows no columns while it has exactly one (D44). */
-  const hidden = $derived(columnsHidden(space.resources));
+  const hidden = $derived(columnsHidden(space.name, space.resources));
   /** "Ajouter une colonne" on a hidden column: the form naming the new one is open. */
   let revealing = $state(false);
   let newColumnName = $state('');
@@ -322,7 +322,8 @@
   {#if hidden}
     <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-3 sm:p-4">
       <Columns3 size={18} class="text-text-muted mt-0.5 shrink-0" />
-      <div class="min-w-0 flex-1">
+      <!-- A basis, so a phone wraps the button below the hint rather than crushing the hint. -->
+      <div class="min-w-0 flex-1 basis-56">
         <p class="text-text-main text-sm font-bold">{m.bookings_columns_hidden_title()}</p>
         <p class={CONTROL_HINT_CLASS}>{m.bookings_columns_hidden_hint()}</p>
       </div>
@@ -602,7 +603,9 @@
   summary={Object.keys(problems).length
     ? m.bookings_problems_summary()
     : dirty
-      ? m.bookings_tab_resources_count({ count: space.resources.length })
+      ? hidden
+        ? m.bookings_unsaved_settings()
+        : m.bookings_tab_resources_count({ count: space.resources.length })
       : m.bookings_saved()}
   saveLabel={m.bookings_save_settings()}
   onSave={saveSettings}

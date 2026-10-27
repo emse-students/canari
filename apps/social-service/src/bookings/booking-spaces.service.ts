@@ -445,6 +445,8 @@ export class BookingSpacesService {
     const [{ n }]: { n: number }[] = await m.query(
       `WITH renamed AS (
          UPDATE booking_resources SET name = $3
+          -- The former name IS the discriminator: the hidden column is the one bearing its space's
+          -- name (D44, the client's columnsHidden), so a column the organiser named never matches.
           WHERE "spaceId" = $1 AND name = $2
             AND (SELECT count(*) FROM booking_resources WHERE "spaceId" = $1) = 1
          RETURNING id)

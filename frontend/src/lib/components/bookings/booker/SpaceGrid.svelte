@@ -35,7 +35,7 @@
 
   let { space, resources, rows, nowMs, onPick }: Props = $props();
   /** One column is the space itself (D44): no column name is drawn. */
-  const hideColumns = $derived(columnsHidden(resources));
+  const hideColumns = $derived(columnsHidden(space.name, resources));
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
   const HOLD_MS = 250;
@@ -238,12 +238,12 @@
           <span class="sr-only">{m.bookings_grid_time_header()}</span>
         </th>
         {#each resources as resource (resource.id)}
-          <!-- One column is the space itself (D44): its name is read by a screen reader only. -->
+          <!-- The hidden column is the space itself (D44): the caption already names it once. -->
           <th
             scope="col"
             class="text-text-main min-w-28 p-2 text-left text-xs font-bold break-words"
           >
-            <span class={hideColumns ? 'sr-only' : ''}>{resource.name}</span>
+            {#if !hideColumns}{resource.name}{/if}
           </th>
         {/each}
       </tr>

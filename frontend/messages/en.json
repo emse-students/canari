@@ -4064,6 +4064,7 @@
   "bookings_columns_hidden_hint": "People booking see no column. Add some if you run several rooms, instruments or people: each gets its own hours.",
   "bookings_columns_new_name": "Name of the new column",
   "bookings_columns_add_confirm": "Add the column",
+  "bookings_unsaved_settings": "Unsaved changes",
   "bookings_resource_add_button": "Add a column",
   "bookings_resource_default_name": "New resource",
   "bookings_resource_name": "Name of the resource",

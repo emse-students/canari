@@ -1590,6 +1590,10 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         await organiser.updateResource(named.resourceId, { name: 'Piano' }, as(ALICE));
         await rename(named.id, 'Music room');
         expect((await columnsOf(named.id)).map((c) => c.name)).toEqual(['Piano']);
+        // Renamed to the space's own name, it becomes the hidden column and follows from then on.
+        await organiser.updateResource(named.resourceId, { name: 'Music room' }, as(ALICE));
+        await rename(named.id, 'Salle de musique');
+        expect((await columnsOf(named.id)).map((c) => c.name)).toEqual(['Salle de musique']);
 
         // Two columns: the first still bears the former name, and is no longer hidden.
         const two = await organiser.create({ name: 'Alumni' }, as(ALICE));

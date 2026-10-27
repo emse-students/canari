@@ -20,7 +20,7 @@
 
   let { space, resources, entries, days, onPick }: Props = $props();
   /** One column is the space itself (D44): no column name is drawn. */
-  const hideColumns = $derived(columnsHidden(resources));
+  const hideColumns = $derived(columnsHidden(space.name, resources));
 
   const unitsOf = (resourceId: string) =>
     entries.find((e) => e.resourceId === resourceId)?.units ?? [];
@@ -30,9 +30,9 @@
   {#each resources as resource (resource.id)}
     {@const units = unitsOf(resource.id)}
     <li class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
-      <h3 class="text-text-main text-base font-bold {hideColumns ? 'sr-only' : ''}">
-        {resource.name}
-      </h3>
+      {#if !hideColumns}
+        <h3 class="text-text-main text-base font-bold">{resource.name}</h3>
+      {/if}
       {#if resource.description}
         <p class="text-text-muted mt-0.5 text-sm whitespace-pre-line">{resource.description}</p>
       {/if}

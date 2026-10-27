@@ -4064,6 +4064,7 @@
   "bookings_columns_hidden_hint": "Les réservants ne voient pas de colonne. Ajoutez-en si vous gérez plusieurs salles, instruments ou personnes : chacune aura ses horaires.",
   "bookings_columns_new_name": "Nom de la nouvelle colonne",
   "bookings_columns_add_confirm": "Ajouter la colonne",
+  "bookings_unsaved_settings": "Modifications non enregistrées",
   "bookings_resource_add_button": "Ajouter une colonne",
   "bookings_resource_default_name": "Nouvelle ressource",
   "bookings_resource_name": "Nom de la ressource",
