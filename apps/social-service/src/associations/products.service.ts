@@ -33,7 +33,11 @@ import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
-import { issuedTagKey, UserTagService } from '../users/user-tag.service';
+import {
+  issuedTagKey,
+  TagHeldByAnotherIssuerError,
+  UserTagService,
+} from '../users/user-tag.service';
 import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
@@ -42,7 +46,8 @@ import {
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { cotisationStem, deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { assertCotisationStemFree, TIER_TAG_NAME_TAKEN } from './cotisation-namespace';
 import {
   fixedPriceFor,
   linkedTierKey,
@@ -836,6 +841,11 @@ export class ProductsService {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
       await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+      await assertCotisationStemFree(
+        this.productRepo.manager,
+        associationId,
+        cotisationStem(asso.slug, dto.variantKey ?? null)
+      );
       const derived = deriveCotisationTag(
         asso.slug,
         asso.cotisationMode,
@@ -1036,6 +1046,7 @@ export class ProductsService {
           `[COTISATION] re-pointed ${linkedIds.length} preferential price link(s) to tier ${current.id.slice(0, 8)}`
         );
       }
+      await this.assertRetagNameFree(associationId, retagging, manager);
       const result: { affected?: number | null } = await manager
         .createQueryBuilder()
         .update('user_tags')
@@ -1049,6 +1060,35 @@ export class ProductsService {
         `[COTISATION] retagged tier ${current.id.slice(0, 8)}: "${retagging.oldTagName}" -> "${retagging.newTagName}" (${result.affected ?? 0} cotisant tag(s) migrated)`
       );
       return this.toSafeProduct(saved);
+    });
+  }
+
+  /**
+   * Refuses (409 `TIER_TAG_NAME_TAKEN`) a retag when a holder of the tier's old tag already holds a
+   * row of the NEW name, whoever issued it: the rename would otherwise meet the `(userId, tagName)`
+   * unique index, or turn a row another association issued into a duplicate holder. Read under the
+   * retag's exclusive association lock, through its `manager`.
+   */
+  private async assertRetagNameFree(
+    associationId: string,
+    retagging: { oldTagName: string; newTagName: string },
+    manager: EntityManager
+  ): Promise<void> {
+    const taken: { userId: string }[] = await manager.query(
+      `SELECT o."userId" FROM user_tags o
+         JOIN user_tags n ON n."userId" = o."userId" AND n."tagName" = $3
+        WHERE o."issuingAssocId" = $1 AND o."tagName" = $2
+        LIMIT 1`,
+      [associationId, retagging.oldTagName, retagging.newTagName]
+    );
+    if (taken.length === 0) return;
+    this.logger.warn(
+      `[COTISATION] retag "${retagging.oldTagName}" -> "${retagging.newTagName}" refused: ` +
+        `a holder already has a row of the new name`
+    );
+    throw new ConflictException({
+      code: TIER_TAG_NAME_TAKEN,
+      message: 'A holder of this tier already holds a tag of the new name',
     });
   }
 
@@ -1078,6 +1118,11 @@ export class ProductsService {
       throw new BadRequestException('Cotisation must be enabled to change a tier');
     }
     await this.assertVariantKeyFree(product.associationId, newVariantKey, product.id, manager);
+    await assertCotisationStemFree(
+      manager,
+      product.associationId,
+      cotisationStem(asso.slug, newVariantKey)
+    );
 
     const now = new Date();
     const oldTag = deriveCotisationTag(asso.slug, asso.cotisationMode, now, product.variantKey);
@@ -1830,14 +1875,26 @@ export class ProductsService {
       if (product) {
         granted = await this.settlementMayGrant(product, row, manager);
         if (granted) {
-          await this.grantPurchaseTag(
-            manager,
-            product,
-            row.userId,
-            'system',
-            paymentIntentId,
-            false
-          );
+          try {
+            await this.grantPurchaseTag(
+              manager,
+              product,
+              row.userId,
+              'system',
+              paymentIntentId,
+              false
+            );
+          } catch (e) {
+            // The buyer holds the tier's tag NAME under another issuer: nothing was written (the
+            // upsert does not cross issuers, and raises no SQL error), so the payment is recorded
+            // paid but not granted, like a refused rank.
+            if (!(e instanceof TagHeldByAnotherIssuerError)) throw e;
+            this.logger.error(
+              `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier product=${product.id.slice(0, 8)} NOT granted - ` +
+                `user=${row.userId.slice(0, 8)} holds its tag name under another issuer; a refund or a fix is owed`
+            );
+            granted = false;
+          }
         }
       } else {
         this.logger.error(

@@ -10,6 +10,7 @@ import { Subject, isObservable, of, throwError } from 'rxjs';
 import { FindOperator, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
 import { ProductsService } from './products.service';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
@@ -617,6 +618,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       expect(created.grantedTagName).toBe('cotisant:bde-avec-alcool');
       expect(created.tagExpiresAt).toBeNull();
+    });
+
+    it("refuses a tier whose key makes its tags coincide with another association's", async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      // Another association is slugged `bde-sport`: tier `sport` of `bde` would derive its tags.
+      productRepo.manager.query.mockImplementation((sql: string) =>
+        Promise.resolve(
+          String(sql).includes('association_products')
+            ? [{ slug: 'bde-sport', variantKey: null }]
+            : []
+        )
+      );
+
+      await expect(
+        service.create('asso1', { name: 'Sport', type: 'membership', variantKey: 'sport' }, false)
+      ).rejects.toMatchObject({ response: { code: COTISATION_TAG_COLLISION } });
+      expect(productRepo.save).not.toHaveBeenCalled();
     });
 
     it('ignores any client-supplied grantedTagName for membership products', async () => {

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -19,21 +20,27 @@ import {
 } from '../associations/tier-pricing';
 
 /**
- * Refusal code of a raw tag grant whose name lies outside the granting association's namespace
- * (`UserTagService.grantTagForAssociation`): a 403 carrying `{ code, message }`, read by its code.
+ * Refusal code of a raw tag grant whose name is not one of the granting association's own
+ * cotisation tier tags (`UserTagService.grantTagForAssociation`): a 403 carrying `{ code, message }`.
  */
-export const TAG_OUTSIDE_ISSUER_NAMESPACE = 'TAG_OUTSIDE_ISSUER_NAMESPACE';
+export const TAG_NOT_ISSUER_TIER = 'TAG_NOT_ISSUER_TIER';
+
+/** Refusal code of `TagHeldByAnotherIssuerError`. */
+export const TAG_HELD_BY_ANOTHER_ISSUER = 'TAG_HELD_BY_ANOTHER_ISSUER';
 
 /**
- * The part of a tag name after its `<category>:` prefix (`"cotisant:bde-2026-2027"` ->
- * `"bde-2026-2027"`), or null when the name carries no category or nothing after it. That part
- * starts with the issuing association's slug, by the convention `deriveCotisationTag` follows.
+ * Thrown by `grantOrRenew` when the user already holds a row of that tag NAME issued by another
+ * association (or by none): a grant never takes over or renews a row it did not issue, since every
+ * tier-holding read counts only the issuer's own rows. A 409 carrying `{ code, message }`; a payment
+ * path catches it by TYPE and records the payment as paid but not granted.
  */
-export function tagNamespacePart(tagName: string): string | null {
-  const sep = tagName.indexOf(':');
-  if (sep <= 0) return null;
-  const rest = tagName.slice(sep + 1);
-  return rest.length > 0 ? rest : null;
+export class TagHeldByAnotherIssuerError extends ConflictException {
+  constructor(tagName: string) {
+    super({
+      code: TAG_HELD_BY_ANOTHER_ISSUER,
+      message: `The user already holds "${tagName}" issued by another association`,
+    });
+  }
 }
 
 /**
@@ -64,9 +71,12 @@ export interface GrantTagData {
 /**
  * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted, or refused
  * because the tier is not a rise over the one the user holds (`lower`, `unranked`) - the same rule a
- * settlement applies, so a paid grant never swaps out a dearer tier by the XOR.
+ * settlement applies, so a paid grant never swaps out a dearer tier by the XOR - or because the
+ * user holds the tag's name under another issuer (`TAG_HELD_BY_ANOTHER_ISSUER`).
  */
-export type RankedGrantOutcome = { granted: UserTag } | { refused: TierRelation };
+export type RankedGrantOutcome =
+  | { granted: UserTag }
+  | { refused: TierRelation | typeof TAG_HELD_BY_ANOTHER_ISSUER };
 
 /** How `grantCotisantLocked` treats a tier the user may already hold. */
 type GrantRule = 'manual' | 'unless-holding-any' | 'only-a-rise';
@@ -149,8 +159,8 @@ export class UserTagService {
   constructor(@InjectRepository(UserTag) private readonly repo: Repository<UserTag>) {}
 
   /**
-   * Creates the tag or, if `(userId, tagName)` already exists, updates `expiresAt` (when given) and
-   * merges `metadata`, without changing `issuingAssocId` or `grantedBy`.
+   * Creates the tag or, if `(userId, tagName)` already exists AS ISSUED BY THE SAME ASSOCIATION,
+   * updates `expiresAt` (when given) and merges `metadata`, without changing `grantedBy`.
    * Pass `manager` to run within an existing transaction (e.g. alongside a sibling-tier revoke).
    *
    * ONE STATEMENT, `INSERT ... ON CONFLICT ("userId", "tagName") DO UPDATE`, never a read then a
@@ -158,6 +168,12 @@ export class UserTagService {
    * keep both their metadata keys (`||` merges in SQL), and a tag revoked concurrently is either
    * still there to renew or gone and granted anew - each a serial order, never the revoked row
    * written back. The unique index on the pair is the entity's `@Unique`.
+   *
+   * The update never crosses issuers: its `WHERE` keeps a row issued by another association (or by
+   * none) untouched, the statement then returns no row, and that is thrown as
+   * `TagHeldByAnotherIssuerError` - a grant that tier-holding reads would not count is never
+   * reported as granted. No SQL error is raised, so a caller may catch it and go on in the same
+   * transaction.
    */
   async grantOrRenew(data: GrantTagData, manager?: EntityManager): Promise<UserTag> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
@@ -167,6 +183,7 @@ export class UserTagService {
        ON CONFLICT ("userId", "tagName") DO UPDATE SET
          "expiresAt" = CASE WHEN CAST($7 AS boolean) THEN EXCLUDED."expiresAt" ELSE user_tags."expiresAt" END,
          metadata = user_tags.metadata || EXCLUDED.metadata
+       WHERE user_tags."issuingAssocId" IS NOT DISTINCT FROM EXCLUDED."issuingAssocId"
        RETURNING *, (xmax = 0) AS inserted`,
       [
         data.userId,
@@ -179,7 +196,13 @@ export class UserTagService {
       ]
     )) as Array<UserTag & { inserted: boolean }>;
     const row = rows[0];
-    if (!row) throw new Error(`grantOrRenew: no row returned for ${data.tagName}`);
+    if (!row) {
+      this.logger.error(
+        `[UserTag] grant of ${data.tagName} to ${data.userId} by assoc=${data.issuingAssocId ?? 'none'} ` +
+          'NOT written: the user holds that name under another issuer'
+      );
+      throw new TagHeldByAnotherIssuerError(data.tagName);
+    }
     const { inserted, ...columns } = row;
     const tag = repo.create(columns);
     if (inserted) {
@@ -299,7 +322,7 @@ export class UserTagService {
       assocId,
       userId,
       grantedBy,
-      variantKey,
+      { variantKey },
       metadata,
       'manual'
     );
@@ -327,7 +350,7 @@ export class UserTagService {
       assocId,
       userId,
       grantedBy,
-      variantKey,
+      { variantKey },
       metadata,
       'only-a-rise'
     );
@@ -352,7 +375,7 @@ export class UserTagService {
       assocId,
       userId,
       grantedBy,
-      variantKey,
+      { variantKey },
       metadata,
       'unless-holding-any'
     );
@@ -360,74 +383,46 @@ export class UserTagService {
   }
 
   /**
-   * Grants a raw tag in the name of `assocId` (the admin's "grant a tag" endpoint) under the
-   * buyer's tier lock: the tag may be one of the association's tier tags, so it must not interleave
-   * with a settlement or another grant ranking or swapping that buyer's tiers.
-   *
-   * A tag grant is scoped to the association that grants it: the name must lie in `assocId`'s own
-   * namespace (`assertTagInIssuerNamespace`), read after the locks like everything else here.
+   * The admin's "grant a tag" endpoint, in the name of `assocId`. A tag grant is scoped to the
+   * association that grants it: the name must be one of `assocId`'s OWN cotisation tier tags for the
+   * current academic year (its catalogue, `listCotisationTiers`), or it is refused
+   * `403 TAG_NOT_ISSUER_TIER`. The tier it names is then granted exactly like the roster's manual
+   * add (`grantCotisant`): under the buyer's tier lock, read after it, with the sibling-tier XOR, and
+   * unranked since it is a manager's decision. `data.expiresAt`, when given, replaces the derived
+   * expiry.
    */
   async grantTagForAssociation(assocId: string, data: GrantTagData): Promise<UserTag> {
-    return this.repo.manager.transaction(async (manager) => {
-      await lockBuyerTiers(manager, assocId, data.userId);
-      await this.assertTagInIssuerNamespace(assocId, data.tagName, manager);
-      return this.grantOrRenew({ ...data, issuingAssocId: assocId }, manager);
-    });
+    const outcome = await this.grantCotisantLocked(
+      assocId,
+      data.userId,
+      data.grantedBy,
+      { tagName: data.tagName },
+      data.metadata ?? {},
+      'manual',
+      data.expiresAt ?? undefined
+    );
+    if (!outcome || !('granted' in outcome)) {
+      throw new Error('grantTagForAssociation: a manual grant is never skipped nor refused');
+    }
+    return outcome.granted;
   }
 
   /**
-   * Refuses (403 `TAG_OUTSIDE_ISSUER_NAMESPACE`) a tag name that is not in `assocId`'s namespace.
-   *
-   * The rule: a name is `<category>:<rest>`, and `<rest>` belongs to the association whose slug is
-   * the LONGEST one equal to `<rest>` or followed in it by `-` (`cotisant:bde-2026-2027` is `bde`'s;
-   * `cotisant:bde-sport-2026-2027` is `bde-sport`'s when that association exists, not `bde`'s). The
-   * grant passes only when that owner is `assocId`. A name with no category, or whose `<rest>` names
-   * no association, is in nobody's namespace and is refused too. Slugs are `[a-z0-9-]`, compared
-   * with `left()` rather than `LIKE`, so no character of a slug is read as a pattern.
-   */
-  private async assertTagInIssuerNamespace(
-    assocId: string,
-    tagName: string,
-    manager: EntityManager
-  ): Promise<void> {
-    const rest = tagNamespacePart(tagName);
-    const owners: { id: string }[] = rest
-      ? await manager.query(
-          `SELECT id FROM associations
-            WHERE slug = $1 OR left($1, length(slug) + 1) = slug || '-'
-            ORDER BY length(slug) DESC
-            LIMIT 1`,
-          [rest]
-        )
-      : [];
-    const owner = owners[0]?.id ?? null;
-    this.logger.debug(
-      `[UserTag] tag namespace: tag=${tagName} grantor=${assocId.slice(0, 8)} owner=${owner?.slice(0, 8) ?? 'none'}`
-    );
-    if (owner === assocId) return;
-    this.logger.warn(
-      `[UserTag] raw grant of "${tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
-        `the name is in ${owner ? `assoc=${owner.slice(0, 8)}'s` : "no association's"} namespace`
-    );
-    throw new ForbiddenException({
-      code: TAG_OUTSIDE_ISSUER_NAMESPACE,
-      message: "The tag name is outside the granting association's namespace",
-    });
-  }
-
-  /**
-   * The body of `grantCotisant`, `grantCotisantUnlessHeld` and `grantCotisantIfARise`. EVERYTHING
-   * it reads - the association, its tiers, the tag to derive, what the user holds - is read through
-   * the transaction's `manager` AFTER the buyer's tier lock, so a retag or a grant committed while it
-   * waited is what it sees. Null: skipped because a tier is held (`unless-holding-any`).
+   * The body of `grantCotisant`, `grantCotisantUnlessHeld`, `grantCotisantIfARise` and
+   * `grantTagForAssociation`. EVERYTHING it reads - the association, its tiers, the tag to derive,
+   * what the user holds - is read through the transaction's `manager` AFTER the buyer's tier lock,
+   * so a retag or a grant committed while it waited is what it sees. Null: skipped because a tier is
+   * held (`unless-holding-any`). `tier` names the tier by key, or by the tag it grants (the raw
+   * grant), which must then be one of the association's own tier tags.
    */
   private async grantCotisantLocked(
     assocId: string,
     userId: string,
     grantedBy: string,
-    variantKey: string | null,
+    tier: { variantKey: string | null } | { tagName: string },
     metadata: Record<string, unknown>,
-    rule: GrantRule
+    rule: GrantRule,
+    expiresAtOverride?: Date
   ): Promise<RankedGrantOutcome | null> {
     return this.repo.manager.transaction(async (manager) => {
       await lockBuyerTiers(manager, assocId, userId);
@@ -437,11 +432,28 @@ export class UserTagService {
       );
       const asso = rows[0];
       if (!asso) throw new NotFoundException('Association not found');
+      const tiers = asso.cotisationMode ? await this.listCotisationTiers(assocId, { manager }) : [];
+      let variantKey: string | null;
+      if ('tagName' in tier) {
+        const named = tiers.find((t) => t.tagName === tier.tagName);
+        if (!named) {
+          this.logger.warn(
+            `[UserTag] raw grant of "${tier.tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
+              'not one of its cotisation tier tags'
+          );
+          throw new ForbiddenException({
+            code: TAG_NOT_ISSUER_TIER,
+            message: "The tag is not one of the granting association's cotisation tiers",
+          });
+        }
+        variantKey = named.variantKey;
+      } else {
+        variantKey = tier.variantKey;
+      }
       if (!asso.cotisationMode) {
         throw new BadRequestException('Cotisation is not enabled for this association');
       }
 
-      const tiers = await this.listCotisationTiers(assocId, { manager });
       // Validate the tier against the association's own catalogue. An arbitrary variantKey would
       // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
       if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
@@ -453,12 +465,9 @@ export class UserTagService {
         throw new BadRequestException('This association has no base tier - a tier must be chosen');
       }
 
-      const { tagName, expiresAt } = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        variantKey
-      );
+      const derived = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), variantKey);
+      const tagName = derived.tagName;
+      const expiresAt = expiresAtOverride ?? derived.expiresAt;
       this.logger.debug(
         `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
       );
@@ -481,10 +490,20 @@ export class UserTagService {
           return { refused: relation };
         }
       }
-      const tag = await this.grantOrRenew(
-        { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
-        manager
-      );
+      let tag: UserTag;
+      try {
+        tag = await this.grantOrRenew(
+          { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
+          manager
+        );
+      } catch (e) {
+        // A paid grant answers the refusal, so its caller records paid but not granted; the
+        // manager's paths let the typed 409 through.
+        if (rule === 'only-a-rise' && e instanceof TagHeldByAnotherIssuerError) {
+          return { refused: TAG_HELD_BY_ANOTHER_ISSUER };
+        }
+        throw e;
+      }
       await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
       return { granted: tag };
     });

@@ -1,6 +1,11 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { TAG_OUTSIDE_ISSUER_NAMESPACE, tagNamespacePart, UserTagService } from './user-tag.service';
+import {
+  TAG_HELD_BY_ANOTHER_ISSUER,
+  TAG_NOT_ISSUER_TIER,
+  TagHeldByAnotherIssuerError,
+  UserTagService,
+} from './user-tag.service';
 import { UserTag } from './entities/user-tag.entity';
 
 describe('UserTagService.listCotisants / exportCotisants', () => {
@@ -256,77 +261,90 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
-  describe('tagNamespacePart', () => {
-    it('is the part after the category, and null without a category or a rest', () => {
-      expect(tagNamespacePart('cotisant:bde-2026-2027')).toBe('bde-2026-2027');
-      expect(tagNamespacePart('cotisant:')).toBeNull();
-      expect(tagNamespacePart(':bde')).toBeNull();
-      expect(tagNamespacePart('bde')).toBeNull();
-    });
-  });
-
-  // A tag grant is scoped to the association that grants it.
+  // A tag grant is scoped to the association that grants it: the raw grant names one of its OWN
+  // tier tags, and is then the roster's manual add (XOR included).
   describe('grantTagForAssociation', () => {
-    /** Answers the namespace owner lookup with `owner`; every other query (the locks) with []. */
-    const ownerIs = (repo: { manager: { query: jest.Mock } }, owner: string | null) =>
-      repo.manager.query.mockImplementation((sql: string) =>
-        Promise.resolve(sql.includes('FROM associations') && owner ? [{ id: owner }] : [])
-      );
+    const cercleTiers = [
+      { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      { name: 'Sans alcool', variantKey: 'sans-alcool' },
+    ];
 
-    it('grants a tag in its own namespace, issued by itself, after the buyer lock', async () => {
+    it('grants one of its own tier tags, issued by itself, and swaps the sibling tier out', async () => {
       const { service, repo } = makeService();
-      ownerIs(repo, 'asso1');
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
 
       const tag = await service.grantTagForAssociation('asso1', {
         userId: 'user1',
-        tagName: 'cotisant:bde-2026-2027',
+        tagName: 'cotisant:cercle-avec-alcool',
         grantedBy: 'admin1',
       });
 
-      expect(tag).toMatchObject({ tagName: 'cotisant:bde-2026-2027', issuingAssocId: 'asso1' });
-      const sqls = (repo.manager.query as jest.Mock).mock.calls.map(([sql]) => String(sql));
-      const lockAt = sqls.findIndex((s) => s.includes('pg_advisory_xact_lock('));
-      const ownerAt = sqls.findIndex((s) => s.includes('FROM associations'));
-      expect(lockAt).toBeGreaterThanOrEqual(0);
-      expect(ownerAt).toBeGreaterThan(lockAt);
-      expect(repo.manager.query.mock.calls[ownerAt][1]).toEqual(['bde-2026-2027']);
+      expect(tag).toMatchObject({
+        tagName: 'cotisant:cercle-avec-alcool',
+        issuingAssocId: 'asso1',
+        expiresAt: null,
+      });
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
+      });
     });
 
     it.each([
-      ['another association', 'asso2'],
-      ['no association', null],
-    ])(
-      "refuses (403 TAG_OUTSIDE_ISSUER_NAMESPACE) a name in %s's namespace, writing nothing",
-      async (_label, owner) => {
-        const { service, repo } = makeService();
-        ownerIs(repo, owner);
-
-        const refused = service.grantTagForAssociation('asso1', {
-          userId: 'user1',
-          tagName: 'cotisant:cercle-avec-alcool-2026-2027',
-          grantedBy: 'admin1',
-        });
-
-        await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
-        await expect(refused).rejects.toMatchObject({
-          response: { code: TAG_OUTSIDE_ISSUER_NAMESPACE },
-        });
-        expect(repo.query).not.toHaveBeenCalled();
-      }
-    );
-
-    it('refuses a name with no category without looking up an owner', async () => {
+      ['a name of another association', 'cotisant:bde-2026-2027'],
+      ['a name that is no tier at all', 'vip:cercle'],
+    ])('refuses (403 TAG_NOT_ISSUER_TIER) %s, writing nothing', async (_label, tagName) => {
       const { service, repo } = makeService();
-      ownerIs(repo, 'asso1');
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+
+      const refused = service.grantTagForAssociation('asso1', {
+        userId: 'user1',
+        tagName,
+        grantedBy: 'admin1',
+      });
+
+      await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(refused).rejects.toMatchObject({ response: { code: TAG_NOT_ISSUER_TIER } });
+      expect(repo.query).not.toHaveBeenCalled();
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // The upsert never crosses issuers: a row of the same name issued elsewhere is never renewed.
+  describe('a grant over a name held under another issuer', () => {
+    it('grantOrRenew throws TagHeldByAnotherIssuerError when the statement writes no row', async () => {
+      const { service, repo } = makeService();
+      repo.query.mockResolvedValueOnce([]);
 
       await expect(
-        service.grantTagForAssociation('asso1', {
+        service.grantOrRenew({
           userId: 'user1',
-          tagName: 'bde-2026-2027',
+          tagName: 'cotisant:bde',
+          issuingAssocId: 'asso1',
           grantedBy: 'admin1',
         })
-      ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(repo.query).not.toHaveBeenCalled();
+      ).rejects.toBeInstanceOf(TagHeldByAnotherIssuerError);
+      expect(String(repo.query.mock.calls[0][0])).toContain(
+        'WHERE user_tags."issuingAssocId" IS NOT DISTINCT FROM EXCLUDED."issuingAssocId"'
+      );
+    });
+
+    it('a paid grant answers the refusal and swaps nothing; a manual one lets the 409 through', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+      ]);
+      repo.findOne.mockResolvedValue(null);
+      repo.query.mockResolvedValue([]);
+
+      expect(await service.grantCotisantIfARise('asso1', 'user1', 'system', null, {})).toEqual({
+        refused: TAG_HELD_BY_ANOTHER_ISSUER,
+      });
+      await expect(service.grantCotisant('asso1', 'user1', 'admin1')).rejects.toBeInstanceOf(
+        TagHeldByAnotherIssuerError
+      );
+      expect(repo.delete).not.toHaveBeenCalled();
     });
   });
 
