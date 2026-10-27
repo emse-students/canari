@@ -10,20 +10,22 @@
  *   - does every reference inside the set point at a row the set contains;
  *   - does the SQL name only tables and columns the ENTITIES declare, give every column an INSERT
  *     cannot omit, and use only the values a closed type allows - derived by parsing the entity
- *     files, so a renamed column fails here and not on dev.
+ *     files, so a renamed column fails here and not on dev;
+ *   - does every row satisfy every CHECK the entities and the migrations put on its table.
  *
  * Run by `make test-ci-scripts`: `bun test ./tools/dev-seed/`.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { entityFiles, parseEntityFile, readSchema } from './entities';
+import { entityFiles, parseEntityFile, readChecks, readSchema } from './entities';
 import {
   REPO_ROOT,
   SEED_EMAIL_DOMAIN,
   SEED_MARKER,
   SEED_SQL_PATH,
   type SeedRows,
+  type SqlValue,
   buildSeed,
   renderSql,
   userId,
@@ -191,7 +193,53 @@ describe('references inside the set resolve', () => {
   });
 });
 
+/** A seeded value that is present and not NULL; an expression (`now() - ...`) is never NULL. */
+const given = (v: SqlValue | undefined) => v !== null && v !== undefined;
+const oneOf =
+  (column: string, values: string[], nullable = false) =>
+  (row: Record<string, SqlValue>) =>
+    nullable && !given(row[column]) ? true : values.includes(row[column] as string);
+const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
+const CAMPUSES = ['saint-etienne', 'gardanne'];
+
+/**
+ * EVERY CHECK ON A SEEDED TABLE, RESTATED AS WHAT IT REQUIRES OF A ROW. `readChecks` finds them
+ * in the entities and the migrations; one with no entry here fails, so a new constraint is met on
+ * the pull request that adds it and never by the dev reset rolling back on the box. A column the
+ * seed leaves out takes its column default, written next to the predicate that reads it.
+ */
+const CHECK_PREDICATES: Record<string, (row: Record<string, SqlValue>) => boolean> = {
+  CHK_association_audiences_campus: oneOf('campus', CAMPUSES, true),
+  CHK_association_audiences_formation: oneOf('formation', FORMATIONS, true),
+  CHK_associations_type: oneOf('type', ['association', 'list', 'institution']),
+  CHK_platform_config_calls_mode: oneOf('calls_mode', ['off', 'audio', 'audio_video']),
+  CHK_platform_config_lives_mode: oneOf('lives_mode', ['off', 'on']),
+  CHK_spaces_campus: oneOf('campus', CAMPUSES),
+  CHK_spaces_formation: oneOf('formation', FORMATIONS),
+  // `status` defaults to 'pending' since migration 114.
+  CHK_user_follows_status: (r) =>
+    ['pending', 'accepted'].includes((r.status ?? 'pending') as string),
+  CHK_user_follows_accepted_at: (r) =>
+    (r.status ?? 'pending') !== 'accepted' || given(r.acceptedAt),
+  // `kind` defaults to 'post'.
+  posts_kind_shape: (r) => {
+    const kind = r.kind ?? 'post';
+    if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt);
+    return (
+      kind === 'reel' && typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt)
+    );
+  },
+};
+const checks = readChecks(REPO_ROOT);
+
 describe('the SQL fits the schema the entities declare', () => {
+  test('the check reader finds both kinds of declaration, so an empty list cannot pass', () => {
+    const names = new Set(checks.map((c) => c.name));
+    // An entity `@Check` and a migration-only constraint.
+    expect(names.has('CHK_user_follows_accepted_at')).toBe(true);
+    expect(names.has('posts_kind_shape')).toBe(true);
+  });
+
   test('the parser reads every entity file it is given, so an empty schema cannot pass', () => {
     const files = entityFiles(REPO_ROOT);
     expect(files.length).toBeGreaterThan(50);
@@ -224,6 +272,19 @@ describe('the SQL fits the schema the entities declare', () => {
         const given = new Set(Object.keys(list[0] ?? {}));
         for (const c of declared?.columns.values() ?? []) {
           if (!c.optional) expect(given.has(c.name), `${table}.${c.name} is required`).toBe(true);
+        }
+      });
+
+      test('satisfies every CHECK the schema puts on it', () => {
+        for (const check of checks.filter((c) => c.table === table)) {
+          const holds = CHECK_PREDICATES[check.name];
+          expect(
+            holds,
+            `${table}: ${check.name} (${check.file}) has no predicate in CHECK_PREDICATES - state what it requires of a seeded row`
+          ).toBeDefined();
+          for (const row of list) {
+            expect(holds?.(row), `${table}.${String(row.id)} breaks ${check.name}`).toBe(true);
+          }
         }
       });
 
