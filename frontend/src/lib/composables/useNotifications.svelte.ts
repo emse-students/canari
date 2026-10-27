@@ -5,7 +5,6 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notifNav } from '$lib/stores/notifNav.svelte';
-import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
@@ -218,13 +217,12 @@ export function useNotifications() {
           console.warn(`[NOTIF] Tap on notification ${id}, which this session did not post.`);
           return;
         }
+        // PUBLISHING THE TARGET IS ALL A TAP DOES: the landing effect in `ChatBackgroundService`
+        // routes and selects. A `goto` here, on a layout where the conversation is an overlay (a
+        // phone, or a narrow window), drained the overlay the landing had just opened
+        // (`shareLanding.ts`, 2026-10-27).
+        console.log(`[NOTIF] Tap on ${target}: landing published`);
         notifNav.navigate(target);
-        try {
-          const { goto } = await import('$app/navigation');
-          await goto(chatDeepLinkRoute(target));
-        } catch (e) {
-          console.warn(`[NOTIF] Tap on ${target} could not route: ${String(e)}`);
-        }
       });
     } catch (e) {
       // Registration itself threw - a plugin version whose `onAction` rejects the shape above. The
@@ -473,14 +471,9 @@ export function useNotifications() {
       : m.notif_call_body_unknown();
     const notifId = stableNotifId(`call:${groupId}`);
 
-    const onTap = async () => {
+    // Publishing the target is all a tap does - the landing effect routes (see the tap listener).
+    const onTap = () => {
       notifNav.navigate(groupId);
-      try {
-        const { goto } = await import('$app/navigation');
-        await goto('/chat');
-      } catch {
-        /* ignore */
-      }
       try {
         window.focus();
       } catch {
@@ -519,7 +512,7 @@ export function useNotifications() {
         // answered or ends (requireInteraction keeps it on screen otherwise).
         incomingCallNotification = n;
         n.onclick = () => {
-          void onTap();
+          onTap();
           n.close();
           incomingCallNotification = null;
         };
@@ -800,21 +793,15 @@ export function useNotifications() {
           body,
           tag: `canari-${conversationId ?? 'message'}`,
         });
-        n.onclick = async () => {
+        n.onclick = () => {
           try {
             window.focus();
           } catch {
             /* ignore */
           }
-          if (conversationId) {
-            notifNav.navigate(conversationId);
-            try {
-              const { goto } = await import('$app/navigation');
-              await goto(chatDeepLinkRoute(conversationId));
-            } catch {
-              /* ignore */
-            }
-          }
+          // Publishing the target is all a click does - the landing effect routes (see the tap
+          // listener).
+          if (conversationId) notifNav.navigate(conversationId);
           n.close();
         };
         console.log(`[NOTIF] Raised for ${convKey}.`);

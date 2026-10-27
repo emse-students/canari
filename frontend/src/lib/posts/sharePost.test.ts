@@ -41,7 +41,7 @@ describe('sharePost', () => {
   });
 
   it('sends into a conversation by offering the link to it and opening it - never sending', () => {
-    sendPostLinkInApp('p1', 'group-1');
+    expect(sendPostLinkInApp('p1', 'group-1')).toBe(true);
     expect(incomingShare.pending).toEqual({
       text: 'https://canari.emse.fr/posts/p1',
       files: [],
