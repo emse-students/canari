@@ -1,10 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
-import { isBlockedBetween } from '../common/user-blocks';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
+import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService } from './follows.service';
 
 /** How a follows log line names an account: its first 8 characters, never a whole account id. */
@@ -16,6 +16,12 @@ export const FOLLOW_ACCEPTED_NOTIFICATION = 'follow_accepted';
 
 /** The largest page any follow list answers, whatever the caller asks for. */
 export const FOLLOW_PAGE_MAX = 100;
+
+/** Which `user_follow_notices` kind records that each bell row type was already sent for a pair. */
+const NOTICE_KIND: Record<string, FollowNoticeKind> = {
+  [FOLLOW_REQUEST_NOTIFICATION]: 'request',
+  [FOLLOW_ACCEPTED_NOTIFICATION]: 'accepted',
+};
 
 /** One person in a follow list: who, and since when the row exists. */
 export interface FollowListEntry {
@@ -46,11 +52,15 @@ function returnedRows<T>(result: unknown): T[] {
  * FOLLOW REQUESTS (WP-F2): every personal account is private (user, 2026-10-25, Q1), so following a
  * person writes a `pending` row that the person accepts or refuses.
  *
- * - ASK: one idempotent insert (`FollowsService.recordFollowRequest`); the person asked is notified
- *   ONCE, by the call that wrote the row. Across a block, in either direction, nothing is written
- *   and nobody is told, and the answer is the one a fresh request gets - a block is never
- *   discoverable by asking (decided 2026-10-27).
- * - ACCEPT: ONE conditional `UPDATE ... WHERE status = 'pending'`, which takes the row lock: a
+ * - ASK: one idempotent `INSERT ... SELECT` (`FollowsService.recordFollowRequest`) that writes only
+ *   for a PERSON with no block between the two (404 FOLLOW_TARGET_NOT_FOUND, 403 FOLLOW_BLOCKED).
+ * - NOTIFY ONCE PER PAIR AND KIND, FROM DURABLE STATE: ask -> withdraw -> ask would otherwise send a
+ *   push per loop. The first call that inserts the `user_follow_notices` row for (asker, person,
+ *   kind) notifies; every later one finds the row and stays silent. Never a clock: the row is the
+ *   "have I already told them", and the request itself still shows in the inbox, which reads
+ *   `user_follows`. The ask route is also throttled per user (FollowRequestsController).
+ * - ACCEPT: ONE conditional `UPDATE ... WHERE status = 'pending'` that also dates `acceptedAt`, and
+ *   takes the row lock: a
  *   withdraw racing it either deletes the row first (the accept finds nothing, 404) or waits and
  *   deletes the follow after (the follower left, which they may). The asker is told
  *   (`follow_accepted`, decided 2026-10-27).
@@ -67,17 +77,11 @@ export class FollowRequestsService {
     @InjectDataSource() private readonly dataSource: DataSource
   ) {}
 
-  /** Asks to follow `followedUserId`; see the class docblock for the block rule. */
+  /** Asks to follow `followedUserId`; see the class docblock for the refusals and the notice. */
   async ask(
     followerUserId: string,
     followedUserId: string
   ): Promise<{ ok: boolean; status: FollowStatus }> {
-    if (await isBlockedBetween(this.dataSource.manager, followerUserId, followedUserId)) {
-      this.logger.debug(
-        `[FOLLOW-REQ] ${short(followerUserId)} -> ${short(followedUserId)}: a block stands, nothing written`
-      );
-      return { ok: true, status: FOLLOW_PENDING };
-    }
     const { status, created } = await this.follows.recordFollowRequest(
       followerUserId,
       followedUserId
@@ -93,12 +97,11 @@ export class FollowRequestsService {
    * with it, so the person asked is not left reading an ask that no longer exists.
    */
   async leave(followerUserId: string, followedUserId: string): Promise<{ ok: boolean }> {
-    const was = await this.follows.userFollowStatus(followerUserId, followedUserId);
-    const res = await this.follows.unfollowUser(followerUserId, followedUserId);
-    if (was === FOLLOW_PENDING) {
+    const { removed } = await this.follows.unfollowUser(followerUserId, followedUserId);
+    if (removed === FOLLOW_PENDING) {
       await this.dropRequestNotification(followedUserId, followerUserId);
     }
-    return res;
+    return { ok: true };
   }
 
   /** The requests waiting for `userId`'s answer, newest first - their own inbox and nobody else's. */
@@ -135,7 +138,7 @@ export class FollowRequestsService {
   async accept(userId: string, followerUserId: string): Promise<{ ok: boolean }> {
     const updated = returnedRows<{ id: string }>(
       await this.dataSource.query(
-        `UPDATE user_follows f SET status = $3
+        `UPDATE user_follows f SET status = $3, "acceptedAt" = now()
           WHERE f."followedUserId" = $1 AND f."followerUserId" = $2 AND f.status = $4
             AND ${NO_BLOCK_BETWEEN('$1', '$2')}
           RETURNING f.id`,
@@ -239,12 +242,29 @@ export class FollowRequestsService {
   }
 
   /**
-   * Writes the bell row and its push. BEST-EFFORT AND LOUD: the row of `user_follows` is the
-   * durable fact and is already committed, so a notification that fails is logged and the answer
-   * stands - failing the request would make the asker try again for a request that exists.
+   * Writes the bell row and its push - ONCE per (asker, person, kind): the `user_follow_notices`
+   * row is claimed first, and a call that finds it already there sends nothing. BEST-EFFORT AND
+   * LOUD: the row of `user_follows` is the durable fact and is already committed, so a
+   * notification that fails is logged and the answer stands - failing the request would make the
+   * asker try again for a request that exists. A claim whose notification then failed is not
+   * retried: one missed bell row, logged, against a loop that could push without end.
    */
   private async notifyQuietly(recipientId: string, actorId: string, type: string): Promise<void> {
+    // The notice is keyed by the FOLLOW pair, whichever side is told.
+    const [follower, followed] =
+      type === FOLLOW_REQUEST_NOTIFICATION ? [actorId, recipientId] : [recipientId, actorId];
     try {
+      const claimed: unknown[] = await this.dataSource.query(
+        `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING kind`,
+        [follower, followed, NOTICE_KIND[type]]
+      );
+      if (claimed.length === 0) {
+        this.logger.debug(
+          `[FOLLOW-REQ] ${type} to ${short(recipientId)} already sent once for this pair: silent`
+        );
+        return;
+      }
       await this.notifications.createNotification({
         recipientId,
         type,

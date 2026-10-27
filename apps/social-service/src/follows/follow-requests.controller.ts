@@ -12,10 +12,21 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { ModerationService } from '../moderation/moderation.service';
 import { FOLLOW_PAGE_MAX, FollowRequestsService } from './follow-requests.service';
 import { FollowsService } from './follows.service';
+
+/**
+ * Asks one account may make per minute, ALL targets together: the route's parameter is `:userId`,
+ * which `UserResourceThrottlerGuard` does not read, so its bucket is the caller alone. A person
+ * following a handful of people in a row stays far below; a loop - a stuck tab, a script walking
+ * the directory - is stopped. The notice itself is once per pair from durable state
+ * (`user_follow_notices`); this bounds the WRITES.
+ */
+export const FOLLOW_ASKS_PER_MINUTE = 30;
 
 /**
  * Following a PERSON, and answering who asks (WP-F1, WP-F2), under `/api/posts/...` - the prefix
@@ -39,9 +50,13 @@ export class FollowRequestsController {
   /**
    * Asks to follow a user: a `pending` request the user answers (every personal account is
    * private). Answers `{ ok, status }`. A muted account may not ask: a request is a push to a
-   * person, and a restricted account may not reach people (decided 2026-10-27).
+   * person, and a restricted account may not reach people (decided 2026-10-27). 404
+   * FOLLOW_TARGET_NOT_FOUND when the id names no person (an association is followed through its own
+   * route), 403 FOLLOW_BLOCKED across a block; throttled per caller.
    */
   @HttpPost('users/:userId/follow')
+  @UseGuards(UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: FOLLOW_ASKS_PER_MINUTE, ttl: 60_000 } })
   async followUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
     if (userId === xUserId) throw new BadRequestException('Cannot follow yourself');
     if (await this.moderation.isUserMuted(xUserId)) {

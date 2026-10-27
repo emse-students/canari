@@ -124,9 +124,11 @@ ordinary review.
   nobody and does not stop a later ask). A new request notifies ONE person through the existing
   `PostNotificationsService` (a `follow_request` type: a bell row and a push, `contentKey` for the
   native renderers, NOT in `MUTABLE_PUSH_TYPES`); an acceptance notifies the requester
-  (`follow_accepted`). A request across a block in either direction writes nothing and notifies
-  nobody, answered exactly as a fresh request (a block must not be discoverable by asking). The
-  block severing already deletes both directions whatever the status (old WP-F4): a spec pins it.
+  (`follow_accepted`) - each at most ONCE per pair, from a `user_follow_notices` row (never a
+  clock), and the ask route is throttled per caller. An ask of an id that is not a person is 404
+  `FOLLOW_TARGET_NOT_FOUND`, an ask across a block 403 `FOLLOW_BLOCKED`, both decided inside the one
+  `INSERT ... SELECT`. The block severing deletes both directions whatever the status, and the
+  request bell rows with them: a spec pins it.
   Proof: unit specs for each transition, a PostgreSQL spec for accept-vs-withdraw, the
   `post-notifications` spec for the two types, and the block case.
 - **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #2605, stacked

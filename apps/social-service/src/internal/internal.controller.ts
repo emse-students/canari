@@ -9,6 +9,7 @@ import {
   Post as HttpPost,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { FOLLOW_REQUEST_NOTIFICATION } from '../follows/follow-requests.service';
 import { In, Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { Post as PostEntity } from '../posts/entities/post.entity';
@@ -78,6 +79,10 @@ export class InternalController {
    * Called by core-service when one of them blocks the other: staying subscribed to somebody you
    * have just blocked is a state nobody asked for, and follows live here while blocks live there.
    *
+   * A follow REQUEST is a row here too (WP-F2), so it goes the same way, and so does its
+   * `follow_request` bell row in either direction: a request that no longer exists is not left
+   * in the other person's notifications. An acceptance's bell row is history and stays.
+   *
    * Idempotent - two people who never followed each other are a valid, silent zero. The count is
    * logged either way, because a sweep that reports nothing is a sweep nobody can tell ran.
    */
@@ -93,7 +98,17 @@ export class InternalController {
       this.userFollowRepo.delete({ followerUserId: userB, followedUserId: userA }),
     ]);
     const removed = (forward.affected ?? 0) + (backward.affected ?? 0);
-    this.logger.log(`[INTERNAL_SEVER_FOLLOWS] a=${userA} b=${userB} removed=${removed}`);
+    const bell: unknown = await this.userFollowRepo.query(
+      `DELETE FROM post_notifications
+        WHERE type = $3
+          AND (("recipientId" = $1 AND "actorId" = $2) OR ("recipientId" = $2 AND "actorId" = $1))`,
+      [userA, userB, FOLLOW_REQUEST_NOTIFICATION]
+    );
+    // TypeORM's Postgres driver answers a DELETE with `[rows, rowCount]`.
+    const bellRows = Array.isArray(bell) && typeof bell[1] === 'number' ? bell[1] : 0;
+    this.logger.log(
+      `[INTERNAL_SEVER_FOLLOWS] a=${userA} b=${userB} removed=${removed} requestNotices=${bellRows}`
+    );
     return { ok: true, removed };
   }
 

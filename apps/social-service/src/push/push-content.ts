@@ -593,8 +593,8 @@ export function coorganiseProposedContent(
 
 /**
  * A person asks to follow the recipient (WP-F2: every personal account is private). `actorName`
- * is the ASKER; `arg` is always empty, the body is the fixed sentence. The tap opens the request
- * inbox (`FOLLOW_REQUESTS_TARGET`), where the answer is given.
+ * is the ASKER; `arg` is always empty, the body is the fixed sentence. The tap opens the
+ * notifications list (`NOTIFICATIONS_TARGET`) until the request inbox exists (WP-F4).
  */
 export function followRequestContent(askerName: string, icon?: PushIcon): PushContent {
   return {
@@ -618,7 +618,7 @@ export function followAcceptedContent(accepterName: string, icon?: PushIcon): Pu
     actorName: accepterName,
     arg: '',
     legacyTitle: `${accepterName} a accepté votre demande`,
-    legacyBody: 'Vous voyez maintenant ses publications',
+    legacyBody: 'Votre demande a été acceptée',
   };
 }
 

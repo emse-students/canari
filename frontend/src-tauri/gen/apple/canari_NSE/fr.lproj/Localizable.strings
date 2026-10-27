@@ -45,7 +45,7 @@
 "notif.social.follow_request.title" = "%@ demande à vous suivre";
 "notif.social.follow_request.body" = "Appuyez pour répondre";
 "notif.social.follow_accepted.title" = "%@ a accepté votre demande";
-"notif.social.follow_accepted.body" = "Vous voyez maintenant ses publications";
+"notif.social.follow_accepted.body" = "Votre demande a été acceptée";
 "notif.social.live_cut.title" = "Votre live a été interrompu";
 "notif.social.live_cut.body" = "La modération a coupé votre live. Ceci est un avertissement.";
 "notif.social.live_suspended.title" = "Lives suspendus";
