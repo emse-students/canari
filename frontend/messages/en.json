@@ -977,7 +977,7 @@
   "profile_vibrations": "Vibrations",
   "profile_vibrations_desc": "Haptic feedback on actions (reactions, replies…)",
   "settings_share_suggestions": "Suggestions when sharing",
-  "settings_share_suggestions_desc": "Shows your recent conversations in Android's Share menu. Their names are visible to the system.",
+  "settings_share_suggestions_desc": "Shows your recent conversations in your phone's Share menu. Their names are visible to the system.",
   "settings_share_suggestions_aria": "Toggle conversation suggestions when sharing",
   "profile_theme": "Theme",
   "profile_theme_desc": "Automatic follows your phone",

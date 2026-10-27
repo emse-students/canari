@@ -291,6 +291,119 @@ describe('the extension bundle', () => {
   });
 });
 
+describe('the conversation suggestions (lot S5, the iOS twin of Android sharing shortcuts)', () => {
+  const PLUGIN = resolve(TAURI, 'plugins/tauri-plugin-gallery');
+  const suggestions = read(resolve(PLUGIN, 'ios/Sources/ShareSuggestions.swift'));
+  const plugin = read(resolve(PLUGIN, 'ios/Sources/GalleryPlugin.swift'));
+  const mobileRs = read(resolve(PLUGIN, 'src/mobile.rs'));
+  const commandsRs = read(resolve(PLUGIN, 'src/commands.rs'));
+  const kotlinTargets = read(resolve(PLUGIN, 'android/src/main/java/ShareTargets.kt'));
+  const native = read(resolve(here, '../sharing/shareTargetsNative.ts'));
+
+  it('declares INSendMessageIntent among the extension attributes, or the sheet offers none', () => {
+    const info = withoutXmlComments(read(resolve(SHARE, 'Info.plist')));
+    const attributes = capture(
+      info,
+      /<key>NSExtensionAttributes<\/key>\s*<dict>([\s\S]*)<\/dict>\s*<key>NSExtensionPointIdentifier/
+    );
+    expect(attributes).toMatch(
+      /<key>IntentsSupported<\/key>\s*<array>\s*<string>INSendMessageIntent<\/string>\s*<\/array>/
+    );
+  });
+
+  it('donates one outgoing INSendMessageIntent per target, in its own group', () => {
+    expect(suggestions).toContain('import Intents');
+    expect(suggestions).toMatch(/INSendMessageIntent\(\s*recipients: nil,/);
+    expect(suggestions).toContain('conversationIdentifier: target.id,');
+    expect(suggestions).toContain(
+      'speakableGroupName: INSpeakableString(spokenPhrase: target.label)'
+    );
+    expect(suggestions).toContain('interaction.groupIdentifier = groupIdentifier');
+    expect(suggestions).toContain('interaction.direction = .outgoing');
+    expect(suggestions).toContain('interaction.donate {');
+    expect(capture(suggestions, /static let groupIdentifier = "([^"]+)"/)).toBe(
+      'fr.emse.canari.share-suggestions'
+    );
+  });
+
+  it('deletes by its own group identifier - before every publish and at every clear', () => {
+    // ONE delete, the group's: never `deleteAll`, which would take what the system learned of the
+    // app beyond the suggestions.
+    expect(suggestions).not.toContain('deleteAll');
+    expect(suggestions.match(/INInteraction\.delete\(with: groupIdentifier\)/g)?.length).toBe(1);
+    const publish = capture(
+      suggestions,
+      /static func publish\(([\s\S]*?)\n {2}\/\/\/ Deletes every/
+    );
+    expect(publish.indexOf('deleteGroup()')).toBeGreaterThan(-1);
+    expect(publish.indexOf('deleteGroup()')).toBeLessThan(publish.indexOf('donate(target)'));
+    // A failed delete donates nothing: the old account's suggestions must not stay beside these.
+    expect(publish).toMatch(
+      /if let code = deleteGroup\(\) \{[\s\S]*?done\(\.failure[\s\S]*?return\s*\}/
+    );
+    const clear = capture(
+      suggestions,
+      /static func clear\(([\s\S]*?)\n {2}\/\/\/ Deletes the donation group/
+    );
+    expect(clear).toContain('deleteGroup()');
+  });
+
+  it('validates a target with the bounds Android and the page use', () => {
+    expect(capture(suggestions, /static let idPrefix = "([^"]+)"/)).toBe(
+      capture(kotlinTargets, /ID_PREFIX = "([^"]+)"/)
+    );
+    expect(capture(suggestions, /static let maxIdLength = (\d+)/)).toBe(
+      capture(kotlinTargets, /MAX_ID_LENGTH = (\d+)/)
+    );
+    expect(capture(suggestions, /static let maxLabelLength = (\d+)/)).toBe(
+      capture(kotlinTargets, /MAX_LABEL_LENGTH = (\d+)/)
+    );
+    expect(capture(suggestions, /static let maxIdLength = (\d+)/)).toBe(
+      capture(native, /MAX_SHARE_TARGET_ID_LENGTH = (\d+)/)
+    );
+  });
+
+  it('answers the commands the Rust side runs on iOS, which it no longer refuses there', () => {
+    for (const name of ['publishShareTargets', 'clearShareTargets']) {
+      expect(mobileRs).toContain(`"${name}"`);
+      expect(plugin).toContain(`@objc public func ${name}(_ invoke: Invoke)`);
+    }
+    expect(plugin).toContain(
+      'invoke.resolve(["present": published.present, "leftover": published.leftover])'
+    );
+    expect(plugin).toContain('invoke.resolve(["removed": removed])');
+    const publish = capture(commandsRs, /(fn publish_share_targets[\s\S]*?\n\})/);
+    const clear = capture(commandsRs, /(fn clear_share_targets[\s\S]*?\n\})/);
+    for (const body of [publish, clear]) {
+      expect(body).toContain('#[cfg(mobile)]');
+      expect(body).not.toContain('AndroidOnly');
+    }
+  });
+
+  it('carries the picked suggestion into the manifest as Android does', () => {
+    expect(swiftController).toContain('import Intents');
+    expect(swiftController).toContain('extensionContext?.intent as? INSendMessageIntent');
+    expect(swiftController).toContain('ShareRules.suggestedTarget(intent.conversationIdentifier)');
+    expect(swiftController).toContain('ShareCapture().run(items: items, target: target)');
+    expect(swiftCapture).toContain('outcome = self.captureLocked(items: items, target: target)');
+    // Android's key, which the Rust import carries through and `sharedInbox.ts` reads.
+    expect(kotlinShare).toContain('payload.put("target", target)');
+    expect(swiftCapture).toContain('payload["target"] = target');
+    // The same shape and bound as Android's `suggestedTarget`.
+    expect(kotlinShare).toContain('id.startsWith("c:") && id.length in 3..200');
+    expect(swiftRules).toContain('id.hasPrefix("c:") && (3...200).contains(id.count)');
+  });
+
+  it('erases the suggestions at sign-out on iOS too, and no conversation shortcut it never had', () => {
+    const erase = capture(native, /(export function eraseAccountShortcuts[\s\S]*?\n\})/);
+    expect(erase).toContain('if (!isMobileTauriRuntime()) return Promise.resolve();');
+    expect(erase).toContain('clearShareTargets(reason, { force: true })');
+    expect(erase).toContain('if (!isAndroidTauriRuntime()) return suggestions;');
+    const auth = read(resolve(here, '../stores/auth.ts'));
+    expect(auth).toContain("eraseAccountShortcuts('signed out')");
+  });
+});
+
 /** A value of an old-style (OpenStep) property list, which is what a pbxproj is. */
 type Pbx = string | Pbx[] | { [key: string]: Pbx };
 type PbxDict = { [key: string]: Pbx };
@@ -485,6 +598,23 @@ describe('the pbxproj builds, embeds and signs the extension', () => {
     const deps = ids(app.target.dependencies).map((d) => obj(d).target);
     expect(deps).toContain(share.id);
     expect(ids(obj(project.rootObject).targets)).toContain(share.id);
+  });
+
+  it('links Intents into the app (the donations) and the extension (the picked intent)', () => {
+    const frameworksOf = (name: string) => {
+      const phases = ids(nativeTarget(name).target.buildPhases)
+        .map(obj)
+        .filter((p) => p.isa === 'PBXFrameworksBuildPhase');
+      expect(phases.length, name).toBe(1);
+      // A Swift package product (Firebase) is a `productRef`, not a file: only files are read.
+      return ids(phases[0].files)
+        .map(obj)
+        .filter((b) => b.fileRef !== undefined)
+        .map((b) => obj(b.fileRef).path as string);
+    };
+    for (const name of ['canari_iOS', 'CanariShare']) {
+      expect(frameworksOf(name), name).toContain('System/Library/Frameworks/Intents.framework');
+    }
   });
 
   it('compiles every Swift file of canari_Share', () => {

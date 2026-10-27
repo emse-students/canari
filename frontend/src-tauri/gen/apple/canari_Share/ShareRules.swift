@@ -28,6 +28,16 @@ enum ShareRules {
     static func nextFileCeiling(keptSoFar: Int64) -> Int64 {
         return min(maxFileBytes, maxTotalBytes - keptSoFar)
     }
+
+    /// The conversation suggestion the member picked in the share sheet (sharing lot S5), as the
+    /// `conversationIdentifier` the app donated (`c:<conversation id>`), or nil - Android's
+    /// `IncomingShare.suggestedTarget`, the same shape and bound. Only a HINT: the page preselects
+    /// it only if the signed-in account holds that conversation.
+    static func suggestedTarget(_ conversationIdentifier: String?) -> String? {
+        guard let id = conversationIdentifier else { return nil }
+        if id.hasPrefix("c:") && (3...200).contains(id.count) { return id }
+        return nil
+    }
 }
 
 /// The file name a shared item is stored and offered under - Android's `share/SharedFileName.kt`.
