@@ -1973,19 +1973,16 @@ is its first compile and the iPhone readings listed under Owed on
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
 
-## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
+## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
 
-`pending_share.json` holds the shared TEXT in the clear, in three places: the App Group (written by
-the iOS Share Extension), the app data directory on iOS (written by `app_group_share.rs`) and on
-Android (written by `IncomingShare.kt`). The copies in `shared_inbox/` are plaintext too. Since
-the review of the Share Extension (PR #2295) both iOS manifests and the App Group inbox are
-EXCLUDED FROM BACKUPS, and Android excludes its whole data domain, so what is left is the file on
-the device while it waits - the same exposure as the copy a system picker leaves in the cache. Not
-a small reuse of the native-cache seal (`native_cache.rs`): the Kotlin and Swift writers would need
-a twin of its envelope, and the extension holds no key (its entitlement is the App Group alone).
-The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT with the install's
-cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
-and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
+A waiting share (manifest and copies) is written under Data Protection's `Complete` class on iOS,
+and a locked read deletes nothing; Android keeps its credential-encrypted storage, with the
+reasoning written down. The app-level seal first sketched here was rejected, with its reasons:
+[sharing](frontend/sharing.md) ("At rest", iOS path). Nothing here compiles iOS, so the Swift, the
+Objective-C and the iOS-only Rust ride the next iOS build. **Owed on the iPhone, in order**: share a
+text and a photo with the phone unlocked; lock it; wake the app with a push (the log says
+`import (...) deferred: the device is locked`, and no `dropped`); unlock; the share is still
+offered, and the log reads `moved copy protection = NSFileProtectionComplete`.
 
 ## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
 

@@ -586,6 +586,13 @@ static void CanariImportAppGroupShare(NSString *why) {
     NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
     return;
   }
+  // A WAITING SHARE IS LOCKED WITH THE DEVICE (`.completeFileProtection`, docs/wiki/frontend/sharing.md):
+  // while it is locked - a push waking the app in the background - the import is not even tried. The
+  // next activation imports it; nothing retries meanwhile, so nothing loops on a locked phone.
+  if (![UIApplication sharedApplication].isProtectedDataAvailable) {
+    NSLog(@"[CanariShare] import (%@) deferred: the device is locked - imported at the next activation", why);
+    return;
+  }
   int code = canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String);
   // The CODE is the log: the launch call runs before the Rust logger exists.
   switch (code) {
@@ -598,6 +605,9 @@ static void CanariImportAppGroupShare(NSString *why) {
       return;
     case CANARI_SHARE_IMPORT_DROPPED:
       NSLog(@"[CanariShare] import (%@) ERROR: the App Group manifest was unreadable and was dropped", why);
+      return;
+    case CANARI_SHARE_IMPORT_PROTECTED:
+      NSLog(@"[CanariShare] import (%@): the share is locked with the device - imported at the next activation", why);
       return;
     case CANARI_SHARE_IMPORT_NO_DIRS:
       NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
@@ -644,6 +654,7 @@ static void CanariLogShareSweep(CanariShareSweep sweep) {
       CANARI_SHARE_SWEEP_EPOCH_REPAIRED,
       CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED,
       CANARI_SHARE_SWEEP_LEFTOVER_FAILED,
+      CANARI_SHARE_SWEEP_PROTECTED,
   };
   NSArray<NSString *> *whats = @[
     @"already ran in this process - nothing done",
@@ -655,6 +666,7 @@ static void CanariLogShareSweep(CanariShareSweep sweep) {
     @"ERROR: the App Group epoch was behind the app's (a sign-out's copy had failed) - rewritten",
     @"ERROR: the App Group epoch is behind the app's and could NOT be rewritten",
     @"ERROR: a leftover file in the App Group could not be deleted",
+    @"a waiting share is locked with the device - its inbox was left whole",
   ];
   for (NSUInteger i = 0; i < whats.count; i++) {
     if (sweep.flags & bits[i]) {
@@ -864,7 +876,12 @@ void canari_ios_bootstrap(void) {
   // page's first drain finds it.
   NSString *shareDataDir = CanariTauriDataDir();
   NSString *shareCacheDir = CanariTauriCacheDir();
-  if (shareDataDir != nil && shareCacheDir != nil) {
+  if (![UIApplication sharedApplication].isProtectedDataAvailable) {
+    // A launch while the device is locked (a push): a waiting share cannot be read, so which copies
+    // it names cannot be known - nothing is swept this process. Rust refuses the same on its own
+    // (SWEEP_PROTECTED); this is the fact that spares it the failed read.
+    NSLog(@"[CanariShare] launch sweep NOT run: the device is locked - the next process sweeps");
+  } else if (shareDataDir != nil && shareCacheDir != nil) {
     CanariShareSweep sweep = canari_ios_sweep_shared_inboxes(shareDataDir.UTF8String, shareCacheDir.UTF8String);
     CanariLogShareSweep(sweep);
   } else {

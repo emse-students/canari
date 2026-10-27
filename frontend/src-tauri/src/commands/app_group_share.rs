@@ -37,7 +37,10 @@ use std::sync::Mutex;
 
 use serde_json::{Map, Value};
 
-use super::handoff::{read_share_epoch, write_share_epoch, PENDING_SHARE_FILE};
+use super::handoff::{
+    claim_and_read, is_locked_read, read_handoff, read_share_epoch, write_share_epoch, Claimed,
+    PENDING_SHARE_FILE,
+};
 use super::picked_files::SHARED_INBOX;
 
 /// The lock file in the App Group the extension holds for a whole capture. Pinned against the Swift
@@ -56,6 +59,9 @@ pub(crate) enum Import {
     /// The App Group manifest was taken and dropped (unreadable, from an older session than the one
     /// waiting, or with nothing to offer); said at the level its cause deserves.
     Dropped,
+    /// A manifest is under Data Protection and the device is locked: nothing was moved or deleted,
+    /// and the next activation after the unlock imports it (`handoff::Claimed::Protected`).
+    Protected,
 }
 
 /// Serialises the imports of THIS process (the native call sites and the Tauri command): the
@@ -114,20 +120,11 @@ fn is_safe_share_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// Claims `{dir}/{name}` by renaming it to `{name}.{suffix}`, reads it and deletes it - the same claim
-/// as `handoff::take_handoff`, so each manifest has exactly one taker. `None` when none waits.
-fn claim(dir: &Path, name: &str, suffix: &str) -> std::io::Result<Option<String>> {
-    let claimed = dir.join(format!("{name}.{suffix}"));
-    match std::fs::rename(dir.join(name), &claimed) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    }
-    let content = std::fs::read_to_string(&claimed);
-    if let Err(e) = std::fs::remove_file(&claimed) {
-        log::warn!("[SHARE] the claimed {name}.{suffix} was not deleted: {e}");
-    }
-    content.map(Some)
+/// Claims `{dir}/{name}` through `handoff::claim_and_read`, the one claim of every handoff. A LOCKED
+/// manifest (`Claimed::Protected`) is left in place by it, and every caller here answers that
+/// outcome without deleting anything.
+fn claim(dir: &Path, name: &str, suffix: &str) -> std::io::Result<Claimed> {
+    claim_and_read(dir, name, suffix, read_handoff)
 }
 
 /// The manifest as a JSON object; `None` (said by the caller) when it is not one.
@@ -170,10 +167,21 @@ fn offers_nothing(manifest: &Map<String, Value>) -> bool {
 /// KEPT OUT OF BACKUPS, per file and after every write, by the native caches' own helper
 /// (`native_cache::exclude_from_backup`, and for its reason: the rename is a new inode, which does
 /// not carry the flag). The manifest carries the shared TEXT, and the app data directory is backed
-/// up on iOS. It is NOT sealed yet: the shared-text P2 in `docs/wiki/backlog.md`.
+/// up on iOS.
+///
+/// LOCKED WITH THE DEVICE: the staging file is given Data Protection's `Complete` class while it is
+/// still EMPTY, so no byte of the text is ever written under a weaker key, and the rename keeps the
+/// class (it is the file's, not the path's). Fails closed: a manifest that cannot be protected is
+/// not written (`docs/wiki/frontend/sharing.md`, "At rest").
 fn write_pending(dir: &Path, manifest: &Map<String, Value>) -> std::io::Result<()> {
     let staging = dir.join(format!("{PENDING_SHARE_FILE}.tmp"));
     let target = dir.join(PENDING_SHARE_FILE);
+    std::fs::write(&staging, b"")?;
+    if let Err(e) = crate::native_cache::protect_until_unlocked(&staging) {
+        log::error!("[SHARE] the share manifest could not be protected - not written: {e}");
+        let _ = std::fs::remove_file(&staging);
+        return Err(std::io::Error::other(e));
+    }
     std::fs::write(&staging, Value::Object(manifest.clone()).to_string())?;
     std::fs::rename(&staging, &target)?;
     crate::native_cache::exclude_from_backup(&target);
@@ -209,8 +217,13 @@ pub(crate) fn import_group_share(
         );
         return Ok(Import::Busy);
     };
-    let Some(raw) = claim(group, PENDING_SHARE_FILE, "importing")? else {
-        return Ok(Import::Nothing);
+    let raw = match claim(group, PENDING_SHARE_FILE, "importing")? {
+        Claimed::Nothing => return Ok(Import::Nothing),
+        Claimed::Protected => {
+            log::info!("[SHARE] the App Group share is protected until the device is unlocked - imported at the next activation");
+            return Ok(Import::Protected);
+        }
+        Claimed::Read(raw) => raw,
     };
     let Some(mut manifest) = parse_manifest(&raw) else {
         // Its copies stay in the App Group until the next process start sweeps what no manifest names.
@@ -235,6 +248,17 @@ pub(crate) fn import_group_share(
         }
     }
     let (files, lost) = files_in_moved_dir(&manifest, &target);
+    // READ, NOT ASSUMED: the extension wrote each copy `Complete`, and a rename keeps a file's class.
+    // The first copy's class is said, so a device log shows what the move kept.
+    if let Some(first) = files
+        .first()
+        .and_then(|f| f.get("path"))
+        .and_then(Value::as_str)
+    {
+        if let Some(class) = crate::native_cache::file_protection(Path::new(first)) {
+            log::info!("[SHARE] share {id}: moved copy protection = {class}");
+        }
+    }
     if lost > 0 {
         log::warn!(
             "[SHARE] share {id}: {lost} file(s) named by the manifest are not in its directory"
@@ -293,12 +317,20 @@ fn hand_over(
     }
     // CLAIMED, NOT PEEKED AT: the page cannot drain the older one between this reading its id and
     // deleting its copies.
-    let replaced = claim(data_dir, PENDING_SHARE_FILE, "replacing")?.and_then(|raw| {
-        parse_manifest(&raw).or_else(|| {
+    let replaced = match claim(data_dir, PENDING_SHARE_FILE, "replacing")? {
+        Claimed::Nothing => None,
+        // The device locked between the two claims. The waiting share may be the NEWER session's,
+        // and it cannot be read to tell: it is kept, and this one goes, said.
+        Claimed::Protected => {
+            log::error!("[SHARE] share {id} dropped: the waiting share is locked and cannot be compared with it");
+            delete_share_dir(inbox, id, "a share arriving over a locked one");
+            return Ok(Import::Protected);
+        }
+        Claimed::Read(raw) => parse_manifest(&raw).or_else(|| {
             log::warn!("[SHARE] the waiting share manifest is unreadable - replaced");
             None
-        })
-    });
+        }),
+    };
     if let Some(older_session) = replaced.as_ref().filter(|r| epoch_of(r) > epoch) {
         // A NEWER SESSION'S SHARE IS NEVER REPLACED BY AN OLDER ONE: this one could only ever be
         // discarded as stale by the page.
@@ -351,8 +383,14 @@ fn report_refusals(
         log::info!("[SHARE] an App Group share with nothing in it - dropped");
         return Ok(Import::Dropped);
     }
-    let waiting =
-        claim(data_dir, PENDING_SHARE_FILE, "replacing")?.and_then(|raw| parse_manifest(&raw));
+    let waiting = match claim(data_dir, PENDING_SHARE_FILE, "replacing")? {
+        Claimed::Nothing => None,
+        Claimed::Protected => {
+            log::warn!("[SHARE] {refused} refusal(s) not reported: the waiting share is locked");
+            return Ok(Import::Protected);
+        }
+        Claimed::Read(raw) => parse_manifest(&raw),
+    };
     let payload = match waiting {
         Some(w) if epoch_of(&w) > epoch => {
             write_pending(data_dir, &w)?;
@@ -380,20 +418,41 @@ fn report_refusals(
     Ok(Import::Imported)
 }
 
+/// What a sweep may keep in one inbox.
+#[derive(Debug, PartialEq, Eq)]
+enum Waiting {
+    /// The id the current session's waiting manifest names, if any: everything else goes.
+    Keep(Option<String>),
+    /// The waiting manifest is LOCKED (`handoff::is_locked_read`): which copies it names cannot be
+    /// read, so the inbox is not swept at all - a sweep never deletes a protected share.
+    Protected,
+}
+
 /// The id of the manifest waiting in `dir` if it is from the CURRENT session; one from a session that
 /// has since signed out (or with the epoch unreadable) is claimed and dropped here, so its copies go
 /// with the sweep instead of waiting, on disk, for the next account. Android's
 /// `IncomingShare.currentPendingShareId`.
-fn current_pending_share_id(dir: &Path, current: Option<u64>) -> Option<String> {
-    let raw = match std::fs::read_to_string(dir.join(PENDING_SHARE_FILE)) {
+fn current_pending_share_id(
+    dir: &Path,
+    current: Option<u64>,
+    read: &impl Fn(&Path) -> std::io::Result<String>,
+) -> Waiting {
+    let raw = match read(&dir.join(PENDING_SHARE_FILE)) {
         Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Waiting::Keep(None),
+        Err(e) if is_locked_read(&e) => {
+            log::info!(
+                "[SHARE] the waiting share manifest in {} is locked - its inbox is not swept",
+                dir.display()
+            );
+            return Waiting::Protected;
+        }
         Err(e) => {
             log::warn!(
                 "[SHARE] the waiting share manifest in {} is unreadable: {e}",
                 dir.display()
             );
-            return None;
+            return Waiting::Keep(None);
         }
     };
     let Some(waiting) = parse_manifest(&raw) else {
@@ -401,7 +460,7 @@ fn current_pending_share_id(dir: &Path, current: Option<u64>) -> Option<String> 
             "[SHARE] the waiting share manifest in {} is unreadable",
             dir.display()
         );
-        return None;
+        return Waiting::Keep(None);
     };
     let epoch = epoch_of(&waiting);
     if current.is_none_or(|current| epoch < current) {
@@ -409,9 +468,9 @@ fn current_pending_share_id(dir: &Path, current: Option<u64>) -> Option<String> 
             log::warn!("[SHARE] a stale waiting share was not claimed: {e}");
         }
         log::info!("[SHARE] a waiting share from a signed-out session dropped (epoch {epoch} < {current:?})");
-        return None;
+        return Waiting::Keep(None);
     }
-    id_of(&waiting).map(str::to_owned)
+    Waiting::Keep(id_of(&waiting).map(str::to_owned))
 }
 
 /// Deletes every entry of `inbox` but `keep`, and says how many went.
@@ -486,6 +545,8 @@ pub(crate) const SWEEP_EPOCH_REPAIRED: u32 = 1 << 6;
 pub(crate) const SWEEP_EPOCH_REPAIR_FAILED: u32 = 1 << 7;
 /// A leftover file in the App Group's root could not be deleted.
 pub(crate) const SWEEP_LEFTOVER_FAILED: u32 = 1 << 8;
+/// A waiting manifest is locked (Data Protection): its inbox was left whole.
+pub(crate) const SWEEP_PROTECTED: u32 = 1 << 9;
 
 /// The App Group root files a claim or a staging write leaves when its process dies between the
 /// rename and the delete: the app's claims (`.importing`, `.replacing`), the extension's
@@ -520,6 +581,33 @@ pub(crate) fn sweep_inboxes_once(
 
 /// The sweep itself, on plain directories (`sweep_inboxes_once` is its once-per-process gate).
 fn sweep_inboxes(group: Option<&Path>, data_dir: &Path, cache_dir: &Path) -> CanariShareSweep {
+    sweep_inboxes_reading(group, data_dir, cache_dir, &read_handoff)
+}
+
+/// Sweeps one inbox unless its waiting manifest is locked.
+fn sweep_unless_protected(
+    waiting: Waiting,
+    inbox: &Path,
+    label: &str,
+    report: &mut CanariShareSweep,
+) -> usize {
+    match waiting {
+        Waiting::Keep(keep) => sweep_inbox(inbox, keep.as_deref(), label),
+        Waiting::Protected => {
+            report.flags |= SWEEP_PROTECTED;
+            0
+        }
+    }
+}
+
+/// [`sweep_inboxes`] with the manifest reader as a parameter, so a test can stand in for a locked
+/// device.
+fn sweep_inboxes_reading(
+    group: Option<&Path>,
+    data_dir: &Path,
+    cache_dir: &Path,
+    read: &impl Fn(&Path) -> std::io::Result<String>,
+) -> CanariShareSweep {
     let mut report = CanariShareSweep::default();
     let current = read_share_epoch(data_dir)
         .inspect_err(|e| {
@@ -527,8 +615,13 @@ fn sweep_inboxes(group: Option<&Path>, data_dir: &Path, cache_dir: &Path) -> Can
             log::error!("[SHARE] the share epoch is unreadable at the sweep: {e}");
         })
         .ok();
-    let keep = current_pending_share_id(data_dir, current);
-    let mut deleted = sweep_inbox(&cache_dir.join(SHARED_INBOX), keep.as_deref(), "app cache");
+    let waiting = current_pending_share_id(data_dir, current, read);
+    let mut deleted = sweep_unless_protected(
+        waiting,
+        &cache_dir.join(SHARED_INBOX),
+        "app cache",
+        &mut report,
+    );
     match group {
         None => report.flags |= SWEEP_NO_GROUP,
         Some(group) => {
@@ -537,8 +630,13 @@ fn sweep_inboxes(group: Option<&Path>, data_dir: &Path, cache_dir: &Path) -> Can
             }
             match try_lock_group(group) {
                 Ok(Some(_lock)) => {
-                    let keep = current_pending_share_id(group, current);
-                    deleted += sweep_inbox(&group.join(SHARED_INBOX), keep.as_deref(), "App Group");
+                    let waiting = current_pending_share_id(group, current, read);
+                    deleted += sweep_unless_protected(
+                        waiting,
+                        &group.join(SHARED_INBOX),
+                        "App Group",
+                        &mut report,
+                    );
                     let (removed, failed) = sweep_group_leftovers(group);
                     report.leftovers = i32::try_from(removed).unwrap_or(i32::MAX);
                     if failed {
@@ -698,6 +796,8 @@ pub(crate) const IMPORT_NOTHING: i32 = 0;
 pub(crate) const IMPORT_BUSY: i32 = 2;
 /// The App Group manifest was unreadable or named no usable id, and was dropped.
 pub(crate) const IMPORT_DROPPED: i32 = 3;
+/// A manifest is locked by Data Protection: nothing moved, imported at the next activation.
+pub(crate) const IMPORT_PROTECTED: i32 = 4;
 /// The app data or cache directory was not handed over.
 pub(crate) const IMPORT_NO_DIRS: i32 = -1;
 /// The App Group container is unavailable.
@@ -712,6 +812,7 @@ fn import_code(result: &std::io::Result<Import>) -> i32 {
         Ok(Import::Nothing) => IMPORT_NOTHING,
         Ok(Import::Busy) => IMPORT_BUSY,
         Ok(Import::Dropped) => IMPORT_DROPPED,
+        Ok(Import::Protected) => IMPORT_PROTECTED,
         Err(_) => IMPORT_FAILED,
     }
 }
@@ -1015,6 +1116,51 @@ mod tests {
         cleanup(&group);
     }
 
+    /// A reader for which every manifest is LOCKED (`EPERM`, as iOS Data Protection answers).
+    fn locked(_: &Path) -> std::io::Result<String> {
+        Err(std::io::Error::from_raw_os_error(1))
+    }
+
+    #[test]
+    fn a_locked_manifest_leaves_both_inboxes_whole() {
+        let (group, data, cache) = scratch("sweep-locked");
+        super::super::handoff::write_share_epoch(&data, 1).unwrap();
+        std::fs::create_dir_all(cache.join(SHARED_INBOX).join("live-1")).unwrap();
+        std::fs::write(
+            data.join(PENDING_SHARE_FILE),
+            json!({"id": "live-1", "epoch": 1, "text": "x", "files": [], "refused": 0}).to_string(),
+        )
+        .unwrap();
+        extension_share(&group, "group-1", 1, "y", &["0_a.png"], 0);
+
+        let report = sweep_inboxes_reading(Some(&group), &data, &cache, &locked);
+        assert_eq!(report.deleted, 0);
+        assert_ne!(report.flags & SWEEP_PROTECTED, 0);
+        // Which copies a locked manifest names cannot be read, so nothing it may name is touched.
+        assert!(cache.join(SHARED_INBOX).join("live-1").exists());
+        assert!(group
+            .join(SHARED_INBOX)
+            .join("group-1")
+            .join("0_a.png")
+            .exists());
+        assert!(pending(&data).is_some());
+        assert!(pending(&group).is_some());
+        cleanup(&group);
+    }
+
+    #[test]
+    fn a_corrupt_manifest_is_no_hiding_place_the_sweep_still_runs() {
+        let (group, data, cache) = scratch("sweep-corrupt");
+        super::super::handoff::write_share_epoch(&data, 1).unwrap();
+        std::fs::create_dir_all(cache.join(SHARED_INBOX).join("orphan-1")).unwrap();
+        std::fs::write(data.join(PENDING_SHARE_FILE), "not json").unwrap();
+
+        let report = sweep_inboxes_reading(None, &data, &cache, &read_handoff);
+        assert_eq!(report.flags & SWEEP_PROTECTED, 0);
+        assert!(!cache.join(SHARED_INBOX).join("orphan-1").exists());
+        cleanup(&group);
+    }
+
     #[test]
     fn the_sweep_keeps_only_the_current_sessions_waiting_shares() {
         let (group, data, cache) = scratch("sweep");
@@ -1124,6 +1270,7 @@ mod tests {
             import_code(&Ok(Import::Nothing)),
             import_code(&Ok(Import::Busy)),
             import_code(&Ok(Import::Dropped)),
+            import_code(&Ok(Import::Protected)),
             import_code(&Err(std::io::Error::other("x"))),
             IMPORT_NO_DIRS,
             IMPORT_NO_GROUP,

@@ -127,6 +127,22 @@ describe('the names the extension, the app and Android share', () => {
     );
   });
 
+  it('writes a waiting share locked with the device: the folder, every copy, the manifest', () => {
+    // `.completeFileProtection` - unreadable while the phone is locked (sharing.md, "At rest").
+    expect(swiftCapture).toMatch(
+      /static let lockedAtRest: \[FileAttributeKey: Any\] = \[\.protectionKey: FileProtectionType\.complete\]/
+    );
+    expect(swiftCapture).toMatch(
+      /createDirectory\(\s*at: dir, [^)]*attributes: ShareCapture\.lockedAtRest\)/
+    );
+    expect(swiftCapture).toMatch(
+      /createFile\(\s*atPath: target\.path, [^)]*attributes: ShareCapture\.lockedAtRest\)/
+    );
+    expect(swiftCapture).toMatch(
+      /data\.write\(to: staging, options: \[\.completeFileProtection\]\)/
+    );
+  });
+
   it('answers the native side in codes both sides read the same way', () => {
     // The launch import and sweep run before the Rust logger exists: their codes ARE the log.
     const header = read(resolve(APPLE, 'Sources/canari/canari_rust_bridge.h'));
@@ -138,14 +154,23 @@ describe('the names the extension, the app and Android share', () => {
       const shift = /^1u? << (\d+)$/.exec(expr.trim());
       return shift ? 1 << Number(shift[1]) : Number(expr.trim());
     };
-    const imports = ['IMPORTED', 'NOTHING', 'BUSY', 'DROPPED', 'NO_DIRS', 'NO_GROUP', 'FAILED'];
+    const imports = [
+      'IMPORTED',
+      'NOTHING',
+      'BUSY',
+      'DROPPED',
+      'PROTECTED',
+      'NO_DIRS',
+      'NO_GROUP',
+      'FAILED',
+    ];
     for (const name of imports) {
       expect(asNumber(headerDefine(`IMPORT_${name}`)), name).toBe(
         asNumber(rustConst(`IMPORT_${name}`))
       );
     }
     const sweeps = [...rustGroup.matchAll(/const SWEEP_(\w+): u32/g)].map((m) => m[1]);
-    expect(sweeps.length).toBe(9);
+    expect(sweeps.length).toBe(10);
     for (const name of sweeps) {
       expect(asNumber(headerDefine(`SWEEP_${name}`)), name).toBe(
         asNumber(rustConst(`SWEEP_${name}`))

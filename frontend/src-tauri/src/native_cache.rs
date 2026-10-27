@@ -427,6 +427,118 @@ fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
     })
 }
 
+/// Gives `path` the iOS Data Protection class `Complete` (`NSFileProtectionComplete`): its key is
+/// discarded while the device is locked, so the file reads only once the member has unlocked it.
+/// For what waits for the member and nothing background reads - a share waiting for its
+/// destination (`app_group_share`). NEVER for a file the notification extension reads while the
+/// phone is locked (the caches above keep `CompleteUntilFirstUserAuthentication`). A no-op off iOS:
+/// Android's app storage is credential-encrypted already (`docs/wiki/frontend/sharing.md`).
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn protect_until_unlocked(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    return ios_file_protection(path, IosProtection::Set);
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+/// The Data Protection class `path` holds (`NSFileProtectionComplete`, ...), for a log line that
+/// READS what a rename kept rather than assuming it. `None` off iOS.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn file_protection(path: &std::path::Path) -> Option<String> {
+    #[cfg(target_os = "ios")]
+    return ios_file_protection(path, IosProtection::Get)
+        .inspect_err(|e| log::warn!("[NATIVE_CACHE] protection class unreadable: {e}"))
+        .ok();
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+#[cfg(target_os = "ios")]
+enum IosProtection {
+    Set,
+    Get,
+}
+
+/// `-[NSFileManager setAttributes:@{NSFileProtectionKey: NSFileProtectionComplete} ofItemAtPath:]`
+/// or `attributesOfItemAtPath:[NSFileProtectionKey]`, through the Objective-C runtime for the reason
+/// [`ios_exclude_from_backup`] gives. `Set` answers `Ok("")`, `Get` the class name.
+#[cfg(target_os = "ios")]
+fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> Result<String, String> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, Bool};
+
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {
+        static NSFileProtectionKey: *const AnyObject;
+        static NSFileProtectionComplete: *const AnyObject;
+    }
+
+    let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
+        .map_err(|e| format!("path has a NUL byte: {e}"))?;
+    objc2::rc::autoreleasepool(|_| {
+        let str_class = AnyClass::get(c"NSString").ok_or("NSString is not loaded")?;
+        let fm_class = AnyClass::get(c"NSFileManager").ok_or("NSFileManager is not loaded")?;
+        let dict_class = AnyClass::get(c"NSDictionary").ok_or("NSDictionary is not loaded")?;
+        // SAFETY: plain Foundation messages with the argument and return types their headers
+        // declare; every object returned is autoreleased into the pool around this block, and the
+        // keys are Foundation constants that live as long as the process.
+        unsafe {
+            let ns_path: *mut AnyObject =
+                msg_send![str_class, stringWithUTF8String: c_path.as_ptr()];
+            if ns_path.is_null() {
+                return Err("path is not UTF-8".to_string());
+            }
+            let manager: *mut AnyObject = msg_send![fm_class, defaultManager];
+            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
+            match op {
+                IosProtection::Set => {
+                    let attributes: *mut AnyObject = msg_send![
+                        dict_class,
+                        dictionaryWithObject: NSFileProtectionComplete,
+                        forKey: NSFileProtectionKey
+                    ];
+                    let ok: Bool = msg_send![
+                        manager,
+                        setAttributes: attributes,
+                        ofItemAtPath: ns_path,
+                        error: no_error
+                    ];
+                    if ok.as_bool() {
+                        Ok(String::new())
+                    } else {
+                        Err("setAttributes refused".to_string())
+                    }
+                }
+                IosProtection::Get => {
+                    let attributes: *mut AnyObject =
+                        msg_send![manager, attributesOfItemAtPath: ns_path, error: no_error];
+                    if attributes.is_null() {
+                        return Err("attributesOfItemAtPath refused".to_string());
+                    }
+                    let class: *mut AnyObject =
+                        msg_send![attributes, objectForKey: NSFileProtectionKey];
+                    if class.is_null() {
+                        return Ok("none".to_string());
+                    }
+                    let utf8: *const std::os::raw::c_char = msg_send![class, UTF8String];
+                    if utf8.is_null() {
+                        return Err("the class name is not UTF-8".to_string());
+                    }
+                    Ok(std::ffi::CStr::from_ptr(utf8)
+                        .to_string_lossy()
+                        .into_owned())
+                }
+            }
+        }
+    })
+}
+
 /// Removes `channel_keys.json`, the epoch-key mirror an older build wrote in the clear. Nothing has
 /// read it since the Graine seed mirror replaced it, so there is nothing to seal: it is deleted.
 #[cfg(any(mobile, test))]

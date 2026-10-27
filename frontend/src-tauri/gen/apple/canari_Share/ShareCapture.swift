@@ -93,6 +93,14 @@ final class ShareCapture {
 
     private let cancellation = Cancellation()
 
+    /// A WAITING SHARE IS LOCKED WITH THE DEVICE: its folder, each copy and the manifest are written
+    /// under Data Protection's `Complete` class, whose key is discarded while the phone is locked -
+    /// the App Group's default (`CompleteUntilFirstUserAuthentication`) left them readable on a
+    /// locked phone once it had been unlocked since boot. Nothing reads them while locked: the app
+    /// imports at its next activation (`app_group_share.rs`), and the rename that moves them keeps
+    /// the class, which belongs to the file. `docs/wiki/frontend/sharing.md`, "At rest".
+    static let lockedAtRest: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.complete]
+
     /// Copies the share and hands it over. BLOCKING: call it off the main thread.
     ///
     /// UNDER AN EXPIRING ACTIVITY. An extension suspended while it holds a lock on a file in a
@@ -163,7 +171,8 @@ final class ShareCapture {
         let inbox = container.appendingPathComponent(ShareCapture.inboxDir, isDirectory: true)
         let dir = inbox.appendingPathComponent(shareId, isDirectory: true)
         do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true, attributes: ShareCapture.lockedAtRest)
         } catch {
             log.error("the share directory could not be made: \(error.localizedDescription)")
             return .failed
@@ -421,7 +430,9 @@ final class ShareCapture {
         // The index prefix keeps two files with the same name apart on disk; the page is told the
         // name alone.
         let target = dir.appendingPathComponent("\(index)_\(name)")
-        guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+        guard FileManager.default.createFile(
+            atPath: target.path, contents: nil, attributes: ShareCapture.lockedAtRest)
+        else {
             log.warning("file \(index) refused: its copy could not be created")
             return nil
         }
@@ -541,11 +552,12 @@ final class ShareCapture {
     /// WRITTEN WHOLE OR NOT AT ALL: the app may import at any moment, and a rename within one
     /// directory is atomic and replaces the manifest it lands on.
     private func writePending(_ container: URL, _ payload: [String: Any]) -> Bool {
+        // `.completeFileProtection`, for the reason `lockedAtRest` gives: the manifest holds the text.
         let target = container.appendingPathComponent(ShareCapture.pendingFile).path
         let staging = container.appendingPathComponent(ShareCapture.pendingFile + ".tmp")
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
-            try data.write(to: staging)
+            try data.write(to: staging, options: [.completeFileProtection])
         } catch {
             log.error("the share manifest could not be written: \(error.localizedDescription)")
             return false

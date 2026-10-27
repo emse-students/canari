@@ -121,6 +121,7 @@ void canari_ios_on_pause(void);
 #define CANARI_SHARE_IMPORT_NOTHING 0
 #define CANARI_SHARE_IMPORT_BUSY 2
 #define CANARI_SHARE_IMPORT_DROPPED 3
+#define CANARI_SHARE_IMPORT_PROTECTED 4
 #define CANARI_SHARE_IMPORT_NO_DIRS (-1)
 #define CANARI_SHARE_IMPORT_NO_GROUP (-2)
 #define CANARI_SHARE_IMPORT_FAILED (-3)
@@ -143,6 +144,7 @@ typedef struct {
 #define CANARI_SHARE_SWEEP_EPOCH_REPAIRED (1u << 6)
 #define CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED (1u << 7)
 #define CANARI_SHARE_SWEEP_LEFTOVER_FAILED (1u << 8)
+#define CANARI_SHARE_SWEEP_PROTECTED (1u << 9)
 CanariShareSweep canari_ios_sweep_shared_inboxes(const char *data_dir, const char *cache_dir);
 
 #ifdef __cplusplus

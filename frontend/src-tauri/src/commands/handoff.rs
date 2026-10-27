@@ -34,28 +34,93 @@ pub(crate) fn read_and_clear_app_data_file(
 
 /// The claim itself, on a plain directory: rename `{dir}/{name}` to a claim name, read it, delete it.
 fn take_handoff(dir: &std::path::Path, name: &str, tag: &str) -> Option<String> {
-    let path = dir.join(name);
-    let claimed = dir.join(format!("{name}.draining"));
-    match std::fs::rename(&path, &claimed) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(e) => {
-            log::warn!("[{tag}] claim failed: {e}");
-            return None;
+    match claim_and_read(dir, name, "draining", read_handoff) {
+        Ok(Claimed::Nothing) => None,
+        Ok(Claimed::Protected) => {
+            log::info!("[{tag}] {name} is protected until the device is unlocked - left for the next drain");
+            None
         }
-    }
-    let content = std::fs::read_to_string(&claimed);
-    if let Err(e) = std::fs::remove_file(&claimed) {
-        log::warn!("[{tag}] delete failed: {e}");
-    }
-    match content {
-        Ok(c) => {
+        Ok(Claimed::Read(c)) => {
             log::info!("[{tag}] {name} drained ({} bytes)", c.len());
             Some(c)
         }
         Err(e) => {
-            log::warn!("[{tag}] read failed: {e}");
+            log::warn!("[{tag}] {name} not drained: {e}");
             None
+        }
+    }
+}
+
+/// What claiming a one-shot file found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Claimed {
+    /// Nothing waited.
+    Nothing,
+    /// The file is under Data Protection and the device is locked (iOS, `.completeFileProtection`):
+    /// it is LEFT IN PLACE, under its own name, for a drain after the unlock.
+    Protected,
+    /// The file's contents; the file is gone.
+    Read(String),
+}
+
+/// THE ERROR iOS DATA PROTECTION ANSWERS for a `.completeFileProtection` file while the device is
+/// locked: `EPERM` (1 on every POSIX system), read from the OS error CODE and never from a message.
+/// It is the only read failure that means "readable later": every other one is a broken file, and
+/// a broken file is still deleted, so "locked" can never become a hiding place for corruption.
+/// None of the app's own files answers `EPERM` elsewhere; if one ever did, the answer here is to
+/// leave it in place, said - never to delete a share.
+const EPERM: i32 = 1;
+
+/// Whether a read failed only because the device is locked (see [`EPERM`]).
+pub(crate) fn is_locked_read(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(EPERM)
+}
+
+/// The reader of a claimed file; a parameter so the tests can stand in for a locked device.
+pub(crate) fn read_handoff(path: &std::path::Path) -> std::io::Result<String> {
+    std::fs::read_to_string(path)
+}
+
+/// Claims `{dir}/{name}` by renaming it to `{name}.{suffix}`, reads it and deletes it - each file has
+/// exactly one taker (see [`read_and_clear_app_data_file`]). A read refused by Data Protection
+/// ([`is_locked_read`]) RENAMES THE CLAIM BACK and deletes nothing: the share waits for the unlock,
+/// and the next activation drains it - no retry, no timer. Any other read failure deletes the claim
+/// and is returned: an unreadable file never becomes readable by waiting.
+pub(crate) fn claim_and_read(
+    dir: &std::path::Path,
+    name: &str,
+    suffix: &str,
+    read: impl Fn(&std::path::Path) -> std::io::Result<String>,
+) -> std::io::Result<Claimed> {
+    let path = dir.join(name);
+    let claimed = dir.join(format!("{name}.{suffix}"));
+    match std::fs::rename(&path, &claimed) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Claimed::Nothing),
+        Err(e) => return Err(e),
+    }
+    match read(&claimed) {
+        Ok(content) => {
+            if let Err(e) = std::fs::remove_file(&claimed) {
+                log::warn!("[HANDOFF] the claimed {name}.{suffix} was not deleted: {e}");
+            }
+            Ok(Claimed::Read(content))
+        }
+        Err(e) if is_locked_read(&e) => {
+            // Nothing can land at `path` meanwhile: no writer runs while the device is locked. One
+            // that did is never overwritten - the claim then stays under its claim name, said.
+            if path.exists() {
+                log::error!("[HANDOFF] {name} reappeared while its locked claim was held - the claim stays as {name}.{suffix}");
+            } else if let Err(back) = std::fs::rename(&claimed, &path) {
+                log::error!("[HANDOFF] the locked {name} could not be put back: {back}");
+            }
+            Ok(Claimed::Protected)
+        }
+        Err(e) => {
+            if let Err(rm) = std::fs::remove_file(&claimed) {
+                log::warn!("[HANDOFF] the unreadable {name}.{suffix} was not deleted: {rm}");
+            }
+            Err(e)
         }
     }
 }
@@ -185,6 +250,35 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
+    }
+
+    #[test]
+    fn a_locked_read_leaves_the_file_in_place_and_deletes_nothing() {
+        let dir = scratch("locked");
+        std::fs::write(dir.join("h.json"), "{}").expect("write");
+        let locked = |_: &std::path::Path| Err(std::io::Error::from_raw_os_error(super::EPERM));
+        assert_eq!(
+            super::claim_and_read(&dir, "h.json", "draining", locked).expect("claim"),
+            super::Claimed::Protected
+        );
+        // Still under its own name, so the next drain after the unlock takes it.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("h.json")).expect("kept"),
+            "{}"
+        );
+        assert!(!dir.join("h.json.draining").exists());
+        assert_eq!(take_handoff(&dir, "h.json", "T").as_deref(), Some("{}"));
+    }
+
+    #[test]
+    fn a_broken_file_is_still_deleted_and_never_reads_as_locked() {
+        let dir = scratch("broken");
+        std::fs::write(dir.join("h.json"), "{}").expect("write");
+        let broken = |_: &std::path::Path| Err(std::io::Error::from_raw_os_error(5)); // EIO
+        let error = super::claim_and_read(&dir, "h.json", "draining", broken).expect_err("broken");
+        assert!(!super::is_locked_read(&error));
+        assert!(!dir.join("h.json").exists());
+        assert!(!dir.join("h.json.draining").exists());
     }
 
     #[test]

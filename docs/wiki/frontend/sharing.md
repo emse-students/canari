@@ -37,6 +37,11 @@ message, a picture or a post opens the system sheet.
    Names are reduced to their last segment and a conservative character set
    (`share/SharedFileName.kt`). `onCreate` skips a relaunch (`savedInstanceState`,
    `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) so a share is never offered twice.
+   **At rest**: the manifest (files dir) and the copies (`cache/shared_inbox/`) live in the app's
+   credential-encrypted storage - unreadable until the first unlock after boot, then readable by the
+   app's uid alone - and neither is backed up (the cache never is; the data domain is excluded).
+   Nothing is added on top: an app-held key protects nothing against an attacker who can already
+   act as the app (the reasoning is under the iOS path, "At rest").
 3. **The handoff is a file, `pending_share.json`** in the Tauri data directory, because a cold start
    gets the intent before the page exists and a value pushed into a page that then navigates is
    lost. It is written to a `.tmp` and renamed into place, so a drain on a return to the foreground
@@ -322,9 +327,30 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native
    caches' helper, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
    The extension also excludes the WHOLE `<AppGroup>/shared_inbox/` directory on every capture - it
-   holds share copies and nothing else, unlike the App Group root. Sealing the manifests is NOT done:
-   three writers (Kotlin, Swift, Rust) and the extension holds no key; the gap is a P2 in
-   [backlog](../backlog.md#p2---a-waiting-share-is-plaintext-at-rest-the-manifest-carries-the-shared-text-found-2026-10-24).
+   holds share copies and nothing else, unlike the App Group root.
+   **At rest, a waiting share is LOCKED WITH THE DEVICE (2026-10-27).** The extension writes its
+   folder, every copy and the manifest under Data Protection's `Complete` class
+   (`ShareCapture.lockedAtRest`, `.completeFileProtection`), and the app's `write_pending` gives the
+   app-side manifest that class while it is still empty (`native_cache::protect_until_unlocked`,
+   failing closed). The App Group's default, `CompleteUntilFirstUserAuthentication`, left all of it
+   readable on a locked phone once it had been unlocked since boot. The move into the app cache is a
+   rename, and a class belongs to the file, not the path; the import READS it back on the first copy
+   (`[SHARE] share <id>: moved copy protection = ...`) rather than assuming it.
+   **A locked read deletes nothing.** Every claim goes through `handoff::claim_and_read`: a read
+   refused with `EPERM` - the OS error CODE iOS answers for a `Complete` file while locked, never a
+   message - renames the claim back and answers `Protected`; any other failure is a broken file and
+   is still deleted, so "locked" is no hiding place for corruption. The sweep leaves an inbox whose
+   manifest is locked whole (`SWEEP_PROTECTED`): which copies it names cannot be read. And the fact
+   is asked before the failure: `canari_ios.mm` does not try the import, nor the launch sweep, while
+   `isProtectedDataAvailable` is false (a push waking the app on a locked phone). Nothing retries -
+   the next `didBecomeActive` imports it, so a locked phone never loops. Tests: `handoff.rs` (a
+   locked read leaves the file, a broken one is deleted), `app_group_share.rs` (a locked manifest
+   leaves both inboxes whole, a corrupt one is still swept), `iosShareExtension.test.ts`.
+   **Why not an app-level seal.** The backlog's first shape sealed the text with the install's cache
+   key (`CNSEAL1`). Rejected: it protected the text while the copies stayed plain, cost two crypto
+   twins of the envelope (Kotlin, Swift) or the Rust library in a memory-capped extension, and an
+   attacker who reads the app's files on an unlocked phone can use its Keystore or Keychain entry
+   too. The platform's protection covers text and files alike.
    **No log line names a shared file**: a copy is `<index>_<sender's name>`, so `take_picked_file`
    and `discard_picked_file` say the share id and the byte count, never the path.
 
