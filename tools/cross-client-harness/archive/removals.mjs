@@ -1,9 +1,12 @@
 /**
  * KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - a removal is COMMITTED, not only unrouted.
  *
- *   bun archive/removals.mjs --row KICK-COMMIT           (W1 W2)
- *   bun archive/removals.mjs --row SALON-REVOKE-COMMIT   (W1 W2)
- *   bun archive/removals.mjs --row DEVREVOKE-KEYGROUP    (W1 W6, and W3 minted as a new owner device)
+ *   bun run.mjs --file removals.mjs --row KICK-COMMIT           (W1 W2)
+ *   bun run.mjs --file removals.mjs --row SALON-REVOKE-COMMIT   (W1 W2)
+ *   bun run.mjs --file removals.mjs --row DEVREVOKE-KEYGROUP    (W1 W6, and W3 minted as a new owner device)
+ *
+ * THROUGH `run.mjs`, ALWAYS: its preflight brings each seat the row names (`REMOVAL_ROWS` `devices`)
+ * to a known starting point and stamps the build; a bare `bun archive/removals.mjs` skips both.
  *
  * The table and the judge are `removalrows.mjs`. Every row builds its own community, routes its
  * subject onto the row's key groups (asserted on the delivery roster, so an unarmed row is VACUOUS
@@ -52,7 +55,7 @@ const arg = (name) => {
 const id = arg('row');
 const spec = REMOVAL_ROWS[id];
 if (!spec) {
-  console.error(`usage: bun archive/removals.mjs --row ${Object.keys(REMOVAL_ROWS).join('|')}`);
+  console.error(`usage: bun run.mjs --file removals.mjs --row ${Object.keys(REMOVAL_ROWS).join('|')}`);
   process.exit(2);
 }
 const log = (s) => console.log(`[${id}] ${s}`);

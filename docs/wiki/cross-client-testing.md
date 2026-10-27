@@ -248,7 +248,13 @@ routes its subject onto the row's key groups (asserted on the delivery roster; a
 reached one makes the row `VACUOUS`), makes one gesture, then reads every group's server epoch once a
 round for `COMMIT_ROUNDS` rounds. The commit log says who moved each one. A kick and a salon revoke
 must be committed by the actor's session as it is, with no reload; a device revoke by any device that
-remains.
+remains. Run through the preflight: `bun run.mjs --file removals.mjs --row <id>` (phase `REMOVALS`).
+
+**What a `PASS` here does not prove:** that the commit removed the subject's leaf. The commit log
+records a commit's group, base epoch and sender, not its kind or the leaves it removed, so a `PASS`
+means "no longer routed, and the epoch advanced by a commit of the right committer after the
+gesture". Reading the tree itself needs a client that reports its group's members, which the rig
+does not have yet.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |

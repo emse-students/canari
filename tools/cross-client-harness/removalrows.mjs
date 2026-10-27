@@ -12,6 +12,13 @@
  * reload - the gesture is the trigger. A device revoke is committed by any device of the group that
  * remains; the revoked device can never be the one.
  *
+ * WHAT THE JUDGE DOES NOT PROVE. The commit log (`mls_commit_log`) records a commit's group, base epoch,
+ * sender device and ciphertext - not its kind, nor which leaves it removed. So a PASS here says: the
+ * subject is no longer routed, AND the epoch advanced by a commit of the right committer after the
+ * gesture. It does NOT say that commit removed the subject's leaf; a commit of another kind by the same
+ * device in the window would pass it. Reading the tree itself needs a client that reports its group's
+ * members, which nothing here has yet - the limit is stated on the board too.
+ *
  * ROUNDS, NOT CLOCKS. After the gesture each group's epoch is read once per round, at most
  * {@link COMMIT_ROUNDS} rounds; the round it moved in is the measurement, and `null` is "it did not".
  */
@@ -22,7 +29,8 @@ export const ROUND_MS = 500;
 export const COMMIT_ROUNDS = 30;
 
 /**
- * The rows. `committer`: `'actor'` - only a device of the actor seat may commit the removal;
+ * The rows. `devices`: the seats the row drives, read by `checks.mjs` `ROW_TABLES` for the preflight
+ * (DEVREVOKE-KEYGROUP mints W3 itself, and still names it so the preflight reaches it). `committer`: `'actor'` - only a device of the actor seat may commit the removal;
  * `'remaining'` - any device but the removed one. `groups`: the key groups the subject must have been
  * routed on before the gesture, by scope, for the row to be armed.
  */
@@ -31,6 +39,7 @@ export const REMOVAL_ROWS = {
     actor: 'W1',
     subject: 'W2',
     committer: 'actor',
+    devices: ['W1', 'W2'],
     groups: ['community', 'salon'],
     what: "W1 removes W2's account from a community whose public and private salons it held: the community's key group and the private salon's each advance by a commit of W1's session, without a reload",
   },
@@ -38,6 +47,7 @@ export const REMOVAL_ROWS = {
     actor: 'W1',
     subject: 'W2',
     committer: 'actor',
+    devices: ['W1', 'W2'],
     groups: ['salon'],
     what: "W1 revokes W2's access to a private salon and opens the salon again the way the rig does: the salon's key group advances by a commit of W1's session, without a reload",
   },
@@ -48,6 +58,7 @@ export const REMOVAL_ROWS = {
     actor: 'W6',
     subject: 'W3',
     committer: 'remaining',
+    devices: ['W1', 'W6', 'W3'],
     groups: ['community', 'salon'],
     what: "W6 revokes a fresh device of the owner account (W3) that loaded a community and its private salon: every key group the device was routed on advances by a commit of a remaining device",
   },
@@ -75,6 +86,12 @@ export function removalOwn(row, m) {
   const actor = new Set(m.actorDevices ?? []);
   for (const g of groups) {
     const tag = `${g.scope} group ${String(g.groupId).slice(0, 8)}`;
+    // NO EPOCH READ BEFORE THE GESTURE IS NO BASELINE: `epoch > null` is true in JavaScript, so a
+    // missing read would pass every comparison below as "moved".
+    if (g.before === null || g.before === undefined) {
+      failures.push(`${tag}: no epoch was read before the gesture - nothing to compare against`);
+      continue;
+    }
     if (g.routedAfter) failures.push(`${tag}: the subject is still routed after the gesture`);
     if (g.movedAtRound === null) {
       failures.push(`${tag}: the epoch did not advance past ${g.before} within ${COMMIT_ROUNDS} rounds`);
