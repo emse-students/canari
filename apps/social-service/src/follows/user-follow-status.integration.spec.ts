@@ -1,5 +1,5 @@
 /**
- * MIGRATION 112 (WP-F1) against a REAL PostgreSQL: `user_follows.status`.
+ * MIGRATION 114 (WP-F1) against a REAL PostgreSQL: `user_follows.status`.
  *
  * What only the database can prove: every follow present when the migration runs is recorded
  * ACCEPTED (decision 3, existing follows are kept); a row written afterwards without a status is a
@@ -17,16 +17,19 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { DataSource } from 'typeorm';
+import { UserFollow } from './entities/user-follow.entity';
+import { FollowsService } from './follows.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
-const MIGRATION_112 = readFileSync(
-  join(__dirname, '..', 'migrations', '112_user_follow_status.sql'),
+const MIGRATION_114 = readFileSync(
+  join(__dirname, '..', 'migrations', '114_user_follow_status.sql'),
   'utf8'
 );
 
-maybe('migration 112: user_follows.status against PostgreSQL', () => {
+maybe('migration 114: user_follows.status against PostgreSQL', () => {
   const schema = `follow_status_it_${Math.random().toString(36).slice(2, 10)}`;
   let client: Client;
 
@@ -43,7 +46,7 @@ maybe('migration 112: user_follows.status against PostgreSQL', () => {
     await client.connect();
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET search_path TO ${schema}, public`);
-    // The table as production has it before 112 (the shape TypeORM gave it, no status).
+    // The table as production has it before 114 (the shape TypeORM gave it, no status).
     await client.query(`
       CREATE TABLE user_follows (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -61,9 +64,9 @@ maybe('migration 112: user_follows.status against PostgreSQL', () => {
   });
 
   it('records every existing follow ACCEPTED, and is a no-op when replayed', async () => {
-    await client.query(MIGRATION_112);
+    await client.query(MIGRATION_114);
     expect(await rows()).toEqual(['a->b:accepted', 'b->a:accepted', 'c->a:accepted']);
-    await client.query(MIGRATION_112);
+    await client.query(MIGRATION_114);
     expect(await rows()).toEqual(['a->b:accepted', 'b->a:accepted', 'c->a:accepted']);
   });
 
@@ -73,7 +76,7 @@ maybe('migration 112: user_follows.status against PostgreSQL', () => {
     );
     expect(await rows()).toContain('d->a:pending');
     // A replay after new rows exist still touches none of them.
-    await client.query(MIGRATION_112);
+    await client.query(MIGRATION_114);
     expect(await rows()).toContain('d->a:pending');
   });
 
@@ -92,5 +95,62 @@ maybe('migration 112: user_follows.status against PostgreSQL', () => {
     );
     expect(idx).toHaveLength(1);
     expect(idx[0].indexdef).toMatch(/WHERE \(\(status\)::text = 'pending'::text\)/);
+  });
+});
+
+maybe('FollowsService against PostgreSQL: the request is ONE idempotent insert', () => {
+  const schema = `follow_service_it_${Math.random().toString(36).slice(2, 10)}`;
+  let admin: Client;
+  let ds: DataSource;
+  let follows: FollowsService;
+
+  beforeAll(async () => {
+    admin = new Client({ connectionString: URL });
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    await admin.query(`SET search_path TO ${schema}, public`);
+    await admin.query(`
+      CREATE TABLE user_follows (
+        id uuid PRIMARY KEY,
+        "followerUserId" varchar(255) NOT NULL,
+        "followedUserId" varchar(255) NOT NULL,
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        CONSTRAINT "UQ_user_follows_pair" UNIQUE ("followerUserId", "followedUserId"));
+    `);
+    await admin.query(MIGRATION_114);
+    ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [UserFollow],
+      synchronize: false,
+      extra: { options: `-c search_path=${schema}` },
+    });
+    await ds.initialize();
+    follows = new FollowsService({} as never, ds.getRepository(UserFollow), {} as never);
+  });
+
+  afterAll(async () => {
+    await ds.destroy();
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  });
+
+  it('a double tap writes one request and answers both taps, never a 500 on the unique key', async () => {
+    const taps = await Promise.all(
+      Array.from({ length: 8 }, () => follows.recordFollowRequest('tap', 'target'))
+    );
+    expect(taps.filter((t) => t.created)).toHaveLength(1);
+    expect(taps.every((t) => t.status === 'pending')).toBe(true);
+    const { rows } = await admin.query(
+      `SELECT status FROM user_follows WHERE "followerUserId" = 'tap'`
+    );
+    expect(rows).toEqual([{ status: 'pending' }]);
+  });
+
+  it('a second ask leaves an ACCEPTED follow accepted, and says so', async () => {
+    await follows.followUser('fan', 'star');
+    await admin.query(`UPDATE user_follows SET status = 'accepted' WHERE "followerUserId" = 'fan'`);
+    expect(await follows.followUser('fan', 'star')).toEqual({ ok: true, status: 'accepted' });
+    expect(await follows.getFollowedUserIdsForUser('fan')).toEqual(['star']);
   });
 });

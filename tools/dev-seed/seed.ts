@@ -416,7 +416,7 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     id: uuid(`user-follow:${who}:${whom}`),
     followerUserId: userId(who),
     followedUserId: userId(whom),
-    // Written, never defaulted: the column's default is a pending REQUEST (migration 112), and a
+    // Written, never defaulted: the column's default is a pending REQUEST (migration 114), and a
     // seeded follow is meant to be one.
     status: 'accepted',
   }));

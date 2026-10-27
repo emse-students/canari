@@ -906,7 +906,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's ACCEPTED followers (`user_follows`, [WP-F1](#a-follow-of-a-person-is-a-request-first-wp-f1-migration-112-decided-2026-10-25)) who can see it |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's ACCEPTED followers (`user_follows`, [WP-F1](#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -983,7 +983,7 @@ old container).** Association post, recipients: follower, muted follower, non-fo
 new build logged `push withheld from 1 muted of 3` and pushed the other two; the pre-mute container
 pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
 
-### A follow of a PERSON is a request first (WP-F1, migration 112; decided 2026-10-25)
+### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
 
 Every personal account is private (Q1 of the
 [backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
@@ -999,10 +999,15 @@ or a pending follower is told by neither) and the live push (`liveAudienceSql`).
 the block severing delete rows whatever their status. A pending row in each of the three
 PostgreSQL specs fails its assertion when the fragment is replaced by `TRUE` (control, 2026-10-27).
 
-**The two defaults of migration 112 are deliberate.** The column is added with `DEFAULT 'accepted'`,
+**The two defaults of migration 114 are deliberate.** The column is added with `DEFAULT 'accepted'`,
 which records every existing follow as accepted (decision 3); the default is then set to
 `'pending'`, so a writer that forgets the column fails closed - and the old image, serving the
 seconds of a deploy, writes requests rather than follows.
+
+**A request is ONE `INSERT ... ON CONFLICT DO NOTHING`** (`FollowsService.recordFollowRequest`),
+never a read then a write: a double tap used to read "no row" twice and 500 on the unique key. A
+conflict leaves an accepted follow accepted; `created` is true for the one call that wrote, so the
+request is notified once. Eight concurrent taps write one row (PostgreSQL spec).
 
 `GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
 too, the meaning a client older than the request screens gives it

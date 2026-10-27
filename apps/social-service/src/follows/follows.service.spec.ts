@@ -31,6 +31,18 @@ function fakeRepo(rows: Row[]) {
     count: jest.fn(({ where }: { where: Partial<Row> }) =>
       Promise.resolve(rows.filter((r) => matches(r, where)).length)
     ),
+    // The one raw statement the service sends: `recordFollowRequest`'s INSERT ... ON CONFLICT DO
+    // NOTHING RETURNING status. Its real behaviour under concurrency is proven against PostgreSQL
+    // in `user-follow-status.integration.spec.ts`; this stands in for its single-caller semantics.
+    query: jest.fn((sql: string, params: string[]) => {
+      if (!/^\s*INSERT INTO user_follows/.test(sql)) throw new Error(`unexpected SQL: ${sql}`);
+      const [, followerUserId, followedUserId, status] = params;
+      if (rows.some((r) => matches(r, { followerUserId, followedUserId }))) {
+        return Promise.resolve([]);
+      }
+      rows.push({ followerUserId, followedUserId, status });
+      return Promise.resolve([{ status }]);
+    }),
     create: jest.fn((row: Row) => ({ ...row })),
     save: jest.fn((row: Row) => {
       rows.push(row);

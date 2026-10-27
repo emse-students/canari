@@ -1,5 +1,5 @@
 /**
- * The status of a follow of a PERSON (`user_follows.status`, migration 112, WP-F1).
+ * The status of a follow of a PERSON (`user_follows.status`, migration 114, WP-F1).
  *
  * Every personal account is private (user, 2026-10-25, Q1): following a person writes a `pending`
  * request, and only the person's answer makes it `accepted`. A follow of an association, a list or

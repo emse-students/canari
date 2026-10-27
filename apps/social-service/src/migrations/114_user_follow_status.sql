@@ -1,4 +1,4 @@
--- Migration 112: user_follows."status", a follow of a PERSON becomes a request the person answers
+-- Migration 114: user_follows."status", a follow of a PERSON becomes a request the person answers
 -- (WP-F1, decided by the user on 2026-10-25: every personal account is private, Q1).
 --
 -- See apps/social-service/src/follows/entities/user-follow.entity.ts and

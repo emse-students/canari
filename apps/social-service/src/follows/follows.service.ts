@@ -1,4 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { AssociationFollow } from './entities/association-follow.entity';
@@ -96,24 +97,50 @@ export class FollowsService {
     followerUserId: string,
     followedUserId: string
   ): Promise<{ ok: boolean; status: FollowStatus }> {
+    const { status } = await this.recordFollowRequest(followerUserId, followedUserId);
+    return { ok: true, status };
+  }
+
+  /**
+   * Writes a `pending` request unless a row already exists, and says which: `created` is true only
+   * for the call that wrote it, so whoever notifies does it once.
+   *
+   * ONE `INSERT ... ON CONFLICT DO NOTHING`, never a read then a write: two taps at once used to
+   * both read "no row", and the second save hit the unique key as a 500. A conflict changes
+   * nothing - an accepted follow stays accepted - and its status is then READ in a second statement,
+   * which sees the winner's committed row (the insert waited for it). If that row was withdrawn in
+   * between, the ask still stands and is written again; the loop is bounded by the three outcomes a
+   * pair can be in, never by a clock.
+   */
+  async recordFollowRequest(
+    followerUserId: string,
+    followedUserId: string
+  ): Promise<{ status: FollowStatus; created: boolean }> {
     this.logger.debug(`[FOLLOW] ${short(followerUserId)} asks to follow ${short(followedUserId)}`);
-    const already = await this.userFollowRepo.findOne({
-      where: { followerUserId, followedUserId },
-    });
-    if (already) {
-      this.logger.debug(`[FOLLOW] ${short(followerUserId)} already ${already.status}: unchanged`);
-      return { ok: true, status: already.status };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const inserted: { status: FollowStatus }[] = await this.userFollowRepo.query(
+        `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING
+         RETURNING status`,
+        [randomUUID(), followerUserId, followedUserId, FOLLOW_PENDING]
+      );
+      if (inserted.length > 0) {
+        this.logger.log(
+          `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: request recorded, pending`
+        );
+        return { status: FOLLOW_PENDING, created: true };
+      }
+      const existing = await this.userFollowStatus(followerUserId, followedUserId);
+      if (existing) {
+        this.logger.debug(`[FOLLOW] ${short(followerUserId)} already ${existing}: unchanged`);
+        return { status: existing, created: false };
+      }
+      this.logger.warn(
+        `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: the row that refused the insert was gone when read (attempt ${attempt})`
+      );
     }
-    const row = this.userFollowRepo.create({
-      followerUserId,
-      followedUserId,
-      status: FOLLOW_PENDING,
-    });
-    await this.userFollowRepo.save(row);
-    this.logger.log(
-      `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: request recorded, pending`
-    );
-    return { ok: true, status: FOLLOW_PENDING };
+    throw new ConflictException('The follow changed while it was being recorded');
   }
 
   /**

@@ -99,7 +99,7 @@ the user's go. WP-F5 and WP-F6 each follow in a LATER stable. **The two packages
 ordinary review.
 
 - **WP-F1 - the data model, the migration, and every reader counting accepted rows only. BUILT,
-  draft pull request #2589.** Migration 112 adds `user_follows.status` (`pending` / `accepted`, a
+  draft pull request #2589.** Migration 114 adds `user_follows.status` (`pending` / `accepted`, a
   CHECK) with every existing row `accepted` (decision 3), then sets the default to `pending` so a
   writer that forgets the column fails closed; a partial index on what is pending FOR a person
   serves F2's inbox. `POST /api/posts/users/:id/follow` now writes a `pending` request and answers
@@ -114,11 +114,11 @@ ordinary review.
   replay a no-op, a status-less insert pending, the CHECK), a pending follower in the reader-spaces,
   personal-republication and lives PostgreSQL specs - all three fail when the fragment is `TRUE` -
   and `follows.service.spec.ts` (a follow lands pending, a re-ask never downgrades an accepted one).
-  Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-112-decided-2026-10-25).
+  Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25).
 - **WP-F2 - the request API: inbox, accept, refuse, and the one notification.** Start:
   `follows/follows.service.ts`, `posts/posts.controller.ts` (the follow routes), the D38b request
   queue in `posts/personal-republications.service.ts` for the shape. `GET` the pending requests FOR
-  the caller (the partial index of 112), `POST .../accept` (pending -> accepted, under a row lock so
+  the caller (the partial index of 114), `POST .../accept` (pending -> accepted, under a row lock so
   a concurrent withdraw cannot be accepted), `POST .../refuse` (the row is deleted; a refusal tells
   nobody and does not stop a later ask). A new request notifies ONE person through the existing
   `PostNotificationsService` (a `follow_request` type: a bell row and a push, `contentKey` for the

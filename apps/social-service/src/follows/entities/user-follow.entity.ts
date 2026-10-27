@@ -12,7 +12,7 @@ import { FOLLOW_PENDING, type FollowStatus } from '../follow-status';
 /**
  * TypeORM entity recording that a user follows - or asks to follow - another user.
  *
- * A row is a FOLLOW only once `status` is `accepted` (migration 112, WP-F1): every personal account
+ * A row is a FOLLOW only once `status` is `accepted` (migration 114, WP-F1): every personal account
  * is private, so a new row is a `pending` request. The column defaults to `pending` so a writer that
  * forgets it fails closed.
  */
