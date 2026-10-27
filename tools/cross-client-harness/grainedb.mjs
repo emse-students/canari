@@ -656,3 +656,35 @@ export function workspaceOrderOf(userId) {
     name,
   }));
 }
+
+/**
+ * Every live KEY GROUP a device is routed on - a community's or a private salon's own distribution
+ * group - with its epoch. Read BEFORE a device is revoked: the revoke deletes these routing rows, so
+ * afterwards nothing would say which groups the device's leaf was in.
+ *
+ * @param {string} deviceId
+ * @returns {{ groupId: string, scope: 'community'|'salon', epoch: number }[]}
+ */
+export function keyGroupsOfDevice(deviceId) {
+  return rows(
+    psql(
+      `SELECT g.id, CASE WHEN g."distributionWorkspaceId" IS NOT NULL THEN 'community' ELSE 'salon' END, g."activeEpoch" ` +
+        `FROM dm_device_group_memberships m JOIN dm_groups g ON g.id = m."groupId" ` +
+        `WHERE m."deviceId" = '${deviceId}' AND g."deletedAt" IS NULL ` +
+        `AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL) ORDER BY g.id`
+    )
+  ).map(([groupId, scope, epoch]) => ({ groupId, scope, epoch: Number(epoch) }));
+}
+
+/**
+ * A group's server epoch and the devices routed on it, read together, or null for no such group.
+ *
+ * @param {string} groupId
+ * @returns {{ epoch: number, devices: string[] } | null}
+ */
+export function groupEpochAndRoster(groupId) {
+  const found = rows(psql(`SELECT "activeEpoch" FROM dm_groups WHERE id = '${groupId}'`));
+  if (found.length !== 1) return null;
+  const devices = rows(psql(`SELECT "deviceId" FROM dm_device_group_memberships WHERE "groupId" = '${groupId}'`)).map(([d]) => d);
+  return { epoch: Number(found[0][0]), devices };
+}

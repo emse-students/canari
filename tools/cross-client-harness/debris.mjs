@@ -69,8 +69,12 @@ export const isGroupDebris = (name) => GROUP_DEBRIS.some((r) => r.test(name));
  *   community as `rowGroupName(rowId)` - `RM4b-<tail>` for RM-4b. RM ONLY: no other row prefix mints
  *   a community a sweep may take, and `cleanup.mjs` reported seven of them as "0 match a check's
  *   venue" on 2026-10-25.
+ * - `RM <stem>-<mark tail>`: the removal rows (`archive/removals.mjs`), one community per run, the stem
+ *   being the row id without hyphens cut to ten letters - exactly the three rows of `REMOVAL_ROWS`.
+ *   Their baselines left two that `cleanup.mjs` listed as "NOT matched" (2026-10-27), and a member's
+ *   client kept asking for their history in every later row.
  */
-export const COMMUNITY_DEBRIS = [/^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/, /^RM\d+[a-z]?-[0-9a-z]+$/];
+export const COMMUNITY_DEBRIS = [/^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/, /^RM\d+[a-z]?-[0-9a-z]+$/, /^RM (KICKCOMMIT|SALONREVOK|DEVREVOKEK)-[0-9a-z]+$/];
 
 /** True when `name` is a community a runner minted, and therefore one a sweep may delete. */
 export const isCommunityDebris = (name) => COMMUNITY_DEBRIS.some((r) => r.test(name));
