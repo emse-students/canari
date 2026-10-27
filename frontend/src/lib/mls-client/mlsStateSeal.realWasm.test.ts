@@ -7,6 +7,7 @@ vi.mock('$lib/wasm/mls_wasm_bg.wasm?url', () => ({ default: 'https://cdn.test/ml
 import { loadAndInitWasm, resetMlsWasmModuleCacheForTests } from './mlsWasmLoader';
 import {
   MlsStateVerdictError,
+  openMlsStateBlobV2,
   resetMlsStateSealForTests,
   sealMlsStateBlobV2,
 } from './mlsStateSeal';
@@ -66,9 +67,37 @@ describe('a v2 state blob through the real WASM client', () => {
   it("mls-core's reader calls a flipped byte STATE_ALTERED - the verdict WebCrypto cannot give", () => {
     const altered = sealed.slice();
     altered[altered.length - 1] ^= 1;
-    expect(() => new bindings.WasmMlsClient('alice', 'web-alice', altered, KEY_B64, true)).toThrow(
-      /STATE_ALTERED/
-    );
+    // The construction rejects with `StateLoadRefusal`: the code as a FIELD, never only in prose.
+    let rejection: unknown;
+    try {
+      new bindings.WasmMlsClient('alice', 'web-alice', altered, KEY_B64, true).free();
+    } catch (e) {
+      rejection = e;
+    }
+    expect(rejection).toEqual({
+      code: 'STATE_ALTERED',
+      message: expect.stringMatching(/^STATE_ALTERED: /),
+    });
+  });
+
+  it('a v1 blob refused by the real constructor arrives TYPED through the web load path', async () => {
+    // Legacy and v1 blobs never meet WebCrypto: the constructor's refusal is their only verdict,
+    // and it is typed at the boundary (`mlsStateLoadErrorOf`), not read out of a message.
+    const plain = await openMlsStateBlobV2(sealed, KEY_B64);
+    const v1 = bindings.encrypt_mls_state_blob_with_key(plain, KEY_B64) as Uint8Array;
+    const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+    for (const [blob, key, user, code] of [
+      [v1, other, 'alice', 'STATE_KEY_MISMATCH'],
+      [v1, KEY_B64, 'bob', 'IDENTITY_MISMATCH'],
+    ] as const) {
+      resetMlsWasmModuleCacheForTests();
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmResponse());
+      const error = await loadAndInitWasm(user, `web-${user}`, blob, key, true).catch(
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(MlsStateVerdictError);
+      expect((error as MlsStateVerdictError).code).toBe(code);
+    }
   });
 
   it('state_blob_verdict answers a CODE, decided on the Rust variant', () => {

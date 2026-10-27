@@ -38,6 +38,7 @@ export interface OneDeviceAddResult {
 }
 import type { ForkFinding } from './integrityFindings';
 import type { CommitInvitation } from './commitSubmission';
+import { KeystoreKeyUnavailableError } from './mlsStateLoadError';
 import type { OwedInvitationReplanner, UnrecordedInvitationTeller } from './owedInvitations';
 
 export type { FrameDelivery };
@@ -388,12 +389,13 @@ export class SavedStateOfAnotherAccountError extends Error {
  * True when an MLS init failed because biometric mode found no key in the platform keystore - a
  * cancelled or refused sheet, or an entry that was never written or was wiped.
  *
- * Reads `mls-core`'s `KEYSTORE_KEY_UNAVAILABLE` code, the one contract that crosses the Tauri
- * boundary, so the service and the login flow cannot disagree about it. Both used to match the
- * sentence `"No keystore key ..."` with a regex of their own.
+ * Reads the TYPE {@link KeystoreKeyUnavailableError}, built at the Tauri boundary from `mls-core`'s
+ * `KEYSTORE_KEY_UNAVAILABLE` code field (`mlsStateLoadErrorOf`), so the service and the login flow
+ * cannot disagree about it. Both used to match a sentence, then the code inside the message; a text
+ * that merely names the code is no longer one.
  */
 export function isKeystoreKeyUnavailable(error: unknown): boolean {
-  return String(error).includes('KEYSTORE_KEY_UNAVAILABLE');
+  return error instanceof KeystoreKeyUnavailableError;
 }
 
 /**

@@ -44,9 +44,8 @@ fn a_blob_whose_tag_does_not_verify_is_state_undecryptable() {
         matches!(err, MlsError::StateUndecryptable(_)),
         "expected StateUndecryptable, got {err:?}"
     );
-    // The Display form is what crosses both FFI boundaries - `JsValue::from_str(&e.to_string())` in
-    // `mls-wasm`, `e.to_string()` in the Tauri command - so the code itself is load-bearing and not
-    // decoration. `classifyStateLoadFailure` reads exactly this prefix.
+    // The code crosses both FFI boundaries as a FIELD (`StateLoadRefusal`, pinned below); the
+    // Display prefix is the same word, for a reader of the logs.
     assert!(
         err.to_string().starts_with("STATE_UNDECRYPTABLE: "),
         "the code must lead the message: {err}"
@@ -251,16 +250,15 @@ fn a_framed_state_altered_under_the_key_in_hand_is_named_altered_and_never_a_rot
         );
         assert!(
             err.to_string().starts_with("STATE_ALTERED: "),
-            "{name}: the code must lead the message, it is what crosses both FFI boundaries: {err}"
+            "{name}: the code must lead the message, the same word the boundaries carry: {err}"
         );
     }
 }
 
 /// The web asks THIS reader for a verdict when WebCrypto refused a v2 blob, and it must be able to
 /// tell a verdict from anything else WITHOUT reading the message: `state_verdict_code` is that
-/// classification, on the variant. Each code must also be the exact prefix the variant's `Display`
-/// writes, because the Tauri commands surface `e.to_string()` - the two boundaries name a verdict
-/// with the same word or the frontend's classifier reads them differently.
+/// classification, on the variant. Each code is also the prefix the variant's `Display` writes, so
+/// a log line and the typed field name a verdict with the same word.
 #[test]
 fn every_verdict_about_the_bytes_carries_its_code_and_nothing_else_does() {
     let verdicts = [
@@ -282,7 +280,7 @@ fn every_verdict_about_the_bytes_carries_its_code_and_nothing_else_does() {
         assert_eq!(err.state_verdict_code(), Some(code), "{err:?}");
         assert!(
             err.to_string().starts_with(&format!("{code}: ")),
-            "the code must be the Display prefix the Tauri side surfaces: {err}"
+            "the code must be the Display prefix too: {err}"
         );
     }
     // Not a verdict about the bytes: an engine or codec failure must stay "unknown" to the caller,
@@ -305,4 +303,50 @@ fn every_verdict_about_the_bytes_carries_its_code_and_nothing_else_does() {
         .map(|_| ())
         .expect_err("an altered state must not load");
     assert_eq!(err.state_verdict_code(), Some("STATE_ALTERED"));
+}
+
+/// What a state LOAD hands a frontend - the Tauri `initialiser_mls` rejection and the WASM
+/// constructor's - is `StateLoadRefusal { code, message }`, and the frontend builds its typed error
+/// from `code` ALONE. The closed set is the four verdicts plus an empty keystore; everything else is
+/// `None`, however its text reads.
+#[test]
+fn a_state_load_refusal_carries_its_code_from_the_variant_and_never_from_the_text() {
+    use mls_core::StateLoadRefusal;
+    for (err, code) in [
+        (MlsError::StateAltered("x".into()), "STATE_ALTERED"),
+        (
+            MlsError::StateSealedUnderAnotherKey("x".into()),
+            "STATE_KEY_MISMATCH",
+        ),
+        (
+            MlsError::StateUndecryptable("x".into()),
+            "STATE_UNDECRYPTABLE",
+        ),
+        (
+            MlsError::StateIdentityMismatch("x".into()),
+            "IDENTITY_MISMATCH",
+        ),
+        (
+            MlsError::KeystoreKeyUnavailable("x".into()),
+            "KEYSTORE_KEY_UNAVAILABLE",
+        ),
+    ] {
+        assert_eq!(err.state_load_code(), Some(code), "{err:?}");
+        let message = err.to_string();
+        assert_eq!(
+            StateLoadRefusal::from(err),
+            StateLoadRefusal {
+                code: Some(code),
+                message
+            }
+        );
+    }
+    // A message that NAMES a code is not one.
+    let prose = MlsError::OpenMls("STATE_ALTERED: in a sentence".into());
+    assert_eq!(prose.state_load_code(), None);
+    assert_eq!(StateLoadRefusal::from(prose).code, None);
+    assert_eq!(
+        StateLoadRefusal::from("IDENTITY_MISMATCH: a String".to_string()).code,
+        None
+    );
 }

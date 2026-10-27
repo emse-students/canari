@@ -47,6 +47,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
+import { mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
@@ -1132,18 +1133,26 @@ export class TauriMlsService extends BaseMlsService {
     // is the two callers that genuinely hold bytes the native side could not have read - the
     // pre-v0.11.0 migration retry and a probe of a candidate key - and they are one-off flows.
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', {
-      userId: this.userId,
-      deviceId: this.deviceId,
-      deviceKeyB64,
-      encryptedState,
-      opts: {
-        legacyPin: legacyPin ?? null,
-        biometricPrompt: keystoreUnlockPrompt(),
-        stateOnDisk: stateOnDisk === true,
-        unattendedKeyRead: unattendedKeyRead === true,
-      },
-    });
+    try {
+      await invoke('initialiser_mls', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        deviceKeyB64,
+        encryptedState,
+        opts: {
+          legacyPin: legacyPin ?? null,
+          biometricPrompt: keystoreUnlockPrompt(),
+          stateOnDisk: stateOnDisk === true,
+          unattendedKeyRead: unattendedKeyRead === true,
+        },
+      });
+    } catch (e) {
+      // THE COMMAND REJECTS WITH `{ code, message }` (`StateLoadRefusal`), and it is typed HERE, at
+      // the invoke boundary - so `classifyStateLoadFailure` and the login read a TYPE, never the
+      // message. No older string shape is understood: the app embeds this frontend, so the native
+      // half that answers is always the one built with it.
+      throw mlsStateLoadErrorOf(e);
+    }
   }
 
   /**

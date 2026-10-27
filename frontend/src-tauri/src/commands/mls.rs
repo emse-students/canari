@@ -10,7 +10,7 @@ use crate::state::{
     PendingDb,
 };
 use mls_core::pending_submission::PendingSubmissionRead;
-use mls_core::{DecryptErrorKind, MlsManager};
+use mls_core::{DecryptErrorKind, MlsManager, StateLoadRefusal};
 use std::sync::Mutex;
 
 /// The two situational inputs of [`initialiser_mls`], grouped so the command keeps a workable
@@ -43,6 +43,14 @@ pub(crate) struct InitMlsOptions {
 }
 
 /// Initialises the MLS manager for this session and caches its at-rest key.
+///
+/// **IT REJECTS WITH A [`StateLoadRefusal`] - `{ code, message }` - AND NEVER WITH A SENTENCE.** The
+/// code is decided on the `MlsError` variant (`state_load_code`): a verdict about the saved bytes
+/// (`STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`), an empty
+/// keystore (`KEYSTORE_KEY_UNAVAILABLE`), or `null` for anything untyped. `TauriMlsService` turns it
+/// into a typed error at the invoke boundary, so no frontend code reads a recovery out of `message`.
+/// No older native build has to be understood: the app EMBEDS its frontend, so both halves ship
+/// together.
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
     app: tauri::AppHandle,
@@ -52,7 +60,7 @@ pub(crate) async fn initialiser_mls(
     encrypted_state: Option<Vec<u8>>,
     opts: Option<InitMlsOptions>,
     state: tauri::State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<String, StateLoadRefusal> {
     let opts = opts.unwrap_or_default();
     let legacy_pin = opts.legacy_pin;
     // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
@@ -101,7 +109,7 @@ pub(crate) async fn initialiser_mls(
             key_b64_opt,
             &keystore,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(StateLoadRefusal::from)?;
 
         let manager =
             match MlsManager::load_with_key(&user_id, &device_id, encrypted_state.clone(), &key) {
@@ -115,9 +123,9 @@ pub(crate) async fn initialiser_mls(
                         Some(resealed) => {
                             log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
                             MlsManager::load_with_key(&user_id, &device_id, Some(resealed), &key)
-                                .map_err(|e| e.to_string())?
+                                .map_err(StateLoadRefusal::from)?
                         }
-                        None => return Err(e.to_string()),
+                        None => return Err(StateLoadRefusal::from(e)),
                     }
                 }
             };
@@ -148,10 +156,10 @@ pub(crate) async fn initialiser_mls(
         *device_key_state
             .lock()
             .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
-        Ok::<String, String>("MLS Initialized".into())
+        Ok::<String, StateLoadRefusal>("MLS Initialized".into())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| StateLoadRefusal::from(e.to_string()))?
 }
 
 /// Opens a pre-v0.11.0 `mls.bin` (Argon2id, `[salt (16) || nonce (12) || ciphertext]`) with `pin`
@@ -1664,4 +1672,97 @@ pub(crate) fn graine_member_signature_key(
     manager
         .member_signature_key(&group_id, &identity)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod state_load_refusal_tests {
+    //! `initialiser_mls` rejects with [`StateLoadRefusal`], and `TauriMlsService` builds its typed
+    //! error from the serialized `code` field ALONE. These pin that field per variant, on the very
+    //! JSON the IPC bridge carries - a reworded message must change nothing here.
+
+    use mls_core::{MlsError, MlsManager, NoopDeviceKeyStore, StateLoadRefusal};
+
+    const USER: &str = "11111111-1111-4111-8111-111111111111";
+    const DEVICE: &str = "tauri-test-device";
+
+    /// The JSON the invoke rejection carries, as the WebView receives it.
+    fn wire(refusal: StateLoadRefusal) -> serde_json::Value {
+        serde_json::to_value(refusal).expect("a refusal always serializes")
+    }
+
+    #[test]
+    fn every_typed_variant_crosses_the_bridge_with_its_code_as_a_field() {
+        let cases = [
+            (MlsError::StateAltered("x".into()), "STATE_ALTERED"),
+            (
+                MlsError::StateSealedUnderAnotherKey("x".into()),
+                "STATE_KEY_MISMATCH",
+            ),
+            (
+                MlsError::StateUndecryptable("x".into()),
+                "STATE_UNDECRYPTABLE",
+            ),
+            (
+                MlsError::StateIdentityMismatch("x".into()),
+                "IDENTITY_MISMATCH",
+            ),
+            (
+                MlsError::KeystoreKeyUnavailable("x".into()),
+                "KEYSTORE_KEY_UNAVAILABLE",
+            ),
+        ];
+        for (err, code) in cases {
+            let message = err.to_string();
+            assert_eq!(
+                wire(StateLoadRefusal::from(err)),
+                serde_json::json!({ "code": code, "message": message }),
+            );
+        }
+    }
+
+    #[test]
+    fn an_untyped_failure_crosses_with_a_null_code_whatever_its_text_says() {
+        // A message that NAMES a verdict proves nothing: the code is decided on the variant.
+        for err in [
+            MlsError::OpenMls("STATE_ALTERED appears in this text".into()),
+            MlsError::InvalidData,
+        ] {
+            assert_eq!(
+                wire(StateLoadRefusal::from(err))["code"],
+                serde_json::Value::Null
+            );
+        }
+        let lock = StateLoadRefusal::from("STATE_KEY_MISMATCH: Failed to lock state".to_string());
+        assert_eq!(wire(lock)["code"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn real_bytes_answer_their_code_through_the_commands_error_type() {
+        let key = [9u8; 32];
+        let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
+        let framed = manager.save_encrypted_with_key(&key).expect("seal");
+
+        let mut altered = framed.clone();
+        let last = altered.len() - 1;
+        altered[last] ^= 1;
+        let err = MlsManager::load_with_key(USER, DEVICE, Some(altered), &key)
+            .map(|_| ())
+            .expect_err("an altered state must not load");
+        assert_eq!(wire(err.into())["code"], "STATE_ALTERED");
+
+        let err = MlsManager::load_with_key(USER, DEVICE, Some(framed.clone()), &[8u8; 32])
+            .map(|_| ())
+            .expect_err("another key must be refused");
+        assert_eq!(wire(err.into())["code"], "STATE_KEY_MISMATCH");
+
+        let err = MlsManager::load_with_key(USER, "another-device", Some(framed.clone()), &key)
+            .map(|_| ())
+            .expect_err("another device's state must be refused");
+        assert_eq!(wire(err.into())["code"], "IDENTITY_MISMATCH");
+
+        let err =
+            MlsManager::resolve_at_rest_key(USER, DEVICE, Some(&framed), None, &NoopDeviceKeyStore)
+                .expect_err("no key in hand and none in the keystore");
+        assert_eq!(wire(err.into())["code"], "KEYSTORE_KEY_UNAVAILABLE");
+    }
 }

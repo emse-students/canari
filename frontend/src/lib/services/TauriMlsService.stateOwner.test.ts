@@ -39,13 +39,25 @@ const BOB = 'bob';
 const KEY = 'k'.repeat(44);
 const PAUSE_FOR_PIN = { noFreshStart: true, stateOnDisk: true, legacyPin: '1234' };
 
-const ALTERED = 'STATE_ALTERED: v1 tag did not verify under the key its header names';
-const ROTATED = "STATE_KEY_MISMATCH: the state's header names a different device key";
+/** What `initialiser_mls` rejects with: `mls-core`'s `StateLoadRefusal`, the code as a FIELD. */
+type StateLoadRefusal = { code: string | null; message: string };
+const ALTERED: StateLoadRefusal = {
+  code: 'STATE_ALTERED',
+  message: 'STATE_ALTERED: v1 tag did not verify under the key its header names',
+};
+const ROTATED: StateLoadRefusal = {
+  code: 'STATE_KEY_MISMATCH',
+  message: "STATE_KEY_MISMATCH: the state's header names a different device key",
+};
+const UNDECRYPTABLE: StateLoadRefusal = {
+  code: 'STATE_UNDECRYPTABLE',
+  message: 'STATE_UNDECRYPTABLE: aead::Error',
+};
 
 /** `initialiser_mls` refuses with `loadError`; `mls_state_owner` answers `owner`. */
-function disk(loadError: string, owner: string | null): void {
+function disk(loadError: StateLoadRefusal, owner: string | null): void {
   invoke.mockImplementation((cmd: string) => {
-    if (cmd === 'initialiser_mls') return Promise.reject(new Error(loadError));
+    if (cmd === 'initialiser_mls') return Promise.reject(loadError);
     if (cmd === 'mls_state_owner') return Promise.resolve(owner);
     return Promise.resolve(undefined);
   });
@@ -76,7 +88,7 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
   });
 
   it("refuses a state recorded as ANOTHER account's - nothing rotated, no legacy re-seal, nothing written", async () => {
-    disk('STATE_UNDECRYPTABLE: aead::Error', 'alice');
+    disk(UNDECRYPTABLE, 'alice');
     const { svc, rotate } = makeService();
 
     const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
@@ -102,7 +114,7 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
   it('CONTROL: a record naming THIS account, or none at all, is no proof - the ordinary pause', async () => {
     for (const owner of [BOB, null]) {
       invoke.mockReset();
-      disk('STATE_UNDECRYPTABLE: aead::Error', owner);
+      disk(UNDECRYPTABLE, owner);
       const { svc, rotate } = makeService();
 
       const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
