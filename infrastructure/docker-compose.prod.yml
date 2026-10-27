@@ -547,10 +547,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node 6 has no `ORIGIN`: the origin is derived per request from `Host` (nginx @ssr
-      # forwards it) and this header, which nginx sets from the edge's `X-Forwarded-Proto`.
-      # Nothing here guards a form action today (there is none); see architecture.md.
-      PROTOCOL_HEADER: x-forwarded-proto
+      # adapter-node 6 has no `ORIGIN`: the origin is derived per request (scheme https by default,
+      # host from `Host`, which nginx @ssr forwards). No PROTOCOL_HEADER: it would trust a value a
+      # client can send. Nothing guards a form action today; see architecture.md.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
