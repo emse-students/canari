@@ -330,6 +330,44 @@ export async function scanGroupRedisKeyOwners(redis: Redis): Promise<Set<string>
 }
 
 /**
+ * The Redis set naming the 1:1 DMs an account erasure is tombstoning (`erasure:dms:<userId>`).
+ *
+ * WHY IT EXISTS: a DM's tombstone deletes every row that named it for the account, in a transaction
+ * that commits BEFORE the DM's Redis keys go ({@link tombstoneGroups}). A run that dies between the
+ * two leaves keys - the DM's `history:` stream among them - that no row of the account names, so a
+ * retry that discovers groups through rows cannot reach them. This set is written before the
+ * tombstone and removed only once the keys went ({@link purgeErasedDmKeys}), so it is the one fact
+ * still naming those DMs after the tombstone. It lives for one run, never by a timer.
+ */
+function erasedDmsKey(userId: string): string {
+  return `erasure:dms:${userId}`;
+}
+
+/** Names `dmIds` in the account's erasure marker ({@link erasedDmsKey}), before their tombstone. */
+export async function markErasedDms(
+  redis: Redis,
+  userId: string,
+  dmIds: readonly string[]
+): Promise<void> {
+  if (dmIds.length === 0) return;
+  await redis.sadd(erasedDmsKey(userId), ...dmIds);
+}
+
+/**
+ * Deletes every Redis key of the DMs the account's erasure marker names, then the marker itself -
+ * in that order, so a run that dies in between leaves the marker for the retry.
+ *
+ * @returns how many DMs the marker named.
+ */
+export async function purgeErasedDmKeys(redis: Redis, userId: string): Promise<number> {
+  const dmIds = await redis.smembers(erasedDmsKey(userId));
+  if (dmIds.length === 0) return 0;
+  await deleteGroupRedisKeys(redis, dmIds);
+  await redis.del(erasedDmsKey(userId));
+  return dmIds.length;
+}
+
+/**
  * Removes every route of `userId` (`<userId>:<deviceId>`) from every group's routing set
  * (`group:members:<g>`), found by scanning the sets themselves - never by a row naming the group.
  *

@@ -271,6 +271,12 @@ a device row names then cut through the same `eraseSeats`, a WARN line when it f
 **Then every route of the account goes, read off the routing sets themselves by its prefix**
 (`removeRoutesOfUser`), never off a row: a run that died after a 1:1 DM's tombstone committed and
 before that DM's Redis keys went left a route no row names, and the retry removes it all the same.
+**The same holds for every Redis key of such a DM**, its `history:` stream included: before the
+tombstone, the DMs are named in a per-account Redis set (`erasure:dms:<userId>`), the one fact still
+naming them once the tombstone deleted their rows; every run ends by deleting the keys of every DM
+that set names, then the set itself (`purgeErasedDmKeys`). An interrupted run leaves the set for the
+retry, so no key of a tombstoned DM waits for the 90-day reaper; the set lives for one run, never
+by a timer.
 **No device row is deleted outside `eraseSeats`**: a seat admitted after the sweep's read keeps its
 row, with a WARN line, for the final pass to cut with any route restored from it meanwhile. That
 pass starts once no token can act as the account, so it meets no republish at all: it is what

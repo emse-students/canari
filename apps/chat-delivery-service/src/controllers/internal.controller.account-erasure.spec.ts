@@ -35,6 +35,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       lateGroups?: string[];
       /** Key packages the sweep's second delete still finds: the account reconnected meanwhile. */
       lateKeyPackages?: number;
+      /** 1:1 DMs the discovery finds, tombstoned whole. */
+      dmGroups?: string[];
+      /** The DMs the account's erasure marker still names: a run that died after a tombstone. */
+      marked?: string[];
     } = {}
   ) {
     process.env.INTERNAL_SECRET = SECRET;
@@ -68,6 +72,17 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
         )
       ),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      // A DM's tombstone: one unit of work over its rows.
+      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
+        const out = await cb({
+          getRepository: () => ({
+            update: jest.fn().mockResolvedValue({ affected: 1 }),
+            delete: jest.fn().mockResolvedValue({ affected: 0 }),
+          }),
+        });
+        steps.push('tombstone');
+        return out;
+      }),
     };
     const repos = {
       pushToken: repo(),
@@ -106,21 +121,43 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       steps.push('rowsLeft');
       return opts.leftRows ?? 0;
     });
-    repos.group.findBy.mockImplementation(async () =>
-      [...(opts.deviceGroups ?? []), ...(opts.evictionGroups ?? [])].map((id) => ({
+    repos.group.findBy.mockImplementation(async () => [
+      ...[...(opts.deviceGroups ?? []), ...(opts.evictionGroups ?? [])].map((id) => ({
         id,
         isGroup: true,
-      }))
+      })),
+      ...(opts.dmGroups ?? []).map((id) => ({ id, isGroup: false })),
+    ]);
+    repos.groupMember.find.mockResolvedValue(
+      (opts.dmGroups ?? []).map((groupId) => ({ groupId, userId: USER }))
     );
+    // The account's erasure marker (`erasure:dms:<user>`), as a set; every other set is a route set.
+    const marker = new Set(opts.marked ?? []);
+    const MARKER = `erasure:dms:${USER}`;
     // The keys come back in one SCAN page; the route sweep is the step that walks them.
     const redis = {
       scan: jest.fn(async () => {
         steps.push('routes');
         return ['0', Object.keys(opts.routed ?? {})];
       }),
-      smembers: jest.fn(async (key: string) => opts.routed?.[key] ?? []),
+      smembers: jest.fn(async (key: string) =>
+        key === MARKER ? [...marker] : (opts.routed?.[key] ?? [])
+      ),
+      sadd: jest.fn(async (key: string, ...members: string[]) => {
+        steps.push(`mark ${members.join(',')}`);
+        members.forEach((m) => marker.add(m));
+        return members.length;
+      }),
       srem: jest.fn().mockResolvedValue(1),
-      del: jest.fn(),
+      del: jest.fn(async (...keys: string[]) => {
+        if (keys.includes(MARKER)) {
+          steps.push('unmark');
+          marker.clear();
+        } else {
+          steps.push(`del ${keys.join(',')}`);
+        }
+        return keys.length;
+      }),
     };
     // Each group's seats are cut through the one eviction, under that group's seat lock.
     const messagingService = {
@@ -215,6 +252,34 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(redis.scan).toHaveBeenCalledWith('0', 'MATCH', 'group:members:*', 'COUNT', 500);
     expect(redis.srem).toHaveBeenCalledTimes(1);
     expect(redis.srem).toHaveBeenCalledWith('group:members:g-dm', `${USER}:dev-1`);
+  });
+
+  it("names a DM in the account's erasure marker BEFORE its tombstone, and drops the marker only once its keys went", async () => {
+    // The tombstone deletes every row that named the DM for this account; the marker is the one
+    // fact that still names it, so it is written first and removed last.
+    const { controller, steps } = make({ dmGroups: ['g-dm'] });
+    await controller.deleteUserData(USER, SECRET);
+
+    const keys = 'history:g-dm,group:members:g-dm,pending_welcome:g-dm,group:parting:g-dm';
+    const at = (s: string) => steps.indexOf(s);
+    expect(at('mark g-dm')).toBeGreaterThanOrEqual(0);
+    expect(at('mark g-dm')).toBeLessThan(at('tombstone'));
+    expect(steps.lastIndexOf(`del ${keys}`)).toBeGreaterThan(at('tombstone'));
+    expect(at('unmark')).toBeGreaterThan(steps.lastIndexOf(`del ${keys}`));
+  });
+
+  it("deletes a DM's Redis keys on a RETRY that finds no row naming it, through the account's erasure marker", async () => {
+    // The run before died after the DM's tombstone committed and before its keys went: no row of
+    // the account names the DM any more, so only the marker can.
+    const { controller, steps } = make({ marked: ['g-dm'] });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(steps).toContain(
+      'del history:g-dm,group:members:g-dm,pending_welcome:g-dm,group:parting:g-dm'
+    );
+    expect(steps.indexOf('unmark')).toBeGreaterThan(
+      steps.indexOf('del history:g-dm,group:members:g-dm,pending_welcome:g-dm,group:parting:g-dm')
+    );
   });
 
   it("deletes the account's eviction records: a claim it took before is refused by the group's generation", async () => {

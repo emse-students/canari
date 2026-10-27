@@ -36,7 +36,13 @@ import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { ADMITTED_SEAT } from '../utils/group-membership';
 import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { parseSessionId } from '../utils/session-id';
-import { removeRoutesOfUser, tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import {
+  markErasedDms,
+  purgeErasedDmKeys,
+  removeRoutesOfUser,
+  tombstoneGroups,
+  totalGroupOwnedRows,
+} from '../utils/group-purge';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
@@ -864,6 +870,10 @@ export class InternalController {
       // deletion rather than infer it, and that party's dismissal markers are their own fact.
       if (dmGroups.length > 0) {
         const dmIds = dmGroups.map((g) => g.id);
+        // NAMED FIRST, in the account's erasure marker: the tombstone deletes every row that names
+        // these DMs for the account and commits before their Redis keys go, so a run that dies in
+        // between leaves keys only the marker still names ({@link purgeErasedDmKeys}, below).
+        await markErasedDms(this.redis, userId, dmIds);
         const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, dmIds);
         this.logger.log(
           `[INTERNAL_DELETE] ${dmIds.length} DM(s) deleted, ` +
@@ -941,6 +951,14 @@ export class InternalController {
     } else {
       this.logger.log(`[INTERNAL_DELETE] user=${who} no route left in any routing set`);
     }
+
+    // ── Every Redis key of the DMs this erasure tombstoned, this run's or an interrupted one's ──
+    // Named by the account's erasure marker, never by a row: on a retry after a run died between a
+    // DM's tombstone and its keys, no row names that DM any more. The marker goes last.
+    const markedDms = await purgeErasedDmKeys(this.redis, userId);
+    this.logger.log(
+      `[INTERNAL_DELETE] user=${who} Redis keys of ${markedDms} tombstoned DM(s) deleted, marker cleared`
+    );
 
     // ── User's own records ────────────────────────────────────────────────
     // Everything still queued FOR the account, a frame with no group included. NO DEVICE ROW IS
