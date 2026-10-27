@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="23/10/2026"
+  updated="27/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -109,6 +109,18 @@
           signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
           commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
           votre compte, détaché de celui-ci.
+        </dd>
+      </div>
+      <div>
+        <dt>Abonnements et demandes d'abonnement</dt>
+        <dd>
+          Suivre une personne est une demande : elle reçoit une notification à votre nom et
+          l'accepte ou la refuse, et un refus n'est signalé à personne. Sont conservés la demande,
+          sa réponse et leurs dates, et la liste de vos abonnés, que vous pouvez consulter et dont
+          vous pouvez retirer quelqu'un. Pour ne jamais notifier deux fois la même personne, le
+          serveur garde aussi le fait qu'une demande (ou son acceptation) a déjà été notifiée entre
+          deux comptes, même après un retrait, un refus ou un blocage. Suivre une association ne
+          demande rien à personne.
         </dd>
       </div>
       <div>
@@ -484,6 +496,14 @@
           <tr>
             <td>Publications, commentaires, médias des publications</td>
             <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
+          </tr>
+          <tr>
+            <td>Abonnements et demandes d'abonnement</td>
+            <td>
+              Une demande : jusqu'à sa réponse ou son retrait ; un abonnement : jusqu'à son retrait
+              par l'un ou l'autre, un blocage ou la suppression d'un des deux comptes ; la trace
+              qu'une notification a été envoyée : jusqu'à la suppression d'un des deux comptes
+            </td>
           </tr>
           <tr>
             <td>Documents d'une association</td>
