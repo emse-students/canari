@@ -1424,6 +1424,12 @@ the commit log's row for that epoch (its confirmed transcript hash), or a `diver
 `unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
 in #2269 by decision of the review.
 
+**WIDENED 2026-10-27:** the departed-member removal of a roster diff now goes through the same check
+(#2580), and for a KEY GROUP too - its base read from social-service, where a holder also publishes
+it. So `diverged` now reaches community and salon key groups, and a forked holder's republished
+key-group base would send that key group's honest members to rung 2 the same way. The count owed
+above counts `[FORK]` lines on key groups as well.
+
 ## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
 
 A commit whose submission got no answer is settled by resubmitting it, and the gate's duplicate

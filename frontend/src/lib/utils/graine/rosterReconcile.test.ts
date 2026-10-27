@@ -3,6 +3,7 @@ import { diffRosterAgainstTree, reconcileDistributionGroupRoster } from './roste
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 
 /**
  * A departure must move the distribution group's epoch (WP-GRAINE-2).
@@ -20,7 +21,7 @@ vi.mock('./admissionGate', () => ({
 }));
 
 let getGroupMemberIdentities: ReturnType<typeof vi.fn>;
-let removeMember: ReturnType<typeof vi.fn>;
+let removeDepartedMembers: ReturnType<typeof vi.fn>;
 let getLocalGroups: ReturnType<typeof vi.fn>;
 let distributionGroupFor: ReturnType<typeof vi.fn>;
 let persisted: number;
@@ -34,7 +35,7 @@ const channelService = {
 
 beforeEach(() => {
   getGroupMemberIdentities = vi.fn().mockResolvedValue(['alice:web-1', 'bob:web-1']);
-  removeMember = vi.fn().mockResolvedValue(undefined);
+  removeDepartedMembers = vi.fn().mockResolvedValue(undefined);
   getLocalGroups = vi.fn().mockReturnValue(['dist-group']);
   distributionGroupFor = vi.fn().mockReturnValue('dist-group');
   listWorkspaceMembers.mockReset();
@@ -53,7 +54,7 @@ beforeEach(() => {
       distributionGroupFor,
       getLocalGroups,
       getGroupMemberIdentities,
-      removeMember,
+      removeDepartedMembers,
       getEpoch: () => 26,
       persistCheckpoint: vi.fn().mockImplementation(async () => {
         persisted += 1;
@@ -141,8 +142,8 @@ describe('reconcileDistributionGroupRoster', () => {
     ).resolves.toEqual(['bob', 'carol']);
 
     // One commit, one epoch, whatever the fleet behind the departures.
-    expect(removeMember).toHaveBeenCalledTimes(1);
-    expect(removeMember).toHaveBeenCalledWith('dist-group', ['bob', 'carol']);
+    expect(removeDepartedMembers).toHaveBeenCalledTimes(1);
+    expect(removeDepartedMembers).toHaveBeenCalledWith('dist-group', ['bob', 'carol']);
     // An epoch that only ever existed in memory is one the next load walks back out of.
     expect(persisted).toBe(1);
   });
@@ -154,7 +155,7 @@ describe('reconcileDistributionGroupRoster', () => {
       reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) => lines.push(m))
     ).resolves.toEqual([]);
 
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(persisted).toBe(0);
     // A pass whose success is indistinguishable from its absence can only be verified against the
     // database - which is how this mechanism had to be checked on prod the first time.
@@ -180,7 +181,7 @@ describe('reconcileDistributionGroupRoster', () => {
       lines.push(m)
     );
 
-    expect(removeMember).toHaveBeenCalledTimes(1);
+    expect(removeDepartedMembers).toHaveBeenCalledTimes(1);
     expect(lines.some((l) => /admission state .* not recorded/.test(l))).toBe(true);
   });
 
@@ -192,7 +193,7 @@ describe('reconcileDistributionGroupRoster', () => {
     await expect(
       reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
     ).resolves.toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 
   it('removes nobody when the tree could not be read', async () => {
@@ -201,7 +202,7 @@ describe('reconcileDistributionGroupRoster', () => {
     await expect(
       reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
     ).resolves.toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 
   it('does not even look when this device has not joined the group', async () => {
@@ -216,7 +217,7 @@ describe('reconcileDistributionGroupRoster', () => {
 
   it('reports a rejected commit and persists nothing', async () => {
     listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
-    removeMember.mockRejectedValue(new Error('epoch rejected'));
+    removeDepartedMembers.mockRejectedValue(new Error('epoch rejected'));
     const lines: string[] = [];
 
     await expect(
@@ -228,13 +229,37 @@ describe('reconcileDistributionGroupRoster', () => {
     expect(lines.some((l) => l.includes('they can still read it'))).toBe(true);
   });
 
+  // The removal is a commit the DIFF decided, so it is staged only on the published branch: each
+  // reason is a non-refusal, said as one, and never the accusing "they can still read it".
+  it.each(['no-base', 'other-epoch', 'diverged'] as const)(
+    'removes nobody from a state the published base cannot vouch for (%s), and says why',
+    async (reason) => {
+      listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+      removeDepartedMembers.mockRejectedValue(
+        new UnpublishedBranchError('dist-group', reason, 'departed-member removal')
+      );
+      const lines: string[] = [];
+
+      await expect(
+        reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+          lines.push(m)
+        )
+      ).resolves.toEqual([]);
+
+      expect(persisted).toBe(0);
+      const said = lines.join(' | ');
+      expect(said).toContain(`cannot vouch for this device's state (${reason}) - nothing staged`);
+      expect(said).not.toContain('they can still read it');
+    }
+  );
+
   it('is silent and harmless before a session has wired the Graine runtime', async () => {
     setGraineRuntime(null);
 
     await expect(
       reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
     ).resolves.toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 });
 
@@ -256,7 +281,7 @@ describe('a private salon reconciles against ITS OWN roster', () => {
 
     expect(listMembers).toHaveBeenCalledWith('chan-1', 'channel');
     expect(listWorkspaceMembers).not.toHaveBeenCalled();
-    expect(removeMember).toHaveBeenCalledWith('dist-group', ['carol']);
+    expect(removeDepartedMembers).toHaveBeenCalledWith('dist-group', ['carol']);
   });
 
   it('looks the group up under the salon scope, not the community one', async () => {
@@ -275,6 +300,6 @@ describe('a private salon reconciles against ITS OWN roster', () => {
     ).resolves.toEqual([]);
 
     // Absence is a reason to ask again later, never to empty the tree of everybody but this device.
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 });
