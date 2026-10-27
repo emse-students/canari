@@ -78,6 +78,9 @@ export async function recordCallStarted(
   await ctx.addMessageToChat('system', serializeEnvelope(envelope), groupId, {
     isSystem: true,
     messageId,
+    // Nothing echoes a call row (it is written locally from signals), so it must never wait in the
+    // bulk-ingest buffer, where a later finalization could not find it and would write a second row.
+    soleWriter: true,
   });
 }
 
@@ -117,6 +120,8 @@ export async function recordCallEnded(
     const starter = starterId.toLowerCase();
     const getName = await resolveDisplayNames([starter]);
     const now = Date.now();
+    // The timeline may have gained this very row during the await: never write a second one.
+    if (ctx.conversations.get(groupId)?.messages.some((x) => x.id === messageId)) return;
     appendLog(`[CallRecord] ${callId} written as ${outcome} (no started row on this device)`);
     await ctx.addMessageToChat(
       'system',
@@ -126,7 +131,7 @@ export async function recordCallEnded(
         callEvent: { callId, starterId: starter, startedAt: now, endedAt: now, outcome },
       }),
       groupId,
-      { isSystem: true, messageId }
+      { isSystem: true, messageId, soleWriter: true }
     );
     return;
   }
@@ -141,6 +146,15 @@ export async function recordCallEnded(
   const starter = env.callEvent.starterId;
   const getName = await resolveDisplayNames([starter]);
   const starterName = getName(starter);
+  // The conversation may have moved during that await: take the row from the CURRENT timeline,
+  // never from the snapshot read before it (a write of the old list would erase what arrived).
+  const current = ctx.conversations.get(groupId);
+  const curIdx = current ? current.messages.findIndex((x) => x.id === messageId) : -1;
+  if (!current || curIdx === -1) {
+    appendLog(`[CallRecord] ${callId} row gone before its end was written`);
+    return;
+  }
+  const curMsg = current.messages[curIdx];
   const nextText = outcome
     ? buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), starterName)
     : buildCallEndedText(starterName, endedAt - env.callEvent.startedAt);
@@ -151,9 +165,9 @@ export async function recordCallEnded(
     callEvent: { ...env.callEvent, endedAt, ...(outcome ? { outcome } : {}) },
   });
 
-  const msgs = [...convo.messages];
-  msgs[idx] = { ...msg, content: nextContent };
-  ctx.conversations.set(groupId, { ...convo, messages: msgs });
+  const msgs = [...current.messages];
+  msgs[curIdx] = { ...curMsg, content: nextContent };
+  ctx.conversations.set(groupId, { ...current, messages: msgs });
 
   if (ctx.storage) {
     // Rewriting the call-ended text is a mutation of an existing row: only the body changes, and

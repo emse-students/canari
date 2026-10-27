@@ -40,7 +40,12 @@ function makeCtx() {
     [G, { id: G, messages: [] } as unknown as Conversation],
   ]);
   const addMessageToChat = vi.fn(
-    async (_s: string, content: string, _c: string, o?: { messageId?: string }) => {
+    async (
+      _s: string,
+      content: string,
+      _c: string,
+      o?: { messageId?: string; soleWriter?: boolean }
+    ) => {
       const convo = conversations.get(G)!;
       conversations.set(G, {
         ...convo,
@@ -61,7 +66,7 @@ function makeCtx() {
       if (env.kind !== 'system') throw new Error('expected a system row');
       return env;
     });
-  return { ctx, rows };
+  return { ctx, rows, conversations, addMessageToChat };
 }
 
 describe('the ONE call-record writer (B15)', () => {
@@ -127,6 +132,31 @@ describe('the ONE call-record writer (B15)', () => {
     await started;
     expect(rows()).toHaveLength(1);
     expect(rows()[0].text).toBe('Contact occupé');
+  });
+
+  it('keeps a message that arrived while the end waited for the display name', async () => {
+    const { ctx, conversations } = makeCtx();
+    await recordCallStarted(ctx, G, 's1', 'me');
+    const ending = recordCallEnded(ctx, G, 's1', 'not-answered', 'me');
+    const convo = conversations.get(G)!;
+    conversations.set(G, {
+      ...convo,
+      messages: [...convo.messages, { id: 'later', content: 'x' }],
+    } as unknown as Conversation);
+    await ending;
+    const ids = conversations.get(G)!.messages.map((x) => x.id);
+    expect(ids).toEqual(['call-s1', 'later']);
+    const first = parseEnvelope(conversations.get(G)!.messages[0].content);
+    expect(first.kind === 'system' && first.text).toBe('Appel sans réponse');
+  });
+
+  it('writes its rows as the sole writer, so a bulk ingest never buffers them', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await recordCallStarted(ctx, G, 'w1', 'caller');
+    await recordCallEnded(ctx, G, 'w2', 'busy', 'caller');
+    const options = addMessageToChat.mock.calls.map((c) => c[3]);
+    expect(options).toHaveLength(2);
+    expect(options.every((o) => o?.soleWriter === true)).toBe(true);
   });
 
   it('writes no row for a call that rang nobody (no outcome, no row)', async () => {

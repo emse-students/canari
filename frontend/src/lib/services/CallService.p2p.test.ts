@@ -1844,7 +1844,187 @@ describe('a second call while one is up', () => {
         .mocked(appendLog)
         .mock.calls.map((c) => c[0])
         .join(' ')
-    ).toContain('invite room-2 in group-2 not rung - busy');
+    ).toContain('invite room-2 in group-2 meets state=calling call=room-1');
+  });
+});
+
+describe('when a busy answer is, and is not, given', () => {
+  const inviteOf = (callId: string, ringTimeoutMs = 60_000) => ({
+    callId,
+    offerSdp: 'START',
+    hasVideo: false,
+    deviceId: 'device-9',
+    ringTimeoutMs,
+  });
+  const ring = (
+    service: CallService,
+    callId: string,
+    group = 'group-2',
+    from = 'other@example.org'
+  ) => service.handleCallSignal(from, group, inviteOf(callId), 'me@example.org', 'device-1');
+
+  it('answers no busy from the ENDED summary: that is not a call', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-2');
+
+    expect(sentCallFrames()).toHaveLength(0);
+  });
+
+  it('answers no busy to a sender it has blocked', async () => {
+    const { isBlockedWith } = await import('$lib/users/blocks');
+    vi.mocked(isBlockedWith).mockResolvedValueOnce(true);
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-2');
+
+    expect(sentCallFrames()).toHaveLength(0);
+  });
+
+  it('answers no busy to an invite with no ring window', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await service.handleCallSignal(
+      'other@example.org',
+      'group-2',
+      inviteOf('room-2', 0),
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(sentCallFrames()).toHaveLength(0);
+  });
+
+  it('answers no busy to a redelivery of the invite of the call it is already in', async () => {
+    const service = new CallService(fakeMls);
+    await ring(service, 'room-1', 'group-1', 'peer@example.org');
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-1', 'group-1', 'peer@example.org');
+
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('incoming');
+  });
+
+  it('glare: the LOWER callId wins, ignoring the other invite and sending no busy', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-9', 'group-1');
+
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('calling');
+    expect(service.currentCallId).toBe('room-1');
+  });
+
+  it('glare: the HIGHER callId yields, cancels its call and rings the winner', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-0', 'group-1');
+
+    expect(get(service.callState)).toBe('incoming');
+    expect(service.currentCallId).toBe('room-0');
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'cancelled', undefined);
+    expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
+  });
+
+  it('a busy answer only ends the caller own call, never another one', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-0', busy: true },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('calling');
+  });
+});
+
+describe('a call whose callee reached the room is ANSWERED (B15)', () => {
+  const asked = async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    return { chat, service, ws };
+  };
+  const failCall = (service: CallService, why: string) =>
+    (service as unknown as { failCall: (r: string) => void }).failCall(why);
+
+  it('the callee leaves before any media: PeerLeft writes a duration, not an unanswered call', async () => {
+    const { chat, service, ws } = await asked();
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
+
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+  });
+
+  it('the callee MLS hangup first: the same fact, written by the signal path alone', async () => {
+    const { chat, service } = await asked();
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true },
+      'me@example.org',
+      'device-1'
+    );
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(chat.onCallEnded).not.toHaveBeenCalled();
+  });
+
+  it('a hang-up by the caller after the callee arrived sends no unanswered reason', async () => {
+    const { chat, service } = await asked();
+    service.endCall();
+
+    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason ?? 0).toBe(canari.CallEndReason.CALL_END_REASON_UNSPECIFIED);
+  });
+
+  it('a stalled media path after the callee joined fails an answered call, with a hangup', async () => {
+    const { chat, service } = await asked();
+    failCall(service, 'ice failed');
+
+    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    expect(sentCallFrames().some((c) => c?.hangup)).toBe(true);
+  });
+});
+
+describe('a call that fails after its invite left (B15)', () => {
+  it('is NOT ANSWERED, never cancelled, and its hangup says so', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    (service as unknown as { failCall: (r: string) => void }).failCall('signalling closed');
+
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'not-answered', undefined);
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
   });
 });
 

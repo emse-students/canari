@@ -128,17 +128,31 @@ B15 and B16, built together because the busy answer is one of the reasons.
   invite) is written by `handleCallSignalForChat`; a fact this device caused (it hung up, declined,
   its ring timer closed, a busy answer arrived) is written through `CallChatNotifier.onCallEnded`.
   `endCall(notify, reason, remoteOrigin)` skips the notifier when the MLS hangup is the other party's.
+- **Answered means the callee reached the room.** A caller in `calling` whose `peerArrived` is set
+  (`PeerReady`) has an ANSWERED call, even if its media never connected: no unanswered reason, a
+  duration. So the relay's `PeerLeft` (a local end) and the callee's MLS hangup (remote) reach the
+  one writer with the same fact, in either order. A failure after the invite left (`failCall`, a
+  refused resume, a failed setup) is `not-answered` when nobody arrived, and ALWAYS sends the
+  hangup now, so the other party's row is finalized.
 - **Reading by side.** The caller reads its own sentence (`chat_system_call_cancelled`,
   `_not_answered`, `_declined`, `_busy`); the callee reads "missed call" for cancelled, not answered
-  and busy, and "declined" for a ring it refused. A device that never rang (it was busy) still gets
-  its missed call from the hangup, created when no started row exists, the sender is another
-  account and the reason is not `declined`.
-- **BUSY end to end.** A device in a call answers a NEW invite with `mkCallBusy` (proto
-  `CallMsg.busy = 11`, ephemeral like every call frame). It does not answer the invite of the call it
-  is already in. The caller's device acts only while `calling` that callId, from another account.
-- **Not decided, recorded**: busy means "a device of the callee is in a call", so a callee with a
-  second, idle device stops that device's ring too. The ended-summary overlay of a busy caller still
-  shows the generic ended screen (the toast and the record carry the message).
+  and busy, and "declined" for a ring it refused. A device with no started row for a call (it never
+  rang: busy, offline during the ring) gets its missed call from the hangup, created when the
+  sender is another account and the reason is not `declined`. A call that failed before its invite
+  left (initiate refused, no ICE servers, no microphone) has no outcome, so no row is written for
+  it. Rows are written with `soleWriter` so a bulk ingest never buffers them away from their end.
+- **BUSY end to end.** Busy means "this device is in a call". It is answered ONLY for an admitted
+  invite (permission, ring window, no block), after those checks, with `mkCallBusy` (proto
+  `CallMsg.busy = 11`, ephemeral like every call frame). Never from the ended summary, never for the
+  invite of the call it is already in. GLARE (both sides calling each other in one conversation):
+  the LOWER callId wins and sends no busy; the higher one drops its own call (`cancelled`) and
+  rings the winner. The caller acts on a busy answer only for its own callId, while `calling`, with
+  nobody arrived, from another account. The native classifier lists the payload as control that ends
+  nothing (`proto_fields.rs`, pinned).
+- **Not decided, recorded**: a callee with a second, idle device stops that device's ring too.
+  The ended-summary overlay of a busy caller shows the generic ended screen (the toast and the
+  record carry the message). The row text is baked per side at write time; rendering from
+  `callEvent.outcome` / `starterId` instead is a P3 in the [backlog](../../backlog.md).
 - Tests: `callSystemMessages.outcome.test.ts` (writer, sides, races, signal path),
   `codec.call.test.ts`, and the busy / reason describes of `CallService.p2p.test.ts`.
 

@@ -220,6 +220,8 @@ every removal is logged.
 
 **BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
 
+- **P3 left: render a call row from `callEvent.outcome` and `starterId`** instead of the text baked per side at write time, so a locale change or a second device reads the same row in its own words.
+
 **These block the `calls_mode` flip, not the stable** (B15 and B16 in
 [calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence)). They are user-visible as soon
 as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
