@@ -88,6 +88,12 @@ message AppMessage {
     // A salon message edited by its author, carried as an encrypted SILENT channel row. DMs and
     // groups keep their `edit_message` system event.
     EditMsg          edit           = 13;
+    // A CanaRun activity card (run, ride, hike, pool swim) in a DM, a group or a salon - never the
+    // feed. READER FIRST: every client displays it before any client sends it, because a client
+    // that does not know a kind cannot show it. docs/wiki/frontend/modules/canarun.md.
+    // Field 15 sits AFTER `author_proof` (14) in number only: mls-core appends the proof to the
+    // bytes TypeScript encoded, and TypeScript never re-encodes a decoded frame that carries one.
+    RunMsg           run            = 15;
   }
   // The author's signature over this message, appended by mls-core as the LAST field of the bytes
   // (`mls-core/src/authorship.rs`). Present on a decrypted frame only when mls-core verified it
@@ -168,6 +174,37 @@ message EditMsg {
   string message_id  = 1; // SERVER row id of the edited message (the key every salon operation uses)
   string new_content = 2; // the replacement TEXT, not a body - the reader keeps the reply reference
   int64  edited_at   = 3; // Unix ms, the author's clock; the larger one wins (editSupersedes)
+}
+
+// ── CanaRun: an activity card ─────────────────────────────────────────────
+//
+// Built by the sender from an imported GPX/TCX/FIT file (lot R2); lot R1 only READS it. Every value
+// is a PEER's input: the reader bounds each one (frontend `canarun/activity.ts`) and shows a run
+// that breaks a bound as an unreadable row - never a crash, never an unbounded drawing.
+// docs/wiki/frontend/modules/canarun.md.
+
+enum RunSport {
+  RUN_SPORT_UNSPECIFIED = 0; // also what a reader makes of a value it was never taught
+  RUN_SPORT_RUNNING     = 1; // pace, min/km
+  RUN_SPORT_CYCLING     = 2; // speed, km/h
+  RUN_SPORT_HIKING      = 3; // pace, min/km
+  RUN_SPORT_POOL_SWIM   = 4; // stats only - a pool swim never carries a trace
+}
+
+message RunMsg {
+  RunSport sport            = 1;
+  int64    started_at       = 2;  // Unix ms, the sender's clock
+  uint32   duration_s       = 3;  // elapsed time
+  uint32   moving_s         = 4;  // time in motion, <= duration_s
+  uint32   distance_m       = 5;
+  uint32   elevation_gain_m = 6;
+  string   title            = 7;  // optional; the reader cuts it to 80 characters
+  // The trace, already trimmed by the sender (`trimmed_m` at EACH end), at most 500 points:
+  // latitude and longitude in units of 1e-5 degree, the first value absolute and every next one the
+  // delta from the previous point. Both lists have the same length; both empty = stats only.
+  repeated sint32 track_lat = 8;
+  repeated sint32 track_lon = 9;
+  uint32   trimmed_m        = 10; // metres removed at each end of the trace before sending
 }
 
 // ── Poll (community channels) ─────────────────────────────────────────────

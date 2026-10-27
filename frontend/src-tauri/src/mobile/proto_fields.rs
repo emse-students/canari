@@ -8,7 +8,13 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::mobile::graine::GRAINE_SEED_BYTES;
-use crate::mobile::push_text::{PushLanguage, PushText};
+use crate::mobile::push_text::{PushLanguage, PushText, RunSport};
+
+/// `AppMessage.run` (`libs/proto/canari.proto`): a CanaRun activity card.
+const RUN_FIELD: u32 = 15;
+
+/// The largest distance the app draws (`RUN_BOUNDS.maxDistanceM`, `canarun/activity.ts`).
+const RUN_MAX_DISTANCE_M: u64 = 10_000_000;
 
 /// Reads a protobuf varint from `bytes` at position `pos`.
 /// Returns (value, next_position), or None if invalid.
@@ -522,6 +528,24 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
                 "poll",
             );
         }
+    }
+
+    // A CanaRun activity card (field 15, lot R1): announced by its sport and distance. The card
+    // itself is checked by the app (`canarun/activity.ts`); the banner reads two numbers and bounds
+    // the one it prints - a distance of zero or past the app's bound (10 000 km) is left out rather
+    // than printed, so a malformed frame still announces "an activity" and nothing absurd.
+    if let Some(run_msg) = find_length_delimited_field(bytes, RUN_FIELD) {
+        let sport = RunSport::from_proto(find_varint_field(&run_msg, 1).unwrap_or(0));
+        let distance = find_varint_field(&run_msg, 5)
+            .filter(|&m| m > 0 && m <= RUN_MAX_DISTANCE_M)
+            .map(|m| m as u32);
+        log::debug!("[PushText] run frame: sport={sport:?} distance={distance:?}");
+        return ok_message_json(
+            PushText::Activity(sport, distance).render(language),
+            message_id,
+            sent_at,
+            "run",
+        );
     }
 
     // Graine key material (fields 10-12): the community distribution group's traffic. It is never a
@@ -1350,6 +1374,46 @@ mod tests {
         assert_eq!(info["ok"], false);
         assert_eq!(info["kind"], "graine_request");
         assert!(info["seeds"].is_null(), "a request has no seeds to absorb");
+    }
+
+    /// `AppMessage.run` (field 15) with `RunMsg { sport = 1, distance_m = 5 }`, plus a packed
+    /// trace in field 8 so the scanner is shown it walks past one.
+    fn run_app_message(sport: u64, distance_m: u64) -> Vec<u8> {
+        let mut run = Vec::new();
+        write_tag(&mut run, 1, 0);
+        write_varint(&mut run, sport);
+        write_tag(&mut run, 5, 0);
+        write_varint(&mut run, distance_m);
+        write_bytes_field(&mut run, 8, &[0x02, 0x04, 0x06]);
+        wrap_app_message(RUN_FIELD, &run, "run-1", 1_700_000_000_000)
+    }
+
+    #[test]
+    fn a_run_is_announced_by_its_sport_and_distance() {
+        let info = extract_full_message_info(&run_app_message(1, 5_230), PushLanguage::French);
+        assert_eq!(info["ok"], true);
+        assert_eq!(info["type"], "run");
+        assert_eq!(info["text"], "\u{1f3c3} Course : 5,2 km");
+        assert_eq!(info["messageId"], "run-1");
+        let en = extract_full_message_info(&run_app_message(2, 42_000), PushLanguage::English);
+        assert_eq!(en["text"], "\u{1f6b4} Ride: 42.0 km");
+        let swim = extract_full_message_info(&run_app_message(4, 1_500), PushLanguage::English);
+        assert_eq!(swim["text"], "\u{1f3ca} Pool swim: 1500 m");
+    }
+
+    /// A distance past the app's bound is not printed, and a sport the scanner does not know is
+    /// "an activity": a malformed frame still announces something true and nothing absurd.
+    #[test]
+    fn a_run_past_the_bound_or_of_an_unknown_sport_is_still_an_activity() {
+        let huge = extract_full_message_info(
+            &run_app_message(1, RUN_MAX_DISTANCE_M + 1),
+            PushLanguage::English,
+        );
+        assert_eq!(huge["text"], "\u{1f3c3} Run");
+        let unknown = extract_full_message_info(&run_app_message(42, 800), PushLanguage::French);
+        assert_eq!(unknown["text"], "\u{1f3c5} Activité : 0,8 km");
+        let zero = extract_full_message_info(&run_app_message(3, 0), PushLanguage::French);
+        assert_eq!(zero["text"], "\u{1f97e} Randonnée");
     }
 
     /// An ordinary message must not acquire a `kind` - the absorber would then be handed every

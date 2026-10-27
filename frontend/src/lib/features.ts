@@ -116,3 +116,17 @@ export const CALLS_VIDEO_ENABLED = deployEnvironment() === 'development';
  * (docs/wiki/frontend/modules/live.md).
  */
 export const LIVE_ENABLED = deployEnvironment() === 'development';
+
+/**
+ * CanaRun's WRITER: anything that SENDS a `RunMsg` (the GPX/TCX/FIT import and the send, lot R2).
+ *
+ * **OFF, AND NOTHING IN LOT R1 READS IT AS ON.** R1 is the reader alone - every client learns to
+ * draw the card before any client may send one, because a client without the reader shows a
+ * stranger's newer kind as "needs a newer version" at best, and an older one shows nothing. Nothing
+ * calls `mkRun` outside tests while this is off; `features.test.ts` asserts so.
+ *
+ * **Turns on when** `minClientVersion` covers the first release carrying the R1 reader - both
+ * stores serving it, raised against the recorded population (durable-rules, release and CI) - and
+ * R2's writer is built (docs/wiki/frontend/modules/canarun.md).
+ */
+export const RUN_WRITER_ENABLED = false;

@@ -8,7 +8,11 @@ import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
-import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
+import {
+  appMsgToEnvelope,
+  isDisplayedDmKind,
+  normalizeMessageId,
+} from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   requestReAdd,
@@ -96,7 +100,7 @@ function refusesAddressedNonAnswer(
 ): boolean {
   if (deliveryMeta?.addressed !== true || msg.system?.event === 'history_bundle') return false;
   console.error(
-    `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (msg.text || msg.reply || msg.media ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
+    `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (isDisplayedDmKind(msg) ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
   );
   return true;
 }
@@ -1205,7 +1209,7 @@ async function handleKnownGroup({
     // prove the message, edit, deletion or reaction to a reader that never saw the frame.
     const authorship = recordAuthorship(decrypted, groupId, opened?.author);
 
-    if (msg.text || msg.reply || msg.media) {
+    if (isDisplayedDmKind(msg)) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
       if (envelope) {
         const stableId =
@@ -1287,6 +1291,12 @@ async function handleKnownGroup({
         deliveryMeta,
         ...(authorship ? { authorship } : {}),
       });
+    } else {
+      // A KNOWN kind this path has no use for (a poll, a salon edit or Graine material reaching a
+      // conversation group): nothing is shown, and the line says which, rather than nothing at all.
+      log(
+        `[MLS] Frame of kind '${msg.kind ?? 'none'}' in ${convoKey.slice(0, 8)}… - not a conversation kind, nothing to display`
+      );
     }
 
     return true;

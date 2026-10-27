@@ -88,6 +88,7 @@
 - [Sharing out of Canari](frontend/share-out.md) — "Partager" on a message, an attachment, a post: the system share sheet, the decrypted copy and how long it lives
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
+- [CanaRun](frontend/modules/canarun.md) - an activity card (run, ride, hike, pool swim) in a DM, group or salon: the decisions, the wire format, the reader built in R1 with the writer off until the floor, R2 owed
 - [CanaReels in a conversation](frontend/modules/reels-in-chat.md) — Design study (2026-10-09): an ephemeral E2E video message in DMs, groups and salons, its model, retention, weak network, work packages
 - [Lydia API reference](lydia-api.md) — every call, state and callback, with the source of each fact; [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost

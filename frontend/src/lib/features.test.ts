@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sourceFiles } from '../test/sourceTree';
 
 /**
  * Calls are compiled into every build since the flip of 2026-10-22 (audio 1:1, in-app); production
@@ -67,5 +68,21 @@ describe('the first production calls are AUDIO ONLY (owner, 2026-10-21)', () => 
     const expression = source.match(/export const CALLS_VIDEO_ENABLED = ([^;]+);/);
     expect(expression, 'CALLS_VIDEO_ENABLED was renamed or removed').not.toBeNull();
     expect(expression![1]).not.toMatch(/CALLS_COMPILED|CALLS_ENABLED/);
+  });
+});
+
+describe('CanaRun R1 ships the reader alone (decided 2026-10-27)', () => {
+  it('keeps the writer off', async () => {
+    expect((await load()).RUN_WRITER_ENABLED).toBe(false);
+  });
+
+  // THE SWITCH IS ONLY A SWITCH IF NOTHING SENDS AROUND IT. Until `minClientVersion` covers the R1
+  // reader, a run sent by any production path reaches clients that cannot draw it.
+  it('lets no production file build a run frame while the writer is off', () => {
+    const builders = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' })
+      .filter((f) => /\b(mkRun|runActivityToProto)\(/.test(f.text))
+      .map((f) => f.path);
+    // The two definitions, and nothing else.
+    expect(builders).toEqual(['src/lib/canarun/activity.ts', 'src/lib/proto/codec.ts']);
   });
 });

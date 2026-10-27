@@ -35,6 +35,43 @@ impl PushLanguage {
     }
 }
 
+/// `RunMsg.sport` (`libs/proto/canari.proto` `RunSport`), as the push words it. A number this
+/// scanner was never taught is `Unspecified`, exactly as the app reads it (`canarun/activity.ts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunSport {
+    Unspecified,
+    Running,
+    Cycling,
+    Hiking,
+    PoolSwim,
+}
+
+impl RunSport {
+    /// Reads the proto enum value.
+    pub fn from_proto(value: u64) -> Self {
+        match value {
+            1 => Self::Running,
+            2 => Self::Cycling,
+            3 => Self::Hiking,
+            4 => Self::PoolSwim,
+            _ => Self::Unspecified,
+        }
+    }
+}
+
+/// A distance as the push prints it: metres for a pool swim, kilometres with one decimal otherwise,
+/// with the decimal separator of `language`.
+fn run_distance(sport: RunSport, metres: u32, language: PushLanguage) -> String {
+    if sport == RunSport::PoolSwim {
+        return format!("{metres} m");
+    }
+    let km = format!("{:.1}", f64::from(metres) / 1000.0);
+    match language {
+        PushLanguage::French => format!("{} km", km.replace('.', ",")),
+        PushLanguage::English => format!("{km} km"),
+    }
+}
+
 /// One user-visible sentence of a push, with the fragments it carries.
 ///
 /// A closed set: adding a sentence means adding a variant, and the exhaustive `match` in
@@ -67,6 +104,9 @@ pub enum PushText<'a> {
     Reel(Option<&'a str>),
     Attachment,
     Poll(&'a str),
+    /// A CanaRun activity card (`AppMessage.run`, field 15), with its distance in metres when the
+    /// frame states a readable one (`None` for zero or past the reader's bound).
+    Activity(RunSport, Option<u32>),
     VideoCallIncoming,
     CallIncoming,
 }
@@ -127,6 +167,28 @@ impl PushText<'_> {
                 format!("\u{1f4ca} Sondage : {question}"),
                 format!("\u{1f4ca} Poll: {question}"),
             ),
+            Self::Activity(sport, distance) => {
+                let (emoji, fr, en) = match sport {
+                    RunSport::Running => ("\u{1f3c3}", "Course", "Run"),
+                    RunSport::Cycling => ("\u{1f6b4}", "Vélo", "Ride"),
+                    RunSport::Hiking => ("\u{1f97e}", "Randonnée", "Hike"),
+                    RunSport::PoolSwim => ("\u{1f3ca}", "Natation en piscine", "Pool swim"),
+                    RunSport::Unspecified => ("\u{1f3c5}", "Activité", "Activity"),
+                };
+                match distance {
+                    Some(m) => pick(
+                        format!(
+                            "{emoji} {fr} : {}",
+                            run_distance(sport, m, PushLanguage::French)
+                        ),
+                        format!(
+                            "{emoji} {en}: {}",
+                            run_distance(sport, m, PushLanguage::English)
+                        ),
+                    ),
+                    None => pick(format!("{emoji} {fr}"), format!("{emoji} {en}")),
+                }
+            }
             Self::VideoCallIncoming => s(
                 "\u{1f4f9} Appel vidéo entrant",
                 "\u{1f4f9} Incoming video call",
@@ -251,6 +313,59 @@ mod tests {
             PushText::VideoCallIncoming.render(PushLanguage::English),
             "\u{1f4f9} Incoming video call"
         );
+    }
+
+    /// A CanaRun card: the sport, then its distance in the unit the app prints it in, with the
+    /// language's decimal separator - and the sport alone when the frame states no distance.
+    #[test]
+    fn an_activity_names_its_sport_and_distance_in_both_languages() {
+        let cases: [(PushText<'_>, &str, &str); 6] = [
+            (
+                PushText::Activity(RunSport::Running, Some(5_230)),
+                "\u{1f3c3} Course : 5,2 km",
+                "\u{1f3c3} Run: 5.2 km",
+            ),
+            (
+                PushText::Activity(RunSport::Cycling, Some(42_000)),
+                "\u{1f6b4} Vélo : 42,0 km",
+                "\u{1f6b4} Ride: 42.0 km",
+            ),
+            (
+                PushText::Activity(RunSport::Hiking, Some(12_345)),
+                "\u{1f97e} Randonnée : 12,3 km",
+                "\u{1f97e} Hike: 12.3 km",
+            ),
+            (
+                PushText::Activity(RunSport::PoolSwim, Some(1_500)),
+                "\u{1f3ca} Natation en piscine : 1500 m",
+                "\u{1f3ca} Pool swim: 1500 m",
+            ),
+            (
+                PushText::Activity(RunSport::Unspecified, Some(800)),
+                "\u{1f3c5} Activité : 0,8 km",
+                "\u{1f3c5} Activity: 0.8 km",
+            ),
+            (
+                PushText::Activity(RunSport::Running, None),
+                "\u{1f3c3} Course",
+                "\u{1f3c3} Run",
+            ),
+        ];
+        for (text, fr, en) in cases {
+            assert_eq!(text.render(PushLanguage::French), fr, "{text:?} in French");
+            assert_eq!(
+                text.render(PushLanguage::English),
+                en,
+                "{text:?} in English"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sport_this_scanner_was_never_taught_is_unspecified() {
+        assert_eq!(RunSport::from_proto(0), RunSport::Unspecified);
+        assert_eq!(RunSport::from_proto(4), RunSport::PoolSwim);
+        assert_eq!(RunSport::from_proto(99), RunSport::Unspecified);
     }
 
     /// The tags `push_context.json` can hold: Paraglide writes `fr` or `en`, older builds and other

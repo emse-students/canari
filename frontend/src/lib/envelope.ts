@@ -14,6 +14,8 @@ import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { m } from '$lib/paraglide/messages';
+import { checkRunActivity, type RunActivity } from '$lib/canarun/activity';
+import { runSummary } from '$lib/canarun/format';
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -81,7 +83,34 @@ export interface PollEnvelope {
   endsAt: string | null;
 }
 
-export type MessageEnvelope = TextEnvelope | MediaEnvelope | SystemEnvelope | PollEnvelope;
+/**
+ * A CanaRun activity card (`RunMsg`). The activity was CHECKED when the envelope was built, and is
+ * checked again when a stored one is parsed - a history bundle relays this string from a peer.
+ */
+export interface RunEnvelope {
+  kind: 'run';
+  run: RunActivity;
+}
+
+/**
+ * A message this build cannot draw, SHOWN rather than dropped: `unknown-kind` is a frame whose
+ * `AppMessage` kind is newer than this client (`field` names it); `malformed-run` is a run that
+ * breaks a bound of `canarun/activity.ts`. Rendered as a neutral notice in the conversation.
+ */
+export interface UnsupportedEnvelope {
+  kind: 'unsupported';
+  reason: 'unknown-kind' | 'malformed-run';
+  /** The `AppMessage` field number this build does not know, for `unknown-kind`. */
+  field?: number;
+}
+
+export type MessageEnvelope =
+  | TextEnvelope
+  | MediaEnvelope
+  | SystemEnvelope
+  | PollEnvelope
+  | RunEnvelope
+  | UnsupportedEnvelope;
 
 // ---------------------------------------------------------------------------
 // Serialization helpers
@@ -107,7 +136,16 @@ export function getPreviewText(env: MessageEnvelope): string {
       return `${m.chat_preview_info()} ${formatMentionsForPreview(env.text)}`;
     case 'poll':
       return `${m.chat_preview_poll()} ${env.question}`;
+    case 'run':
+      return `${m.chat_preview_run()} ${runSummary(env.run)}`;
+    case 'unsupported':
+      return unsupportedEnvelopeText(env);
   }
+}
+
+/** The sentence an {@link UnsupportedEnvelope} is shown as - in the bubble and in every preview. */
+export function unsupportedEnvelopeText(env: UnsupportedEnvelope): string {
+  return env.reason === 'malformed-run' ? m.chat_unreadable_run() : m.chat_unsupported_kind();
 }
 
 /**
@@ -279,6 +317,38 @@ export function parseEnvelope(content: string): MessageEnvelope {
         }
       }
 
+      if (obj.kind === 'run' && typeof obj.run === 'object' && obj.run !== null) {
+        // A PEER'S STRING when it came in a history bundle: checked exactly as the frame was.
+        const r = obj.run as Record<string, unknown>;
+        const read = checkRunActivity({
+          sport: r.sport,
+          startedAt: r.startedAt,
+          durationS: r.durationS,
+          movingS: r.movingS,
+          distanceM: r.distanceM,
+          elevationGainM: r.elevationGainM,
+          title: r.title,
+          trackE5: r.trackE5,
+          trimmedM: r.trimmedM,
+        });
+        if (read.ok) return { kind: 'run', run: read.activity };
+        console.warn(`[ENVELOPE] stored run refused: ${read.why} - shown as unreadable`);
+        return { kind: 'unsupported', reason: 'malformed-run' };
+      }
+
+      if (
+        obj.kind === 'unsupported' &&
+        (obj.reason === 'unknown-kind' || obj.reason === 'malformed-run')
+      ) {
+        return {
+          kind: 'unsupported',
+          reason: obj.reason,
+          ...(typeof obj.field === 'number' && Number.isInteger(obj.field)
+            ? { field: obj.field }
+            : {}),
+        };
+      }
+
       // Fallthrough to legacy on valid JSON that isn't a known envelope
       result = { kind: 'text', text: content };
     } catch {
@@ -337,6 +407,10 @@ export function envelopeBodyText(content: string): string {
       return env.text;
     case 'poll':
       return env.question;
+    case 'run':
+      return env.run.title ?? '';
+    case 'unsupported':
+      return '';
   }
 }
 
@@ -379,6 +453,19 @@ export function mkPollEnvelope(
   endsAt: string | null
 ): PollEnvelope {
   return { kind: 'poll', question, options, multipleChoice, endsAt };
+}
+
+/** Build a run envelope from an activity `checkRunActivity` accepted. */
+export function mkRunEnvelope(run: RunActivity): RunEnvelope {
+  return { kind: 'run', run };
+}
+
+/** Build the envelope of a message this build cannot draw (see {@link UnsupportedEnvelope}). */
+export function mkUnsupportedEnvelope(
+  reason: UnsupportedEnvelope['reason'],
+  field?: number
+): UnsupportedEnvelope {
+  return { kind: 'unsupported', reason, ...(field !== undefined ? { field } : {}) };
 }
 
 /**

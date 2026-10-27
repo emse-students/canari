@@ -21,6 +21,7 @@
 
 import protobuf from 'protobufjs/minimal.js';
 import { canari } from '$lib/proto/canari.js';
+import { decodeAppMessage, type DecodedAppMessage } from '$lib/proto/codec';
 import { GraineFieldWriter, type GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type { DevicePin } from '$lib/mls-client/deviceTrust';
@@ -155,7 +156,7 @@ export type AuthorshipCheck =
       /** The signer's user id in its canonical form (`canonicalUserId`) - compare only with it. */
       authorUserId: string;
       /** The decoded body - the message as its author sent it. */
-      message: canari.AppMessage;
+      message: DecodedAppMessage;
       /** The group the proof was signed in - the CALLER compares it with the conversation. */
       group: string;
       /** Which trusted key proved it: the author's leaf in the tree, or a key pinned for it. */
@@ -209,7 +210,7 @@ export async function checkRecordedAuthorship(
   const sep = canonical.indexOf(':');
   const authorUserId = canonical.slice(0, sep);
   const authorDeviceId = canonical.slice(sep + 1);
-  const message = decodeBody(body);
+  const message = decodeAppMessage(body);
   if (!message) return { kind: 'forged', why: 'the signed bytes are not a message' };
 
   const descriptor = await authorDescriptor(group, author, body);
@@ -252,14 +253,6 @@ export async function checkRecordedAuthorship(
     kind: 'unproven',
     why: `the signature verifies under none of ${author}'s ${pinned.length + (treeKey ? 1 : 0)} known key(s) (tree, unanchored pin) - none may accuse`,
   };
-}
-
-function decodeBody(body: Uint8Array): canari.AppMessage | null {
-  try {
-    return canari.AppMessage.decode(body);
-  } catch {
-    return null;
-  }
 }
 
 function utf8(text: string): Uint8Array {

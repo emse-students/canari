@@ -12,6 +12,7 @@
  *    Uint8Array  → AppMessage  decodeAppMessage()
  */
 
+import protobuf from 'protobufjs/minimal.js';
 import { canari } from './canari.js';
 import type { MediaRef } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
@@ -21,7 +22,16 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 
 export type IWsEnvelope = canari.WsEnvelope.$Properties;
 export type IInboundMsg = canari.InboundMsg.$Properties;
-export type IAppMessage = canari.AppMessage.$Properties;
+/**
+ * What the decode learnt beyond the proto: the field number of a kind newer than this build, set
+ * only on a frame that carries no kind this build knows (`decodeAppMessage`).
+ */
+export interface AppMessageForwardKind {
+  readonly unknownKindField?: number;
+}
+export type IAppMessage = canari.AppMessage.$Properties & AppMessageForwardKind;
+/** A decoded frame, as {@link decodeAppMessage} answers it. */
+export type DecodedAppMessage = canari.AppMessage & AppMessageForwardKind;
 export type IMlsFrame = canari.MlsFrame.$Properties;
 export type IWelcomeFrame = canari.WelcomeFrame.$Properties;
 export type IReadAck = canari.ReadAck.$Properties;
@@ -35,6 +45,7 @@ export type ISystemMsg = canari.SystemMsg.$Properties;
 export type ICallMsg = canari.CallMsg.$Properties;
 export type IPollMsg = canari.PollMsg.$Properties;
 export type IPollOption = canari.PollOption.$Properties;
+export type IRunMsg = canari.RunMsg.$Properties;
 
 export const MediaKind = canari.MediaKind;
 
@@ -164,13 +175,25 @@ export function encodeAppMessage(msg: canari.AppMessage.$Properties): Uint8Array
 /**
  * Decode raw bytes (MLS plaintext) back into an AppMessage.
  * Returns null if decoding fails (e.g. legacy plain-text message).
+ *
+ * A frame carrying NO kind this build knows is also walked for the field number it does carry, and
+ * that number rides on the result as `unknownKindField` (non-enumerable, so no encode or JSON ever
+ * sees it) - see {@link unknownAppMessageKind}. Every reader of a peer's frame decodes here.
  */
-export function decodeAppMessage(bytes: Uint8Array): canari.AppMessage | null {
+export function decodeAppMessage(bytes: Uint8Array): DecodedAppMessage | null {
+  let msg: canari.AppMessage;
   try {
-    return canari.AppMessage.decode(bytes);
+    msg = canari.AppMessage.decode(bytes);
   } catch {
     return null;
   }
+  if (!hasKnownKind(msg)) {
+    const field = firstUndeclaredField(bytes);
+    if (field !== null) {
+      Object.defineProperty(msg, 'unknownKindField', { value: field, enumerable: false });
+    }
+  }
+  return msg;
 }
 
 // ─── Convenience builders (avoid spreading canari.IXxx everywhere) ────────────
@@ -258,6 +281,87 @@ export function mkVisibleSystem(
  */
 export function mkPoll(poll: canari.PollMsg.$Properties): canari.AppMessage.$Properties {
   return { poll };
+}
+
+/**
+ * Builds a CanaRun activity frame (`canarun/activity.ts` `runActivityToProto` makes the `RunMsg`).
+ *
+ * **NO PRODUCTION CODE CALLS THIS IN LOT R1** - the reader ships first and the writer stays off
+ * (`RUN_WRITER_ENABLED`, `features.ts`) until `minClientVersion` covers every client that can draw
+ * the card; a client without the reader would show nothing. Tests use it, and R2 will.
+ */
+export function mkRun(run: canari.RunMsg.$Properties): canari.AppMessage.$Properties {
+  return { run };
+}
+
+/**
+ * The members of `AppMessage.oneof kind` this build knows, by their generated names. Asserted
+ * against `libs/proto/canari.proto` by `codec.unknownKind.test.ts`, so a kind added to the proto
+ * and not here fails a test rather than reading as "newer than this build".
+ */
+export const APP_MESSAGE_KINDS = [
+  'text',
+  'reply',
+  'reaction',
+  'media',
+  'system',
+  'call',
+  'poll',
+  'graine',
+  'graineRequest',
+  'graineBundle',
+  'edit',
+  'run',
+] as const;
+
+/** Every field number `AppMessage` declares in this build: the kinds, `message_id`, `sent_at`, `author_proof`. */
+export const APP_MESSAGE_FIELD_NUMBERS: ReadonlySet<number> = new Set([
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+]);
+
+/** Does the frame carry a kind this build knows? */
+function hasKnownKind(msg: canari.AppMessage.$Properties): boolean {
+  return APP_MESSAGE_KINDS.some((k) => msg[k] != null);
+}
+
+/**
+ * The first top-level field number of `bytes` that `AppMessage` does not declare, or `null`. Read
+ * from the WIRE: protobufjs discards an unknown field by default (`Reader.discardUnknown`), so the
+ * decoded object no longer says it was there.
+ */
+function firstUndeclaredField(bytes: Uint8Array): number | null {
+  const reader = protobuf.Reader.create(bytes);
+  try {
+    while (reader.pos < reader.len) {
+      const tag = reader.uint32();
+      const field = tag >>> 3;
+      if (!APP_MESSAGE_FIELD_NUMBERS.has(field)) return field;
+      reader.skipType(tag & 7);
+    }
+  } catch (e) {
+    // The decode of these very bytes has just succeeded, so a walk of their tags cannot fail short
+    // of a protobufjs change - said, rather than read as "no unknown field".
+    console.warn(`[APPMSG] a decoded frame's tags do not re-read: ${String(e).slice(0, 120)}`);
+  }
+  return null;
+}
+
+/**
+ * The field number of a kind this build DOES NOT KNOW, or `null` - as {@link decodeAppMessage}
+ * found it on the wire.
+ *
+ * WHY. A newer client adds a kind as a new `oneof` member; this build's decoder knows no name for
+ * it, sets no kind, and every reader used to answer such a frame with nothing - the message
+ * vanished without a trace on an older device. Detected STRUCTURALLY, from the field numbers in the
+ * bytes, never from any text: a frame with no known kind and a field number this build does not
+ * declare is a newer kind, shown as "needs a newer version" (`appMsgToEnvelope`).
+ *
+ * A frame that DOES carry a known kind is never reported, whatever else it carries: a newer field
+ * beside a kind this build reads is that newer writer's business.
+ */
+export function unknownAppMessageKind(msg: IAppMessage): number | null {
+  if (hasKnownKind(msg)) return null;
+  return msg.unknownKindField ?? null;
 }
 
 /**

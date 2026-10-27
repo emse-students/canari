@@ -4,8 +4,11 @@ import {
   mkTextEnvelope,
   mkMediaEnvelope,
   mkPollEnvelope,
+  mkRunEnvelope,
   mkSystemEnvelope,
+  mkUnsupportedEnvelope,
 } from '$lib/envelope';
+import { runActivityFromProto } from '$lib/canarun/activity';
 
 /** Returns true if the message was sent by the current user (case-insensitive). */
 export function isOwnMessage(senderId: string, userId: string): boolean {
@@ -46,6 +49,7 @@ import {
   mediaReelFromProto,
   mediaKindToType,
   mediaPlaceholderFromProto,
+  unknownAppMessageKind,
   type IAppMessage,
 } from '$lib/proto/codec';
 import { bytesToHex } from '$lib/utils/hex';
@@ -161,7 +165,9 @@ export function resolveAppMessageTimestampMs(
 
 /**
  * Convert a decoded AppMessage to { content, options } ready for addMessageToChat.
- * Returns null for non-displayable types (reaction, system, call) which require
+ * A CanaRun card is checked here (`canarun/activity.ts`), and a kind newer than this build comes
+ * back as an "unsupported" envelope rather than null, so it is shown instead of vanishing.
+ * Returns null for non-displayable types (reaction, system, call, edit, graine*) which require
  * special handling at the call site - a channel notice goes through
  * {@link appMsgToChannelSystemEnvelope}, a DM/group control event through `handleSystemEvent`.
  *
@@ -248,7 +254,50 @@ export function appMsgToEnvelope(
     };
   }
 
+  if (msg.run) {
+    // A PEER'S VALUES: checked before anything draws them, and a run that breaks a bound is SHOWN
+    // as unreadable rather than dropped - the sender sent something, and the reader says so.
+    const read = runActivityFromProto(msg.run);
+    if (!read.ok) {
+      console.warn(
+        `[APPMSG] run ${String(msg.messageId ?? '').slice(0, 8)} refused: ${read.why} - shown as unreadable`
+      );
+    }
+    return {
+      content: serializeEnvelope(
+        read.ok ? mkRunEnvelope(read.activity) : mkUnsupportedEnvelope('malformed-run')
+      ),
+      options: { messageId: msg.messageId || undefined, timestamp },
+    };
+  }
+
+  // A KIND NEWER THAN THIS BUILD is shown, not dropped (CanaRun R1, decided 2026-10-27). Only a
+  // frame carrying NO known kind can reach this, so every control kind above and below - reaction,
+  // system, call, edit, graine* - still answers null and keeps its own route.
+  const unknownField = unknownAppMessageKind(msg);
+  if (unknownField !== null) {
+    console.warn(
+      `[APPMSG] message ${String(msg.messageId ?? '').slice(0, 8)} carries kind field ${unknownField}, unknown to this build - shown as "needs a newer version"`
+    );
+    return {
+      content: serializeEnvelope(mkUnsupportedEnvelope('unknown-kind', unknownField)),
+      options: { messageId: msg.messageId || undefined, timestamp },
+    };
+  }
+
   return null;
+}
+
+/**
+ * Does this frame carry a message the conversation SHOWS as a bubble of its own, on the DM/group
+ * live path? Text, reply, media, a CanaRun card, and a kind newer than this build (shown as
+ * "needs a newer version"). The control kinds - reaction, system, call, edit, graine* - are not,
+ * and keep their own branches.
+ */
+export function isDisplayedDmKind(msg: IAppMessage): boolean {
+  return Boolean(
+    msg.text || msg.reply || msg.media || msg.run || unknownAppMessageKind(msg) !== null
+  );
 }
 
 /**

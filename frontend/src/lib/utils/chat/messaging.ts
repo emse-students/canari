@@ -17,7 +17,7 @@ import {
   mkReaction,
   mkSystem,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, parseEnvelope, getPreviewText } from '$lib/envelope';
 import {
   sendEncryptedChannelMessage,
   isChannelConversationId,
@@ -653,7 +653,8 @@ export async function sendChatMessage(
             ? replyEnv.caption === undefined
               ? m.chat_preview_media()
               : cutReplyPreview(replyEnv.caption)
-            : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
+            : // A poll, a CanaRun card, a message this build cannot draw: their list preview.
+              cutReplyPreview(getPreviewText(replyEnv));
     replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
   }
 

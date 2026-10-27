@@ -6,7 +6,10 @@ vi.mock('$lib/utils/hex', () => ({
   toBase64: vi.fn((bytes: Uint8Array) => `b64:${bytes.length}`),
 }));
 
-vi.mock('$lib/proto/codec', () => ({
+vi.mock('$lib/proto/codec', async (importOriginal) => ({
+  // The real predicate: which kinds the DM path shows is decided on the decoded frame (CanaRun R1).
+  unknownAppMessageKind: (await importOriginal<typeof import('$lib/proto/codec')>())
+    .unknownAppMessageKind,
   decodeAppMessage: vi.fn(() => ({ text: { body: 'hello-from-proto' }, messageId: 'mid-1' })),
   encodeAppMessage: vi.fn(() => new Uint8Array([1])),
   mkSystem: vi.fn(() => new Uint8Array([2])),

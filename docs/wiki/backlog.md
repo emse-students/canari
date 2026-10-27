@@ -1961,7 +1961,18 @@ carries the share out of it into the Android layout. Nothing on Windows compiles
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`). CanaRun waits.
+suggestions (`INSendMessageIntent`). CanaRun: its reader is built, see the entry below.
+
+## CanaRun - the reader is built (R1, 2026-10-27); the writer waits for the floor, then R2
+
+An activity card (run, ride, hike, pool swim) sent end-to-end encrypted in a DM, group or salon -
+never the feed. The owner's six decisions of 2026-10-27, the wire format (`AppMessage.run = 15`) and
+the reader's bounds are on [canarun](frontend/modules/canarun.md), the only copy. R1 also makes ANY
+kind newer than a build show as "needs a newer version" instead of vanishing.
+**Owed, in order**: (1) the R1 release reaches both stores; (2) `minClientVersion` raised to it,
+against the recorded population; (3) R2 - the GPX/TCX/FIT import, the 200 m trimming, the stats-only
+option, the composer entry, the privacy-policy and register lines TOGETHER - and the flip of
+`RUN_WRITER_ENABLED` in R2's own commit. Starting point: [canarun](frontend/modules/canarun.md#owed---r2-the-writer).
 
 ## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
 

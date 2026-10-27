@@ -11,7 +11,7 @@
     mediaFailureCause,
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
-  import { parseEnvelope } from '$lib/envelope';
+  import { parseEnvelope, unsupportedEnvelopeText } from '$lib/envelope';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
@@ -23,6 +23,7 @@
   } from '$lib/utils/chat/uploadProgress.svelte';
   import { isReelMessage } from '$lib/reels/chatReel';
   import ChannelPoll from '../channels/ChannelPoll.svelte';
+  import RunCard from './RunCard.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
@@ -251,7 +252,11 @@
   let replyDragPx = $state(0);
 
   let envelope = $derived(parseEnvelope(content));
-  let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
+  // A message this build cannot draw (a newer kind, an unreadable run) is a neutral notice: SHOWN,
+  // never dropped, and never a bubble of text the sender did not write.
+  let effectiveSystem = $derived(
+    isSystem || envelope.kind === 'system' || envelope.kind === 'unsupported'
+  );
   let channelInvite = $derived(
     envelope.kind === 'system' ? (envelope.channelInvite ?? null) : null
   );
@@ -260,7 +265,9 @@
       ? envelope.text
       : envelope.kind === 'media'
         ? (envelope.caption ?? '')
-        : ''
+        : envelope.kind === 'unsupported'
+          ? unsupportedEnvelopeText(envelope)
+          : ''
   );
   let effectiveReplyTo = $derived(
     replyTo ??
@@ -274,7 +281,11 @@
    * ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)).
    */
   const isReelMessageRow = $derived(isReelMessage(mediaRef));
-  const forwardAction = $derived(onForward && !isReelMessageRow ? onForward : undefined);
+  // A CanaRun card is not forwarded either: a forward is a SEND, and the run writer is off
+  // (`RUN_WRITER_ENABLED`, CanaRun R1) - the forward path would refuse it as nothing to forward.
+  const forwardAction = $derived(
+    onForward && !isReelMessageRow && envelope.kind !== 'run' ? onForward : undefined
+  );
   // Image/video with no caption and no reply quote - render naked (no bubble background)
   /**
    * "Partager" in the long-press sheet: the system share sheet on the attachment, decrypted, or on
@@ -317,6 +328,10 @@
   // tally derived from the envelope until the server state arrives.
   let pollEnvelope = $derived(envelope.kind === 'poll' && !isDeleted ? envelope : null);
   const isPollOnly = $derived(!!pollEnvelope);
+  // A CanaRun activity: a self-contained card like the poll, already checked when it was parsed.
+  let runEnvelope = $derived(envelope.kind === 'run' && !isDeleted ? envelope : null);
+  /** A card that draws its own frame (a poll, a CanaRun activity): no bubble chrome around it. */
+  const isCardOnly = $derived(isPollOnly || !!runEnvelope);
   let pollSpec = $derived(
     pollEnvelope
       ? {
@@ -366,7 +381,7 @@
   // Emoji-only message (no media, reply or poll) - renders naked like an image/media, at a larger
   // size (see MessageTextBody's `jumbo` prop), like WhatsApp/Messenger.
   const isEmojiOnly = $derived.by(() => {
-    if (mediaRef || effectiveReplyTo || isPollOnly || isDeleted) return false;
+    if (mediaRef || effectiveReplyTo || isCardOnly || isDeleted) return false;
     return isEmojiOnlyText(textContent, JUMBO_EMOJI_MAX_COUNT);
   });
 
@@ -419,7 +434,9 @@
   }
 
   /** Only the author's own text message can be edited, and only where the parent can take it. */
-  const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !pollEnvelope && !!onBeginEdit);
+  const canEdit = $derived(
+    !isDeleted && isOwn && !mediaRef && !pollEnvelope && !runEnvelope && !!onBeginEdit
+  );
 
   /**
    * ONE TAP OPENS THE INFO PANEL, TWO TAPS LIKE - NEVER BOTH (user, 2026-10-12). The first tap used
@@ -949,18 +966,18 @@
                 toggleInfo(e as unknown as MouseEvent);
               }
             }}
-            class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+            class="{isMediaOnly || isLinkOnly || isGifOnly || isCardOnly || isEmojiOnly
               ? 'p-0'
               : 'px-3 py-2'} {bleedsMedia
               ? 'overflow-hidden'
               : ''} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
               ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
-              : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+              : ''} {isMediaOnly || isLinkOnly || isGifOnly || isCardOnly || isEmojiOnly
               ? ''
               : getBubbleShapeClass(
                   effectiveReplyTo ? stackedQuotePosition(groupPosition) : groupPosition,
                   isOwn
-                )} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+                )} {isMediaOnly || isLinkOnly || isGifOnly || isCardOnly || isEmojiOnly
               ? ''
               : isOwn
                 ? 'text-bubble-out-text bg-bubble-out'
@@ -977,6 +994,8 @@
                 canClose={(isOwn || canModerate) && !!onClosePoll}
                 onClose={() => onClosePoll?.(messageId)}
               />
+            {:else if runEnvelope}
+              <RunCard run={runEnvelope.run} />
             {:else}
               <MessageMediaRenderer
                 {mediaRef}
