@@ -92,6 +92,26 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     expect(body).toEqual({ vendorToken: VENDOR, requestId: 'r1' });
   });
 
+  // One order_ref per request (Lydia refuses a reused one, error 3): the attempt part names the
+  // request, the row is still the submission, for a confirm and a cancel alike.
+  it.each([
+    ['confirm', 'provider-confirm', { vendorToken: VENDOR, requestId: 'r1' }],
+    ['cancel', 'cancel-pending', { requestId: 'r1', vendorToken: VENDOR }],
+  ])('hands a per-request form %s to the submission it names', async (outcome, route, expected) => {
+    mockedAxios.post.mockResolvedValue({ data: { outcome: 'open' } });
+    const controller = makeController(VERIFIED);
+    await expect(
+      controller.handleLydiaRequestCallback(outcome, {
+        request_id: 'r1',
+        order_ref: `form:sub-1:${CHECKOUT_ID}`,
+        sig: 'valid-sig',
+      })
+    ).resolves.toEqual({ received: true });
+    const [url, body] = mockedAxios.post.mock.calls[0];
+    expect(url).toContain(`/internal/forms/submissions/sub-1/${route}`);
+    expect(body).toEqual(expected);
+  });
+
   it('answers a retryable 503 when social-service could not read the row request, so nothing claims it was handled', async () => {
     mockedAxios.post.mockResolvedValue({ data: { outcome: 'unreadable' } });
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);

@@ -60,7 +60,14 @@ the numeric `request_id` (what callbacks carry) AND the `request_uuid` (**32 hex
 - **Amount range: 0.50 to 1000.00 EUR** (csm, 2026-10-04); Canari refuses outside it before calling.
 - **`order_ref` must be UNIQUE per request**: a second `request/do` with an `order_ref` already used
   answers error 3, "order_ref deja utilise" (measured 2026-10-21). Canari's boutique reused one string per
-  product and user, so a declined purchase could never be retried (tracked in [backlog](backlog.md)).
+  product and user, so a declined purchase could never be retried; it names the attempt since migration
+  101. A paid FORM had the same defect - a retry reuses the pending row, and every request of it carried
+  `form:<submissionId>` - and sends `form:<submissionId>:<attempt uuid>` (78 characters) since 2026-10-27
+  ([payments](frontend/modules/payments.md#a-form-answer-sends-one-order_ref-per-request-2026-10-27)).
+- **A Business that is not validated answers error 5 BEFORE any order_ref check** (sandbox, 2026-10-27): a
+  Business fresh from `business/create` answered error 5 to the first `request/do` AND to a second carrying
+  the same order_ref, never error 3. So error 3 can only be re-measured with a validated sandbox Business;
+  the dev association that had one lost its link at a dev data reset.
 - **`expire_time` is an integer number of SECONDS from creation** (measured 2026-10-15): `60` expired after
   about 79 s, `120` after about 181 s (a sweep of roughly one minute); absent and `0` never expired in the
   window watched (`0` is NOT "expire now"); no ceiling refused (one year accepted); `abc`, `-5` or a date

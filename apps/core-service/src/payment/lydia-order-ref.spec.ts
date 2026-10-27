@@ -6,11 +6,27 @@ describe('parseLydiaOrderRef', () => {
   // A real user id: a 64-character hex digest, never a UUID.
   const userId = 'a'.repeat(32) + '0123456789abcdef0123456789abcdef';
 
-  it('decodes a form order_ref', () => {
+  it('decodes a legacy form order_ref, issued before one per request', () => {
     expect(parseLydiaOrderRef('form:submission-42')).toEqual({
       kind: 'form',
       submissionId: 'submission-42',
     });
+  });
+
+  it('decodes a per-request form order_ref to its submission, whichever attempt it names', () => {
+    const submissionId = '22222222-2222-2222-2222-222222222222';
+    const first = `form:${submissionId}:${checkoutId}`;
+    const second = `form:${submissionId}:44444444-4444-4444-4444-444444444444`;
+    // The attempt decides nothing: a callback about an older attempt still names the same row.
+    expect(parseLydiaOrderRef(first)).toEqual({ kind: 'form', submissionId });
+    expect(parseLydiaOrderRef(second)).toEqual({ kind: 'form', submissionId });
+    expect(first.length).toBe(78);
+  });
+
+  it('rejects a form order_ref whose attempt is not a UUID, or that has a third part', () => {
+    expect(parseLydiaOrderRef('form:submission-42:not-a-uuid')).toBeNull();
+    expect(parseLydiaOrderRef(`form:submission-42:${checkoutId}:${checkoutId}`)).toBeNull();
+    expect(parseLydiaOrderRef('form:submission-42:')).toBeNull();
   });
 
   it('decodes a product order_ref naming the attempt, and no buyer', () => {

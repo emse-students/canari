@@ -1179,6 +1179,33 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: 'uuid-1' });
     });
 
+    // P1 (2026-10-27): the retry above reuses the row, and every request of it used to carry the
+    // SAME order_ref `form:<submissionId>`, which Lydia refuses on the second request/do (error 3,
+    // measured 2026-10-21). Control: with the order_ref back to `form:${id}` this test fails on the
+    // two keys being equal.
+    it('sends a NEW order_ref for the retry of a reused row, naming the same submission', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [],
+      });
+      await retry(service);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'declined';
+      await retry(service);
+      expect(rows).toHaveLength(1);
+      const keys = core.calls
+        .filter((c) => c.route === 'create-checkout-session')
+        .map((c) => c.body.idempotencyKey as string);
+      expect(keys).toHaveLength(2);
+      const perAttempt = new RegExp(
+        `^form:${rows[0].id}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+      );
+      for (const key of keys) expect(key).toMatch(perAttempt);
+      expect(keys[0]).not.toBe(keys[1]);
+    });
+
     // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
     // purchase was recorded for one answer. Control: with BOTH ALREADY_ANSWERED checks removed from
     // `submit`, these fail on the request issued and the second row written.
