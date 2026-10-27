@@ -218,6 +218,10 @@ every removal is logged.
 
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 
+**BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
+
+- **P3 left: render a call row from `callEvent.outcome` and `starterId`** instead of the text baked per side at write time, so a locale change or a second device reads the same row in its own words.
+
 **These block the `calls_mode` flip, not the stable** (B15 and B16 in
 [calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence)). They are user-visible as soon
 as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
@@ -1961,7 +1965,7 @@ carries the share out of it into the Android layout. Nothing on Windows compiles
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`). CanaRun waits.
+suggestions (`INSendMessageIntent`).
 
 ## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
 

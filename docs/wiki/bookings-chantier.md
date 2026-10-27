@@ -152,6 +152,30 @@ info to the booking's people), the drag's ceiling (`maxSteps`) and its 250 ms fi
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
 
+## Decisions taken by Master on 2026-10-27 (user delegated)
+
+The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
+Master, who took the default the mockups drew for each, except Q-R1, Q-R2, Q-R4, Q-R5 and Q-R15.
+
+| # | Question | Decision |
+|---|---|---|
+| Q-R1 | Who sets the reminder delay (D53) | **The organiser sets the space's default; each person may change it on their booking; "no reminder" is allowed.** |
+| Q-R2 | Notify on a holder's own cancellation, a participant's withdrawal | **Yes, both ways**: a holder's cancellation notifies the participants, a withdrawal notifies the holder. |
+| Q-R3 | An optional message with an organiser's cancellation | Yes, carried by the notification only, not stored in the history. |
+| Q-R4 | Notify the people of coming bookings when a space is deleted | **Yes.** |
+| Q-R5 | What a push shows on a lock screen for a LINK-ONLY space | **A neutral text, never the space's name.** |
+| Q-R6 | A booking made inside its reminder delay | No reminder. |
+| Q-R7 | Tell the organiser when someone books or cancels | No. |
+| Q-R8 | Keep the one-day grid of all columns for the organiser | No: removed with the planning. |
+| Q-R9 | A space back to one column | Its column hides again (D44's rule is "exactly one column", WP-R1). |
+| Q-R10 | Closed days fold to a narrow strip in the week | Yes. |
+| Q-R11 | The painter's grain; a finger on the painter | 30 min, the text rows for exact times; a finger paints at once. |
+| Q-R12 | "Apply these hours to every column" | Not built. |
+| Q-R13 | Section placement and titles | As drawn: the people ceiling and the after-booking info in section 3; titles L'essentiel / Quand peut-on réserver ? / Qui peut réserver, et que demande-t-on ? / Règles de réservation / Données. |
+| Q-R14 | When the wizard is offered | On every creation, skippable ("Je règle tout moi-même"). |
+| Q-R15 | A "Réservations" category in the notification settings | **Yes.** |
+| Q-R16 | The dashboard's counters | Yes, as drawn. |
+
 ## Accords recorded
 
 User, 2026-10-15, in session (relayed by the planning session, recorded at Master's request),
