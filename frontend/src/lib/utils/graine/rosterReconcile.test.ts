@@ -303,3 +303,55 @@ describe('a private salon reconciles against ITS OWN roster', () => {
     expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * ONE PASS PER SCOPE AT A TIME (2026-10-27). The actor of a removal runs a pass the moment the
+ * server accepts it, so it can meet a load's pass on the same scope: two passes reading one tree
+ * would both decide the same Remove. A caller arriving during a pass waits for it - that pass may
+ * have read the roster before the caller's server write - and callers arriving while a pass still
+ * waits share it, since it has read nothing yet.
+ */
+describe('reconcileDistributionGroupRoster - one pass per scope at a time', () => {
+  it('starts the next pass only after the running one, and shares a pass that has not started', async () => {
+    let releaseFirst: () => void = () => {};
+    let reads = 0;
+    listWorkspaceMembers.mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) await new Promise<void>((r) => (releaseFirst = r));
+      return [{ userId: 'alice' }, { userId: 'bob' }];
+    });
+
+    const first = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    const third = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+
+    // The second waits for the first, which is still reading; the third shares the second.
+    expect(third).toBe(second);
+    await Promise.resolve();
+    expect(reads).toBe(1);
+
+    releaseFirst();
+    await Promise.all([first, second, third]);
+    expect(reads).toBe(2);
+  });
+
+  it('does not hold a pass on one scope behind a pass on another', async () => {
+    let release: () => void = () => {};
+    listWorkspaceMembers.mockImplementation(
+      () =>
+        new Promise((r) => {
+          release = () => r([{ userId: 'alice' }, { userId: 'bob' }]);
+        })
+    );
+
+    const community = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    await expect(
+      reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'))
+    ).resolves.toEqual([]);
+
+    release();
+    await community;
+  });
+});

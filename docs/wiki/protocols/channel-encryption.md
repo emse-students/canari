@@ -1808,6 +1808,29 @@ it, whenever, converging to nothing to do.
 reading it as one would empty the tree of everybody but this device. Same rule as every other
 destructive sweep here.
 
+### The actor of a removal commits it - 2026-10-27
+
+"Lazily" turned out to mean "at the next app load": the pass ran only from the community LISTING,
+and selecting a salon or a community calls nothing that reaches it. So the device that had just
+revoked somebody from a private salon - holding the salon's group, online by construction - committed
+nothing while it stayed loaded, and every session minted meanwhile stayed at the epoch the removed
+devices hold, protected by server routing alone. The rig hid it for a while: the leave-and-re-enter
+gesture of its salon row was a full page load until it became a click, after which the row measured
+the real behaviour.
+
+**Whoever removes somebody commits the Remove**, the mirror of section 20's admission:
+`commitSalonRevoke` (`frontend/src/lib/utils/graine/commitRemoval.ts`) runs from the settings panel
+right after the server accepts the revoke, not awaited and never throwing. It is the SAME roster
+pass, not a second implementation - a diff read after the server write, so it removes exactly whom
+the server no longer lists - and the pass is now serialised per scope
+(`reconcileDistributionGroupRoster`): a pass waits for the one running on its scope, and callers
+arriving while a pass still waits share it, so the actor's pass and a load's cannot both commit the
+same Remove. One writer: the actor's own device, on its leader tab.
+
+What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
+above, unchanged): an actor that holds no key group for the scope (an admin revoking a private salon
+they are not in), a follower tab, a session with no Graine runtime.
+
 ### Two primitives were missing, and one was inert
 
 `member_identities` / `get_member_identities` / `lister_identites_membres` (mls-core, wasm, Tauri):

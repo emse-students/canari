@@ -1,5 +1,5 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
+import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
@@ -84,12 +84,62 @@ export function diffRosterAgainstTree(input: {
  * tree of everybody but this device. Same rule as every other destructive sweep here - absence is
  * a reason to ask again later, never to destroy.
  *
+ * **ONE PASS PER SCOPE AT A TIME, AND A CALLER ARRIVING DURING ONE GETS THE NEXT.** Since
+ * 2026-10-27 the actor of a removal runs a pass the moment the server accepts it
+ * (`commitRemoval.ts`), so a pass can now start while a load's pass is reading or committing. Two
+ * passes reading one tree would both decide the same Remove, and the loser's refusal would be
+ * logged as a removal that failed. So a pass waits for the one running on its scope - which may
+ * have read the roster BEFORE the caller's server write, so sharing it would not do - and callers
+ * that arrive while a pass is still WAITING share that one, since it has read nothing yet. The
+ * shared pass logs through the first caller's `log`. Termination: each pass is one bounded read and
+ * at most one commit; the map entry is deleted when the last queued pass settles.
+ *
  * @returns the user ids removed; empty when there was nothing to do OR nothing could be decided.
  */
-export async function reconcileDistributionGroupRoster(
+export function reconcileDistributionGroupRoster(
   channelService: ChannelService,
   scope: DistributionScope,
   log: (message: string) => void = () => {}
+): Promise<string[]> {
+  const key = scopeKey(scope);
+  const lane = passes.get(key) ?? { tail: Promise.resolve(), waiting: null };
+  if (lane.waiting) {
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: a roster pass is already waiting to read - sharing it rather than queuing another`
+    );
+    return lane.waiting;
+  }
+  const pass: Promise<string[]> = lane.tail.then(() => {
+    // Started: it reads from here on, so a caller arriving now needs the pass after it.
+    if (lane.waiting === pass) lane.waiting = null;
+    return reconcileOnce(channelService, scope, log);
+  });
+  lane.waiting = pass;
+  const tail = pass.then(
+    () => undefined,
+    () => undefined
+  );
+  lane.tail = tail;
+  passes.set(key, lane);
+  void tail.then(() => {
+    if (passes.get(key) === lane && lane.tail === tail) passes.delete(key);
+  });
+  return pass;
+}
+
+/**
+ * Roster passes by scope key: the tail every new pass starts after, and the pass that has not
+ * started reading yet (shared by whoever arrives before it does). Module-level because the callers
+ * - a load, a join, the actor of a removal - live in different modules; it holds promises for the
+ * duration of the passes only, so logging out leaves nothing behind.
+ */
+const passes = new Map<string, { tail: Promise<void>; waiting: Promise<string[]> | null }>();
+
+/** One pass of {@link reconcileDistributionGroupRoster}, unserialised. Never called directly. */
+async function reconcileOnce(
+  channelService: ChannelService,
+  scope: DistributionScope,
+  log: (message: string) => void
 ): Promise<string[]> {
   if (!isGraineReady()) return [];
   const { mlsService, userId, deviceKey } = requireGraineRuntime(
