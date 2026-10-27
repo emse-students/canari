@@ -98,15 +98,16 @@ async function venue() {
   const channelId = channelIdOf(workspaceId, salon);
   await openSalon(w1);
   if (spec.subject === 'W2') {
-    await openChannelAccess(w1);
-    await grantChannelAccess(w1, PEER_NAME);
-    await clearOverlays(w1);
+    await inPanel(w1, openChannelAccess, () => grantChannelAccess(w1, PEER_NAME));
     await openSalon(w2);
     const peerId = userIdOf(PEER_NAME);
     const salonRouted = await awaitUserRouting(channelId, peerId, true);
     const communityRouted = await awaitCommunityRouting(workspaceId, peerId, true, 60_000);
     log(`peer routed: salon ${salonRouted.ok} (${salonRouted.elapsedMs} ms), community ${communityRouted.ok} (${communityRouted.elapsedMs} ms)`);
   }
+  // BACK ON THE SALON before sending: the access panel is a side panel on this viewport, and a send
+  // typed under it lands nowhere.
+  await openSalon(w1);
   await send(w1, `${run}-in`);
   return { workspaceId, channelId };
 }
