@@ -168,6 +168,38 @@ RED was `FAIL` on `1.4.1-alpha.6`, without the fix; GREEN on `1.5.0-alpha.1`, wh
 | LIST-RACE-1-A1 | W1's first salon starts A1's listing, held; a second salon heard while held is listed after the release | W1 +A1 - B | `PASS-DIRTY` - `1.5.0-alpha.1`: GREEN on the phone, the salon listed after the release (#2554) |
 | LIST-RACE-1-A1-CTL | LIST-RACE-1-A1 with nothing held | W1 +A1 - B | `PASS-DIRTY` - `1.5.0-alpha.1`: listed in round 1 |
 
+## COMM - communities, salons and their permissions
+
+Replayed on `1.5.0-alpha.1` (2026-10-27) and, where the rig was repaired, on `1.5.0-alpha.2` (the same code plus the store text). The dirt behind every `PASS-DIRTY` is named in the ledger. The rig rot met on the way: the seats run below the `xl` breakpoint, where a `SidePanel` is a drawer whose scrim takes every click beside it.
+
+| ID | What | Seats | Verdict |
+| --- | --- | --- | --- |
+| COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1`, after the rig read the token apart from its per-read admission fragment |
+| COMM-3 | An expired link, a `maxUses`-exhausted one, a REVOKED one and one to a deleted community all refused, and the rotation's new link accepted as the positive control | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-4 | The `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-5 | Promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-6 | SIX enforced permissions and no seventh, the three default roles as documented, and a toggle reaching the column a decision reads | `W1` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1`, after the rig closed the drawer scrim below `xl` |
+| COMM-8 | A private salon: a non-member cannot see it, cannot fetch it by id, and **is never sent its seed** | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-9 | Removed from a salon: routing rows dropped (`evicted=true`), the next message sealed under a session they do not hold | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` (with COMM-10) |
+| COMM-10 | Removed from a salon: what they ALREADY hold stays readable - Graine retains seeds on purpose | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` (with COMM-9) |
+| COMM-11 | Kicked from the COMMUNITY: the workspace purged and every private salon group left | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1`, after the rig closed the drawer scrim below `xl` |
+| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows; a new device under `joined` (W3), and the rule widened under a member already in | `W1 W2 W3` | `VACUOUS` - `1.5.0-alpha.2` (same code): product defect - the saved history rule is not applied from the live frame ([backlog](backlog.md#p2---the-history-rule-saved-by-an-admin-is-not-applied-from-the-live-frame)) |
+| COMM-13 | An admin JOINS a salon: 403 before and 200 after, the member list gains them, the transcript gains NOTHING | `W1 W2` | `VACUOUS` - `1.5.0-alpha.1`: the premise never arms on a live client - an online admin is not told of a new private salon ([backlog](backlog.md#p3---an-admin-who-never-joined-a-private-salon-is-not-told-when-it-is-created-or-deleted)) |
+| COMM-14 | Channel notification levels enforced server-side | `W1 W2` +push | `PASS-DIRTY` - `1.5.0-alpha.2` (same code), on a private salon holding the owner and the peer (the venue gained accounts) |
+| COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.2` (same code), after the rig read wrapped labels and answered the app's own close confirmation (#1798) |
+| COMM-16 | Delete a channel, then a community by typing its name: the rows really gone, the slug free again | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS-DIRTY` - `1.5.0-alpha.1` and `1.5.0-alpha.2` (same code) on a clean rail |
+| COMM-18 | Deep link into a channel from a cold start | `+A1` | `PASS-DIRTY` - `1.5.0-alpha.1`, after the rig took a cold-start WebView's empty URL as inert |
+| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `FAIL` - FAIL-PRODUCT, details in the private operations notes |
+| COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.1` |
+| COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `PASS-DIRTY` - `1.5.0-alpha.2` (same code), after the rig closed the access drawer after the flip |
+| COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `PASS-DIRTY` - `1.5.0-alpha.2` (same code) |
+
 ## CALL - in-app 1:1 audio calls between two browsers
 
 Runner `archive/callweb.mjs`, table, judges and narration `callrows.mjs`. W2 calls W4 in their DM;
