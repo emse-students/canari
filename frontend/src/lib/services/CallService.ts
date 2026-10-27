@@ -4,7 +4,15 @@ import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { canari } from '../proto/canari.js';
-import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
+import {
+  callEndReasonFromWire,
+  encodeAppMessage,
+  mkCallAnswered,
+  mkCallBusy,
+  mkCallHangup,
+  mkCallInvite,
+  type CallEndReason,
+} from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/utils/sessionLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
@@ -33,7 +41,6 @@ import {
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
-import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
 import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
@@ -91,7 +98,17 @@ interface IceServerConfig {
 /** Optional hook to mirror call lifecycle events into the chat timeline. */
 export interface CallChatNotifier {
   onCallStarted: (groupId: string, callId: string) => void | Promise<void>;
-  onCallEnded: (groupId: string, callId: string) => void | Promise<void>;
+  /**
+   * A call this device ended (or lost) LOCALLY. `outcome` is the typed reason it ended unanswered,
+   * absent for an answered call; `starterId` is the caller, absent when it is this account. The
+   * notifier hands it to the ONE call-record writer; remote hangups never come through here.
+   */
+  onCallEnded: (
+    groupId: string,
+    callId: string,
+    outcome?: CallEndReason,
+    starterId?: string
+  ) => void | Promise<void>;
 }
 
 /**
@@ -583,7 +600,28 @@ export class CallService {
 
     if (callMsg.hangup) {
       if (this.currentCallId === callMsg.callId) {
-        this.endCall(false);
+        // Remote origin: `handleCallSignalForChat` writes this call's record from the same frame.
+        this.endCall(false, callEndReasonFromWire(callMsg.endReason), true);
+      }
+      return;
+    }
+
+    if (callMsg.busy) {
+      // The callee's device is in another call: only the caller's device, still ringing THIS call,
+      // acts on it. Our own other devices (a sibling of the caller, or a busy sibling of the callee
+      // answering for itself) have nothing to end.
+      if (
+        senderNorm !== userNorm &&
+        callMsg.callId === this.currentCallId &&
+        get(this.callState) === 'calling'
+      ) {
+        appendLog(`[Call] ${senderId} is busy - ending call ${callMsg.callId} at once`);
+        showToast(m.call_busy(), 'info');
+        this.endCall(true, 'busy');
+      } else {
+        appendLog(
+          `[Call] busy answer for ${callMsg.callId} ignored (state=${get(this.callState)})`
+        );
       }
       return;
     }
@@ -626,12 +664,22 @@ export class CallService {
         return;
       }
       if (get(this.callState) !== 'idle') {
-        // BUSY: a second call does not ring over the one in progress, and nothing is sent for it.
-        // A hangup would reach the whole conversation - our own other devices included, which are
-        // free to answer it - so this device stays out of it; the caller's ring window decides.
+        // BUSY: a second call does not ring over the one in progress. It is ANSWERED with the typed
+        // busy frame, which ends the caller's ring at once; a hangup would instead have reached
+        // the whole conversation, our own other devices included. This device writes no record of
+        // the call here: the caller's hangup that follows is its missed call
+        // (`handleCallSignalForChat`). The invite of the call this device is already in (a
+        // redelivery) is not busy: it is itself.
         appendLog(
           `[Call] invite ${callMsg.callId} in ${groupId} not rung - busy (state=${get(this.callState)} call=${this.currentCallId})`
         );
+        if (callMsg.callId !== this.currentCallId) {
+          try {
+            await this.sendMlsNotification(groupId, mkCallBusy(callMsg.callId, currentDeviceId));
+          } catch (e) {
+            console.error(`[Call] busy answer for ${callMsg.callId} not sent`, e);
+          }
+        }
         return;
       }
       // An invite with no window comes from a build before the ring window existed: it would
@@ -715,7 +763,7 @@ export class CallService {
         return;
       }
       appendLog(`[Call] ring window (${ringTimeoutMs} ms) closed unanswered - call=${callId}`);
-      if (side === 'calling') this.endCall(true);
+      if (side === 'calling') this.endCall(true, 'not-answered');
       else this.dismissIncomingCall();
     }, ringTimeoutMs);
   }
@@ -902,8 +950,16 @@ export class CallService {
     }
   }
 
-  /** Ends the active call and optionally notifies the group via MLS. */
-  public endCall(notify: boolean = true) {
+  /**
+   * Ends the active call and optionally notifies the group via MLS.
+   *
+   * @param reason Why a call that was never answered ended (typed, sent on the hangup). Left out,
+   *   it is inferred from what this device was doing: a ring refused is 'declined', a ring the user
+   *   abandoned is 'cancelled'. An answered call carries none.
+   * @param remoteOrigin True when the OTHER party ended it (its MLS hangup): the call-record writer
+   *   already has that frame, so this device writes nothing.
+   */
+  public endCall(notify: boolean = true, reason?: CallEndReason, remoteOrigin: boolean = false) {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
     // Guard against double-calls: if cleanup already ran - or the call is already showing its
@@ -912,27 +968,39 @@ export class CallService {
     const state = get(this.callState);
     if (state === 'idle' || state === 'ended') return;
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
-    const wasCalling = get(this.callState) === 'calling';
+    const wasCalling = state === 'calling';
+    // Typed, and only for a call nobody answered: incoming = a ring this device refused; calling =
+    // a ring someone was actually rung by (a call that failed before its invite rang nobody).
+    const outcome: CallEndReason | undefined =
+      state === 'incoming'
+        ? (reason ?? 'declined')
+        : wasCalling && this.inviteSent
+          ? (reason ?? (notify ? 'cancelled' : 'not-answered'))
+          : undefined;
+    appendLog(
+      `[Call] ending call ${callId} state=${state} outcome=${outcome ?? 'answered-or-unrung'} notify=${notify} remote=${remoteOrigin}`
+    );
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
     this.reconnecting.set(false);
     if (notify && groupId && callId) {
-      this.sendMlsNotification(groupId, mkCallHangup(callId, this.mlsService.getDeviceId())).catch(
-        console.error
-      );
+      this.sendMlsNotification(
+        groupId,
+        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
+      ).catch(console.error);
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
       // or a late ring after the call ended).
       void this.endServerRing(groupId, callId, wasCalling ? 'cancelled' : 'ended');
     }
-    if (groupId && callId) {
-      void this.chatNotifier?.onCallEnded(groupId, callId);
-      // Missed only if someone was actually rung: a call that failed before its invite (the
-      // initiate refused, no ICE servers, no microphone) rang nobody and missed nothing.
-      if (wasCalling && this.inviteSent) {
-        const ctx = getCallSystemMessageContext();
-        const callerId = ctx?.userId ?? '';
-        void recordCallMissed(ctx, groupId, callId, callerId);
-      }
+    if (groupId && callId && !remoteOrigin) {
+      // The one record writer, told WHY the call ended. A call that failed before its invite
+      // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
+      void this.chatNotifier?.onCallEnded(
+        groupId,
+        callId,
+        outcome,
+        state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined
+      );
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no

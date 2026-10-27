@@ -2,14 +2,15 @@ import type { IStorage } from '$lib/db';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import {
   buildCallEndedText,
+  buildCallOutcomeText,
   mkCallStartedEnvelope,
   parseEnvelope,
   serializeEnvelope,
 } from '$lib/envelope';
-import type { ICallMsg } from '$lib/proto/codec';
+import { callEndReasonFromWire, type CallEndReason, type ICallMsg } from '$lib/proto/codec';
+import { appendLog } from '$lib/utils/sessionLog';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import type { SvelteMap } from 'svelte/reactivity';
-import { m } from '$lib/paraglide/messages';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
 
@@ -60,7 +61,7 @@ export async function recordCallStarted(
   callId: string,
   starterId: string
 ): Promise<void> {
-  if (!ctx || !callId) return;
+  if (!ctx || !callId || endedCallIds.has(callId)) return;
 
   const convo = ctx.conversations.get(groupId);
   if (!convo) return;
@@ -69,6 +70,9 @@ export async function recordCallStarted(
   if (convo.messages.some((m) => m.id === messageId)) return;
 
   const getName = await resolveDisplayNames([starterId]);
+  // The call may have ENDED during that await (a busy answer arrives in milliseconds): its final
+  // record is written, and a "started" row now would sit beside it with the same id.
+  if (endedCallIds.has(callId)) return;
   const starterName = getName(starterId.toLowerCase());
   const envelope = mkCallStartedEnvelope(starterName, callId, starterId.toLowerCase());
   await ctx.addMessageToChat('system', serializeEnvelope(envelope), groupId, {
@@ -78,40 +82,73 @@ export async function recordCallStarted(
 }
 
 /**
- * Updates the call system message with the final duration.
- * Idempotent per callId.
+ * THE ONE WRITER OF A CALL'S FINAL RECORD. Every end of a call - an answered one, a cancelled, declined,
+ * unanswered or busy one, and an invite that never rang - is written here, and nowhere else. Two writers
+ * (a "missed" one and a "duration" one) used to disagree about the same call: an unanswered call read
+ * "started a call that lasted less than a minute".
+ *
+ * `outcome` is the TYPED reason the call ended unanswered ({@link CallEndReason}); absent means it
+ * was answered and the record gets its duration. Idempotent per callId, and final: the structured
+ * `endedAt` flag (never the text) guards a duplicate signal, so the first end wins.
+ *
+ * When this device holds no row for the call, one is CREATED only if the caller says who started it
+ * (`starterId`) and there is an outcome: a busy or unrung device has no "started" row to finalize.
  */
 export async function recordCallEnded(
   ctx: CallSystemMessageContext | null,
   groupId: string,
-  callId: string
+  callId: string,
+  outcome?: CallEndReason,
+  starterId?: string
 ): Promise<void> {
   if (!ctx || !callId || endedCallIds.has(callId)) return;
   endedCallIds.add(callId);
 
   const convo = ctx.conversations.get(groupId);
-  if (!convo) return;
+  if (!convo) {
+    appendLog(`[CallRecord] end of ${callId} dropped: no conversation ${groupId.slice(0, 8)}`);
+    return;
+  }
 
   const messageId = callMessageId(callId);
   const idx = convo.messages.findIndex((m) => m.id === messageId);
-  if (idx === -1) return;
+  if (idx === -1) {
+    if (!outcome || !starterId) return;
+    const starter = starterId.toLowerCase();
+    const getName = await resolveDisplayNames([starter]);
+    const now = Date.now();
+    appendLog(`[CallRecord] ${callId} written as ${outcome} (no started row on this device)`);
+    await ctx.addMessageToChat(
+      'system',
+      serializeEnvelope({
+        kind: 'system',
+        text: buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), getName(starter)),
+        callEvent: { callId, starterId: starter, startedAt: now, endedAt: now, outcome },
+      }),
+      groupId,
+      { isSystem: true, messageId }
+    );
+    return;
+  }
 
   const msg = convo.messages[idx];
   const env = parseEnvelope(msg.content);
   if (env.kind !== 'system' || !env.callEvent) return;
-  // Already finalized: the structured `endedAt` flag (not the display text) guards
-  // against re-processing a duplicate hangup, so it survives text translation.
+  // Already finalized (a missed invite is written final): a duplicate end leaves it as it is.
   if (env.callEvent.endedAt) return;
 
   const endedAt = Date.now();
-  const durationMs = endedAt - env.callEvent.startedAt;
-  const getName = await resolveDisplayNames([env.callEvent.starterId]);
-  const starterName = getName(env.callEvent.starterId);
-  const nextText = buildCallEndedText(starterName, durationMs);
+  const starter = env.callEvent.starterId;
+  const getName = await resolveDisplayNames([starter]);
+  const starterName = getName(starter);
+  const nextText = outcome
+    ? buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), starterName)
+    : buildCallEndedText(starterName, endedAt - env.callEvent.startedAt);
+  appendLog(`[CallRecord] ${callId} finalized as ${outcome ?? 'answered'}`);
   const nextContent = serializeEnvelope({
     ...env,
     text: nextText,
-    callEvent: { ...env.callEvent, endedAt },
+    callEvent: { ...env.callEvent, endedAt, ...(outcome ? { outcome } : {}) },
   });
 
   const msgs = [...convo.messages];
@@ -123,47 +160,10 @@ export async function recordCallEnded(
     // a full-row write here erased every other field the row carried.
     await ctx.storage
       .updateMessage(messageId, { content: nextContent }, ctx.deviceKey())
-      .catch(() => {});
+      .catch((e: unknown) =>
+        appendLog(`[CallRecord] ${callId} not persisted: ${String(e).slice(0, 120)}`)
+      );
   }
-}
-
-/**
- * Inserts a "Missed call" system message when the caller hangs up before anyone answers.
- * Idempotent per callId.
- */
-export async function recordCallMissed(
-  ctx: CallSystemMessageContext | null,
-  groupId: string,
-  callId: string,
-  callerId: string
-): Promise<void> {
-  if (!ctx || !callId) return;
-
-  const convo = ctx.conversations.get(groupId);
-  if (!convo) return;
-
-  const messageId = callMessageId(callId);
-  // If a call-started message already exists (someone picked up remotely), skip.
-  if (convo.messages.some((m) => m.id === messageId)) return;
-
-  const getName = await resolveDisplayNames([callerId]);
-  const callerName = getName(callerId.toLowerCase());
-  const text = m.chat_system_call_missed({ caller: callerName });
-  const envelope = serializeEnvelope({
-    kind: 'system',
-    text,
-    callEvent: {
-      callId,
-      starterId: callerId.toLowerCase(),
-      startedAt: Date.now(),
-      endedAt: Date.now(),
-    },
-  });
-
-  await ctx.addMessageToChat('system', envelope, groupId, {
-    isSystem: true,
-    messageId,
-  });
 }
 
 /**
@@ -182,9 +182,24 @@ export async function handleCallSignalForChat(
   const userNorm = currentUserId.toLowerCase();
 
   if (callMsg.hangup) {
-    await recordCallEnded(ctx, groupId, callMsg.callId);
+    const outcome = callEndReasonFromWire(callMsg.endReason);
+    // A device with no "started" row for this call (it was busy, or never saw the invite) still
+    // owes its owner a MISSED call when ANOTHER account gave up on it: the caller's own other
+    // devices and a ring this account refused elsewhere are not missed calls.
+    const missedHere = outcome && outcome !== 'declined' && senderNorm !== userNorm;
+    await recordCallEnded(
+      ctx,
+      groupId,
+      callMsg.callId,
+      outcome,
+      missedHere ? senderNorm : undefined
+    );
     return;
   }
+
+  // BUSY is answered to the caller's DEVICE, which ends its own call and writes its own record
+  // (`CallService`); no other device writes anything for it.
+  if (callMsg.busy) return;
 
   if (callMsg.answered) {
     return;
@@ -199,7 +214,7 @@ export async function handleCallSignalForChat(
     // The same predicate as `CallService` (the server's kill switch, awaited until answered): an
     // invite that will not ring is a MISSED call, never a "call started" line with no ring.
     if (!notificationPreferences.callsAllowed(groupId) || !(await callsAvailableAnswered())) {
-      await recordCallMissed(ctx, groupId, callMsg.callId, senderId);
+      await recordCallEnded(ctx, groupId, callMsg.callId, 'not-answered', senderNorm);
       return;
     }
     await recordCallStarted(ctx, groupId, callMsg.callId, senderId);

@@ -218,6 +218,8 @@ every removal is logged.
 
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 
+**BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
+
 **These block the `calls_mode` flip, not the stable** (B15 and B16 in
 [calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence)). They are user-visible as soon
 as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
