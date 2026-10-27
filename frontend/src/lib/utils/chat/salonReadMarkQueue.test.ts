@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { SalonGoneError } from './salonGoneError';
 import { mergeReadWatermarks, watermarkAfterReading, watermarkFor } from './readState';
 import {
   flushSalonReadMarks,
@@ -28,6 +30,31 @@ describe('salonReadMarkQueue', () => {
     // "reload": the owed mark is read back from storage
     expect(await flushSalonReadMarks('u1', send)).toBe(1);
     expect(owedSalonReadMarks('u1')).toEqual({});
+  });
+
+  it('a typed 404 drops the mark durably and logs once across reloads', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    recordSalonReadMark('u1', 'gone_salon', 100);
+    recordSalonReadMark('u1', 'live_salon', 50);
+    const send = vi.fn(async (id: string) => {
+      if (id === 'gone_salon') throw new SalonGoneError(id);
+    });
+    expect(await flushSalonReadMarks('u1', send)).toBe(1);
+    expect(owedSalonReadMarks('u1')).toEqual({});
+    // "reload": a second flush finds nothing and asks nothing
+    expect(await flushSalonReadMarks('u1', send)).toBe(0);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(info).toHaveBeenCalledTimes(1);
+  });
+
+  it('a 500 or a transport failure keeps the mark owed', async () => {
+    recordSalonReadMark('u1', 'channel_a', 100);
+    await flushSalonReadMarks(
+      'u1',
+      vi.fn().mockRejectedValue(new ApiRefusalError(500, null, 'API Error 500'))
+    );
+    await flushSalonReadMarks('u1', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    expect(owedSalonReadMarks('u1')).toEqual({ channel_a: { at: 100 } });
   });
 
   it('a mark raised while the call was in flight stays owed', async () => {

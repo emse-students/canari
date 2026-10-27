@@ -24,6 +24,7 @@
 import type { ReadWatermarks } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { SalonGoneError } from './salonGoneError';
 import { mergeReadWatermarks, watermarkFor } from './readState';
 
 /** One owed mark: `at` is the read point, `serverAt` the server clock of the newest row it covers. */
@@ -173,7 +174,8 @@ export function owedDmReadMarks(userId: string): Owed {
 
 /**
  * Delivers every owed mark. A mark is removed only when the server answered AND nothing higher was
- * recorded while the call was in flight; a refusal keeps it and is reported once per salon.
+ * recorded while the call was in flight; a refusal keeps it and is reported once per salon, except a typed {@link SalonGoneError}
+ * (the salon no longer exists), which DROPS it durably and logs once.
  *
  * @returns how many marks the server took.
  */
@@ -210,6 +212,17 @@ async function flush(
       delivered++;
       if (space === 'salon') salonMarksDelivered++;
     } catch (e) {
+      if (space === 'salon' && e instanceof SalonGoneError) {
+        // The server answered: the salon no longer exists. Dropped durably, so it is logged once
+        // (the next load finds nothing owed) and never asked again.
+        const current = load(space, userId);
+        delete current[id];
+        store(space, userId, current);
+        console.info(
+          `[READ] salon mark ${mark.at} for ${id} dropped - the server answered 404, the salon is gone`
+        );
+        continue;
+      }
       console.warn(
         `[READ] ${space} mark ${mark.at} for ${id} not delivered - kept, and asked again at` +
           ` ${nextChance} (its senders still see it unread until then): ${String(e)}`
