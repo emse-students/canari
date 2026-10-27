@@ -1324,9 +1324,8 @@ device of a member. Seen means exactly one of:
 - this member approved it this session, under its key (`memberDeviceAnswers.ts`, below).
 
 **A pin of its key is NOT seen.** Pins (`pinnedSignatureKeys`, [device binding](#device-binding))
-are one store for every group, written by any tree this device merged or joined - another group's, a
-community key group's, a device's own external entry. A pin says the key was met somewhere, never
-that a member of THIS group admitted the device, so it never makes an Add automatic.
+are one store for every group, so a pin says the key was met somewhere, never that a member of THIS
+group admitted the device. No decision in this section reads a pin: each is taken per group.
 
 The rule holds on all three automatic adders: the pending sweep, the `welcome_request` handler, and
 the Android background answer, which admits only a device whose own leaf is in the tree
@@ -1356,23 +1355,43 @@ is raised in ANY conversation row, a 1:1 included, because neither answer touche
   (`undoMemberDeviceDecline`), and withdraws nothing on the server - the device may be the owner's,
   and another member may know it.
 
-Both answers live for the session only (`resetJoinRequests` clears them at sign-out): an answer lost
-to a restart is asked again, which never adds anything silently.
+Both answers live for the session only (`resetJoinRequests` clears them at sign-out, with the sweep
+they owed): an answer lost to a restart is asked again, which never adds anything silently. An Add in
+one conversation never lifts a Decline given in another. A sweep that could not take a group's add
+lock leaves that group's asks on screen (`onGroupNotSwept`), so an ask does not blink while another
+device adds. And a person's ask is never raised for a user who already holds a leaf, whatever the
+seat's flag says (`admissionOfSeat`): that is a member, and the flag an anomaly said at ERROR.
 
-**A device never admitted does not let itself in.** The device's own recovery used to serve itself an
-external commit on any `pending` seat nothing followed (`unhonoured-seat`). Such a seat that no
-commit ever admitted (`admittedAtEpoch` null - the server clears it only when the device goes
-`active`) now reads `never-admitted-seat` (`classifyOwnSeat`, `recovery.ts`) and asks a member
-(`welcome_request`), whose device shows the ask. The self-service door stays for a device admitted
-once that lost its state (an `active` row, or an admitted seat); a new PERSON still joins by link and
-waits for a member's Add (`awaiting-admission`); a community key group is entered as before.
+**A further device of a member does not let itself in.** The device's own recovery serves itself an
+external commit on a `pending` seat nothing follows (`unhonoured-seat`). Whether that is its door is
+NOT on the row: the server clears `admittedAtEpoch` on every transition, the demotions included (a
+kick, the stale-device sweep), so a device coming back and one never admitted read the same. So a
+seat with no admission (`never-admitted-seat`), and an account seat with no seat for this device at
+all, are decided by `decideOwnDoor` (`recovery.ts`):
+
+- **its own door** when this device once held the group - recorded on the device itself where its
+  state is dropped (`heldGroupsRegistry.ts`, written by `dropGroupState`), which no server write can
+  clear - or when no other device of its user is in the group (a 1:1 peer's first device; a user
+  whose devices were all demoted), since then nobody could be asked about it;
+- **a member's Add** (`welcome_request`, whose member shows the device ask) when it never held the
+  group and another device of its user is in it: a further device of a member.
+
+A device whose state was lost wholesale (a reinstall) never recorded its drops; with a device of its
+user in the group it is asked about, and a leaf of its own still in the tree is added back without a
+tap (`member-device`). A new PERSON still joins by link and waits for a member's Add
+(`awaiting-admission`); a community key group is entered as before. While it waits, the device shows
+its owner its own key (`chat_waiting_own_device_key`, `ownSignatureKey`), the one the member's ask
+names.
 
 **And one that does is said.** A commit signed by the device it admits, whose user already held a
-leaf, at first sight (`entersAsUnvouchedDevice`, `deviceTrust.ts`), is an entry no member made: in a
+leaf, for a device that was never in THIS group (`firstInGroup`: no leaf of it in the tree the commit
+was built on, and no departure of it recorded for this group - `device_trust.rs` now records one per
+removed device), is an entry no member made, decided per group whatever the pin says
+(`entersAsUnvouchedDevice`, `deviceTrust.ts`, and its Rust twin, held to one table): in a
 conversation - a 1:1 included - it is logged at ERROR, reported through `[UNINVITED_ENTRY]` as
 `kind=unvouched-device` (the server allowlists it), and written in the conversation
-(`chat_system_unvouched_device_entry`). A device back under its pinned key, a member-signed Add, a
-key group and this device's own join say nothing. The owner's alert "a new device was added to your
+(`chat_system_unvouched_device_entry`). A device coming back to a group it was in, a member-signed
+Add, a key group and this device's own join say nothing. The owner's alert "a new device was added to your
 account" carries **Not me** (`revokeNoticedDevice`): the device's revocation, as the device list does
 it - its id banned, its logins ended, its seats withdrawn - after which every member's stray collector
 removes its leaf from each conversation (`removeStrayLeaves`, revoked devices).
@@ -1391,14 +1410,10 @@ account that already had one. **This reverses part of the 2026-10-22 decision "n
 of a new device" ([new-device notices](#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day));
 the user confirmed the mandatory tap on 2026-10-27** ([backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built)).
 
-**The same class, not gated: the gesture adders.** A member's own gesture adds the devices the server
-LISTS for a user, and nothing in a tree can vouch for them: creating a group adds the creator's other
-devices (`createNewGroup`), starting a conversation adds the contact's devices and the creator's own
-(`startNewConversation`), and inviting someone adds every device listed for them
-(`inviteMembersToGroup`). The member chose the PERSON, not the devices, and a group being created has
-no tree to have seen anything in - so the seen check has nothing to read there. Only a signature by
-the user's own key can tell their real devices from listed ones: these close with the real fix, and
-are named in the [backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built).
+**The same class, not gated here.** Some member-initiated paths add a user's devices without the seen
+check, because the member chose the person and there is no tree yet to have seen a device in. They
+close with the real fix below, and are named in the
+[backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built).
 
 #### The real fix: a device is vouched for by its own user (scoped, not built)
 

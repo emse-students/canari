@@ -284,6 +284,13 @@ impl MlsManager {
     /// `message` must be a Graine structure (see the module docs for why that can never collide with
     /// an MLS `SignContent`); this is not a general-purpose signing oracle. Its callers are a v2 seed's
     /// endorsement and an admission voucher (channel-encryption section 25), both label-prefixed.
+    /// This device's own credential SIGNATURE key, public half - the key every leaf and KeyPackage it
+    /// publishes carries. Shown to its owner while it waits for a member's Add (2026-10-27), so the
+    /// owner can compare it with the key the member is asked to approve.
+    pub fn own_signature_key(&self) -> Vec<u8> {
+        self.keypair.to_public_vec()
+    }
+
     pub fn sign_with_device_credential(&self, message: &[u8]) -> Result<Vec<u8>, MlsError> {
         log::debug!("[GRAINE_SIG] endorsing with the device credential");
         self.keypair.sign(message).map_err(|e| {

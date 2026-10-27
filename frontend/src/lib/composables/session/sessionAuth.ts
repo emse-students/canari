@@ -187,7 +187,11 @@ import {
   beginJoinRequestSweep,
   settleSweptJoinRequests,
 } from '$lib/utils/chat/joinRequests.svelte';
-import { setMemberDeviceSweep } from '$lib/utils/chat/memberDeviceAnswers';
+import {
+  markSweepOwed,
+  setMemberDeviceSweep,
+  takeOwedSweep,
+} from '$lib/utils/chat/memberDeviceAnswers';
 import {
   drainDeferredWelcomeRequests,
   serveWelcomeRequest,
@@ -477,12 +481,6 @@ export function makeWelcomeRequestContext(
   };
 }
 
-/**
- * A sweep a member's answer asked for while another was running (`owed`): that one may have passed
- * the row already, so one more runs when it ends - never more than one, however many asked.
- */
-let sweepOwed = false;
-
 /** Processes any pending MLS invitations from our own other devices (multi-device sync). Re-entrant safe. */
 export async function processDeviceInvitationsLocally(
   ctx: SessionContext,
@@ -494,7 +492,7 @@ export async function processDeviceInvitationsLocally(
 ) {
   if (ctx.isSyncing()) {
     if (opts.owed) {
-      sweepOwed = true;
+      markSweepOwed();
       cb.log('[PENDING] a sweep is running - one more follows it for the device a member approved');
     }
     return;
@@ -504,6 +502,7 @@ export async function processDeviceInvitationsLocally(
     // A new person's pending device is never added by the sweep; it raises a member's approval. The
     // sweep reads the server's durable rows, so what a completed one raised replaces what is shown.
     const raised: JoinApprovalRequest[] = [];
+    const notSwept = new Set<string>();
     // Before the sweep reads anything: an ask announced while it reads is not its to take away.
     const sweep = beginJoinRequestSweep();
     const swept = await processPendingInvitations({
@@ -515,15 +514,15 @@ export async function processDeviceInvitationsLocally(
       requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
       log: cb.log,
       onJoinApprovalRequested: (request) => raised.push(request),
+      onGroupNotSwept: (groupId) => notSwept.add(groupId),
     });
-    if (swept) settleSweptJoinRequests(sweep, raised);
+    if (swept) settleSweptJoinRequests(sweep, raised, notSwept);
   } finally {
     ctx.setIsSyncing(false);
   }
-  if (sweepOwed) {
-    sweepOwed = false;
-    await processDeviceInvitationsLocally(ctx, cb);
-  }
+  // A sweep a member's answer asked for while this one ran (`owed`): this one may have passed the
+  // row already, so one more runs - never more than one, however many asked.
+  if (takeOwedSweep()) await processDeviceInvitationsLocally(ctx, cb);
 }
 
 /**

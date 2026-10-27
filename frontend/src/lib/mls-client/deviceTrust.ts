@@ -73,6 +73,12 @@ export interface DeviceEvent {
    * event recorded before the field existed, which is never announced.
    */
   memberAlreadyPresent?: boolean;
+  /**
+   * Whether this DEVICE was never in this group as far as this device saw: no leaf of its in the
+   * tree the commit was built on, no departure of it recorded here. Decided per group, never from
+   * the pin. Absent on an event recorded before the field existed, which reads as `false`.
+   */
+  firstInGroup?: boolean;
 }
 
 /**
@@ -93,7 +99,9 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
     case 'first-sight':
       return event.memberAlreadyPresent === true;
     case 'pinned':
-      return false;
+      // A pin written by another group's tree vouches for nothing here: a device that brought
+      // itself into a group it was never in is announced whatever its pin says.
+      return entersAsUnvouchedDevice(event);
   }
 }
 
@@ -117,21 +125,22 @@ export function entersUninvited(event: DeviceEvent): boolean {
 }
 
 /**
- * Whether this event is a device of a MEMBER that brought ITSELF into the group at first sight: the
- * commit admitting it was signed by that very device (an external commit), its user already held a
- * leaf, and this device had never seen its key.
+ * Whether this event is a device of a MEMBER that brought ITSELF into the group: the commit admitting
+ * it was signed by that very device (an external commit), its user already held a leaf, and the
+ * device was never in THIS group (`firstInGroup`) - whatever its pin says, since the pins are one
+ * store any group's tree writes. The twin of `DeviceEvent::enters_as_unvouched_device` in Rust.
  *
  * In a conversation no member admitted that device - a further device of a member is added by a
  * member's Add, after a member's tap (`automaticAdmission` in `utils/chat/actions.ts`), and the
  * device's own recovery never joins itself for a seat it was never admitted to (`requestReAdd`). So
  * the entry is reported and written in the conversation (`deviceNotices.svelte.ts`), and its key is
  * never "seen" by the admission rule: seen is a leaf in that group's tree or a member's approval,
- * never a pin. A device coming back under its pinned key (`pinned`), or a changed key, is not this
- * case; in a community or salon key group every device enters this way and the caller does not ask.
+ * never a pin. A device coming back to a group it was in is not this case; in a community or salon
+ * key group every device enters this way and the caller does not ask.
  */
 export function entersAsUnvouchedDevice(event: DeviceEvent): boolean {
   if (event.addedBy === null || event.memberAlreadyPresent !== true) return false;
-  if (event.trust !== 'first-sight') return false;
+  if (event.firstInGroup !== true) return false;
   const admitted = canonicalIdentity(event.identity);
   return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
 }

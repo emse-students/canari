@@ -170,7 +170,8 @@ export function beginJoinRequestSweep(): JoinRequestSweep {
 /**
  * Replaces the asks with what one COMPLETED pending-invitation sweep raised: the server's `pending`
  * rows are the durable state, so an ask the sweep did not raise again has been answered or has
- * gone. A sweep that did not complete settles nothing.
+ * gone. A sweep that did not complete settles nothing, and a group it did not read through
+ * (`notSwept`) keeps its asks.
  *
  * ONLY AN ASK THAT WAS ON SCREEN WHEN THE SWEEP STARTED can be taken away by it (`sweep`, by identity
  * - never a clock): an ask announced while the sweep was reading may postdate every row it read, so
@@ -184,11 +185,14 @@ export function beginJoinRequestSweep(): JoinRequestSweep {
  */
 export function settleSweptJoinRequests(
   sweep: JoinRequestSweep,
-  raised: readonly JoinApprovalRequest[]
+  raised: readonly JoinApprovalRequest[],
+  notSwept?: ReadonlySet<string>
 ): void {
   const keep = raised.map(keyOfAsk);
-  // Deleting the entry being visited is safe while iterating a Map.
+  // Deleting the entry being visited is safe while iterating a Map. A group the sweep did not read
+  // through (its add lock was busy) keeps what it shows: no flicker while another device adds.
   for (const [key, entry] of requests) {
+    if (notSwept?.has(entry.groupId)) continue;
     if (!keep.includes(key) && sweep.shown.includes(tokenOf(key, entry))) requests.delete(key);
   }
   for (const ask of raised) {

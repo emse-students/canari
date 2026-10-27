@@ -21,6 +21,7 @@ import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
 import { purgeLocalConversationRecord } from './groupActions';
 import { enumerateNotReadyGroups } from './notReadyRegistry';
+import { onceHeldGroup, recordHeldGroup } from './heldGroupsRegistry';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -81,6 +82,9 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // populations `requestReAdd` serves, so a stub that answers nothing puts every case on the
     // "could not tell" path and none of them reach the join at all.
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
+    // Default = no OTHER device of this account is in the group, so a seat with no admission is this
+    // device's own door (`decideOwnDoor`); the further-device cases below name a sibling.
+    getGroupMembers: vi.fn().mockResolvedValue([]),
     // Default = THIS ACCOUNT holds a seat in every group a case names. With no row for this device
     // (the default above) the seam reads the account's seat before choosing a door, and a seated
     // account keeps the self-service join; the ADM-2 cases below override it with a list that does
@@ -282,7 +286,7 @@ describe('requestReAdd', () => {
   it('the wait ENDS on the facts: owed on one pass, its own external join on the next', async () => {
     // A wait with no exit is a strand. The exit is the row itself: once the lock is released with no
     // Welcome queued, the next watchdog pass reads `unhonoured-seat` and a device a commit ADMITTED
-    // serves itself (a seat no commit admitted asks a member instead - pinned further down).
+    // serves itself (a seat no commit admitted is decided by `decideOwnDoor` - pinned further down).
     let clock = Date.now();
     const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
     try {
@@ -412,33 +416,106 @@ describe('requestReAdd', () => {
     );
   });
 
-  it('never joins itself on a seat no commit admitted - a new device of a member asks a member', async () => {
-    // A further device of a member - the owner's new phone - is seated `pending` in every group of
-    // the account when it registers, and no commit ever admitted it. Its first entry is a member's
-    // Add after a member's tap (2026-10-27), never its own external commit: it asks a member, who is
-    // shown the device and its key. The cost is named in the wiki: with nobody online, it waits.
-    const deps = makeDeps();
-    deps.mlsService.getDeviceMemberships = vi
-      .fn()
-      .mockResolvedValue([
-        membership('g1', 'pending', { welcomeQueued: false, addInFlight: false }),
-      ]);
-    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+  describe('a seat no commit admitted - whose door it is (2026-10-27)', () => {
+    const unadmitted = () =>
+      vi
+        .fn()
+        .mockResolvedValue([
+          membership('g1', 'pending', { welcomeQueued: false, addInFlight: false }),
+        ]);
+    const sibling = () =>
+      vi.fn().mockResolvedValue([{ userId: 'user-a', deviceId: 'laptop-device' }]);
 
-    await requestReAdd('g1', deps);
+    it('a further device of an admitted user, that never held the group, asks a member', async () => {
+      // The owner's new phone: seated `pending` in every group of the account when it registers,
+      // never in the tree. Its first entry is a member's Add after a member's tap, never its own
+      // external commit. The cost is named in the wiki: with nobody online, it waits.
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = unadmitted();
+      deps.mlsService.getGroupMembers = sibling();
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
-    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
-    expect(deps.log).toHaveBeenCalledWith(
-      expect.stringContaining('pending seat no commit ever admitted')
-    );
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+      expect(deps.log).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'device laptop-d of this account is in the group - a member is asked'
+        )
+      );
+    });
+
+    it('a 1:1 peer with no admitted device joins by itself - it is how its user enters at all', async () => {
+      // THE 2026-09-03 LOOP, NOT REOPENED: the row reads the same as a further device's, but no
+      // other device of this account is in the group, so nobody could ever be asked about it.
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = unadmitted();
+      deps.mlsService.getGroupMembers = vi
+        .fn()
+        .mockResolvedValue([{ userId: 'peer', deviceId: 'peer-device' }]);
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    });
+
+    it('a demoted seat of a device that held the group joins by itself, a sibling or not', async () => {
+      // Every demotion (a kick, the stale-device sweep) clears the admission the row carried, so the
+      // row cannot tell this device from a new one. Its own record of the drop can.
+      recordHeldGroup('self-device', 'g1');
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = unadmitted();
+      deps.mlsService.getGroupMembers = sibling();
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+      expect(deps.mlsService.getGroupMembers).not.toHaveBeenCalled();
+    });
+
+    it('a device whose drop of the group was recorded is known to have held it (dropGroupState)', async () => {
+      const deps = makeDeps();
+      await recoverForkedGroup('g1', deps);
+      expect(onceHeldGroup('self-device', 'g1')).toBe(true);
+      expect(onceHeldGroup('other-device', 'g1')).toBe(false);
+    });
+
+    it('skips the round when the group devices cannot be read - never a guess', async () => {
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = unadmitted();
+      deps.mlsService.getGroupMembers = vi.fn().mockRejectedValue(new Error('offline'));
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    });
+
+    it('no seat for this device at all, a further device that never held the group: asks a member, never joins', async () => {
+      // The account is seated, this device is not (never tapped in, or its ask declined and its
+      // pending row cleaned up). Its own commit would enter around the member it waits for.
+      const deps = makeDeps();
+      deps.mlsService.getGroupMembers = sibling();
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    });
   });
 
   it('serves itself on an ADMITTED roster seat with no Welcome and no Add in flight', async () => {
     // THE P1 OF 2026-09-03, PINNED for the population it still covers: a seat a commit admitted whose
     // Welcome nobody delivered - no Welcome queued, no member adding. Nothing owes this device
-    // anything that exists, so the self-service join is its to make. A seat no commit admitted (a
-    // device enrolling while nobody is online) asks a member instead (the test above).
+    // anything that exists, so the self-service join is its to make. A seat no commit admitted is
+    // decided by whose door it is (the cases above).
     const deps = makeDeps();
     deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([
       membership('g1', 'pending', {

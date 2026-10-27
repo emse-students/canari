@@ -1360,6 +1360,7 @@
   "chat_dm_settings_label": "Chat settings",
   "chat_settings_title": "Settings",
   "chat_e2e_established_preview": "E2E channel established.",
+  "chat_waiting_own_device_key": "Waiting to be added. This device's key: {fingerprint} - a member asked to add it sees the same key.",
   "chat_awaiting_admission_preview": "Waiting for a member to add you.",
   "chat_unread_messages_label": [
     {
@@ -3322,8 +3323,8 @@
   "join_request_device_body_own": "A device you have never seen asks to join your conversations as your account. Add it only if you just signed in on a new device.",
   "join_request_device_row_text": "A new device of {user} asks to join the conversation",
   "join_request_device_row_text_own": "A new device of your account asks to join the conversation",
-  "join_request_device_detail": "“{label}” · key {fingerprint}",
-  "join_request_device_detail_unnamed": "Unnamed device · key {fingerprint}",
+  "join_request_device_detail": "key {fingerprint} - named \"{label}\"",
+  "join_request_device_detail_unnamed": "key {fingerprint} - unnamed",
   "join_request_device_declined": "Device declined in this conversation.",
   "chat_system_conversation_deleted": "{sender} deleted this conversation.",
   "chat_system_message_deleted": "This message has been deleted.",

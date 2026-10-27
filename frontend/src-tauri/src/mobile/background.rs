@@ -3556,6 +3556,10 @@ mod tests {
     /// (both platforms), and BOTH answers carry the alert's key - whatever else they say.
     #[test]
     fn a_commit_adding_an_own_device_carries_the_owner_alert_on_both_push_paths() {
+        // It SENDS (`send_messages_background_with_key`), so it holds the serialiser and a quiet
+        // foreground like every sender here (`quiet_foreground`): a foreground test running beside it
+        // made its write refuse.
+        let _quiet = quiet_foreground();
         let tag = "own-device";
         let (mut alice, bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");

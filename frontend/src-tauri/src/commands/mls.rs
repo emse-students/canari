@@ -1603,6 +1603,17 @@ pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<S
     })?
 }
 
+/// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
+#[tauri::command]
+pub(crate) fn mls_own_signature_key(state: tauri::State<AppState>) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.own_signature_key())
+}
+
 /// Signs a v2 session ENDORSEMENT with this device's MLS credential key.
 #[tauri::command]
 pub(crate) fn graine_sign_with_device_credential(

@@ -34,9 +34,13 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { clearEpochGap } from './epochGapRegistry';
+import { recordHeldGroup } from './heldGroupsRegistry';
 
 /** What a caller of {@link dropGroupState} must be able to do. */
-export type DroppableMlsService = Pick<IMlsService, 'forgetGroup' | 'persistCheckpoint'>;
+export type DroppableMlsService = Pick<
+  IMlsService,
+  'forgetGroup' | 'persistCheckpoint' | 'getDeviceId'
+>;
 
 /** Options for {@link dropGroupState}. */
 export interface DropGroupStateOptions {
@@ -72,6 +76,17 @@ export async function dropGroupState(
 ): Promise<void> {
   const write = log ?? ((msg: string) => console.log(msg));
   const short = groupId.slice(0, 8);
+
+  // THIS DEVICE HELD THE GROUP, and its recovery may come back by its own commit
+  // (`heldGroupsRegistry.ts`). Not for a state built during this very operation and never persisted
+  // (`never-persisted`, a refused external join): that device never held the group.
+  if (checkpoint !== 'never-persisted') {
+    try {
+      recordHeldGroup(mlsService.getDeviceId(), groupId);
+    } catch (e) {
+      write(`[MLS] recording that this device held ${short}... FAILED: ` + String(e));
+    }
+  }
 
   try {
     mlsService.forgetGroup(groupId, minEpoch);

@@ -584,10 +584,10 @@ describe('deliverDeviceEvents - an entry no member made', () => {
   });
 });
 
-// A NEVER-SEEN DEVICE OF A MEMBER THAT LET ITSELF IN (2026-10-27): its own commit, its user already in
-// the tree, a key this device never saw. No member added it, so it is written in the conversation and
-// reported under its own kind - never "seen" for that pin. A device coming back under its pinned key,
-// a member's Add, and this very device's own join say nothing.
+// A DEVICE OF A MEMBER THAT LET ITSELF INTO A GROUP IT WAS NEVER IN (2026-10-27): its own commit, its
+// user already in the tree, no leaf of it here before - whatever its pin says. No member added it, so
+// it is written in the conversation and reported under its own kind. A device coming back to this
+// group, a member's Add, and this very device's own join say nothing.
 describe('deliverDeviceEvents - a member device that entered by itself', () => {
   const selfEntry = (over: Partial<DeviceEvent> = {}) =>
     event({
@@ -595,6 +595,7 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       identity: 'bob:new-tablet',
       addedBy: 'bob:new-tablet',
       memberAlreadyPresent: true,
+      firstInGroup: true,
       trust: 'first-sight',
       keyFingerprint: 'beef',
       ...over,
@@ -637,11 +638,20 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     error.mockRestore();
   });
 
-  it('says nothing for a device back under its pinned key, a member-signed Add, or this device itself', async () => {
+  it('reports a device pinned by ANOTHER group entering this one by itself - the pin vouches for nothing here', async () => {
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry({ trust: 'pinned' })], ctx);
+
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: 'group-1', kind: 'unvouched-device' })
+    );
+  });
+
+  it('says nothing for a device back in this group, a member-signed Add, or this device itself', async () => {
     const { ctx } = makeCtx();
     await deliverDeviceEvents(
       [
-        selfEntry({ trust: 'pinned' }),
+        selfEntry({ trust: 'pinned', firstInGroup: false }),
         selfEntry({ addedBy: 'bob:phone-1' }),
         selfEntry({ identity: 'alice:phone-a', addedBy: 'alice:phone-a' }),
       ],

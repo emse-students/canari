@@ -346,6 +346,7 @@ const sites: { name: string; evidence: EvictionEvidence; run: () => Promise<Site
         mlsService: {
           forgetGroup: vi.fn(),
           persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+          getDeviceId: vi.fn().mockReturnValue('my-device'),
         },
         storage: null,
         userId: 'me',

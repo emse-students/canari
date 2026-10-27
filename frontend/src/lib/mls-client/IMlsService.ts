@@ -1401,6 +1401,11 @@ export interface IMlsService {
    */
   signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   /**
+   * This device's own credential signature key, public half - the key its leaves and KeyPackages
+   * carry, and the one a member is shown when asked to add it. Throws before the engine is ready.
+   */
+  ownSignatureKey(): Promise<Uint8Array>;
+  /**
    * Hands over the fork findings mls-core recorded since the last call, and forgets them
    * (`mls-core/src/fork_check.rs`): frames whose signed epoch fingerprint was not this device's at
    * the same epoch. Asked after a same-epoch refusal, where a fork is seen.

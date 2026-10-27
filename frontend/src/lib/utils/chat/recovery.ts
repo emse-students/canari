@@ -22,6 +22,7 @@ import { pendingGroupExitIds } from './pendingGroupExits';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
 import { dropGroupState } from './dropGroupState';
+import { onceHeldGroup } from './heldGroupsRegistry';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
@@ -591,6 +592,22 @@ export async function requestReAdd(
       // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no
       // seat there, this device's door is its own, as an `active` row's.
       const listed = seat.row.deviceMembership;
+      if (!listed) {
+        // NO SEAT FOR THIS DEVICE AT ALL, ON EITHER READ: the account is seated, this device is not.
+        // Whose door that is depends on whether this device ever held the group
+        // ({@link decideOwnDoor}): a further device of a member never seated here is asked about by a
+        // member, never let in by its own commit.
+        const door = await decideOwnDoor(groupId, deps, 'no seat for this device');
+        if (door === null) return;
+        if (door === 'ask-a-member') {
+          await askAMemberToReAddUs(
+            groupId,
+            deps,
+            "no seat for this device, a further device of a member - a member's Add, not this device's own join"
+          );
+          return;
+        }
+      }
       if (listed) {
         deps.log(
           `[READD] ${groupId.slice(0, 8)}... no row for this device on the first read, the account's list ` +
@@ -622,19 +639,24 @@ export async function requestReAdd(
     await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
     return;
   }
-  // A SEAT NO COMMIT EVER ADMITTED IS NOT THIS DEVICE'S DOOR (`never-admitted-seat`, 2026-10-27). A
-  // further device of a member - its owner's new phone - is given a `pending` seat in every group of
-  // the account when it registers, and nothing in the tree vouches for it yet: its first entry is a
-  // member's Add, after a member's tap (`automaticAdmission` in `actions.ts`), never its own external
-  // commit. So it asks a member, who is shown the device and its key; the self-service door stays
-  // for a device that was admitted once and lost its state (`not-pending`, an admitted seat).
+  // A PENDING SEAT NO COMMIT ADMITTED (`never-admitted-seat`, 2026-10-27) IS EITHER DOOR, AND THE ROW
+  // CANNOT SAY WHICH: every demotion - a kick, the stale-device sweep - clears the admission it
+  // carried, so a device that held the group and one that never did read the same. The device's own
+  // record and the group's other devices decide ({@link decideOwnDoor}): a further device of a member
+  // that never held the group asks a member, who is shown the device and its key; any other device -
+  // one coming back, or the first device of its user here (a 1:1 peer) - takes its own door.
   if (reading === 'never-admitted-seat') {
-    await askAMemberToReAddUs(
-      groupId,
-      deps,
-      "a seat no commit admitted - a member's Add, not this device's own join"
-    );
-    return;
+    const door = await decideOwnDoor(groupId, deps, 'pending seat no commit admitted');
+    if (door === null) return;
+    if (door === 'ask-a-member') {
+      await askAMemberToReAddUs(
+        groupId,
+        deps,
+        "a further device of a member that never held the group - a member's Add, not this device's own join"
+      );
+      return;
+    }
+    reading = 'unhonoured-seat';
   }
   // A WELCOME THAT IS COMING IS WAITED FOR, NEVER ASKED FOR AGAIN (DUP-2, 2026-10-25).
   //
@@ -1033,11 +1055,58 @@ async function readWelcomeOwed(
 
 /**
  * {@link WelcomeOwedReading}, with the one reading the conversation seam adds: `never-admitted-seat`,
- * an `unhonoured-seat` no commit ever admitted - asked of a member, never joined by this device
- * itself. The Graine key-group join keeps the shared reading: every member enters a key group by its
- * own external commit.
+ * an `unhonoured-seat` no commit admitted since the row was last written (every demotion clears the
+ * admission) - whose door it is, {@link decideOwnDoor} says. The Graine key-group join keeps the
+ * shared reading: every member enters a key group by its own external commit.
  */
 type OwnSeatReading = WelcomeOwedReading | 'never-admitted-seat';
+
+/**
+ * Whose door a seat with no admission is (2026-10-27): this device's own external commit, or a
+ * member's Add.
+ *
+ * - `self`: this device once held the group ({@link onceHeldGroup}) - it comes back, its owner's
+ *   account let it in before - or its user has no other device in the group, so this device is how
+ *   its user enters at all (a 1:1 peer's first device, a seat whose devices were all demoted).
+ * - `ask-a-member`: it never held the group and another device of its user is in it - a FURTHER
+ *   device of a member, whose first entry is a member's Add after a member's tap
+ *   (`automaticAdmission` in `actions.ts`), never its own commit.
+ *
+ * @returns `null` when the group's devices could not be read - the round is skipped, never guessed.
+ */
+async function decideOwnDoor(
+  groupId: string,
+  deps: RecoveryDeps,
+  context: string
+): Promise<'self' | 'ask-a-member' | null> {
+  const short = groupId.slice(0, 8);
+  const ownDevice = deps.mlsService.getDeviceId();
+  if (onceHeldGroup(ownDevice, groupId)) {
+    deps.log(`[READD] ${short}... ${context}: this device held the group before - its own door`);
+    return 'self';
+  }
+  let devices: { userId: string; deviceId: string }[];
+  try {
+    devices = await deps.mlsService.getGroupMembers(groupId);
+  } catch (e) {
+    deps.log(
+      `[READD] ${short}... ${context}: the group's devices could not be read (${String(e).slice(0, 120)}) - skipping this round`
+    );
+    return null;
+  }
+  const own = deps.userId.toLowerCase();
+  const sibling = devices.find((d) => d.userId.toLowerCase() === own && d.deviceId !== ownDevice);
+  if (sibling !== undefined) {
+    deps.log(
+      `[READD] ${short}... ${context}: never held here, and device ${sibling.deviceId.slice(0, 8)} of this account is in the group - a member is asked`
+    );
+    return 'ask-a-member';
+  }
+  deps.log(
+    `[READD] ${short}... ${context}: no other device of this account is in the group - its own door`
+  );
+  return 'self';
+}
 
 /**
  * Reads THIS DEVICE'S seat ({@link readWelcomeOwedFromRow}) and says what it read - the one place
@@ -1071,11 +1140,11 @@ function classifyOwnSeat(
       );
     }
     if (reading === 'unhonoured-seat' && admittedAt === null) {
-      // NO COMMIT EVER ADMITTED THIS SEAT (the server clears `admittedAtEpoch` only when the device
-      // goes `active`, which is `not-pending`): the device was never let in, so it does not let itself
-      // in. A member is asked ({@link requestReAdd}'s `never-admitted-seat`).
+      // NO COMMIT ADMITTED THIS SEAT SINCE IT WAS LAST WRITTEN - which is NOT "never admitted": the
+      // server clears `admittedAtEpoch` on every transition, the demotions included (a kick, the
+      // stale-device sweep). So this reading does not choose the door; {@link decideOwnDoor} does.
       deps.log(
-        `[READD] ${groupId.slice(0, 8)}... pending seat no commit ever admitted - a member is asked, no self-service join`
+        `[READD] ${groupId.slice(0, 8)}... pending seat no commit admitted since it was written - deciding whose door it is`
       );
       return 'never-admitted-seat';
     }

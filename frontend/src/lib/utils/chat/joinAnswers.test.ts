@@ -436,6 +436,17 @@ describe('a device ask - answered for the device, never for the seat', () => {
     expect(sweep).toHaveBeenCalledOnce();
   });
 
+  it('an Add in one conversation never lifts a Decline given in another', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+
+    await declineJoinRequest({ ...deviceAsk, groupId: 'other-group' }, m.deps);
+    await admitJoinRequest(deviceAsk, m.deps);
+
+    expect(memberDeviceAnswer('other-group', 'peer', 'never-seen')).toEqual({ kind: 'declined' });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')?.kind).toBe('approved');
+  });
+
   it('is its own entry beside an ask of the same person, and tells the own account apart', () => {
     raiseJoinRequest({ groupId: GROUP, requesterUserId: 'peer', requesterDeviceId: 'p-1' });
     raiseJoinRequest({

@@ -1123,21 +1123,27 @@ operations notes).
 
 Built: an automatic Add no longer brings in a device of a member unless its own leaf is in that
 group's tree or a member approved it, one device at a time, under the key it showed; a pin never
-counts. A device no commit admitted asks a member rather than joining itself, and one that does join
-itself is reported and written in the conversation, with "Not me" on the owner's alert
+counts. A further device of a member that never held a group asks a member rather than joining
+itself (a device coming back, and a user's first device in a group, keep their own door); one that
+does join itself is reported and written in the conversation, decided per group, with "Not me" on
+the owner's alert; and a waiting device shows its owner its own key
 ([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). The user
 confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons. Owed:
 
 - the production rate of device enrolments per week (and how many are a second device of an
   account), which is the number of taps it costs - and how often a device enrols while none of its
   conversations has a member online, which now waits instead of joining itself;
-- a hardware reading of the owner's own new phone approved from the old one, fingerprint shown;
-- a place where a device shows ITS OWN key fingerprint, so the member can compare what the ask shows
-  with the device in hand - today the fingerprint binds the approval but nothing displays its twin;
-- **the gesture adders, the same class, not gated**: `createNewGroup` (the creator's other devices),
-  `startNewConversation` (the contact's devices and the creator's own) and `inviteMembersToGroup`
-  (every device listed for the invited person) add what the server lists, and no tree can vouch for
-  it - they close with the real fix;
+- **the hourly stranded report cannot tell a device waiting for a member's tap from a stranded
+  one**: both are a `pending` seat with no Welcome, no add in flight and no admission. The device
+  knows which it is (`decideOwnDoor` logs it); the report needs that fact on the seat - e.g. the
+  `welcome_request` the waiting device sends, recorded per seat - before its count can be read as
+  defects again;
+- a hardware reading of the owner's own new phone approved from the old one, the two keys compared;
+- **a device that lost its state wholesale** (a reinstall keeping its id) never recorded its drops,
+  so with a device of its user in a group it is asked about - a tap, or added back without one when
+  its own leaf is still in the tree;
+- **the same class, not gated**: the member-initiated paths that add a user's devices with no tree
+  to check them against (details in the private operations notes) close with the real fix;
 - the Android background welcome now stages nothing (only a device already in the tree passes its
   rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
   native callers if the real fix is not built;

@@ -42,6 +42,24 @@ export interface AskedDeviceKey {
 
 /** What runs the pending-invitation sweep now, registered by the session (`setMemberDeviceSweep`). */
 let sweep: (() => Promise<void>) | null = null;
+/**
+ * A sweep an answer asked for while another was running: that one may have passed the row already,
+ * so one more runs when it ends (`processDeviceInvitationsLocally`). Kept HERE so a sign-out's
+ * {@link resetMemberDeviceAnswers} forgets it with the answers it was owed for.
+ */
+let sweepOwed = false;
+
+/** Records that one more sweep is owed after the running one ({@link takeOwedSweep}). */
+export function markSweepOwed(): void {
+  sweepOwed = true;
+}
+
+/** Whether a sweep is owed, and forgets it: at most one more runs, however many asked. */
+export function takeOwedSweep(): boolean {
+  const owed = sweepOwed;
+  sweepOwed = false;
+  return owed;
+}
 
 function identityOf(userId: string, deviceId: string): string {
   return canonicalIdentity(`${userId}:${deviceId}`) ?? `${userId}:${deviceId}`;
@@ -103,7 +121,8 @@ function startSweep(why: string): void {
 export function approveMemberDevice(userId: string, deviceId: string, fingerprint: string): void {
   const identity = identityOf(userId, deviceId);
   approved.set(identity, fingerprint);
-  for (const key of declined) if (key.endsWith(`|${identity}`)) declined.delete(key);
+  // A DECLINE IN ANOTHER CONVERSATION STANDS: it is that conversation's answer, and an approval
+  // given here never overrides it (`memberDeviceAnswer` reads the decline first).
   console.log(
     `[JOIN_REQUEST] unseen device ${identity.slice(0, 24)}... approved by this member under key ${fingerprint} - the sweep adds it`
   );
@@ -144,4 +163,5 @@ export function resetMemberDeviceAnswers(): void {
   approved.clear();
   declined.clear();
   askedKeys.clear();
+  sweepOwed = false;
 }

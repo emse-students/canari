@@ -163,7 +163,10 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     expect(mlsService.addMember).not.toHaveBeenCalled();
   });
 
-  it('asks a member about a seat still awaiting one, even when the tree holds a leaf of theirs', async () => {
+  it("never raises a person's ask for a user who already holds a leaf, whatever the seat's flag", async () => {
+    // The ask's Add re-plans the person's devices from the server's list and its Decline removes
+    // their leaves: one tap on it would act on a member nobody asked about (review of #2594).
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const onJoinApprovalRequested = vi.fn();
     const mlsService = serverVouches({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:p1', 'stranger:old']),
@@ -173,12 +176,11 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
 
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(mlsService.replaceMember).not.toHaveBeenCalled();
-    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
-      groupId: 'g-adm-leaf',
-      requesterUserId: 'stranger',
-      requesterDeviceId: 'dev-1',
-      askId: 'ask-stranger',
-    });
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the user already holds a leaf there - no person')
+    );
+    error.mockRestore();
   });
 
   it("asks nobody about a person whose seat is not an invitation link's ask", async () => {
@@ -630,7 +632,8 @@ describe('processPendingInvitations - a new user is never added automatically', 
     );
   });
 
-  it('a seat still awaiting a member asks a member, even when the tree holds a leaf of theirs', async () => {
+  it("a seat flagged as an ask for a user who holds a leaf raises no person's ask and adds nothing", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const onJoinApprovalRequested = vi.fn();
     const mlsService = makeMls({
       ...pendingFor('peer', 'new-phone'),
@@ -640,11 +643,9 @@ describe('processPendingInvitations - a new user is never added automatically', 
     await sweep(mlsService, { onJoinApprovalRequested });
 
     expect(mlsService.addMember).not.toHaveBeenCalled();
-    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
-      groupId: 'g1',
-      requesterUserId: 'peer',
-      requesterDeviceId: 'new-phone',
-    });
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('flagged as a join ask'));
+    error.mockRestore();
   });
 
   it('refuses on a tree it cannot read, and keeps the row for the next sweep', async () => {

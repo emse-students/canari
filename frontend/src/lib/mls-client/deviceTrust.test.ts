@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DeviceTrustRefusedError,
+  announcesNewDevice,
   deviceEventAudience,
   deviceEventKey,
   entersAsUnvouchedDevice,
@@ -256,20 +257,31 @@ describe('entersUninvited - an entry no member made', () => {
   });
 });
 
-describe('entersAsUnvouchedDevice - a member device that admitted itself at first sight', () => {
-  it('is a first-sight device of a present user that signed its own admission', () => {
-    expect(entersAsUnvouchedDevice(event({ addedBy: 'Bob:web-2' }))).toBe(true);
+describe('entersAsUnvouchedDevice - a member device that admitted itself into a group it was never in', () => {
+  it('is a device of a present user, never in this group, that signed its own admission', () => {
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'Bob:web-2', firstInGroup: true }))).toBe(true);
   });
 
-  it('is not a pinned key coming back, a changed key, a member-signed Add or a new person', () => {
-    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', trust: 'pinned' }))).toBe(false);
-    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', trust: 'key-changed' }))).toBe(
+  it('holds whatever the pin says - a pin is one store, written by any group', () => {
+    for (const trust of ['pinned', 'key-changed', 'first-sight'] as const) {
+      const e = event({ addedBy: 'bob:web-2', trust, firstInGroup: true });
+      expect(entersAsUnvouchedDevice(e)).toBe(true);
+      // And the owner is told, whichever: the alert is what carries "Not me".
+      expect(announcesNewDevice(e)).toBe(true);
+    }
+  });
+
+  it('is not a device coming back to this group, a member-signed Add or a new person', () => {
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', firstInGroup: false }))).toBe(
       false
     );
-    expect(entersAsUnvouchedDevice(event())).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2' }))).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ firstInGroup: true }))).toBe(false);
     expect(
-      entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', memberAlreadyPresent: false }))
+      entersAsUnvouchedDevice(
+        event({ addedBy: 'bob:web-2', memberAlreadyPresent: false, firstInGroup: true })
+      )
     ).toBe(false);
-    expect(entersAsUnvouchedDevice(event({ addedBy: null }))).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ addedBy: null, firstInGroup: true }))).toBe(false);
   });
 });

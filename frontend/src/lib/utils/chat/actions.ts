@@ -186,6 +186,36 @@ async function automaticAdmission(deps: {
 }
 
 /**
+ * {@link automaticAdmission} for a seat the server may flag as an invitation-link ask
+ * (`awaitingAdmission`), with the one verdict such a seat adds: `ask-for-a-member`.
+ *
+ * A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, whatever the tree says - only a member's gesture
+ * answers it. AND IT IS NEVER A PERSON'S ASK FOR A USER WHO ALREADY HOLDS A LEAF (review of #2594,
+ * 2026-10-27): the ask's Add re-plans the person's devices from the server's list and its Decline
+ * removes the person's leaves, so one tap on such an entry would act on a member nobody asked about.
+ * A member is not a new person; the flag is an anomaly, refused at a level that accuses, and nothing
+ * is raised. Without the flag the verdict is {@link automaticAdmission}'s.
+ */
+async function admissionOfSeat(deps: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  groupId: string;
+  userId: string;
+  deviceId: string;
+  awaitingAdmission: boolean | undefined;
+  tag: string;
+  log: (message: string) => void;
+}): Promise<AutomaticAdmission | 'ask-for-a-member'> {
+  const { awaitingAdmission, deviceId, ...rest } = deps;
+  if (awaitingAdmission !== true) return automaticAdmission({ ...rest, deviceId });
+  const userVerdict = await automaticAdmission(rest);
+  if (userVerdict === 'newcomer' || userVerdict === 'unreadable') return userVerdict;
+  console.error(
+    `${deps.tag} ${deps.userId}'s seat in ${deps.groupId.slice(0, 8)}... is flagged as a join ask, but the user already holds a leaf there - no person's ask is raised for a member, nothing added`
+  );
+  return 'ask-for-a-member';
+}
+
+/**
  * Whether the package an Add of an APPROVED device would be built from carries the key the member
  * approved (`memberDeviceAnswers.ts`) - read from the package's own bytes
  * (`keyPackageFingerprintOf`). A package under another key - fetched after the approval, from a
@@ -504,9 +534,11 @@ export async function raiseAnnouncedJoinAsk(params: {
     log,
   });
   if (admission === 'unreadable') return;
-  if (admission === 'member-device') {
+  // ANY LEAF OF THE USER, not only this device's: a person's ask is never raised for a member
+  // ({@link admissionOfSeat}).
+  if (admission !== 'newcomer') {
     log(
-      `[JOIN_ASK] ${ask.requesterUserId} already holds a leaf in ${ask.groupId.slice(0, 8)}... - a member's Add came first, nothing to ask`
+      `[JOIN_ASK] ${ask.requesterUserId} already holds a leaf in ${ask.groupId.slice(0, 8)}... - a member, not a new person: nothing to ask`
     );
     return;
   }
@@ -722,6 +754,11 @@ export async function processPendingInvitations(params: {
    * this device never saw (`kind: 'device'`).
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+  /**
+   * A group whose rows this pass did NOT read through - another device held its add lock - so its
+   * silence about an ask says nothing, and the asks shown for it stay (`settleSweptJoinRequests`).
+   */
+  onGroupNotSwept?: (groupId: string) => void;
 }): Promise<boolean> {
   const {
     mlsService,
@@ -732,6 +769,7 @@ export async function processPendingInvitations(params: {
     requestReAdd,
     log,
     onJoinApprovalRequested,
+    onGroupNotSwept,
   } = params;
 
   const myDeviceId = mlsService.getDeviceId();
@@ -805,7 +843,8 @@ export async function processPendingInvitations(params: {
     // covers the worst case mobile: bulk add + Argon2 + commit + Welcomes, H1).
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
-      log(`[PENDING] Group ${groupId}: lock held by another device - skip`);
+      log(`[PENDING] Group ${groupId}: lock held by another device - skip, its asks stay as shown`);
+      onGroupNotSwept?.(groupId);
       continue;
     }
 
@@ -823,20 +862,18 @@ export async function processPendingInvitations(params: {
           retirePendingInvitation(mlsService, inv, groupId, log);
           continue;
         }
-        // A SEAT STILL AWAITING A MEMBER IS AN ASK, WHATEVER THE TREE SAYS: only a member's gesture
-        // answers it, so a leaf of theirs in the tree never makes it an automatic Add.
-        const admission =
-          inv.awaitingAdmission === true
-            ? 'newcomer'
-            : await automaticAdmission({
-                mlsService,
-                groupId,
-                userId: inv.userId,
-                deviceId: inv.deviceId,
-                tag: '[PENDING]',
-                log,
-              });
-        if (admission === 'unreadable') continue;
+        // A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, nor a person's ask for a member
+        // ({@link admissionOfSeat}).
+        const admission = await admissionOfSeat({
+          mlsService,
+          groupId,
+          userId: inv.userId,
+          deviceId: inv.deviceId,
+          awaitingAdmission: inv.awaitingAdmission,
+          tag: '[PENDING]',
+          log,
+        });
+        if (admission === 'unreadable' || admission === 'ask-for-a-member') continue;
         // Asked from ONE package read per session (`unseenDeviceKey`), never one per sweep.
         if (admission === 'unseen-device') {
           await askAboutUnseenDevice(
@@ -1799,21 +1836,19 @@ export async function handleWelcomeRequest(params: {
   // The roster guard above reads the server, and so does everything that brought this request
   // here. Whether the requester is a MEMBER is read from our own tree: a new person is brought in by
   // a member's gesture, never by a relayed request (`automaticAdmission`).
-  // A SEAT STILL AWAITING A MEMBER IS AN ASK, WHATEVER THE TREE SAYS: only a member's gesture
-  // answers it, so a leaf of the requester's never turns it into an automatic Add.
+  // A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, nor a person's ask for a member
+  // ({@link admissionOfSeat}).
   const seat = userMembers.find((m) => m.userId === requesterUserId);
-  const admission =
-    seat?.awaitingAdmission === true
-      ? 'newcomer'
-      : await automaticAdmission({
-          mlsService,
-          groupId,
-          userId: requesterUserId,
-          deviceId: requesterDeviceId,
-          tag: '[WELCOME_REQ]',
-          log,
-        });
-  if (admission === 'unreadable') return;
+  const admission = await admissionOfSeat({
+    mlsService,
+    groupId,
+    userId: requesterUserId,
+    deviceId: requesterDeviceId,
+    awaitingAdmission: seat?.awaitingAdmission,
+    tag: '[WELCOME_REQ]',
+    log,
+  });
+  if (admission === 'unreadable' || admission === 'ask-for-a-member') return;
   if (admission === 'unseen-device') {
     await askAboutUnseenDevice(
       mlsService,

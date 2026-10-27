@@ -32,16 +32,24 @@ export async function answerJoinRequestOrToast(
   return true;
 }
 
+/** The longest device name a device ask shows; past it the name is cut. */
+const MAX_DEVICE_LABEL = 32;
+
 /**
- * The second line of a device ask (`kind: 'device'`): the name its account gave it and the
- * fingerprint of its key, in groups of four - the key the approval binds, so the member approves THIS
- * key and a later package under another one is asked about anew. The name is the server's, shown
- * only as a hint. `null` for any other ask.
+ * The second line of a device ask (`kind: 'device'`): the fingerprint of its key, in groups of four -
+ * the key the approval binds, so the member approves THIS key and a later package under another one
+ * is asked about anew - then the name its account gave it. The name is the server's, a hint only: it
+ * comes AFTER the key, quoted and cut, so a name cannot pose as the key the line names first.
+ * `null` for any other ask.
  */
 export function deviceAskDetail(request: JoinRequest): string | null {
   if (request.kind !== 'device' || !request.keyFingerprint) return null;
   const fingerprint = request.keyFingerprint.match(/.{1,4}/g)?.join(' ') ?? request.keyFingerprint;
-  return request.deviceLabel
-    ? m.join_request_device_detail({ label: request.deviceLabel, fingerprint })
+  const label = request.deviceLabel?.trim();
+  return label
+    ? m.join_request_device_detail({
+        label: label.length > MAX_DEVICE_LABEL ? `${label.slice(0, MAX_DEVICE_LABEL)}...` : label,
+        fingerprint,
+      })
     : m.join_request_device_detail_unnamed({ fingerprint });
 }
