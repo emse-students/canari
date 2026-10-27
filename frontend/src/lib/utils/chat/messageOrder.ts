@@ -8,6 +8,69 @@ export function messageTime(msg: ChatMessage): number {
 }
 
 /**
+ * The sender id every system notice carries.
+ *
+ * This is the DURABLE form of "this row is a notice": `StoredMessage` has no `isSystem` column, so
+ * a row read back from IndexedDB is recognised by this id and nothing else. `ChatMessage.isSystem`
+ * is the DERIVED, in-memory form, and it is what the renderer reads.
+ *
+ * IT IS NOT A USER ID, so anything that resolves senders must refuse it rather than look it up:
+ * `GET /api/users/system` was issued on every chat open and could only ever 404. That refusal lives
+ * in `resolveDisplayNames`, which imports this constant instead of spelling it a second time.
+ */
+export const SYSTEM_SENDER_ID = 'system';
+
+/**
+ * Is this row a system notice?
+ *
+ * ONE BELIEF, ONE DERIVATION. `isSystem` and `senderId === SYSTEM_SENDER_ID` are the same fact in
+ * two forms, and any writer that set one without the other produced a notice rendered as an
+ * ORDINARY BUBBLE - labelled "Utilisateur", because no display name resolves for the sentinel and
+ * the sender label falls back to the unknown-user string. The history bundle did exactly that: it
+ * carries reactions, deletions, edits and the edit instant from the source device, and never
+ * carried this flag, so a notice restored onto a second device arrived as a message from nobody.
+ *
+ * Every seam that MATERIALISES a row derives it from here instead of restating it, because an
+ * invariant held in some of the places that build a row is not held.
+ */
+export function isSystemSender(senderId: string): boolean {
+  return senderId.toLowerCase() === SYSTEM_SENDER_ID;
+}
+
+/**
+ * Is this row a system notice (a device added, a member joined, a key rotated)?
+ *
+ * THE ONE TYPED PREDICATE, read by every consumer that must not treat a notice as conversation
+ * activity (the sidebar recency, the `lastMessageAt` seed, the persisted `updatedAt`). `isSystem` is
+ * the in-memory flag and the sender is the durable form; either one means a notice.
+ */
+export function isSystemRow(msg: Pick<ChatMessage, 'isSystem' | 'senderId'>): boolean {
+  return msg.isSystem === true || isSystemSender(msg.senderId);
+}
+
+/**
+ * The `lastMessageAt` seed after `messages` arrived: it advances on REAL messages only.
+ *
+ * A system notice is not activity, so it never moves the conversation up the list (user,
+ * 2026-10-27). Every writer of the seed goes through here, so none can restate the rule.
+ *
+ * @param previous the seed before the arrival
+ * @param messages the rows that arrived (or the merged row set - only the newest real one counts)
+ */
+export function advanceLastMessageAt(
+  previous: number | undefined,
+  messages: readonly Pick<ChatMessage, 'isSystem' | 'senderId' | 'timestamp'>[]
+): number | undefined {
+  let next = previous;
+  for (const msg of messages) {
+    if (isSystemRow(msg)) continue;
+    const at = messageTime(msg as ChatMessage);
+    if (Number.isFinite(at) && at > (next ?? 0)) next = at;
+  }
+  return next;
+}
+
+/**
  * Comparator for two messages: timestamp ascending, then serverTimestamp (persistent server
  * queue order), then ingestSequence (in-session catch-up order), then message id as final tie-break.
  */

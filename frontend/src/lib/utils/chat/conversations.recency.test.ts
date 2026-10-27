@@ -8,6 +8,7 @@ import {
   conversationRecency,
   toConversationMeta,
 } from './conversations';
+import { advanceLastMessageAt } from './messageOrder';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 function msg(id: string, at: number): ChatMessage {
@@ -47,6 +48,35 @@ describe('conversationRecency', () => {
   it('persists the same key, never the local clock', () => {
     expect(toConversationMeta('c', convo('c', []), 'me').updatedAt).toBe(0);
     expect(toConversationMeta('c', convo('c', [msg('1', 7)], 3), 'me').updatedAt).toBe(7);
+  });
+});
+
+function notice(id: string, at: number, flagOnly = false): ChatMessage {
+  return flagOnly ? { ...msg(id, at), isSystem: true } : { ...msg(id, at), senderId: 'system' };
+}
+
+describe('a system notice is not activity', () => {
+  it('skips a newer notice (flagged or by sender) and reads the newest real message', () => {
+    const c = convo('c', [msg('1', 100), notice('2', 900), notice('3', 950, true)]);
+    expect(conversationRecency(c)).toBe(100);
+  });
+
+  it('keeps an only-notices conversation at its seed, then its creation, never the notice time', () => {
+    expect(conversationRecency(convo('c', [notice('1', 900)], 40))).toBe(40);
+    expect(conversationRecency({ ...convo('c', [notice('1', 900)]), startedAt: 10 })).toBe(10);
+    expect(conversationRecency(convo('c', [notice('1', 900)]))).toBe(0);
+  });
+
+  it('does not let a notice move a conversation above a quieter one', () => {
+    const a = convo('a', [msg('1', 100), notice('2', 900)]);
+    const b = convo('b', [msg('1', 500)]);
+    expect([a, b].sort(compareConversationRecency).map((x) => x.id)).toEqual(['b', 'a']);
+  });
+
+  it('advanceLastMessageAt moves the seed on real messages only', () => {
+    expect(advanceLastMessageAt(50, [notice('1', 900)])).toBe(50);
+    expect(advanceLastMessageAt(undefined, [notice('1', 900)])).toBeUndefined();
+    expect(advanceLastMessageAt(50, [notice('1', 900), msg('2', 70)])).toBe(70);
   });
 });
 

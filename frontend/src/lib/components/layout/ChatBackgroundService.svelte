@@ -1079,7 +1079,7 @@
               globalConvs.conversations.set(channelConversationId, {
                 ...convo,
                 messages: [...convo.messages, newMsg],
-                lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+                // A join notice is not activity: the seed does not move for it.
               });
             } catch {
               // Non-blocking: system message is best-effort.
