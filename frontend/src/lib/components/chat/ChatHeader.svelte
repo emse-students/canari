@@ -188,10 +188,11 @@
 
   /**
    * A DM watches its peer's presence. The teardown names the peer through `watched`, captured here,
-   * and NEVER through the prop: Svelte runs a teardown against the values the effect last saw, so
-   * reading `contactName` there walked the parent's props back to `currentConvo`, re-evaluated it with
-   * the conversation being LEFT, and that derived kept the dependencies of that evaluation - the pane
-   * of the conversation opened next stopped receiving its messages (TOK-3 / OFF-2, 2026-10-27).
+   * and NEVER through the prop: a derived read in a teardown is re-run with the stale values and
+   * keeps that run's dependencies. Reading `contactName` there walked the parent's props back to
+   * `currentConvo`, re-ran it with the conversation being LEFT, and the pane of the conversation
+   * opened next stopped receiving its messages (TOK-3 / OFF-2, 2026-10-27; frontend/architecture,
+   * "A teardown sees the values its effect saw").
    */
   $effect(() => {
     if (contactName && !isGroupConversation && !isChannel) {

@@ -21,7 +21,7 @@
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppInForeground, onAppScreenChange } from '$lib/utils/appForeground';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
-  import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
+  import { createReadMarkDebounce, createReadingTracker } from '$lib/utils/chat/readMarkDebounce';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
@@ -696,6 +696,8 @@
   // ─── Read watermark (debounced 2 s; delivered at once on leave or off-screen) ──
   /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
   const readMarks = createReadMarkDebounce(2000);
+  /** Which conversation's window `readMarks` holds, so leaving it ends that window first. */
+  const reading = createReadingTracker();
 
   /** Delivers every owed salon read mark; a refusal keeps it owed (see `salonReadMarkQueue.ts`). */
   function flushOwedSalonMarks(): Promise<number> {
@@ -705,6 +707,22 @@
   }
 
   $effect(() => {
+    // LEAVING INSIDE THE WINDOW MUST NOT COST THE MARK, AND IT IS DETECTED HERE, BEFORE ANY RETURN.
+    // A salon's mark is already owed durably, so the owed queue delivers it; a DM's used to be
+    // ZEROED on leave after the local mark had moved, so it is delivered now instead. This was the
+    // effect's teardown until 2026-10-27, and a teardown reads `selectedContact` as it was BEFORE the
+    // change, so the leave branch never ran and the next conversation's note joined the old window.
+    const ended = reading.left(convs.selectedContact);
+    if (ended) {
+      untrack(() => {
+        if (ended.salon) {
+          void flushOwedSalonMarks();
+          readMarks.cancel();
+        } else {
+          readMarks.flush();
+        }
+      });
+    }
     if (!convs.selectedContact || !session.isLoggedIn) return;
     // THE THIRD TERM IS THE ONLY ONE A PHONE ANSWERS HONESTLY. `hasFocus()` and `visibilityState`
     // are both permanently true in a backgrounded Tauri WebView (measured on device 2026-09-05:
@@ -774,6 +792,7 @@
       recordDmReadMark(session.userId, currentContact, target);
     }
 
+    reading.arm({ contact: currentContact, salon: channelReceipt });
     readMarks.note(target, (toSend) => {
       untrack(() => {
         if (channelReceipt) {
@@ -807,24 +826,9 @@
         void flushOwedDmReadMarks(session.userId);
       });
     });
-
-    // Only end the window when the user navigates to a different conversation.
-    // Same-conversation re-runs (e.g. from the optimistic update above) must
-    // not cancel the pending window - that was the root cause of receipts never firing.
-    return () => {
-      if (convs.selectedContact !== currentContact) {
-        // LEAVING INSIDE THE WINDOW MUST NOT COST THE MARK. A salon's is already owed durably, so
-        // the owed queue delivers it. A DM's used to be ZEROED here after the local mark had moved,
-        // so nothing ever sent it again and the peer saw the conversation unread for good: it is
-        // delivered now instead.
-        if (channelReceipt) {
-          void flushOwedSalonMarks();
-          readMarks.cancel();
-        } else {
-          readMarks.flush();
-        }
-      }
-    };
+    // Same-conversation re-runs (e.g. from the optimistic update above) must not end the pending
+    // window - that was the root cause of receipts never firing - and `reading.left` ends it only
+    // when the selection names another conversation.
   });
 
   // ─── Refused control actions: the account's list, and the Retry that runs them ────

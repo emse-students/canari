@@ -1058,7 +1058,8 @@
   });
 
   $effect(() => {
-    // Captured: a teardown that reads a prop re-runs its getter against stale values (ChatHeader).
+    // Captured: a prop read in a teardown can re-run a parent derived with stale values and rewire
+    // it (frontend/architecture, on teardowns).
     const report = onMessagesScrollEl;
     report?.(chatContainer ?? null);
     return () => report?.(null);

@@ -75,3 +75,41 @@ export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
     },
   };
 }
+
+/** The conversation whose read-mark window the receipt effect armed, and how its mark travels. */
+export interface ReadingOf {
+  contact: string;
+  /** A salon's mark is owed durably to the server queue; a DM's or a group's goes to the outbox. */
+  salon: boolean;
+}
+
+/** Remembers which conversation is being read, so the selection leaving it can end its window. */
+export interface ReadingTracker {
+  /** Records the conversation whose window was just armed. */
+  arm: (reading: ReadingOf) => void;
+  /**
+   * The reading the selection has LEFT, returned once, or null. Asked at the START of the receipt
+   * effect with the CURRENT selection - never from its teardown, where Svelte hands a `$state` read
+   * its pre-change value, so `selectedContact !== currentContact` was never true there and leaving
+   * inside the window delivered nothing: the next conversation's note joined the old window
+   * (frontend/architecture, "A teardown sees the values its effect saw").
+   */
+  left: (selected: string | null) => ReadingOf | null;
+}
+
+/** Creates the tracker the receipt effect consults on every run. */
+export function createReadingTracker(): ReadingTracker {
+  let reading: ReadingOf | null = null;
+  return {
+    arm(next) {
+      reading = next;
+    },
+    left(selected) {
+      if (!reading || reading.contact === selected) return null;
+      const ended = reading;
+      reading = null;
+      appendLog(`[READ] reading of ${ended.contact} ended: the selection moved on`);
+      return ended;
+    },
+  };
+}
