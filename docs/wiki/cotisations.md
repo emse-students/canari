@@ -211,8 +211,10 @@ alcohol tier (full price 30 EUR, 15 EUR for holders of the other tier). A rise t
 set is charged in FULL; setting it is the admin's job, and making that visible is the admin
 screen's. An automatic `target - held` was designed and dropped the same day: it would have
 duplicated or contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE
-function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike,
-and the checkout row freezes it: settlement records the row's amount, never a re-read of the product.
+function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike.
+**The complement price freezes when the checkout opens**: the attempt row stores the amount asked,
+and settlement records the row's amount, never a re-read of the product - an admin who edits the
+preferential price while the buyer is paying changes the next checkout, not this one.
 
 **`memberPriceTag` names a TIER, read at use time.** The column stores a tag string, and a `dated`
 association's tags change every academic year - an exact match on the saved string would have
@@ -240,7 +242,14 @@ purchase records are read, so the code does not depend on how the held tier was 
 | `higher` | target price `>` held price | sold, at `fixedPriceFor`'s amount; the XOR swaps at settlement |
 | `held` | the target is a held tier - ANY of them, the cheaper of two included (`tierRelationOf`) | 409 `PRODUCT_ALREADY_PURCHASED`, paid for or granted |
 | `lower` | target price `<=` held price | 409 `TIER_NOT_A_RISE` - equal counts |
-| `unranked` | a tier is held and either side has no fixed price (grid, free amount, a tag whose product is gone) | 409 `TIER_NOT_RANKABLE` - no rank is guessed |
+| `unranked` | a tier is held and either side has no fixed price (grid, free amount) | 409 `TIER_NOT_RANKABLE` - no rank is guessed |
+
+**A paid form that grants a tier is held to the same rule, before any payment.** `submit` asks
+`UserTagService.rankCotisationTier` (the same `rankTier` decision the ranked grant takes) for every
+answer that owes money, online or in cash, and refuses through `tierRefusal` (`tier-pricing.ts`, the
+ONE relation -> 409 mapping the checkout uses too) - same codes, so the form page words them with the
+shop's sentences. It is a pre-check outside any lock; the grant re-ranks under the buyer's lock when
+the money lands (`grantCotisantIfARise`), and a refusal there is the `paid_not_granted` case below.
 
 **Two attempts, one tier.** Opening a checkout of a tier first settles the buyer's open attempts of
 EVERY sibling tier (`productsToSettleBefore`): cancelled at the provider, or recorded if already
@@ -254,7 +263,15 @@ the XOR cannot replace the held tier. The payment is recorded with status `paid_
 `purchase_records` (a varchar with no CHECK - no migration), logged at ERROR, listed with a "Not
 granted" mark in the association's purchases and its export (it is money received), never counted
 as having bought the product, and counted every hour by `PaidNotGrantedScheduler` (:29, `count=0`
-at log, ERROR while non-zero). A refund or a manual grant is owed; nothing yet clears the mark once
+at log, ERROR while non-zero). `receivedStatus` (`purchase-record.entity.ts`) is the one place the
+status is chosen from "delivered or not", for the boutique and the forms alike. Three more payments
+take the marker: a settlement whose product row was DELETED while its buyer paid (nothing can be
+delivered, no tag, no top-up - logged at ERROR, a refund is owed); a paid form whose payment landed
+with no seat (`paid_over_capacity`), so no grant ran; and a form payment whose record is written by a
+call that ran no grant itself (a replay after the record write failed) - that call reads whether the
+submitter holds the form's tier NOW (`formTierDelivered`), the only durable trace of what the earlier
+grant decided. A grant that FAILED (retryable) in the same call is marked too, since nothing is held
+when the record is written; a later replay that grants it does not clear the mark. A refund or a manual grant is owed; nothing yet clears the mark once
 that is done. The settlement ranks on the prices of NOW, so an admin who lowers or grids the target
 between the opening and the payment also lands here: ranking against what the opening decided would
 need that decision stored on the checkout row, a column `product_checkouts` does not have.
@@ -300,9 +317,13 @@ connection fails alone instead of everything hanging.
 waiting. A checkout opening is split in two: `preparePurchase` fetches the active payment provider,
 the routing it gives and, for a grid priced on promo or formation, the buyer's profile - all before
 the lock; `decidePurchase`, under it, reads only this database. It reloads the association and the
-product by id and recomputes the routing with the provider already fetched; if the account or the
-target association no longer matches, it refuses `409 PAYMENT_ROUTING_CHANGED` - no retry, nothing
-opened, and trying again uses the new account.
+product by id and recomputes the routing with the provider already fetched; if ANY field of it
+changed (`sameRouting`: provider, account, receiving association, readiness, delegation), it refuses
+`409 PAYMENT_ROUTING_CHANGED` - no retry, nothing opened, and trying again uses the new account. The
+profile is the one other input fetched before the lock: if the product re-read under it has a grid
+that prices on promo or formation and the preparation did not fetch the profile (the grid was added
+in between), it refuses `409 PURCHASE_PRICING_CHANGED` rather than price on the "everyone else"
+cell or call out under the lock.
 
 `product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL, asserting every wait
 through `pg_locks` rather than a timer: two concurrent settlements; a settlement and a checkout
@@ -310,7 +331,8 @@ opening each blocked on a held lock, then re-reading the grant made under it; a 
 settlement on one buyer, ending on one tier; two tabs opening two sibling tiers, one refused; a
 retag and a settlement of the same tier, never leaving the old tag; a price lowered between opening
 and payment, marked `paid_not_granted`; and every locked path run on a pool of ONE connection. With
-the lock, the sibling check or the manager-bound read removed, the matching case fails.
+the lock, the sibling check or the manager-bound read removed, the matching case fails. It also ranks a
+paid form's pre-check against the real tables, and settles a payment for a deleted product.
 
 A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The
 provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in core-service) still answers `AMOUNT_OUT_OF_RANGE`
@@ -442,7 +464,9 @@ never inside it, and of two first grants the second renews the first. Proven by 
 
 ### B. Paid form with `grantedTagName`
 
-`forms.service.ts#markPaid` (after Stripe) or `#validateCashPayment` (cash) call `grantOrRenew(...)`.
+`forms.service.ts#markPaid` (after Stripe) or `#validateCashPayment` (cash) grant through
+`grantCotisantIfARise`; `submit` refuses a tier that is not a rise before any payment (see "Rising
+to a higher tier").
 
 ### C. Manual grant from the Cotisations tab (cash / retroactive)
 
