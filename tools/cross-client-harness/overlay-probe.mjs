@@ -86,7 +86,10 @@ export const OVERLAYS = `(function () {
     if (s.opacity === '0' && !moving(e)) return null;
     return r;
   };
-  [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]')).forEach(function (d) {
+  // AN ALERTDIALOG IS A DIALOG: ConfirmDialog (every showConfirm) renders role=alertdialog, so a
+  // confirmation left open by a dead step was invisible here and owned every click (COMM-15's
+  // rail, 1.5.0-alpha.1). It closes on Escape like the others.
+  [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true], [role=alertdialog][aria-modal=true]')).forEach(function (d) {
     if (vis(d)) out.push({ kind: 'dialog', label: (d.getAttribute('aria-label') || '').slice(0, 60) });
   });
   [].slice.call(document.querySelectorAll('button')).forEach(function (b) {

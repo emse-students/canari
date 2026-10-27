@@ -130,7 +130,12 @@ export async function openCommunity(cx, name) {
   // WAITED FOR BY THE SELECTOR THE CLICK WILL USE. It used to wait on a text match, which any
   // element mentioning the community satisfies - the line the app logs on creation among them -
   // so the wait could pass while the rail button the next line needs was not on the page at all.
-  const listed = `[aria-label=${JSON.stringify(name)}]`;
+  //
+  // EXACT, OR THE NAME FOLLOWED BY THE UNREAD SUFFIX. Since #1452 a rail button with unread salons
+  // is labelled `<name>, <sidebar_community_unread_label>`, so an exact match found nothing on a
+  // member whose community already held messages - COMM-12's peer, every arm, on 1.5.0-alpha.1
+  // (2026-10-27). The `, ` keeps a prefix from matching a longer name.
+  const listed = `[aria-label=${JSON.stringify(name)}], [aria-label^=${JSON.stringify(`${name}, `)}]`;
   await awaitListed(cx, `!!${RESOLVE}(${JSON.stringify(listed)})`, 20000, 'the community', cx.port);
   await awaitAppSettled(cx);
   // A SIDE PANEL LEFT UP COVERS THE RAIL. Below the `xl` breakpoint (the seats run 958-984 px wide)
@@ -1666,8 +1671,8 @@ export async function submitPollVote(cx) {
  * none, so COMM-15 left the styled dialog open over the whole screen (`z-(--z-critical)`) and read
  * "it never asked" (1.5.0-alpha.1, 2026-10-27).
  *
- * The confirming button carries the SAME caption as the card's close button, so it is clicked
- * INSIDE the topmost modal dialog, never by caption across the page. The return keeps its shape -
+ * `ConfirmDialog` is an `alertdialog`, not a `dialog`. The confirming button carries the SAME caption
+ * as the card's close button, so it is clicked INSIDE that modal, never by caption across the page. The return keeps its shape -
  * `[{ type: 'confirm', message }]` - so "the app asked before closing" stays one assertion.
  */
 export async function closePollCard(cx) {
@@ -1678,7 +1683,7 @@ export async function closePollCard(cx) {
   await until(
     cx,
     `(function () {
-       var d = [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]')).filter(function (x) {
+       var d = [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true], [role=alertdialog][aria-modal=true]')).filter(function (x) {
          return (x.innerText || '').indexOf(${JSON.stringify(question)}) >= 0;
        }).pop();
        if (!d) return false;
