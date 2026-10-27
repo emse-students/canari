@@ -18,6 +18,14 @@ import {
   userIdOfLeaf,
 } from '$lib/mls-client/leafIdentity';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import {
+  bindHistoryWithheld,
+  historyWithheldEntries,
+  isWithheldDevice,
+  noteDeviceAddedByAMember,
+  withholdHistoryFrom,
+  type WithheldDevice,
+} from './historyWithheld';
 
 /**
  * THE NEW-DEVICE NOTICES (user decision 2026-10-22), built from the device events the MLS layer
@@ -142,6 +150,8 @@ interface Stored {
    * when the event came: the line is written at the next delivery that finds the row.
    */
   owedUninvited: DeviceEvent[];
+  /** The devices no history is answered to (`historyWithheld.ts`). */
+  historyWithheld: WithheldDevice[];
 }
 
 /** A contact line decided owed but not yet written everywhere, retried at each delivery. */
@@ -160,6 +170,7 @@ const EMPTY: Stored = {
   owedLines: [],
   refusedSeen: [],
   owedUninvited: [],
+  historyWithheld: [],
 };
 
 function isOwedLine(v: unknown): v is OwedLine {
@@ -225,6 +236,9 @@ function readStored(userId: string): Stored {
       owedUninvited: Array.isArray(parsed.owedUninvited)
         ? parsed.owedUninvited.filter(isEvent)
         : [],
+      historyWithheld: Array.isArray(parsed.historyWithheld)
+        ? parsed.historyWithheld.filter(isWithheldDevice)
+        : [],
     };
   } catch (e) {
     console.error(`[DEVICE_NOTICE] stored notices corrupt, dropped: ${String(e)}`);
@@ -241,6 +255,7 @@ function writeStored(userId: string): void {
     owedLines,
     refusedSeen,
     owedUninvited,
+    historyWithheld: historyWithheldEntries(),
   };
   try {
     localStorage.setItem(ACCOUNT_KEY.deviceNotices(userId), JSON.stringify(stored));
@@ -263,6 +278,9 @@ export function loadDeviceNotices(userId: string): void {
   owedLines = stored.owedLines;
   refusedSeen = stored.refusedSeen;
   owedUninvited = stored.owedUninvited;
+  bindHistoryWithheld(stored.historyWithheld, () => {
+    if (boundAccount === userId) writeStored(userId);
+  });
   for (const n of stored.pending) pending.set(n.key, n);
   if (stored.pending.length > 0) {
     console.log(`[DEVICE_NOTICE] ${stored.pending.length} unseen new-device alert(s) restored`);
@@ -279,6 +297,7 @@ export function forgetDeviceNotices(): void {
   owedLines = [];
   refusedSeen = [];
   owedUninvited = [];
+  bindHistoryWithheld([], null);
   boundAccount = null;
 }
 
@@ -348,6 +367,10 @@ export async function deliverDeviceEvents(
   // and the stored copy must still lose them.
   const hadOwedLines = owedLines.length > 0;
   await retryOwedLines(ctx, trees);
+  // A member's Add of a device vouches for it: history withheld from it is answered again.
+  for (const event of events) {
+    noteDeviceAddedByAMember(event.groupId, event.identity, event.addedBy);
+  }
   await noteUninvitedEntries(events, ctx);
   // The events a previous delivery could not decide come first, oldest first.
   const retried = undecided;
@@ -482,6 +505,10 @@ async function noteUninvitedEntries(
         continue;
       }
       reportUninvitedEntry(event, decided.kind);
+      // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE until a member vouches for it.
+      if (decided.kind === 'unvouched-device') {
+        withholdHistoryFrom(event.groupId, event.identity, event.keyFingerprint);
+      }
       if (decided.kind === 'new-person' || decided.kind === 'unvouched-device') {
         await writeUninvitedLine(event, decided.kind, decided.convo, ctx);
       }

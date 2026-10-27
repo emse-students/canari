@@ -3,6 +3,7 @@ import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
+import { bindHistoryWithheld, withholdHistoryFrom } from './historyWithheld';
 
 const GROUP = 'g1';
 /** The device that asked - every bundle is addressed at one, never at the group at large. */
@@ -229,4 +230,44 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
   function data0(mlsService: ReturnType<typeof createMlsServiceStub>) {
     return sentBundle(mlsService).data.messages[0];
   }
+});
+
+describe('sendHistoryBundleForIds - history is withheld from an unverified device', () => {
+  afterEach(() => bindHistoryWithheld([], null));
+
+  function serveTo(to: string) {
+    const mlsService = createMlsServiceStub();
+    const log = vi.fn();
+    return {
+      mlsService,
+      log,
+      done: sendHistoryBundleForIds(
+        GROUP,
+        ['m1'],
+        { storage: storageWith([storedMessage('m1')]), deviceKeyB64: 'k', mlsService, log },
+        { to, since: 0, requestId: 'req-0001' }
+      ),
+    };
+  }
+
+  it('sends nothing to a device recorded as having let itself in', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    withholdHistoryFrom(GROUP, REQUESTER, 'fp-1');
+    const { mlsService, log, done } = serveTo(REQUESTER);
+    await done;
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no history answered to it'));
+    vi.restoreAllMocks();
+  });
+
+  it('still answers every other device of the conversation', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1');
+    const { mlsService, done } = serveTo(REQUESTER);
+    await done;
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
 });

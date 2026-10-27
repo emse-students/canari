@@ -4712,6 +4712,9 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract joinByExternalCommit(
     groupInfoBytes: Uint8Array
   ): Promise<{ groupId: string; commit: Uint8Array }>;
+  /** Whether an external commit on this GroupInfo would bring this device in as a FURTHER DEVICE
+   *  OF A MEMBER: its tree holds a leaf of this user and none of this device's own. */
+  protected abstract isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean>;
 
   /**
    * Runs one staged commit transaction under the MLS lock: stage (no merge) -> validate the epoch
@@ -6788,7 +6791,10 @@ export abstract class BaseMlsService implements IMlsService {
    * that branch: {@link groupInfoChannel} routes those to their own transport, so a 403 here is
    * always a chat group we are genuinely outside of.
    */
-  async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
+  async externalJoin(
+    groupId: string,
+    opts: { asAFurtherDevice?: 'ask' } = {}
+  ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
     if (getTabLeadership() === 'follower') {
@@ -6881,6 +6887,28 @@ export abstract class BaseMlsService implements IMlsService {
             baseEpoch: gi.baseEpoch,
             serverEpoch: gi.activeEpoch,
           };
+        }
+
+        // A FURTHER DEVICE OF A MEMBER DOES NOT LET ITSELF INTO A CONVERSATION (2026-10-27), decided
+        // on THIS GroupInfo's tree - the one the commit would be built on and every member's verdict
+        // reads - so an honest device never makes the entry a member says as nobody's. Read again on
+        // every attempt: each one fetched a fresh base.
+        if (opts.asAFurtherDevice === 'ask') {
+          let further: boolean;
+          try {
+            further = await this.isFurtherDeviceIn(fromBase64(gi.groupInfo));
+          } catch (e) {
+            console.warn(
+              `[MLS] externalJoin ${short}... the served tree could not be read for the door: ${String(e).slice(0, 120)}`
+            );
+            return { joined: false, reason: 'build_failed' };
+          }
+          if (further) {
+            console.log(
+              `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
+            );
+            return { joined: false, reason: 'further_device' };
+          }
         }
 
         // BUILD THE COMMIT AND THE BASE IT CREATES IN THE SAME BREATH. An external commit is applied

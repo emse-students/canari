@@ -326,7 +326,7 @@ pub fn canonical_identity(identity: &str) -> Option<String> {
 }
 
 /// Whether two identities are the same device under [`canonical_identity`].
-fn same_identity(a: &str, b: &str) -> bool {
+pub(crate) fn same_identity(a: &str, b: &str) -> bool {
     matches!((canonical_identity(a), canonical_identity(b)), (Some(a), Some(b)) if a == b)
 }
 
@@ -362,7 +362,7 @@ pub fn identity_names(found: &str, expected: &str) -> bool {
 
 /// Whether two identities name the same USER (the user half, ignoring ASCII case, as
 /// [`identity_names`] compares it).
-fn same_user(a: &str, b: &str) -> bool {
+pub(crate) fn same_user(a: &str, b: &str) -> bool {
     let user = |s: &str| s.split_once(':').map_or(s, |(u, _)| u).to_string();
     user(a).eq_ignore_ascii_case(&user(b))
 }
@@ -952,7 +952,8 @@ impl DeviceTrust {
                     continue;
                 }
                 LeafTrust::Pinned => log::error!(
-                    "[TRUST] {group_id} epoch {epoch}: {identity} entered by its OWN commit under a key                      pinned elsewhere, never in this group - the pin vouches for nothing here, recorded"
+                    "[TRUST] {group_id} epoch {epoch}: {identity} entered by its OWN commit under a key \
+                     pinned elsewhere, never in this group - the pin vouches for nothing here, recorded"
                 ),
                 LeafTrust::FirstSight => log::info!(
                     "[TRUST] {group_id} epoch {epoch}: {identity} added by {} (key {fingerprint}, first sight)",
@@ -1255,6 +1256,9 @@ mod tests {
             own_device_id: String,
             audience: String,
             key: Option<String>,
+            /// Whether the entry is the unvouched class, asserted where a row names it.
+            #[serde(default)]
+            unvouched: Option<bool>,
         }
         let cases: Vec<Case> =
             serde_json::from_str(include_str!("../tests/fixtures/device_notices.json"))
@@ -1268,6 +1272,14 @@ mod tests {
                 c.name
             );
             assert_eq!(c.event.notice_key(), c.key, "{}", c.name);
+            if let Some(unvouched) = c.unvouched {
+                assert_eq!(
+                    c.event.enters_as_unvouched_device(),
+                    unvouched,
+                    "{}",
+                    c.name
+                );
+            }
         }
     }
 

@@ -1568,6 +1568,13 @@ export class TauriMlsService extends BaseMlsService {
     return new Uint8Array(gi);
   }
 
+  /** Tauri-native `invoke` wrapper - `mls_external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('mls_external_join_is_a_further_device', {
+      groupInfoBytes: Array.from(groupInfoBytes),
+    });
+  }
+
   /** Tauri-native `invoke` wrapper - builds an external commit from a served GroupInfo and stages it.
    *  The native command returns the (group_id, commit) tuple; the group joins the known-groups cache. */
   protected async joinByExternalCommit(

@@ -1103,6 +1103,18 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+    /// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+    #[wasm_bindgen]
+    pub fn external_join_is_a_further_device(
+        &self,
+        group_info_bytes: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .external_join_is_a_further_device(&group_info_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Join a group via an external commit built from a served GroupInfo. The returned group is at
     /// the new epoch with the commit STAGED: submit the commit for server epoch validation (against
     /// the GroupInfo's base epoch), then `merge_pending_commit` on accept, or `forget_group` +

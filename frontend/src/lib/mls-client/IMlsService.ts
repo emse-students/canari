@@ -129,6 +129,12 @@ export type ExternalJoinOutcome =
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
   /**
+   * NOT ATTEMPTED (`asAFurtherDevice: 'ask'`): the served tree holds a leaf of this device's user
+   * and none of its own, so the commit would bring in a FURTHER DEVICE OF A MEMBER - an entry every
+   * member says as one nobody made. Its door is a member's Add; the caller asks for it.
+   */
+  | { joined: false; reason: 'further_device' }
+  /**
    * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
    * Nothing is claimed about membership; nothing else this account commits is accepted for
    * `retryAfterMs`, so a sweep stops there rather than ask group after group.
@@ -1087,7 +1093,18 @@ export interface IMlsService {
    * peer Welcome (self-service recovery). The outcome is a TYPE, not a boolean: see
    * {@link ExternalJoinOutcome} for why each refusal has to reach its caller distinguishable.
    */
-  externalJoin(groupId: string): Promise<ExternalJoinOutcome>;
+  externalJoin(
+    groupId: string,
+    opts?: {
+      /**
+       * `ask` for a CONVERSATION: a join that would bring this device in as a further device of a
+       * member is not built ({@link ExternalJoinOutcome} `further_device`), decided on the tree of
+       * the very GroupInfo each attempt fetches. A key group, which every member enters this way,
+       * leaves it unset.
+       */
+      asAFurtherDevice?: 'ask';
+    }
+  ): Promise<ExternalJoinOutcome>;
   /**
    * Declares `groupId` to be the Graine key-distribution group of `scope`, so every later decision
    * that differs for it is taken from a registered fact rather than rediscovered.

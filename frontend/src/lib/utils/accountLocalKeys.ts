@@ -151,12 +151,6 @@ export const ACCOUNT_KEY = {
    * JSON array of `userId:deviceId`, keyed by this device because the pins are its own.
    */
   refusedDevices: (userId: string, deviceId: string) => `mls_refused_devices:${userId}:${deviceId}`,
-  /**
-   * `heldGroupsRegistry.ts`: the groups THIS DEVICE once held and dropped - a JSON array, keyed by
-   * the device id alone (the drop knows no account). Swept with the account through the device ids
-   * the account names on this install ({@link accountLocalStorageKeysIn}).
-   */
-  heldGroups: (deviceId: string) => `mls_held_groups:v1:${deviceId}`,
 } as const;
 
 /** The Tauri store (`@tauri-apps/plugin-store`) that mirrors {@link ACCOUNT_KEY}`.lastActive`. */
@@ -304,34 +298,5 @@ export function accountLocalStorageKeysIn(store: Storage, userId: string): strin
     if (exact.has(key) || prefixes.some((p) => key.startsWith(p))) found.push(key);
   }
   found.push(...legacyConversationKeysIn(store, userId).proven);
-  for (const deviceId of deviceIdsNamedIn(store, userId)) {
-    const key = ACCOUNT_KEY.heldGroups(deviceId);
-    if (store.getItem(key) !== null) found.push(key);
-  }
   return found;
-}
-
-/**
- * The device ids `userId`'s keys name on this install: the live one and the ones a rotation
- * abandoned. What a key built from a device id alone ({@link ACCOUNT_KEY}`.heldGroups`) is swept
- * through - an unreadable rotation record names none, and says so.
- */
-function deviceIdsNamedIn(store: Storage, userId: string): string[] {
-  const ids: string[] = [];
-  const live = store.getItem(ACCOUNT_KEY.deviceId(userId));
-  if (live) ids.push(live);
-  const retiring = store.getItem(ACCOUNT_KEY.retiringDeviceIds(userId));
-  if (retiring) {
-    try {
-      const parsed: unknown = JSON.parse(retiring);
-      if (Array.isArray(parsed)) {
-        ids.push(...parsed.filter((v): v is string => typeof v === 'string' && v !== ''));
-      }
-    } catch {
-      console.error(
-        '[WIPE] the abandoned-device record is unreadable - its held-groups records are not swept'
-      );
-    }
-  }
-  return ids;
 }

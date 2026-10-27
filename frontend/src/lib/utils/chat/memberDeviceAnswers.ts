@@ -61,6 +61,22 @@ export function takeOwedSweep(): boolean {
   return owed;
 }
 
+/**
+ * The `groupId|userId` pairs whose seat was flagged as a person's ask while the user still held a
+ * leaf (`admissionOfSeat` in `actions.ts`), already accused this session. The state is EXPECTED for
+ * as long as a removed member's leaf outlives the removal, and every sweep meets it again: it is said
+ * once at a level that accuses, then quietly, and asked about anew after a sign-out.
+ */
+const flaggedAsksSaid = new Set<string>();
+
+/** Whether this is the first time this session that the flagged ask of `userId` in `groupId` is met. */
+export function firstSightOfFlaggedAsk(groupId: string, userId: string): boolean {
+  const key = `${groupId}|${userId}`;
+  if (flaggedAsksSaid.has(key)) return false;
+  flaggedAsksSaid.add(key);
+  return true;
+}
+
 function identityOf(userId: string, deviceId: string): string {
   return canonicalIdentity(`${userId}:${deviceId}`) ?? `${userId}:${deviceId}`;
 }
@@ -163,5 +179,6 @@ export function resetMemberDeviceAnswers(): void {
   approved.clear();
   declined.clear();
   askedKeys.clear();
+  flaggedAsksSaid.clear();
   sweepOwed = false;
 }

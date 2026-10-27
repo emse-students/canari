@@ -1364,24 +1364,26 @@ seat's flag says (`admissionOfSeat`): that is a member, and the flag an anomaly 
 
 **A further device of a member does not let itself in.** The device's own recovery serves itself an
 external commit on a `pending` seat nothing follows (`unhonoured-seat`). Whether that is its door is
-NOT on the row: the server clears `admittedAtEpoch` on every transition, the demotions included (a
-kick, the stale-device sweep), so a device coming back and one never admitted read the same. So a
-seat with no admission (`never-admitted-seat`), and an account seat with no seat for this device at
-all, are decided by `decideOwnDoor` (`recovery.ts`):
+NOT on the row - the server clears `admittedAtEpoch` on every transition, the demotions included -
+and NOT on the server's device rows either, which can be empty while the tree still holds the user's
+leaves (a stale demotion, a fresh start). It is decided on **the ratchet tree of the very GroupInfo
+the external commit would be built on** (`externalJoin(groupId, { asAFurtherDevice: 'ask' })`,
+`external_join_is_a_further_device` in `welcome.rs`), read again on every attempt, since each retry
+fetches a fresh GroupInfo:
 
-- **its own door** when this device once held the group - recorded on the device itself where its
-  state is dropped (`heldGroupsRegistry.ts`, written by `dropGroupState`), which no server write can
-  clear - or when no other device of its user is in the group (a 1:1 peer's first device; a user
-  whose devices were all demoted), since then nobody could be asked about it;
-- **a member's Add** (`welcome_request`, whose member shows the device ask) when it never held the
-  group and another device of its user is in it: a further device of a member.
+- **a member's Add** (`further_device`, then a `welcome_request`, whose member shows the device ask)
+  when that tree holds a leaf of this device's user and none of this device's own identity;
+- **its own door** otherwise: a 1:1 peer's first device, a user none of whose devices is in the tree,
+  or a device whose own leaf is still there (the external commit replaces it).
 
-A device whose state was lost wholesale (a reinstall) never recorded its drops; with a device of its
-user in the group it is asked about, and a leaf of its own still in the tree is added back without a
-tap (`member-device`). A new PERSON still joins by link and waits for a member's Add
-(`awaiting-admission`); a community key group is entered as before. While it waits, the device shows
-its owner its own key (`chat_waiting_own_device_key`, `ownSignatureKey`), the one the member's ask
-names.
+That is the observer's predicate (`firstInGroup` + `memberAlreadyPresent` + a self-signed commit),
+read off the same tree and without the departure half, so it is the stricter of the two: **an honest
+device can no longer produce an entry its members flag** (`mls-core/tests/further_device_door.rs`
+builds both and checks them against each other). A new PERSON still joins by link and waits for a
+member's Add (`awaiting-admission`); a community key group is entered as before, never asking. While
+it waits, a further device shows its owner its own key (`chat_waiting_own_device_key`,
+`ownSignatureKey`), the one the member's ask names - never on a person's link ask, whose member is
+shown a person.
 
 **And one that does is said.** A commit signed by the device it admits, whose user already held a
 leaf, for a device that was never in THIS group (`firstInGroup`: no leaf of it in the tree the commit
@@ -1396,19 +1398,26 @@ account" carries **Not me** (`revokeNoticedDevice`): the device's revocation, as
 it - its id banned, its logins ended, its seats withdrawn - after which every member's stray collector
 removes its leaf from each conversation (`removeStrayLeaves`, revoked devices).
 
-**What it costs, and it is a cost on EVERY enrolment.** Every new device id is unseen by everyone:
-a new phone, a reinstall or factory wipe, a restore (WP-RESTORE-1), a device that lost its state and
-re-enrols under a new id, a new browser. Each now waits for one tap before it enters its
-conversations - its owner's, from another device of theirs that is online, which covers all their
-conversations at once; otherwise, a contact's in each conversation they share. **It no longer serves
-itself either**: a device enrolling while nobody is online used to join by itself on its unhonoured
-seats (the P1 of 2026-09-03), and now waits for a member online AND their tap. The owner's other
-devices no longer serve it from a push, so the local notification "a device was added to your
-account" follows the foreground Add. A user whose only device was reinstalled depends entirely on
-contacts. The rate is owed from production: device ids first seen per week, and how many belong to an
-account that already had one. **This reverses part of the 2026-10-22 decision "no mandatory approval
-of a new device" ([new-device notices](#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day));
-the user confirmed the mandatory tap on 2026-10-27** ([backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built)).
+**History is withheld from an unverified device.** A device written as `unvouched-device` in a
+conversation is answered no history there (`historyWithheld.ts`, checked in `sendBundleChunks` for
+every answer path) until a member vouches for it: a member's commit adding that device, or this
+member's approval of it under the key it entered with. The record persists with the account's device
+notices and is bounded.
+
+**What it costs.** Every new device id is unseen by everyone, and a device id lives in the install:
+a new phone, a new browser, a reinstall or factory wipe, a device that lost its state - each enrols
+under a NEW id; only a restore from the account's backup keeps one. In a conversation whose tree
+holds another device of its user, such a device waits for one tap before it enters - its owner's,
+from another device of theirs that is online, which covers all their conversations at once;
+otherwise, a contact's in each conversation they share - where it used to join by itself on its
+unhonoured seats (the P1 of 2026-09-03). Where the tree holds no other device of its user, it still
+joins by itself. The owner's other devices no longer serve it from a push, so the local notification
+"a device was added to your account" follows the foreground Add. The rate is owed from production:
+device ids first seen per week, and how many belong to an account that already had one. **This
+reverses part of the 2026-10-22 decision "no mandatory approval of a new device"
+([new-device notices](#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)); the
+user confirmed the mandatory tap on 2026-10-27**
+([backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built)).
 
 **The same class, not gated here.** Some member-initiated paths add a user's devices without the seen
 check, because the member chose the person and there is no tree yet to have seen a device in. They

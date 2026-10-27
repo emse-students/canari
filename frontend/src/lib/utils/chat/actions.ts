@@ -74,6 +74,7 @@ import {
   memberDeviceAnswer,
   rememberAskedDeviceKey,
   withdrawMemberDeviceApproval,
+  firstSightOfFlaggedAsk,
   type AskedDeviceKey,
 } from './memberDeviceAnswers';
 
@@ -209,9 +210,12 @@ async function admissionOfSeat(deps: {
   if (awaitingAdmission !== true) return automaticAdmission({ ...rest, deviceId });
   const userVerdict = await automaticAdmission(rest);
   if (userVerdict === 'newcomer' || userVerdict === 'unreadable') return userVerdict;
-  console.error(
-    `${deps.tag} ${deps.userId}'s seat in ${deps.groupId.slice(0, 8)}... is flagged as a join ask, but the user already holds a leaf there - no person's ask is raised for a member, nothing added`
-  );
+  const what = `${deps.tag} ${deps.userId}'s seat in ${deps.groupId.slice(0, 8)}... is flagged as a join ask, but the user already holds a leaf there - no person's ask is raised for a member, nothing added`;
+  // SAID ONCE PER SESSION AT A LEVEL THAT ACCUSES: a removed member's leaf can outlive the removal
+  // until it is collected, and every sweep meets the same seat. The ask is raised again by the first
+  // sweep after the leaf is gone, since the verdict is read from the tree on every pass.
+  if (firstSightOfFlaggedAsk(deps.groupId, deps.userId)) console.error(what);
+  else deps.log(`${what} (already reported this session)`);
   return 'ask-for-a-member';
 }
 

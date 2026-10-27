@@ -65,6 +65,7 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
   import { ownKeyFingerprint } from '$lib/utils/chat/deviceNoticeWiring';
+  import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import {
     isNarrowChatLayout,
@@ -320,9 +321,12 @@
 
   // THIS DEVICE'S OWN KEY, shown while it waits to be added (2026-10-27): a member asked to add a
   // further device of this account is shown the key of the package it would add, and the owner
-  // compares the two here. Read once, when a waiting conversation is first shown.
+  // compares the two here. Read once, when a waiting conversation is first shown. NOT for a person's
+  // invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person, not a key.
   let ownKey = $state<string | null>(null);
-  const waitingToBeAdded = $derived(conversation?.lifecycle === 'pending');
+  const waitingToBeAdded = $derived(
+    conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
+  );
   $effect(() => {
     if (!waitingToBeAdded || ownKey !== null) return;
     void ownKeyFingerprint().then((key) => {

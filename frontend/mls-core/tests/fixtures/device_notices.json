@@ -218,7 +218,8 @@
     "ownDeviceId": "phone-a",
     "isKeyDistributionGroup": false,
     "audience": "owner-alert",
-    "key": "alice:web-9|99"
+    "key": "alice:web-9|99",
+    "unvouched": true
   },
   {
     "name": "a member's device coming back by its own commit under its pinned key, once in this group, is not new",
@@ -236,6 +237,26 @@
     "ownDeviceId": "phone-a",
     "isKeyDistributionGroup": false,
     "audience": "none",
-    "key": "alice:web-9|99"
+    "key": "alice:web-9|99",
+    "unvouched": false
+  },
+  {
+    "name": "a device coming back by its own commit under a key first seen here, once in this group, is an ordinary new-device notice and not an unvouched entry",
+    "event": {
+      "groupId": "g",
+      "epoch": 8,
+      "identity": "bob:web-3",
+      "keyFingerprint": "77",
+      "trust": "first-sight",
+      "addedBy": "bob:web-3",
+      "memberAlreadyPresent": true,
+      "firstInGroup": false
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:web-3|77",
+    "unvouched": false
   }
 ]

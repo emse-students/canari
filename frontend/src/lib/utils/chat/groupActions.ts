@@ -32,6 +32,7 @@ import {
   FollowerTabCommitError,
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
+import { historyWithheldFrom } from './historyWithheld';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
@@ -1082,6 +1083,14 @@ async function sendBundleChunks(
     push?: boolean;
   }
 ): Promise<BundleOutcome> {
+  // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
+  // nothing from before is given to a device that let itself in until a member vouches for it.
+  if (historyWithheldFrom(groupId, to)) {
+    log(
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}… unvouched - no history answered to it until a member vouches for it`
+    );
+    return { kind: 'refused' };
+  }
   // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
   // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
   // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read

@@ -21,7 +21,6 @@ import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
 import { purgeLocalConversationRecord } from './groupActions';
 import { enumerateNotReadyGroups } from './notReadyRegistry';
-import { onceHeldGroup, recordHeldGroup } from './heldGroupsRegistry';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -82,8 +81,8 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // populations `requestReAdd` serves, so a stub that answers nothing puts every case on the
     // "could not tell" path and none of them reach the join at all.
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
-    // Default = no OTHER device of this account is in the group, so a seat with no admission is this
-    // device's own door (`decideOwnDoor`); the further-device cases below name a sibling.
+    // The server's ACTIVE device rows. The door no longer reads them (the join reads the tree it is
+    // built on), and a case below pins that an empty answer does not let a further device in.
     getGroupMembers: vi.fn().mockResolvedValue([]),
     // Default = THIS ACCOUNT holds a seat in every group a case names. With no row for this device
     // (the default above) the seam reads the account's seat before choosing a door, and a seated
@@ -229,7 +228,7 @@ describe('requestReAdd', () => {
 
     await requestReAdd('g1', deps);
 
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
   });
 
   it('waits when a Welcome is actually queued for this device and this group', async () => {
@@ -310,7 +309,7 @@ describe('requestReAdd', () => {
 
       clock += RECOVERY_TIMEOUT_MS + 1_000;
       await requestReAdd('g1', deps);
-      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
       expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     } finally {
       now.mockRestore();
@@ -333,7 +332,7 @@ describe('requestReAdd', () => {
 
     await requestReAdd('g1', deps);
 
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
@@ -354,7 +353,7 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps, { welcomeHandled: true });
 
     expect(deps.mlsService.fetchPendingMessages).not.toHaveBeenCalled();
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
     // And it says what it did: a Welcome listed and read past is not "NO queued Welcome".
     expect(deps.log).toHaveBeenCalledWith(
       expect.stringContaining('the row still lists a queued Welcome, read past')
@@ -423,90 +422,55 @@ describe('requestReAdd', () => {
         .mockResolvedValue([
           membership('g1', 'pending', { welcomeQueued: false, addInFlight: false }),
         ]);
-    const sibling = () =>
-      vi.fn().mockResolvedValue([{ userId: 'user-a', deviceId: 'laptop-device' }]);
 
-    it('a further device of an admitted user, that never held the group, asks a member', async () => {
-      // The owner's new phone: seated `pending` in every group of the account when it registers,
-      // never in the tree. Its first entry is a member's Add after a member's tap, never its own
-      // external commit. The cost is named in the wiki: with nobody online, it waits.
+    it('a further device asks a member when the served tree says so, though the server lists no device', async () => {
+      // THE DOOR IS READ OFF THE TREE THE COMMIT WOULD BE BUILT ON, never off the server's rows: the
+      // rows can be empty (a stale demotion, a fresh start) while the tree still holds the user's
+      // leaves, and every member's verdict reads the tree. The join answers `further_device`.
       const deps = makeDeps();
       deps.mlsService.getDeviceMemberships = unadmitted();
-      deps.mlsService.getGroupMembers = sibling();
-      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+      deps.mlsService.getGroupMembers = vi.fn().mockResolvedValue([]);
+      deps.mlsService.externalJoin = vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'further_device' });
 
       await requestReAdd('g1', deps);
 
-      expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
       expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+      expect(deps.mlsService.getGroupMembers).not.toHaveBeenCalled();
       expect(deps.log).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'device laptop-d of this account is in the group - a member is asked'
-        )
+        expect.stringContaining("a further device of a member - a member's Add")
       );
     });
 
-    it('a 1:1 peer with no admitted device joins by itself - it is how its user enters at all', async () => {
-      // THE 2026-09-03 LOOP, NOT REOPENED: the row reads the same as a further device's, but no
-      // other device of this account is in the group, so nobody could ever be asked about it.
+    it('a 1:1 peer or a demoted device joins by itself when the tree holds no other device of it', async () => {
+      // THE 2026-09-03 LOOP, NOT REOPENED: the row reads the same as a further device's, but the
+      // tree the join is built on says this device is its user's way in (or already its own leaf).
       const deps = makeDeps();
       deps.mlsService.getDeviceMemberships = unadmitted();
-      deps.mlsService.getGroupMembers = vi
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
+      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+      expect(deps.log).toHaveBeenCalledWith(
+        expect.stringContaining("the join's tree decides whose door it is")
+      );
+    });
+
+    it('no seat for this device at all goes through the same door', async () => {
+      // The account is seated, this device is not. Its own commit would enter around the member it
+      // waits for - unless the tree it is built on says it is the user's only way in.
+      const deps = makeDeps();
+      deps.mlsService.externalJoin = vi
         .fn()
-        .mockResolvedValue([{ userId: 'peer', deviceId: 'peer-device' }]);
-      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+        .mockResolvedValue({ joined: false, reason: 'further_device' });
 
       await requestReAdd('g1', deps);
 
-      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
-      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-    });
-
-    it('a demoted seat of a device that held the group joins by itself, a sibling or not', async () => {
-      // Every demotion (a kick, the stale-device sweep) clears the admission the row carried, so the
-      // row cannot tell this device from a new one. Its own record of the drop can.
-      recordHeldGroup('self-device', 'g1');
-      const deps = makeDeps();
-      deps.mlsService.getDeviceMemberships = unadmitted();
-      deps.mlsService.getGroupMembers = sibling();
-      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
-
-      await requestReAdd('g1', deps);
-
-      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
-      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-      expect(deps.mlsService.getGroupMembers).not.toHaveBeenCalled();
-    });
-
-    it('a device whose drop of the group was recorded is known to have held it (dropGroupState)', async () => {
-      const deps = makeDeps();
-      await recoverForkedGroup('g1', deps);
-      expect(onceHeldGroup('self-device', 'g1')).toBe(true);
-      expect(onceHeldGroup('other-device', 'g1')).toBe(false);
-    });
-
-    it('skips the round when the group devices cannot be read - never a guess', async () => {
-      const deps = makeDeps();
-      deps.mlsService.getDeviceMemberships = unadmitted();
-      deps.mlsService.getGroupMembers = vi.fn().mockRejectedValue(new Error('offline'));
-      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
-
-      await requestReAdd('g1', deps);
-
-      expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
-      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-    });
-
-    it('no seat for this device at all, a further device that never held the group: asks a member, never joins', async () => {
-      // The account is seated, this device is not (never tapped in, or its ask declined and its
-      // pending row cleaned up). Its own commit would enter around the member it waits for.
-      const deps = makeDeps();
-      deps.mlsService.getGroupMembers = sibling();
-      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
-
-      await requestReAdd('g1', deps);
-
-      expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
       expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
     });
   });
@@ -528,7 +492,7 @@ describe('requestReAdd', () => {
 
     await requestReAdd('g1', deps);
 
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
@@ -598,7 +562,7 @@ describe('requestReAdd', () => {
 
     await requestReAdd('g1', deps);
 
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     // External join lands at the current epoch without the peer-driven history bundle, so the
     // group is reconciled. Nothing durable records that: the comparison is cheap enough to re-run
@@ -616,7 +580,7 @@ describe('requestReAdd', () => {
 
     await requestReAdd('g1', deps);
 
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
     // Marked in the persistent registry so the SYNC_WATCHDOG drives the cadence.
     expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).not.toBeNull();
@@ -998,7 +962,7 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     await requestReAdd('g1', deps);
 
     expect(deps.conversations.get('g1')?.lifecycle).toBe('active');
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
   });
 
   it('a roster that does not answer retires nothing: the round is skipped', async () => {
@@ -1085,7 +1049,7 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     await requestReAdd('g1', deps);
 
     expect(deps.mlsService.getUserGroups).toHaveBeenCalledWith('user-a');
-    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
   });
 });
 
@@ -1101,7 +1065,7 @@ describe('recoverForkedGroup', () => {
     // minEpoch rejects a stale re-Welcome from the diverged branch.
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-fork', 4);
     // The forgotten group is no longer local -> requestReAdd attempts recovery (external join first).
-    expect(mls.externalJoin).toHaveBeenCalledWith('g-fork');
+    expect(mls.externalJoin).toHaveBeenCalledWith('g-fork', { asAFurtherDevice: 'ask' });
   });
 });
 
@@ -1143,7 +1107,7 @@ describe('recoverRosterDisagreement', () => {
     // WASM guard, which is the whole defect.
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck', 0);
     // And recovery actually ran: this device is owed nothing, so it serves itself.
-    expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck');
+    expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck', { asAFurtherDevice: 'ask' });
   });
 
   it('waits for the Welcome a member owes us instead of joining over the top of the Add', async () => {
@@ -1192,7 +1156,7 @@ describe('recoverRosterDisagreement', () => {
     await recoverRosterDisagreement('g-stuck', deps);
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
-    expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck');
+    expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck', { asAFurtherDevice: 'ask' });
   });
 });
 

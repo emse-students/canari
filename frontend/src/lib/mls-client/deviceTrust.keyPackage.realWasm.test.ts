@@ -31,6 +31,17 @@ describe('keyPackageSignatureKey - read from the bytes the real WASM publishes',
     client.free();
   });
 
+  it('the key a waiting device shows its owner is the key a member is asked to approve', async () => {
+    // The owner compares the two fingerprints by eye: the one their waiting device shows
+    // (`own_signature_key`) and the one the member's ask shows (read from the published package).
+    const client = new bindings.WasmMlsClient('bob', 'phone-bob', undefined, undefined, false);
+    const own = client.own_signature_key();
+    const [dated] = client.generate_key_packages(1);
+    expect(await keyFingerprintOf(own)).toBe(await keyPackageFingerprintOf(dated.public));
+    dated.free();
+    client.free();
+  });
+
   it('tells two devices apart by their packages', async () => {
     const one = new bindings.WasmMlsClient('bob', 'phone-1', undefined, undefined, false);
     const two = new bindings.WasmMlsClient('bob', 'phone-2', undefined, undefined, false);

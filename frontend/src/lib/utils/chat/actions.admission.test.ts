@@ -648,6 +648,38 @@ describe('processPendingInvitations - a new user is never added automatically', 
     error.mockRestore();
   });
 
+  it("accuses the flagged seat once a session, and raises the person's ask once the leaf is gone", async () => {
+    // A removed member's leaf can outlive the removal until it is collected: every sweep meets the
+    // seat again, which is expected and said once. The verdict is read off the tree on every pass, so
+    // the ask a member owes the person comes back the moment the leaf is no longer there.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onJoinApprovalRequested = vi.fn();
+    const log = vi.fn();
+    const identities = vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']);
+    const mlsService = makeMls({
+      ...pendingFor('peer', 'new-phone'),
+      getGroupMemberIdentities: identities,
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+
+    expect(
+      error.mock.calls.filter(([m]) => String(m).includes('flagged as a join ask'))
+    ).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('already reported this session'));
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+
+    identities.mockResolvedValue(['self:self-device']);
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requesterUserId: 'peer', requesterDeviceId: 'new-phone' })
+    );
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it('refuses on a tree it cannot read, and keeps the row for the next sweep', async () => {
     const log = vi.fn();
     const mlsService = makeMls({

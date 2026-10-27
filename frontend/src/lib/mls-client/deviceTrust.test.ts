@@ -99,11 +99,13 @@ describe('deviceEventAudience and deviceEventKey - the table shared with Rust', 
     isKeyDistributionGroup: boolean;
     audience: string;
     key: string | null;
+    unvouched?: boolean;
   }>;
 
   it.each(cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
     expect(deviceEventAudience(c.event, c)).toBe(c.audience);
     expect(deviceEventKey(c.event)).toBe(c.key);
+    if (c.unvouched !== undefined) expect(entersAsUnvouchedDevice(c.event)).toBe(c.unvouched);
   });
 });
 

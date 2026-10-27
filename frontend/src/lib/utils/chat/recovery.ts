@@ -22,7 +22,6 @@ import { pendingGroupExitIds } from './pendingGroupExits';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
 import { dropGroupState } from './dropGroupState';
-import { onceHeldGroup } from './heldGroupsRegistry';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
@@ -591,23 +590,10 @@ export async function requestReAdd(
       // The account is seated. The list carries this device's seat too when the server has one, read
       // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no
       // seat there, this device's door is its own, as an `active` row's.
+      // NO SEAT FOR THIS DEVICE AT ALL, ON EITHER READ, goes on to the join below like any other:
+      // whether it is a further device of a member is read off the tree its commit would be built
+      // on (`asAFurtherDevice`), never off the server's rows.
       const listed = seat.row.deviceMembership;
-      if (!listed) {
-        // NO SEAT FOR THIS DEVICE AT ALL, ON EITHER READ: the account is seated, this device is not.
-        // Whose door that is depends on whether this device ever held the group
-        // ({@link decideOwnDoor}): a further device of a member never seated here is asked about by a
-        // member, never let in by its own commit.
-        const door = await decideOwnDoor(groupId, deps, 'no seat for this device');
-        if (door === null) return;
-        if (door === 'ask-a-member') {
-          await askAMemberToReAddUs(
-            groupId,
-            deps,
-            "no seat for this device, a further device of a member - a member's Add, not this device's own join"
-          );
-          return;
-        }
-      }
       if (listed) {
         deps.log(
           `[READD] ${groupId.slice(0, 8)}... no row for this device on the first read, the account's list ` +
@@ -638,25 +624,6 @@ export async function requestReAdd(
   if (reading === 'awaiting-admission') {
     await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
     return;
-  }
-  // A PENDING SEAT NO COMMIT ADMITTED (`never-admitted-seat`, 2026-10-27) IS EITHER DOOR, AND THE ROW
-  // CANNOT SAY WHICH: every demotion - a kick, the stale-device sweep - clears the admission it
-  // carried, so a device that held the group and one that never did read the same. The device's own
-  // record and the group's other devices decide ({@link decideOwnDoor}): a further device of a member
-  // that never held the group asks a member, who is shown the device and its key; any other device -
-  // one coming back, or the first device of its user here (a 1:1 peer) - takes its own door.
-  if (reading === 'never-admitted-seat') {
-    const door = await decideOwnDoor(groupId, deps, 'pending seat no commit admitted');
-    if (door === null) return;
-    if (door === 'ask-a-member') {
-      await askAMemberToReAddUs(
-        groupId,
-        deps,
-        "a further device of a member that never held the group - a member's Add, not this device's own join"
-      );
-      return;
-    }
-    reading = 'unhonoured-seat';
   }
   // A WELCOME THAT IS COMING IS WAITED FOR, NEVER ASKED FOR AGAIN (DUP-2, 2026-10-25).
   //
@@ -767,7 +734,11 @@ export async function requestReAdd(
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
   let outcome: ExternalJoinOutcome;
   try {
-    outcome = await deps.mlsService.externalJoin(groupId);
+    // A FURTHER DEVICE OF A MEMBER (2026-10-27) - the tree holds a leaf of its user and none of its
+    // own - is not let in by its own commit: the join answers `further_device` and the device asks
+    // a member below, whose device shows it and its key. Read off the very GroupInfo the commit
+    // would be built on, so an honest device never makes the entry members say as nobody's.
+    outcome = await deps.mlsService.externalJoin(groupId, { asAFurtherDevice: 'ask' });
   } catch (e) {
     // A STATUS CODE IS AN ANSWER. The server holds no membership row for us, so there is no base to
     // join and no point asking a member to re-add us - the group's own roster is what refused. This
@@ -963,6 +934,15 @@ export async function requestReAdd(
     return;
   }
 
+  // A FURTHER DEVICE OF A MEMBER: its door is a member's Add, asked for here.
+  if (outcome.reason === 'further_device') {
+    await askAMemberToReAddUs(
+      groupId,
+      deps,
+      "a further device of a member - a member's Add, not this device's own join"
+    );
+    return;
+  }
   // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
   // fine and nobody needs to re-add us, so asking a member for a Welcome would mutate the tree to
   // work around a wait. The watchdog's next pass joins again once the wait has passed.
@@ -1025,7 +1005,7 @@ async function readWelcomeOwed(
   groupId: string,
   deps: RecoveryDeps,
   opts: ReAddOptions = {}
-): Promise<OwnSeatReading | 'no-device-row' | null> {
+): Promise<WelcomeOwedReading | 'no-device-row' | null> {
   try {
     const rows = await deps.mlsService.getDeviceMemberships(
       deps.userId,
@@ -1054,61 +1034,6 @@ async function readWelcomeOwed(
 }
 
 /**
- * {@link WelcomeOwedReading}, with the one reading the conversation seam adds: `never-admitted-seat`,
- * an `unhonoured-seat` no commit admitted since the row was last written (every demotion clears the
- * admission) - whose door it is, {@link decideOwnDoor} says. The Graine key-group join keeps the
- * shared reading: every member enters a key group by its own external commit.
- */
-type OwnSeatReading = WelcomeOwedReading | 'never-admitted-seat';
-
-/**
- * Whose door a seat with no admission is (2026-10-27): this device's own external commit, or a
- * member's Add.
- *
- * - `self`: this device once held the group ({@link onceHeldGroup}) - it comes back, its owner's
- *   account let it in before - or its user has no other device in the group, so this device is how
- *   its user enters at all (a 1:1 peer's first device, a seat whose devices were all demoted).
- * - `ask-a-member`: it never held the group and another device of its user is in it - a FURTHER
- *   device of a member, whose first entry is a member's Add after a member's tap
- *   (`automaticAdmission` in `actions.ts`), never its own commit.
- *
- * @returns `null` when the group's devices could not be read - the round is skipped, never guessed.
- */
-async function decideOwnDoor(
-  groupId: string,
-  deps: RecoveryDeps,
-  context: string
-): Promise<'self' | 'ask-a-member' | null> {
-  const short = groupId.slice(0, 8);
-  const ownDevice = deps.mlsService.getDeviceId();
-  if (onceHeldGroup(ownDevice, groupId)) {
-    deps.log(`[READD] ${short}... ${context}: this device held the group before - its own door`);
-    return 'self';
-  }
-  let devices: { userId: string; deviceId: string }[];
-  try {
-    devices = await deps.mlsService.getGroupMembers(groupId);
-  } catch (e) {
-    deps.log(
-      `[READD] ${short}... ${context}: the group's devices could not be read (${String(e).slice(0, 120)}) - skipping this round`
-    );
-    return null;
-  }
-  const own = deps.userId.toLowerCase();
-  const sibling = devices.find((d) => d.userId.toLowerCase() === own && d.deviceId !== ownDevice);
-  if (sibling !== undefined) {
-    deps.log(
-      `[READD] ${short}... ${context}: never held here, and device ${sibling.deviceId.slice(0, 8)} of this account is in the group - a member is asked`
-    );
-    return 'ask-a-member';
-  }
-  deps.log(
-    `[READD] ${short}... ${context}: no other device of this account is in the group - its own door`
-  );
-  return 'self';
-}
-
-/**
  * Reads THIS DEVICE'S seat ({@link readWelcomeOwedFromRow}) and says what it read - the one place
  * both sources of that seat go through: `getDeviceMemberships`' row, and the account list's
  * `deviceMembership` when the first had none ({@link requestReAdd}). So an anomaly accuses and skips
@@ -1123,7 +1048,7 @@ function classifyOwnSeat(
   admittedAt: string | null,
   readPast: boolean,
   deps: RecoveryDeps
-): OwnSeatReading | null {
+): WelcomeOwedReading | null {
   {
     const reading = readWelcomeOwedFromRow(row, { ignoreQueuedWelcome: readPast });
     if (reading === null) {
@@ -1142,11 +1067,13 @@ function classifyOwnSeat(
     if (reading === 'unhonoured-seat' && admittedAt === null) {
       // NO COMMIT ADMITTED THIS SEAT SINCE IT WAS LAST WRITTEN - which is NOT "never admitted": the
       // server clears `admittedAtEpoch` on every transition, the demotions included (a kick, the
-      // stale-device sweep). So this reading does not choose the door; {@link decideOwnDoor} does.
+      // stale-device sweep), so a device coming back and one never admitted read the same. Not an
+      // anomaly, and not a door by itself: the join decides it on the tree of the GroupInfo it is
+      // built on, the one every member's verdict reads (`asAFurtherDevice`).
       deps.log(
-        `[READD] ${groupId.slice(0, 8)}... pending seat no commit admitted since it was written - deciding whose door it is`
+        `[READD] ${groupId.slice(0, 8)}... pending seat no commit admitted since it was written - the join's tree decides whose door it is`
       );
-      return 'never-admitted-seat';
+      return 'unhonoured-seat';
     }
     if (reading === 'unhonoured-seat') {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in

@@ -18,6 +18,7 @@ import {
   type DeviceNoticeContext,
   type KeyAge,
 } from './deviceNotices.svelte';
+import { historyWithheldFrom } from './historyWithheld';
 
 /**
  * User decision 2026-10-22: the owner is alerted (in the app, durably until seen) when a device
@@ -627,6 +628,19 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('never-seen device of a member'));
     error.mockRestore();
+  });
+
+  it("withholds history from it until a member's Add of it vouches for it", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry()], ctx);
+    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(true);
+
+    await deliverDeviceEvents([selfEntry({ addedBy: 'alice:phone-a', firstInGroup: false })], ctx);
+    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(false);
+    error.mockRestore();
+    warn.mockRestore();
   });
 
   it('says it in a 1:1 too - the peer of a DM is a member like any other', async () => {
