@@ -32,7 +32,7 @@
       hasSponsorship: model.hasSponsorship,
     };
     if (!mayOpenProfileSection(section, facts)) {
-      void goto(resolve('/profile'), { replaceState: true });
+      void goto(resolve('profile'), { replace: true });
     }
   });
 </script>

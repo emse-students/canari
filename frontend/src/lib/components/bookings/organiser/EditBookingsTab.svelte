@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -55,7 +56,7 @@
     try {
       const { id } = await createSpace(name, associationId);
       Log.i('BOOKINGS', `space created from the tab id=${id.slice(0, 8)}`);
-      await goto(resolve(spaceEditorHref(id)));
+      await goto(resolve(internalPath(spaceEditorHref(id))));
     } catch (e) {
       error = describeBookingRefusal(e, m.bookings_tab_create_button());
     } finally {
@@ -131,14 +132,14 @@
           </div>
           <div class="flex items-center gap-2">
             <a
-              href={resolve(spaceHref(space.id))}
+              href={resolve(internalPath(spaceHref(space.id)))}
               class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
             >
               <CalendarDays size={12} />
               {m.bookings_tab_open_action()}
             </a>
             <a
-              href={resolve(spaceEditorHref(space.id))}
+              href={resolve(internalPath(spaceEditorHref(space.id)))}
               class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
             >
               <Pencil size={12} />

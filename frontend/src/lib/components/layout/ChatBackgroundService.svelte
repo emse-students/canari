@@ -15,7 +15,7 @@
    */
   import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { navigating } from '$app/state';
   import { internalPath, loginAfterSessionExpiry } from '$lib/utils/internalPath';
   import { m } from '$lib/paraglide/messages';
@@ -228,7 +228,7 @@
     // lands, instead of leaving it waiting for the conversations map to mutate again.
     const targetRoute = chatDeepLinkRoute(id);
     const step = landingStep({
-      arrived: $page.url.pathname === targetRoute,
+      arrived: page.url.pathname === targetRoute,
       routeAlreadyRequested: lastRoutedLanding === landing,
     });
     if (step !== 'await-arrival') lastRoutedLanding = landing;
@@ -692,7 +692,7 @@
       loginPath,
       log: appendLog,
     });
-    void goto(resolve(internalPath(loginPath)), { replaceState: true });
+    void goto(resolve(internalPath(loginPath)), { replace: true });
   }
 
   /**
@@ -2052,7 +2052,10 @@
   // Safety net for navigations that arrive before onMount's startLoginFlow completes
   // (e.g. the OIDC callback navigates to /posts while onMount already ran with uid=null).
   // Delegates to startLoginFlow which handles both mobile and web paths uniformly.
-  afterNavigate(async ({ to }) => {
+  afterNavigate(async ({ to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
       path === '/login' ||

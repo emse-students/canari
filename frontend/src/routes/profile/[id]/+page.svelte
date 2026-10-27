@@ -142,7 +142,7 @@
     // `me` is the segment of the reader's own sections (`/profile/me/<section>`), never a user id:
     // a typed `/profile/me` is the reader's own profile too.
     if (userId === PROFILE_SELF_SEGMENT || (currentUserId && userId === currentUserId)) {
-      goto(resolve('/profile'), { replaceState: true });
+      goto(resolve('profile'), { replace: true });
       return;
     }
 

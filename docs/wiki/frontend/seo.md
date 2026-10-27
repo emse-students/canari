@@ -375,7 +375,7 @@ social-service. Four things still need a human, after a deploy, and none of them
    path is the one that crosses three services — head injector, social-service, media-service — so
    it is the one a missing `INTERNAL_SECRET` silently reduces back to a logo.
 2. **Install the Android build and confirm it still boots.** The adapter split means the mobile
-   build now goes down a different branch of `svelte.config.js` than the web one.
+   build now goes down a different branch of `kit.config.js` than the web one.
 3. **Run an association page and the agenda through Google's Rich Results Test.** The JSON-LD is
    verified by our tests, never by Google's own parser.
 4. **Submit `/sitemap.xml` in Search Console**, then read the coverage report a few days later.

@@ -1,6 +1,6 @@
 # Frontend architecture
 
-**Stack**: SvelteKit 2.9 / Svelte 5 (runes) / TailwindCSS 4 / Tauri 2  
+**Stack**: SvelteKit 3 / Svelte 5 (runes) / TailwindCSS 4 / Tauri 2  
 **Source**: `frontend/`
 
 ## Overview
@@ -9,7 +9,7 @@ The frontend is a SvelteKit application that never renders a component on the se
 
 ### One SPA, two adapters
 
-`svelte.config.js` picks its adapter from `process.env.BUILD_WEB`:
+`kit.config.js` picks its adapter from `process.env.BUILD_WEB`:
 
 | Build | Adapter | Output | Who sets it |
 |---|---|---|---|
@@ -773,3 +773,19 @@ them - 70 % of the suite's wall-clock. So vitest alone reads a second compile of
   keys equal the app output's keys, and that every key of `messages/{fr,en}.json` is in it.
 - A test that dies with `Failed to resolve import "$lib/paraglide/..."` has not compiled it: run
   `bun run paraglide:compile:test`.
+
+## SvelteKit 3 and adapter-node 6 (2026-10-27)
+
+One pull request, because `adapter-node@6` requires `@sveltejs/kit@3` and `kit@3` drops what `adapter-node@5` used. What moved, so the next reader does not rediscover it:
+
+- **Config.** `svelte.config.js` is refused. The same object lives in `frontend/kit.config.js` (still plain JS, still stamping `kit.version.name` once per process - `kitConfigStamp.test.ts`) and `vite.config.js` passes it to `sveltekit(kitConfig)`. There is no `kit:` namespace any more. `vitest.config.ts` passes `svelte({ configFile: false })`, otherwise the plugin logs "no Svelte config found".
+- **`$lib` is KEPT through the deprecated `alias: { $lib: 'src/lib' }`.** SvelteKit 3 wants `#lib` (a package.json subpath import) with the file extension on every import: 7645 imports in 1566 files, which `bunx sv migrate sveltekit-3 --tasks lib-alias` rewrites mechanically (tried, then reverted). It would conflict with every open branch, so it waits for a quiet moment; until then each build prints `config_option_deprecated_alias`. `tsconfig_invalid: "paths" was overwritten` is printed on Windows only (path separators in the kit's own validator).
+- **tsconfig** extends `$app/tsconfig` and carries its own `include`/`exclude` (the two generated JS bundles are never checked as source).
+- **Renames.** `$app/environment` -> `$app/env`; `$app/stores` -> `$app/state`; `Handle`/`HandleServerError` types come from `@sveltejs/kit/hooks`; `$env/dynamic/private` -> `src/env.ts` (`defineEnvVars`, every variable optional, read at runtime) + `$app/env/private`.
+- **`resolve()`.** A string starting with `/` is a ROUTE ID (groups stripped, `[param]` demands params); anything else is a PATHNAME without the leading slash. A computed path therefore goes through `internalPath()`, which now drops the slash and is typed `''`. `base` is gone: `appPathFromPathname` reads it from `resolve('')`. `preloadCode` takes a route id, so `routeCodePreload.ts` matches the path first.
+- **`goto` options.** `replaceState` -> `replace`, `keepFocus`+`noScroll` -> `reset: false`, `invalidateAll` -> `refreshAll`. The five `replaceState(url, state)` tab writes are `goto(url, { shallow: true, replace: true, state })`, and SvelteKit 3 now runs `beforeNavigate`/`onNavigate`/`afterNavigate` for them, so each of those hooks returns early on `shallow && type === 'goto'` - otherwise a tab switch would drain the overlay stack and ask "unsaved changes".
+- **Error hooks** receive `{ kind, error, event }` and are called for expected errors too (`handleError` logs by the derived status; the client one warns below 500).
+- **`cookie` override removed.** `overrides.cookie ^0.7` existed to lift kit 2's `cookie@0.6`; kit 3 depends on `cookie@2`, which the pin broke (`parseCookie is not a function`).
+- **adapter-node 6.** `ORIGIN` is gone (the compose files still set it, inert; the app has no form action or remote function for the CSRF origin check to guard). Static assets are served from a table recorded at build time, with content-hash ETags and `GET`/`HEAD` only. The server half of `check-bundle-consistency.mjs` now reads `const global = "__sveltekit_..."` instead of `version_hash`.
+- **Behaviour kept on purpose.** `version.pollInterval: 0` (the app owns stale-build recovery).
+- **UNVERIFIED here:** `goto` now rejects for a URL no route resolves (deep links, notification targets); the `ORIGIN` removal behind nginx; the web app on dev (`frontend-ssr` container, SEO head injection was smoke-tested against a local `build/index.js` only); both phones.

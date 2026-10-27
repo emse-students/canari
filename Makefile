@@ -543,7 +543,7 @@ build-frontend:
 # ── METTRE LE CODE COURANT SUR LA PILE LOCALE ────────────────────────────────────────────────
 # LA CIBLE QUI MANQUAIT, ET SON ABSENCE COÛTE UN CONTENEUR MORT (2026-09-04).
 #
-# `svelte.config.js` choisit adapter-STATIC sauf si `BUILD_WEB` est posé - la polarité est
+# `kit.config.js` choisit adapter-STATIC sauf si `BUILD_WEB` est posé - la polarité est
 # volontaire (Tauri par défaut). Les deux images frontend de la pile locale veulent l'autre forme :
 # `Dockerfile.frontend-ssr` fait `COPY frontend/build ./` et lance `node index.js`, `Dockerfile.
 # frontend` fait `COPY frontend/build/client` et `build/prerendered`. Un `bun run build` nu ne

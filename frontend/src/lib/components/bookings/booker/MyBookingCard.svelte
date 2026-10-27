@@ -10,6 +10,7 @@
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { spaceHref } from '$lib/bookings/routes';
+  import { internalPath } from '$lib/utils/internalPath';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -57,7 +58,7 @@
   <div class="flex items-start justify-between gap-3">
     <div class="min-w-0">
       <a
-        href={resolve(spaceHref(booking.space.id))}
+        href={resolve(internalPath(spaceHref(booking.space.id)))}
         class="text-text-main block truncate text-base font-bold hover:underline"
       >
         {booking.space.name}
