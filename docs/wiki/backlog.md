@@ -1961,7 +1961,7 @@ carries the share out of it into the Android layout. Nothing on Windows compiles
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`). CanaRun waits.
+suggestions (`INSendMessageIntent`).
 
 ## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
 
