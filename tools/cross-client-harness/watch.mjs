@@ -3705,6 +3705,35 @@ export function atLevels(levels, re) {
 /** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
 const levelOfEntry = (line) => /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
 
+/** A route's first preload in a document: `pathname` is the route preloaded. */
+const FIRST_ROUTE_PRELOAD = /\[RoutePreload\] \{"pathname":"(\/[a-z]*)","first":true\}$/;
+
+/**
+ * A ROUTE IS PRELOADED ONCE PER DOCUMENT, on the first in-app navigation that reaches it, and says so
+ * at debug (`[RoutePreload] {"pathname":"/chat","first":true}`). `PAGE_BOOT_NARRATION` forgives it
+ * only in a window whose document was replaced. A seat the preflight reloaded JUST BEFORE the row
+ * makes its first navigations inside the row's window instead: read on LIST-RACE-1 on
+ * `1.5.0-alpha.1` (2026-10-27), on W1, W8 and A1.
+ *
+ * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug. A
+ * pathname preloaded twice in one window is a document that booted twice, or a preload that is not
+ * the first, and both copies stay dirt. So does `"first":false`, or the line at another level.
+ */
+export function forgivingFirstRoutePreloads(rep) {
+  const seen = new Map();
+  for (const line of rep.unexplained) {
+    const m = FIRST_ROUTE_PRELOAD.exec(line);
+    if (m && levelOfEntry(line) === 'debug') seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+  }
+  const once = [...seen].filter(([, n]) => n === 1).map(([p]) => p);
+  if (!once.length) return rep;
+  const esc = (s) => s.replace(/[/]/g, '\\/');
+  return ignoringExpectedLog(
+    rep,
+    once.map((p) => atLevels(['debug'], new RegExp(`^\\[RoutePreload\\] \\{"pathname":"${esc(p)}","first":true\\}$`)))
+  );
+}
+
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
   // one list silently compared a different string from the others and every `^`-anchored rule in it

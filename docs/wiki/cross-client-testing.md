@@ -149,9 +149,9 @@ No row verdict depends on it; it stays here until it is explained.
 | BIG-1 | `campaign-big`: four users, twelve devices (W1-W8 + A1 + I1), created with one bulk Add | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 | BIG-2 | 30 rapid messages from three senders while two commits land in the middle | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 | BIG-3 | A community of twelve seats: a removal, then a new user | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
-| BIG-1-noI1 | BIG-1 without I1 (W1-W8 + A1), recorded under its own id while the iPhone reads no rows | W1-W8 +A1 - B | `PASS-DIRTY` - `1.4.1-alpha.5`: own 20/20 and the invariant held; dirt named (an old group's unsigned history, the phone arming trip fixed by #2533, the A1 history-coverage walk - a P3) |
+| BIG-1-noI1 | BIG-1 without I1 (W1-W8 + A1), recorded under its own id while the iPhone reads no rows | W1-W8 +A1 - B | `PASS-DIRTY` - `1.5.0-alpha.1`: own and the invariant held; dirt is undeclared narration (restored messages marked unverified) |
 | BIG-2-noI1 | BIG-2 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, the desktop thread panel scrolled under a sr-only status label (fixed by #2535); replayed on `1.4.1-alpha.6` |
-| BIG-3-noI1 | BIG-3 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, a salon heard of live was lower-cased until a reload (fixed by #2538); replayed on `1.4.1-alpha.6` |
+| BIG-3-noI1 | BIG-3 without I1 | W1-W8 +A1 - B | `FAIL` - `1.5.0-alpha.1`: FAIL-PRODUCT, pre-existing since `v1.4.0`, details in the private operations notes; seven of nine assertions held |
 
 ## LIST - a salon heard of live while its community's listing is in flight
 
@@ -159,14 +159,14 @@ Found by BIG-3-noI1 on A1 (2026-10-26); the cause and the fix are the backlog P2
 live while its community's listing is in flight is deleted by that listing's clean-up". Runner
 `archive/listrace.mjs`, table and judge `listracerows.mjs`. The subject's listing ANSWER is held
 (`hold-answer once`), released under the client's own 20 s stall, and every wait is counted in rounds.
-RED is `FAIL` on a build without the fix; GREEN is owed on the pre-release that carries it.
+RED was `FAIL` on `1.4.1-alpha.6`, without the fix; GREEN on `1.5.0-alpha.1`, which carries it.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| LIST-RACE-1-W | W4 joins by link; W8 (same account) lists in session with its answer held; W1's salon heard while held is listed after the release | W1 W4 W8 - U | `FAIL` - `1.4.1-alpha.6`: RED as expected, the salon not listed in 20 rounds; GREEN owed on `1.5.0-alpha.1` |
-| LIST-RACE-1-W-CTL | LIST-RACE-1-W with nothing held | W1 W4 W8 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: listed in round 1 |
-| LIST-RACE-1-A1 | W1's first salon starts A1's listing, held; a second salon heard while held is listed after the release | W1 +A1 - B | `FAIL` - `1.4.1-alpha.6`: RED as expected, the salon not listed in 20 rounds; GREEN owed on `1.5.0-alpha.1` |
-| LIST-RACE-1-A1-CTL | LIST-RACE-1-A1 with nothing held | W1 +A1 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: listed in round 1 |
+| LIST-RACE-1-W | W4 joins by link; W8 (same account) lists in session with its answer held; W1's salon heard while held is listed after the release | W1 W4 W8 - U | `PASS-DIRTY` - `1.5.0-alpha.1`: GREEN, the salon listed after the release (#2554); dirt named (a two-device key-group join race, backlog P3) |
+| LIST-RACE-1-W-CTL | LIST-RACE-1-W with nothing held | W1 W4 W8 - U | `PASS-DIRTY` - `1.5.0-alpha.1`: listed in round 1 |
+| LIST-RACE-1-A1 | W1's first salon starts A1's listing, held; a second salon heard while held is listed after the release | W1 +A1 - B | `PASS-DIRTY` - `1.5.0-alpha.1`: GREEN on the phone, the salon listed after the release (#2554) |
+| LIST-RACE-1-A1-CTL | LIST-RACE-1-A1 with nothing held | W1 +A1 - B | `PASS-DIRTY` - `1.5.0-alpha.1`: listed in round 1 |
 
 ## CALL - in-app 1:1 audio calls between two browsers
 
@@ -188,6 +188,18 @@ ring window. The first readings were a scratch runner; the repo row replays them
 | CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS-DIRTY` - `1.4.1-alpha.6`: ended at the window; a first `FAIL` was the rig's own 60 s bound |
 | CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: W5 rings its whole 60 s with no busy answer (calls B16) |
 | CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
+
+## LIVE - a live broadcast, watched from the web
+
+Read with a scratch runner on 2026-10-27; the repo row (narration and server rules on the CALL
+pattern) is owed. What each reading holds against the `lives_mode` flip is on
+[live](frontend/modules/live.md#the-first-rig-readings-and-what-they-hold-against-the-lives_mode-flip-live-web-2026-10-27).
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| LIVE-WEB-1 | W2 goes live from desktop Chrome; W4 and W5 watch from the feed card; W2 ends | W2 W4 W5 - U | `ERROR` - `1.4.1-alpha.6`: ERROR-PRODUCT, a desktop camera reports no facing and the live asks an exact one (#2574, after the stable) |
+| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: every fact held; viewers stall every ~4 s (L-F1); undeclared `[LIVE]` narration |
+| LIVE-WEB-3 | LIVE-WEB-2 with W4's account following the broadcaster: the announcement names one follower | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: `followers=1`, the push found no token on a web account (a device reading is owed) |
 
 ## TOK - a token expiring in the middle of an operation
 
