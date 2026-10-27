@@ -16,6 +16,11 @@
    * One resource (D10, D32): its name, its public and its after-booking text, the account linked
    * to it, and its availability. Its fields and its availability save separately - they are two
    * calls, and a refusal of one (D29) must not lose what was typed in the other.
+   *
+   * `hidden` is the space's ONE default column (D44): its name is the space's, its texts are the
+   * space's own, and it cannot be deleted alone - so only the linked account and the hours are
+   * drawn. A text it already carries (a space set up before WP-R1) stays shown, so nothing the
+   * server still serves is out of the organiser's sight.
    */
   interface Props {
     resource: ManagedResource;
@@ -27,9 +32,20 @@
     onDeleted: (resourceId: string) => void;
     /** Whether the fields or the availability hold changes not saved, for the leave warning. */
     onDirty: (dirty: boolean) => void;
+    /** The space shows no columns (D44, `columnsHidden`): this is its only one. */
+    hidden?: boolean;
   }
 
-  let { resource, spaceId, timeZone, stepMinutes, onChanged, onDeleted, onDirty }: Props = $props();
+  let {
+    resource,
+    spaceId,
+    timeZone,
+    stepMinutes,
+    onChanged,
+    onDeleted,
+    onDirty,
+    hidden = false,
+  }: Props = $props();
 
   // The editor's own copy: the parent keys this component by the resource id.
   let name = $state(untrack(() => resource.name));
@@ -42,6 +58,8 @@
   let error = $state('');
 
   let availabilityDirty = $state(false);
+  /** A hidden column still shows a text it carries: never hide what the server serves. */
+  const showTexts = $derived(!hidden || !!resource.description || !!resource.privateInfo);
 
   const fieldId = (f: string) => `resource-${resource.id}-${f}`;
   const fieldsNow = () => JSON.stringify([name, description, privateInfo, linkedUserId]);
@@ -58,8 +76,10 @@
     saving = true;
     saved = false;
     error = '';
+    // A hidden column's name is the space's, which the server keeps in step on a rename: sending
+    // this editor's copy could write a former name back.
     const fields = {
-      name: name.trim(),
+      ...(hidden ? {} : { name: name.trim() }),
       description: description.trim() || null,
       privateInfo: privateInfo.trim() || null,
       linkedUserId: linkedUserId || null,
@@ -101,47 +121,51 @@
 </script>
 
 <article class="border-cn-border space-y-4 rounded-2xl border p-3 sm:p-4">
-  <div class="flex items-start gap-2">
-    <div class="min-w-0 flex-1">
-      <Input
-        id={fieldId('name')}
-        label={m.bookings_resource_name()}
-        bind:value={name}
-        maxlength={120}
-        error={name.trim() ? undefined : m.bookings_problem_required()}
-        oninput={() => (saved = false)}
-      />
+  {#if !hidden}
+    <div class="flex items-start gap-2">
+      <div class="min-w-0 flex-1">
+        <Input
+          id={fieldId('name')}
+          label={m.bookings_resource_name()}
+          bind:value={name}
+          maxlength={120}
+          error={name.trim() ? undefined : m.bookings_problem_required()}
+          oninput={() => (saved = false)}
+        />
+      </div>
+      <button
+        type="button"
+        class="ui-icon-button text-text-muted hover:text-red-err mt-7 shrink-0 rounded-full"
+        aria-label={m.bookings_resource_delete_aria({ name: resource.name })}
+        disabled={deleting}
+        onclick={remove}
+      >
+        <Trash2 size={18} />
+      </button>
     </div>
-    <button
-      type="button"
-      class="ui-icon-button text-text-muted hover:text-red-err mt-7 shrink-0 rounded-full"
-      aria-label={m.bookings_resource_delete_aria({ name: resource.name })}
-      disabled={deleting}
-      onclick={remove}
-    >
-      <Trash2 size={18} />
-    </button>
-  </div>
+  {/if}
 
-  <Textarea
-    id={fieldId('description')}
-    label={m.bookings_field_description()}
-    bind:value={description}
-    rows={2}
-    maxlength={2000}
-    oninput={() => (saved = false)}
-  />
-  <div>
+  {#if showTexts}
     <Textarea
-      id={fieldId('private')}
-      label={m.bookings_field_private_info()}
-      bind:value={privateInfo}
+      id={fieldId('description')}
+      label={m.bookings_field_description()}
+      bind:value={description}
       rows={2}
       maxlength={2000}
       oninput={() => (saved = false)}
     />
-    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
-  </div>
+    <div>
+      <Textarea
+        id={fieldId('private')}
+        label={m.bookings_field_private_info()}
+        bind:value={privateInfo}
+        rows={2}
+        maxlength={2000}
+        oninput={() => (saved = false)}
+      />
+      <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
+    </div>
+  {/if}
   <div>
     <label class={CONTROL_LABEL_CLASS} for={fieldId('linked')}>{m.bookings_resource_linked()}</label
     >

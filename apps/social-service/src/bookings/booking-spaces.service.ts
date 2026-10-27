@@ -295,6 +295,9 @@ export class BookingSpacesService {
     const space = this.spaces.create({ ...owner, slotMode: 'step', stepMinutes: 30, maxSteps: 4 });
     this.applySettings(space, dto);
     await this.assertSettingsValid(space);
+    // Parsed before the transaction, so a malformed line refuses the creation as a 400 and nothing
+    // is written.
+    const hours = dto.availability ? this.parseAvailability(dto.availability) : null;
     // The id is chosen here so the poster can be claimed FOR this space, inside the transaction that
     // stores it: a refused claim refuses the creation, and a rollback leaves the claim to the release.
     space.id = randomUUID();
@@ -317,10 +320,14 @@ export class BookingSpacesService {
           await this.posterMedia.claim(m, poster, actor.userId, space.id, associationId);
           claimed = true;
         }
-        return m.save(BookingSpace, space);
+        const created = await m.save(BookingSpace, space);
+        const column = await this.writeDefaultColumn(m, created, hours);
+        return { id: created.id, resourceId: column };
       });
-      this.logger.log(`[BOOKINGS] space created id=${saved.id.slice(0, 8)}`);
-      return { id: saved.id };
+      this.logger.log(
+        `[BOOKINGS] space created id=${saved.id.slice(0, 8)} column=${saved.resourceId.slice(0, 8)} hours=${hours?.lines.length ?? 0}`
+      );
+      return saved;
     } catch (err) {
       // No row cites the poster this request claimed: it goes back to the idle sweep.
       if (poster && claimed) {
@@ -332,6 +339,40 @@ export class BookingSpacesService {
       }
       throw err;
     }
+  }
+
+  /**
+   * THE SPACE'S ONE DEFAULT COLUMN (D44): a resource named after the space, at position 0, with the
+   * hours the creation carried, if any. The data model is unchanged - a space still books through
+   * its resources - so a space that is created bookable needs one; the screens hide the columns
+   * level while there is exactly one. Written inside the creation's transaction: a refused write
+   * leaves no space without its column.
+   */
+  private async writeDefaultColumn(
+    m: EntityManager,
+    space: BookingSpace,
+    hours: { lines: AvailabilityLine[]; exceptions: AvailabilityException[] } | null
+  ): Promise<string> {
+    const column = await m.save(
+      BookingResource,
+      m.create(BookingResource, { spaceId: space.id, name: space.name, position: 0 })
+    );
+    if (hours?.lines.length) {
+      await m.insert(
+        BookingAvailabilityRule,
+        hours.lines.map((l) => ({ ...l, resourceId: column.id }))
+      );
+    }
+    if (hours?.exceptions.length) {
+      await m.insert(
+        BookingAvailabilityException,
+        hours.exceptions.map((e) => ({ ...e, resourceId: column.id }))
+      );
+    }
+    this.logger.debug(
+      `[BOOKINGS] default column written space=${space.id.slice(0, 8)} lines=${hours?.lines.length ?? 0} closures=${hours?.exceptions.length ?? 0}`
+    );
+    return column.id;
   }
 
   /**
@@ -350,6 +391,7 @@ export class BookingSpacesService {
         const space = await this.lockSpace(m, spaceId);
         const oldPoster = space.poster?.mediaId ?? null;
         const before: SlotConfig = { ...space };
+        const formerName = space.name;
         this.applySettings(space, dto);
         await this.assertSettingsValid(space);
         if (SHAPE_KEYS.some((k) => before[k] !== space[k])) {
@@ -370,6 +412,8 @@ export class BookingSpacesService {
           claimed = newPoster;
         }
         await m.save(BookingSpace, space);
+        if (space.name !== formerName)
+          await this.renameDefaultColumn(m, spaceId, formerName, space.name);
         this.logger.log(`[BOOKINGS] space updated id=${spaceId.slice(0, 8)}`);
         return { oldPoster, newPoster };
       });
@@ -382,6 +426,34 @@ export class BookingSpacesService {
       if (claimed) await this.posterMedia.releaseUncited([claimed], 'its update was refused');
       throw err;
     }
+  }
+
+  /**
+   * A renamed space carries its HIDDEN column's name along (D44): the column is the space's only
+   * resource and still bears the space's former name, which is how it was created. A space's only
+   * column that the organiser named otherwise keeps its own name, and so does any column once there
+   * are two. Without this, the name a booker reads in their bookings, the calendar file and the
+   * export would stay the old one. Runs under the space lock the update holds.
+   */
+  private async renameDefaultColumn(
+    m: EntityManager,
+    spaceId: string,
+    formerName: string,
+    name: string
+  ): Promise<void> {
+    // A CTE, so the statement answers rows whatever the driver makes of a bare UPDATE.
+    const [{ n }]: { n: number }[] = await m.query(
+      `WITH renamed AS (
+         UPDATE booking_resources SET name = $3
+          WHERE "spaceId" = $1 AND name = $2
+            AND (SELECT count(*) FROM booking_resources WHERE "spaceId" = $1) = 1
+         RETURNING id)
+       SELECT count(*)::int AS n FROM renamed`,
+      [spaceId, formerName, name]
+    );
+    this.logger.debug(
+      `[BOOKINGS] space renamed id=${spaceId.slice(0, 8)} hiddenColumnFollowed=${n === 1}`
+    );
   }
 
   /**

@@ -1301,7 +1301,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
 
       expect((await organiser.managedList(null, as(ALICE))).map((s) => s.id)).toEqual([personal]);
       expect(await organiser.managedList(association, as(ORGA))).toEqual([
-        expect.objectContaining({ name: 'BDA', resourceCount: 0 }),
+        expect.objectContaining({ name: 'BDA', resourceCount: 1 }),
       ]);
       expect(await refusal(organiser.managedList(association, as(ALICE)))).toEqual({
         code: 'not-manager',
@@ -1497,6 +1497,106 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(
         await refusal(organiser.addResource(space.id, { name: 'one more' }, as(ORGA)))
       ).toEqual({ code: 'too-many-resources', max: MAX_RESOURCES_PER_SPACE });
+    });
+
+    describe('the hidden default column (WP-R1, D44)', () => {
+      const columnsOf = (spaceId: string) =>
+        ds.getRepository(BookingResource).find({ where: { spaceId }, order: { position: 'ASC' } });
+
+      it('creates the space with ONE column named after it, closed when no hours are given', async () => {
+        const created = await organiser.create({ name: 'Salle de musique' }, as(ALICE));
+        const columns = await columnsOf(created.id);
+        expect(columns.map((c) => [c.id, c.name, c.position])).toEqual([
+          [created.resourceId, 'Salle de musique', 0],
+        ]);
+        const view = await organiser.managedSpaceView(created.id, as(ALICE));
+        expect(view.resources).toEqual([
+          expect.objectContaining({ id: created.resourceId, lines: [], exceptions: [] }),
+        ]);
+      });
+
+      it('writes the first hours in the same call, and the space is bookable at once', async () => {
+        const created = await organiser.create(
+          {
+            name: 'Atelier',
+            timeZone: 'UTC',
+            availability: availability(EVERY_DAY, [
+              { fromDate: '2026-12-24', toDate: '2026-12-26' },
+            ]),
+          } as never,
+          as(ALICE)
+        );
+        const view = await organiser.managedSpaceView(created.id, as(ALICE));
+        expect(view.resources[0].lines).toHaveLength(7);
+        expect(view.resources[0].lines).toEqual(
+          expect.arrayContaining([
+            { weekday: 1, onDate: null, startTime: '08:00:00', endTime: '22:00:00' },
+          ])
+        );
+        expect(view.resources[0].exceptions).toEqual([
+          { fromDate: '2026-12-24', toDate: '2026-12-26' },
+        ]);
+        await expect(
+          service.book(
+            created.id,
+            { resourceId: created.resourceId, startsAt: on('10:00'), endsAt: on('10:30') } as never,
+            as(BOB),
+            NOW
+          )
+        ).resolves.toEqual(expect.objectContaining({ id: expect.any(String) }));
+      });
+
+      it('refuses a malformed line before writing anything', async () => {
+        expect(
+          await refusal(
+            organiser.create(
+              {
+                name: 'Malformed',
+                availability: availability([{ weekday: 1, startTime: '10:00', endTime: '09:00' }]),
+              } as never,
+              as(ALICE)
+            )
+          )
+        ).toEqual({ code: 'line-order' });
+        expect(await ds.getRepository(BookingSpace).countBy({ name: 'Malformed' })).toBe(0);
+      });
+
+      it('leaves NO space when a write of the column fails inside the transaction', async () => {
+        // A weekday the DTO would refuse reaches the database's own CHECK here (the service is
+        // called directly): the space and its column were already written, and must roll back.
+        await expect(
+          organiser.create(
+            {
+              name: 'Half made',
+              availability: availability([{ weekday: 9, startTime: '08:00', endTime: '09:00' }]),
+            } as never,
+            as(ALICE)
+          )
+        ).rejects.toThrow(/booking_availability_rules_weekday/);
+        expect(await ds.getRepository(BookingSpace).countBy({ name: 'Half made' })).toBe(0);
+        expect(await ds.getRepository(BookingResource).countBy({ name: 'Half made' })).toBe(0);
+      });
+
+      it('renames the hidden column with its space, and nothing the organiser named', async () => {
+        const rename = (id: string, name: string) =>
+          organiser.update(id, { name } as never, as(ALICE), NOW);
+
+        const one = await organiser.create({ name: 'Old' }, as(ALICE));
+        await rename(one.id, 'New');
+        expect((await columnsOf(one.id)).map((c) => c.name)).toEqual(['New']);
+
+        // The only column, but named by the organiser: it keeps its name.
+        const named = await organiser.create({ name: 'Room' }, as(ALICE));
+        await organiser.updateResource(named.resourceId, { name: 'Piano' }, as(ALICE));
+        await rename(named.id, 'Music room');
+        expect((await columnsOf(named.id)).map((c) => c.name)).toEqual(['Piano']);
+
+        // Two columns: the first still bears the former name, and is no longer hidden.
+        const two = await organiser.create({ name: 'Alumni' }, as(ALICE));
+        await organiser.addResource(two.id, { name: 'Camille', position: 1 }, as(ALICE));
+        await rename(two.id, 'Alumni 2026');
+        expect((await columnsOf(two.id)).map((c) => c.name)).toEqual(['Alumni', 'Camille']);
+      });
     });
 
     /**
