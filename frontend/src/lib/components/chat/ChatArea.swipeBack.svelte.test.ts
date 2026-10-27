@@ -76,6 +76,7 @@ function mountArea(onBack: () => void): HTMLElement {
       } as unknown as Conversation,
       messageText: '',
       onMessageChange: () => {},
+      bindDraftWriter: () => () => {},
       onSend: () => {},
       onInviteMembers: () => {},
       onBack,

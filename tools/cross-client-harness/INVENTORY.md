@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-110 scripts.
+111 scripts.
 
 | script | what it is |
 |---|---|
@@ -76,6 +76,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `killrows.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - KILL-1..5 and RM-3 - their table and their judges. |
 | `launch.mjs` | Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5 |
 | `listracerows.mjs` | LIST-RACE-1 - A SALON HEARD OF LIVE WHILE ITS COMMUNITY'S LISTING IS IN FLIGHT (2026-10-26). |
+| `liverows.mjs` | LIVE-WEB-2 AND LIVE-STALL-1 - A LIVE BROADCAST FROM THE MI 9T, WATCHED FROM THE WEB (2026-10-27). |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
@@ -101,6 +102,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `purge-devices.mjs` | Deletes NAMED devices of an account, through the real UI. |
 | `recv.mjs` | Waits for one message to ARRIVE on one client, and ends on the bubble rather than on a clock. |
 | `reload.mjs` | Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
+| `removalrows.mjs` | KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - A REMOVAL IS COMMITTED, NOT ONLY UNROUTED. |
 | `results.mjs` | Append-only result log for the campaign. |
 | `rowkit.mjs` | THE PURE HALF OF EVERY 1.4.1 ROW RUNNER - the names a row mints, and how its verdict is composed. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
@@ -148,7 +150,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-93 scripts.
+94 scripts.
 
 | script | what it is |
 |---|---|
@@ -205,6 +207,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/kill.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - a process that dies with a commit in flight. |
 | `archive/life.mjs` | LIFE-1..8 - the phone in every state an OS can put it in, one check per run. |
 | `archive/listrace.mjs` | LIST-RACE-1: a salon heard of live while its community's listing is held - listed after the release? |
+| `archive/liveweb.mjs` | LIVE-WEB-2 AND LIVE-STALL-1 - A LIVE FROM THE MI 9T, WATCHED FROM THE WEB, ONE ROW PER PROCESS. |
 | `archive/mention.mjs` | MENTION-1..6 - the @mention composer, the cleartext `mentionedUserIds` routing hint it produces |
 | `archive/msg1.mjs` | MSG-1: W1 -> W2, both foreground, DM, plain text. One copy, correct author, and it STAYS. |
 | `archive/msg10.mjs` | MSG-10 - the SENDER is offline. |
@@ -234,6 +237,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
 | `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
+| `archive/removals.mjs` | KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - a removal is COMMITTED, not only unrouted. |
 | `archive/roster.mjs` | THE MEMBERSHIP TABLE ITSELF - the four rows nothing on this board could have caught. |
 | `archive/salon.mjs` | THE SALON ROWS OF THE 1.4.1 CAMPAIGN - the removal bound (#2284) on a salon's access list. |
 | `archive/search.mjs` | SEARCH-1..6 - the two searches this app has (in-conversation full-history, and the sidebar |
@@ -250,7 +254,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-63 scripts.
+65 scripts.
 
 | script | what it is |
 |---|---|
@@ -289,6 +293,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
 | `archive/kill-selftest.mjs` | THE KILL ROWS' OWN JUDGEMENTS, PINNED (`killrows.mjs`). |
 | `archive/listrace-selftest.mjs` | LIST-RACE-1'S TABLE AND JUDGE, PINNED (`listracerows.mjs`). |
+| `archive/liveweb-selftest.mjs` | THE LIVE ROWS' OWN JUDGEMENTS AND NARRATION, PINNED (`liverows.mjs`). |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
@@ -300,6 +305,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/picker-selftest.mjs` | THE RIG CHOOSES AN OPTION OF THE IN-APP PICKER BY ITS DRAWN LABEL, AND REFUSES WITH A REASON. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
+| `archive/removals-selftest.mjs` | THE REMOVAL ROWS' JUDGE, PINNED (`removalrows.mjs`): a clean measurement passes, each fact broken |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
 | `archive/salon-selftest.mjs` | THE SALON ROWS' OWN JUDGEMENTS, PINNED (`salonrows.mjs`). |
 | `archive/seedargs-selftest.mjs` | THE SEEDER'S GRAMMAR REFUSES WHAT IT DOES NOT KNOW, AND THIS HOLDS IT TO THAT. |
@@ -311,6 +317,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/sourcestamp-selftest.mjs` | THE GATE THAT WOULD HAVE SAVED GRP-3 AND GRP-8, pinned on both sides. |
 | `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT NINE TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
+| `archive/ssh-selftest.mjs` | WHICH `ssh` FAILURES ARE RETRIED, PINNED (`ssh.mjs` `transportFailure`): the transport's own (255, |
 | `archive/staleness-selftest.mjs` | A ROW MEASURED ON A BUNDLE THE ESTATE NO LONGER SERVES IS ABSENT, NOT FAILING. |
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
 | `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
@@ -375,4 +382,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-314 scripts in total.
+318 scripts in total.

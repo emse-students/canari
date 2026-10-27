@@ -496,6 +496,9 @@ test-harness:
 	@bun tools/cross-client-harness/archive/big-selftest.mjs
 	@bun tools/cross-client-harness/archive/listrace-selftest.mjs
 	@bun tools/cross-client-harness/archive/callweb-selftest.mjs
+	@bun tools/cross-client-harness/archive/liveweb-selftest.mjs
+	@bun tools/cross-client-harness/archive/ssh-selftest.mjs
+	@bun tools/cross-client-harness/archive/removals-selftest.mjs
 	@bun tools/cross-client-harness/archive/handrow-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 

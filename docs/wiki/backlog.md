@@ -288,6 +288,10 @@ every removal is logged.
 
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 
+**BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
+
+- **P3 left: render a call row from `callEvent.outcome` and `starterId`** instead of the text baked per side at write time, so a locale change or a second device reads the same row in its own words.
+
 **These block the `calls_mode` flip, not the stable** (B15 and B16 in
 [calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence)). They are user-visible as soon
 as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
@@ -1490,6 +1494,12 @@ the commit log's row for that epoch (its confirmed transcript hash), or a `diver
 `unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
 in #2269 by decision of the review.
 
+**WIDENED 2026-10-27:** the departed-member removal of a roster diff now goes through the same check
+(#2580), and for a KEY GROUP too - its base read from social-service, where a holder also publishes
+it. So `diverged` now reaches community and salon key groups, and a forked holder's republished
+key-group base would send that key group's honest members to rung 2 the same way. The count owed
+above counts `[FORK]` lines on key groups as well.
+
 ## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
 
 A commit whose submission got no answer is settled by resubmitting it, and the gate's duplicate
@@ -2031,7 +2041,27 @@ carries the share out of it into the Android layout. Nothing on Windows compiles
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`). CanaRun waits.
+suggestions (`INSendMessageIntent`).
+
+## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
+
+- **A text restored while an edit is open is LOST.** A refused send answered (or a share landing)
+  on the conversation being edited goes through `restoreFailedDraft` into the composer, which holds
+  the edited message's text; `cancel`, `confirm` and `reset` then put back the draft saved at
+  `begin` (`editSession.svelte.ts`), and the restored text is gone - or, on `confirm`, saved as part
+  of the edited message.
+- **The salon ledger detour stays, for durability.** A salon text resumed after the member left the
+  salon goes back to the ledger (`recordUnsentSalonText`), not straight into that salon's draft
+  through the gated writer: the ledger is persisted, the drafts are memory only, so a page closed
+  before the next visit would lose it. Simplifying it waits for drafts that outlive the page.
+- **A mention dropdown can outlive a conversation switch.** `useMentionAutocomplete` closes only on
+  input: type `@ali` in A, switch to B before the debounced search answers or with the list open,
+  and the list (A's members) stays over B's composer until the next keystroke.
+- **Drafts are never removed when a conversation is left or deleted**: the entry stays in
+  `draftByConversation` until sign-out. Memory only and per page life, so small - but a conversation
+  re-joined later shows the old text.
+
+[chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
 
 ## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
 
@@ -2046,6 +2076,22 @@ a twin of its envelope, and the extension holds no key (its entitlement is the A
 The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT with the install's
 cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
 and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
+
+## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
+
+A share from another app opens "Envoyer a..." (`IncomingShareHost`), which reuses
+`ForwardMessageModal` and so `shareDestinations` with `order: 'alphabetical'`. The conversation
+list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent'`) all lead with
+the most recent conversation, so the one the member just left is at the top everywhere except
+there. Deciding: whether the forward and the share-in picker split their order, or both go to
+`'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
+
+Seen failing in a full `vitest run` on a loaded machine, and passing when the file runs alone.
+Not diagnosed: the test asserts a mount count, so a mount that has not settled yet when the
+assertion runs (a timing dependency) is the first suspect, not proven. Owed: run it under
+`--repeat` with the full sweep's load, and name the condition before touching the test.
 
 ## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
 

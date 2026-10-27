@@ -128,6 +128,9 @@
       get paused() {
         return el.paused;
       },
+      get seeking() {
+        return el.seeking;
+      },
       async play() {
         try {
           await el.play();
