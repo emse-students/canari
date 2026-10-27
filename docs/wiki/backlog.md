@@ -406,6 +406,39 @@ To read:
 What the audit left open is in the private operations notes until each item is fixed; the rule is
 in [durable-rules](durable-rules.md).
 
+## P3 - At a live's end, a viewer downloads a segment the end has already purged (LIVE-WEB-3, `1.4.1-alpha.6`, 2026-10-26; not yet read on the server)
+
+**Suspected, not a defect until the server side is read.** On a web viewer (W4, watching A1), the
+last second of a live printed:
+
+```
+[LIVE] viewer <live>: 3 segments behind - jumping from 4 to 7
+GET /api/media/public/live/<live>/<segment> -> 404
+[LIVE] viewer <live>: segment 7 is gone - skipped
+GET /api/lives/<live>/manifest?from=... -> 404     (LIVE_NOT_FOUND)
+[LIVE] viewer <live>: stopped on ended (404 not-found)
+```
+
+- **The viewer does stop at the ended manifest.** The next poll after the end answered 404
+  `LIVE_NOT_FOUND`, and the player stopped on it. That part works.
+- **The suspected race.** `endLive` purges the live's segments right away
+  (`purgeBestEffort(liveId, 'at end')`, `lives.service.ts`). A manifest read just before the end
+  still lists the last segments, so a download that follows meets a file already deleted: one 404
+  per viewer per live, at the very end. The `jumping` line just before it fits a backlog flushed at
+  the end (the broadcaster's camera handed over its last segments).
+- **A second thing to read beside it.** `manifest()`'s comment says an ended live answers 410 "from
+  the moment the live has ended". A viewer saw 404 `LIVE_NOT_FOUND` instead, which fits the purge
+  removing the live row with its segments. If so, the 410 is never seen by a viewer.
+- **To read first** (server side, one LIVE row's window): the order of `ended by its broadcaster`,
+  `purging the segments of live`, the viewer's last manifest and its segment GET. Whether the
+  manifest that listed segment 7 was answered before or after the end decides it.
+- **The candidate directions, after that reading:**
+  - The purge waits one manifest window, so the last listed segments stay downloadable.
+  - Or the player reads a 404 on a segment listed by the LAST manifest before an end as the end,
+    not as a gap.
+- **In the rig:** the purged-segment 404 stays dirt in the LIVE rows (`liverows.mjs` `liveRefusals`
+  forgives only the manifest 404), until the product decides.
+
 ## Session liveness beyond the verifier, tracked privately (2026-10-25)
 
 Two follow-ups of [sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
