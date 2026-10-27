@@ -43,6 +43,7 @@ import {
   advanceLastMessageAt,
   insertMessageOrdered,
   mergeMessagesInInputOrder,
+  tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
@@ -916,7 +917,9 @@ export function useMessaging() {
             type: 'message_added',
             conversationId: normalized,
             message: upgraded,
-            lastMessageAt: updatedConvo.lastMessageAt ?? 0,
+            ...(updatedConvo.lastMessageAt !== undefined
+              ? { lastMessageAt: updatedConvo.lastMessageAt }
+              : {}),
             unreadCount: updatedConvo.unreadCount ?? 0,
             ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
@@ -960,7 +963,7 @@ export function useMessaging() {
         type: 'message_added',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]) ?? 0,
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
         unreadCount: nextUnreadCount,
         ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       });
@@ -976,7 +979,7 @@ export function useMessaging() {
         type: 'own_message_composed',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]) ?? 0,
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
       });
     }
 
@@ -1302,7 +1305,7 @@ export function useMessaging() {
       type: 'messages_batch',
       conversationId: normalized,
       messages: brandNew,
-      lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, brandNew) ?? 0,
+      ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, brandNew)),
       unreadCount: nextUnreadCount,
     });
 

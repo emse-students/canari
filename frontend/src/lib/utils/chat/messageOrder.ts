@@ -1,4 +1,5 @@
 import type { ChatMessage } from '$lib/types';
+import { parseEnvelope } from '$lib/envelope';
 
 /** Returns the message timestamp as a numeric ms-since-epoch value regardless of input type. */
 export function messageTime(msg: ChatMessage): number {
@@ -49,9 +50,23 @@ export function isSystemRow(msg: Pick<ChatMessage, 'isSystem' | 'senderId'>): bo
 }
 
 /**
+ * Is this row a NOTICE - a system row that is not a call record?
+ *
+ * A call record (missed, ended, declined) is a product event that DOES count as activity, like on
+ * Messenger and WhatsApp (decided 2026-10-27); it is a system row carrying a `callEvent` envelope.
+ * Everything else sent by `system` (device added, member joined or left, key rotation) is a notice
+ * and never moves a conversation. The envelope parse is cached.
+ */
+export function isNoticeRow(msg: Pick<ChatMessage, 'isSystem' | 'senderId' | 'content'>): boolean {
+  if (!isSystemRow(msg)) return false;
+  const env = parseEnvelope(msg.content);
+  return !(env.kind === 'system' && env.callEvent);
+}
+
+/**
  * The `lastMessageAt` seed after `messages` arrived: it advances on REAL messages only.
  *
- * A system notice is not activity, so it never moves the conversation up the list (user,
+ * A system NOTICE is not activity (a call record is, see {@link isNoticeRow}), so it never moves the conversation up the list (user,
  * 2026-10-27). Every writer of the seed goes through here, so none can restate the rule.
  *
  * @param previous the seed before the arrival
@@ -59,15 +74,23 @@ export function isSystemRow(msg: Pick<ChatMessage, 'isSystem' | 'senderId'>): bo
  */
 export function advanceLastMessageAt(
   previous: number | undefined,
-  messages: readonly Pick<ChatMessage, 'isSystem' | 'senderId' | 'timestamp'>[]
+  messages: readonly Pick<ChatMessage, 'isSystem' | 'senderId' | 'timestamp' | 'content'>[]
 ): number | undefined {
   let next = previous;
   for (const msg of messages) {
-    if (isSystemRow(msg)) continue;
+    if (isNoticeRow(msg)) continue;
     const at = messageTime(msg as ChatMessage);
     if (Number.isFinite(at) && at > (next ?? 0)) next = at;
   }
   return next;
+}
+
+/**
+ * The seed as a tab-sync event field: ABSENT when there is none, never `0` (a follower tab would
+ * rank a conversation by 0, below its `startedAt`). Spread it into the event.
+ */
+export function tabSeed(seed: number | undefined): { lastMessageAt?: number } {
+  return seed === undefined ? {} : { lastMessageAt: seed };
 }
 
 /**

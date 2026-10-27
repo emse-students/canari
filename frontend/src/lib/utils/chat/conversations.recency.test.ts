@@ -9,6 +9,7 @@ import {
   toConversationMeta,
 } from './conversations';
 import { advanceLastMessageAt } from './messageOrder';
+import { mkCallStartedEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 function msg(id: string, at: number): ChatMessage {
@@ -77,6 +78,36 @@ describe('a system notice is not activity', () => {
     expect(advanceLastMessageAt(50, [notice('1', 900)])).toBe(50);
     expect(advanceLastMessageAt(undefined, [notice('1', 900)])).toBeUndefined();
     expect(advanceLastMessageAt(50, [notice('1', 900), msg('2', 70)])).toBe(70);
+  });
+});
+
+describe('a call record is activity, a notice is not', () => {
+  const call = (id: string, at: number): ChatMessage => ({
+    ...msg(id, at),
+    senderId: 'system',
+    isSystem: true,
+    content: serializeEnvelope(mkCallStartedEnvelope('Camille', 'c1', 'camille', at)),
+  });
+
+  it('ranks by the call record even when a notice is newer', () => {
+    expect(conversationRecency(convo('c', [msg('1', 100), call('2', 400), notice('3', 900)]))).toBe(
+      400
+    );
+  });
+
+  it('advanceLastMessageAt moves on a call record', () => {
+    expect(advanceLastMessageAt(50, [call('1', 600)])).toBe(600);
+  });
+});
+
+describe('a freshly created conversation holding only its creation notice', () => {
+  it('ranks by its creation seed, above an older quieter conversation', () => {
+    const fresh = convo('fresh', [notice('1', 5000)], 4000);
+    const old = convo('old', [msg('1', 1000)]);
+    expect([old, fresh].sort(compareConversationRecency).map((x) => x.id)).toEqual([
+      'fresh',
+      'old',
+    ]);
   });
 });
 

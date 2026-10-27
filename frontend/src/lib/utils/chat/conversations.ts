@@ -26,7 +26,7 @@ import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
-import { isSystemRow, messageTime } from './messageOrder';
+import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 
@@ -1171,7 +1171,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 /**
  * THE ONE SIDEBAR ORDERING KEY: the sent time of the conversation's newest message, in ms.
  *
- * A SYSTEM NOTICE IS NOT ACTIVITY (user, 2026-10-27: "X a ajoute un appareil" moved the conversation
+ * A SYSTEM NOTICE IS NOT ACTIVITY, A CALL RECORD IS ({@link isNoticeRow}; user, 2026-10-27: "X a ajoute un appareil" moved the conversation
  * up the list). Only real messages count, and a conversation holding notices alone keeps the
  * position of its seed, which no notice ever advances ({@link advanceLastMessageAt}), then of its
  * creation (`startedAt`), then 0 - never the arrival time of a notice.
@@ -1191,7 +1191,7 @@ export function conversationRecency(
   convo: Pick<Conversation, 'messages' | 'lastMessageAt'> & { startedAt?: number }
 ): number {
   for (let i = convo.messages.length - 1; i >= 0; i--) {
-    if (isSystemRow(convo.messages[i])) continue;
+    if (isNoticeRow(convo.messages[i])) continue;
     const at = messageTime(convo.messages[i]);
     if (Number.isFinite(at)) return at;
   }

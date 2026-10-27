@@ -1016,6 +1016,7 @@
                 contactName: channelConversationId,
                 displayName: channelName,
               },
+              lastMessageAt: Date.now(), // creation moment, see groupCreation
             })
           );
         }
@@ -1437,7 +1438,9 @@
       globalConvs.conversations.set(event.conversationId, {
         ...target,
         messages: insertMessageOrdered(target.messages, event.message),
-        lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt),
+        ...(event.lastMessageAt !== undefined
+          ? { lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt) }
+          : {}),
         // `unreadCount` is deliberately untouched: an own message is never unread, and the sender
         // has nothing to say about what this tab has read.
       });
@@ -1481,7 +1484,7 @@
       globalConvs.conversations.set(event.conversationId, {
         ...convo,
         messages: merged.messages,
-        lastMessageAt: event.lastMessageAt,
+        ...(event.lastMessageAt !== undefined ? { lastMessageAt: event.lastMessageAt } : {}),
         unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
       return;
@@ -1497,7 +1500,7 @@
     globalConvs.conversations.set(event.conversationId, {
       ...convo,
       messages: merged,
-      lastMessageAt: event.lastMessageAt,
+      ...(event.lastMessageAt !== undefined ? { lastMessageAt: event.lastMessageAt } : {}),
       unreadCount: isOpenHere ? 0 : event.unreadCount,
     });
   }

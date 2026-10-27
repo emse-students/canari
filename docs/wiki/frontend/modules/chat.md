@@ -2371,6 +2371,15 @@ sender, the same fact in its two forms - and every writer of the `lastMessageAt`
 cache merge, the channel join notice). A conversation holding notices only keeps its seed, then
 `startedAt` (the server's creation instant), then 0: never the arrival time of a notice.
 
+**A CALL RECORD IS ACTIVITY (decided 2026-10-27)**: a system row carrying a `callEvent` envelope (missed,
+ended, declined) still moves the conversation, as on Messenger and WhatsApp; `isNoticeRow` is the
+predicate every consumer uses (notice = system row that is not a call record). Tab-sync events omit
+`lastMessageAt` when there is no seed (`tabSeed`) instead of writing 0. A conversation created on
+this device is seeded with its creation moment (`lastMessageAt`, group / DM / channel creation and
+the channel join), NOT `startedAt`, which stays the server's write-once fact that the sweep
+backfills. The boot stub seeded from an old `meta.updatedAt` (written while notices counted) is
+transient: the first load of messages replaces it, no migration.
+
 **The preview line is unchanged** and still shows the newest row, notice included: it is a text, not
 a position, and hiding it would show a stale sentence. Read receipts and unread counts already
 ignored notices. Not changed: native notification previews (they raise only for inbound messages).
