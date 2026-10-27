@@ -25,7 +25,7 @@ const ok = (label, cond) => {
 
 // THE SPELLINGS OF `livePlayer.ts` ON MAIN AFTER #2583, line for line - and pinned against the source
 // below, so a reworded line fails here rather than letting the judge pass on lines it cannot see.
-const S = 'd8de628a…';
+const S = '0f1e2d3c…';
 const JOINED = `[00:16:17.719] [LIVE] viewer joined ${S} at segment 1`;
 const STALL = `[00:16:17.720] [LIVE] viewer ${S} stalled at 2.01 (target 2000 ms)`;
 const STALL_OLD = `[00:16:17.720] [LIVE] viewer ${S} stalled at 2.01`;
@@ -43,6 +43,7 @@ for (const t of [
   '`[LIVE] viewer ${this.liveId}: a delivery gap of ${Math.round(d.gapMs ?? 0)} ms - target buffer now ${Math.round(d.targetMs)} ms`',
   '`[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`',
   '`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`',
+  '`[LIVE] viewer ${this.liveId}: stopped on ${final.kind} (${describe(error)})`',
 ]) ok(`livePlayer.ts still writes ${t.slice(1, 60)}...`, SOURCE.includes(t));
 
 // ── the order of a viewer's lines ────────────────────────────────────────────────────────────────
@@ -60,6 +61,14 @@ const moved = stallsOf([JOINED, GAP(3960, 4500), `[LIVE] viewer ${S} has stalled
 ok('a stall line in a spelling the judge cannot read FAILS, rather than passing unseen', moved.unread.length === 1 && failsOn('W2', moved, /cannot read/));
 const quiet = stallsOf([JOINED]);
 ok('no stall and no gap passes: nothing to adapt to', stallFacts('W4', quiet).every(([o]) => o));
+ok('a viewer that never wrote its join line FAILS - its stall counts read nothing', failsOn('W4', stallsOf([STALL, GAP(1, 2)]), /no "viewer joined" line/) && failsOn('W4', stallsOf([]), /no "viewer joined" line/));
+const END_410 = '[19:14:05.822] [LIVE] Live manifest: 410 LIVE_ENDED -> ended (broadcaster)';
+const END_404 = '[19:14:06.915] [LIVE] Live manifest: 404 LIVE_NOT_FOUND -> not-found';
+const STOP = (why) => `[19:14:05.822] [LIVE] viewer ${S}: stopped on ended (${why})`;
+ok('one ended answer followed by its stop passes (410 before the purge, 404 after it)', stallFacts('W4', stallsOf([JOINED, END_410, STOP('410 ended')])).every(([o]) => o) && stallFacts('W2', stallsOf([JOINED, END_404, STOP('404 not-found')])).every(([o]) => o));
+ok('an ended answer the viewer did not stop on FAILS (a mid-live 404 forgiven by the refusal alone)', failsOn('W4', stallsOf([JOINED, END_404, STALL]), /not followed by its stop/));
+ok('an ended answer as the very last line FAILS - it stopped nothing', failsOn('W4', stallsOf([JOINED, END_410]), /not followed by its stop/));
+ok('two ended answers FAIL - the refusal forgives one', failsOn('W4', stallsOf([JOINED, END_410, STOP('410 ended'), END_404, STOP('404 not-found')]), /answer 2 time/));
 ok('two gaps record both targets, in order', stallsOf([GAP(3900, 4400), GAP(4100, 4600)]).targets.join() === '4400,4600');
 ok('another viewer line is neither a stall nor a gap', Object.values(stallsOf([`[LIVE] viewer ${S}: seek to the live edge (join) at 3.97`])).every((v) => v === false || v === 0 || (Array.isArray(v) && !v.length)));
 
@@ -131,8 +140,8 @@ ok('an append failure stays dirt', !forgiven('LIVE-STALL-1', 'W2', `error: [LIVE
 
 console.log('the refusals');
 const http = (line) => ({ ...rep([]), badHttp: [line] });
-const MANIFEST = 'GET https://dev.canari-emse.fr/api/lives/59bc51fe-bf10-4d49-8bed-27cc25833021/manifest?from=7&chat=1&messagesAfter=0&reactionsAfter=0 -> 404';
-const SEGMENT = 'GET https://dev.canari-emse.fr/api/media/public/live/59bc51fe-bf10-4d49-8bed-27cc25833021/957e4ec4-396f-4720-9077-3d061656c351 -> 404';
+const MANIFEST = 'GET https://dev.canari-emse.fr/api/lives/11111111-2222-4333-8444-555555555555/manifest?from=7&chat=1&messagesAfter=0&reactionsAfter=0 -> 404';
+const SEGMENT = 'GET https://dev.canari-emse.fr/api/media/public/live/11111111-2222-4333-8444-555555555555/66666666-7777-4888-9999-aaaaaaaaaaaa -> 404';
 const left = (seat, line) => ignoringExpectedRefusal(http(line), liveRefusals('LIVE-STALL-1', seat)).badHttp.length;
 ok("the ended live's manifest 404 is forgiven on a viewer", left('W2', MANIFEST) === 0);
 ok('... NOT on the broadcaster', left('A1', MANIFEST) === 1);
@@ -142,14 +151,14 @@ ok('a purged SEGMENT 404 stays dirt on a viewer', left('W2', SEGMENT) === 1);
 
 // ── the server rules ─────────────────────────────────────────────────────────────────────────────
 console.log('the server rules');
-const L = '59bc51fe-bf10-4d49-8bed-27cc25833021';
-const N2 = '957e4ec4-396f-4720-9077-3d061656c351';
+const L = '11111111-2222-4333-8444-555555555555';
+const N2 = '66666666-7777-4888-9999-aaaaaaaaaaaa';
 const NEST = (lvl, ctx) => `[Nest] 1  - 10/27/2026, 11:16:10 PM   ${lvl} [${ctx}] `;
 const expectedIn = (line, row) => rowVerdict(line, row)?.expected === true;
 const LIVE_LINES = [
-  `${NEST('DEBUG', 'LivesService')}[LIVE] start asked by f7a9bb80`,
-  `${NEST('DEBUG', 'LivesService')}[LIVE] f7a9bb80 accepted the live rules v2`,
-  `${NEST('LOG', 'LivesService')}[LIVE] ${L} started by f7a9bb80`,
+  `${NEST('DEBUG', 'LivesService')}[LIVE] start asked by 0a1b2c3d`,
+  `${NEST('DEBUG', 'LivesService')}[LIVE] 0a1b2c3d accepted the live rules v2`,
+  `${NEST('LOG', 'LivesService')}[LIVE] ${L} started by 0a1b2c3d`,
   `${NEST('DEBUG', 'LivesService')}[LIVE] segment 3 of ${L} reserved as ${N2}`,
   `${NEST('DEBUG', 'LivesService')}[LIVE] segment 3 of ${L} stored (52342 B)`,
   `${NEST('DEBUG', 'LivesService')}[LIVE] ${L} claimed for its announcement`,
@@ -161,7 +170,7 @@ const LIVE_LINES = [
   `${NEST('DEBUG', 'HttpLiveSegmentStore')}[LIVE] storing segment ${N2} of live ${L} (52342 B)`,
   `${NEST('DEBUG', 'HttpLiveSegmentStore')}[LIVE] purging the segments of live ${L}`,
   `${NEST('DEBUG', 'InternalLivesModeController')}[LIVE] lives_mode relayed to media-service: on`,
-  `${NEST('LOG', 'LiveAnnouncer')}[LIVE_ANNOUNCE] ${L} by f7a9bb80 kind=member followers=1`,
+  `${NEST('LOG', 'LiveAnnouncer')}[LIVE_ANNOUNCE] ${L} by 0a1b2c3d kind=member followers=1`,
   `${NEST('DEBUG', 'LiveSegmentsService')}[LIVE] storing live/${L}/${N2} (52342 B)`,
   `${NEST('DEBUG', 'MediaController')}[LIVE] segment ${L}/${N2} served to the edge cache (52342 B)`,
   `${NEST('DEBUG', 'LivesService')}[LIVE_GC] ${L} deleted (9 segment object(s))`,
@@ -173,7 +182,7 @@ ok("the retention tick's store listing is NOT claimed by the LIVE rule - it stay
 ok("the end's purge that left something stays dirt", !expectedIn(`${NEST('LOG', 'LiveSegmentsService')}[LIVE_GC] live ${L}: deleted=8 failed=1 remaining=1`, 'LIVE-STALL-1'));
 ok("the sweep's 'kept' line is not this rule's", !expectedIn(`${NEST('LOG', 'LivesService')}[LIVE_GC] ${L} kept: deleted=8 failed=1 remaining=1`, 'LIVE-STALL-1'));
 ok('... and none of them outside a LIVE row',LIVE_LINES.every((l) => !expectedIn(l, 'CALL-WEB-1') && !expectedIn(l, 'TOK-3')));
-ok('a refused start stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] start refused: f7a9bb80 already has an open live`, 'LIVE-STALL-1'));
+ok('a refused start stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] start refused: 0a1b2c3d already has an open live`, 'LIVE-STALL-1'));
 ok('a segment out of order stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] segment 4 of ${L} out of order (expected 3)`, 'LIVE-STALL-1'));
 ok('a full live stays dirt in a LIVE row', !expectedIn(`${NEST('LOG', 'LiveSeats')}[LIVE_SEAT] ${L}: FULL, 24/24 seated - refused`, 'LIVE-STALL-1'));
 ok('a seat released that was never held stays dirt', !expectedIn(`${NEST('DEBUG', 'LiveSeats')}[LIVE_SEAT] ${L}: seat released (held=false)`, 'LIVE-STALL-1'));

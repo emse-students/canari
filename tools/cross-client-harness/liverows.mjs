@@ -48,20 +48,32 @@ const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live
 const NOT_A_STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting while seeking at [\d.]+ - not a stall$`);
 const SAYS_STALL = /^\[LIVE\] viewer .*stall/;
 const JOINED = new RegExp(String.raw`^\[LIVE\] viewer joined ${S} at segment \d+$`);
+// THE ENDED LIVE'S ANSWER, as the player classifies it (`liveFailureOutcome`), and the stop it must cause.
+const END_ANSWER = /^\[LIVE\] Live manifest: (404 LIVE_NOT_FOUND -> not-found|410 LIVE_ENDED -> ended \([a-z_]+\))$/;
+const STOPPED_ON_END = new RegExp(String.raw`^\[LIVE\] viewer ${S}: stopped on ended \((404 not-found|410 ended)\)$`);
 
 /** A console text as the narration compares it: no `level:` prefix, no stamps. */
 const sentence = (line) => stripStamp(String(line).replace(/^(?:log|info|debug|verbose|warning|warn|error|assert):?\s+/, ''));
 
 /**
  * What one viewer's console says about its stalls, in order: the first delivery gap, every target
- * buffer it moved to, and the stalls and stall seeks before and after that first gap.
+ * buffer it moved to, and the stalls and stall seeks before and after that first gap. And the
+ * ended live's manifest answers (`endAnswers`) with how many were NOT followed at once by the stop
+ * they must cause (`strayEndAnswers`) - what bounds `liveRefusals`, which cannot see order.
  *
  * @param {string[]} lines the viewer's console texts, oldest first
  */
 export function stallsOf(lines) {
-  const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [] };
+  const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [], endAnswers: 0, strayEndAnswers: 0 };
+  let answered = false;
   for (const raw of lines) {
     const s = sentence(raw);
+    if (answered && !STOPPED_ON_END.test(s)) out.strayEndAnswers++;
+    answered = END_ANSWER.test(s);
+    if (answered) {
+      out.endAnswers++;
+      continue;
+    }
     if (JOINED.test(s)) out.joined = true;
     const g = GAP.exec(s);
     if (g) {
@@ -74,12 +86,19 @@ export function stallsOf(lines) {
     else if (STALL_SEEK.test(s)) out[after ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
     else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
   }
+  if (answered) out.strayEndAnswers++; // an end answer as the very last line stopped nothing
   return out;
 }
 
-/** L-F1's facts for one viewer: no stall after its first gap, none without a gap, no stall line it cannot read. */
+/**
+ * One viewer's facts: it joined (else every stall count below is vacuous); no stall line it cannot
+ * read; no stall after its first gap and none without a gap (L-F1); and at most ONE ended-live answer,
+ * followed at once by the stop it causes - the one 404 or 410 `liveRefusals` forgives.
+ */
 export function stallFacts(viewer, st) {
   return [
+    [st.joined, `${viewer} wrote no "viewer joined" line - nothing below was read from a playing viewer`],
+    [st.endAnswers <= 1 && st.strayEndAnswers === 0, `${viewer} read the ended live's answer ${st.endAnswers} time(s), ${st.strayEndAnswers} of them not followed by its stop`],
     [st.unread.length === 0, `${viewer} wrote ${st.unread.length} stall line(s) this judge cannot read - a spelling moved: ${st.unread.slice(0, 2).join(' | ')}`],
     [st.stallsAfter === 0 && st.stallSeeksAfter === 0, `${viewer} stalled ${st.stallsAfter} time(s) and seeked ${st.stallSeeksAfter} time(s) after its first delivery gap (targets ${st.targets.join(',') || 'none'} ms)`],
     [st.gaps.length > 0 || (st.stallsBefore === 0 && st.stallSeeksBefore === 0), `${viewer} stalled ${st.stallsBefore} time(s) and never named a delivery gap - the target buffer never moved`],
@@ -231,7 +250,12 @@ export function liveNarration(row, seat) {
  * THE ENDED LIVE'S MANIFEST ANSWERS 410 `LIVE_ENDED` until the end's purge has run, and 404
  * `LIVE_NOT_FOUND` after it (both on LIVE-WEB-2, 2026-10-27: W4 polled before the purge, W2 after it).
  * That is how a viewer whose chat did not hear the end first learns it (`stopped on ended`): a status,
- * an answer, once. Only on a viewer seat. A SEGMENT 404 (`segment N is gone - skipped`) is NOT forgiven: it is the purge at the
+ * an answer, once. Only on a viewer seat.
+ *
+ * THIS FORGIVENESS CANNOT SEE TIME: the rendered request line carries none, so it covers the whole row
+ * on a viewer. What bounds it is `stallFacts`, over the viewer's own lines in order: at most one such
+ * answer, followed at once by `stopped on ended`. A 404 or 410 mid-live would stop the viewer early
+ * (its video stops advancing) or come without that stop, and either fails the row. A SEGMENT 404 (`segment N is gone - skipped`) is NOT forgiven: it is the purge at the
  * end racing a viewer's download, a finding.
  *
  * @param {string} row a `LIVE_ROWS` id
