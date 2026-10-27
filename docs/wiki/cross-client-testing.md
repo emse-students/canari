@@ -245,6 +245,27 @@ that build predates the fix (#2583); the AFTER reading is owed on the pre-releas
 | TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 06d5be3d143b. To be replayed on alpha.5 |
 | TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `pending` - clock-only row: waits 61 min past the 1 h access token with the socket open, run alone and unattended; not yet scheduled |
 
+## RMC - a removal committed, not only unrouted
+
+Runner `archive/removals.mjs`, table and judge `removalrows.mjs`. Each row builds its own community,
+routes its subject onto the row's key groups (asserted on the delivery roster; a subject that never
+reached one makes the row `VACUOUS`), makes one gesture, then reads every group's server epoch once a
+round for `COMMIT_ROUNDS` rounds. The commit log says who moved each one. A kick and a salon revoke
+must be committed by the actor's session as it is, with no reload; a device revoke by any device that
+remains. Run through the preflight: `bun run.mjs --file removals.mjs --row <id>` (phase `REMOVALS`).
+
+**What a `PASS` here does not prove:** that the commit removed the subject's leaf. The commit log
+records a commit's group, base epoch and sender, not its kind or the leaves it removed, so a `PASS`
+means "no longer routed, and the epoch advanced by a commit of the right committer after the
+gesture". Reading the tree itself needs a client that reports its group's members, which the rig
+does not have yet.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| KICK-COMMIT | W1 removes the peer from a community whose public and private salons it held: both key groups advance by W1's commit, no reload | W1 W2 - U | `pending` - prepared for the removals work |
+| SALON-REVOKE-COMMIT | W1 revokes the peer from a private salon and opens it again: the salon's key group advances by W1's commit, no reload | W1 W2 - U | `pending` - prepared for the removals work |
+| DEVREVOKE-KEYGROUP | W6 revokes a fresh owner device (W3) that loaded a community and its private salon: every key group it held advances by a remaining device's commit | W1 W6, W3 minted - U | `pending` - prepared for the removals work |
+
 ## NET - a flaky network
 
 | Id | What it asks | Needs | State |
