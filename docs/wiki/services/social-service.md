@@ -1012,7 +1012,7 @@ request is notified once. Eight concurrent taps write one row (PostgreSQL spec).
 `GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
 too, the meaning a client older than the request screens gives it
 ([legacy-compatibility](../legacy-compatibility.md)). Answering, listing and removing followers are
-WP-F3, not built.
+WP-F3 (below).
 
 **Answering a request (WP-F2), `follows/follow-requests.service.ts`.** The follow routes moved out
 of `PostsController` into `FollowRequestsController` (same URLs), in a module of its own because it
@@ -1033,6 +1033,13 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
   exists (WP-F4), and belong to NO category in chat-delivery: they always go out.
 - **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
   pending or accepted, both directions - pinned in `follow-requests.integration.spec.ts`.
+
+**The caller's own lists (WP-F3).** `GET me/followers` (accepted, newest first), `DELETE
+me/followers/:userId` (the follow is deleted and NOBODY is told; the removed person may ask again,
+which is a new request; a pending request is refused, not removed) and `GET me/follow-requests/sent`
+(the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
+lists exist as routes: no rule says who may read another person's followers, so none is open. A
+pair a block stands between is left out of every list, as of every reader.
 
 ### Who may touch a calendar event
 

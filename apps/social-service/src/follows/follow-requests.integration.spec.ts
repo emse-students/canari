@@ -257,4 +257,66 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     if (secretBefore === undefined) delete process.env.INTERNAL_SECRET;
     else process.env.INTERNAL_SECRET = secretBefore;
   });
+
+  describe('the caller own lists (WP-F3)', () => {
+    /** `fan` asks `bob` and `bob` accepts: a follower. */
+    const followerOf = async (fan: string, whom: string) => {
+      await requests.ask(fan, whom);
+      await requests.accept(whom, fan);
+    };
+
+    it('my followers are the ACCEPTED ones, newest first, never a pending ask, never across a block', async () => {
+      await followerOf('ann', 'bob');
+      await q(
+        `UPDATE user_follows SET "createdAt" = now() - interval '1 hour' WHERE "followerUserId" = 'ann'`
+      );
+      await followerOf('cid', 'bob');
+      await requests.ask('dan', 'bob'); // still a request
+      await followerOf('eve', 'bob');
+      await block('eve', 'bob'); // the severing never ran: the row stays, never listed
+      await followerOf('bob', 'ann'); // whom bob follows is not his followers
+
+      const mine = await requests.followers('bob', 50, 0);
+      expect(mine.map((r) => r.userId)).toEqual(['cid', 'ann']);
+      expect((await requests.followers('bob', 1, 1)).map((r) => r.userId)).toEqual(['ann']);
+    });
+
+    it('removing a follower deletes the follow at once, tells nobody, and they may ask again', async () => {
+      await followerOf('ann', 'bob');
+      expect(await follows.getFollowedUserIdsForUser('ann')).toEqual(['bob']);
+      told.length = 0;
+      expect(await requests.removeFollower('bob', 'ann')).toEqual({ ok: true });
+      expect(await statusOf('ann', 'bob')).toBeNull();
+      // Every reader of a follow reads this row (WP-F1): with it gone, the Suivis arm, the
+      // announce and the live push stop reaching ann in the same instant.
+      expect(await follows.getFollowedUserIdsForUser('ann')).toEqual([]);
+      expect(told).toEqual([]);
+      await expect(requests.removeFollower('bob', 'ann')).rejects.toBeInstanceOf(NotFoundException);
+      expect((await requests.ask('ann', 'bob')).status).toBe('pending');
+    });
+
+    it('a pending request is refused, not removed; and nobody removes a follow that is not theirs', async () => {
+      await requests.ask('ann', 'bob');
+      await expect(requests.removeFollower('bob', 'ann')).rejects.toBeInstanceOf(NotFoundException);
+      expect(await statusOf('ann', 'bob')).toBe('pending');
+      await requests.accept('bob', 'ann');
+      // ann is bob's follower, not the other way round: ann cannot "remove" bob.
+      await expect(requests.removeFollower('ann', 'bob')).rejects.toBeInstanceOf(NotFoundException);
+      expect(await statusOf('ann', 'bob')).toBe('accepted');
+    });
+
+    it('my sent requests are the unanswered ones I asked, and a withdraw takes one off the list', async () => {
+      await requests.ask('ann', 'bob');
+      await q(
+        `UPDATE user_follows SET "createdAt" = now() - interval '1 hour' WHERE "followedUserId" = 'bob'`
+      );
+      await requests.ask('ann', 'cid');
+      await followerOf('ann', 'dan'); // answered: not a request any more
+      await requests.ask('eve', 'ann'); // asked OF ann: her inbox, not her sent list
+
+      expect((await requests.outgoing('ann', 50, 0)).map((r) => r.userId)).toEqual(['cid', 'bob']);
+      await requests.leave('ann', 'cid');
+      expect((await requests.outgoing('ann', 50, 0)).map((r) => r.userId)).toEqual(['bob']);
+    });
+  });
 });

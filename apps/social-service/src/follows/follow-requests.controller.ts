@@ -98,4 +98,33 @@ export class FollowRequestsController {
   refuse(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
     return this.requests.refuse(xUserId, userId);
   }
+
+  /**
+   * The requests the CALLER sent and nobody answered yet, newest first; each is withdrawn with
+   * `DELETE users/:userId/follow`.
+   */
+  @Get('me/follow-requests/sent')
+  sent(
+    @Headers('x-user-id') xUserId: string,
+    @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+  ) {
+    return this.requests.outgoing(xUserId, limit, offset);
+  }
+
+  /** The caller's own ACCEPTED followers, newest first. Nobody reads another person's list. */
+  @Get('me/followers')
+  followers(
+    @Headers('x-user-id') xUserId: string,
+    @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+  ) {
+    return this.requests.followers(xUserId, limit, offset);
+  }
+
+  /** The caller removes `userId` from their followers: deleted, nobody told; 404 if not one. */
+  @Delete('me/followers/:userId')
+  removeFollower(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
+    return this.requests.removeFollower(xUserId, userId);
+  }
 }

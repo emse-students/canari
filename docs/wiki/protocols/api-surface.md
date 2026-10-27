@@ -342,6 +342,9 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | GET | `/api/posts/me/follow-requests/count` | `{ pending }` |
 | POST | `/api/posts/me/follow-requests/:userId/accept` | Accept (404 when none pending); tells the asker |
 | POST | `/api/posts/me/follow-requests/:userId/refuse` | Refuse: deleted, nobody told (404 when none pending) |
+| GET | `/api/posts/me/follow-requests/sent` | The caller's unanswered requests (withdraw with `DELETE users/:userId/follow`) |
+| GET | `/api/posts/me/followers` | The caller's accepted followers (`limit` <= 100, `offset`) |
+| DELETE | `/api/posts/me/followers/:userId` | Remove a follower: deleted, nobody told (404 when not one) |
 
 ### Channels
 

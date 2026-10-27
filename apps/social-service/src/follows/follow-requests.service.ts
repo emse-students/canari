@@ -174,6 +174,70 @@ export class FollowRequestsService {
     return { ok: true };
   }
 
+  // ── The caller's own lists (WP-F3) ──────────────────────────────────────────────────────────────
+
+  /**
+   * `userId`'s ACCEPTED followers, newest first. Only the caller's own list exists as a route: no
+   * one reads another person's followers (no list-visibility rule has been decided, so none is
+   * open). A pair a block stands between is left out, as everywhere a follow is read.
+   */
+  async followers(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
+    const rows: FollowListEntry[] = await this.dataSource.query(
+      `SELECT f."followerUserId" AS "userId", f."createdAt" AS "createdAt"
+         FROM user_follows f
+        WHERE f."followedUserId" = $1 AND f.status = $2
+          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+        ORDER BY f."createdAt" DESC, f.id
+        LIMIT $3 OFFSET $4`,
+      [userId, FOLLOW_ACCEPTED, clampLimit(limit), Math.max(0, offset)]
+    );
+    this.logger.debug(`[FOLLOW-REQ] followers of ${short(userId)}: ${rows.length} row(s)`);
+    return rows;
+  }
+
+  /**
+   * `userId` removes `followerUserId` from their followers: the row is deleted and NOBODY is told
+   * (decision 3); the removed person may ask again, which is a new request. 404 when that person
+   * does not follow them - a pending request is refused, not removed.
+   */
+  async removeFollower(userId: string, followerUserId: string): Promise<{ ok: boolean }> {
+    const deleted = returnedRows<{ id: string }>(
+      await this.dataSource.query(
+        `DELETE FROM user_follows f
+          WHERE f."followedUserId" = $1 AND f."followerUserId" = $2 AND f.status = $3
+          RETURNING f.id`,
+        [userId, followerUserId, FOLLOW_ACCEPTED]
+      )
+    );
+    if (deleted.length === 0) {
+      this.logger.debug(
+        `[FOLLOW-REQ] ${short(userId)} removal of ${short(followerUserId)}: not a follower`
+      );
+      throw new NotFoundException('Follower not found');
+    }
+    this.logger.log(`[FOLLOW-REQ] ${short(userId)} removed follower ${short(followerUserId)}`);
+    return { ok: true };
+  }
+
+  /**
+   * The requests `userId` SENT that nobody has answered yet, newest first - so each can be
+   * withdrawn from a list (`DELETE users/:userId/follow`). A request across a block was never
+   * written, so there is nothing to filter here beyond what the severing already removed.
+   */
+  async outgoing(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
+    const rows: FollowListEntry[] = await this.dataSource.query(
+      `SELECT f."followedUserId" AS "userId", f."createdAt" AS "createdAt"
+         FROM user_follows f
+        WHERE f."followerUserId" = $1 AND f.status = $2
+          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+        ORDER BY f."createdAt" DESC, f.id
+        LIMIT $3 OFFSET $4`,
+      [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]
+    );
+    this.logger.debug(`[FOLLOW-REQ] sent requests of ${short(userId)}: ${rows.length} row(s)`);
+    return rows;
+  }
+
   /**
    * Writes the bell row and its push. BEST-EFFORT AND LOUD: the row of `user_follows` is the
    * durable fact and is already committed, so a notification that fails is logged and the answer
