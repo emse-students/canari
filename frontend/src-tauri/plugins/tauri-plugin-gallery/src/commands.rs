@@ -272,9 +272,10 @@ fn remove_staged(path: &std::path::Path) {
     }
 }
 
-/// One conversation suggested in Android's share sheet, as the page sends it: the shortcut id
-/// (`c:<conversation id>`), the name shown, and the deep link a tap from the launcher opens. The
-/// native side validates each and drops a malformed one (`ShareTargets.kt`).
+/// One conversation suggested in the phone's share sheet, as the page sends it: the id
+/// (`c:<conversation id>`, Android's shortcut id and iOS's `conversationIdentifier`), the name
+/// shown, and the deep link a tap from Android's launcher opens (iOS ignores it). The native side
+/// validates each and drops a malformed one (`ShareTargets.kt`, `ShareSuggestions.swift`).
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ShareTarget {
     pub id: String,
@@ -291,9 +292,10 @@ pub struct PublishAnswer {
     pub leftover: u32,
 }
 
-/// Replaces the conversations Android's share sheet suggests (sharing lot S5) with `targets`, most
-/// recent first. Answers what the platform lists afterwards and what it left. Android only: the iOS suggestions need the
-/// Share Extension (lot S4).
+/// Replaces the conversations the phone's share sheet suggests (sharing lot S5) with `targets`,
+/// most recent first. Answers what the platform holds afterwards and what it left. Android
+/// publishes sharing shortcuts (`ShareTargets.kt`); iOS donates one `INSendMessageIntent` per
+/// target under one group identifier, after deleting that group (`ShareSuggestions.swift`).
 ///
 /// The labels are conversation names: they are NOT logged, only their count.
 #[command]
@@ -305,36 +307,39 @@ pub(crate) async fn publish_share_targets<R: Runtime>(
         "[gallery] publish_share_targets: {} target(s)",
         targets.len()
     );
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         app.gallery().publish_share_targets(targets)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     {
         let _ = (app, targets);
-        Err(crate::Error::AndroidOnly)
+        Err(crate::Error::Unsupported)
     }
 }
 
-/// Removes every conversation this app suggested to Android's share sheet - at sign-out, and when
-/// the member turns the suggestions off. Returns how many were removed.
+/// Removes every conversation this app suggested to the phone's share sheet - at sign-out, and when
+/// the member turns the suggestions off. Returns how many were removed (on iOS, how many the last
+/// donation left: the platform deletes a donation group without counting it).
 #[command]
 pub(crate) async fn clear_share_targets<R: Runtime>(app: AppHandle<R>) -> crate::Result<u32> {
     log::debug!("[gallery] clear_share_targets");
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         app.gallery().clear_share_targets().map(|o| o.removed)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     {
         let _ = app;
-        Err(crate::Error::AndroidOnly)
+        Err(crate::Error::Unsupported)
     }
 }
 
 /// Removes every `chat_<group>` conversation shortcut the message notifications published - at
 /// sign-out, beside `clear_share_targets`: they carry a conversation's name and a face, and nothing
-/// of an account stays with the system for the next one. Returns how many were removed.
+/// of an account stays with the system for the next one. Returns how many were removed. Android
+/// only, and the page never calls it on iOS: there the notification extension donates no intent
+/// and publishes no shortcut, so there is no such set to erase.
 #[command]
 pub(crate) async fn clear_conversation_shortcuts<R: Runtime>(
     app: AppHandle<R>,

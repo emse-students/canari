@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="23/10/2026"
+  updated="27/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -645,6 +645,15 @@
               pas être retiré par l'application : il est désactivé, et c'est le lanceur qui décide
               s'il reste affiché</td
             >
+          </tr>
+          <tr>
+            <td>Suggestions de partage (application iPhone)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés à
+              iOS pour les proposer dans son menu Partager (désactivable dans Paramètres &gt;
+              Préférences). Le système peut donc les afficher dans ses suggestions
+            </td>
+            <td>Effacés à la déconnexion et à la désactivation du réglage</td>
           </tr>
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>

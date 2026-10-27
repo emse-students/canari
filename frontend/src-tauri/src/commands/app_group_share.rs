@@ -871,6 +871,26 @@ mod tests {
         cleanup(&group);
     }
 
+    /// Sharing lot S5 on iOS: the extension writes the picked suggestion's conversation identifier
+    /// as `target`, Android's key, and the import must hand it to the page unchanged.
+    #[test]
+    fn the_suggestion_the_member_picked_survives_the_import() {
+        let (group, data, cache) = scratch("target");
+        extension_share(&group, "dddd-1", 0, "hi", &["0_a.png"], 0);
+        let path = group.join(PENDING_SHARE_FILE);
+        let mut manifest: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        manifest["target"] = json!("c:conv-42");
+        std::fs::write(&path, manifest.to_string()).unwrap();
+
+        assert_eq!(
+            import_group_share(&group, &data, &cache).unwrap(),
+            Import::Imported
+        );
+        assert_eq!(pending(&data).expect("handed over")["target"], "c:conv-42");
+        cleanup(&group);
+    }
+
     #[test]
     fn a_file_the_manifest_names_but_the_directory_lacks_is_counted_refused() {
         let (group, data, cache) = scratch("lost");

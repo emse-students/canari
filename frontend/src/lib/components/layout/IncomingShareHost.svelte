@@ -11,9 +11,9 @@
    * deep-link landing, so the conversation opens exactly as a tapped notification would, and the
    * chat page then stages the share in its composer (`incomingShare.takeFor`).
    *
-   * It also keeps Android's share-sheet SUGGESTIONS (lot S5) in line with the conversation list
-   * (`syncShareTargets`), and opens the picker on the suggestion the member picked there - only when
-   * this account holds that conversation.
+   * It also keeps the phone's share-sheet SUGGESTIONS (lot S5: Android shortcuts, iOS intent
+   * donations) in line with the conversation list (`syncShareTargets`), and opens the picker on the
+   * suggestion the member picked there - only when this account holds that conversation.
    * See `docs/wiki/frontend/sharing.md`.
    */
   import { onMount } from 'svelte';
@@ -27,7 +27,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { landShareOn } from '$lib/sharing/shareLanding';
-  import { isAndroidTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { drainNativeShare } from '$lib/mobile/incomingShareDrain';
   import { syncShareTargets } from '$lib/sharing/shareTargets';
   import { suggestionIfHeld } from '$lib/sharing/shareDestinations';
@@ -65,8 +65,9 @@
 
   // The share sheet's suggestions follow the conversation list, the setting and the session.
   $effect(() => {
-    // Android only: elsewhere nothing is read, so nothing re-runs this.
-    if (!isAndroidTauriRuntime()) return;
+    // Phone apps only (Android shortcuts, iOS intent donations): elsewhere nothing is read, so
+    // nothing re-runs this.
+    if (!isMobileTauriRuntime()) return;
     syncShareTargets({
       enabled: settings.shareSuggestionsEnabled,
       signedIn: globalSession.isLoggedIn,

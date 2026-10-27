@@ -50,6 +50,8 @@
 		5AE1A2B3C4D5E6F700000017 /* ShareRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000F /* ShareRules.swift */; };
 		5AE1A2B3C4D5E6F700000018 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000012 /* Localizable.strings */; };
 		5AE1A2B3C4D5E6F700000019 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
+		5AE1A2B3C4D5E6F700000031 /* Intents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000030 /* Intents.framework */; };
+		5AE1A2B3C4D5E6F700000032 /* Intents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000030 /* Intents.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -117,6 +119,7 @@
 		D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundTasks.framework; path = System/Library/Frameworks/BackgroundTasks.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF03 /* CallKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CallKit.framework; path = System/Library/Frameworks/CallKit.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF04 /* PushKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PushKit.framework; path = System/Library/Frameworks/PushKit.framework; sourceTree = SDKROOT; };
+		5AE1A2B3C4D5E6F700000030 /* Intents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Intents.framework; path = System/Library/Frameworks/Intents.framework; sourceTree = SDKROOT; };
 		DA10CA11E0000000000000F1 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000E1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000F2 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -159,6 +162,7 @@
 				BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */,
 				BD49C8A1300FAFC5000960D7 /* CallKit.framework in Frameworks */,
 				BD49C8A2300FAFC5000960D8 /* PushKit.framework in Frameworks */,
+				5AE1A2B3C4D5E6F700000031 /* Intents.framework in Frameworks */,
 				BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
 			);
@@ -179,6 +183,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5AE1A2B3C4D5E6F700000019 /* UserNotifications.framework in Frameworks */,
+				5AE1A2B3C4D5E6F700000032 /* Intents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -201,6 +206,7 @@
 				D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */,
 				D4E5F6012345678ABCDEF03 /* CallKit.framework */,
 				D4E5F6012345678ABCDEF04 /* PushKit.framework */,
+				5AE1A2B3C4D5E6F700000030 /* Intents.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";

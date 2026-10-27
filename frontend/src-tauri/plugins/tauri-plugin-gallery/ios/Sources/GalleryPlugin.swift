@@ -94,6 +94,45 @@ class GalleryPlugin: Plugin {
     }
   }
 
+  class ShareTargetArg: Decodable {
+    let id: String
+    let label: String
+    let link: String
+  }
+
+  class PublishShareTargetsArgs: Decodable {
+    let targets: [ShareTargetArg]
+  }
+
+  /// Replaces the conversations the share sheet suggests (`ShareSuggestions.publish`, sharing lot
+  /// S5). The labels are conversation names: only their count is logged.
+  @objc public func publishShareTargets(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(PublishShareTargetsArgs.self)
+    NSLog("[GalleryPlugin] publishShareTargets: %d target(s)", args.targets.count)
+    let targets = args.targets.map { ShareSuggestions.Target(id: $0.id, label: $0.label) }
+    ShareSuggestions.publish(targets) { outcome in
+      switch outcome {
+      case .success(let published):
+        invoke.resolve(["present": published.present, "leftover": published.leftover])
+      case .failure(.deleteFailed(let code)):
+        invoke.reject("publishShareTargets: the previous suggestions were not deleted", code: "deleteFailed\(code)")
+      }
+    }
+  }
+
+  /// Removes every conversation this app suggested to the share sheet (`ShareSuggestions.clear`).
+  @objc public func clearShareTargets(_ invoke: Invoke) {
+    NSLog("[GalleryPlugin] clearShareTargets")
+    ShareSuggestions.clear { outcome in
+      switch outcome {
+      case .success(let removed):
+        invoke.resolve(["removed": removed])
+      case .failure(.deleteFailed(let code)):
+        invoke.reject("clearShareTargets: the suggestions were not deleted", code: "deleteFailed\(code)")
+      }
+    }
+  }
+
   /// This app's page in Settings, where a refused camera, microphone or photo access is given back.
   @objc public func openAppSettings(_ invoke: Invoke) {
     NSLog("[GalleryPlugin] openAppSettings")
