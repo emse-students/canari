@@ -3468,7 +3468,11 @@ export function dirtOf(rep) {
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
 export function gate(verdict, reports, observations = {}) {
-  const entries = Object.entries(reports).filter(([, r]) => r);
+  // A ROUTE'S FIRST PRELOAD is forgiven HERE, once, for every row and every seat - not per runner:
+  // COMM's runners call `gate` directly and carried it as dirt while the MLS rows did not.
+  const entries = Object.entries(reports)
+    .filter(([, r]) => r)
+    .map(([label, r]) => [label, forgivingFirstRoutePreloads(r)]);
   const dirty = entries.filter(([, r]) => !r.clean);
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
@@ -3704,6 +3708,37 @@ export function atLevels(levels, re) {
 
 /** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
 const levelOfEntry = (line) => /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
+
+/** A route's first preload in a document: `pathname` is the route preloaded. */
+const FIRST_ROUTE_PRELOAD = /\[RoutePreload\] \{"pathname":"(\/[a-z]*)","first":true\}$/;
+
+/**
+ * A ROUTE IS PRELOADED ONCE PER DOCUMENT, on the first in-app navigation that reaches it, and says so
+ * at debug (`[RoutePreload] {"pathname":"/chat","first":true}`). `PAGE_BOOT_NARRATION` forgives it
+ * only in a window whose document was replaced. A seat the preflight reloaded JUST BEFORE the row
+ * makes its first navigations inside the row's window instead: read on LIST-RACE-1 on
+ * `1.5.0-alpha.1` (2026-10-27), on W1, W8 and A1.
+ *
+ * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug - applied
+ * by `gate` to every seat of every row, the one place every runner passes through. A
+ * pathname preloaded twice in one window is a document that booted twice, or a preload that is not
+ * the first, and both copies stay dirt. So does `"first":false`, or the line at another level.
+ */
+export function forgivingFirstRoutePreloads(rep) {
+  if (!Array.isArray(rep?.unexplained)) return rep;
+  const seen = new Map();
+  for (const line of rep.unexplained) {
+    const m = FIRST_ROUTE_PRELOAD.exec(line);
+    if (m && levelOfEntry(line) === 'debug') seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+  }
+  const once = [...seen].filter(([, n]) => n === 1).map(([p]) => p);
+  if (!once.length) return rep;
+  const esc = (s) => s.replace(/[/]/g, '\\/');
+  return ignoringExpectedLog(
+    rep,
+    once.map((p) => atLevels(['debug'], new RegExp(`^\\[RoutePreload\\] \\{"pathname":"${esc(p)}","first":true\\}$`)))
+  );
+}
 
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after

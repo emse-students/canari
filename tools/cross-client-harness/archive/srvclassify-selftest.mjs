@@ -1100,6 +1100,11 @@ check(
     ['the ask announced to the members', L('JoinAsk', `[JOIN_ASK] ANNOUNCED group=${G} asker=aaaaaaaa ask=c80e3db4 devices=5`), 'ADM-1', 'DEV-1'],
     ['the ask settled', L('JoinAsk', `[JOIN_ASK] SETTLED group=${G} asker=aaaaaaaa ask=c80e3db4 outcome=declined devices=5`), 'ADM-3', 'ADM-8'],
     ["ADM-4's call-initiate probe", D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'ADM-4', 'ADM-1'],
+    ["BIG-3's kick", L('ChannelService', `[WORKSPACE] kick workspace=${G} target=223bc34e by=f7a9bb80`), 'BIG-3-noI1', 'BIG-1-noI1'],
+    ['... and in RM-5 still', L('ChannelService', `[WORKSPACE] kick workspace=${G} target=223bc34e by=f7a9bb80`), 'RM-5', 'RM-4'],
+    ["BIG-3's kick cutting private salons", L('ChannelService', `[CHANNEL_GRAINE] private salons to cut workspace=${G} user=223bc34e reason=kicked salons=0/0`), 'BIG-3', 'BIG-2'],
+    ["BIG-3 sets its history to joined", L('ChannelService', `[WORKSPACE] historyVisibility=joined workspace=${G} by=f7a9bb80`), 'BIG-3-noI1', 'COMM-1'],
+    ["BIG-3's newcomer reads a short page", D('ChannelService', `[HISTORY] channel=${G} short page (4/50): silent rows below the oldest body included`), 'BIG-3', 'LIST-1'],
     ['a real call initiated, in a CALL-WEB row', D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'CALL-WEB-1', 'KILL-3'],
     ["ADM-4's ring probe is not a CALL-WEB row's", D('CallsService', `[ring] ringGroup caller=${'a'.repeat(64)} group=${G} call=adm4-probe`), 'ADM-4', 'CALL-WEB-1'],
     ['a call invite', L('CallsService', `[call] invite room=${G} user=${'a'.repeat(64)} group=${G}`), 'CALL-WEB-4', 'ADM-4'],
@@ -1232,7 +1237,9 @@ check(
   check('R6 a non-member external commit is not a waiting seat', verdictIn(W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external`), null), 'unclaimed');
   check('R6 FAMILY-* names a family, not a prefix of a longer word', rowNamed(['DUP-*'], 'DUPX-1'), false);
   check('R6 an exact id is exact', rowNamed(['ADM-5'], 'ADM-50'), false);
-  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+(-[A-Z]+)?-(\d+|\*)$/.test(x))), true);
+  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+(-[A-Z]+)?-(\d+|\*)(-\*)?$/.test(x))), true);
+  check('R6 BIG-3-* names BIG-3-noI1, and not BIG-30', rowNamed(['BIG-3', 'BIG-3-*'], 'BIG-3-noI1') && !rowNamed(['BIG-3', 'BIG-3-*'], 'BIG-30'), true);
+  check('R6 BIG-3 sets shared: not forgiven', verdictIn(L('ChannelService', `[WORKSPACE] historyVisibility=shared workspace=${G} by=f7a9bb80`), 'BIG-3'), 'unread-shape');
   check('R6 CALL-WEB-* names CALL-WEB-7', rowNamed(['CALL-WEB-*'], 'CALL-WEB-7'), true);
   check('R6 CALL-WEB-* is not CALL-1', rowNamed(['CALL-WEB-*'], 'CALL-1'), false);
   const serverEnded = `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=server-timeout duration_ms=61000 paired_ms=- offer_in=0`;

@@ -174,8 +174,12 @@ export const IDP_HOSTS = ['miconnect.emse.fr', 'auth.canari-emse.fr', 'cas.emse.
  * Browser pages that are no estate and run no application: a blank tab, Chrome's new-tab page, and
  * the error page Chrome shows when a navigation failed (a NET row that cut the link lands there).
  * Exact URLs - a prefix would let `about:blank#...` style tricks and any `chrome://` page through.
+ *
+ * THE EMPTY STRING IS ONE OF THEM: a WebView the engine has just created on a cold start reports its
+ * target with url '' until its first navigation commits, and COMM-18's cold start attached in that
+ * window and was refused as 'not a URL' (2026-10-27). It holds no document, so it runs nothing.
  */
-export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-native://newtab/', 'chrome-error://chromewebdata/'];
+export const INERT_PAGES = ['', 'about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-native://newtab/', 'chrome-error://chromewebdata/'];
 
 /**
  * Whether a page may be attached to or navigated to by a rig whose estate is `estateOrigin` - an

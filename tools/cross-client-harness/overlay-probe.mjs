@@ -27,7 +27,28 @@
  *     every click. It is `md:hidden`, which means A1 and a narrow browser, and it is exactly what a
  *     long-press check leaves behind when it dies.
  */
+/**
+ * WHETHER A BUTTON IS A BACKDROP - page source for a function `(button, rect) -> boolean`, shared by
+ * {@link OVERLAYS} (which counts them) and `clearOverlays` (which clicks one), so the two can never
+ * disagree about what a backdrop is.
+ *
+ * Two shapes. A button covering 80 % of the viewport is the original one (`MessageMobileActions`).
+ * The SECOND is the SidePanel scrim below the `xl` breakpoint: a FIXED, TEXT-FREE button that covers
+ * the page beside the drawer but not the nav rail, so it measured 862x685 on a 958 px seat - under
+ * 80 % - and the sweep reported the screen clear while it owned every click on the sidebar. COMM-7,
+ * -11, -14, -21 and -23 failed on exactly that (`whatIsOnTop: BUTTON.fixed inset-0
+ * z-(--z-side-panel-scrim)`, 2026-10-27). Text-free and fixed is what keeps the lower bar safe: no
+ * confirming control in this app is a captionless fixed button.
+ */
+export const IS_BACKDROP_FN = `function (b, r) {
+  var area = window.innerWidth * window.innerHeight;
+  var covers = r.width * r.height;
+  if (covers >= 0.8 * area) return true;
+  return covers >= 0.5 * area && !(b.innerText || '').trim() && getComputedStyle(b).position === 'fixed';
+}`;
+
 export const OVERLAYS = `(function () {
+  var isBackdrop = ${IS_BACKDROP_FN};
   var out = [];
   // ITS OWN transition, not an ancestor's. IS_MOVING_FN walks up the tree because its question is
   // "can this be clicked yet", which any moving ancestor answers; the question HERE is narrower -
@@ -65,13 +86,15 @@ export const OVERLAYS = `(function () {
     if (s.opacity === '0' && !moving(e)) return null;
     return r;
   };
-  [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]')).forEach(function (d) {
+  // AN ALERTDIALOG IS A DIALOG: ConfirmDialog (every showConfirm) renders role=alertdialog, so a
+  // confirmation left open by a dead step was invisible here and owned every click (COMM-15's
+  // rail, 1.5.0-alpha.1). It closes on Escape like the others.
+  [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true], [role=alertdialog][aria-modal=true]')).forEach(function (d) {
     if (vis(d)) out.push({ kind: 'dialog', label: (d.getAttribute('aria-label') || '').slice(0, 60) });
   });
-  var area = window.innerWidth * window.innerHeight;
   [].slice.call(document.querySelectorAll('button')).forEach(function (b) {
     var r = vis(b);
-    if (r && r.width * r.height >= 0.8 * area) {
+    if (r && isBackdrop(b, r)) {
       out.push({ kind: 'backdrop', label: (b.getAttribute('aria-label') || '').slice(0, 60) });
     }
   });

@@ -94,6 +94,7 @@ export async function observersOf(seats, { refusals = {}, logs = {}, provoked = 
     // narrates its boot (`PAGE_BOOT_NARRATION`). Read off the window's OWN navigations rather than
     // asked of each runner: a seat whose window saw no document replaced gets no forgiveness, so a
     // page that booted unasked is still a finding. Met on the first live FLOOR draw (2026-10-25).
+    // A route's first preload in a window with no replaced document is forgiven by `gate` itself.
     if ((rep.documentsReplaced ?? 0) > 0) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
     if (offline.includes(device)) rep = ignoringOfflineCut(rep);
     if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);

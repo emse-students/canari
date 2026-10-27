@@ -36,7 +36,7 @@ export const APP_TAB = new URL(SITE).host;
 
 /** The app's hostname, without a port: what a cookie's `domain` can be compared against. */
 export const APP_HOST = new URL(SITE).hostname;
-import { OVERLAYS } from './overlay-probe.mjs';
+import { IS_BACKDROP_FN, OVERLAYS } from './overlay-probe.mjs';
 import { serial } from './serial.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
@@ -806,18 +806,34 @@ export async function clearOverlays(cx) {
       // Tag then click the tagged element, so the click addresses exactly what the predicate chose -
       // the same rule `openConversation` learnt the hard way. The tag is always removed: a stray one
       // would be picked up by the next call, which is how a harness fix becomes a harness fault.
-      const tagged = await evaluate(
-        cx,
-        `(function () {
-          var area = window.innerWidth * window.innerHeight;
-          var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
-            var r = e.getBoundingClientRect();
-            return r.width * r.height >= 0.8 * area;
-          })[0];
-          if (b) b.setAttribute('${TAG}', '1');
-          return b ? 'tagged' : 'gone';
-        })()`,
+      //
+      // CLICKED AT A POINT IT OWNS, NOT AT ITS CENTRE. A SidePanel scrim sits UNDER its own drawer, and
+      // on a ~958 px seat the drawer covers the scrim's centre - so a centre click either refused
+      // ('not on top at own centre') or landed inside the panel and closed nothing. The point is the
+      // first on a coarse grid where the hit-test returns the backdrop itself.
+      const target = JSON.parse(
+        await evaluate(
+          cx,
+          `JSON.stringify((function () {
+            var isBackdrop = ${IS_BACKDROP_FN};
+            var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
+              var r = e.getBoundingClientRect();
+              return r.width > 0 && r.height > 0 && isBackdrop(e, r);
+            })[0];
+            if (!b) return { state: 'gone' };
+            b.setAttribute('${TAG}', '1');
+            var r = b.getBoundingClientRect();
+            for (var fy = 0.1; fy < 1; fy += 0.2) {
+              for (var fx = 0.05; fx < 1; fx += 0.15) {
+                var x = r.left + r.width * fx, y = r.top + r.height * fy;
+                if (document.elementFromPoint(x, y) === b) return { state: 'tagged', x: x, y: y };
+              }
+            }
+            return { state: 'tagged' };
+          })())`,
+        ),
       );
+      const tagged = target.state;
       // GONE BETWEEN THE READ AND THE TAG IS PROGRESS, NOT A TARGET. The probe counts a backdrop
       // still fading out (its opacity is animating), so the one a confirmation just dismissed can be
       // read here and be gone a frame later - and a click aimed at no element threw `no stable
@@ -829,7 +845,8 @@ export async function clearOverlays(cx) {
       // element still there - never from the click's message; one still standing re-throws.
       try {
         if (tagged === 'tagged') {
-          await realClick(cx, `[${TAG}]`).catch(async (e) => {
+          const click = target.x === undefined ? realClick(cx, `[${TAG}]`) : clickAtPoint(cx, target.x, target.y);
+          await click.catch(async (e) => {
             const still = await evaluate(cx, `document.querySelector('[${TAG}]') ? 'present' : 'gone'`);
             if (still !== 'gone') throw e;
           });
