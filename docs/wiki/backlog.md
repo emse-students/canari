@@ -116,7 +116,7 @@ ordinary review.
   and `follows.service.spec.ts` (a follow lands pending, a re-ask never downgrades an accepted one).
   Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25).
 - **WP-F2 - the request API: inbox, accept, refuse, and the one notification. BUILT, draft pull
-  request #PR_F2, stacked on #2589.** Start:
+  request #2601, stacked on #2589.** Start:
   `follows/follows.service.ts`, `posts/posts.controller.ts` (the follow routes), the D38b request
   queue in `posts/personal-republications.service.ts` for the shape. `GET` the pending requests FOR
   the caller (the partial index of 114), `POST .../accept` (pending -> accepted, under a row lock so
