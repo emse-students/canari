@@ -834,6 +834,19 @@ directory). Owed: say what serialises two joins of one account into one key grou
 deletes the overlap; a larger retry bound only widens it. Then re-measure with LIST-RACE-1-W, which
 reproduces the pair. Not narrated: it stays dirt until fixed.
 
+## P3 - "they can still read it" after a refusal whose commit log has just applied the departure (BIG-3-noI1, 2026-10-27)
+
+`rosterReconcile.ts` logs `[GRAINE] could not remove N departed member(s) from ...: <error> - they
+can still read it` on every failure of its Remove. On dev `1.5.0-alpha.1` the failure was
+`concurrent_commit`. The line just before it in the same console says the commit log was read and the
+concurrent commit WAS that departure (`refused concurrent_commit at epoch 7: read the commit log, 1
+commit(s) applied, now epoch 8`, with the member gone from the tree). So the line states something
+false, and a reader told "they can still read it" is sent after a leak that did not happen. Owed:
+classify the refusal against the commit log the client just read. Say "still read it" only when the
+departed member's leaves are still in the tree after that read; say "removed by another member's
+commit" when the log already removed them. Never branch on the error's message: the outcome is a
+fact the caller already holds.
+
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
 When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the
