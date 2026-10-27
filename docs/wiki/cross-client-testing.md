@@ -110,7 +110,7 @@ No row verdict depends on it; it stays here until it is explained.
 | RM-3 | The remover dies after the roster delete and before the Remove commit lands | W1 W2 W4 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 0b7fe696970b |
 | RM-4 | Two admins rewrite one salon's access list at once: each grants a different member | W1 W2 (both admins) - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 614d54231694. To be replayed on alpha.5 |
 | RM-4b | Two admins each revoke a different member of one private salon | W1 W2 (both admins) - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 614d54231694. To be replayed on alpha.5 |
-| RM-5 | A community kick races an invitation into a private salon for the same user | W1 W2 W4 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: a salon grant landed after the member had been removed; predates rig 614d54231694. To be replayed on alpha.5 |
+| RM-5 | A community kick races an invitation into a private salon for the same user | W1 W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: all five cycles whole; the closing uncontested grant seats the subject, a salon message reaches them, and the tree holds one leaf per active device (no stale leaf); dirt is the deleted-salon read-mark 404 ([backlog](backlog.md#p3---a-read-mark-for-a-salon-that-no-longer-exists-is-retried-forever)) |
 | RM-6 | A member holding only `channel.manage` makes a salon private while leaving off an admin | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig 614d54231694. To be replayed on alpha.5 |
 | RM-7 | A role demotion of the actor races their removal of someone | W1 W2 W4 - U | `pending` - no runner written yet; not yet scheduled |
 | RM-8 | Leave a group while offline (#2259) | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 66efaf30890a |
@@ -121,7 +121,7 @@ No row verdict depends on it; it stays here until it is explained.
 | --- | --- | --- | --- |
 | ADM-1 | A new person follows the group link (new clients everywhere) | W1 W2 + W4 joiner - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig b937940da71c. To be replayed on alpha.5 |
 | ADM-2 | A member Declines | as ADM-1 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: a stale re-add retry after a Decline re-lists the conversation; fixed for alpha.5 (#2493); predates rig b937940da71c. To be replayed on alpha.5 |
-| ADM-3 | Two members answer at once: one Adds, one Declines | W1 W2 + W4 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig b937940da71c. To be replayed on alpha.5 |
+| ADM-3 | Two members answer at once: one Adds, one Declines | W1 W2 + W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: server clean; dirt is the deleted-salon read-mark 404 |
 | ADM-4 | : the waiting seat calls every member route from its own page (roster, members, enrol someone, mint a link, vouch, history, exclusions, call initiate/ring) | W4 waiting - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig b937940da71c. To be replayed on alpha.5 |
 | ADM-5 | OLD joiner: A1 on the `v1.4.0` APK follows a link created on new clients | +A1 (old) W1 W2 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
 | ADM-6 | OLD member: A1 on `v1.4.0` is a member when a NEW joiner follows the link | +A1 (old) W1 + W4 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
@@ -135,7 +135,7 @@ No row verdict depends on it; it stays here until it is explained.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | DEV-1 | A new device of an existing member (W3 owner) | W1 W2 + W3 new - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig cdbf5ba7263a |
-| DEV-2 | Revoke W3 from W1 | W1 W2 W3 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product, by ANALYSIS of the run's logs (the ledger records the failed assertions only): a 401 on the device's own revoked check is read as "unreachable", so the revoke reset never runs; predates rig cdbf5ba7263a. To be replayed on alpha.5 |
+| DEV-2 | Revoke W3 from W1 | W1 W2 W3 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: server clean; dirt is the deleted-salon read-mark 404 and two `absorbed N seed(s)` debug lines on W3 |
 | DEV-3 | Revoke W3 while it is OFFLINE, then bring it back | W1 W2 W3 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product, by ANALYSIS of the run's logs (the ledger records the failed assertions only): the same 401 read as "unreachable" (the revoke reset never runs), and a 500 on a Welcome to a revoked device; predates rig cdbf5ba7263a. To be replayed on alpha.5 |
 | DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | W1 W2 + W3 W6 new - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig cdbf5ba7263a |
 | DEV-5 | The same device id presents a NEW signature key (a copied profile re-keyed) | W1 + W3 copy - U | `pending` - not a runner row: attached to CORRUPT-8 and played later, blocked on Q5 |
@@ -211,15 +211,15 @@ ring window. The first readings were a scratch runner; the repo row replays them
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| CALL-WEB-1 | W2 calls W4, W4 accepts: connected, audio heard both ways, W2 hangs up, both end | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: dirt is undeclared call narration only, now `callNarration` |
-| CALL-WEB-2 | W2 mutes and unmutes mid-call: W4 hears under 1 %, then at least 20 % again | W2 W4 - U | `INVALID` - `1.4.1-alpha.6`: six FAILs voided as the shared-beep rig artifact; `PASS-DIRTY` with the far end muted; owed on distinct tones |
+| CALL-WEB-1 | W2 calls W4, W4 accepts: connected, audio heard both ways, W2 hangs up, both end | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: dirt is chat-delivery `CallsService` ring/presence debug lines no rule scopes |
+| CALL-WEB-2 | W2 mutes and unmutes mid-call: W4 hears under 1 %, then at least 20 % again | W2 W4 - U | `FAIL` - `1.5.0-alpha.2`: muted to 2.1 % of the baseline (bar 1 %), back to 14 % after the unmute (bar 20 %), on a baseline of 4.8 %; a steady tone is what noise suppression learns to remove, so rig versus product is not separated |
 | CALL-WEB-2q | CALL-WEB-2 with W4 muted first, the scratch diagnostic of the shared beep | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: with no echo of its own beep, W2 is heard again after the unmute; the repo row has no such variant |
-| CALL-WEB-3 | the callee hangs up a connected call: both end | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
-| CALL-WEB-4 | W4 declines while ringing: both end, never connected | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only; the call is written as a call with a duration (calls B15) |
-| CALL-WEB-5 | W2 hangs up while W4 rings: W4's ring stops, W2 ends | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
-| CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS-DIRTY` - `1.4.1-alpha.6`: ended at the window; a first `FAIL` was the rig's own 60 s bound |
-| CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: W5 rings its whole 60 s with no busy answer (calls B16) |
-| CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: undeclared call narration only |
+| CALL-WEB-3 | the callee hangs up a connected call: both end | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-4 | W4 declines while ringing: both end, never connected | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-5 | W2 hangs up while W4 rings: W4's ring stops, W2 ends | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
 
 ## LIVE - a live broadcast, watched from the web
 
