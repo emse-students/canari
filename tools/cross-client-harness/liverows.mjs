@@ -40,8 +40,13 @@ export const PLAYED_SHARE = 0.5;
 
 const S = String.raw`[0-9a-f]{8}(?:…|\.\.\.)`;
 const GAP = new RegExp(String.raw`^\[LIVE\] viewer ${S}: a delivery gap of (\d+) ms - target buffer now (\d+) ms$`);
+// THE SPELLINGS ARE `livePlayer.ts`'s ON MAIN AFTER #2583 (the L-F1 fix), read from the source: a
+// pattern that matched no real line would make this judge pass on every viewer. `stallsOf` also
+// keeps every viewer line that SAYS stall and matches neither, and such a line fails the row.
 const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \(target \d+ ms\))?$`);
-const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live edge \(stall\) at [\d.]+$`);
+const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live edge \(stall\) at [\d.]+(?:, \d+ ms behind)?$`);
+const NOT_A_STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting while seeking at [\d.]+ - not a stall$`);
+const SAYS_STALL = /^\[LIVE\] viewer .*stall/;
 const JOINED = new RegExp(String.raw`^\[LIVE\] viewer joined ${S} at segment \d+$`);
 
 /** A console text as the narration compares it: no `level:` prefix, no stamps. */
@@ -54,7 +59,7 @@ const sentence = (line) => stripStamp(String(line).replace(/^(?:log|info|debug|v
  * @param {string[]} lines the viewer's console texts, oldest first
  */
 export function stallsOf(lines) {
-  const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0 };
+  const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [] };
   for (const raw of lines) {
     const s = sentence(raw);
     if (JOINED.test(s)) out.joined = true;
@@ -67,13 +72,15 @@ export function stallsOf(lines) {
     const after = out.gaps.length > 0;
     if (STALL.test(s)) out[after ? 'stallsAfter' : 'stallsBefore']++;
     else if (STALL_SEEK.test(s)) out[after ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
+    else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
   }
   return out;
 }
 
-/** L-F1's facts for one viewer: no stall after its first gap, and none at all without a gap. */
+/** L-F1's facts for one viewer: no stall after its first gap, none without a gap, no stall line it cannot read. */
 export function stallFacts(viewer, st) {
   return [
+    [st.unread.length === 0, `${viewer} wrote ${st.unread.length} stall line(s) this judge cannot read - a spelling moved: ${st.unread.slice(0, 2).join(' | ')}`],
     [st.stallsAfter === 0 && st.stallSeeksAfter === 0, `${viewer} stalled ${st.stallsAfter} time(s) and seeked ${st.stallSeeksAfter} time(s) after its first delivery gap (targets ${st.targets.join(',') || 'none'} ms)`],
     [st.gaps.length > 0 || (st.stallsBefore === 0 && st.stallSeeksBefore === 0), `${viewer} stalled ${st.stallsBefore} time(s) and never named a delivery gap - the target buffer never moved`],
   ];
@@ -179,13 +186,14 @@ const VIEWER = [
   at(D, String.raw`\[LiveChat\] \{"op":"key","liveId":"${S}"\}`),
   at(D, String.raw`\[LiveCrypto\] \{"op":"open","index":${N},"sealedBytes":${N}\}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: no segment yet, waiting`),
-  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall|time gap|catch-up)\) at ${F}`),
+  // `join` and `stall` only: `catch-up`, `drift` and `time gap` are a viewer behind or a broadcaster
+  // re-acquiring its camera, none of them the steady path, so each stays dirt until a reading explains it.
+  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall)\) at ${F}, ${N} ms behind`),
   at(L, String.raw`\[LIVE\] viewer joined ${S} at segment ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S} -> (playing|ended)`),
-  at(D, String.raw`\[LIVE\] viewer ${S} stalled at ${F}( \(target ${N} ms\))?`),
-  at(D, String.raw`\[LIVE\] viewer ${S}: waiting while seeking`),
-  at(['debug', 'log'], String.raw`\[LIVE\] viewer ${S}: a delivery gap of ${N} ms - target buffer now ${N} ms`),
-  at(D, String.raw`\[LIVE\] viewer ${S}: ${N} segments behind - jumping from ${N} to ${N}`),
+  at(D, String.raw`\[LIVE\] viewer ${S} stalled at ${F} \(target ${N} ms\)`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: waiting while seeking at ${F} - not a stall`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: a delivery gap of ${N} ms - target buffer now ${N} ms`),
   at(L, String.raw`\[LIVE\] viewer ${S} \(ended\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),

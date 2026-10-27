@@ -8,6 +8,10 @@
  *
  *   bun archive/liveweb-selftest.mjs
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { PHASES, devicesFor } from '../checks.mjs';
 import { LIVE_ROWS, liveNarration, liveOwn, liveRefusals, stallFacts, stallsOf } from '../liverows.mjs';
 import { rowVerdict } from '../srvlog.mjs';
@@ -19,24 +23,41 @@ const ok = (label, cond) => {
   if (!cond) failures++;
 };
 
+// THE SPELLINGS OF `livePlayer.ts` ON MAIN AFTER #2583, line for line - and pinned against the source
+// below, so a reworded line fails here rather than letting the judge pass on lines it cannot see.
 const S = 'd8de628a…';
 const JOINED = `[00:16:17.719] [LIVE] viewer joined ${S} at segment 1`;
-const STALL = `[00:16:17.720] [LIVE] viewer ${S} stalled at 2.01`;
-const STALL_T = `[00:16:21.720] [LIVE] viewer ${S} stalled at 6.01 (target 2000 ms)`;
-const SEEK = `[00:16:18.931] [LIVE] viewer ${S}: seek to the live edge (stall) at 5.98`;
+const STALL = `[00:16:17.720] [LIVE] viewer ${S} stalled at 2.01 (target 2000 ms)`;
+const STALL_OLD = `[00:16:17.720] [LIVE] viewer ${S} stalled at 2.01`;
+const SEEK = `[00:16:18.931] [LIVE] viewer ${S}: seek to the live edge (stall) at 5.98, 2000 ms behind`;
+const SEEK_OLD = `[00:16:18.931] [LIVE] viewer ${S}: seek to the live edge (stall) at 5.98`;
 const GAP = (gap, target) => `[00:16:20.100] [LIVE] viewer ${S}: a delivery gap of ${gap} ms - target buffer now ${target} ms`;
-const WAITING = `[00:16:20.200] [LIVE] viewer ${S}: waiting while seeking`;
+const WAITING = `[00:16:20.200] [LIVE] viewer ${S}: waiting while seeking at 5.10 - not a stall`;
+const failsOn = (viewer, st, re) => stallFacts(viewer, st).some(([o, why]) => !o && re.test(why));
+
+console.log('the spellings, against the source');
+const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../frontend/src/lib/live/livePlayer.ts'), 'utf8');
+for (const t of [
+  '`[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${this.policy.targetMs} ms)`',
+  '`[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`',
+  '`[LIVE] viewer ${this.liveId}: a delivery gap of ${Math.round(d.gapMs ?? 0)} ms - target buffer now ${Math.round(d.targetMs)} ms`',
+  '`[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`',
+  '`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`',
+]) ok(`livePlayer.ts still writes ${t.slice(1, 60)}...`, SOURCE.includes(t));
 
 // ── the order of a viewer's lines ────────────────────────────────────────────────────────────────
 console.log('the order of a viewer\'s lines (L-F1)');
 const adapted = stallsOf([JOINED, STALL, SEEK, GAP(3960, 4500), WAITING]);
 ok('a stall before the first gap counts BEFORE, and the target is recorded', adapted.joined && adapted.stallsBefore === 1 && adapted.stallSeeksBefore === 1 && adapted.stallsAfter === 0 && adapted.targets.join() === '4500' && adapted.gaps.join() === '3960');
-ok('... and passes L-F1', stallFacts('W2', adapted).every(([o]) => o));
-const relapsed = stallsOf([JOINED, GAP(3960, 4500), STALL_T, SEEK]);
-ok('a stall AFTER the first gap counts after, the "(target N ms)" spelling included', relapsed.stallsAfter === 1 && relapsed.stallSeeksAfter === 1);
-ok('... and fails L-F1', !stallFacts('W2', relapsed)[0][0]);
+ok('... and passes L-F1, the seek wait included (it is not a stall)', stallFacts('W2', adapted).every(([o]) => o) && adapted.unread.length === 0);
+const relapsed = stallsOf([JOINED, GAP(3960, 4500), STALL, SEEK]);
+ok('a stall AFTER the first gap counts after', relapsed.stallsAfter === 1 && relapsed.stallSeeksAfter === 1);
+ok('... and fails L-F1', failsOn('W2', relapsed, /after its first delivery gap/));
+ok('the pre-#2583 spellings are still counted, never skipped', stallsOf([GAP(1, 2), STALL_OLD, SEEK_OLD]).stallsAfter === 1 && stallsOf([GAP(1, 2), STALL_OLD, SEEK_OLD]).stallSeeksAfter === 1);
 const never = stallsOf([JOINED, STALL, SEEK, STALL, SEEK]);
-ok('stalls with no gap ever named fail: the target buffer never moved (the build without the fix)', never.gaps.length === 0 && !stallFacts('W4', never)[1][0]);
+ok('stalls with no gap ever named fail: the target buffer never moved (the build without the fix)', never.gaps.length === 0 && failsOn('W4', never, /never named a delivery gap/));
+const moved = stallsOf([JOINED, GAP(3960, 4500), `[LIVE] viewer ${S} has stalled at 6.01`]);
+ok('a stall line in a spelling the judge cannot read FAILS, rather than passing unseen', moved.unread.length === 1 && failsOn('W2', moved, /cannot read/));
 const quiet = stallsOf([JOINED]);
 ok('no stall and no gap passes: nothing to adapt to', stallFacts('W4', quiet).every(([o]) => o));
 ok('two gaps record both targets, in order', stallsOf([GAP(3900, 4400), GAP(4100, 4600)]).targets.join() === '4400,4600');
@@ -94,6 +115,10 @@ ok('... an end that DROPPED segments is not', !forgiven('LIVE-STALL-1', 'A1', EN
 ok('a seal is forgiven on the broadcaster, NOT on a viewer', forgiven('LIVE-WEB-2', 'A1', SEAL) && !forgiven('LIVE-WEB-2', 'W2', SEAL));
 ok('a viewer join, stall and gap are forgiven on a viewer', forgiven('LIVE-STALL-1', 'W2', VJOIN) && forgiven('LIVE-STALL-1', 'W4', VSTALL) && forgiven('LIVE-STALL-1', 'W2', VGAP));
 ok('... NOT on the broadcaster', !forgiven('LIVE-STALL-1', 'A1', VJOIN) && !forgiven('LIVE-STALL-1', 'A1', VSTALL));
+ok('a join seek and a stall seek are forgiven on a viewer, the wait while seeking too', forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK}`) && forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK.replace('(stall)', '(join)')}`) && forgiven('LIVE-STALL-1', 'W2', `debug: ${WAITING}`));
+ok('a catch-up, drift or time-gap seek stays dirt - not the steady path', ['catch-up', 'drift', 'time gap'].every((why) => !forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK.replace('(stall)', `(${why})`)}`)));
+ok('a viewer jumping segments behind stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S}: 3 segments behind - jumping from 4 to 7`));
+ok('a viewer reconnecting stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S} -> reconnecting (network)`));
 ok('... and NOT on a seat outside the row', !forgiven('LIVE-STALL-1', 'W5', VJOIN));
 ok('... and NOT outside a LIVE row', liveNarration('CALL-WEB-1', 'W2').length === 0);
 ok('a viewer stall at warn stays dirt', !forgiven('LIVE-STALL-1', 'W2', `warn: ${STALL}`));
