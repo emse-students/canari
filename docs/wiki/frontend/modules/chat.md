@@ -740,7 +740,10 @@ deleted); it now only ANNOUNCES the edit.
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
   from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
   changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
-  runs when the conversation changes: the text went with it, the draft belonged to the one left.
+  runs when the conversation changes, and **an edit's text never stays as a draft** (2026-10-27):
+  `begin` binds a writer to the draft of the conversation it starts in (`bindDraftWriter`), and
+  `reset` gives the saved draft back through it - to the conversation the edit began in, never to
+  the one now open ([each conversation keeps its own draft](#each-conversation-keeps-its-own-draft-2026-10-27)).
   **It must run on a change of conversation ID, never of the conversation OBJECT** (2026-10-07): the parent
   replaces that object on every incoming message, and an effect reading `conversation?.id` depends on the object, so
   each arrival dropped the banner. `ChatArea` reads the id through a `$derived`, compared by value.
@@ -3881,7 +3884,7 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
-A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
+A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - into the draft of the conversation the text was written in, whichever one is open by then (each conversation keeps its own draft since 2026-10-27, [below](#each-conversation-keeps-its-own-draft-2026-10-27)), and it logs. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
 
 ### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
 
@@ -4034,3 +4037,30 @@ bracket the unknown stretch between the conversation map and the pane DOM:
 (the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
 rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
 means `selectedContact` and the pane disagree.
+
+## Each conversation keeps its own draft (2026-10-27)
+
+The composer's text was ONE field of `MainChatPage` (`messageText`), cleared only when the route
+switched between `/chat` and `/communities`. A draft left in one conversation - or a share staged
+there - sat in the next conversation's composer, and that conversation's Send posted it there: read
+on the Mi 9T, where two shared links followed the reader into two other conversations. The text now
+follows the rule the staged files and the armed reply already followed:
+`useMessaging.draftByConversation`, keyed by conversation id, read through `draftFor` and written
+through `setDraft`; the page's `messageText` is a `$derived` of the open conversation's entry.
+`forgetAccount` clears it with the other two at sign-out, since the next account may open the same
+DM or salon. A refused send (`restoreFailedDraft`), a taken-back send and a share all write into
+the draft of THEIR conversation. Test: `useMessaging.draft.svelte.test.ts`.
+
+Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
+
+- **Text that comes back LATER is written through `lateDraftWriter`**, which captures
+  `signOutGeneration()` when it is made and drops the text (logged, without the content) once a
+  sign-out has begun: an edit's saved draft, a refused send and a resumed salon text. A sign-out
+  clears the drafts (`forgetAccount`) while the composer is still mounted, and the edit's reset or
+  the refused send's answer came after the clear - the next account to open the same DM or salon
+  saw, and could send, the leaving account's text. Test: `useMessaging.draft.svelte.test.ts`.
+- **The composer resets an open edit when it UNMOUNTS** (`ChatArea`'s `onDestroy`), not only when
+  the conversation id changes: the page remounts on any route change, so an edit left open there
+  left the edited message's text as the draft, with no banner, for Send to post twice. Test:
+  `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
+  derived and its late writers gated.
