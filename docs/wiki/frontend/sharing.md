@@ -196,7 +196,11 @@ post page's header all open it. Canari has no presence and no story, so neither 
   picked - so the S1 picker never opens for it - `landShareOn` opens that conversation as a tapped
   notification would, and the chat page puts the link in the composer (`takeFor`). **The member
   sends with Send; a word can be typed first**, which is Instagram's message field without a second
-  one. The navigation drains the overlay stack, so the sheet and the reel viewer close with it.
+  one. The landing does not navigate when the conversation's section is already shown, so nothing
+  drains the overlay stack then: the sheet closes itself, and **the reel viewer closes on the
+  sheet's `onSentInApp`**, called only when the landing was published (`sendPostLinkInApp` returns
+  true). Without it a reel sent from `/chat` or `/communities` left the viewer over the composer
+  holding the link (review of #2609, 2026-10-27).
 - The sheet is loaded on its first open (`import()`), never with a card: it reads the conversation
   list (`globalChatSingleton`), which a feed scrolled past must not pay for.
 - `offerTo` stamps the share with the page's current FLOOR (the last sign-out it saw): it was made
@@ -241,7 +245,7 @@ the viewer) and from the post page; a tap lands in the conversation with the lin
 Send draws the card; a tap on a reel's card opens the viewer; the recipient without the post's space
 sees "unavailable"; "Copier le lien" and "Partager via..." from both. Tests:
 `PostShareSheet.svelte.test.ts`, `sharePost.test.ts`, `shareDestinations.test.ts`,
-`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet),
+`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet, a sent reel closes the viewer),
 `LinkPreviewCard.reel.svelte.test.ts` and `canariLinkPreview.test.ts` (a reel's card opens the
 viewer, a post's its page).
 
