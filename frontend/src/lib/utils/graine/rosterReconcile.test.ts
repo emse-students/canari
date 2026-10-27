@@ -4,6 +4,7 @@ import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
+import { DEADLINE_MS, fetchUnderDeadline } from '$lib/utils/requestDeadline';
 
 /**
  * A departure must move the distribution group's epoch (WP-GRAINE-2).
@@ -384,25 +385,41 @@ describe('reconcileDistributionGroupRoster - one pass per scope at a time', () =
     expect(b.some((l) => l.includes('agrees with its roster'))).toBe(true);
   });
 
-  it('releases the lane when a pass ends on a transport deadline, so the next one runs', async () => {
-    // `apiFetch`'s own deadline is what ends a hung read: the pass logs it, removes nobody, and the
-    // scope's next pass is not held behind it.
-    listWorkspaceMembers.mockRejectedValueOnce(
-      Object.assign(new Error('GET members: no response head within 15000 ms'), {
-        name: 'RequestDeadlineError',
-      })
-    );
-    const lines: string[] = [];
+  it('a HUNG roster read ends on its typed deadline and releases the lane - termination', async () => {
+    // The real deadline primitive `apiFetch` sends every request through, over a server that never
+    // answers: nothing here rejects the read by hand. Fake time is the only thing advanced.
+    vi.useFakeTimers();
+    try {
+      const neverAnswers = ((_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        )) as unknown as typeof fetch;
+      listWorkspaceMembers.mockImplementationOnce(() =>
+        fetchUnderDeadline(neverAnswers, '/api/members', {}, 'read', DEADLINE_MS.read)
+      );
+      const lines: string[] = [];
 
-    await expect(
-      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) => lines.push(m))
-    ).resolves.toEqual([]);
-    expect(lines.join(' ')).toContain('nobody removed');
+      const hung = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      );
+      // Let it START reading, so the next caller queues behind it rather than sharing it.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listWorkspaceMembers).toHaveBeenCalledTimes(1);
+      const next = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+      await vi.advanceTimersByTimeAsync(DEADLINE_MS.read - 1);
+      // Still hung, and the next pass waits behind it.
+      expect(listWorkspaceMembers).toHaveBeenCalledTimes(1);
 
-    await expect(
-      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) => lines.push(m))
-    ).resolves.toEqual([]);
-    expect(listWorkspaceMembers).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(hung).resolves.toEqual([]);
+      expect(lines.join(' ')).toContain('RequestDeadlineError');
+      expect(lines.join(' ')).toContain('nobody removed');
+      // The lane was released: the queued pass ran its own read.
+      await expect(next).resolves.toEqual([]);
+      expect(listWorkspaceMembers).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not hold a pass on one scope behind a pass on another', async () => {
