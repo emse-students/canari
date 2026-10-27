@@ -30,6 +30,7 @@
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
+  import { commitSalonRevoke } from '$lib/utils/graine/commitRemoval';
   import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ChannelSidebarItem {
@@ -432,6 +433,10 @@
       // The per-member route needs no base (it removes exactly one name), but its answer moves the
       // revision, which this panel must follow to keep its next write valid.
       await afterAccessWrite(channelId, base, answer);
+      // Whoever removes somebody commits the Remove (channel-encryption section 10): the server has
+      // unrouted them, and only a holder of the salon's key group can take their leaves out of it.
+      // Not awaited and never throws - the revoke has already succeeded, every outcome is logged.
+      if (answer.isPrivate) void commitSalonRevoke(channelService, channelId, userId, appendLog);
       // Also remove from displayed member list
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
