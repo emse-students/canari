@@ -26,10 +26,15 @@ impl MlsManager {
 
     /// Join a group via an external commit, using a GroupInfo served by the delivery service. Builds
     /// the external commit (which adds THIS device's own leaf) and inserts the resulting group
-    /// locally with the commit STAGED. Mirrors the staged-commit regime: the caller submits the
-    /// returned commit for server epoch validation, then calls `merge_pending_commit_for` on accept.
-    /// An external commit CANNOT be cleared, so on reject the caller must `forget_group` and rebuild
-    /// from a fresher GroupInfo (self-service retry - this is what replaces the CAS/successor dance).
+    /// locally. openmls 0.9 MERGES the commit inside `ExternalCommitBuilder::finalize`, so the group
+    /// is already at the epoch its commit creates and holds no openmls pending commit; "not yet
+    /// merged" is this crate's `pending_external_joins` marker, persisted in the sealed state. The
+    /// caller submits the returned commit for server epoch validation, then calls
+    /// `merge_pending_commit_for` on accept, which ends the marker and pins the tree. There is no
+    /// prior epoch to fall back to, so on reject the group is dropped whole
+    /// (`clear_pending_commit_for` forgets it) and the join is rebuilt from a fresher GroupInfo
+    /// (self-service retry - this is what replaces the CAS/successor dance). Pinned by
+    /// `external_join_pending_tests.rs`.
     /// Returns `(group_id, commit_bytes)`. Refuses a group already held locally (a concurrent
     /// Welcome may have landed first) with [`MlsError::GroupAlreadyHeld`], BEFORE anything is built;
     /// rung-2 callers `forget_group` before calling.
