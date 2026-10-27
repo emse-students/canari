@@ -282,6 +282,20 @@ const CALLEE_ANSWERS = [
   at(L, String.raw`\[Call\] answer to offer #${N} \(${N} bytes\) -> peer`),
 ];
 const HUNG_UP = at(L, String.raw`\[Call\] hung up from the full screen`);
+
+// HOW A CALL ENDS ON EACH SEAT, AND THE RECORD IT WRITES (#2582, B15/B16; first read on
+// `1.5.1-alpha.1`, 2026-10-27). `endCall` names its state, its typed outcome, whether this side
+// notifies and whether the end came from the other side; `finalizeCallRecord` names the outcome
+// the conversation's record was written with. EVERY FIELD IS PINNED PER SCENARIO AND ROLE: the
+// side that ends notifies (`notify=true remote=false`), the side told of it does not
+// (`notify=false remote=true`). An outcome, state or direction other than the one its scenario
+// produces - a declined call ending as `cancelled`, a connected call recording `not-answered` -
+// stays dirt.
+const ENDING = (state, outcome, ends) =>
+  at(L, String.raw`\[Call\] ending call ${H} state=${state} outcome=${outcome} notify=${ends} remote=${!ends}`);
+const RECORDED = (outcome) => at(L, String.raw`\[CallRecord\] ${H} finalized as ${outcome}`);
+/** The end of an answered call, on the side that ended it (`ends`) or the side told of it. */
+const ANSWERED_END = (ends) => [ENDING('incall', 'answered-or-unrung', ends), RECORDED('answered')];
 const UNANSWERED = at(L, String.raw`\[Call\] ring window \(60000 ms\) closed unanswered - call=${H}`);
 // THE PRIMING play() OF A RING SCREEN THAT LEFT BEFORE ANY STREAM: `primeVoice` logs its rejection
 // on purpose ("expected and only logged"); this is the rejection of an element unmounted under it,
@@ -300,22 +314,41 @@ export function callNarration(row, seat) {
   const connects = !['decline', 'cancel', 'offline'].includes(scenario);
   if (seat === 'W2') {
     const caller = [...SETUP, ...CALLER, ...(connects ? CONNECTED : [])];
-    if (scenario === 'offline') return [...caller, UNANSWERED];
+    // The caller's own ring screen, primed by the dialling tap, leaves before any stream in every
+    // row whose call never connects (read on CALL-WEB-4/5/6, `1.5.1-alpha.1`).
+    if (scenario === 'offline') return [...caller, UNANSWERED, ENDING('calling', 'not-answered', true), RECORDED('not-answered'), PRIMED_AWAY];
     if (scenario === 'reload') return [...caller, at(L, String.raw`\[Call\] the other party left the call room`)];
-    if (['basic', 'mute', 'cancel', 'busy'].includes(scenario)) return [...caller, HUNG_UP];
+    if (scenario === 'decline') return [...caller, ENDING('calling', 'declined', false), RECORDED('declined'), PRIMED_AWAY];
+    if (scenario === 'cancel') return [...caller, HUNG_UP, ENDING('calling', 'cancelled', true), RECORDED('cancelled'), PRIMED_AWAY];
+    if (['basic', 'mute', 'busy'].includes(scenario)) return [...caller, HUNG_UP, ...ANSWERED_END(true)];
     return caller;
   }
   if (seat === 'W4') {
     const callee = [...SETUP, ...CALLEE_RINGS];
-    if (scenario === 'decline') return [...callee, at(L, String.raw`\[Call\] declined from the full screen`), PRIMED_AWAY];
-    if (scenario === 'cancel') return [...callee, PRIMED_AWAY];
+    if (scenario === 'decline')
+      return [...callee, at(L, String.raw`\[Call\] declined from the full screen`), PRIMED_AWAY, ENDING('incoming', 'declined', true), RECORDED('declined')];
+    if (scenario === 'cancel') return [...callee, PRIMED_AWAY, ENDING('incoming', 'cancelled', false), RECORDED('cancelled')];
     const answered = [...callee, ...CALLEE_ANSWERS, ...CONNECTED];
     if (scenario === 'callee-hangup') return [...answered, HUNG_UP];
-    if (scenario === 'busy') return [...answered, at(L, String.raw`\[Call\] invite ${H} in ${H} not rung - busy \(state=incall call=${H}\)`)];
+    // B16: the second invite meets the call in progress (`yieldToOrAnswerBusy`) and is answered
+    // busy; W4 writes W5's call as `busy` in their DM, and its own call ends as W2's was.
+    if (scenario === 'busy')
+      return [...answered, at(L, String.raw`\[Call\] invite ${H} in ${H} meets state=incall call=${H}`), RECORDED('busy'), ...ANSWERED_END(false)];
     if (scenario === 'reload')
       return [...answered, at(['debug'], String.raw`\[CallView\] minimised to the top banner`), at(L, String.raw`\[Call\] top bar up - above every covering layer`)];
-    return answered;
+    return [...answered, ...ANSWERED_END(false)];
   }
-  if (seat === 'W5' && scenario === 'busy') return [...SETUP, at(L, String.raw`\[Call\] server ring sent - answer window open`), UNANSWERED, HUNG_UP, PRIMED_AWAY];
+  if (seat === 'W5' && scenario === 'busy')
+    return [
+      ...SETUP,
+      at(L, String.raw`\[Call\] server ring sent - answer window open`),
+      UNANSWERED,
+      HUNG_UP,
+      PRIMED_AWAY,
+      // B16: the busy answer ends W5's call at once, as `busy`.
+      at(L, String.raw`\[Call\] ${H} is busy - ending call ${H} at once`),
+      ENDING('calling', 'busy', true),
+      RECORDED('busy'),
+    ];
   return [];
 }

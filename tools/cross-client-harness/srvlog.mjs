@@ -1271,6 +1271,31 @@ const ROW_RULES = [
       /\[CallsService\] \[ring\] ringGroup caller=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ring\] call=[0-9a-f-]{36} group=[0-9a-f-]{36} rang=(\d+)\/\1 devices$|\[CallsService\] \[calls\] presence active user=[0-9a-f]{64} device=\S+ call=[0-9a-f-]{36}$|\[CallsService\] \[calls\] requestRoomToken user=[0-9a-f]{64} group=[0-9a-f-]{36} room=[0-9a-f-]{36}$|\[CallsService\] \[call\] join-token room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$/,
     rows: ['CALL-WEB-*'],
   },
+  // THE RING'S END AND THE PRESENCE CLEARED (`calls.service.ts` `endRing`, `reportCallPresence`;
+  // first read on `1.5.1-alpha.1`, 2026-10-27). The `reason` is pinned per row to what its scenario
+  // sends - an answered call `answered` then `ended`, a declined one `ended`, a cancelled or
+  // unanswered one `cancelled`, the busy row its answered call and W5's ended at once - so a ring
+  // ended for another reason is read by the rule of a row it is not, and stays dirt. `notified=R/N`
+  // is forgiven only when R equals N, as the ring's `rang=R/N` is.
+  ...[
+    { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2'] },
+    { name: 'call ring ended: declined', reasons: 'ended', rows: ['CALL-WEB-4'] },
+    { name: 'call ring ended: cancelled or unanswered', reasons: 'cancelled', rows: ['CALL-WEB-5', 'CALL-WEB-6'] },
+    { name: 'call ring ended: one answered, one busy', reasons: 'answered|cancelled', rows: ['CALL-WEB-7'] },
+  ].map(({ name, reasons, rows }) => ({
+    name,
+    tag: /\[CallsService\] \[(ring\] (endRing|ring-end) |calls\] cleared presence )/,
+    shape: new RegExp(
+      [
+        String.raw`\[CallsService\] \[ring\] endRing user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36} reason=(${reasons})`,
+        String.raw`\[CallsService\] \[ring\] ring-end call=[0-9a-f-]{36} notified=(\d+)\/\2`,
+        String.raw`\[CallsService\] \[calls\] cleared presence for user=[0-9a-f]{64} device=\S+`,
+      ]
+        .map((s) => `${s}$`)
+        .join('|')
+    ),
+    rows,
+  })),
   // call-service's half (Rust, `call_service`): a signalling socket per seat, its p2p pairing and
   // relays, and its end. `disposition=client-close` is the only end forgiven: any other is a call
   // the service ended, which is a finding.
