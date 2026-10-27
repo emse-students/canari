@@ -36,6 +36,19 @@ import { isGraineReady, rawChannelId, requireGraineRuntime, scopeForChannel } fr
  * removal it reports must not be reported as failed because a commit could not follow it.
  */
 
+/**
+ * The device id the removal REQUEST names as the one that will commit (`?actorDevice=`), or
+ * `undefined` when this device will commit nothing - no Graine runtime, or a tab that is not the
+ * leader. The server echoes it in the removal broadcast, and every receiver leaves a scope's Remove
+ * to this device exactly when the device holds a leaf of that scope's tree; otherwise the receivers
+ * elect one (`departureCommitter.ts`). Naming it only when it WILL commit is what keeps that rule
+ * from handing a Remove to a device that then stays silent.
+ */
+export function committingDeviceId(): string | undefined {
+  if (!isGraineReady() || getTabLeadership() !== 'leader') return undefined;
+  return requireGraineRuntime('committingDeviceId').mlsService.getDeviceId() || undefined;
+}
+
 /** What one actor-side removal commit did, in the terms its log line reports. */
 export type RemovalCommitOutcome =
   /** A roster pass ran on a held group; `removedUserIds` is empty when it removed nobody. */

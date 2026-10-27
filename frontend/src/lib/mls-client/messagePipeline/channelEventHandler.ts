@@ -14,6 +14,7 @@ import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readSta
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
+import { salonGrants } from '$lib/utils/chat/memberRemoval';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -185,6 +186,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'channel.member.joined') {
     const data = event.data || {};
+    // The grant's revision, for each person it names, orders it against a removal (`salonGrants`).
+    const granted: string[] = Array.isArray(data.grantedUserIds)
+      ? data.grantedUserIds.map(String)
+      : data.joinedBy
+        ? [String(data.joinedBy)]
+        : [];
+    salonGrants.noteGrant(String(data.channelId || ''), granted, data.accessRevision);
     onChannelMemberJoined?.({
       channelId: String(data.channelId || ''),
       channelName: data.channelName,
@@ -204,12 +212,23 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // are normalised here so a single client handler decides what is actually lost.
   if (event.type === 'channel.member.kicked' || event.type === 'channel.member.removed') {
     const data = event.data || {};
+    const channelId = String(data.channelId || '');
+    const kickedUserId = String(data.kickedUserId ?? data.removedUserId ?? '');
+    // A removal OLDER than a grant already seen for the same person and salon (a leave, then a
+    // quick re-invitation) changes nothing: acting on it would purge a salon they are back in.
+    if (channelId && salonGrants.supersedes(channelId, kickedUserId, data.accessRevision)) {
+      log(
+        `[CHANNEL] removal of ${kickedUserId.slice(0, 8)} from ${channelId.slice(0, 8)} at access revision ${data.accessRevision} is older than a grant already seen - ignored`
+      );
+      return;
+    }
     onChannelMemberKicked?.({
-      channelId: String(data.channelId || ''),
+      channelId,
       channelName: data.channelName,
       workspaceId: data.workspaceId,
-      kickedUserId: String(data.kickedUserId ?? data.removedUserId ?? ''),
+      kickedUserId,
       kickedBy: data.kickedBy ?? data.removedBy,
+      actorDeviceId: typeof data.actorDeviceId === 'string' ? data.actorDeviceId : undefined,
       channelIsPrivate: data.isPrivate === true,
     });
     return;

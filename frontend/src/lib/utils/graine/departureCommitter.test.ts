@@ -1,5 +1,9 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { commitDepartureIfElected, electDepartureCommitter } from './departureCommitter';
+import {
+  commitDepartureIfElected,
+  electDepartureCommitter,
+  electionWindow,
+} from './departureCommitter';
 
 /**
  * WHO COMMITS A DEPARTURE THE ACTOR CANNOT (channel-encryption section 10). Every receiver of the
@@ -37,6 +41,10 @@ vi.mock('./runtime', () => ({
     },
   }),
 }));
+const gap = vi.hoisted(() => ({ groups: new Set<string>() }));
+vi.mock('$lib/utils/chat/epochGapRegistry', () => ({
+  isInEpochGap: (id: string) => gap.groups.has(id),
+}));
 vi.mock('$lib/utils/chat/groupUsability', () => ({
   holdsGroupState: (mls: { getLocalGroups: () => string[] }, id: string) =>
     mls.getLocalGroups().includes(id),
@@ -69,6 +77,7 @@ beforeEach(() => {
   runtime.leaves = ['alice:dev-a', 'carol:dev-c', 'bob:dev-b'];
   runtime.scopes = [];
   runtime.deviceId = 'dev-a';
+  gap.groups = new Set();
   rosterRows = [
     { userId: 'alice', onlineDevices: ['dev-a'] },
     { userId: 'carol', onlineDevices: ['dev-c'] },
@@ -118,6 +127,21 @@ describe('electDepartureCommitter', () => {
     ).toBeNull();
   });
 
+  it('elects only within the first leaves of the tree, whatever is online beyond them', () => {
+    const leaves = ['a1:d', 'a2:d', 'a3:d', 'a4:d', 'zed:d', 'bob:b'];
+    expect(electionWindow(leaves, 'bob')).toEqual(['a1:d', 'a2:d', 'a3:d', 'a4:d']);
+    expect(
+      electDepartureCommitter({
+        leafIdentities: leaves,
+        rosterRows: [
+          { userId: 'a1', onlineDevices: [] },
+          { userId: 'zed', onlineDevices: ['d'] },
+        ],
+        departedUserId: 'bob',
+      })
+    ).toBeNull();
+  });
+
   it('elects nobody when no remaining device is online', () => {
     expect(
       electDepartureCommitter({
@@ -139,6 +163,7 @@ describe('commitDepartureIfElected', () => {
   });
 
   it('commits nothing when another device is elected, and names it', async () => {
+    runtime.leaves = ['alice:dev-a', 'alice:dev-z', 'carol:dev-c', 'bob:dev-b'];
     runtime.deviceId = 'dev-z';
     await expect(commitDepartureIfElected(channels, salonLeave, log)).resolves.toEqual([
       'elected-elsewhere',
@@ -147,18 +172,85 @@ describe('commitDepartureIfElected', () => {
     expect(lines.join('\n')).toContain('alice:dev-a is elected');
   });
 
-  it('leaves it to the actor when the actor holds a leaf', async () => {
+  it('leaves it to the actor when the actor DEVICE holds a leaf', async () => {
     await expect(
-      commitDepartureIfElected(channels, { ...salonLeave, actorUserId: 'Carol' }, log)
+      commitDepartureIfElected(
+        channels,
+        { ...salonLeave, actorUserId: 'Carol', actorDeviceId: 'dev-c' },
+        log
+      )
     ).resolves.toEqual(['actor-commits']);
     expect(reconcile).not.toHaveBeenCalled();
     expect(channels.listMembers).not.toHaveBeenCalled();
   });
 
+  it('elects when the actor user holds a leaf but the acting device does not', async () => {
+    // Carol kicked from another device: a user-level check would leave it to a device that
+    // commits nothing.
+    await expect(
+      commitDepartureIfElected(
+        channels,
+        { ...salonLeave, actorUserId: 'carol', actorDeviceId: 'dev-c-phone' },
+        log
+      )
+    ).resolves.toEqual(['elected-here']);
+  });
+
+  it('elects when the actor named no committing device (an older client, a follower tab)', async () => {
+    await expect(
+      commitDepartureIfElected(channels, { ...salonLeave, actorUserId: 'carol' }, log)
+    ).resolves.toEqual(['elected-here']);
+  });
+
   it('elects among the members when the actor holds no leaf', async () => {
     await expect(
-      commitDepartureIfElected(channels, { ...salonLeave, actorUserId: 'admin' }, log)
+      commitDepartureIfElected(
+        channels,
+        { ...salonLeave, actorUserId: 'admin', actorDeviceId: 'web-1' },
+        log
+      )
     ).resolves.toEqual(['elected-here']);
+  });
+
+  it('does not even read the roster from a device outside the election window', async () => {
+    // Four leaves sort before this device's own: it can never be elected, so it asks nothing.
+    runtime.leaves = ['aa:d', 'ab:d', 'ac:d', 'ad:d', 'alice:dev-a', 'bob:dev-b'];
+    await expect(commitDepartureIfElected(channels, salonLeave, log)).resolves.toEqual([
+      'outside-window',
+    ]);
+    expect(channels.listMembers).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing from an elected device whose group is in an epoch gap', async () => {
+    gap.groups = new Set(['kg-1']);
+    await expect(commitDepartureIfElected(channels, salonLeave, log)).resolves.toEqual([
+      'cannot-commit',
+    ]);
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('two receivers that disagree on presence elect two devices - each runs the one pass', async () => {
+    // Alice's read saw her own device online; Carol's read a moment later saw Alice offline. The
+    // epoch gate keeps one commit; the other pass reads the tree again and says "already gone".
+    const aliceView = electDepartureCommitter({
+      leafIdentities: ['alice:dev-a', 'carol:dev-c', 'bob:dev-b'],
+      rosterRows: [
+        { userId: 'alice', onlineDevices: ['dev-a'] },
+        { userId: 'carol', onlineDevices: ['dev-c'] },
+      ],
+      departedUserId: 'bob',
+    });
+    const carolView = electDepartureCommitter({
+      leafIdentities: ['alice:dev-a', 'carol:dev-c', 'bob:dev-b'],
+      rosterRows: [
+        { userId: 'alice', onlineDevices: [] },
+        { userId: 'carol', onlineDevices: ['dev-c'] },
+      ],
+      departedUserId: 'bob',
+    });
+    expect(aliceView).toBe('alice:dev-a');
+    expect(carolView).toBe('carol:dev-c');
   });
 
   it('commits nothing and says so when nobody can be elected', async () => {

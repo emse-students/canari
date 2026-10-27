@@ -1,6 +1,11 @@
 import type { ChannelService } from '$lib/services/ChannelService';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
-import { commitCommunityKick, commitRemovalNow, commitSalonRevoke } from './commitRemoval';
+import {
+  commitCommunityKick,
+  commitRemovalNow,
+  commitSalonRevoke,
+  committingDeviceId,
+} from './commitRemoval';
 
 /**
  * THE ACTOR OF A REMOVAL COMMITS IT (channel-encryption section 10). A revoke used to be committed
@@ -30,6 +35,7 @@ vi.mock('./runtime', () => ({
       distributionGroupFor: () => (runtime.held ? 'kg-salon' : null),
       getLocalGroups: () => (runtime.held ? ['kg-salon'] : []),
       distributionScopes: () => runtime.scopes,
+      getDeviceId: () => 'web-self',
     },
   }),
 }));
@@ -143,5 +149,16 @@ describe('commitCommunityKick', () => {
       { kind: 'not-leader' },
     ]);
     expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('committingDeviceId', () => {
+  it('names this device only when it will commit: a runtime and the leader tab', () => {
+    expect(committingDeviceId()).toBe('web-self');
+    leadership.value = 'follower';
+    expect(committingDeviceId()).toBeUndefined();
+    leadership.value = 'leader';
+    runtime.ready = false;
+    expect(committingDeviceId()).toBeUndefined();
   });
 });

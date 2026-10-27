@@ -392,12 +392,15 @@ export class ChannelsController {
   removeMemberFromChannel(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
   ) {
+    // `actorDevice`: the actor's device that commits the key-group Remove (`committingDevice`).
     return this.service.removeMemberFromChannel(
       channelId,
       userId.trim().toLowerCase(),
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      actorDevice
     );
   }
 
@@ -459,12 +462,14 @@ export class ChannelsController {
   kickFromWorkspace(
     @Headers('x-user-id') xUserId: string,
     @Param('workspaceId') workspaceId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
   ) {
     return this.service.kickFromWorkspace(
       workspaceId,
       userId.trim().toLowerCase(),
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      actorDevice
     );
   }
 

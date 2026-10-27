@@ -72,7 +72,12 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
-  import { removalOutcome } from '$lib/utils/chat/memberRemoval';
+  import {
+    departureToDecide,
+    isOwnLeave,
+    removalOutcome,
+    salonGrants,
+  } from '$lib/utils/chat/memberRemoval';
   import { commitDepartureIfElected } from '$lib/utils/graine/departureCommitter';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
@@ -718,6 +723,8 @@
     globalMessaging.forgetAccount(appendLog);
     // ...and the media held by a closed new-post composer (`holdPostComposerMedia`).
     forgetPostComposerMedia();
+    // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
+    salonGrants.clear();
     _loginInProgress = false;
   }
 
@@ -1098,19 +1105,8 @@
         if (outcome === 'ignore') {
           // Somebody else left or was removed. When the actor cannot commit it - a leave, or an
           // actor with no leaf in a key group - ONE elected remaining device does (`departureCommitter`).
-          if (event.workspaceId && event.kickedUserId) {
-            void commitDepartureIfElected(
-              channelService,
-              {
-                workspaceId: String(event.workspaceId),
-                channelId: event.channelId,
-                channelIsPrivate: event.channelIsPrivate === true,
-                departedUserId: event.kickedUserId,
-                actorUserId: event.kickedBy,
-              },
-              appendLog
-            );
-          }
+          const departure = departureToDecide(event);
+          if (departure) void commitDepartureIfElected(channelService, departure, appendLog);
           return;
         }
 
@@ -1150,8 +1146,7 @@
         }
         // A salon this user LEFT is announced to their own devices too (2026-10-27), so they drop
         // it; being told they were "removed" from it would be false, so a leave says nothing.
-        const selfLeft =
-          String(event.kickedBy ?? '').toLowerCase() === globalSession.userId?.toLowerCase();
+        const selfLeft = isOwnLeave(event, globalSession.userId);
         appendLog(`${selfLeft ? 'Left' : 'Removed from'} channel ${event.channelId}`);
         if (!selfLeft) {
           showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');

@@ -1846,13 +1846,28 @@ a revoke whose actor holds no leaf in a scope is the same case. So every receive
 broadcast about somebody else - and a salon leave now broadcasts `channel.member.removed` with the
 leaver as its own actor, to the salon's audience and the leaver - reads the scope's tree and its
 roster with per-device presence and elects the same device: the first, in canonical
-`userId:deviceId` order, of the tree's leaves whose user is on the roster, is not the departed user,
-and whose device the roster reports online. That device runs the scope's roster pass (the same
-serialised pass, so a load's pass cannot double it); every other receiver commits nothing and logs
-whom it left it to. When the actor's user holds a leaf, the receivers leave it to the actor. No
+`userId:deviceId` order, of the first four leaves of the tree (the departed user's excluded) whose
+user is on the roster and whose device the roster reports online. The window is a function of the
+tree alone, so only a receiver whose own leaf is in it reads the roster at all - a departure costs
+at most four roster reads, not one per member. That device runs the scope's roster pass (the same
+serialised pass, so a load's pass cannot double it) unless its tab is not the leader or its group
+sits in an epoch gap, which it says; every other receiver commits nothing and logs whom it left it
+to. **The actor is checked BY DEVICE**: a kick or a revoke names the actor's device when that device
+will commit (`committingDeviceId`: a Graine runtime and the leader tab), the server echoes it as
+`actorDeviceId`, and the receivers leave a scope's Remove to it exactly when that device is a leaf
+of the scope's tree - a user-level check handed it to an actor whose OTHER device held the leaf. No
 clock: two receivers reading presence a moment apart may elect two devices - the epoch gate keeps
-one commit and the other pass finds nothing to remove - or none, and then the Remove waits for a
-holder's next roster pass. Neither is retried.
+one commit and the other pass reads the tree again and says "already gone" - or none, and then the
+Remove waits for a holder's next roster pass. Neither is retried. **Presence says online, not able
+to commit**: an elected device that does not hold the group, or an older client predating this
+election, commits nothing, and only the backstop - a holder's next roster pass - covers it.
+
+**A removal and a grant of the same salon are ordered by the server's `accessRevision`**, which both
+broadcasts now carry: a removal older than a grant already seen for the same person (a leave and a
+quick re-invitation, handled out of order) is ignored by the event pipeline (`SalonGrantLedger`,
+`memberRemoval.ts`) rather than purging a salon its user is back in. A removal whose announcement
+fails after the write is logged and answered as done - the removal happened, and a 500 would invite
+a retry answered "not a member".
 
 What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
 above, unchanged): an actor or an elected device on a follower tab, a session with no Graine

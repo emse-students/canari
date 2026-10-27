@@ -71,6 +71,8 @@ export interface MessageHandlerDeps {
     /** The user being removed. Compare with the local user id before touching any state. */
     kickedUserId: string;
     kickedBy?: string;
+    /** The actor's device that commits the key-group Remove itself, when the actor named one. */
+    actorDeviceId?: string;
     /** Channel removals only: a public channel stays readable, so nothing is lost. */
     channelIsPrivate?: boolean;
   }) => void;

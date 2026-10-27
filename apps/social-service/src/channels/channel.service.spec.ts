@@ -544,6 +544,28 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  it('a kick names the committing device the actor sent, and drops a malformed one', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1', 'web-1');
+    expect(redis.publishChannelEvent).toHaveBeenLastCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1', actorDeviceId: 'web-1' },
+      expect.any(Array)
+    );
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1', 'not/a device');
+    expect(redis.publishChannelEvent).toHaveBeenLastCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1' },
+      expect.any(Array)
+    );
+  });
+
   it('removeMemberFromChannel reports whether the channel was private', async () => {
     const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
     channelRepo.findOne.mockResolvedValue({
@@ -2635,9 +2657,25 @@ describe('ChannelService security hardening', () => {
         removedUserId: 'u1',
         removedBy: 'u1',
         isPrivate: true,
+        // The revision the strip left, so a client that saw a later grant does not purge.
+        accessRevision: expect.any(Number),
       }),
       expect.arrayContaining(['u1'])
     );
+    // A leave names no committing device: the leaver's own leaf is the one leaving.
+    const calls = repos.redis.publishChannelEvent.mock.calls as unknown[][];
+    expect(calls[calls.length - 1][1]).not.toHaveProperty('actorDeviceId');
+  });
+
+  it('a leave whose announcement fails is still a leave, not a 500', async () => {
+    const repos = makeService();
+    const { channel } = arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+    repos.redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(repos.service.leaveChannel('ch1', { userId: 'u1' })).resolves.toEqual({
+      success: true,
+    });
+    expect(channel.allowedUsers).toEqual(['boss']);
   });
 
   // ── The governance postcondition (2026-08-18) ──────────────────────────────────────────────
