@@ -4,6 +4,7 @@
   import { globalConvs, globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import {
     canAnswerJoinRequests,
+    isOwnDeviceAsk,
     pendingJoinRequests,
     type JoinRequest,
   } from '$lib/utils/chat/joinRequests.svelte';
@@ -20,6 +21,10 @@
    * member - a person another member's Add admitted first is left whole (`declineJoinRequest`). One
    * ask at a time, the oldest first; it stays until answered, or until a sweep finds another member
    * answered it - and it is shown only while the chat page that answers it is mounted.
+   *
+   * A DEVICE this one never saw, of a user already in the conversation (`kind: 'device'`), is asked
+   * about in its own words - the account's own, or a contact's - and its answer is about the device
+   * alone (`memberDeviceAnswers.ts`).
    */
   // The conversation on screen draws its own asks at the end of its thread (`JoinRequestRow`), so
   // the banner carries only those of the OTHER conversations - never the same ask twice.
@@ -50,15 +55,24 @@
   <Banner variant="info" tone="alert">
     <UserPlus size={15} class="shrink-0" aria-hidden="true" />
     <div class="flex min-w-0 flex-col">
-      <strong>{m.join_request_title()}</strong>
-      <span>
-        {groupName
-          ? m.join_request_body_named({
-              user: getUserDisplayNameSync(request.userId),
-              group: groupName,
-            })
-          : m.join_request_body({ user: getUserDisplayNameSync(request.userId) })}
-      </span>
+      {#if request.kind === 'device'}
+        <strong>{m.join_request_device_title()}</strong>
+        <span>
+          {isOwnDeviceAsk(request, session.userId)
+            ? m.join_request_device_body_own()
+            : m.join_request_device_body({ user: getUserDisplayNameSync(request.userId) })}
+        </span>
+      {:else}
+        <strong>{m.join_request_title()}</strong>
+        <span>
+          {groupName
+            ? m.join_request_body_named({
+                user: getUserDisplayNameSync(request.userId),
+                group: groupName,
+              })
+            : m.join_request_body({ user: getUserDisplayNameSync(request.userId) })}
+        </span>
+      {/if}
     </div>
     {#snippet action()}
       <div class="flex shrink-0 items-center gap-2">

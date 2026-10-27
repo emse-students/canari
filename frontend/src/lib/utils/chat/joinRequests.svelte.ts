@@ -2,6 +2,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import type { JoinAskOutcome } from '$lib/mls-client/joinAskFrames';
 import type { JoinApprovalRequest } from './actions';
+import { resetMemberDeviceAnswers, setMemberDeviceSweep } from './memberDeviceAnswers';
 
 /**
  * A NEW PERSON ASKING TO JOIN A CONVERSATION, held until a member of it answers.
@@ -27,6 +28,11 @@ export interface JoinRequest {
    * from a server older than the field.
    */
   askId?: string;
+  /**
+   * `device`: a DEVICE never seen by this one, of a user already in the conversation, asks to join
+   * (`memberDeviceAnswers.ts`). Its own entry beside any ask of the person, never merged into one.
+   */
+  kind?: 'device';
 }
 
 /**
@@ -53,8 +59,8 @@ const settledAsks = new SvelteSet<string>();
 // Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
 let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
-function keyOf(groupId: string, userId: string): string {
-  return `${groupId}|${canonicalUserId(userId)}`;
+function keyOf(groupId: string, userId: string, kind?: 'device'): string {
+  return `${groupId}|${canonicalUserId(userId)}${kind === 'device' ? '|device' : ''}`;
 }
 
 function short(groupId: string): string {
@@ -66,7 +72,7 @@ function short(groupId: string): string {
  * the server already settled is not recorded, and a newer ask of the same person replaces the entry.
  */
 export function raiseJoinRequest(ask: JoinApprovalRequest): void {
-  const key = keyOf(ask.groupId, ask.requesterUserId);
+  const key = keyOf(ask.groupId, ask.requesterUserId, ask.kind);
   const userId = canonicalUserId(ask.requesterUserId);
   if (ask.askId && settledAsks.has(ask.askId)) {
     console.log(
@@ -90,9 +96,10 @@ export function raiseJoinRequest(ask: JoinApprovalRequest): void {
     userId,
     deviceIds: [ask.requesterDeviceId],
     ...(ask.askId ? { askId: ask.askId } : {}),
+    ...(ask.kind ? { kind: ask.kind } : {}),
   });
   console.log(
-    `[JOIN_REQUEST] ${userId} asks to join ${short(ask.groupId)}${known ? ' again (a new ask)' : ''} - a member's answer is awaited`
+    `[JOIN_REQUEST] ${ask.kind === 'device' ? `an unseen device of ${userId}` : userId} asks to join ${short(ask.groupId)}${known ? ' again (a new ask)' : ''} - a member's answer is awaited`
   );
 }
 
@@ -134,13 +141,13 @@ export function settleSweptJoinRequests(
   sweep: JoinRequestSweep,
   raised: readonly JoinApprovalRequest[]
 ): void {
-  const keep = raised.map((ask) => keyOf(ask.groupId, ask.requesterUserId));
+  const keep = raised.map((ask) => keyOf(ask.groupId, ask.requesterUserId, ask.kind));
   // Deleting the entry being visited is safe while iterating a Map.
   for (const [key, entry] of requests) {
     if (!keep.includes(key) && sweep.shown.includes(tokenOf(key, entry))) requests.delete(key);
   }
   for (const ask of raised) {
-    const key = keyOf(ask.groupId, ask.requesterUserId);
+    const key = keyOf(ask.groupId, ask.requesterUserId, ask.kind);
     const live = requests.get(key);
     if (
       live?.askId &&
@@ -189,6 +196,14 @@ export function settleJoinRequest(settled: SettledJoinAsk): void {
   );
 }
 
+/**
+ * Whether `request` is about a device of the signed-in account itself - the owner's own new device,
+ * told to its owner in their own words (`join_request_device_body_own`).
+ */
+export function isOwnDeviceAsk(request: JoinRequest, myUserId: string | null | undefined): boolean {
+  return request.kind === 'device' && !!myUserId && canonicalUserId(myUserId) === request.userId;
+}
+
 /** The asks awaiting an answer, oldest first. Reactive. */
 export function pendingJoinRequests(): JoinRequest[] {
   return [...requests.values()];
@@ -209,7 +224,7 @@ export function setJoinRequestHandlers(next: JoinRequestHandlers | null): void {
 
 /** Removes `request`'s entry only while it still is that ask - never a newer ask of the person. */
 function forget(request: JoinRequest): void {
-  const key = keyOf(request.groupId, request.userId);
+  const key = keyOf(request.groupId, request.userId, request.kind);
   if (requests.get(key)?.askId === request.askId) requests.delete(key);
 }
 
@@ -276,4 +291,7 @@ export async function answerJoinRequest(
 export function resetJoinRequests(): void {
   requests.clear();
   settledAsks.clear();
+  // And this member's answers about unseen devices, with the sweep that would act on them.
+  resetMemberDeviceAnswers();
+  setMemberDeviceSweep(null);
 }

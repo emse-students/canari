@@ -22,8 +22,10 @@ import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { handleWelcomeRequest } from './actions';
 import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
+import { memberDeviceAnswer, setMemberDeviceSweep } from './memberDeviceAnswers';
 import {
   answerJoinRequest,
+  isOwnDeviceAsk,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -352,6 +354,67 @@ describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
     m.mlsService.declineJoinRequest = vi.fn().mockRejectedValue(new Error('403'));
 
     expect((await declineJoinRequest(request, m.deps)).done).toBe(false);
+  });
+});
+
+/**
+ * AN UNSEEN DEVICE OF A MEMBER (`kind: 'device'`): the answer is about the DEVICE. Add records the
+ * member's approval and runs the sweep that adds it; Decline records the refusal. Neither touches
+ * the person's seat - they are a member, their other devices stay.
+ */
+describe('a device ask - answered for the device, never for the seat', () => {
+  const deviceAsk: JoinRequest = {
+    groupId: GROUP,
+    userId: 'peer',
+    deviceIds: ['never-seen'],
+    kind: 'device',
+  };
+  afterEach(() => setMemberDeviceSweep(null));
+
+  it('Add records the approval and runs the sweep; no invite, no seat touched', async () => {
+    const m = memberSide();
+    const sweep = vi.fn().mockResolvedValue(undefined);
+    setMemberDeviceSweep(sweep);
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer('peer', 'never-seen')).toBe('approved');
+    expect(sweep).toHaveBeenCalledOnce();
+    expect(m.invite).not.toHaveBeenCalled();
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+  });
+
+  it('Add in a 1:1 conversation is answered too - the device of a DM peer', async () => {
+    const m = memberSide();
+    m.deps.conversations = conversations('direct');
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+  });
+
+  it('Decline records the refusal and asks the server for nothing', async () => {
+    const m = memberSide();
+
+    expect(await declineJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer('peer', 'never-seen')).toBe('declined');
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+    expect(m.mlsService.removeMemberFromServer).not.toHaveBeenCalled();
+  });
+
+  it('is its own entry beside an ask of the same person, and tells the own account apart', () => {
+    raiseJoinRequest({ groupId: GROUP, requesterUserId: 'peer', requesterDeviceId: 'p-1' });
+    raiseJoinRequest({
+      groupId: GROUP,
+      requesterUserId: 'peer',
+      requesterDeviceId: 'never-seen',
+      kind: 'device',
+    });
+
+    const asks = pendingJoinRequests();
+    expect(asks).toHaveLength(2);
+    const device = asks.find((a) => a.kind === 'device');
+    expect(device?.deviceIds).toEqual(['never-seen']);
+    expect(isOwnDeviceAsk(device!, 'Peer')).toBe(true);
+    expect(isOwnDeviceAsk(device!, 'me')).toBe(false);
   });
 });
 

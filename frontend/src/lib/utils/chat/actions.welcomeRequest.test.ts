@@ -85,6 +85,10 @@ describe('handleWelcomeRequest - membership guard', () => {
     const mlsService = createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
+      // A device this one already saw: an unseen device of a member is asked about, never re-added.
+      pinnedSignatureKeys: vi
+        .fn()
+        .mockResolvedValue({ keys: [new Uint8Array([7])], anchored: true, reaffirmations: 0 }),
       // Requester device must resolve to a KeyPackage so the add can proceed.
       fetchUserDevices: vi
         .fn()
@@ -124,6 +128,10 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
+      // A device this one already saw: an unseen device of a member is asked about, never re-added.
+      pinnedSignatureKeys: vi
+        .fn()
+        .mockResolvedValue({ keys: [new Uint8Array([7])], anchored: true, reaffirmations: 0 }),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
@@ -302,6 +310,10 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
+      // A device this one already saw: an unseen device of a member is asked about, never re-added.
+      pinnedSignatureKeys: vi
+        .fn()
+        .mockResolvedValue({ keys: [new Uint8Array([7])], anchored: true, reaffirmations: 0 }),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
@@ -431,6 +443,10 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
+      // A device this one already saw: an unseen device of a member is asked about, never re-added.
+      pinnedSignatureKeys: vi
+        .fn()
+        .mockResolvedValue({ keys: [new Uint8Array([7])], anchored: true, reaffirmations: 0 }),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),

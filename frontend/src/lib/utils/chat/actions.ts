@@ -68,6 +68,7 @@ import {
   reportRefusedDeviceSkipped,
 } from '$lib/mls-client/refusedDevices';
 import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
+import { memberDeviceAnswer } from './memberDeviceAnswers';
 
 /**
  * A device asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to bring
@@ -82,6 +83,12 @@ export interface JoinApprovalRequest {
    * named it (`askId`): an ask the server settled is never raised again (`joinRequests.svelte.ts`).
    */
   askId?: string;
+  /**
+   * `device`: the ask is about a DEVICE this device never saw, of a user who already holds a leaf
+   * ({@link automaticAdmission}'s `unseen-device`) - answered for the device (`memberDeviceAnswers.ts`),
+   * never by withdrawing the person's seat. Absent: a new person asks to join.
+   */
+  kind?: 'device';
 }
 
 /**
@@ -102,19 +109,30 @@ export interface JoinApprovalRequest {
  * ({@link readConfirmedTree}) instead of the local one: a tree behind a Remove still holds the
  * removed person, and an Add decided on it re-admits someone a member just took out. A reading that
  * could not be confirmed is `unreadable`.
+ *
+ * AND A LEAF PROVES THE USER, NOT THE DEVICE. Given `deviceId`, a member's device is `member-device`
+ * only when THIS device has seen it - a leaf in the tree, a pin of its signature key (written from a
+ * merged signed commit or a joined tree: a lost Welcome, a re-add under the same key), or this
+ * member's own approval this session. A device of a member never seen here is `unseen-device`:
+ * nothing this device can verify yet says it is theirs, so its first admission is a member's
+ * gesture, as a new person's is (`memberDeviceAnswers.ts`). Without `deviceId` the
+ * verdict is about the user alone.
  */
-type AutomaticAdmission = 'member-device' | 'newcomer' | 'unreadable';
+type AutomaticAdmission = 'member-device' | 'unseen-device' | 'newcomer' | 'unreadable';
 
 async function automaticAdmission(deps: {
-  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'pinnedSignatureKeys'>;
   groupId: string;
   userId: string;
+  /** The device the Add would bring in; absent, the verdict is about the user alone. */
+  deviceId?: string;
   /** The caller's log tag, so the line reads in the sequence it belongs to. */
   tag: string;
   log: (message: string) => void;
   confirmed?: TreeReading;
 }): Promise<AutomaticAdmission> {
-  const { mlsService, groupId, userId, tag, log, confirmed } = deps;
+  const { mlsService, groupId, userId, deviceId, tag, log, confirmed } = deps;
+  let identities: readonly string[];
   if (confirmed !== undefined) {
     if (confirmed.status === 'unconfirmed') {
       log(
@@ -122,17 +140,69 @@ async function automaticAdmission(deps: {
       );
       return 'unreadable';
     }
-    return treeHoldsUser(confirmed.identities, userId) ? 'member-device' : 'newcomer';
+    identities = confirmed.identities;
+  } else {
+    try {
+      identities = await mlsService.getGroupMemberIdentities(groupId);
+    } catch (e) {
+      log(
+        `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
+      );
+      return 'unreadable';
+    }
+  }
+  if (!treeHoldsUser(identities, userId)) return 'newcomer';
+  if (deviceId === undefined || treeHoldsDevice(identities, userId, deviceId)) {
+    return 'member-device';
+  }
+  if (memberDeviceAnswer(userId, deviceId) === 'approved') {
+    log(
+      `${tag} ${userId}:${deviceId.slice(0, 12)}... was approved by this member - added as a member's device`
+    );
+    return 'member-device';
   }
   try {
-    const identities = await mlsService.getGroupMemberIdentities(groupId);
-    return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
+    if ((await mlsService.pinnedSignatureKeys(userId, deviceId)) !== null) return 'member-device';
   } catch (e) {
     log(
-      `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
+      `${tag} Pin of ${userId}:${deviceId.slice(0, 12)}... unreadable, cannot say whether this device saw it - nothing added: ${String(e).slice(0, 100)}`
     );
     return 'unreadable';
   }
+  return 'unseen-device';
+}
+
+/**
+ * Puts the ask about a DEVICE this device never saw, of a user already in the conversation, to this
+ * device's member ({@link automaticAdmission}'s `unseen-device`) - in ANY conversation row, a 1:1
+ * included: the answer adds or refuses the device (`memberDeviceAnswers.ts`) and touches no seat, so
+ * nothing about it is a group's alone. A device this member already declined this session is not
+ * asked about again, and nothing is added. No conversation row - a key group, a row not loaded yet -
+ * asks nothing: the next sweep asks again once the row is there.
+ */
+function askAboutUnseenDevice(
+  conversations: ReadonlyMap<string, Conversation>,
+  request: JoinApprovalRequest,
+  tag: string,
+  log: (message: string) => void,
+  onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
+): void {
+  const short = request.groupId.slice(0, 8);
+  const device = `${request.requesterUserId}:${request.requesterDeviceId.slice(0, 12)}...`;
+  if (memberDeviceAnswer(request.requesterUserId, request.requesterDeviceId) === 'declined') {
+    log(`${tag} ${device} was declined by this member - not added in ${short}..., not asked again`);
+    return;
+  }
+  if (!conversations.has(request.groupId)) {
+    log(
+      `${tag} ${device} is a device this one never saw - not added in ${short}..., and nobody is asked: no conversation row is loaded for it`
+    );
+    return;
+  }
+  log(
+    `${tag} ${device} is a device this one never saw, of a member of ${short}... - not added automatically, a member's approval is asked`
+  );
+  onJoinApprovalRequested?.({ ...request, kind: 'device' });
 }
 
 /** What every automatic Add of one group rests on, as one read of the server gives it. */
@@ -314,7 +384,7 @@ export interface AnnouncedJoinAsk {
  * settled (`askId`) is not raised however late this lands.
  */
 export async function raiseAnnouncedJoinAsk(params: {
-  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'pinnedSignatureKeys'>;
   conversations: ReadonlyMap<string, Conversation>;
   ask: AnnouncedJoinAsk;
   log: (msg: string) => void;
@@ -543,7 +613,8 @@ export async function processPendingInvitations(params: {
   /**
    * A pending device whose USER holds no leaf in our tree is a new person, never added from a server
    * row (`automaticAdmission`): this asks a member to approve the join instead. The row is left as
-   * it is - the approval, or the next sweep, is what answers it.
+   * it is - the approval, or the next sweep, is what answers it. So is a device of a member that
+   * this device never saw (`kind: 'device'`).
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }): Promise<boolean> {
@@ -656,10 +727,22 @@ export async function processPendingInvitations(params: {
                 mlsService,
                 groupId,
                 userId: inv.userId,
+                deviceId: inv.deviceId,
                 tag: '[PENDING]',
                 log,
               });
         if (admission === 'unreadable') continue;
+        // Asked BEFORE its KeyPackage is fetched: every sweep until the answer would spend one.
+        if (admission === 'unseen-device') {
+          askAboutUnseenDevice(
+            conversations,
+            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            '[PENDING]',
+            log,
+            onJoinApprovalRequested
+          );
+          continue;
+        }
         if (admission === 'newcomer') {
           askAMemberToAdmit(
             conversations,
@@ -1517,7 +1600,8 @@ export async function handleWelcomeRequest(params: {
   onNotReady?: (terminalGroupId: string) => void;
   /**
    * A requester whose USER holds no leaf in our tree is a new person, never added on a relayed
-   * request (`automaticAdmission`): this asks a member to approve the join instead.
+   * request (`automaticAdmission`): this asks a member to approve the join instead. So is a device
+   * of a member that this device never saw (`kind: 'device'`).
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }) {
@@ -1606,10 +1690,21 @@ export async function handleWelcomeRequest(params: {
           mlsService,
           groupId,
           userId: requesterUserId,
+          deviceId: requesterDeviceId,
           tag: '[WELCOME_REQ]',
           log,
         });
   if (admission === 'unreadable') return;
+  if (admission === 'unseen-device') {
+    askAboutUnseenDevice(
+      conversations,
+      { groupId, requesterUserId, requesterDeviceId },
+      '[WELCOME_REQ]',
+      log,
+      onJoinApprovalRequested
+    );
+    return;
+  }
   if (admission === 'newcomer') {
     askAMemberToAdmit(
       conversations,

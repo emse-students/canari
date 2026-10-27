@@ -536,7 +536,8 @@ pub struct WelcomeRequest<'a> {
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `warm-process`, `stale-epoch-known`,
 /// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`, `newcomer` (the
 /// requester's user holds no leaf: a new person, whom only a member's gesture admits),
-/// `already-member`, `add-failed`, `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire
+/// `unseen-device` (the user holds a leaf but this phone never pinned the device: its first
+/// admission is a member's gesture too), `already-member`, `add-failed`, `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire
 /// name the package is refused for (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
 ///
 /// **THE PACKAGE IS BOUND TO THE REQUESTER** as the foreground's Add binds it: the delivery service
@@ -636,11 +637,14 @@ pub fn prepare_welcome_background_with_key(
     }
     // Bound to the requester BEFORE staging, typed: the refusal travels as its wire name. mls-core
     // has already logged a substitution (`identity-mismatch`, `signature-key-changed`) at ERROR.
-    match manager.key_package_verdict(&kp_bytes, requester) {
-        Ok(trust) => log::debug!(
-            "[BG_WELCOME] key package bound to {requester} ({}) group={short}",
-            trust.as_str()
-        ),
+    let trust = match manager.key_package_verdict(&kp_bytes, requester) {
+        Ok(trust) => {
+            log::debug!(
+                "[BG_WELCOME] key package bound to {requester} ({}) group={short}",
+                trust.as_str()
+            );
+            trust
+        }
         Err(reason) => {
             log::error!(
                 "[BG_WELCOME] key package fetched for {requester} refused ({}) group={short} - nothing staged",
@@ -648,6 +652,17 @@ pub fn prepare_welcome_background_with_key(
             );
             return welcome_refused(reason.as_str());
         }
+    };
+    // NOR IS A DEVICE THIS PHONE HAS NEVER SEEN, EVEN A MEMBER'S. A user holding a leaf proves the
+    // user, not the device: nothing this phone can verify says the device is theirs, so its first
+    // admission is a member's gesture, raised by the foreground (`automaticAdmission` in `actions.ts`,
+    // the same rule). A device this phone pinned - a lost Welcome, a re-add under the same key - is
+    // still answered here.
+    if trust == mls_core::LeafTrust::FirstSight {
+        log::warn!(
+            "[BG_WELCOME] {requester} is a device this phone never saw in group={short} - not added from a push, a member's approval is owed"
+        );
+        return welcome_refused("unseen-device");
     }
     log::debug!(
         "[BG_WELCOME] add_member group={short} kp_len={} base_epoch={base_epoch}",
@@ -2293,11 +2308,28 @@ mod tests {
     /// group is one epoch past alice's `mls.bin`. Returns alice's stale sealed state, the commit that
     /// moved the group, the key package of a NEW DEVICE of bob (`dev-c`, asking for a Welcome - a
     /// member's device, the one case a background Add answers) and the group id.
+    /// `holder` SEES `device` - pins its signature key - in a group of its own, so a background
+    /// answer may add it (`unseen-device` otherwise) while the group under test keeps its epochs.
+    fn seen_elsewhere(holder: &mut MlsManager, tag: &str, device: &MlsManager) {
+        let elsewhere = format!("{tag}-elsewhere");
+        holder
+            .create_group(elsewhere.clone())
+            .expect("second group");
+        holder
+            .add_member(&elsewhere, &device.generate_key_package().unwrap())
+            .expect("the holder sees the device");
+        holder
+            .merge_pending_commit_for(&elsewhere)
+            .expect("merged: the device is pinned");
+    }
+
     fn shut_phone_behind_its_group(
         tag: &str,
         key_seed: u8,
     ) -> (Vec<u8>, MlsManager, Vec<u8>, String, String) {
-        let (alice, mut bob, gid) = joined_pair(tag);
+        let (mut alice, mut bob, gid) = joined_pair(tag);
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
+        seen_elsewhere(&mut alice, tag, &carol);
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(key_seed)).expect("key");
         let stale = alice.save_encrypted_with_key(&key).expect("seal alice");
         let dave = MlsManager::load_or_create(&format!("{tag}-dave"), "dev-d", None).unwrap();
@@ -2305,7 +2337,6 @@ mod tests {
             .add_member(&gid, &dave.generate_key_package().unwrap())
             .expect("bob adds dave");
         bob.merge_pending_commit_for(&gid).expect("bob merges");
-        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (stale, bob, moved, kp, gid)
     }
@@ -2320,18 +2351,21 @@ mod tests {
         dir
     }
 
-    /// Alice in a group with bob, her sealed state in a directory of its own, and a NEW DEVICE of
+    /// Alice in a group with bob, her sealed state in a directory of its own, and ANOTHER DEVICE of
     /// bob (`dev-c`, named `carol` below for the device asking) with the key package it asks to be
-    /// added with - a member's device, the one case a background Add answers (`newcomer` otherwise).
+    /// added with - a member's device alice already SAW, the one case a background Add answers
+    /// (`newcomer` for a new person, `unseen-device` for a device she never saw). She saw it in a
+    /// second group, so the group under test keeps its epochs.
     fn holder_and_newcomer(
         tag: &str,
         seed: u8,
     ) -> (std::path::PathBuf, Vec<u8>, MlsManager, String, String) {
-        let (alice, _bob, gid) = joined_pair(tag);
+        let (mut alice, _bob, gid) = joined_pair(tag);
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
+        seen_elsewhere(&mut alice, tag, &carol);
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(seed)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding(tag, &state);
-        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (dir, state, carol, kp, gid)
     }
@@ -2858,10 +2892,11 @@ mod tests {
         let (mut alice, _bob, held_gid) = joined_pair("slots");
         let free_gid = "slots-free".to_string();
         alice.create_group(free_gid.clone()).unwrap();
+        let carol = MlsManager::load_or_create("slots-bob", "dev-c", None).unwrap();
+        seen_elsewhere(&mut alice, "slots", &carol);
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(66)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("slots", &state);
-        let carol = MlsManager::load_or_create("slots-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         assert_eq!(
             prepare(&dir, &state, 66, "slots", &held_gid, &kp)["ok"],
@@ -3346,6 +3381,39 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
     }
 
+    /// A DEVICE THIS PHONE NEVER SAW IS NOT ADDED FROM A PUSH, EVEN A MEMBER'S. Bob holds a leaf, so
+    /// he is a member; `dev-x` was never pinned here, and a member holding a leaf proves the user,
+    /// not the device. Refused as `unseen-device`, nothing staged - a member's gesture admits it.
+    #[test]
+    fn an_unseen_device_of_a_member_is_not_added_from_a_push() {
+        let _s = quiet_foreground();
+        let (alice, _bob, gid) = joined_pair("unseen");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(58)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("unseen", &state);
+        let unseen = MlsManager::load_or_create("unseen-bob", "dev-x", None).unwrap();
+        let kp = STANDARD.encode(unseen.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(58),
+            "unseen-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "unseen-bob:dev-x",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["reason"], "unseen-device", "{out}");
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            state,
+            "nothing is staged"
+        );
+    }
+
     /// A package naming a device this phone pinned, under ANOTHER signature key, is refused: nothing
     /// proves the change, so the background answer does not re-add it.
     #[test]
@@ -3473,11 +3541,15 @@ mod tests {
         assert!(contact.get("ownDeviceAdded").is_none(), "{contact}");
     }
 
-    /// The phone serving its own account's new device in the background names it for the local
-    /// notification, and the event reaches `mls.bin` - where the app takes it for the in-app alert -
-    /// ONLY once the accepted Add is merged: a cleared Add leaves no event for anyone to announce.
+    /// THE ACCOUNT'S OWN NEW DEVICE IS NOT ADDED FROM A PUSH EITHER. A device this phone never saw
+    /// is `unseen-device` whoever it claims to belong to - an own-account id proves nothing more
+    /// than a contact's. Nothing is staged,
+    /// so nothing is named for a notification: the app raises the ask in the foreground, and the
+    /// owner's alert comes from the commit the member's Add then makes. (`ownDeviceAdded` is still
+    /// computed from the stage; only a first-sight device makes it non-empty, and such a device is
+    /// admitted by a member's gesture until a device of the owner can vouch for it.)
     #[test]
-    fn a_background_add_of_an_own_device_reaches_the_app_only_once_accepted() {
+    fn an_own_new_device_is_not_added_from_a_push() {
         let _s = crate::concurrency::test_support::serialise();
         crate::concurrency::mark_foreground_inactive();
         let tag = "own-welcome";
@@ -3487,73 +3559,26 @@ mod tests {
         let laptop = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-laptop", None)
             .expect("laptop");
         let kp = STANDARD.encode(laptop.generate_key_package().expect("kp"));
-        let requester = format!("{tag}-alice:dev-laptop");
-        let prepare = |dir: &Path| {
-            prepare_welcome_background_with_key(
-                dir,
-                &state,
-                &key_b64(29),
-                &format!("{tag}-alice"),
-                "dev-a",
-                &WelcomeRequest {
-                    group_id: &gid,
-                    requester: &requester,
-                    key_package_b64: &kp,
-                },
-            )
-        };
-        let owner_events = |dir: &Path| {
-            let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin");
-            let mut reloaded =
-                MlsManager::load_with_key(&format!("{tag}-alice"), "dev-a", Some(saved), &key)
-                    .expect("reload");
-            reloaded
-                .take_device_events()
-                .into_iter()
-                .filter(|e| e.is_owner_alert(&format!("{tag}-alice"), "dev-a"))
-                .count()
-        };
-
-        // Refused by the server: cleared, and nothing for the app to announce.
-        let refused_dir = dir_holding(&format!("{tag}-refused"), &state);
-        let out = prepare(&refused_dir);
-        assert_eq!(
-            out["ownDeviceAdded"].as_array().map(Vec::len),
-            Some(1),
-            "{out}"
+        let dir = dir_holding(tag, &state);
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(29),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: &format!("{tag}-alice:dev-laptop"),
+                key_package_b64: &kp,
+            },
         );
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["reason"], "unseen-device", "{out}");
+        assert!(out.get("ownDeviceAdded").is_none(), "{out}");
         assert_eq!(
-            settle(
-                &refused_dir,
-                29,
-                tag,
-                &gid,
-                &out,
-                WelcomeAnswer::Refused(RefusalMemo::Nothing)
-            )["settled"],
-            "cleared"
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            state,
+            "nothing is staged"
         );
-        assert_eq!(
-            owner_events(&refused_dir),
-            0,
-            "a cleared Add announces nothing"
-        );
-
-        // Accepted: merged, and the event is the app's.
-        let accepted_dir = dir_holding(&format!("{tag}-accepted"), &state);
-        let out = prepare(&accepted_dir);
-        let keys = out["ownDeviceAdded"]
-            .as_array()
-            .expect("named for the notice");
-        assert_eq!(keys.len(), 1, "{out}");
-        assert!(keys[0]
-            .as_str()
-            .unwrap()
-            .starts_with(&format!("{requester}|")));
-        assert_eq!(
-            settle(&accepted_dir, 29, tag, &gid, &out, WelcomeAnswer::Accepted)["settled"],
-            "merged"
-        );
-        assert_eq!(owner_events(&accepted_dir), 1, "the merged Add's event");
     }
 }

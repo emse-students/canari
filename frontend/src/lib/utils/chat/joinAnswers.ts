@@ -4,6 +4,7 @@ import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import type { AnsweredJoinAsk, BulkAdditionOutcome } from './groupCreation';
 import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
+import { approveMemberDevices, declineMemberDevices } from './memberDeviceAnswers';
 
 /**
  * A MEMBER'S TWO ANSWERS TO "X ASKS TO JOIN" (`joinRequests.svelte.ts`), each saying whether it
@@ -102,6 +103,7 @@ export async function admitJoinRequest(
   request: JoinRequest,
   deps: JoinAnswerDeps
 ): Promise<JoinAnswerResult> {
+  if (request.kind === 'device') return admitUnseenDevices(request, deps);
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   if ((await holdsALeaf(request, deps)) === true) {
@@ -162,6 +164,14 @@ export async function declineJoinRequest(
   request: JoinRequest,
   deps: JoinAnswerDeps
 ): Promise<JoinAnswerResult> {
+  if (request.kind === 'device') {
+    // About the DEVICE alone: the person stays a member, their seat and other devices untouched.
+    declineMemberDevices(request.userId, request.deviceIds);
+    deps.log(
+      `[JOIN_REQUEST] unseen device(s) of ${request.userId} declined in ${request.groupId.slice(0, 8)}... - not added`
+    );
+    return { done: true };
+  }
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   let outcome: JoinDeclineOutcome;
@@ -171,5 +181,23 @@ export async function declineJoinRequest(
     return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
   }
   deps.log(`[JOIN_REQUEST] ${request.userId} ${DECLINE_OUTCOME_LINE[outcome]}`);
+  return { done: true };
+}
+
+/**
+ * ADMITS a device this device never saw, of a user already in the conversation (`kind: 'device'`):
+ * the member's approval is recorded for the DEVICE, and the pending-invitation sweep adds it - the
+ * same Add every member device gets, in every conversation this device shares with its owner
+ * (`memberDeviceAnswers.ts`). Done once the approval is recorded: from then on the device is added,
+ * never asked about again this session, and a sweep that cannot add it now says why in its log.
+ */
+async function admitUnseenDevices(
+  request: JoinRequest,
+  deps: JoinAnswerDeps
+): Promise<JoinAnswerResult> {
+  const swept = await approveMemberDevices(request.userId, request.deviceIds);
+  deps.log(
+    `[JOIN_REQUEST] unseen device(s) of ${request.userId} approved in ${request.groupId.slice(0, 8)}... - ${swept ? 'the sweep ran' : 'the next sweep adds them'}`
+  );
   return { done: true };
 }

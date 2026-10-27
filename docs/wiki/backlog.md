@@ -1119,6 +1119,18 @@ than the rule still auto-Adds a link joiner and "only by a member" holds only fr
 production once the build serves both stores; and a second step on the receiving side (private
 operations notes).
 
+## An unseen device of a member is asked about before it is added (2026-10-27): interim built
+
+Built: an automatic Add no longer brings in a device of a member that this device never saw (no
+leaf, no pin, no approval this session); a member is asked instead, in any conversation, and the
+answer covers the device across conversations - web, native and the Android background answer alike
+([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). Owed:
+**the user's confirmation**, since it reverses part of the 2026-10-22 "no mandatory approval of a
+new device"; the production rate of device enrolments per week (and how many are a second device of
+an account), which is the number of taps it costs; a hardware reading of the owner's own new phone
+approved from the old one; and the real fix, a device vouched for by a user signing key (shape B,
+recommended on that page), after which this ask remains only as a shim for users without one.
+
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 
 A removal deletes the roster row before the member's Remove commit lands. If that commit never

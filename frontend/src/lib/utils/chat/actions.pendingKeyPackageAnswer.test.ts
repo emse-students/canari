@@ -48,6 +48,10 @@ describe('a pending invitation acts on WHICH answer it got', () => {
       releaseAddLock: vi.fn().mockResolvedValue(undefined),
       getGroupMembers: vi.fn().mockResolvedValue([]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
+      // A device of the member this device already saw: an unseen one is asked about, never fetched.
+      pinnedSignatureKeys: vi
+        .fn()
+        .mockResolvedValue({ keys: [new Uint8Array([7])], anchored: true, reaffirmations: 0 }),
       // Empty, so every case below falls through to the single-device fallback under test.
       fetchUserDevices: vi.fn().mockResolvedValue([]),
       fetchDeviceKeyPackage: vi.fn(),

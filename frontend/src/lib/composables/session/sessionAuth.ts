@@ -187,6 +187,7 @@ import {
   beginJoinRequestSweep,
   settleSweptJoinRequests,
 } from '$lib/utils/chat/joinRequests.svelte';
+import { setMemberDeviceSweep } from '$lib/utils/chat/memberDeviceAnswers';
 import {
   drainDeferredWelcomeRequests,
   serveWelcomeRequest,
@@ -476,12 +477,28 @@ export function makeWelcomeRequestContext(
   };
 }
 
+/**
+ * A sweep a member's answer asked for while another was running (`owed`): that one may have passed
+ * the row already, so one more runs when it ends - never more than one, however many asked.
+ */
+let sweepOwed = false;
+
 /** Processes any pending MLS invitations from our own other devices (multi-device sync). Re-entrant safe. */
 export async function processDeviceInvitationsLocally(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks
+  cb: ChatSessionCallbacks,
+  opts: {
+    /** A member approved an unseen device (`memberDeviceAnswers.ts`): a busy sweep is followed by one more. */
+    owed?: boolean;
+  } = {}
 ) {
-  if (ctx.isSyncing()) return;
+  if (ctx.isSyncing()) {
+    if (opts.owed) {
+      sweepOwed = true;
+      cb.log('[PENDING] a sweep is running - one more follows it for the device a member approved');
+    }
+    return;
+  }
   ctx.setIsSyncing(true);
   try {
     // A new person's pending device is never added by the sweep; it raises a member's approval. The
@@ -502,6 +519,10 @@ export async function processDeviceInvitationsLocally(
     if (swept) settleSweptJoinRequests(sweep, raised);
   } finally {
     ctx.setIsSyncing(false);
+  }
+  if (sweepOwed) {
+    sweepOwed = false;
+    await processDeviceInvitationsLocally(ctx, cb);
   }
 }
 
@@ -2041,6 +2062,8 @@ export async function loginImpl(
       addMessageToChat: (senderId, content, contactName, options) =>
         cb.addMessageToChat(senderId, content, contactName, options),
     });
+    // A member's approval of a device this one never saw is carried out by this session's sweep.
+    setMemberDeviceSweep(() => processDeviceInvitationsLocally(ctx, cb, { owed: true }));
     endStartupCatchupPhase();
 
     /**
