@@ -69,8 +69,12 @@ message, a picture or a post opens the system sheet.
    (`share_items_lost`).
 5. **"Envoyer a..."** is the forward picker (`ForwardMessageModal`, `variant="share"`): DMs, groups
    and salons. It opens only when the session is up, so the PIN always comes first, with no clock.
-   The pick is published as a deep-link landing (`notifNav.navigate` + `chatDeepLinkRoute`), so the
-   conversation opens exactly as a tapped notification would, salons under `/communities` included.
+   The pick is published as a deep-link landing (`notifNav.navigate`, and NOTHING else), so the
+   conversation opens exactly as a tapped notification would, salons under `/communities` included:
+   the landing effect in `ChatBackgroundService` routes and selects. `landShareOn` used to `goto`
+   the route as well, and on a phone already on `/chat` that navigation's `beforeNavigate` drained
+   the overlay stack AFTER the effect had opened the conversation - the share was staged in a
+   composer that closed at once (read on the Mi 9T, 2026-10-27, `1.5.0`).
    **A landing that ends without displaying its target** (abandoned, or the member went elsewhere)
    gives the share back to the picker (`incomingShare.releaseTarget`): the landing ending is the
    fact that says so.
