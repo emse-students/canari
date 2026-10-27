@@ -15,7 +15,14 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
   }),
 }));
 
+// The packages below are opaque bytes; the key an approval binds is read through this seam.
+vi.mock('$lib/mls-client/deviceTrust', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/deviceTrust')>()),
+  keyPackageFingerprintOf: vi.fn().mockResolvedValue('fp-peer-dev'),
+}));
+
 import { processPendingInvitations } from './actions';
+import { approveMemberDevice, resetMemberDeviceAnswers } from './memberDeviceAnswers';
 
 /**
  * A BAD MINUTE ON ONE ENDPOINT USED TO RETIRE A PERFECTLY VALID INVITATION.
@@ -39,6 +46,10 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     status: 'pending',
   };
 
+  // A device of the member this member approved under its key: an unseen one is asked about.
+  beforeEach(() => approveMemberDevice('peer', 'peer-dev', 'fp-peer-dev'));
+  afterEach(() => resetMemberDeviceAnswers());
+
   function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     return {
       getDeviceId: vi.fn().mockReturnValue('self-device'),
@@ -48,10 +59,6 @@ describe('a pending invitation acts on WHICH answer it got', () => {
       releaseAddLock: vi.fn().mockResolvedValue(undefined),
       getGroupMembers: vi.fn().mockResolvedValue([]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
-      // A device of the member this device already saw: an unseen one is asked about, never fetched.
-      pinnedSignatureKeys: vi
-        .fn()
-        .mockResolvedValue({ keys: [new Uint8Array([7])], anchored: true, reaffirmations: 0 }),
       // Empty, so every case below falls through to the single-device fallback under test.
       fetchUserDevices: vi.fn().mockResolvedValue([]),
       fetchDeviceKeyPackage: vi.fn(),

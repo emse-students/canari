@@ -2,6 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, ConversationLifecycle } from '$lib/types';
 import {
+  entersAsUnvouchedDevice,
   entersUninvited,
   CONTACT_NEW_DEVICE_WINDOW_MS,
   deviceEventAudience,
@@ -439,8 +440,17 @@ function uninvitedLineId(groupId: string, key: string): string {
 }
 
 /**
- * Writes, in the conversation itself, every entry no member made ({@link entersUninvited}) among
- * `events` that is a NEW PERSON's, and retries the ones owed from an earlier delivery. Every decided
+ * Whether an event is an entry no member made: a new person's ({@link entersUninvited}), or a
+ * never-seen device of a member that admitted itself ({@link entersAsUnvouchedDevice}).
+ */
+function isSelfAdmittedEntry(event: DeviceEvent): boolean {
+  return entersUninvited(event) || entersAsUnvouchedDevice(event);
+}
+
+/**
+ * Writes, in the conversation itself, every entry no member made among `events` - a NEW PERSON's
+ * ({@link entersUninvited}) or a never-seen DEVICE of a member that admitted itself
+ * ({@link entersAsUnvouchedDevice}) - and retries the ones owed from an earlier delivery. Every decided
  * entry is reported to the server with its kind (`reportUninvitedEntry`, once per session) - that
  * report is the measurement.
  *
@@ -455,7 +465,7 @@ async function noteUninvitedEntries(
   ctx: DeviceNoticeContext
 ): Promise<void> {
   const retried = owedUninvited;
-  const fresh = events.filter(entersUninvited);
+  const fresh = events.filter(isSelfAdmittedEntry);
   if (retried.length === 0 && fresh.length === 0) return;
   owedUninvited = [];
   for (const event of [...retried, ...fresh]) {
@@ -472,7 +482,9 @@ async function noteUninvitedEntries(
         continue;
       }
       reportUninvitedEntry(event, decided.kind);
-      if (decided.kind === 'new-person') await writeUninvitedLine(event, decided.convo, ctx);
+      if (decided.kind === 'new-person' || decided.kind === 'unvouched-device') {
+        await writeUninvitedLine(event, decided.kind, decided.convo, ctx);
+      }
     } catch (e) {
       // Nothing is lost - the entry is kept, durably, and decided at the next delivery - so this is
       // a warning: what accuses is the entry itself, once decided (`reportUninvitedEntry`).
@@ -512,6 +524,14 @@ async function decideUninvitedEntry(
   }
   const type = convo.conversationType ?? 'group';
   if (type === 'channel') return 'not-a-conversation';
+  // A member's never-seen device that let itself in: in a 1:1 too - the peer's further device is a
+  // member's Add as much as anyone's (`automaticAdmission`).
+  // This very device entering is its own join, never an accusation of itself.
+  if (entersAsUnvouchedDevice(event)) {
+    const self = canonicalIdentity(`${ctx.ownUserId}:${ctx.ownDeviceId}`);
+    if (canonicalIdentity(event.identity) === self) return 'not-a-conversation';
+    return { kind: 'unvouched-device', convo };
+  }
   const userId = canonicalUserId(userIdOfLeaf(event.identity));
   if (type === 'direct' && convo.directPeerId && canonicalUserId(convo.directPeerId) === userId) {
     return { kind: 'direct-peer', convo };
@@ -523,6 +543,7 @@ async function decideUninvitedEntry(
 
 async function writeUninvitedLine(
   event: DeviceEvent,
+  kind: 'new-person' | 'unvouched-device',
   convo: NoticeConversation,
   ctx: DeviceNoticeContext
 ): Promise<void> {
@@ -531,13 +552,18 @@ async function writeUninvitedLine(
   if (convo.messages.some((msg) => msg.id === messageId)) return;
   const userId = userIdOfLeaf(event.identity);
   const getName = await ctx.resolveDisplayNames([userId]);
+  const user = getName(userId);
   await ctx.addMessageToChat(
     'system',
-    m.chat_system_uninvited_entry({ user: getName(userId) }),
+    kind === 'unvouched-device'
+      ? m.chat_system_unvouched_device_entry({ user })
+      : m.chat_system_uninvited_entry({ user }),
     event.groupId,
     { isSystem: true, messageId }
   );
-  console.warn(`[DEVICE_NOTICE] uninvited-entry line written in ${event.groupId.slice(0, 8)}...`);
+  console.warn(
+    `[DEVICE_NOTICE] uninvited-entry line (${kind}) written in ${event.groupId.slice(0, 8)}...`
+  );
 }
 
 /**

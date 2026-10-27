@@ -6,6 +6,7 @@ import {
   DeviceTrustRefusedError,
   deviceEventAudience,
   deviceEventKey,
+  entersAsUnvouchedDevice,
   entersUninvited,
   isNewToItsOwner,
   keyFingerprintOf,
@@ -252,5 +253,23 @@ describe('entersUninvited - an entry no member made', () => {
         event({ identity: 'mallory:dev1', addedBy: null, memberAlreadyPresent: false })
       )
     ).toBe(false);
+  });
+});
+
+describe('entersAsUnvouchedDevice - a member device that admitted itself at first sight', () => {
+  it('is a first-sight device of a present user that signed its own admission', () => {
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'Bob:web-2' }))).toBe(true);
+  });
+
+  it('is not a pinned key coming back, a changed key, a member-signed Add or a new person', () => {
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', trust: 'pinned' }))).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', trust: 'key-changed' }))).toBe(
+      false
+    );
+    expect(entersAsUnvouchedDevice(event())).toBe(false);
+    expect(
+      entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', memberAlreadyPresent: false }))
+    ).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ addedBy: null }))).toBe(false);
   });
 });

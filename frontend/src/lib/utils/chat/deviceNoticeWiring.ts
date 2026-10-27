@@ -16,6 +16,46 @@ import {
 
 /** The MLS service the notices consume events from, while an account is signed in. */
 let registeredMls: IMlsService | null = null;
+/** The signed-in account and this device, read live, while the notices are registered. */
+let registeredSession: Pick<DeviceNoticeSession, 'getUserId' | 'getMyDeviceId'> | null = null;
+
+/**
+ * "NOT ME": the owner says a device the alert names is not theirs, and it is REVOKED - the same
+ * revocation as the device list's (`deleteDevice`): its id is banned, its logins end, its seats go
+ * server-side, and every member's stray collector (`removeStrayLeaves`) takes its leaf out of each
+ * conversation, since it holds no seat any more. Never this device itself.
+ *
+ * @returns whether the server answered the revocation done; a refusal or a failure is logged at a
+ *   level that accuses, and the alert stays so the owner can retry or use the list.
+ */
+export async function revokeNoticedDevice(deviceId: string): Promise<boolean> {
+  const mls = registeredMls;
+  const session = registeredSession;
+  if (!mls || !session) {
+    console.error('[DEVICE_NOTICE] "not me" with no account registered - nothing revoked');
+    return false;
+  }
+  if (deviceId === session.getMyDeviceId()) {
+    console.error('[DEVICE_NOTICE] "not me" named this very device - refused, nothing revoked');
+    return false;
+  }
+  const short = deviceId.slice(0, 8);
+  console.warn(`[DEVICE_NOTICE] the owner says ${short}... is not theirs - revoking it`);
+  try {
+    const result = await mls.deleteDevice(session.getUserId(), deviceId);
+    if (result.status === 'device_deleted') {
+      console.warn(
+        `[DEVICE_NOTICE] ${short}... revoked: ${result.groupsCleaned} seat(s) withdrawn, its leaves go with the stray collector`
+      );
+      return true;
+    }
+    console.error(`[DEVICE_NOTICE] revocation of ${short}... answered status=${result.status}`);
+    return false;
+  } catch (e) {
+    console.error(`[DEVICE_NOTICE] revocation of ${short}... failed: ${String(e).slice(0, 160)}`);
+    return false;
+  }
+}
 
 /**
  * Unbinds the notices from the account that signs out: no more consumer, so the device events stay
@@ -24,6 +64,7 @@ let registeredMls: IMlsService | null = null;
 export function unregisterDeviceNotices(): void {
   registeredMls?.setDeviceEventConsumer(null);
   registeredMls = null;
+  registeredSession = null;
   setRefusedDeviceListener(null);
   forgetDeviceNotices();
 }
@@ -184,6 +225,7 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
 export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSession): void {
   loadDeviceNotices(session.getUserId());
   registeredMls = mls;
+  registeredSession = session;
   const onPhone = isMobileTauriRuntime();
   const refusedCtx = () => ({
     ownUserId: session.getUserId(),

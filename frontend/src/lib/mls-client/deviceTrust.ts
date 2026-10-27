@@ -117,6 +117,26 @@ export function entersUninvited(event: DeviceEvent): boolean {
 }
 
 /**
+ * Whether this event is a device of a MEMBER that brought ITSELF into the group at first sight: the
+ * commit admitting it was signed by that very device (an external commit), its user already held a
+ * leaf, and this device had never seen its key.
+ *
+ * In a conversation no member admitted that device - a further device of a member is added by a
+ * member's Add, after a member's tap (`automaticAdmission` in `utils/chat/actions.ts`), and the
+ * device's own recovery never joins itself for a seat it was never admitted to (`requestReAdd`). So
+ * the entry is reported and written in the conversation (`deviceNotices.svelte.ts`), and its key is
+ * never "seen" by the admission rule: seen is a leaf in that group's tree or a member's approval,
+ * never a pin. A device coming back under its pinned key (`pinned`), or a changed key, is not this
+ * case; in a community or salon key group every device enters this way and the caller does not ask.
+ */
+export function entersAsUnvouchedDevice(event: DeviceEvent): boolean {
+  if (event.addedBy === null || event.memberAlreadyPresent !== true) return false;
+  if (event.trust !== 'first-sight') return false;
+  const admitted = canonicalIdentity(event.identity);
+  return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
+}
+
+/**
  * Who is told about a device event (decided by the user 2026-10-22, refined the same day):
  * - `owner-alert`: the account the device belongs to - "a new device was added to your account", in
  *   the app and as a local notification, whatever kind of group the commit came from;
@@ -181,6 +201,48 @@ export function deviceEventKey(event: DeviceEvent): string | null {
 export async function keyFingerprintOf(key: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', key as BufferSource));
   return Array.from(digest.slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Reads the length prefix of an RFC 9420 variable-length vector (section 2.1.2): the top two bits of
+ * the first byte give the prefix size (1, 2 or 4 bytes). Throws on a truncated or reserved prefix.
+ */
+function readVarVector(bytes: Uint8Array, at: number): { start: number; end: number } {
+  if (at >= bytes.length) throw new Error('KeyPackage truncated before a vector');
+  const first = bytes[at];
+  const size = 1 << (first >> 6);
+  if (size === 8) throw new Error('KeyPackage carries a reserved vector length prefix');
+  if (at + size > bytes.length) throw new Error('KeyPackage truncated in a vector length');
+  let length = first & 0x3f;
+  for (let i = 1; i < size; i++) length = length * 256 + bytes[at + i];
+  const start = at + size;
+  const end = start + length;
+  if (end > bytes.length) throw new Error('KeyPackage truncated inside a vector');
+  return { start, end };
+}
+
+/**
+ * The signature key a serialized KeyPackage's leaf node carries - the key a member's approval of an
+ * unseen device is bound to (`memberDeviceAnswers.ts`), read from the very bytes an Add would be
+ * built from.
+ *
+ * The RFC 9420 layout: `version` (u16), `cipher_suite` (u16), `init_key<V>`, then the leaf node,
+ * whose first two fields are `encryption_key<V>` and `signature_key<V>`. The package is NOT verified
+ * here - the Add vets it in Rust (`vetKeyPackage`) - this only says which key it names, so a package
+ * whose key differs from the one a member approved is refused before anything is staged. Held to the
+ * real WASM build (`deviceTrust.keyPackage.realWasm.test.ts`). Throws on bytes that are not a
+ * KeyPackage.
+ */
+export function keyPackageSignatureKey(keyPackage: Uint8Array): Uint8Array {
+  const initKey = readVarVector(keyPackage, 4);
+  const encryptionKey = readVarVector(keyPackage, initKey.end);
+  const signatureKey = readVarVector(keyPackage, encryptionKey.end);
+  return keyPackage.slice(signatureKey.start, signatureKey.end);
+}
+
+/** {@link keyFingerprintOf} of the signature key a KeyPackage carries ({@link keyPackageSignatureKey}). */
+export async function keyPackageFingerprintOf(keyPackage: Uint8Array): Promise<string> {
+  return keyFingerprintOf(keyPackageSignatureKey(keyPackage));
 }
 
 /**

@@ -14,7 +14,8 @@ import { resetMemberDeviceAnswers, setMemberDeviceSweep } from './memberDeviceAn
  * the request's roster row on the server, which is what stops the ask from coming back.
  *
  * ONE ENTRY PER PERSON AND CONVERSATION, whatever the number of their devices or of the sweeps that
- * raise it. The pending-invitation sweep is the durable source - the server's `pending` rows - so a
+ * raise it - and ONE ENTRY PER DEVICE for an unseen device of a member (`kind: 'device'`), which the
+ * member approves on its own, under the key it shows. The pending-invitation sweep is the durable source - the server's `pending` rows - so a
  * finished sweep REPLACES what it raised ({@link settleSweptJoinRequests}): an ask another member
  * answered, or whose row is gone, leaves with the next sweep rather than staying on screen.
  */
@@ -30,9 +31,14 @@ export interface JoinRequest {
   askId?: string;
   /**
    * `device`: a DEVICE never seen by this one, of a user already in the conversation, asks to join
-   * (`memberDeviceAnswers.ts`). Its own entry beside any ask of the person, never merged into one.
+   * (`memberDeviceAnswers.ts`). ONE ENTRY PER DEVICE - `deviceIds` holds exactly that device - beside
+   * any ask of the person, never merged with another device's: one tap approves one device.
    */
   kind?: 'device';
+  /** A `device` entry's key fingerprint, shown and bound into the approval. */
+  keyFingerprint?: string;
+  /** A `device` entry's name, as its account registered it; shown, never trusted. */
+  deviceLabel?: string;
 }
 
 /**
@@ -59,8 +65,22 @@ const settledAsks = new SvelteSet<string>();
 // Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
 let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
-function keyOf(groupId: string, userId: string, kind?: 'device'): string {
-  return `${groupId}|${canonicalUserId(userId)}${kind === 'device' ? '|device' : ''}`;
+function keyOf(groupId: string, userId: string, device?: { kind?: 'device'; deviceId: string }) {
+  const person = `${groupId}|${canonicalUserId(userId)}`;
+  return device?.kind === 'device' ? `${person}|device|${device.deviceId}` : person;
+}
+
+/** The store key of one ask as an automatic adder raised it. */
+function keyOfAsk(ask: JoinApprovalRequest): string {
+  return keyOf(ask.groupId, ask.requesterUserId, {
+    kind: ask.kind,
+    deviceId: ask.requesterDeviceId,
+  });
+}
+
+/** The store key of one entry. */
+function keyOfEntry(entry: JoinRequest): string {
+  return keyOf(entry.groupId, entry.userId, { kind: entry.kind, deviceId: entry.deviceIds[0] });
 }
 
 function short(groupId: string): string {
@@ -72,8 +92,12 @@ function short(groupId: string): string {
  * the server already settled is not recorded, and a newer ask of the same person replaces the entry.
  */
 export function raiseJoinRequest(ask: JoinApprovalRequest): void {
-  const key = keyOf(ask.groupId, ask.requesterUserId, ask.kind);
+  const key = keyOfAsk(ask);
   const userId = canonicalUserId(ask.requesterUserId);
+  if (ask.kind === 'device') {
+    raiseDeviceAsk(key, userId, ask);
+    return;
+  }
   if (ask.askId && settledAsks.has(ask.askId)) {
     console.log(
       `[JOIN_REQUEST] ${userId} in ${short(ask.groupId)} - ask ${ask.askId.slice(0, 8)} was already answered, not raised`
@@ -96,16 +120,37 @@ export function raiseJoinRequest(ask: JoinApprovalRequest): void {
     userId,
     deviceIds: [ask.requesterDeviceId],
     ...(ask.askId ? { askId: ask.askId } : {}),
-    ...(ask.kind ? { kind: ask.kind } : {}),
   });
   console.log(
-    `[JOIN_REQUEST] ${ask.kind === 'device' ? `an unseen device of ${userId}` : userId} asks to join ${short(ask.groupId)}${known ? ' again (a new ask)' : ''} - a member's answer is awaited`
+    `[JOIN_REQUEST] ${userId} asks to join ${short(ask.groupId)}${known ? ' again (a new ask)' : ''} - a member's answer is awaited`
+  );
+}
+
+/**
+ * Records the ask about ONE unseen device of a member. The same device showing ANOTHER key replaces
+ * the entry - the member answers about the key now shown, never one an earlier read showed.
+ */
+function raiseDeviceAsk(key: string, userId: string, ask: JoinApprovalRequest): void {
+  const known = requests.get(key);
+  if (known?.keyFingerprint === ask.keyFingerprint && known?.deviceLabel === ask.deviceLabel) {
+    return;
+  }
+  requests.set(key, {
+    groupId: ask.groupId,
+    userId,
+    deviceIds: [ask.requesterDeviceId],
+    kind: 'device',
+    ...(ask.keyFingerprint ? { keyFingerprint: ask.keyFingerprint } : {}),
+    ...(ask.deviceLabel ? { deviceLabel: ask.deviceLabel } : {}),
+  });
+  console.log(
+    `[JOIN_REQUEST] an unseen device ${ask.requesterDeviceId.slice(0, 12)}... of ${userId} asks to join ${short(ask.groupId)} under key ${ask.keyFingerprint ?? '(none)'}${known ? ' (its key changed since the last ask)' : ''} - a member's answer is awaited`
   );
 }
 
 /** What one entry IS, for a sweep: its ask's identity, or - from a server older than it - its key. */
 function tokenOf(key: string, entry: JoinRequest): string {
-  return entry.askId ?? `key:${key}`;
+  return entry.askId ?? `key:${key}|${entry.keyFingerprint ?? ''}`;
 }
 
 /**
@@ -141,13 +186,13 @@ export function settleSweptJoinRequests(
   sweep: JoinRequestSweep,
   raised: readonly JoinApprovalRequest[]
 ): void {
-  const keep = raised.map((ask) => keyOf(ask.groupId, ask.requesterUserId, ask.kind));
+  const keep = raised.map(keyOfAsk);
   // Deleting the entry being visited is safe while iterating a Map.
   for (const [key, entry] of requests) {
     if (!keep.includes(key) && sweep.shown.includes(tokenOf(key, entry))) requests.delete(key);
   }
   for (const ask of raised) {
-    const key = keyOf(ask.groupId, ask.requesterUserId, ask.kind);
+    const key = keyOfAsk(ask);
     const live = requests.get(key);
     if (
       live?.askId &&
@@ -224,8 +269,11 @@ export function setJoinRequestHandlers(next: JoinRequestHandlers | null): void {
 
 /** Removes `request`'s entry only while it still is that ask - never a newer ask of the person. */
 function forget(request: JoinRequest): void {
-  const key = keyOf(request.groupId, request.userId, request.kind);
-  if (requests.get(key)?.askId === request.askId) requests.delete(key);
+  const key = keyOfEntry(request);
+  const live = requests.get(key);
+  if (live?.askId === request.askId && live?.keyFingerprint === request.keyFingerprint) {
+    requests.delete(key);
+  }
 }
 
 /**

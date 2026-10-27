@@ -6,7 +6,7 @@
     isOwnDeviceAsk,
   } from '$lib/utils/chat/joinRequests.svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
-  import { answerJoinRequestOrToast } from '$lib/utils/chat/joinRequestAnswer';
+  import { answerJoinRequestOrToast, deviceAskDetail } from '$lib/utils/chat/joinRequestAnswer';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import type { JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
@@ -28,7 +28,8 @@
    *
    * Any member may add them: the Add is this device's own, and only one device wins the add lock.
    * A device never seen here, of a user already in the conversation (`kind: 'device'`), is told in
-   * its own words, and its answer is about that device alone (`memberDeviceAnswers.ts`).
+   * its own words, one card per device with its name and key fingerprint, and its answer is about
+   * that device alone (`memberDeviceAnswers.ts`).
    */
   const asks = $derived(
     canAnswerJoinRequests() ? pendingJoinRequests().filter((r) => r.groupId === groupId) : []
@@ -45,7 +46,7 @@
   }
 </script>
 
-{#each asks as request (`${request.kind ?? 'person'}|${request.userId}`)}
+{#each asks as request (`${request.kind ?? 'person'}|${request.userId}|${request.kind === 'device' ? request.deviceIds[0] : ''}`)}
   <div
     class="my-3 flex justify-center"
     role="group"
@@ -66,6 +67,11 @@
           {m.join_request_device_row_text({ user: getUserDisplayNameSync(request.userId) })}
         {/if}
       </span>
+      {#if request.kind === 'device'}
+        <span class="text-text-muted font-mono" data-device-ask-detail
+          >{deviceAskDetail(request)}</span
+        >
+      {/if}
       <div class="flex items-center gap-2">
         <button
           type="button"

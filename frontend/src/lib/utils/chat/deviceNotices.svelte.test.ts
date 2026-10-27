@@ -583,3 +583,78 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     warn.mockRestore();
   });
 });
+
+// A NEVER-SEEN DEVICE OF A MEMBER THAT LET ITSELF IN (2026-10-27): its own commit, its user already in
+// the tree, a key this device never saw. No member added it, so it is written in the conversation and
+// reported under its own kind - never "seen" for that pin. A device coming back under its pinned key,
+// a member's Add, and this very device's own join say nothing.
+describe('deliverDeviceEvents - a member device that entered by itself', () => {
+  const selfEntry = (over: Partial<DeviceEvent> = {}) =>
+    event({
+      groupId: 'group-1',
+      identity: 'bob:new-tablet',
+      addedBy: 'bob:new-tablet',
+      memberAlreadyPresent: true,
+      trust: 'first-sight',
+      keyFingerprint: 'beef',
+      ...over,
+    });
+  const reporter = vi.fn(async () => {});
+  beforeEach(() => {
+    reporter.mockClear();
+    resetReportedUninvitedEntries();
+    setUninvitedEntryReporter(reporter);
+  });
+  afterEach(() => setUninvitedEntryReporter(null));
+
+  it('writes the accusing line, reports kind unvouched-device and logs at ERROR', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([selfEntry()], ctx);
+
+    const lines = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(lines.map((c) => c[2])).toEqual(['group-1']);
+    expect(lines[0][1]).toContain('Bob');
+    expect(reporter).toHaveBeenCalledWith({
+      kind: 'unvouched-device',
+      groupId: 'group-1',
+      entrant: 'bob:new-tablet',
+      epoch: 5,
+      keyFingerprint: 'beef',
+    });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('never-seen device of a member'));
+    error.mockRestore();
+  });
+
+  it('says it in a 1:1 too - the peer of a DM is a member like any other', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry({ groupId: 'dm-1' })], ctx);
+
+    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'unvouched-device' }));
+    error.mockRestore();
+  });
+
+  it('says nothing for a device back under its pinned key, a member-signed Add, or this device itself', async () => {
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents(
+      [
+        selfEntry({ trust: 'pinned' }),
+        selfEntry({ addedBy: 'bob:phone-1' }),
+        selfEntry({ identity: 'alice:phone-a', addedBy: 'alice:phone-a' }),
+      ],
+      ctx
+    );
+
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('says nothing in a community key group, where every device enters this way', async () => {
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry({ groupId: 'community-key' })], ctx);
+
+    expect(reporter).not.toHaveBeenCalled();
+  });
+});

@@ -1121,15 +1121,28 @@ operations notes).
 
 ## An unseen device of a member is asked about before it is added (2026-10-27): interim built
 
-Built: an automatic Add no longer brings in a device of a member that this device never saw (no
-leaf, no pin, no approval this session); a member is asked instead, in any conversation, and the
-answer covers the device across conversations - web, native and the Android background answer alike
-([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). Owed:
-**the user's confirmation**, since it reverses part of the 2026-10-22 "no mandatory approval of a
-new device"; the production rate of device enrolments per week (and how many are a second device of
-an account), which is the number of taps it costs; a hardware reading of the owner's own new phone
-approved from the old one; and the real fix, a device vouched for by a user signing key (shape B,
-recommended on that page), after which this ask remains only as a shim for users without one.
+Built: an automatic Add no longer brings in a device of a member unless its own leaf is in that
+group's tree or a member approved it, one device at a time, under the key it showed; a pin never
+counts. A device no commit admitted asks a member rather than joining itself, and one that does join
+itself is reported and written in the conversation, with "Not me" on the owner's alert
+([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). The user
+confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons. Owed:
+
+- the production rate of device enrolments per week (and how many are a second device of an
+  account), which is the number of taps it costs - and how often a device enrols while none of its
+  conversations has a member online, which now waits instead of joining itself;
+- a hardware reading of the owner's own new phone approved from the old one, fingerprint shown;
+- a place where a device shows ITS OWN key fingerprint, so the member can compare what the ask shows
+  with the device in hand - today the fingerprint binds the approval but nothing displays its twin;
+- **the gesture adders, the same class, not gated**: `createNewGroup` (the creator's other devices),
+  `startNewConversation` (the contact's devices and the creator's own) and `inviteMembersToGroup`
+  (every device listed for the invited person) add what the server lists, and no tree can vouch for
+  it - they close with the real fix;
+- the Android background welcome now stages nothing (only a device already in the tree passes its
+  rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
+  native callers if the real fix is not built;
+- the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
+  after which this ask remains only as a shim for users without one.
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 

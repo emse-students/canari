@@ -8,7 +8,7 @@
     pendingJoinRequests,
     type JoinRequest,
   } from '$lib/utils/chat/joinRequests.svelte';
-  import { answerJoinRequestOrToast } from '$lib/utils/chat/joinRequestAnswer';
+  import { answerJoinRequestOrToast, deviceAskDetail } from '$lib/utils/chat/joinRequestAnswer';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
 
@@ -23,8 +23,8 @@
    * answered it - and it is shown only while the chat page that answers it is mounted.
    *
    * A DEVICE this one never saw, of a user already in the conversation (`kind: 'device'`), is asked
-   * about in its own words - the account's own, or a contact's - and its answer is about the device
-   * alone (`memberDeviceAnswers.ts`).
+   * about in its own words - the account's own, or a contact's - with the device's name and its key
+   * fingerprint, and its answer is about that one device alone (`memberDeviceAnswers.ts`).
    */
   // The conversation on screen draws its own asks at the end of its thread (`JoinRequestRow`), so
   // the banner carries only those of the OTHER conversations - never the same ask twice.
@@ -62,6 +62,7 @@
             ? m.join_request_device_body_own()
             : m.join_request_device_body({ user: getUserDisplayNameSync(request.userId) })}
         </span>
+        <span class="font-mono" data-device-ask-detail>{deviceAskDetail(request)}</span>
       {:else}
         <strong>{m.join_request_title()}</strong>
         <span>

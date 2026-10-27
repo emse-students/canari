@@ -622,6 +622,20 @@ export async function requestReAdd(
     await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
     return;
   }
+  // A SEAT NO COMMIT EVER ADMITTED IS NOT THIS DEVICE'S DOOR (`never-admitted-seat`, 2026-10-27). A
+  // further device of a member - its owner's new phone - is given a `pending` seat in every group of
+  // the account when it registers, and nothing in the tree vouches for it yet: its first entry is a
+  // member's Add, after a member's tap (`automaticAdmission` in `actions.ts`), never its own external
+  // commit. So it asks a member, who is shown the device and its key; the self-service door stays
+  // for a device that was admitted once and lost its state (`not-pending`, an admitted seat).
+  if (reading === 'never-admitted-seat') {
+    await askAMemberToReAddUs(
+      groupId,
+      deps,
+      "a seat no commit admitted - a member's Add, not this device's own join"
+    );
+    return;
+  }
   // A WELCOME THAT IS COMING IS WAITED FOR, NEVER ASKED FOR AGAIN (DUP-2, 2026-10-25).
   //
   // Two readings say somebody else's Welcome is the door. A `welcome_request` on top of any of
@@ -989,7 +1003,7 @@ async function readWelcomeOwed(
   groupId: string,
   deps: RecoveryDeps,
   opts: ReAddOptions = {}
-): Promise<WelcomeOwedReading | 'no-device-row' | null> {
+): Promise<OwnSeatReading | 'no-device-row' | null> {
   try {
     const rows = await deps.mlsService.getDeviceMemberships(
       deps.userId,
@@ -1018,6 +1032,14 @@ async function readWelcomeOwed(
 }
 
 /**
+ * {@link WelcomeOwedReading}, with the one reading the conversation seam adds: `never-admitted-seat`,
+ * an `unhonoured-seat` no commit ever admitted - asked of a member, never joined by this device
+ * itself. The Graine key-group join keeps the shared reading: every member enters a key group by its
+ * own external commit.
+ */
+type OwnSeatReading = WelcomeOwedReading | 'never-admitted-seat';
+
+/**
  * Reads THIS DEVICE'S seat ({@link readWelcomeOwedFromRow}) and says what it read - the one place
  * both sources of that seat go through: `getDeviceMemberships`' row, and the account list's
  * `deviceMembership` when the first had none ({@link requestReAdd}). So an anomaly accuses and skips
@@ -1032,7 +1054,7 @@ function classifyOwnSeat(
   admittedAt: string | null,
   readPast: boolean,
   deps: RecoveryDeps
-): WelcomeOwedReading | null {
+): OwnSeatReading | null {
   {
     const reading = readWelcomeOwedFromRow(row, { ignoreQueuedWelcome: readPast });
     if (reading === null) {
@@ -1047,6 +1069,15 @@ function classifyOwnSeat(
         `[READD] ${groupId.slice(0, 8)}... invitation-link seat awaiting a member's admission - ` +
           `a member is asked, no self-service join`
       );
+    }
+    if (reading === 'unhonoured-seat' && admittedAt === null) {
+      // NO COMMIT EVER ADMITTED THIS SEAT (the server clears `admittedAtEpoch` only when the device
+      // goes `active`, which is `not-pending`): the device was never let in, so it does not let itself
+      // in. A member is asked ({@link requestReAdd}'s `never-admitted-seat`).
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... pending seat no commit ever admitted - a member is asked, no self-service join`
+      );
+      return 'never-admitted-seat';
     }
     if (reading === 'unhonoured-seat') {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in
