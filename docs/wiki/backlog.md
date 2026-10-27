@@ -3442,6 +3442,10 @@ WHERE pr.status = 'paid' AND pr."paymentMethod" = 'online'
 
 The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) and needs WP-LYDIA-1.
 
+### P2 - the history rule saved by an admin is not applied from the live frame
+
+Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's card resets to the old rule right after a `200` save, and the rule applies at the next listing. The server publishes `workspace.updated` with `historyVisibility`, but `channelEventHandler.ts:276-283` forwards only `workspaceId`, `imageMediaId` and `channelsReordered`, so `handleWorkspaceUpdated` never receives it; the frame replaces the sidebar entry with the old rule a millisecond after the save, and the panel re-reads it. A post-stable chantier: the fix turns on a path that has never run live.
+
 ### P3 - an admin who never joined a private salon is not told when it is created or deleted
 
 Not on the roster, so no `channel.deleted`; the sidebar keeps a stale row until the next load. **Do not widen the audience** (that is what leaked private-salon traffic to non-members); the shape that would work is a contentless `channel.gone` addressed to the community, worth doing only if the stale row is ever seen to matter.
