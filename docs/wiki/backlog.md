@@ -129,7 +129,7 @@ ordinary review.
   block severing already deletes both directions whatever the status (old WP-F4): a spec pins it.
   Proof: unit specs for each transition, a PostgreSQL spec for accept-vs-withdraw, the
   `post-notifications` spec for the two types, and the block case.
-- **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #PR_F3, stacked
+- **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #2605, stacked
   on #2601.** `GET` my ACCEPTED followers (a person sees
   only their own list), `DELETE` one of them (the row goes, the removed person is told nothing and
   may ask again), and `GET` my own outgoing requests so a request can be withdrawn from a list.
