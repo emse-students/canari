@@ -240,6 +240,88 @@ export function readSchema(repoRoot: string): Map<string, EntityTable> {
   return schema;
 }
 
+/** One named CHECK constraint, and the file whose text last added it. */
+export interface CheckConstraint {
+  table: string;
+  name: string;
+  file: string;
+}
+
+/** The table a DDL statement is about: `ALTER TABLE x` or `CREATE TABLE x`, else null. */
+function statementTable(statement: string): string | null {
+  const m = statement.match(
+    /\b(?:ALTER\s+TABLE(?:\s+IF\s+EXISTS)?(?:\s+ONLY)?|CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+(?:public\.)?"?(\w+)"?/i
+  );
+  return m ? m[1] : null;
+}
+
+/**
+ * EVERY NAMED CHECK THE SCHEMA CARRIES, from both places one is written: an entity's
+ * `@Check('name', ...)` (what `synchronize` builds) and a migration's `CONSTRAINT name CHECK`
+ * (what a deployed estate has - several checks exist ONLY there). Migrations are read in order per
+ * app, so a constraint a later file drops and never re-adds is gone.
+ *
+ * WHY IT EXISTS: a CHECK is a row-level rule the column parser above cannot see. A seed row that
+ * breaks one rolls the whole dev reset back on the box (2026-10-27: migration 114's
+ * `CHK_user_follows_accepted_at` against seeded `accepted` follows that carried no `acceptedAt`).
+ * `seed.test.ts` demands a predicate for every check on a seeded table, so a NEW check fails the
+ * pull request that adds it until somebody states what it means for the seed.
+ *
+ * An UNNAMED check cannot be tracked by name, so it is reported with a synthetic `unnamed@file`
+ * name - which no predicate matches, and the test then asks for the constraint to be named.
+ */
+export function readChecks(repoRoot: string): CheckConstraint[] {
+  const found = new Map<string, CheckConstraint>();
+  const key = (table: string, name: string) => `${table}.${name}`;
+
+  for (const file of entityFiles(repoRoot)) {
+    const source = readFileSync(join(repoRoot, file), 'utf8');
+    const entity = source.match(/@Entity\(\s*(?:'([^']+)')?\s*\)[\s\S]*?export\s+class\s+(\w+)/);
+    if (!entity) continue;
+    const table = entity[1] ?? snakeCase(entity[2]);
+    for (const m of source.matchAll(/@Check\(\s*'([^']+)'/g)) {
+      found.set(key(table, m[1]), { table, name: m[1], file });
+    }
+  }
+
+  for (const app of readdirSync(join(repoRoot, 'apps'))) {
+    const dir = join(repoRoot, 'apps', app, 'src', 'migrations');
+    let files: string[];
+    try {
+      files = readdirSync(dir)
+        .filter((f) => f.endsWith('.sql'))
+        .sort();
+    } catch {
+      console.debug(`[dev-seed] apps/${app} has no migrations directory - no checks read there`);
+      continue;
+    }
+    for (const name of files) {
+      const file = `apps/${app}/src/migrations/${name}`;
+      const sql = readFileSync(join(dir, name), 'utf8').replace(/--[^\n]*/g, '');
+      for (const statement of sql.split(';')) {
+        const table = statementTable(statement);
+        if (!table) continue;
+        for (const m of statement.matchAll(/DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+"?(\w+)"?/gi)) {
+          found.delete(key(table, m[1]));
+        }
+        for (const m of statement.matchAll(/CONSTRAINT\s+"?(\w+)"?\s+CHECK\b/gi)) {
+          found.set(key(table, m[1]), { table, name: m[1], file });
+        }
+        // A CHECK not preceded by `CONSTRAINT name` is unnamed.
+        const named = [...statement.matchAll(/CONSTRAINT\s+"?\w+"?\s+CHECK\b/gi)].length;
+        const all = [...statement.matchAll(/\bCHECK\s*\(/gi)].length;
+        if (all > named) {
+          const unnamed = `unnamed@${file}`;
+          found.set(key(table, unnamed), { table, name: unnamed, file });
+        }
+      }
+    }
+  }
+  return [...found.values()].sort((a, b) =>
+    key(a.table, a.name).localeCompare(key(b.table, b.name))
+  );
+}
+
 /**
  * The bit count of `AssociationPermissionFlag`, read from the enum itself so the seed's
  * all-permissions mask follows a flag added there instead of silently lacking it.

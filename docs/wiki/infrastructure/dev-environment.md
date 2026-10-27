@@ -168,7 +168,11 @@ asserts determinism, that the committed SQL is the generator's output, the fake 
 reference inside the set, and - by PARSING the entity files
 ([`entities.ts`](../../../tools/dev-seed/entities.ts)) - that every table and column the SQL names is
 declared and insertable, that every column an INSERT cannot omit is given, and that a closed type's
-value is one it allows. A renamed column fails the pull request, not the reset.
+value is one it allows. A renamed column fails the pull request, not the reset. It also reads every
+named CHECK on a seeded table - from an entity's `@Check` and from the migrations, where several
+exist only - and demands a predicate for each that every row satisfies: migration 114's
+`CHK_user_follows_accepted_at` met seeded `accepted` follows with no `acceptedAt` (2026-10-27), and
+without this the first reset after the deploy would have rolled back on the box.
 
 **How a tester gets in.** Authentik is one shared instance and the dev OIDC client signs real
 accounts in; the app creates the tester's own row at the first sign-in (`findOrCreateFromOidc`) -
@@ -433,7 +437,7 @@ Run by `make test-ci-scripts`, which is a CI job:
 |---|---|
 | [`compose-wiring.test.sh`](../../../.github/scripts/tests/compose-wiring.test.sh) | the service list and its listening ports from the compose files; the NestJS app list from `apps/*/package.json` declaring `@nestjs/core`, each of which must set `NODE_ENV` |
 | [`dev-reset-guards.test.sh`](../../../.github/scripts/tests/dev-reset-guards.test.sh) | the truncate's table list from `pg_tables` and the ledger's name from `migrations.sh`; drives the real reset against a stub `docker`, and fails if the production copy returns |
-| [`seed.test.ts`](../../../tools/dev-seed/seed.test.ts) | every table and column the seed names, and every one it must give, from the entity declarations |
+| [`seed.test.ts`](../../../tools/dev-seed/seed.test.ts) | every table and column the seed names, every one it must give, and every CHECK on its tables, from the entity declarations and the migrations |
 | [`dev-gap.test.sh`](../../../.github/scripts/tests/dev-gap.test.sh) | the row set from production's compose file's named stateful images |
 | [`ceiling.test.sh`](../../../.github/scripts/tests/ceiling.test.sh) | the stateful image names from `docker-compose.prod.yml` |
 | [`deploy-env.test.sh`](../../../.github/scripts/tests/deploy-env.test.sh) | the expected `.env` key set from `deploy.yml`'s own `upsert_env_var` calls, and the dev secret list from the manifest - it also asserts that `deploy-dev` references no production secret by its bare name |
