@@ -23,8 +23,6 @@ import {
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
-  TIER_NOT_A_RISE,
-  TIER_NOT_RANKABLE,
   PAYMENT_ROUTING_CHANGED,
   productOrderRef,
   withCheckoutReturnKey,
@@ -47,6 +45,7 @@ import {
   fixedPriceFor,
   linkedTierKey,
   pickHeldTier,
+  tierRefusal,
   tierRelationOf,
   type HeldTier,
   type TierRelation,
@@ -135,24 +134,6 @@ interface CotisantStatus {
   activeTier: string | null;
   facts: TierFacts;
 }
-
-/**
- * The typed 409 of each tier relation the checkout refuses (`assertTierIsARise`); null = sold.
- * `held` keeps `PRODUCT_ALREADY_PURCHASED`, the code the shop already words.
- */
-const TIER_REFUSALS: Record<TierRelation, { code: string; message: string } | null> = {
-  none: null,
-  higher: null,
-  held: { code: PRODUCT_ALREADY_PURCHASED, message: 'You already hold this membership' },
-  lower: {
-    code: TIER_NOT_A_RISE,
-    message: 'You already hold a membership tier worth at least this one',
-  },
-  unranked: {
-    code: TIER_NOT_RANKABLE,
-    message: 'Your current membership tier cannot be compared with this one',
-  },
-};
 
 /**
  * What one viewer pays for one product, resolved server-side.
@@ -2421,7 +2402,7 @@ export class ProductsService {
       `[SHOP] tier rank: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
         `held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`
     );
-    const refusal = TIER_REFUSALS[relation];
+    const refusal = tierRefusal(relation);
     if (!refusal) return;
     this.logger.log(
       `[SHOP] refused (${refusal.code}): product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +

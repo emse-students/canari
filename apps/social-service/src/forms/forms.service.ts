@@ -62,6 +62,7 @@ import {
 } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
+import { tierRefusal } from '../associations/tier-pricing';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { toManagerView, toSubmitterView } from './submission.projection';
@@ -801,6 +802,36 @@ export class FormsService {
   }
 
   /**
+   * Refuses, BEFORE any payment request is opened, a paid answer to a form that grants a cotisation
+   * tier which is not a rise over the tier the submitter holds - the boutique checkout's rule
+   * (`tierRefusal`, the one mapping), with its typed 409 codes. Without it the money was taken and
+   * the grant refused afterwards, leaving a refund owed (`paid_not_granted`). A pre-check: the grant
+   * re-ranks under the buyer's tier lock when the payment lands (`grantCotisantIfARise`).
+   */
+  private async assertGrantedTierIsARise(
+    form: Pick<Form, 'id' | 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    userId: string | undefined
+  ): Promise<void> {
+    if (!form.grantsCotisation || !form.associationId || !userId) return;
+    const relation = await this.userTagService.rankCotisationTier(
+      form.associationId,
+      userId,
+      form.cotisationVariantKey
+    );
+    const refusal = tierRefusal(relation);
+    this.logger.debug(
+      `[Forms] granted tier rank: form=${form.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+        `tier=${form.cotisationVariantKey ?? 'base'} relation=${relation}`
+    );
+    if (!refusal) return;
+    this.logger.log(
+      `[Forms] submit refused (${refusal.code}): form=${form.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+        `tier=${form.cotisationVariantKey ?? 'base'} is not a rise (relation=${relation})`
+    );
+    throw new ConflictException(refusal);
+  }
+
+  /**
    * Grants the form's configured cotisation tier to a submitter whose payment just landed.
    * Shared by the online-payment confirmation path (`markPaid`) and the cash validation path, which had a copy
    * each.
@@ -1236,6 +1267,9 @@ export class FormsService {
     if (oneAnswer) {
       await this.assertNoOtherAnswer(this.submissionRepo.manager, id, input.userId!, previous?.id);
     }
+    // A form that grants a tier takes money for it: refused here, before anything is cancelled or
+    // opened, when it is not a rise over the tier held - the boutique's rule and codes.
+    if (totalCents > 0) await this.assertGrantedTierIsARise(form, input.userId);
     if (previous) {
       const settled = await this.settleOpenRequest(previous, form);
       if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };

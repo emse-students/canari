@@ -428,6 +428,25 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         tagName: 'cotisant:cercle-sans-alcool',
       });
     });
+
+    // The paid form's pre-check, before any payment request: the same rank, no lock, no write.
+    it('rankCotisationTier answers the rank the grant would take, writing nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-avec-alcool');
+
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('lower');
+      expect(await service.rankCotisationTier('asso1', 'user1', 'avec-alcool')).toBe('held');
+      expect(repo.manager.transaction).not.toHaveBeenCalled();
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('rankCotisationTier answers none for an association without cotisation', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: null }, priced);
+
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('none');
+    });
   });
 
   // WP-COT-9: MANAGE_MEMBERS is per-association, so the tag id alone must not be enough to reach

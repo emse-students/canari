@@ -400,6 +400,24 @@ export class UserTagService {
   }
 
   /**
+   * Where tier `variantKey` of `assocId` stands against what the user holds NOW, for a caller that
+   * must refuse a non-rise BEFORE it opens a payment (a paid form that grants a tier): the same
+   * `rankTier` decision the ranked grant takes, read outside any lock. It is a pre-check, not the
+   * verdict - the grant re-ranks under the buyer's tier lock when the money lands. `none` when the
+   * association has no cotisation.
+   */
+  async rankCotisationTier(
+    assocId: string,
+    userId: string,
+    variantKey: string | null
+  ): Promise<TierRelation> {
+    const manager = this.repo.manager;
+    const tiers = await this.listCotisationTiers(assocId, { manager });
+    if (tiers.length === 0) return 'none';
+    return this.rankTier(assocId, userId, variantKey, tiers, manager);
+  }
+
+  /**
    * Where tier `variantKey` stands against what the user holds, read through `manager` under the
    * buyer's tier lock: the same `pickHeldTier` / `tierRelationOf` decision a checkout and a
    * settlement take, on the tiers' PRODUCT prices.

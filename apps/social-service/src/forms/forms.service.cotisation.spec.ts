@@ -56,7 +56,8 @@ describe('FormsService - cotisation configuration and granting', () => {
           query: jest.fn(() => Promise.resolve([])),
           findOne: jest.fn(() => submissionRepo.findOne()),
           count: jest.fn(() => Promise.resolve(1)),
-          save: jest.fn((x: unknown) => Promise.resolve(x)),
+          create: jest.fn((_entity: unknown, x: unknown) => x),
+          save: jest.fn((x: unknown) => Promise.resolve({ id: 's1', ...(x as object) })),
         })
       ),
     };
@@ -65,6 +66,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       holdsAnyCotisation: jest.fn(() => Promise.resolve(false)),
       holdsCotisationTier: jest.fn(() => Promise.resolve(false)),
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       hasActiveTag: jest.fn(() => Promise.resolve(false)),
     };
@@ -574,6 +576,61 @@ describe('FormsService - cotisation configuration and granting', () => {
       await service.validateCashPayment('f1', 's1', 'treasurer1', false);
 
       expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
+    });
+  });
+  // A paid form that grants a tier takes money for it, so it is refused BEFORE any payment request
+  // when it is not a rise - the boutique's rule and its typed codes, not a refund owed afterwards.
+  describe('a paid answer is refused before payment when its tier is not a rise', () => {
+    const grantingForm = {
+      id: 'f1',
+      title: 'Adhesion',
+      currency: 'eur',
+      basePrice: 1500,
+      items: [],
+      allowCashPayment: true,
+      allowMultipleSubmissions: true,
+      associationId: 'asso1',
+      grantsCotisation: true,
+      cotisationVariantKey: 'sans-alcool',
+    };
+    const submitCash = (service: FormsService) =>
+      service.submit('f1', { userId: 'user1', answers: {}, paymentMethod: 'cash' } as any);
+
+    it.each([
+      ['lower', 'TIER_NOT_A_RISE'],
+      ['unranked', 'TIER_NOT_RANKABLE'],
+      ['held', 'PRODUCT_ALREADY_PURCHASED'],
+    ])('refuses a %s tier with %s and writes nothing', async (relation, code) => {
+      const { service, userTagService, submissionRepo } = makeService({ form: grantingForm });
+      userTagService.rankCotisationTier.mockResolvedValue(relation);
+
+      await expect(submitCash(service)).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code }),
+      });
+      expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'sans-alcool'
+      );
+      expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: a rise is taken', async () => {
+      const { service, userTagService } = makeService({ form: grantingForm });
+      userTagService.rankCotisationTier.mockResolvedValue('higher');
+
+      await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
+    });
+
+    it('does not rank a form that grants no cotisation', async () => {
+      const { service, userTagService } = makeService({
+        form: { ...grantingForm, grantsCotisation: false },
+      });
+
+      await submitCash(service);
+
+      expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
     });
   });
 });

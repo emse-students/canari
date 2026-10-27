@@ -134,6 +134,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     };
     const userTagService = {
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      // The paid form's pre-check before any payment request: nothing held, so a rise.
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
     };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
