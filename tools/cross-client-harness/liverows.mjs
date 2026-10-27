@@ -132,8 +132,20 @@ const N = String.raw`\d+`;
 const F = String.raw`[\d.]+`;
 const at = (levels, s) => atLevels(levels, new RegExp(`^${s}$`));
 
-/** The broadcaster, from the composer's live chip to the camera given back. */
+/** The feed every seat of the row opens: the broadcaster to compose, a viewer to find the card. */
+const FEED = [
+  at(D, String.raw`\[POSTS\] stored first page drawn: ${N} posts read in ${N} ms`),
+  at(D, String.raw`\[progressive-mount\] all ${N} mounted`),
+  at(D, String.raw`\[LIVE\] list`),
+  at(D, String.raw`\[LIVE\] feed card: ${N} open live\(s\)`),
+];
+
+/** The broadcaster, from the feed's composer and its live chip to the camera given back. */
 const BROADCASTER = [
+  ...FEED,
+  // THE PHONE'S FEED reserves its left edge for the tab swipe while the page is on screen; A1 opens the
+  // feed by a tap to compose (read on LIVE-WEB-2, 2026-10-27).
+  at(D, String.raw`\[GESTURE\] left-edge exclusion (over ${N}\.\.${N} px|cleared)`),
   at(D, String.raw`\[POST_COMPOSER\] live screen opened`),
   at(D, String.raw`\[live-overlay\] open`),
   at(D, String.raw`\[theme\] native bars (held at dark|released)`),
@@ -156,6 +168,10 @@ const BROADCASTER = [
   at(D, String.raw`\[LiveCrypto\] \{"op":"seal","index":${N},"plainBytes":${N}\}`),
   at(D, String.raw`\[LIVE\] segment ${N} of ${S}: ${N} B`),
   at(D, String.raw`\[LIVE-PIPE\] segment ${N} queued`),
+  // The pipeline's periodic summary (every 15 segments, read on LIVE-STALL-1, 2026-10-27). `not on
+  // keyframe 0, dropped 0` and ONE generation open ARE THE ASSERTION; the two-fragment count is L-F1's
+  // cause (paired seals), recorded rather than judged here - the viewer's lines judge its effect.
+  at(L, String.raw`\[LIVE-PIPE\] summary: ${N} segments, ${F} MB, seal ${F} ms avg, two-fragment chunks ${N}, not on keyframe 0, dropped 0, generations open 1`),
   at(D, String.raw`\[LIVE-SCREEN\] end asked`),
   at(L, String.raw`\[LIVE-BROADCAST\] ending ${S}`),
   at(D, String.raw`\[LIVE-BROADCAST\] recording paused: (the live is ending|the screen is closing)`),
@@ -174,10 +190,8 @@ const BROADCASTER = [
 
 /** A viewer, from the feed to the end it was told about. */
 const VIEWER = [
-  at(D, String.raw`\[POSTS\] stored first page drawn: ${N} posts read in ${N} ms`),
-  at(D, String.raw`\[progressive-mount\] all ${N} mounted`),
-  at(D, String.raw`\[LIVE\] (list|limits)`),
-  at(D, String.raw`\[LIVE\] feed card: ${N} open live\(s\)`),
+  ...FEED,
+  at(D, String.raw`\[LIVE\] limits`),
   at(D, String.raw`\[POSTS\] live ${S} opened from the feed card`),
   at(D, String.raw`\[VIDEO\] viewer opens with the app's sound`),
   at(D, String.raw`\[LIVE\] viewer (opened on|start) ${S}`),
@@ -214,9 +228,10 @@ export function liveNarration(row, seat) {
 }
 
 /**
- * THE ENDED LIVE'S MANIFEST ANSWERS 404 `LIVE_NOT_FOUND`, and that is how a viewer whose chat did not
- * hear the end first learns it (`stopped on ended (404 not-found)`): a status, an answer, once. Only on
- * a viewer seat. A SEGMENT 404 (`segment N is gone - skipped`) is NOT forgiven: it is the purge at the
+ * THE ENDED LIVE'S MANIFEST ANSWERS 410 `LIVE_ENDED` until the end's purge has run, and 404
+ * `LIVE_NOT_FOUND` after it (both on LIVE-WEB-2, 2026-10-27: W4 polled before the purge, W2 after it).
+ * That is how a viewer whose chat did not hear the end first learns it (`stopped on ended`): a status,
+ * an answer, once. Only on a viewer seat. A SEGMENT 404 (`segment N is gone - skipped`) is NOT forgiven: it is the purge at the
  * end racing a viewer's download, a finding.
  *
  * @param {string} row a `LIVE_ROWS` id
@@ -225,5 +240,5 @@ export function liveNarration(row, seat) {
 export function liveRefusals(row, seat) {
   const spec = LIVE_ROWS[row];
   if (!spec?.viewers.includes(seat)) return [];
-  return [{ path: /^\/api\/lives\/[0-9a-f-]{36}\/manifest\?/, status: [404] }];
+  return [{ path: /^\/api\/lives\/[0-9a-f-]{36}\/manifest\?/, status: [404, 410] }];
 }

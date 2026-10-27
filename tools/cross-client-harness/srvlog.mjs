@@ -1288,7 +1288,11 @@ const ROW_RULES = [
   // is a finding. `seat released (held=true)` only: releasing a seat never held is not the path.
   {
     name: 'live start, segments, seats and end',
-    tag: /\[(LivesService|LiveSeats|HttpLiveSegmentStore|InternalLivesModeController|LiveAnnouncer)\] \[(LIVE|LIVE_SEAT|LIVE_ANNOUNCE)\] /,
+    // THE TAG NAMES THE STORE'S TWO PER-LIVE LINES ONLY: its `listing the live folders of the store`
+    // is the retention tick's, BENIGN in every window, and a tag that claimed it turned it into
+    // "a shape nobody has read" (LIVE-WEB-2, 2026-10-27). `[LIVE_GC] <live> deleted` is the end's
+    // purge; the sweep's other `[LIVE_GC]` lines (kept, OPEN, orphan) stay outside this rule.
+    tag: /\[(LivesService|LiveSeats|InternalLivesModeController|LiveAnnouncer)\] \[(LIVE|LIVE_SEAT|LIVE_ANNOUNCE)\] |\[HttpLiveSegmentStore\] \[LIVE\] (storing segment|purging the segments) |\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted /,
     shape: new RegExp(
       [
         String.raw`\[LivesService\] \[LIVE\] start asked by [0-9a-f]{8}`,
@@ -1306,6 +1310,7 @@ const ROW_RULES = [
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] purging the segments of live [0-9a-f-]{36}`,
         String.raw`\[InternalLivesModeController\] \[LIVE\] lives_mode relayed to media-service: on`,
         String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=member followers=\d+`,
+        String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted \(\d+ segment object\(s\)\)`,
       ]
         .map((s) => `${s}$`)
         .join('|')
@@ -1315,8 +1320,10 @@ const ROW_RULES = [
   // media-service's half: a segment written to the store, and served once to the edge cache.
   {
     name: 'live segment stored and served',
-    tag: /\[(LiveSegmentsService|MediaController)\] \[LIVE\] (storing live\/|segment )/,
-    shape: /\[LiveSegmentsService\] \[LIVE\] storing live\/[0-9a-f-]{36}\/[0-9a-f-]{36} \(\d+ B\)$|\[MediaController\] \[LIVE\] segment [0-9a-f-]{36}\/[0-9a-f-]{36} served to the edge cache \(\d+ B\)$/,
+    // and the end's purge of the live's folder: `failed=0 remaining=0` IS THE ASSERTION, any other
+    // count stays dirt.
+    tag: /\[(LiveSegmentsService|MediaController)\] \[LIVE\] (storing live\/|segment )|\[LiveSegmentsService\] \[LIVE_GC\] live /,
+    shape: /\[LiveSegmentsService\] \[LIVE\] storing live\/[0-9a-f-]{36}\/[0-9a-f-]{36} \(\d+ B\)$|\[MediaController\] \[LIVE\] segment [0-9a-f-]{36}\/[0-9a-f-]{36} served to the edge cache \(\d+ B\)$|\[LiveSegmentsService\] \[LIVE_GC\] live [0-9a-f-]{36}: deleted=\d+ failed=0 remaining=0$/,
     rows: ['LIVE-*'],
   },
   // A FRESHLY MINTED DEVICE'S FIRST MEMBERSHIP READ (`invitations.controller.ts`): every group its

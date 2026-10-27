@@ -121,7 +121,12 @@ ok('a viewer jumping segments behind stays dirt', !forgiven('LIVE-STALL-1', 'W2'
 ok('a viewer reconnecting stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S} -> reconnecting (network)`));
 ok('... and NOT on a seat outside the row', !forgiven('LIVE-STALL-1', 'W5', VJOIN));
 ok('... and NOT outside a LIVE row', liveNarration('CALL-WEB-1', 'W2').length === 0);
-ok('a viewer stall at warn stays dirt', !forgiven('LIVE-STALL-1', 'W2', `warn: ${STALL}`));
+const EDGE = 'debug: [19:13:45.487] [2026-10-27T18:13:45.487Z] [GESTURE] left-edge exclusion over 782..2122 px';
+ok("the phone's feed edge exclusion is forgiven on the broadcaster, NOT on a viewer", forgiven('LIVE-WEB-2', 'A1', EDGE) && forgiven('LIVE-WEB-2', 'A1', 'debug: [GESTURE] left-edge exclusion cleared') && !forgiven('LIVE-WEB-2', 'W2', EDGE));
+const SUMMARY = (dropped) => `log: [19:25:01.790] [LIVE-PIPE] summary: 15 segments, 0.7 MB, seal 2.3 ms avg, two-fragment chunks 5, not on keyframe 0, dropped ${dropped}, generations open 1`;
+ok("the pipeline's clean summary is forgiven on the broadcaster; one that dropped a segment is not", forgiven('LIVE-STALL-1', 'A1', SUMMARY(0)) && !forgiven('LIVE-STALL-1', 'A1', SUMMARY(1)));
+ok('the feed is forgiven on the broadcaster too (it composes from there)', forgiven('LIVE-WEB-2', 'A1', 'debug: [19:13:45.540] [LIVE] feed card: 0 open live(s)'));
+ok('a viewer stall at warn stays dirt',!forgiven('LIVE-STALL-1', 'W2', `warn: ${STALL}`));
 ok('an append failure stays dirt', !forgiven('LIVE-STALL-1', 'W2', `error: [LIVE] viewer ${S}: append failed (1 in a row)`));
 
 console.log('the refusals');
@@ -131,7 +136,8 @@ const SEGMENT = 'GET https://dev.canari-emse.fr/api/media/public/live/59bc51fe-b
 const left = (seat, line) => ignoringExpectedRefusal(http(line), liveRefusals('LIVE-STALL-1', seat)).badHttp.length;
 ok("the ended live's manifest 404 is forgiven on a viewer", left('W2', MANIFEST) === 0);
 ok('... NOT on the broadcaster', left('A1', MANIFEST) === 1);
-ok("... and a manifest 500 is not", left('W2', MANIFEST.replace('-> 404', '-> 500')) === 1);
+ok("the ended live's manifest 410 (before the end's purge) is forgiven on a viewer too", left('W2', MANIFEST.replace('-> 404', '-> 410')) === 0);
+ok("... and a manifest 500 is not",left('W2', MANIFEST.replace('-> 404', '-> 500')) === 1);
 ok('a purged SEGMENT 404 stays dirt on a viewer', left('W2', SEGMENT) === 1);
 
 // ── the server rules ─────────────────────────────────────────────────────────────────────────────
@@ -158,9 +164,15 @@ const LIVE_LINES = [
   `${NEST('LOG', 'LiveAnnouncer')}[LIVE_ANNOUNCE] ${L} by f7a9bb80 kind=member followers=1`,
   `${NEST('DEBUG', 'LiveSegmentsService')}[LIVE] storing live/${L}/${N2} (52342 B)`,
   `${NEST('DEBUG', 'MediaController')}[LIVE] segment ${L}/${N2} served to the edge cache (52342 B)`,
+  `${NEST('DEBUG', 'LivesService')}[LIVE_GC] ${L} deleted (9 segment object(s))`,
+  `${NEST('LOG', 'LiveSegmentsService')}[LIVE_GC] live ${L}: deleted=9 failed=0 remaining=0`,
 ];
 ok('every line of a live is expected in a LIVE row', LIVE_LINES.every((l) => expectedIn(l, 'LIVE-STALL-1') && expectedIn(l, 'LIVE-WEB-2')));
-ok('... and none of them outside a LIVE row', LIVE_LINES.every((l) => !expectedIn(l, 'CALL-WEB-1') && !expectedIn(l, 'TOK-3')));
+const LISTING = `${NEST('DEBUG', 'HttpLiveSegmentStore')}[LIVE] listing the live folders of the store`;
+ok("the retention tick's store listing is NOT claimed by the LIVE rule - it stays benign everywhere (LIVE-WEB-2, 2026-10-27)", rowVerdict(LISTING, 'LIVE-STALL-1') === null && rowVerdict(LISTING, 'TOK-3') === null);
+ok("the end's purge that left something stays dirt", !expectedIn(`${NEST('LOG', 'LiveSegmentsService')}[LIVE_GC] live ${L}: deleted=8 failed=1 remaining=1`, 'LIVE-STALL-1'));
+ok("the sweep's 'kept' line is not this rule's", !expectedIn(`${NEST('LOG', 'LivesService')}[LIVE_GC] ${L} kept: deleted=8 failed=1 remaining=1`, 'LIVE-STALL-1'));
+ok('... and none of them outside a LIVE row',LIVE_LINES.every((l) => !expectedIn(l, 'CALL-WEB-1') && !expectedIn(l, 'TOK-3')));
 ok('a refused start stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] start refused: f7a9bb80 already has an open live`, 'LIVE-STALL-1'));
 ok('a segment out of order stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] segment 4 of ${L} out of order (expected 3)`, 'LIVE-STALL-1'));
 ok('a full live stays dirt in a LIVE row', !expectedIn(`${NEST('LOG', 'LiveSeats')}[LIVE_SEAT] ${L}: FULL, 24/24 seated - refused`, 'LIVE-STALL-1'));
