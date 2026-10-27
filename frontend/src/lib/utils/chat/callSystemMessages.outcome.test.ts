@@ -26,7 +26,7 @@ import {
   setCallSystemMessageContext,
   type CallSystemMessageContext,
 } from './callSystemMessages';
-import { parseEnvelope } from '$lib/envelope';
+import { mkCallStartedEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { setLocale } from '$lib/paraglide/runtime';
 import { canari } from '$lib/proto/canari.js';
 import type { Conversation } from '$lib/types';
@@ -148,6 +148,26 @@ describe('the ONE call-record writer (B15)', () => {
     expect(ids).toEqual(['call-s1', 'later']);
     const first = parseEnvelope(conversations.get(G)!.messages[0].content);
     expect(first.kind === 'system' && first.text).toBe('Appel sans réponse');
+  });
+
+  it('finalizes the row that appeared while an end with no row waited', async () => {
+    const { ctx, conversations } = makeCtx();
+    const ending = recordCallEnded(ctx, G, 'f1', 'busy', 'me');
+    const convo = conversations.get(G)!;
+    conversations.set(G, {
+      ...convo,
+      messages: [
+        {
+          id: 'call-f1',
+          content: serializeEnvelope(mkCallStartedEnvelope('me', 'f1', 'me', 1)),
+        },
+      ],
+    } as unknown as Conversation);
+    await ending;
+    const msgs = conversations.get(G)!.messages;
+    expect(msgs).toHaveLength(1);
+    const env = parseEnvelope(msgs[0].content);
+    expect(env.kind === 'system' && env.callEvent?.outcome).toBe('busy');
   });
 
   it('writes its rows as the sole writer, so a bulk ingest never buffers them', async () => {

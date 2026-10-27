@@ -120,8 +120,12 @@ export async function recordCallEnded(
     const starter = starterId.toLowerCase();
     const getName = await resolveDisplayNames([starter]);
     const now = Date.now();
-    // The timeline may have gained this very row during the await: never write a second one.
-    if (ctx.conversations.get(groupId)?.messages.some((x) => x.id === messageId)) return;
+    // The timeline may have gained this very row during the await: never write a second one -
+    // finalize the one that arrived.
+    if (ctx.conversations.get(groupId)?.messages.some((x) => x.id === messageId)) {
+      await finalizeCallRow(ctx, groupId, callId, outcome);
+      return;
+    }
     appendLog(`[CallRecord] ${callId} written as ${outcome} (no started row on this device)`);
     await ctx.addMessageToChat(
       'system',
@@ -136,6 +140,23 @@ export async function recordCallEnded(
     return;
   }
 
+  await finalizeCallRow(ctx, groupId, callId, outcome);
+}
+
+/**
+ * Finalizes the EXISTING row of a call, read from the timeline as it is NOW (never a snapshot taken
+ * before an await: writing back an old list would erase what arrived meanwhile).
+ */
+async function finalizeCallRow(
+  ctx: CallSystemMessageContext,
+  groupId: string,
+  callId: string,
+  outcome: CallEndReason | undefined
+): Promise<void> {
+  const messageId = callMessageId(callId);
+  const convo = ctx.conversations.get(groupId);
+  const idx = convo ? convo.messages.findIndex((m) => m.id === messageId) : -1;
+  if (!convo || idx === -1) return;
   const msg = convo.messages[idx];
   const env = parseEnvelope(msg.content);
   if (env.kind !== 'system' || !env.callEvent) return;

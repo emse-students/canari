@@ -149,6 +149,14 @@ B15 and B16, built together because the busy answer is one of the reasons.
   rings the winner. The caller acts on a busy answer only for its own callId, while `calling`, with
   nobody arrived, from another account. The native classifier lists the payload as control that ends
   nothing (`proto_fields.rs`, pinned).
+- **An invite during the 1.5 s ended summary RINGS**: the summary and its timer are cleared first
+  (the timer is a field, cleared by `cleanup`, so it cannot cut a later call's summary short). A
+  `calling` call with no id yet (`startCall` sets the state before the server gives the id) has rung
+  nobody and loses any glare in its conversation.
+- **Glare noise, accepted**: the loser's `cancelled` hangup reaches the winner, whose writer files a
+  missed call from the loser. **Compat, dev only**: a client built before `busy` reads a busy frame
+  as an invite and logs a false "carries no ring window" WARN; calls are dev builds only, so no
+  user sees it.
 - **Not decided, recorded**: a callee with a second, idle device stops that device's ring too.
   The ended-summary overlay of a busy caller shows the generic ended screen (the toast and the
   record carry the message). The row text is baked per side at write time; rendering from
@@ -1927,9 +1935,9 @@ What changed: the other person's photo, blown up, blurred and dimmed, is the bac
   any other failure, the screen and the bar say "Toucher pour entendre", and the NEXT pointer event
   anywhere (or the Accept tap, which primes the sink) starts it. Logged: `[Call] WARN voice refused
   without a gesture (<why>) - waiting for a tap`.
-- **A second call while one is up is not rung, and nothing is sent back.** A hangup would reach the
-  whole conversation - our own other devices included, which may be free to answer it. Logged:
-  `[Call] invite <callId> in <groupId> not rung - busy (state=... call=...)`
+- **A second call while one is up is answered BUSY** (a typed frame, never a hangup, which would reach
+  the whole conversation); see [the call record](#the-call-record-one-writer-a-typed-reason-2026-10-27).
+  Logged: `[Call] invite <callId> in <groupId> meets state=... call=...`
   (`CallService.p2p.test.ts`, "a second call while one is up").
 - **The 64px controls are size-checked on the RENDERED screen**, not by `iconButtonScale.test.ts`:
   they are drawn by a snippet that markup scan cannot see through. `CallOverlay.svelte.test.ts`

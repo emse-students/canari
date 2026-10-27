@@ -737,7 +737,8 @@ export class CallService {
    * A new admitted invite meets a device that is not idle. BUSY means THIS DEVICE is in a call.
    *
    * - The invite of the call this device is already in (a redelivery) is itself: ignored, no answer.
-   * - The ENDED summary is not a call: nothing is answered, nothing rung (it is gone in 1.5 s).
+   * - The ENDED summary is not a call: it is cleared at once (its timer too) and the invite RINGS,
+   *   as a glare loser's does. Dropping it would leave the caller ringing into nothing.
    * - GLARE (both sides calling each other in one conversation): the LOWER callId wins. The winner
    *   ignores the other invite and sends no busy; the loser drops its own call and rings the
    *   winner's. Both sides decide from the two ids alone, so they cannot both yield or both stay.
@@ -758,15 +759,22 @@ export class CallService {
     );
     if (callId === this.currentCallId) return false;
     if (state === 'ended') {
-      appendLog(`[Call] invite ${callId} not rung and not answered busy - the last call is over`);
-      return false;
+      appendLog(`[Call] invite ${callId} meets the ended summary - clearing it to ring`);
+      this.cleanup();
+      return get(this.callState) === 'idle';
     }
-    if (state === 'calling' && this.currentGroupId === groupId && this.currentCallId) {
-      if (this.currentCallId < callId) {
+    // 'calling' with no id yet is a call still in its setup (`startCall` takes the id from the
+    // server after it sets the state): it has rung nobody, so it loses any glare in its conversation.
+    if (state === 'calling' && this.currentGroupId === groupId) {
+      if (this.currentCallId && this.currentCallId < callId) {
         appendLog(`[Call] glare with ${callId}: this call wins (lower id), no busy sent`);
         return false;
       }
-      appendLog(`[Call] glare with ${callId}: this call loses (higher id) - dropping it to ring`);
+      // The loser's own hangup reaches the winner, whose record writer files it as a missed call
+      // from the loser (the loser did call, and the winner never rang for it): accepted.
+      appendLog(
+        `[Call] glare with ${callId}: this call loses (higher id or none yet) - dropping it to ring`
+      );
       this.endCall(true, 'cancelled');
       this.cleanup();
       return get(this.callState) === 'idle';
@@ -1061,7 +1069,9 @@ export class CallService {
       this.writeEndReport();
       this.endedAt.set(Date.now());
       this.callState.set('ended');
-      setTimeout(() => {
+      this.clearEndedSummaryTimer();
+      this.endedSummaryTimer = window.setTimeout(() => {
+        this.endedSummaryTimer = null;
         if (get(this.callState) === 'ended') {
           this.cleanup();
         }
@@ -1078,8 +1088,8 @@ export class CallService {
    * network blip alone is resumed, never ended here). Without this, a dead media path
    * left the UI stuck "in call" on a frozen stream. No-op once the call is already
    * idle, so overlapping failure events (ICE + connection both fire `failed`) only
-   * tear down once. Ends only this leg without broadcasting an MLS hangup: in a group
-   * call one peer's failed relay must not end everyone else's call.
+   * tear down once. It DOES send the MLS hangup (calls are 1:1): the other party's ring stops and
+   * its record row is finalized by it.
    */
   private failCall(reason: string, cause?: Error): void {
     const state = get(this.callState);
@@ -1116,7 +1126,18 @@ export class CallService {
     }).catch(() => {});
   }
 
+  /** The pending close of the ended summary; cleared by `cleanup` so it cannot cut a LATER call's summary short. */
+  private endedSummaryTimer: number | null = null;
+
+  private clearEndedSummaryTimer(): void {
+    if (this.endedSummaryTimer !== null) {
+      window.clearTimeout(this.endedSummaryTimer);
+      this.endedSummaryTimer = null;
+    }
+  }
+
   private cleanup() {
+    this.clearEndedSummaryTimer();
     // Any setup still awaiting belongs to the call ending here (`assertSetupLive`).
     this.callSetupSeq += 1;
     // Read before the reset below: only a call that connected owes a final worker report.

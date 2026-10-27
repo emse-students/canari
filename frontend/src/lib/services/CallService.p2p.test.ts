@@ -1863,16 +1863,35 @@ describe('when a busy answer is, and is not, given', () => {
     from = 'other@example.org'
   ) => service.handleCallSignal(from, group, inviteOf(callId), 'me@example.org', 'device-1');
 
-  it('answers no busy from the ENDED summary: that is not a call', async () => {
+  it('an invite during the ended summary rings, with no busy', async () => {
     const service = new CallService(fakeMls);
     await callerJoined(service);
     service.endCall();
     expect(get(service.callState)).toBe('ended');
     vi.mocked(fakeMls.sendMessage).mockClear();
 
-    await ring(service, 'room-2');
+    await ring(service, 'room-2', 'group-1');
 
     expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('incoming');
+    expect(service.currentCallId).toBe('room-2');
+    // The summary's old timer must not cut the new ring short.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(get(service.callState)).toBe('incoming');
+  });
+
+  it('a call still in its setup (no id yet) loses a glare and rings the invite', async () => {
+    const service = new CallService(fakeMls);
+    const internals = service as unknown as { currentGroupId: string | null };
+    service.callState.set('calling');
+    internals.currentGroupId = 'group-1';
+    expect(service.currentCallId).toBeNull();
+
+    await ring(service, 'room-2', 'group-1');
+
+    expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
+    expect(get(service.callState)).toBe('incoming');
+    expect(service.currentCallId).toBe('room-2');
   });
 
   it('answers no busy to a sender it has blocked', async () => {
