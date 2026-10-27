@@ -10,7 +10,7 @@ import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
-import { getToken } from '$lib/stores/auth';
+import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
@@ -226,6 +226,28 @@ export function useMessaging() {
     else draftByConversation.delete(conversationKey);
   }
 
+  /**
+   * A writer of `conversationKey`'s draft for text that comes back LATER - an edit's saved draft, a
+   * refused send, a salon text resumed after an await. It is bound to the account signed in NOW: a
+   * sign-out in between (`signOutGeneration`) makes it drop the text, because {@link forgetAccount}
+   * has cleared the drafts and a write after it would hand the leaving account's text to the next
+   * one opening the same conversation (review of #2614, 2026-10-27).
+   */
+  function lateDraftWriter(
+    conversationKey: string | null | undefined,
+    origin: string
+  ): (text: string) => void {
+    const generation = signOutGeneration();
+    return (text) => {
+      if (signOutGeneration() !== generation) {
+        if (text)
+          console.info(`[DRAFT] ${origin}: ${text.length} char(s) dropped - signed out since`);
+        return;
+      }
+      setDraft(conversationKey, text);
+    };
+  }
+
   /** The staged files of `conversationKey`, oldest first ([] when none or no conversation). */
   function pendingMediaFilesFor(
     conversationKey: string | null | undefined
@@ -234,8 +256,8 @@ export function useMessaging() {
   }
 
   /**
-   * THE ACCOUNT SIGNED OUT: its staged files and armed replies leave the memory. This composable is
-   * a singleton that outlives a sign-out without a page reload, and both maps are keyed by
+   * THE ACCOUNT SIGNED OUT: its staged files, armed replies and drafts leave the memory. This composable is
+   * a singleton that outlives a sign-out without a page reload, and the maps are keyed by
    * conversation ids the NEXT account may open too - a DM between the two accounts, a salon of a
    * shared community - whose composer would then show, and send, what the previous one staged.
    */
@@ -247,7 +269,7 @@ export function useMessaging() {
     replyByConversation.clear();
     draftByConversation.clear();
     log(
-      `[MEDIA] signed out: staging of ${staged}, replies of ${replies} and drafts of ${drafts} conversation(s) forgotten`
+      `[COMPOSER] signed out: staging of ${staged}, replies of ${replies} and drafts of ${drafts} conversation(s) forgotten`
     );
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
@@ -2427,6 +2449,7 @@ export function useMessaging() {
     replyFor,
     /** The text typed in a given conversation's composer. */
     draftFor,
+    lateDraftWriter,
     /** Replaces the text of a given conversation's composer. */
     setDraft,
     /** The files staged IN a given conversation, sent by its next handleSendChat. */

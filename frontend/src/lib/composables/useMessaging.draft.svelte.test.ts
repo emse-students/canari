@@ -5,6 +5,7 @@
  * armed reply - keyed by conversation, forgotten at sign-out.
  */
 import { describe, expect, it, vi } from 'vitest';
+import { useMessaging } from './useMessaging.svelte';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
@@ -15,8 +16,14 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+// The sign-out counter, moved by hand: a sign-out begins by bumping it (`clearAuthCounted`).
+const signOut = vi.hoisted(() => ({ count: 0 }));
+vi.mock('$lib/stores/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/auth')>()),
+  signOutGeneration: () => signOut.count,
+}));
+
 // Imported once: every `useMessaging()` call builds its own maps, so no module reset is needed.
-const { useMessaging } = await import('./useMessaging.svelte');
 
 async function freshMessaging() {
   return useMessaging();
@@ -56,5 +63,33 @@ describe('the composer draft', () => {
     messaging.forgetAccount(vi.fn());
 
     expect(messaging.draftFor('shared-dm')).toBe('');
+  });
+
+  it('comes back LATER into the conversation it was written in (an edit, a refused send)', async () => {
+    const messaging = await freshMessaging();
+    const giveBack = messaging.lateDraftWriter('A', 'draft an edit replaced');
+    messaging.setDraft('B', 'typed in B meanwhile');
+
+    giveBack('hello');
+
+    expect(messaging.draftFor('A')).toBe('hello');
+    expect(messaging.draftFor('B')).toBe('typed in B meanwhile');
+  });
+
+  it('written back after a sign-out writes NOTHING - the next account would open it', async () => {
+    // The order a sign-out takes: the counter moves, the drafts are forgotten, then the still
+    // mounted composer resets its edit (or a refused send answers) and gives its text back.
+    const messaging = await freshMessaging();
+    const giveBack = messaging.lateDraftWriter('shared-dm', 'draft an edit replaced');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    signOut.count++;
+    messaging.forgetAccount(vi.fn());
+
+    giveBack('from the account leaving');
+
+    expect(messaging.draftFor('shared-dm')).toBe('');
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('dropped - signed out since'));
+    expect(info.mock.calls.flat().join(' ')).not.toContain('from the account leaving');
+    info.mockRestore();
   });
 });

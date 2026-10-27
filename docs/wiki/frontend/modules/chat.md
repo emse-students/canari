@@ -4050,3 +4050,17 @@ through `setDraft`; the page's `messageText` is a `$derived` of the open convers
 `forgetAccount` clears it with the other two at sign-out, since the next account may open the same
 DM or salon. A refused send (`restoreFailedDraft`), a taken-back send and a share all write into
 the draft of THEIR conversation. Test: `useMessaging.draft.svelte.test.ts`.
+
+Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
+
+- **Text that comes back LATER is written through `lateDraftWriter`**, which captures
+  `signOutGeneration()` when it is made and drops the text (logged, without the content) once a
+  sign-out has begun: an edit's saved draft, a refused send and a resumed salon text. A sign-out
+  clears the drafts (`forgetAccount`) while the composer is still mounted, and the edit's reset or
+  the refused send's answer came after the clear - the next account to open the same DM or salon
+  saw, and could send, the leaving account's text. Test: `useMessaging.draft.svelte.test.ts`.
+- **The composer resets an open edit when it UNMOUNTS** (`ChatArea`'s `onDestroy`), not only when
+  the conversation id changes: the page remounts on any route change, so an edit left open there
+  left the edited message's text as the draft, with no banner, for Send to post twice. Test:
+  `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
+  derived and its late writers gated.

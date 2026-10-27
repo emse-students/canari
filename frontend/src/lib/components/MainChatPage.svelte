@@ -646,6 +646,7 @@
     const userId = session.userId;
     if (!contact || !userId || !isChannelConversationId(contact)) return;
     void untrack(async () => {
+      const restore = messaging.lateDraftWriter(contact, 'resumed salon text');
       const orphans = await messaging.resumeUnsentSends(msgCtx(), contact);
       if (orphans.length > 0 && convs.selectedContact !== contact) {
         // The member left the salon while the owner check ran: the texts belong to ITS composer,
@@ -655,7 +656,7 @@
         return;
       }
       for (const o of orphans) {
-        messaging.setDraft(contact, restoreFailedDraft(messaging.draftFor(contact), o.text));
+        restore(restoreFailedDraft(messaging.draftFor(contact), o.text));
         log(
           `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
         );
@@ -1094,8 +1095,9 @@
   function handleSendChat() {
     const contact = convs.selectedContact;
     const text = messaging.draftFor(contact);
+    const restore = messaging.lateDraftWriter(contact, 'refused send');
     sendText(text, () => {
-      messaging.setDraft(contact, restoreFailedDraft(messaging.draftFor(contact), text));
+      restore(restoreFailedDraft(messaging.draftFor(contact), text));
       log(`[SEND] refused: draft restored to its conversation (${text.length} chars)`);
     });
     messaging.setDraft(contact, '');
@@ -1562,10 +1564,8 @@
           isChannel={isSelectedChannel ?? false}
           imageMediaId={activeConversation?.imageMediaId ?? null}
           onMessageChange={(value) => messaging.setDraft(convs.selectedContact, value)}
-          bindDraftWriter={() => {
-            const contact = convs.selectedContact;
-            return (text) => messaging.setDraft(contact, text);
-          }}
+          bindDraftWriter={() =>
+            messaging.lateDraftWriter(convs.selectedContact, 'draft an edit replaced')}
           onSend={handleSendChat}
           onTyping={handleTyping}
           onSendGif={handleSendGif}

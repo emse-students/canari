@@ -73,13 +73,14 @@ export function createEditSession(deps: EditSessionDeps) {
       deps.save(messageId, text);
     },
     /**
-     * The conversation changed during an edit: the draft goes back to the conversation the edit
-     * began in, replacing the message text the edit had loaded there - an edit's text never stays
-     * as a draft (2026-10-27). The conversation now open is not touched.
+     * The edit's composer went away - the conversation changed, or the page holding it unmounted:
+     * the draft goes back to the conversation the edit began in, replacing the message text the
+     * edit had loaded there - an edit's text never stays as a draft (2026-10-27). The conversation
+     * now open is not touched, and a sign-out in between drops the draft (`bindDraftWriter`).
      */
-    reset() {
+    reset(why = 'the conversation changed') {
       if (!current) return;
-      Log.d('editSession', `dropped on ${current.messageId}: the conversation changed`);
+      Log.d('editSession', `dropped on ${current.messageId}: ${why}`);
       const { draft, giveBack } = current;
       current = null;
       giveBack(draft);

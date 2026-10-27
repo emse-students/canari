@@ -14,7 +14,7 @@
     Pin,
     ChartColumn,
   } from '@lucide/svelte';
-  import { tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -958,6 +958,11 @@
     void conversationId;
     untrack(() => editSession.reset());
   });
+  // The page holding this composer unmounts on any route change (/chat <-> /communities, a profile
+  // link, a notification's landing) while the drafts outlive it in `useMessaging`: an edit left open
+  // then would leave the edited message's text as the draft, with no banner, for Send to post twice
+  // (review of #2614, 2026-10-27).
+  onDestroy(() => editSession.reset('its composer unmounted'));
 
   $effect(() => {
     const c = conversation;
