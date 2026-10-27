@@ -73,6 +73,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
   import { removalOutcome } from '$lib/utils/chat/memberRemoval';
+  import { commitDepartureIfElected } from '$lib/utils/graine/departureCommitter';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type {
@@ -1094,7 +1095,24 @@
           channelId: event.channelId,
           channelIsPrivate: event.channelIsPrivate,
         });
-        if (outcome === 'ignore') return;
+        if (outcome === 'ignore') {
+          // Somebody else left or was removed. When the actor cannot commit it - a leave, or an
+          // actor with no leaf in a key group - ONE elected remaining device does (`departureCommitter`).
+          if (event.workspaceId && event.kickedUserId) {
+            void commitDepartureIfElected(
+              channelService,
+              {
+                workspaceId: String(event.workspaceId),
+                channelId: event.channelId,
+                channelIsPrivate: event.channelIsPrivate === true,
+                departedUserId: event.kickedUserId,
+                actorUserId: event.kickedBy,
+              },
+              appendLog
+            );
+          }
+          return;
+        }
 
         if (outcome === 'community') {
           const communityName =
@@ -1117,7 +1135,11 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            appendLog(`[CHANNEL] stored copy of ${event.channelId} not deleted: ${String(e)}`)
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -1126,8 +1148,14 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        appendLog(`Removed from channel ${event.channelId}`);
-        showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
+        // A salon this user LEFT is announced to their own devices too (2026-10-27), so they drop
+        // it; being told they were "removed" from it would be false, so a leave says nothing.
+        const selfLeft =
+          String(event.kickedBy ?? '').toLowerCase() === globalSession.userId?.toLowerCase();
+        appendLog(`${selfLeft ? 'Left' : 'Removed from'} channel ${event.channelId}`);
+        if (!selfLeft) {
+          showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
+        }
       },
       onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
         globalChannels.handleRolePermissionsChanged(event);

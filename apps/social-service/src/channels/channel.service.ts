@@ -4001,6 +4001,25 @@ export class ChannelService implements OnApplicationBootstrap {
       (m) => this.stripFromChannels(m, [channel], input.userId)
     );
 
+    // ANNOUNCED LIKE A REMOVAL, with the leaver as its own actor (2026-10-27). The leaver cannot
+    // commit their own Remove from the salon's key group, and nothing told the members who can: the
+    // leave was committed only by a member's next app load. Every remaining member's client elects
+    // ONE online device to commit it (`departureCommitter.ts`); the leaver's other devices drop the
+    // salon. `allowedUsers` was stripped above, so the leaver is added back by name.
+    const audience = await this.channelAudience(channel);
+    await this.redis.publishChannelEvent(
+      'channel.member.removed',
+      {
+        channelId,
+        channelName: channel.name,
+        workspaceId: channel.workspaceId,
+        removedUserId: input.userId,
+        removedBy: input.userId,
+        isPrivate: true,
+      },
+      [...new Set([...audience, input.userId])]
+    );
+
     return { success: true };
   }
 

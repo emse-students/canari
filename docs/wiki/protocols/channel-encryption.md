@@ -1839,11 +1839,26 @@ so the actor commits in the community's key group and then in each private salon
 community it holds, one at a time. A `channel.member.kicked` broadcast about somebody else stays
 `ignore` on every receiver (`memberRemoval.ts`): the commit is the actor's, never the fan-out's.
 
+**A departure nobody acting can commit is committed by ONE ELECTED device**
+(`frontend/src/lib/utils/graine/departureCommitter.ts`). A member's own LEAVE has no committer: MLS
+does not let a member commit its own removal, and the leaver's devices are unrouted first. A kick or
+a revoke whose actor holds no leaf in a scope is the same case. So every receiver of the removal
+broadcast about somebody else - and a salon leave now broadcasts `channel.member.removed` with the
+leaver as its own actor, to the salon's audience and the leaver - reads the scope's tree and its
+roster with per-device presence and elects the same device: the first, in canonical
+`userId:deviceId` order, of the tree's leaves whose user is on the roster, is not the departed user,
+and whose device the roster reports online. That device runs the scope's roster pass (the same
+serialised pass, so a load's pass cannot double it); every other receiver commits nothing and logs
+whom it left it to. When the actor's user holds a leaf, the receivers leave it to the actor. No
+clock: two receivers reading presence a moment apart may elect two devices - the epoch gate keeps
+one commit and the other pass finds nothing to remove - or none, and then the Remove waits for a
+holder's next roster pass. Neither is retried.
+
 What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
-above, unchanged): an actor that holds no key group for the scope (an admin revoking a private salon
-they are not in), a follower tab, a session with no Graine runtime - and **an access-list rewrite**
-(`updateChannelAccess`: a salon's list edited wholesale, or a public salon made private with a
-shorter list), which runs no actor pass at all.
+above, unchanged): an actor or an elected device on a follower tab, a session with no Graine
+runtime, a roster read without per-device presence, no remaining device online - and **an
+access-list rewrite** (`updateChannelAccess`: a salon's list edited wholesale, or a public salon made
+private with a shorter list), which runs no actor pass and broadcasts no removal at all.
 
 ### Two primitives were missing, and one was inert
 

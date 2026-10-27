@@ -2618,6 +2618,28 @@ describe('ChannelService security hardening', () => {
     expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
   });
 
+  it('leaving a private channel announces a removal whose actor is the leaver', async () => {
+    const repos = makeService();
+    arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+
+    await repos.service.leaveChannel('ch1', { userId: 'u1' });
+
+    // The remaining members elect the device that commits the key-group Remove from this event,
+    // and the leaver's other devices drop the salon from it - so the leaver must be in the list
+    // even though `allowedUsers` no longer names them.
+    expect(repos.redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removed',
+      expect.objectContaining({
+        channelId: 'ch1',
+        workspaceId: 'ws1',
+        removedUserId: 'u1',
+        removedBy: 'u1',
+        isPrivate: true,
+      }),
+      expect.arrayContaining(['u1'])
+    );
+  });
+
   // ── The governance postcondition (2026-08-18) ──────────────────────────────────────────────
   //
   // Every operation below used to check what the ACTOR may do and never what the community would
