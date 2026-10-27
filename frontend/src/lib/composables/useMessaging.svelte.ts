@@ -202,6 +202,29 @@ export function useMessaging() {
    * review, 2026-10-15: the in-app camera made staging a photo and walking away an ordinary act).
    */
   const pendingByConversation = new SvelteMap<string, import('$lib/media').PendingMediaFile[]>();
+  /**
+   * The TEXT typed in each conversation's composer, keyed by conversation id - the same rule as
+   * {@link pendingByConversation}. It was one field for every conversation, so a draft left in A
+   * (or a share staged there) sat in B's composer after a switch, and B's Send posted it there
+   * (Mi 9T, 2026-10-27).
+   */
+  const draftByConversation = new SvelteMap<string, string>();
+
+  /** The text typed in `conversationKey`'s composer ('' when none or no conversation). */
+  function draftFor(conversationKey: string | null | undefined): string {
+    return conversationKey ? (draftByConversation.get(conversationKey) ?? '') : '';
+  }
+
+  /** Replaces the text of `conversationKey`'s composer; an empty text leaves no entry. */
+  function setDraft(conversationKey: string | null | undefined, text: string): void {
+    if (!conversationKey) {
+      if (text)
+        console.warn(`[DRAFT] ${text.length} char(s) typed with no conversation open - dropped`);
+      return;
+    }
+    if (text) draftByConversation.set(conversationKey, text);
+    else draftByConversation.delete(conversationKey);
+  }
 
   /** The staged files of `conversationKey`, oldest first ([] when none or no conversation). */
   function pendingMediaFilesFor(
@@ -219,10 +242,12 @@ export function useMessaging() {
   function forgetAccount(log: (msg: string) => void): void {
     const staged = pendingByConversation.size;
     const replies = replyByConversation.size;
+    const drafts = draftByConversation.size;
     pendingByConversation.clear();
     replyByConversation.clear();
+    draftByConversation.clear();
     log(
-      `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
+      `[MEDIA] signed out: staging of ${staged}, replies of ${replies} and drafts of ${drafts} conversation(s) forgotten`
     );
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
@@ -2400,6 +2425,10 @@ export function useMessaging() {
 
     /** The message the user is replying to IN a given conversation (null when none is pending there). */
     replyFor,
+    /** The text typed in a given conversation's composer. */
+    draftFor,
+    /** Replaces the text of a given conversation's composer. */
+    setDraft,
     /** The files staged IN a given conversation, sent by its next handleSendChat. */
     pendingMediaFilesFor,
     /** Forgets every staged file and armed reply of the account that signed out. */

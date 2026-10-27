@@ -93,6 +93,8 @@
     isChannel?: boolean;
     /** Callback fired on each keystroke in the composer. */
     onMessageChange: (value: string) => void;
+    /** A writer bound to the draft of the conversation open now (an edit gives its draft back there). */
+    bindDraftWriter: () => (text: string) => void;
     /** Callback to submit the composed message. */
     onSend: () => void;
     /** Optional callback emitting throttled typing start/stop signals. */
@@ -254,6 +256,7 @@
     messageText,
     isChannel = false,
     onMessageChange,
+    bindDraftWriter,
     onSend,
     onTyping,
     onSendGif,
@@ -940,11 +943,12 @@
   const editSession = createEditSession({
     getText: () => messageText,
     setText: (text) => onMessageChange(text),
+    bindDraftWriter: () => bindDraftWriter(),
     save: (messageId, text) => onEdit?.(messageId, text),
   });
 
-  // An edit belongs to ONE conversation: the composer's text is cleared on a switch, and the draft
-  // saved by the session belonged to the conversation that was left.
+  // An edit belongs to ONE conversation: on a switch the session gives its saved draft back to the
+  // conversation that was left, so the edited message's text never stays there as a draft.
   // The id goes through a $derived on purpose: an effect reading `conversation?.id` depends on the
   // `conversation` OBJECT, which the parent replaces on every incoming message (same id, new
   // object) - that re-ran the reset and dropped the banner. A derived is compared by value, so
