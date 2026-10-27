@@ -1257,6 +1257,17 @@ const ROW_RULES = [
       /\[CallsService\] \[call\] invite room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$|\[CallsController\] \[ICE\] ice-servers request user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] getIceServers user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] Requesting Cloudflare TURN credentials \(ttl=\d+\)$|\[CallsService\] \[ICE\] Cloudflare returned \d+ ICE server\(s\)$/,
     rows: ['CALL-WEB-*'],
   },
+  // THE RING AND THE ROOM TOKEN (`calls.service.ts`): each one's entry line and its decision, which
+  // the project's logging standard requires (CLAUDE.md, CODING STANDARDS: entry, decisions, error
+  // branches). `rang=R/N` is forgiven only when R equals N - every device holding a token was handed
+  // the ring; a ring that reached fewer than it tried is a finding and stays dirt.
+  {
+    name: 'call ring, presence and room token',
+    tag: /\[CallsService\] \[(ring|calls|call)\] (ringGroup|call=|presence active|requestRoomToken|join-token)/,
+    shape:
+      /\[CallsService\] \[ring\] ringGroup caller=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ring\] call=[0-9a-f-]{36} group=[0-9a-f-]{36} rang=(\d+)\/\1 devices$|\[CallsService\] \[calls\] presence active user=[0-9a-f]{64} device=\S+ call=[0-9a-f-]{36}$|\[CallsService\] \[calls\] requestRoomToken user=[0-9a-f]{64} group=[0-9a-f-]{36} room=[0-9a-f-]{36}$|\[CallsService\] \[call\] join-token room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$/,
+    rows: ['CALL-WEB-*'],
+  },
   // call-service's half (Rust, `call_service`): a signalling socket per seat, its p2p pairing and
   // relays, and its end. `disposition=client-close` is the only end forgiven: any other is a call
   // the service ended, which is a finding.

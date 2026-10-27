@@ -1574,6 +1574,18 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  // WHICH SOCKET CLOSED, by its PATH: `webSocketClosed` carries only a requestId, so a call's own
+  // signalling socket ending with the call and the gateway dropping read the same. The created event
+  // names the URL; only its pathname is kept - the call socket carries its token in the query.
+  const wsPaths = new Map();
+  for (const ev of (cx.consumed ?? []).concat(cx.events)) {
+    if (ev?.method !== 'Network.webSocketCreated') continue;
+    try {
+      wsPaths.set(ev.params.requestId, new URL(ev.params.url).pathname);
+    } catch {
+      wsPaths.set(ev.params.requestId, '?');
+    }
+  }
   /** Socket handshakes that completed in the window - informational, never gating. */
   const wsOpen = [];
   const exceptions = [];
@@ -1629,7 +1641,7 @@ export async function report(w) {
       }
       case 'Network.webSocketFrameError':
       case 'Network.webSocketClosed':
-        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
+        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}${wsPaths.has(p.requestId) ? ` path=${wsPaths.get(p.requestId)}` : ''}` });
         break;
       // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
       // close followed by a reconnection are different findings, and before this the second half was
@@ -3753,6 +3765,37 @@ export function ignoringExpectedLog(rep, needles) {
       // going back to a stdout dump the run has long scrolled past.
       unmatched: needles.filter((n) => !matched.has(n)).map(String),
     },
+  };
+}
+
+/**
+ * The same report with the closes of NAMED sockets forgiven, and `clean` recomputed.
+ *
+ * A call's signalling socket (`/api/call`) opens with the call and closes when it ends: one close
+ * per call on each seat that was in it, and the close IS the hang-up. That close is expected and
+ * necessary, and nothing else's is. Matched on the socket's PATH (tagged by `report` from its
+ * `webSocketCreated`), exactly - so the chat gateway dropping during a call stays a finding, and so
+ * does a close whose socket the window never saw open (no `path=` at all).
+ *
+ * FORGIVEN, NOT DELETED: kept as `wsEventsForgiven`, out of the gate.
+ *
+ * @param {object} rep a `report` result
+ * @param {string[]} paths socket pathnames whose closes are this row's own, e.g. `['/api/call']`
+ */
+export function forgivingSocketCloses(rep, paths) {
+  const own = (t) => paths.some((p) => t.endsWith(` path=${p}`));
+  const wsEvents = rep.wsEvents.filter((t) => !own(t));
+  return {
+    ...rep,
+    wsEvents,
+    wsEventsForgiven: rep.wsEvents.filter(own),
+    clean:
+      rep.errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      wsEvents.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
   };
 }
 

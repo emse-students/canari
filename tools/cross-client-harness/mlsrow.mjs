@@ -28,6 +28,7 @@ import { forgivingProvoked, rowGroupName } from './rowkit.mjs';
 import { ESTATE } from './site.mjs';
 import {
   PAGE_BOOT_NARRATION,
+  forgivingSocketCloses,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -86,7 +87,7 @@ export const watchersOf = (seats) => Object.fromEntries(Object.entries(seats.sea
  *   armed there (`rowkit.mjs` `forgivingProvoked`, one line each), and the devices it cut on purpose
  *   (`ignoringOfflineCut`) - and nothing wider
  */
-export async function observersOf(seats, { refusals = {}, logs = {}, provoked = {}, offline = [] } = {}) {
+export async function observersOf(seats, { refusals = {}, logs = {}, provoked = {}, offline = [], sockets = {} } = {}) {
   const out = {};
   for (const [device, s] of Object.entries(seats.seat)) {
     let rep = await report(s.w);
@@ -99,6 +100,7 @@ export async function observersOf(seats, { refusals = {}, logs = {}, provoked = 
     if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);
     if (refusals[device]?.length) rep = ignoringExpectedRefusal(rep, refusals[device]);
     if (logs[device]?.length) rep = ignoringExpectedLog(rep, logs[device]);
+    if (sockets[device]?.length) rep = forgivingSocketCloses(rep, sockets[device]);
     out[device] = { ...rep, cx: s.cx };
   }
   return out;
