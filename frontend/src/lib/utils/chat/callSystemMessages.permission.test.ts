@@ -24,7 +24,11 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
   refreshAppVersionCheck: () => server.refresh(),
 }));
 
-import { handleCallSignalForChat, type CallSystemMessageContext } from './callSystemMessages';
+import {
+  handleCallSignalForChat,
+  setCallSystemMessageContext,
+  type CallSystemMessageContext,
+} from './callSystemMessages';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { parseEnvelope } from '$lib/envelope';
 import type { Conversation } from '$lib/types';
@@ -49,7 +53,11 @@ function makeCtx() {
 const invite = { callId: 'call-1', offerSdp: 'START' };
 
 describe('handleCallSignalForChat - the conversation call permission', () => {
-  beforeEach(() => notificationPreferences.reset());
+  beforeEach(() => {
+    notificationPreferences.reset();
+    // The record writer is idempotent per callId for the life of its context: each test is a new one.
+    setCallSystemMessageContext(null);
+  });
 
   it('writes the call as started where calls may ring', async () => {
     const { ctx, addMessageToChat } = makeCtx();
