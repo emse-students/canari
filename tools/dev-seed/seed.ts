@@ -417,8 +417,10 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     followerUserId: userId(who),
     followedUserId: userId(whom),
     // Written, never defaulted: the column's default is a pending REQUEST (migration 114), and a
-    // seeded follow is meant to be one.
+    // seeded follow is meant to be an accepted one - which `CHK_user_follows_accepted_at` refuses
+    // without its acceptance date. Dated like `createdAt`, which the row leaves to its default.
     status: 'accepted',
+    acceptedAt: ago(0),
   }));
 
   const events = EVENTS.map((e) => ({
