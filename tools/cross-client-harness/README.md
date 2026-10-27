@@ -474,6 +474,21 @@ instead every build appends its APK's sha256, origin and bundle verdict to `a1-b
 `installVerdict` refuses an artefact whose hash was never recorded as passing for this estate.
 Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
 
+**A Play TESTER build is recorded, never installed, by `bun a1tester.mjs --tag vX.Y.Z-alpha.N`.**
+A Play-signed app cannot be replaced by the rig's APK (another signature, and no uninstall), so a
+phone the tester programme moved stays there, and `pin.mjs` refuses an app no record vouches for.
+`a1tester.mjs` reads the facts where they live: the installed versionName/versionCode from `dumpsys`,
+the running bundle's stamp from the app, and the release, its Android job and that job's log from
+GitHub. `testerbuild.mjs` (pinned by `archive/testerbuild-selftest.mjs`) accepts only when all of
+these hold:
+- the tag is a pre-release;
+- its Android job succeeded and printed `Android build targets dev`;
+- the phone's bundle names the commit that job checked out and was built inside the job's window;
+- the versionName is the tag's.
+On acceptance it appends `source: 'play-tester'` to `a1-builds.ndjson`. A STABLE (a production build)
+is refused first, an unknown build stays `unrecorded`, and a tester record carries no APK sha, so it
+never authorises a `--no-build` install.
+
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may
 read the same outcome differently.
