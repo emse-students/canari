@@ -9,7 +9,8 @@
  */
 import { BUSY_ROUNDS, CALL_JUDGES, CALL_WEB_ROWS, PULSE_ON_MS, PULSE_PERIOD_MS, RECORD_SEATS, ROUND_MS, SEAT_TONES, UNANSWERED_ROUNDS, callNarration, callOwn, recordForm, toneWav } from '../callrows.mjs';
 import { captionWith } from '../messages.mjs';
-import { ignoringExpectedLog } from '../watch.mjs';
+import { rowVerdict } from '../srvlog.mjs';
+import { forgivingSocketCloses, ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -115,6 +116,35 @@ ok('the callee not rung while busy is forgiven on W4 in CALL-WEB-7', forgiven('C
 ok('... and NOT in CALL-WEB-1', !forgiven('CALL-WEB-1', 'W4', BUSY));
 ok('a call line at another level stays dirt', !forgiven('CALL-WEB-1', 'W2', HUNG.replace(/^log/, 'warning')));
 ok('a seat the row does not name gets nothing', callNarration('CALL-WEB-1', 'W5').length === 0 && callNarration('NOT-A-ROW', 'W2').length === 0);
+
+// ── the dirt CALL-WEB-2 met on 2026-10-27, each scoped, each with its counter-case ─────────────────
+console.log('the dirt, scoped');
+const ICE = (state) => `log: [11:22:14.415] [Call] ICE gathering complete (host=8 srflx=1 relay=4 ice=${state})`;
+ok('ICE gathering ending while the checks run is forgiven on the caller', forgiven('CALL-WEB-2', 'W2', ICE('checking')));
+ok('... and once connected', forgiven('CALL-WEB-2', 'W2', ICE('connected')));
+ok('... but NOT when ICE failed - a call in trouble', !forgiven('CALL-WEB-2', 'W2', ICE('failed')));
+ok('... nor disconnected', !forgiven('CALL-WEB-2', 'W2', ICE('disconnected')));
+
+const U64 = 'c71e1a5b3b2963b5878b585eaac179a69727003158736487e857e6f700cc2aef';
+const G = 'e6af86b3-099d-4a49-9b6e-2b05e5f2b75e';
+const C = '1eaf9bb0-8be6-4aba-a9c2-ec4ecb219fb1';
+const NEST = (lvl) => `[Nest] 1  - 10/27/2026, 10:22:10 AM   ${lvl} [CallsService] `;
+const RING = (r, n) => `${NEST('LOG')}[ring] call=${C} group=${G} rang=${r}/${n} devices`;
+const expectedIn = (line, row) => rowVerdict(line, row)?.expected === true;
+ok('a ring that reached every device it tried is expected in a CALL row', expectedIn(RING(0, 0), 'CALL-WEB-2') && expectedIn(RING(2, 2), 'CALL-WEB-1'));
+ok('... a ring that reached FEWER than it tried is not', !expectedIn(RING(0, 2), 'CALL-WEB-2') && !expectedIn(RING(1, 2), 'CALL-WEB-1'));
+ok('the ring entry is expected in a CALL row', expectedIn(`${NEST('DEBUG')}[ring] ringGroup caller=${U64} group=${G} call=${C}`, 'CALL-WEB-2'));
+ok('the call presence is expected in a CALL row', expectedIn(`${NEST('DEBUG')}[calls] presence active user=${U64} device=web-${U64}-mvn2mrrz-j6mu call=${C}`, 'CALL-WEB-2'));
+ok('the room token request and its grant are expected in a CALL row', expectedIn(`${NEST('DEBUG')}[calls] requestRoomToken user=${U64} group=${G} room=${C}`, 'CALL-WEB-2') && expectedIn(`${NEST('LOG')}[call] join-token room=${C} user=${U64} group=${G}`, 'CALL-WEB-2'));
+ok('... and none of them outside a CALL row', !expectedIn(RING(0, 0), 'COMM-1') && !expectedIn(`${NEST('LOG')}[call] join-token room=${C} user=${U64} group=${G}`, 'TOK-3'));
+
+const sock = (path) => `11:22:34.120 Network.webSocketClosed {"requestId":"41580.3295","timestamp":86276.016738}${path ? ` path=${path}` : ''}`;
+const repOf = (wsEvents) => ({ errors: [], warnings: [], unexplained: [], badHttp: [], exceptions: [], severe: [], wsEvents, clean: false });
+const callClosed = forgivingSocketCloses(repOf([sock('/api/call')]), ['/api/call']);
+ok("the call socket's own close is forgiven, kept aside, and the seat is clean", callClosed.clean && callClosed.wsEvents.length === 0 && callClosed.wsEventsForgiven.length === 1);
+ok('the chat gateway closing during a call is NOT', !forgivingSocketCloses(repOf([sock('/ws')]), ['/api/call']).clean);
+ok('a close whose socket was never seen open is NOT', !forgivingSocketCloses(repOf([sock(null)]), ['/api/call']).clean);
+ok('a path that only starts with the call path is NOT', !forgivingSocketCloses(repOf([sock('/api/call-other')]), ['/api/call']).clean);
 
 // ── the tone file ────────────────────────────────────────────────────────────────────────────────
 console.log('the tone file');
