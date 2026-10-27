@@ -23,7 +23,7 @@ import { join } from 'node:path';
 
 import { subjectFor } from '../accounts.mjs';
 import { pin } from '../atoms.mjs';
-import { CALL_WEB_ROWS, FLOW_SECONDS, RECORD_SEATS, ROUND_MS, SEAT_TONES, UNANSWERED_ROUNDS, WAIT_ROUNDS, callNarration, callOwn, recordForm, toneWav } from '../callrows.mjs';
+import { CALL_SOCKET_PATH, CALL_WEB_ROWS, FLOW_SECONDS, RECORD_SEATS, ROUND_MS, SEAT_TONES, UNANSWERED_ROUNDS, WAIT_ROUNDS, callNarration, callOwn, recordForm, toneWav } from '../callrows.mjs';
 import { TRACK_PCS, SAMPLE } from '../callpeer.mjs';
 import { client, evaluate, openConversation, realClick } from '../chat.mjs';
 import { resolveDevices, tabMatchFor } from '../device.mjs';
@@ -356,7 +356,9 @@ try {
   for (const f of failures) log(f);
   log(`assertions: ${verdict}`);
   const logs = Object.fromEntries(spec.devices.map((d) => [d, callNarration(id, d)]));
-  const observers = await observersOf(seats, { logs });
+  // THE CALL SOCKET'S OWN CLOSE IS THE HANG-UP (`forgivingSocketCloses`): every seat of the row may close `/api/call`, nothing else.
+  const sockets = Object.fromEntries(spec.devices.map((d) => [d, [CALL_SOCKET_PATH]]));
+  const observers = await observersOf(seats, { logs, sockets });
   await finishObserved(
     id,
     verdict,

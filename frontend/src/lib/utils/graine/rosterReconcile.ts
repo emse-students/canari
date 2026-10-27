@@ -5,6 +5,7 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 
 /**
  * Making a departure move the community's distribution-group epoch.
@@ -148,8 +149,19 @@ export async function reconcileDistributionGroupRoster(
   );
 
   try {
-    await mlsService.removeMember(groupId, diff.strayUserIds);
+    // A commit the DIFF decided, nobody asked for: staged only on the branch the server publishes
+    // (`publishedBranch.ts`), like the conversation stray sweep - a forked device must not be the
+    // one that removes anybody from a key group.
+    await mlsService.removeDepartedMembers(groupId, diff.strayUserIds);
   } catch (e) {
+    if (e instanceof UnpublishedBranchError) {
+      // NOT a refusal: nothing was staged. A `diverged` state was handed to the recovery ladder
+      // where it was thrown; a stale base is republished by the next ordinary read of the scope.
+      log(
+        `[GRAINE] ${diff.strayUserIds.length} departed member(s) NOT removed from ${scopeLabel(scope)}: the published base cannot vouch for this device's state (${e.reason}) - nothing staged`
+      );
+      return [];
+    }
     // Loud, and not swallowed into a boolean: until this commit lands, everyone named here can
     // still read every message the community sends. A rejected commit (another device won the
     // epoch) is the benign case and the next pass carries it; anything else is a real failure and

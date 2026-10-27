@@ -14,7 +14,7 @@
  * invariant is the salon's own - every user the server entitles holds an active seat in the salon's
  * group, and nobody else does (`salonrows.mjs` `salonEntitlement`), read once the seats settled.
  */
-import { clearOverlays as clearDialogs, evaluate, openChannel, until } from '../chat.mjs';
+import { awaitMessage, clearOverlays as clearDialogs, evaluate, openChannel, send, until } from '../chat.mjs';
 import { closeOverlays as closePanels } from '../groupnav.mjs';
 import {
   PERMISSION_LABELS,
@@ -43,8 +43,8 @@ import { awaitUserRouting, channelIdOf, communityChannels, communityMemberIds, c
 import { closeSeats, displayNameOf, observersOf, openSeats, userOf } from '../mlsrow.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName } from '../rowkit.mjs';
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, kickRaceNarration, kickRaceRefusals, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
-import { PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION, atLevels } from '../watch.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceClosingOwn, kickRaceCycleOwn, kickRaceNarration, kickRaceRefusals, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
+import { PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION, atLevels, consoleLines } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const id = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -300,10 +300,36 @@ const ACTIONS = {
       const seated = routed.dist.devices.some((d) => d.userId.toLowerCase() === u.toLowerCase() && d.status === 'active');
       cycles.push({ i, held, kick, grant, member, allowed, seated, supersededNamed, gestures });
     }
+
+    // THE CLOSING UNCONTESTED GRANT (#2552): the subject back in, granted with no kick beside it, and
+    // the tree it joins read by its OWN roster check - the leaf count is the stale-leaf answer.
+    const closing = { grantFirstCycles: cycles.filter((k) => typeof k.grant === 'number' && k.grant >= 200 && k.grant < 300).length, subjectRows: [], readable: false, leaves: null, activeDevices: 0 };
+    try {
+      if (!isCommunityMember(c.workspaceId, u)) await joinByLink(c, S);
+      const G = seats.seat[spec.granter].cx;
+      await openChannel(G, c.community, c.salon);
+      await openChannelAccess(G);
+      if (!salonDistribution(c.channelId).allowedUsers.some((x) => x.toLowerCase() === u.toLowerCase())) await grantChannelAccess(G, c.name(S));
+      await clearOverlays(G);
+      const subjectW = seats.seat[S].w;
+      const before = consoleLines(subjectW.cx).length;
+      const routed = await seatIn(c, S);
+      closing.subjectRows = routed.dist.devices.filter((d) => d.userId.toLowerCase() === u.toLowerCase()).map(({ deviceId, status }) => ({ deviceId, status }));
+      closing.activeDevices = routed.dist.devices.filter((d) => d.status === 'active').length;
+      const marker = `RM5-close-${Date.now().toString(36)}`;
+      await openChannel(seats.seat.W1.cx, c.community, c.salon);
+      await send(seats.seat.W1.cx, marker);
+      closing.readable = !!(await awaitMessage(seats.seat[S].cx, marker, 30_000));
+      const leafLine = new RegExp(`\\[GRAINE\\] salon ${c.channelId.slice(0, 8)} of \\S+ distribution group agrees with its roster - (\\d+) leaf`);
+      const counts = consoleLines(subjectW.cx).slice(before).map((l) => leafLine.exec(l)?.[1]).filter(Boolean);
+      closing.leaves = counts.length ? Number(counts.at(-1)) : null;
+    } catch (e) {
+      closing.error = String(e?.message ?? e).slice(0, 200);
+    }
     return {
       records,
-      detail: { cycles: cycles.map(({ gestures: _g, ...k }) => k) },
-      judge: () => cycles.flatMap((k) => kickRaceCycleOwn(k.i, k)),
+      detail: { cycles: cycles.map(({ gestures: _g, ...k }) => k), closing },
+      judge: () => [...cycles.flatMap((k) => kickRaceCycleOwn(k.i, k)), ...kickRaceClosingOwn(closing)],
     };
   },
 
