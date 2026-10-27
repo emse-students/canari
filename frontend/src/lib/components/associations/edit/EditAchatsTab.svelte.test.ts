@@ -126,14 +126,39 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     expect(state.close).not.toHaveBeenCalled();
   });
 
-  it('words a refusal from its typed code', async () => {
+  it('re-reads the list on a 409, so the row shows what the server holds, and words the refusal', async () => {
     state.close.mockRejectedValue(new SocialApiError('closed', 'PURCHASE_ALREADY_CLOSED', 409));
     const target = await render([open]);
+    // Someone else closed it meanwhile: the server's list now carries the outcome.
+    state.rows = [{ ...open, closedOutcome: 'refunded', closedAt: '2026-10-27T11:00:00.000Z' }];
 
     button(target, m.asso_achats_close_granted_button())!.click();
     await settle();
 
     expect(state.close).toHaveBeenCalledWith('asso-1', 'rec-1', 'granted');
     expect(target.textContent).toContain(m.asso_achats_close_already());
+    expect(target.textContent).toContain(m.asso_achats_closed_refunded());
+    expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();
+  });
+
+  it('logs a failure that is not a 409 as an error, and does not re-read the list', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    state.close.mockRejectedValue(new Error('network down'));
+    const target = await render([open]);
+    state.rows = [];
+
+    button(target, m.asso_achats_close_refunded_button())!.click();
+    await settle();
+
+    expect(error).toHaveBeenCalled();
+    expect(button(target, m.asso_achats_close_refunded_button())).toBeDefined();
+    error.mockRestore();
+  });
+
+  it('offers only "Mark refunded" for an erased buyer', async () => {
+    const target = await render([{ ...open, buyerErased: true }]);
+
+    expect(button(target, m.asso_achats_close_refunded_button())).toBeDefined();
+    expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();
   });
 });

@@ -8,6 +8,7 @@ describe('closingRefusalMessage - a refused closing is worded from its typed cod
     ['PURCHASE_ALREADY_CLOSED', () => m.asso_achats_close_already()],
     ['PURCHASE_NOT_CLOSABLE', () => m.asso_achats_close_not_closable()],
     ['PURCHASE_TIER_GONE', () => m.asso_achats_close_tier_gone()],
+    ['PURCHASE_BUYER_ERASED', () => m.asso_achats_close_buyer_erased()],
   ])('%s', (code, sentence) => {
     expect(closingRefusalMessage(new SocialApiError('server prose', code, 409))).toBe(sentence());
   });

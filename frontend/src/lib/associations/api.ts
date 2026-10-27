@@ -1853,6 +1853,8 @@ export interface AssociationPurchase {
   closedOutcome?: PurchaseClosingOutcome | null;
   /** When that outcome was recorded, by the server's clock; null while open. */
   closedAt?: string | null;
+  /** True when the buyer's account was erased: the payment can be closed as refunded only. */
+  buyerErased?: boolean;
 }
 
 /** The two outcomes that close a payment paid for and not granted. */

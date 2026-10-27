@@ -291,8 +291,27 @@ the outcome beside the mark, and the hourly count reads only the marked records 
 another association, 409 `PURCHASE_NOT_CLOSABLE` (not marked), `PURCHASE_ALREADY_CLOSED` (the first
 outcome stands; under the locks a second closing reads the first one's row, and the unique index is
 the durable guarantee), `PURCHASE_TIER_GONE` (`granted` asked for a tier whose product or form no
-longer grants one; nothing written, `refunded` stays possible). Each closing writes one `[SHOP]
-[AUDIT]` line naming the outcome, the manager, the association and the buyer. A paid form is NOT
+longer grants one, or one the association's cotisation catalogue no longer lists - checked before the
+grant, so the manual grant path's own 400s never surface; nothing written, `refunded` stays possible),
+`PURCHASE_BUYER_ERASED` (`granted` for a record whose buyer was erased, `userId = '[deleted]'`:
+granting would mint a cotisant out of the placeholder; read on the record LOCKED `FOR UPDATE`, so an
+erasure committing in between is seen; the button is hidden for that row, `refunded` stays possible).
+Only `granted` takes the buyer's tier lock; `refunded` writes no tag and takes none. Every 409
+re-reads the list in the panel, so the row shows the state that refused it. `PURCHASE_ALREADY_CLOSED`
+is answered for a unique violation of `purchase_record_closings_one_per_record` alone, by constraint
+name. Each closing writes one `[SHOP] [AUDIT]` line naming the outcome, the manager, the association
+and the buyer. The confirmation says what `granted` cannot know: for a `held` verdict it only renews
+the tier and a refund is the owed outcome, and a buyer who bought a higher tier since would be moved
+DOWN by it.
+
+**Erasure and a granted closing queue, they do not deadlock.** The erasure anonymises
+`purchase_records` BEFORE deleting `user_tags` (`ERASURE_ROW_STATEMENTS`), the closing's order
+(record row, then tag). An erasure first is seen by the closing (`PURCHASE_BUYER_ERASED`); a closing
+first commits its tag, which the erasure's DELETE then removes.
+
+**The frozen tier is deterministic.** Two tier products sharing the held key (a catalogue from before
+keys were unique per association) freeze the smallest product id and log a WARN; either names the
+same key, so the verdict cannot change. A paid form is NOT
 covered by the freeze: it has no checkout row, and `grantCotisantIfARise` still ranks it on the
 prices of its settlement.
 

@@ -116,3 +116,9 @@ export const PURCHASE_ALREADY_CLOSED = 'PURCHASE_ALREADY_CLOSED';
  * Nothing is written; the payment can still be closed as `refunded`.
  */
 export const PURCHASE_TIER_GONE = 'PURCHASE_TIER_GONE';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer's account was erased: every
+ * erased account shares one id, so a grant would make a cotisant of nobody. `refunded` stays open.
+ */
+export const PURCHASE_BUYER_ERASED = 'PURCHASE_BUYER_ERASED';

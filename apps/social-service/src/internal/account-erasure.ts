@@ -437,6 +437,15 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM association_follows WHERE "followerUserId" = $1`,
   },
   { label: 'push_mutes', sql: `DELETE FROM association_push_mutes WHERE "userId" = $1` },
+  // Anonymised, and BEFORE the tags: closing a payment as granted locks its purchase record and
+  // then writes a tag (`ProductsService.closePaidNotGranted`). Taking the record rows first, in the
+  // same order, makes the two queue instead of deadlocking: an erasure that runs first is seen by
+  // the closing (it refuses `granted` for an erased buyer); a closing that runs first commits its
+  // tag, which the DELETE below then removes.
+  {
+    label: 'purchase_records',
+    sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
+  },
   { label: 'user_tags', sql: `DELETE FROM user_tags WHERE "userId" = $1` },
   { label: 'user_moderation', sql: `DELETE FROM user_moderation WHERE "userId" = $1` },
   { label: 'form_respondents', sql: `DELETE FROM form_respondents WHERE "userId" = $1` },
@@ -489,11 +498,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Its lives: ended and anonymised, for the live sweep to delete; its removals by others, deleted.
   ...LIVES_ERASURE_STATEMENTS,
 
-  // Anonymised
-  {
-    label: 'purchase_records',
-    sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
-  },
+  // Anonymised (purchase_records above, before the tags)
   {
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,

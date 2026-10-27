@@ -150,6 +150,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
     );
+    // The columns a closing reads of a paid form (`grantClosedTier`).
+    await admin.query(
+      `CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "grantsCotisation" boolean NOT NULL,
+         "cotisationVariantKey" varchar(64))`
+    );
 
     await ds.getRepository(Association).save(
       ds.getRepository(Association).create({
@@ -621,6 +626,88 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const refused = await settled(service.closePaidNotGranted(ASSO, paid.id, 'm', 'refunded'));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_NOT_CLOSABLE');
+  });
+
+  /**
+   * A paid form's record marked `paid_not_granted`, written directly (a form has no checkout row),
+   * for a form granting tier `variantKey`. Answers the record id.
+   */
+  async function markedFormRecord(userId: string, variantKey: string | null): Promise<string> {
+    const formId = `00000000-0000-4000-8000-${String(++buyerSeq).padStart(12, '0')}`;
+    await ds.query(
+      `INSERT INTO forms (id, "associationId", "grantsCotisation", "cotisationVariantKey")
+       VALUES ($1, $2, true, $3)`,
+      [formId, ASSO, variantKey]
+    );
+    const record = await ds.getRepository(PurchaseRecord).save(
+      ds.getRepository(PurchaseRecord).create({
+        userId,
+        source: 'form',
+        formId,
+        productId: null,
+        amountCents: 1500,
+        paymentMethod: 'online',
+        status: 'paid_not_granted',
+        stripePaymentIntentId: null,
+        associationId: ASSO,
+        productName: 'Adhesion',
+      })
+    );
+    return record.id;
+  }
+
+  it("closing a paid FORM as granted grants the form's tier by hand", async () => {
+    const buyer = newBuyer();
+    const record = await markedFormRecord(buyer, 'a');
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted');
+
+    expect(closed).toMatchObject({ source: 'form', closedOutcome: 'granted' });
+    expect(await heldTags(buyer)).toEqual([TAG_A]);
+  });
+
+  it('a tier absent from the catalogue is refused PURCHASE_TIER_GONE, typed, and nothing written', async () => {
+    const buyer = newBuyer();
+    const record = await markedFormRecord(buyer, 'no-such-tier');
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_TIER_GONE');
+    expect(await heldTags(buyer)).toEqual([]);
+    const rows = await ds.query(
+      `SELECT 1 FROM purchase_record_closings WHERE "purchaseRecordId" = $1`,
+      [record]
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('an ERASED buyer cannot be closed as granted - no cotisant is minted - but can be refunded', async () => {
+    const record = await markedFormRecord('[deleted]', 'a');
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    expect(codeOf(refused.error)).toBe('PURCHASE_BUYER_ERASED');
+    expect(await heldTags('[deleted]')).toEqual([]);
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'refunded');
+    expect(closed).toMatchObject({ closedOutcome: 'refunded', buyerErased: true });
+  });
+
+  it('an erasure committed while a granted closing waits for the row is SEEN: refused, no tag', async () => {
+    const buyer = newBuyer();
+    const record = await markedFormRecord(buyer, 'a');
+
+    // The erasure's anonymisation of the record, held open on the test's connection.
+    await admin.query('BEGIN');
+    await admin.query(`UPDATE purchase_records SET "userId" = '[deleted]' WHERE id = $1`, [record]);
+    const closing = settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const waits = await waitersReach(1, true);
+    await admin.query('COMMIT');
+    const outcome = await closing;
+
+    expect(waits).toBe(1);
+    expect(codeOf(outcome.error)).toBe('PURCHASE_BUYER_ERASED');
+    expect(await heldTags(buyer)).toEqual([]);
+    expect(await heldTags('[deleted]')).toEqual([]);
   });
 
   it('the hourly count reads only the marked payments nobody has closed', async () => {

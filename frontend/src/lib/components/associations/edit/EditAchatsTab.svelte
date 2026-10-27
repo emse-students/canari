@@ -20,6 +20,7 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { closingRefusalMessage } from '$lib/associations/purchaseClosing';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -98,7 +99,11 @@
   /**
    * Records how a payment paid for and not granted was settled, after an in-app confirmation. The
    * server answers the updated row, which replaces this one: the mark stays, the outcome shows.
-   * `granted` grants the tier by hand on the server, replacing the tier the buyer holds.
+   * `granted` grants the tier by hand on the server, replacing whatever tier the buyer holds now.
+   *
+   * A 409 is an ANSWER about the row as the server knows it (closed meanwhile, its buyer erased, its
+   * tier gone): the list is re-read so it shows that state, then the refusal is worded. Anything
+   * else is a failure, logged as one.
    */
   async function handleClose(purchase: AssociationPurchase, outcome: PurchaseClosingOutcome) {
     const buyer = purchaseBuyerName(purchase);
@@ -121,10 +126,18 @@
       purchases = purchases.map((p) => (p.id === row.id ? row : p));
       Log.i('ASSO', `purchase ${purchase.id.slice(0, 8)} closed as ${outcome}`);
     } catch (e) {
-      Log.i(
-        'ASSO',
-        `closing purchase ${purchase.id.slice(0, 8)} as ${outcome} refused: ${String(e)}`
-      );
+      if (refusalStatus(e) === 409) {
+        Log.i(
+          'ASSO',
+          `closing purchase ${purchase.id.slice(0, 8)} as ${outcome} refused (${refusalCode(e)}) - re-reading the list`
+        );
+        await loadPurchases();
+      } else {
+        console.error(
+          `[ASSO] closing purchase ${purchase.id.slice(0, 8)} as ${outcome} failed:`,
+          e
+        );
+      }
       purchasesError = closingRefusalMessage(e);
     } finally {
       closingId = null;
@@ -329,14 +342,17 @@
                       >
                         {m.asso_achats_close_refunded_button()}
                       </button>
-                      <button
-                        type="button"
-                        disabled={closingId === purchase.id}
-                        onclick={() => handleClose(purchase, 'granted')}
-                        class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
-                      >
-                        {m.asso_achats_close_granted_button()}
-                      </button>
+                      <!-- An erased buyer is nobody to grant to: only a refund can close it. -->
+                      {#if !purchase.buyerErased}
+                        <button
+                          type="button"
+                          disabled={closingId === purchase.id}
+                          onclick={() => handleClose(purchase, 'granted')}
+                          class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                        >
+                          {m.asso_achats_close_granted_button()}
+                        </button>
+                      {/if}
                     </span>
                   {/if}
                 {/if}

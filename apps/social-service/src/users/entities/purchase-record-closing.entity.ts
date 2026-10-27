@@ -9,6 +9,9 @@ export type PurchaseClosingOutcome = 'refunded' | 'granted';
 /** Every outcome a closing may record, as the CHECK of migration 113 lists them. */
 export const PURCHASE_CLOSING_OUTCOMES: readonly PurchaseClosingOutcome[] = ['refunded', 'granted'];
 
+/** The unique index of migration 113 that makes a payment closable once. */
+export const CLOSING_UNIQUE_INDEX = 'purchase_record_closings_one_per_record';
+
 /**
  * ONE closing of a purchase record marked `paid_not_granted` (migration 113): which outcome a
  * manager recorded, who, and when by the server's own clock. Written once per purchase record (the
@@ -17,7 +20,7 @@ export const PURCHASE_CLOSING_OUTCOMES: readonly PurchaseClosingOutcome[] = ['re
  * higher tier").
  */
 @Entity('purchase_record_closings')
-@Index('purchase_record_closings_one_per_record', ['purchaseRecordId'], { unique: true })
+@Index(CLOSING_UNIQUE_INDEX, ['purchaseRecordId'], { unique: true })
 @Check('purchase_record_closings_outcome', `outcome IN ('refunded', 'granted')`)
 export class PurchaseRecordClosing {
   @PrimaryGeneratedColumn('uuid')

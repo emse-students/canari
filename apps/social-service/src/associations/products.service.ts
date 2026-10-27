@@ -27,13 +27,15 @@ import {
   TIER_NOT_RANKABLE,
   PAYMENT_ROUTING_CHANGED,
   PURCHASE_ALREADY_CLOSED,
+  PURCHASE_BUYER_ERASED,
   PURCHASE_NOT_CLOSABLE,
   PURCHASE_TIER_GONE,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
 import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
-import { isUniqueViolation } from '../common/pg-errors';
+import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
+import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
@@ -44,6 +46,7 @@ import {
   type PurchasePaymentMethod,
 } from '../users/entities/purchase-record.entity';
 import {
+  CLOSING_UNIQUE_INDEX,
   PurchaseRecordClosing,
   type PurchaseClosingOutcome,
 } from '../users/entities/purchase-record-closing.entity';
@@ -239,6 +242,11 @@ export interface PurchaseListRow {
   closedOutcome: PurchaseClosingOutcome | null;
   /** When the closing was recorded, by the server's clock; null while open. */
   closedAt: string | null;
+  /**
+   * True when the buyer's account was erased (`DELETED_ACCOUNT`): such a payment can be closed as
+   * `refunded` only, so the list offers no "granted".
+   */
+  buyerErased: boolean;
 }
 
 /** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
@@ -2338,6 +2346,7 @@ export class ProductsService {
       notGranted: r.status === 'paid_not_granted',
       closedOutcome: closings.get(r.id)?.outcome ?? null,
       closedAt: closings.get(r.id)?.createdAt.toISOString() ?? null,
+      buyerErased: r.userId === DELETED_ACCOUNT,
     }));
   }
 
@@ -2418,11 +2427,25 @@ export class ProductsService {
   /**
    * The product id of the tier a purchase is ranked against (`TierFacts.held`, picked by
    * `pickHeldTier`), which a checkout opening freezes on its row: null when nothing is held.
+   *
+   * Deterministic when two products carry the held key (a catalogue from before the key was kept
+   * unique per association): the smallest id, logged at WARN. Either one names the same key, and
+   * the settlement reads the frozen product back as its key, so the choice cannot change a verdict.
    */
   private heldTierProductIdOf(facts: TierFacts | null): string | null {
     const held = facts?.held;
     if (!held) return null;
-    return facts.tiers.find((t) => t.variantKey === held.variantKey)?.id ?? null;
+    const ids = facts.tiers
+      .filter((t) => t.variantKey === held.variantKey)
+      .map((t) => t.id)
+      .sort();
+    if (ids.length > 1) {
+      this.logger.warn(
+        `[SHOP] ${ids.length} tier products share key ${held.variantKey ?? 'base'} - freezing ` +
+          `the smallest id ${ids[0].slice(0, 8)}; the catalogue should hold one per key`
+      );
+    }
+    return ids[0] ?? null;
   }
 
   /**
@@ -2700,8 +2723,14 @@ export class ProductsService {
    *
    * Refusals, typed: 404 when the record is not this association's; 409 `PURCHASE_NOT_CLOSABLE` when
    * it is not marked `paid_not_granted`; 409 `PURCHASE_ALREADY_CLOSED`; 409 `PURCHASE_TIER_GONE` for
-   * `granted` when the tier paid for can no longer be granted (nothing is written: `refunded` stays
-   * open to the manager).
+   * `granted` when the tier paid for can no longer be granted; 409 `PURCHASE_BUYER_ERASED` for
+   * `granted` when the buyer's account was erased - every erased account shares one id
+   * (`DELETED_ACCOUNT`), so a grant would mint a cotisant nobody is. Judged on the LOCKED row, so an
+   * erasure committed while this waited is seen. Nothing is written by a refusal, and `refunded`
+   * stays open in each case, so the report can always be drained.
+   *
+   * Only `granted` takes the buyer's tier lock: `refunded` writes no tag, and two closings of one
+   * payment are already serialised by the row lock.
    */
   async closePaidNotGranted(
     associationId: string,
@@ -2726,11 +2755,13 @@ export class ProductsService {
     if (head.status !== 'paid_not_granted' || !head.userId) {
       throw this.purchaseNotClosable(head);
     }
+    const grants = outcome === 'granted';
+    if (grants && head.userId === DELETED_ACCOUNT) throw this.purchaseBuyerErased(head.id);
     const buyer = head.userId;
     let closed: PurchaseListRow;
     try {
       closed = await this.productRepo.manager.transaction(async (manager) => {
-        await this.lockBuyerTiers(manager, associationId, buyer);
+        if (grants) await this.lockBuyerTiers(manager, associationId, buyer);
         const record = await manager.findOne(PurchaseRecord, {
           where: { id: purchaseId, associationId },
           lock: { mode: 'pessimistic_write' },
@@ -2738,10 +2769,12 @@ export class ProductsService {
         if (!record || record.status !== 'paid_not_granted') {
           throw this.purchaseNotClosable(record ?? head);
         }
+        // An erasure that committed between the read above and this lock rewrote the buyer.
+        if (grants && record.userId !== buyer) throw this.purchaseBuyerErased(record.id);
         if ((await this.purchaseRecordService.closingsOf([record.id], manager)).has(record.id)) {
           throw this.purchaseAlreadyClosed(record.id);
         }
-        if (outcome === 'granted') await this.grantClosedTier(manager, record, closedBy);
+        if (grants) await this.grantClosedTier(manager, record, closedBy);
         await manager.insert(PurchaseRecordClosing, {
           purchaseRecordId: record.id,
           outcome,
@@ -2751,8 +2784,10 @@ export class ProductsService {
         return row;
       });
     } catch (err) {
-      // The unique index answering a closing that slipped past the check above: still the 409.
-      if (isUniqueViolation(err)) throw this.purchaseAlreadyClosed(purchaseId);
+      // The unique index answering a closing that slipped past the check above: still the 409. Only
+      // THAT index: another unique violation in the transaction is not a second closing.
+      if (violatesUniqueIndex(err, CLOSING_UNIQUE_INDEX))
+        throw this.purchaseAlreadyClosed(purchaseId);
       throw err;
     }
     // The audit line of a money decision: who recorded which outcome for which payment.
@@ -2768,7 +2803,10 @@ export class ProductsService {
    * a boutique record's tier is its product's (`variantKey`, read now, so a retag still matches), a
    * paid form's is the form's `cotisationVariantKey`. A manager's grant, NOT ranked, exactly like the
    * roster's: the sibling XOR replaces whatever tier the buyer holds, which is the decision the
-   * manager is recording. Refuses `PURCHASE_TIER_GONE` when that tier no longer exists.
+   * manager is recording. Refuses `PURCHASE_TIER_GONE` when that tier can no longer be granted: its
+   * product or form no longer names one, the association no longer sells cotisations, or the tier is
+   * not in its catalogue. Judged HERE, from the same catalogue `grantCotisantWithin` validates
+   * against, so that grant never has to refuse and no refusal is read from its message.
    */
   private async grantClosedTier(
     manager: EntityManager,
@@ -2794,6 +2832,16 @@ export class ProductsService {
           : [];
       if (!rows[0]?.grantsCotisation) throw this.purchaseTierGone(record, 'its form');
       variantKey = rows[0].cotisationVariantKey;
+    }
+    // Empty when the association no longer sells cotisations (no mode).
+    const catalogue = await this.userTagService.listCotisationTiers(record.associationId, {
+      manager,
+    });
+    if (!catalogue.some((t) => t.variantKey === variantKey)) {
+      throw this.purchaseTierGone(
+        record,
+        `tier ${variantKey ?? 'base'} (absent from the cotisation catalogue)`
+      );
     }
     await this.userTagService.grantCotisantWithin(
       manager,
@@ -2822,6 +2870,18 @@ export class ProductsService {
     return new ConflictException({
       code: PURCHASE_NOT_CLOSABLE,
       message: 'Only a membership paid for and not granted can be closed.',
+    });
+  }
+
+  /** The typed 409 of a `granted` closing whose buyer's account was erased, logged. */
+  private purchaseBuyerErased(purchaseId: string): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_BUYER_ERASED}): purchase=${purchaseId.slice(0, 8)} - its ` +
+        'buyer account was erased; only a refund can be recorded'
+    );
+    return new ConflictException({
+      code: PURCHASE_BUYER_ERASED,
+      message: "The buyer's account was deleted: only a refund can be recorded.",
     });
   }
 
