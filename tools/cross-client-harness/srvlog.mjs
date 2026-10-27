@@ -1171,6 +1171,9 @@ export function mintedDeviceSeating(line) {
 
 const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6', 'ADM-9', 'ADM-10'];
 const THROTTLED = String.raw`repeat=10*, said at 1, 10, 100\.\.\.`;
+/** BIG-3 and its played variants (`BIG-3-noI1`): the row kicks an account and admits a newcomer. */
+const BIG3 = ['BIG-3', 'BIG-3-*'];
+
 const ROW_RULES = [
   // ── #2358: a new person joins a group only through a member ───────────────────────────────────
   // A waiting seat calling a member route: WARN, said at the 1st, 10th, 100th refusal per route,
@@ -1255,6 +1258,17 @@ const ROW_RULES = [
     tag: /\[CallsService\] \[call\] invite |\[ICE\] (ice-servers request|getIceServers|Requesting Cloudflare TURN credentials|Cloudflare returned)/,
     shape:
       /\[CallsService\] \[call\] invite room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$|\[CallsController\] \[ICE\] ice-servers request user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] getIceServers user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] Requesting Cloudflare TURN credentials \(ttl=\d+\)$|\[CallsService\] \[ICE\] Cloudflare returned \d+ ICE server\(s\)$/,
+    rows: ['CALL-WEB-*'],
+  },
+  // THE RING AND THE ROOM TOKEN (`calls.service.ts`): each one's entry line and its decision, which
+  // the project's logging standard requires (CLAUDE.md, CODING STANDARDS: entry, decisions, error
+  // branches). `rang=R/N` is forgiven only when R equals N - every device holding a token was handed
+  // the ring; a ring that reached fewer than it tried is a finding and stays dirt.
+  {
+    name: 'call ring, presence and room token',
+    tag: /\[CallsService\] \[(ring|calls|call)\] (ringGroup|call=|presence active|requestRoomToken|join-token)/,
+    shape:
+      /\[CallsService\] \[ring\] ringGroup caller=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ring\] call=[0-9a-f-]{36} group=[0-9a-f-]{36} rang=(\d+)\/\1 devices$|\[CallsService\] \[calls\] presence active user=[0-9a-f]{64} device=\S+ call=[0-9a-f-]{36}$|\[CallsService\] \[calls\] requestRoomToken user=[0-9a-f]{64} group=[0-9a-f-]{36} room=[0-9a-f-]{36}$|\[CallsService\] \[call\] join-token room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$/,
     rows: ['CALL-WEB-*'],
   },
   // call-service's half (Rust, `call_service`): a signalling socket per seat, its p2p pairing and
@@ -1469,13 +1483,31 @@ const ROW_RULES = [
     name: 'a member kicked',
     tag: /\[WORKSPACE\] kick /,
     shape: /\[ChannelService\] \[WORKSPACE\] kick workspace=\S+ target=\S+ by=\S+$/,
-    rows: ['RM-5'],
+    rows: ['RM-5', ...BIG3],
   },
   {
     name: "a kick cuts the target's private salons",
     tag: /\[CHANNEL_GRAINE\] private salons to cut /,
     shape: /\[ChannelService\] \[CHANNEL_GRAINE\] private salons to cut workspace=\S+ user=\S+ reason=kicked salons=\d+\/\d+$/,
-    rows: ['RM-5'],
+    rows: ['RM-5', ...BIG3],
+  },
+  // BIG-3'S OWN SETTING AND ITS NEWCOMER'S FIRST READ (`archive/big.mjs`, read on `1.5.0-alpha.1`,
+  // 2026-10-27). The row sets the community's history to `joined` before it admits the newcomer
+  // (`setHistoryVisibility`), and the newcomer's first page of the row's young salon holds fewer bodies
+  // than it asked for, so the server includes the silent rows below the oldest one
+  // (`channel.service.ts`, "a short page is the end of the history"). Only BIG-3's own value is
+  // forgiven: `shared` set in this row would be a row that did not play its premise.
+  {
+    name: "BIG-3 sets its community's history to joined",
+    tag: /\[WORKSPACE\] historyVisibility=/,
+    shape: /\[ChannelService\] \[WORKSPACE\] historyVisibility=joined workspace=\S+ by=[0-9a-f]{8}$/,
+    rows: [...BIG3],
+  },
+  {
+    name: "a short history page of BIG-3's salon",
+    tag: /\[HISTORY\] channel=\S+ short page /,
+    shape: /\[ChannelService\] \[HISTORY\] channel=[0-9a-f-]{36} short page \(\d+\/\d+\): silent rows below the oldest body included$/,
+    rows: [...BIG3],
   },
   {
     name: "a kick's departure cancelled by the rejoin",

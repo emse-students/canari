@@ -169,6 +169,41 @@ export function revokeRaceOwn({ held, status, expected, targetOf, allowed, seate
 }
 
 /**
+ * RM-5's CLOSING UNCONTESTED GRANT - the stale-leaf question (#2552). After the race cycles, with at
+ * least one where the grant landed first (a refused Welcome can leave the subject's leaf behind),
+ * the subject is let back in and granted with no kick beside it. Three things must then hold: the
+ * subject's devices are `active` in the salon's group, one row each; a salon message reaches the
+ * subject's seat; and the tree the subject joined holds exactly one leaf per active device - a stale
+ * leaf left by a refused Welcome is gone or reused, never a second leaf beside the new one.
+ *
+ * @param {object} c
+ * @param {number} c.grantFirstCycles cycles whose grant was accepted (2xx)
+ * @param {{deviceId: string, status: string}[]} c.subjectRows the subject's delivery rows after the grant
+ * @param {boolean} c.readable the closing marker reached the subject's seat
+ * @param {number|null} c.leaves the leaf count the subject's own roster check reported, null if none
+ * @param {number} c.activeDevices active delivery rows on the salon's group
+ * @param {string} [c.error] a gesture that threw
+ */
+export function kickRaceClosingOwn({ grantFirstCycles, subjectRows, readable, leaves, activeDevices, error }) {
+  const rows = subjectRows ?? [];
+  const ids = rows.map((r) => r.deviceId);
+  const out = [
+    { what: `closing: at least one cycle had the grant land first (${grantFirstCycles})`, ok: grantFirstCycles > 0 },
+    {
+      what: `closing: the subject is seated, one active row per device (${rows.map((r) => r.status).join(', ') || 'no row'})`,
+      ok: rows.length > 0 && rows.every((r) => r.status === 'active') && new Set(ids).size === ids.length,
+    },
+    { what: `closing: a salon message reached the subject (${readable ? 'read' : 'NOT read'})`, ok: readable === true },
+    {
+      what: `closing: no stale leaf - ${leaves ?? 'no'} leaf/leaves for ${activeDevices} active device(s)`,
+      ok: typeof leaves === 'number' && leaves === activeDevices,
+    },
+  ];
+  if (error) out.push({ what: `closing: a gesture threw - ${error}`, ok: false });
+  return out;
+}
+
+/**
  * RM-5, one cycle: the kick stood (retried inline), and the subject ended WHOLE - a member, allowed
  * and seated, or none of the three.
  *
