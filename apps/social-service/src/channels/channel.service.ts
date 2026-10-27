@@ -5374,7 +5374,10 @@ export class ChannelService implements OnApplicationBootstrap {
         ? Math.max(at, serverAt as number)
         : at;
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
+    // A typed code beside the 404: the client drops its owed mark ONLY on this code, never on a bare
+    // 404 (a proxy, a deploy window, a renamed route). The status stays 404 for old clients.
+    if (!channel)
+      throw new NotFoundException({ code: 'CHANNEL_NOT_FOUND', message: 'Channel not found' });
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });

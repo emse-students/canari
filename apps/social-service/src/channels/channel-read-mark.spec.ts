@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -64,7 +64,7 @@ describe('ChannelService - salon read marks', () => {
       noop as unknown as Repository<WorkspaceInvite>,
       redis as unknown as RedisService
     );
-    return { service, redis, qb, messageRepo };
+    return { service, redis, qb, messageRepo, channelRepo };
   }
 
   beforeEach(() => {
@@ -134,6 +134,14 @@ describe('ChannelService - salon read marks', () => {
     await expect(service.advanceChannelReadMark(CH, READER, 0)).rejects.toThrow(
       BadRequestException
     );
+  });
+
+  it('answers a salon that no longer exists with 404 and the typed CHANNEL_NOT_FOUND code', async () => {
+    const { service, channelRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue(null);
+    const error = await service.advanceChannelReadMark(CH, READER, 1).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NotFoundException);
+    expect((error as NotFoundException).getResponse()).toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
   });
 
   it('refuses a member who cannot read the private salon', async () => {

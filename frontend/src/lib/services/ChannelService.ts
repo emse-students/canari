@@ -295,7 +295,7 @@ export interface ChannelMessageRow {
 
 import { apiFetch } from '$lib/utils/apiFetch';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
-import { SalonGoneError } from '$lib/utils/chat/salonGoneError';
+import { SALON_GONE_CODE, SalonGoneError } from '$lib/utils/chat/salonGoneError';
 import { readApiJson } from '$lib/utils/apiJson';
 import { Log } from '$lib/utils/Log';
 
@@ -883,8 +883,8 @@ export class ChannelService {
    * read message's timestamp, which for a salon message IS its server `createdAt`). The server
    * bounds it, stores it and tells the salon's readers with `channel.read`.
    *
-   * Throws on a refusal - the caller owns the one line a lost receipt leaves; a `404` throws
-   * {@link SalonGoneError}.
+   * Throws on a refusal - the caller owns the one line a lost receipt leaves; a `404` carrying
+   * the server code `CHANNEL_NOT_FOUND` throws {@link SalonGoneError}.
    *
    * @returns the stored instant, or `null` when the server already held as much.
    */
@@ -894,8 +894,12 @@ export class ChannelService {
       method: 'POST',
       body: JSON.stringify({ at, ...(serverAt ? { serverAt } : {}) }),
     });
-    // A 404 is the server's ANSWER that the salon is gone: typed here so the owed-mark queue drops it.
-    if (res.status === 404) throw new SalonGoneError(cid);
+    // The server's typed answer that the salon is gone (404 AND code): a bare 404 (proxy, deploy
+    // window, renamed route) is not that, and falls through to a plain refusal that keeps the mark.
+    if (res.status === 404) {
+      const code = readErrorCode(await res.clone().text());
+      if (code === SALON_GONE_CODE) throw new SalonGoneError(cid);
+    }
     await this.handleError(res);
     const body = (await res.json()) as { at: number | null };
     Log.d('CHANNEL_READ', `mark ${cid.slice(0, 8)} asked=${at} stored=${body.at}`);

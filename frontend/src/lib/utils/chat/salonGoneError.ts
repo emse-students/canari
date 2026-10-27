@@ -1,7 +1,10 @@
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
+/** The stable code the server puts beside the 404 of a salon that does not exist. */
+export const SALON_GONE_CODE = 'CHANNEL_NOT_FOUND';
+
 /**
- * The server ANSWERED `404` for a salon read mark: the salon no longer exists. Classified at the
+ * The server ANSWERED `404` with `CHANNEL_NOT_FOUND` for a salon read mark: the salon no longer exists. Classified at the
  * throw (`ChannelService.advanceReadMark`) so the owed-mark queue drops the mark by TYPE, never by
  * reading a message. Its own tiny module so the queue does not import the whole channel service.
  */
