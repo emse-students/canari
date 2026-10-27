@@ -1281,6 +1281,51 @@ const ROW_RULES = [
       /call_service: Authenticated WebSocket upgrade for user [0-9a-f]{64}$|call_service: \[call\] socket open peer=[0-9a-f]{64}:[0-9a-f-]{36}$|call_service: \[call\] session start room=[0-9a-f-]{36} peer=[0-9a-f]{64}:[0-9a-f-]{36} mode=p2p$|call_service: \[call\] p2p paired room=[0-9a-f-]{36} initiator=\S+ polite=\S+ resumed=(true|false)$|call_service: \[call\] p2p (offer|answer) relayed room=[0-9a-f-]{36} from=\S+ to=\S+$|call_service: \[call\] [0-9a-f]{64}:[0-9a-f-]{36} sent Close \((no payload|code=\d+ reason=)\)$|call_service: \[call\] session end room=[0-9a-f-]{36} peer=\S+ mode=p2p disposition=client-close duration_ms=\d+ paired_ms=(\d+|-) .*$|call_service: \[call\] p2p room [0-9a-f-]{36} removed - no peers remaining$/,
     rows: ['CALL-WEB-*'],
   },
+  // ── a live broadcast (`liverows.mjs`): its start, its segments, its seats and its end ─────────
+  // social-service's half (`lives.service.ts`, `live-seats.ts`, `live-segment-store.ts`,
+  // `live-announcer.ts`). Forgiven only in a LIVE row. Every refusal (`start refused`, `segment ...
+  // refused`, `out of order`, `FULL`) and every `max_duration` end stays dirt: a row that meets one
+  // is a finding. `seat released (held=true)` only: releasing a seat never held is not the path.
+  {
+    name: 'live start, segments, seats and end',
+    // THE TAG NAMES THE STORE'S TWO PER-LIVE LINES ONLY: its `listing the live folders of the store`
+    // is the retention tick's, BENIGN in every window, and a tag that claimed it turned it into
+    // "a shape nobody has read" (LIVE-WEB-2, 2026-10-27). `[LIVE_GC] <live> deleted` is the end's
+    // purge; the sweep's other `[LIVE_GC]` lines (kept, OPEN, orphan) stay outside this rule.
+    tag: /\[(LivesService|LiveSeats|InternalLivesModeController|LiveAnnouncer)\] \[(LIVE|LIVE_SEAT|LIVE_ANNOUNCE)\] |\[HttpLiveSegmentStore\] \[LIVE\] (storing segment|purging the segments) |\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted /,
+    shape: new RegExp(
+      [
+        String.raw`\[LivesService\] \[LIVE\] start asked by [0-9a-f]{8}`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f]{8} accepted the live rules v\d+`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} started by [0-9a-f]{8}`,
+        String.raw`\[LivesService\] \[LIVE\] segment \d+ of [0-9a-f-]{36} reserved as [0-9a-f-]{36}`,
+        String.raw`\[LivesService\] \[LIVE\] segment \d+ of [0-9a-f-]{36} stored \(\d+ B\)`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} (claimed for its announcement|already announced)`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} ended by its broadcaster`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat held, \d+ on this live, \d+\/\d+ seated`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: \d+ watching \(broadcaster's read\)`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat released \(held=true\)`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: ended, \d+ seat\(s\) given back`,
+        String.raw`\[HttpLiveSegmentStore\] \[LIVE\] storing segment [0-9a-f-]{36} of live [0-9a-f-]{36} \(\d+ B\)`,
+        String.raw`\[HttpLiveSegmentStore\] \[LIVE\] purging the segments of live [0-9a-f-]{36}`,
+        String.raw`\[InternalLivesModeController\] \[LIVE\] lives_mode relayed to media-service: on`,
+        String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=member followers=\d+`,
+        String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted \(\d+ segment object\(s\)\)`,
+      ]
+        .map((s) => `${s}$`)
+        .join('|')
+    ),
+    rows: ['LIVE-*'],
+  },
+  // media-service's half: a segment written to the store, and served once to the edge cache.
+  {
+    name: 'live segment stored and served',
+    // and the end's purge of the live's folder: `failed=0 remaining=0` IS THE ASSERTION, any other
+    // count stays dirt.
+    tag: /\[(LiveSegmentsService|MediaController)\] \[LIVE\] (storing live\/|segment )|\[LiveSegmentsService\] \[LIVE_GC\] live /,
+    shape: /\[LiveSegmentsService\] \[LIVE\] storing live\/[0-9a-f-]{36}\/[0-9a-f-]{36} \(\d+ B\)$|\[MediaController\] \[LIVE\] segment [0-9a-f-]{36}\/[0-9a-f-]{36} served to the edge cache \(\d+ B\)$|\[LiveSegmentsService\] \[LIVE_GC\] live [0-9a-f-]{36}: deleted=\d+ failed=0 remaining=0$/,
+    rows: ['LIVE-*'],
+  },
   // A FRESHLY MINTED DEVICE'S FIRST MEMBERSHIP READ (`invitations.controller.ts`): every group its
   // owner is in is pending and nobody is adding it yet - the starting state of an enrolment, before
   // the owner's other devices seat it. The BENIGN `stranded=0` rule keeps its reason; this shape is

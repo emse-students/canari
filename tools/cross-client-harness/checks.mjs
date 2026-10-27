@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { ADMIT_ROWS } from './admitrows.mjs';
 import { BIG_ROWS } from './bigrows.mjs';
 import { LIST_RACE_ROWS } from './listracerows.mjs';
+import { LIVE_ROWS } from './liverows.mjs';
 import { CALL_WEB_ROWS } from './callrows.mjs';
 import { DEV_ROWS } from './devicerows.mjs';
 import { FLOOR_ROWS } from './floorrows.mjs';
@@ -557,6 +558,13 @@ export const PHASES = {
     scripts: Object.keys(CALL_WEB_ROWS).map((row) => `callweb.mjs --row ${row}`),
     needs: ['W2', 'W4', 'W5', 'W8'],
   },
+  // A LIVE FROM THE MI 9T WATCHED FROM TWO BROWSERS (LIVE-WEB-2, and L-F1's LIVE-STALL-1, 2026-10-27).
+  // Every row names A1, the broadcaster, so `ROW_TABLES` arms the phone and stamps its build.
+  LIVEWEB: {
+    title: '1.5.0 - a live from the Mi 9T, watched from two browsers',
+    scripts: Object.keys(LIVE_ROWS).map((row) => `liveweb.mjs --row ${row}`),
+    needs: ['W2', 'W4', 'A1'],
+  },
 };
 
 /**
@@ -686,6 +694,7 @@ export const ROW_TABLES = {
   'big.mjs': BIG_ROWS,
   'listrace.mjs': LIST_RACE_ROWS,
   'callweb.mjs': CALL_WEB_ROWS,
+  'liveweb.mjs': LIVE_ROWS,
   'floor.mjs': Object.fromEntries(Object.entries(FLOOR_ROWS).map(([k, v]) => [k.replace(/^FLOOR-/, ''), v])),
 };
 

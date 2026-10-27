@@ -223,14 +223,18 @@ ring window. The first readings were a scratch runner; the repo row replays them
 
 ## LIVE - a live broadcast, watched from the web
 
-Read with a scratch runner on 2026-10-27; the repo row (narration and server rules on the CALL
-pattern) is owed. What each reading holds against the `lives_mode` flip is on
+LIVE-WEB-1 and -3 were read with a scratch runner (2026-10-26). LIVE-WEB-2 and LIVE-STALL-1 are repo
+rows since 2026-10-27: `bun run.mjs --file liveweb.mjs --row <id>` (`liverows.mjs`), judged on each
+viewer's own `[LIVE]` lines IN ORDER - a stall after the viewer's first delivery gap, or stalls with no
+gap at all, fail the row (L-F1). The two `1.5.0-alpha.2` readings below are L-F1's BEFORE baseline:
+that build predates the fix (#2583); the AFTER reading is owed on the pre-release carrying it. What each reading holds against the `lives_mode` flip is on
 [live](frontend/modules/live.md#the-first-rig-readings-and-what-they-hold-against-the-lives_mode-flip-live-web-2026-10-27).
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | LIVE-WEB-1 | W2 goes live from desktop Chrome; W4 and W5 watch from the feed card; W2 ends | W2 W4 W5 - U | `ERROR` - `1.4.1-alpha.6`: ERROR-PRODUCT, a desktop camera reports no facing and the live asks an exact one (#2574, after the stable) |
-| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: every fact held; viewers stall every ~4 s (L-F1); undeclared `[LIVE]` narration |
+| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end; no viewer stalls after its first delivery gap | A1 W2 W4 - B | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef, A1 8cd51abf): every other fact held; W2 stalled 6 times and W4 4 times in a 6 s watch, neither named a delivery gap (L-F1, before #2583) |
+| LIVE-STALL-1 | L-F1: A1 broadcasts for a minute to W2 and W4; no viewer stalls after its first delivery gap; each target buffer is recorded | A1 W2 W4 - B | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef, A1 8cd51abf): W2 stalled 29 times and W4 26 times in 60 s, no delivery gap named (L-F1, before #2583); server window clean; A1 sealed 8 of 30 chunks as fragment pairs |
 | LIVE-WEB-3 | LIVE-WEB-2 with W4's account following the broadcaster: the announcement names one follower | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: `followers=1`, the push found no token on a web account (a device reading is owed) |
 
 ## TOK - a token expiring in the middle of an operation
