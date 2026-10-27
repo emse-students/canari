@@ -28,7 +28,6 @@ import { forgivingProvoked, rowGroupName } from './rowkit.mjs';
 import { ESTATE } from './site.mjs';
 import {
   PAGE_BOOT_NARRATION,
-  forgivingFirstRoutePreloads,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -95,9 +94,8 @@ export async function observersOf(seats, { refusals = {}, logs = {}, provoked = 
     // narrates its boot (`PAGE_BOOT_NARRATION`). Read off the window's OWN navigations rather than
     // asked of each runner: a seat whose window saw no document replaced gets no forgiveness, so a
     // page that booted unasked is still a finding. Met on the first live FLOOR draw (2026-10-25).
+    // A route's first preload in a window with no replaced document is forgiven by `gate` itself.
     if ((rep.documentsReplaced ?? 0) > 0) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
-    // A ROUTE'S FIRST PRELOAD in a document the preflight reloaded just before the row (`watch.mjs`).
-    else rep = forgivingFirstRoutePreloads(rep);
     if (offline.includes(device)) rep = ignoringOfflineCut(rep);
     if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);
     if (refusals[device]?.length) rep = ignoringExpectedRefusal(rep, refusals[device]);

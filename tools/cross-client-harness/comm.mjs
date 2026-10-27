@@ -30,7 +30,8 @@ import {
   realClick,
   until,
 } from './chat.mjs';
-import { answeringDialogs, RESOLVE } from './cdp.mjs';
+import { RESOLVE } from './cdp.mjs';
+import { closeOverlays } from './groupnav.mjs';
 import {
   currentLabelOf,
   decidePickerChoice,
@@ -132,6 +133,12 @@ export async function openCommunity(cx, name) {
   const listed = `[aria-label=${JSON.stringify(name)}]`;
   await awaitListed(cx, `!!${RESOLVE}(${JSON.stringify(listed)})`, 20000, 'the community', cx.port);
   await awaitAppSettled(cx);
+  // A SIDE PANEL LEFT UP COVERS THE RAIL. Below the `xl` breakpoint (the seats run 958-984 px wide)
+  // a `SidePanel` is an overlay with a full-screen scrim, so a settings or members panel a previous
+  // step opened takes the click meant for the community's rail button: COMM-7, -11, -14 and -21 all
+  // died on `whatIsOnTop: BUTTON ... z-side-panel-scrim` on the 1.5.0-alpha.1 replay (2026-10-27).
+  // The rail is what this gesture needs, so whatever covers it is closed by its own control first.
+  await closeOverlays(cx);
   const point = await realClick(cx, listed);
   await provesOpen(cx, name, 10000);
   return point.received ?? null;
@@ -1594,7 +1601,12 @@ export async function pollCard(cx, question) {
          if (!card) return { present: true, cards: heads.length, options: [], ended: null, closable: null };
          var buttons = [].slice.call(card.querySelectorAll('button[aria-pressed]'));
          var options = buttons.map(function (b) {
-           var label = b.querySelector('span.truncate');
+           // STRUCTURAL, not by class: the label was \`span.truncate\` until it learnt to wrap
+           // (2026-09-23), and a class selector then read every label as '' (COMM-15, 2026-10-27).
+           // button > [progress bar] > content row > [selection icon, label].
+           var content = b.lastElementChild;
+           var row = content ? content.firstElementChild : null;
+           var label = row ? row.lastElementChild : null;
            var badge = b.querySelector('[role="button"]');
            return {
              label: label ? (label.innerText || '').trim() : '',
@@ -1647,19 +1659,44 @@ export async function submitPollVote(cx) {
 }
 
 /**
- * Closes a poll early, ANSWERING THE NATIVE CONFIRMATION and returning what it said.
+ * Closes a poll early, ANSWERING THE APP'S CONFIRMATION and returning what it asked.
  *
- * This is the one confirmation in the product that is a `window.confirm` rather than the styled
- * dialog every other destructive action uses - so it blocks the renderer, and every gesture in this
- * module would hang behind it. `answeringDialogs` accepts the real dialog rather than replacing it;
- * the returned message is the evidence that the app asked before closing, which is the whole
- * difference between a confirmed close and a click that closed a poll silently.
+ * IT WAS A `window.confirm` UNTIL #1798, which moved it into the app's own `showConfirm` dialog
+ * (the WebView drew the system one in English on Android). This answered the native one and saw
+ * none, so COMM-15 left the styled dialog open over the whole screen (`z-(--z-critical)`) and read
+ * "it never asked" (1.5.0-alpha.1, 2026-10-27).
+ *
+ * The confirming button carries the SAME caption as the card's close button, so it is clicked
+ * INSIDE the topmost modal dialog, never by caption across the page. The return keeps its shape -
+ * `[{ type: 'confirm', message }]` - so "the app asked before closing" stays one assertion.
  */
 export async function closePollCard(cx) {
-  const { dialogs } = await answeringDialogs(cx, () =>
-    realClick(cx, control('channel_poll_close_button'))
+  await realClick(cx, control('channel_poll_close_button'));
+  const question = caption('channel_poll_close_confirm');
+  const confirmLabel = caption('channel_poll_close_button');
+  const TAG = 'data-harness-poll-confirm';
+  await until(
+    cx,
+    `(function () {
+       var d = [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]')).filter(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(question)}) >= 0;
+       }).pop();
+       if (!d) return false;
+       var b = [].slice.call(d.querySelectorAll('button')).filter(function (x) {
+         return (x.innerText || '').trim() === ${JSON.stringify(confirmLabel)} && !x.disabled;
+       })[0];
+       if (!b) return false;
+       b.setAttribute('${TAG}', '1');
+       return true;
+     })()`,
+    10000
   );
-  return dialogs;
+  try {
+    await realClick(cx, `[${TAG}]`);
+  } finally {
+    await evaluate(cx, `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'ok'; })()`);
+  }
+  return [{ type: 'confirm', message: question }];
 }
 
 /*

@@ -2088,6 +2088,11 @@ const CUT_LINE =
     ['the line at log level stays dirt', left([pre('/chat', true, 'log')]).length === 1],
     ['an unrelated line stays', left([pre('/chat'), 'debug: [00:00:00.000] [OTHER] x']).length === 1],
     ['a clean window is clean after it', forgivingFirstRoutePreloads(rep([pre('/chat')])).clean === true],
+    ['a report with no unexplained list passes through', forgivingFirstRoutePreloads({ clean: true }).clean === true],
+    // Applied by `gate` for every runner (COMM calls it directly): a lone preload keeps a PASS a PASS,
+    // a doubled one demotes it.
+    ['gate forgives a lone first preload', gate('PASS', { W1: { ...rep([pre('/chat')]), clean: false } }).verdict === 'PASS'],
+    ['gate keeps a doubled preload as dirt', gate('PASS', { W1: { ...rep([pre('/chat'), pre('/chat')]), clean: false } }).verdict === 'PASS-DIRTY'],
   ];
   for (const [name, ok] of cases) {
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${'preload'.padEnd(12)} first route preload: ${name}`);

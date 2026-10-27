@@ -90,7 +90,7 @@ import {
   workspaceIdOf,
 } from '../grainedb.mjs';
 import { PEER_NAME, PORTS } from '../names.mjs';
-import { becomeANewDevice } from '../newdevice.mjs';
+import { becomeANewDeviceAndConfirm } from '../newdevice.mjs';
 import { mark, record } from '../results.mjs';
 import {
   DELIVERY_CROSSING_NARRATION,
@@ -323,7 +323,10 @@ async function newDeviceArm() {
 
   // W3 becomes a device the server has never seen, signed in as the owner.
   const minted = await step('[newdevice] mint a new device of the owner on W3', () =>
-    becomeANewDevice({ report: (s) => console.log(`  newdevice: ${s}`) })
+    // BOTH HALVES: a new device of this account is now asked for the account PIN ("PIN de
+    // chiffrement"), and the first half alone left that modal over every control the read below
+    // needs (COMM-12 on 1.5.0-alpha.1, 2026-10-27). `confirmEnrolment` answers it.
+    becomeANewDeviceAndConfirm({ report: (s) => console.log(`  newdevice: ${s}`) })
   );
   out.minted = !!minted?.cx && !minted.refused;
   if (out.minted) {

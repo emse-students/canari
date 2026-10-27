@@ -3468,7 +3468,11 @@ export function dirtOf(rep) {
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
 export function gate(verdict, reports, observations = {}) {
-  const entries = Object.entries(reports).filter(([, r]) => r);
+  // A ROUTE'S FIRST PRELOAD is forgiven HERE, once, for every row and every seat - not per runner:
+  // COMM's runners call `gate` directly and carried it as dirt while the MLS rows did not.
+  const entries = Object.entries(reports)
+    .filter(([, r]) => r)
+    .map(([label, r]) => [label, forgivingFirstRoutePreloads(r)]);
   const dirty = entries.filter(([, r]) => !r.clean);
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
@@ -3715,11 +3719,13 @@ const FIRST_ROUTE_PRELOAD = /\[RoutePreload\] \{"pathname":"(\/[a-z]*)","first":
  * makes its first navigations inside the row's window instead: read on LIST-RACE-1 on
  * `1.5.0-alpha.1` (2026-10-27), on W1, W8 and A1.
  *
- * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug. A
+ * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug - applied
+ * by `gate` to every seat of every row, the one place every runner passes through. A
  * pathname preloaded twice in one window is a document that booted twice, or a preload that is not
  * the first, and both copies stay dirt. So does `"first":false`, or the line at another level.
  */
 export function forgivingFirstRoutePreloads(rep) {
+  if (!Array.isArray(rep?.unexplained)) return rep;
   const seen = new Map();
   for (const line of rep.unexplained) {
     const m = FIRST_ROUTE_PRELOAD.exec(line);
