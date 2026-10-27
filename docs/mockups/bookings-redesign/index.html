@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Réservations - maquettes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="mockup.css" />
+    <style>
+      .board {
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+      .screen {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .frames {
+        display: flex;
+        gap: 24px;
+        align-items: flex-start;
+        overflow-x: auto;
+        padding-bottom: 8px;
+      }
+      .frame {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .frame .box {
+        border: 1px solid var(--cn-border);
+        border-radius: var(--radius-2xl);
+        overflow: hidden;
+        background: var(--cn-surface);
+      }
+      .frame iframe {
+        border: 0;
+        display: block;
+      }
+      .frame.phone .box {
+        width: 390px;
+        height: 844px;
+      }
+      .frame.phone iframe {
+        width: 390px;
+        height: 844px;
+      }
+      .frame.desk .box {
+        width: 960px;
+        height: 600px;
+      }
+      .frame.desk iframe {
+        width: 1280px;
+        height: 800px;
+        transform: scale(0.75);
+        transform-origin: 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="board">
+      <div class="stack tight">
+        <h1>Réservations - la refonte D44-D54, en maquettes</h1>
+        <p class="muted">
+          Static mockups, not shipped code. Each screen at 390 px (phone) and 1280 px (desktop,
+          drawn at 75 %). Every frame is the same responsive page; open it alone to use it at full
+          size. Decisions: <code>docs/wiki/bookings-chantier.md</code>, "Redesign decided
+          2026-10-23".
+        </p>
+        <div class="row wrap">
+          <span class="seg" id="theme">
+            <button class="on" data-t="light">Clair</button><button data-t="dark">Sombre</button>
+          </span>
+          <span class="seg" id="notes">
+            <button class="on" data-n="1">Annotations</button><button data-n="0">Sans</button>
+          </span>
+        </div>
+      </div>
+      <div id="screens" class="stack loose"></div>
+    </div>
+    <script>
+      const SCREENS = [
+        ['spaces.html', 'Réservations : la liste des espaces, avec la vignette de l\'affiche (D45)'],
+        ['space.html', 'Un espace, côté réservant : une colonne cachée, semaine en colonnes, durée au glisser (D44, D46, D48)'],
+        ['space.html?case=alumni', 'Un espace à 14 colonnes et créneaux fixes : le sélecteur de colonne (D46)'],
+        ['dashboard.html', 'Le tableau de bord de l\'organisateur : à venir, qui, annuler, bloquer au glisser (D50)'],
+        ['availability.html', 'Les disponibilités : la semaine à peindre et ses quatre modèles (D49)'],
+        ['availability.html?tpl=event', 'Les disponibilités : modèle « Événement ponctuel » (D49)'],
+        ['settings.html', 'Les réglages : cinq sections repliables, en mots simples (D51)'],
+        ['wizard.html', 'La création en 3 étapes, optionnelle (D52)'],
+      ];
+      let theme = 'light';
+      let notes = '1';
+      function draw() {
+        const host = document.getElementById('screens');
+        host.innerHTML = SCREENS.map(([url, title]) => {
+          const q = (url.includes('?') ? '&' : '?') + 'theme=' + theme + '&notes=' + notes;
+          return (
+            '<section class="screen"><h2>' + title + '</h2>' +
+            '<a class="xs" href="' + url + q + '" target="_blank">Ouvrir seule</a>' +
+            '<div class="frames">' +
+            '<div class="frame phone"><span class="xs muted">390 px</span><div class="box"><iframe loading="lazy" src="' + url + q + '"></iframe></div></div>' +
+            '<div class="frame desk"><span class="xs muted">1280 px (75 %)</span><div class="box"><iframe loading="lazy" src="' + url + q + '"></iframe></div></div>' +
+            '</div></section>'
+          );
+        }).join('');
+        document.documentElement.dataset.theme = theme;
+      }
+      document.getElementById('theme').addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        theme = b.dataset.t;
+        document.querySelectorAll('#theme button').forEach((x) => x.classList.toggle('on', x === b));
+        draw();
+      });
+      document.getElementById('notes').addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        notes = b.dataset.n;
+        document.querySelectorAll('#notes button').forEach((x) => x.classList.toggle('on', x === b));
+        draw();
+      });
+      draw();
+    </script>
+  </body>
+</html>

@@ -92,6 +92,14 @@ see who else booked.
 | D53 | Notifications (2026-10-23) | **YES now**: organiser cancellation, confirmation to an added participant, a reminder before the slot with an adjustable delay. Supersedes D13's "no notification in v1". |
 | D54 | Method (2026-10-23) | **Mockups first**, built in parallel with the stable (user: *"Tout de suite, en parallele de la stable"*). |
 
+**The mockups of D44-D54 (D54's first step, 2026-10-27)** are static pages in
+[`docs/mockups/bookings-redesign/`](../mockups/bookings-redesign/index.html): open `index.html`
+for every screen at 390 and 1280 px, light or dark, with or without the annotations. They copy the
+tokens of `frontend/src/app.css` and draw Lucide icons; nothing in them is shipped code. Screens:
+`spaces.html` (the list and its thumbnails), `space.html` (music room) and `space.html?case=alumni`
+(14 columns, fixed slots), `dashboard.html`, `availability.html` (and `?tpl=event`),
+`settings.html`, `wizard.html` (`?step=1..3`). The drag on the grid and the painter work.
+
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.

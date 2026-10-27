@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Réglages de l'espace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="mockup.css" />
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="mockup.js"></script>
+  </head>
+  <body>
+    <div id="page" class="page tool">
+      <div class="stack loose">
+        <div class="note">
+          <b>Mockup - settings in five collapsible sections, in plain words (D35 kept, D51).</b> Each
+          section title is a QUESTION the organiser would ask, and its line underneath says the
+          current answer, so a closed section still reads. Sections 4 and 5 start closed with a badge
+          counting what is set, as today. Every field maps 1:1 to a setting that already exists
+          (WP-B4); the new ones are marked.
+        </div>
+
+        <div class="row wrap" style="gap: 12px">
+          <a class="btn icon ghost" href="dashboard.html" aria-label="Retour"><i data-lucide="arrow-left"></i></a>
+          <div class="grow stack tight">
+            <h1>Réglages</h1>
+            <span class="xs muted">Salle de musique</span>
+          </div>
+          <button class="btn primary"><i data-lucide="check"></i>Enregistrer</button>
+        </div>
+
+        <!-- 1 -->
+        <details class="section" open>
+          <summary>
+            <span class="sec-num">1</span>
+            <div class="grow"><h3>L'essentiel</h3><div class="xs muted">Nom, description, affiche</div></div>
+            <i data-lucide="chevron-down" class="chev"></i>
+          </summary>
+          <div class="body">
+            <div class="field"><label>Nom</label><input class="input" value="Salle de musique" /></div>
+            <div class="field">
+              <label>Description</label>
+              <textarea class="input">Piano droit, batterie, deux amplis. Laissez la salle rangée.</textarea>
+            </div>
+            <div class="field">
+              <span class="label">Affiche</span>
+              <div class="poster" style="max-height: 140px"><div class="poster-art"><i data-lucide="music"></i></div></div>
+              <div class="row wrap">
+                <div class="thumb"><i data-lucide="music"></i></div>
+                <span class="xs muted grow">En bannière sur la page de l'espace, en vignette dans la liste des espaces.</span>
+                <button class="btn sm"><i data-lucide="image"></i>Changer</button>
+                <button class="btn sm ghost">Retirer</button>
+              </div>
+            </div>
+            <div class="row xs muted">
+              <i data-lucide="globe" class="icon-sm"></i>Les heures sont celles de Paris.
+              <a href="#">Changer de fuseau</a>
+            </div>
+          </div>
+        </details>
+
+        <!-- 2 -->
+        <details class="section" open>
+          <summary>
+            <span class="sec-num">2</span>
+            <div class="grow">
+              <h3>Quand peut-on réserver ?</h3>
+              <div class="xs muted">Tous les jours sauf dimanche · durée au choix, 30 min à 3 h</div>
+            </div>
+            <i data-lucide="chevron-down" class="chev"></i>
+          </summary>
+          <div class="body">
+            <div class="card pad stack tight">
+              <div class="row"><span class="strong grow">Horaires d'ouverture</span><a class="btn sm" href="availability.html"><i data-lucide="paintbrush" class="icon-sm"></i>Modifier</a></div>
+              <div class="xs">Lun – Ven 08:00 – 23:00 · Sam 10:00 – 23:00 · Dim fermé</div>
+              <div class="xs muted">2 fermetures : Toussaint, vacances de Noël</div>
+            </div>
+            <div class="field">
+              <span class="label">Comment découper le temps ?</span>
+              <div class="choice on">
+                <span class="dot"></span>
+                <div class="grow stack tight">
+                  <div class="strong">Durée au choix</div>
+                  <div class="row wrap xs">par tranches de <select class="input" style="width: 96px"><option>30 min</option></select>, jusqu'à <select class="input" style="width: 96px"><option>3 h</option></select> d'affilée</div>
+                </div>
+              </div>
+              <div class="choice">
+                <span class="dot"></span>
+                <div class="grow"><div class="strong">Créneaux fixes</div><div class="xs muted">Ex. : entretiens de 25 min. On réserve un créneau entier.</div></div>
+              </div>
+            </div>
+            <div class="card pad row wrap">
+              <i data-lucide="columns-3"></i>
+              <div class="grow">
+                <div class="strong">Une seule colonne</div>
+                <div class="xs muted">Plusieurs salles, instruments ou personnes à réserver séparément ? Ajoutez des colonnes : chacune aura ses horaires.</div>
+              </div>
+              <button class="btn"><i data-lucide="plus"></i>Ajouter une colonne</button>
+            </div>
+            <div class="note">
+              <b>D44.</b> The columns level appears here only when asked for; once there are two or
+              more, this card becomes the list of columns (name, description, linked account, private
+              info, each with "Horaires").
+            </div>
+          </div>
+        </details>
+
+        <!-- 3 -->
+        <details class="section" open>
+          <summary>
+            <span class="sec-num">3</span>
+            <div class="grow">
+              <h3>Qui peut réserver, et que demande-t-on ?</h3>
+              <div class="xs muted">Tout Canari · noms cachés · dans la liste · aucune question</div>
+            </div>
+            <i data-lucide="chevron-down" class="chev"></i>
+          </summary>
+          <div class="body">
+            <div class="field">
+              <span class="label">Qui peut réserver ?</span>
+              <div class="choice on"><span class="dot"></span><div><div class="strong">Tout le monde sur Canari</div></div></div>
+              <div class="choice"><span class="dot"></span><div><div class="strong">Seulement certaines personnes</div><div class="xs muted">Par promo, formation ou cotisation</div></div></div>
+            </div>
+            <div class="field">
+              <span class="label">Les autres voient-ils qui a réservé ?</span>
+              <div class="choice"><span class="dot"></span><div><div class="strong">Oui, les noms sont visibles</div></div></div>
+              <div class="choice on"><span class="dot"></span><div><div class="strong">Non, juste « Réservé »</div><div class="xs muted">Vous et les personnes de la réservation voyez toujours les noms.</div></div></div>
+            </div>
+            <div class="field">
+              <span class="label">Comment trouve-t-on cet espace ?</span>
+              <div class="choice on"><span class="dot"></span><div><div class="strong">Dans la liste des réservations</div></div></div>
+              <div class="choice"><span class="dot"></span><div><div class="strong">Seulement avec le lien ou le QR code</div><div class="xs muted">Pour un rendez-vous discret.</div></div></div>
+            </div>
+            <div class="field">
+              <span class="label">À combien peut-on venir ?</span>
+              <div class="row xs"><select class="input" style="width: 96px"><option>4</option></select> personnes au plus, réservant compris</div>
+            </div>
+            <div class="field">
+              <span class="label">Questions posées en réservant</span>
+              <div class="card pad xs muted">Aucune question.</div>
+              <button class="btn sm" style="align-self: flex-start"><i data-lucide="plus"></i>Ajouter une question</button>
+            </div>
+            <div class="field">
+              <label>Infos données après la réservation</label>
+              <textarea class="input" placeholder="Ex. : le code de la porte, un lien visio">Code de la porte : 4812</textarea>
+              <span class="xxs muted">Visible seulement par les personnes de la réservation, tant qu'elle existe.</span>
+            </div>
+          </div>
+        </details>
+
+        <!-- 4 -->
+        <details class="section">
+          <summary>
+            <span class="sec-num">4</span>
+            <div class="grow">
+              <h3>Règles de réservation</h3>
+              <div class="xs muted">Délais, limites par personne, rappel</div>
+            </div>
+            <span class="pill yellow">2 actives</span>
+            <i data-lucide="chevron-down" class="chev"></i>
+          </summary>
+          <div class="body">
+            <div class="field"><label>Réservations ouvertes à partir du</label><input class="input" placeholder="Tout de suite" /></div>
+            <div class="field"><label>Au plus tard avant le créneau</label><select class="input"><option>Jusqu'au dernier moment</option><option>1 h avant</option></select></div>
+            <div class="field"><label>Jusqu'à combien de jours à l'avance ?</label><select class="input"><option>14 jours</option></select></div>
+            <div class="field">
+              <span class="label">Limites par personne</span>
+              <div class="row wrap xs"><select class="input" style="width: 96px"><option>2</option></select> réservations à venir au plus</div>
+              <div class="row wrap xs"><select class="input" style="width: 96px"><option>—</option></select> heures par <select class="input" style="width: 120px"><option>semaine</option></select> au plus</div>
+            </div>
+            <div class="field"><label>Un participant peut se retirer</label><select class="input"><option>Jusqu'au début</option><option>Jusqu'à 2 h avant</option></select></div>
+            <div class="field">
+              <label>Rappel envoyé avant le créneau <span class="pill">nouveau</span></label>
+              <select class="input"><option>1 h avant</option><option>15 min avant</option><option>La veille à 18:00</option><option>Pas de rappel</option></select>
+            </div>
+            <div class="note">
+              <b>D53, question.</b> The reminder is drawn here as the space's default. Can each person
+              change it on their booking (the booking sheet shows a select), or is the organiser's
+              choice final?
+            </div>
+          </div>
+        </details>
+
+        <!-- 5 -->
+        <details class="section">
+          <summary>
+            <span class="sec-num">5</span>
+            <div class="grow">
+              <h3>Données</h3>
+              <div class="xs muted">Effacement, export, suppression</div>
+            </div>
+            <span class="pill">7 jours</span>
+            <i data-lucide="chevron-down" class="chev"></i>
+          </summary>
+          <div class="body">
+            <div class="field">
+              <label>Effacer les réponses et les fichiers</label>
+              <div class="row xs"><select class="input" style="width: 96px"><option>7</option></select> jours après le créneau (de 1 à 30)</div>
+              <span class="xxs muted">L'historique (qui, quand) reste un an, puis tout est effacé.</span>
+            </div>
+            <button class="btn" style="align-self: flex-start"><i data-lucide="download"></i>Exporter en Excel</button>
+            <div class="card pad stack tight" style="border-color: var(--red-err)">
+              <span class="strong">Supprimer l'espace</span>
+              <span class="xs muted">Tout est effacé : réservations à venir, historique, fichiers.</span>
+              <button class="btn danger sm" style="align-self: flex-start"><i data-lucide="trash-2"></i>Supprimer</button>
+            </div>
+            <div class="note">
+              <b>Question (D27 + D53).</b> Deleting a space erases its coming bookings. Should their
+              people be NOTIFIED, as an organiser's cancellation now is? Same question for a personal
+              space erased with its owner's account (WP-B1).
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+    <script>
+      MK.shell({ active: 'bookings' });
+      MK.paintIcons();
+    </script>
+  </body>
+</html>

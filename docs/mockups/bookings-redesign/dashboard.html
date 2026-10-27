@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tableau de bord organisateur</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="mockup.css" />
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="mockup.js"></script>
+  </head>
+  <body>
+    <div id="page" class="page grid">
+      <div class="stack loose">
+        <div class="note">
+          <b>Mockup - the organiser's dashboard (D50).</b> What is coming, who booked, a cancel one
+          tap away, and a block drawn by dragging on the grid. Names are shown here whatever the
+          space's visibility (the organiser always reads them, D9).
+        </div>
+
+        <div class="row wrap" style="gap: 12px">
+          <a class="btn icon ghost" href="space.html" aria-label="Retour"><i data-lucide="arrow-left"></i></a>
+          <div class="thumb desktop-only"><i data-lucide="music"></i></div>
+          <div class="grow stack tight">
+            <h1>Salle de musique</h1>
+            <span class="xs muted">BDA · vous gérez cet espace</span>
+          </div>
+          <div class="row wrap">
+            <a class="btn" href="space.html"><i data-lucide="eye"></i><span class="desktop-only">Voir la page</span></a>
+            <button class="btn"><i data-lucide="download"></i><span class="desktop-only">Exporter</span></button>
+            <a class="btn" href="settings.html"><i data-lucide="settings"></i><span class="desktop-only">Réglages</span></a>
+          </div>
+        </div>
+
+        <div class="row wrap">
+          <span class="pill">9 réservations cette semaine</span>
+          <span class="pill">21 h occupées sur 97</span>
+          <span class="pill warn"><i data-lucide="ban" class="icon-sm"></i>1 blocage</span>
+        </div>
+
+        <!-- D44: the columns level is hidden until the organiser asks for it -->
+        <div class="card pad row wrap">
+          <i data-lucide="columns-3"></i>
+          <div class="grow">
+            <div class="strong">Une seule colonne</div>
+            <div class="xs muted">Les réservants ne voient pas de colonne. Ajoutez-en si vous gérez plusieurs salles, instruments ou personnes.</div>
+          </div>
+          <button class="btn"><i data-lucide="plus"></i>Ajouter une colonne</button>
+        </div>
+        <div class="note">
+          <b>D44.</b> The data model keeps its resource; the UI shows none until "Ajouter une colonne".
+          Adding the second column asks for a name for BOTH (the hidden one is named "Salle de
+          musique" until then). <b>Question:</b> when a space goes back to one column (the others
+          deleted, D42 permitting), does the remaining one hide again?
+        </div>
+
+        <div class="tabs phone-only" id="tabs">
+          <a href="#" class="on" data-t="up">À venir</a><a href="#" data-t="plan">Planning</a>
+        </div>
+
+        <div class="two-col">
+          <div class="stack" id="plan">
+            <div class="row wrap">
+              <button class="btn icon" aria-label="Semaine précédente"><i data-lucide="chevron-left"></i></button>
+              <button class="btn icon" aria-label="Semaine suivante"><i data-lucide="chevron-right"></i></button>
+              <h3 class="grow">26 oct. – 1er nov.</h3>
+              <span class="xs muted"><i data-lucide="mouse-pointer-2" class="icon-sm"></i> Glissez sur des cases libres pour les bloquer</span>
+            </div>
+            <div class="desktop-only" id="grid-week"></div>
+            <div class="phone-only stack tight">
+              <div class="strip" id="strip"></div>
+              <div id="grid-day"></div>
+            </div>
+            <div class="note">
+              <b>D50, block by drag.</b> The same grid as the booker's, in organiser mode: a drag
+              draws a RED outline and opens "Bloquer" with the range. A drag cannot cross a booking
+              (the run stops there, as the booker's does); the server still answers
+              <code>bookings-inside-block</code> if the grid was stale. Tapping a booking opens who
+              booked, their answers and its cancel.
+            </div>
+          </div>
+
+          <aside class="stack" id="up">
+            <div class="card">
+              <div class="list-row"><h3 class="grow">À venir</h3><span class="pill">9</span></div>
+              <div id="upcoming"></div>
+            </div>
+            <div class="note">
+              <b>D50 + D53, quick cancel.</b> "Annuler" opens in place: an optional message, then the
+              confirmation. The holder and every participant are notified. The earlier warning "la
+              personne n'est pas prévenue" (D13) is gone.
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <div class="scrim"></div>
+      <section class="sheet" id="sheet-block" aria-label="Bloquer">
+        <div class="sheet-head">
+          <h3 class="grow">Bloquer ce créneau</h3>
+          <button class="btn icon ghost" data-close aria-label="Fermer"><i data-lucide="x"></i></button>
+        </div>
+        <div class="sheet-body">
+          <div class="card pad row"><i data-lucide="ban"></i><span class="strong" id="block-when"></span></div>
+          <div class="field">
+            <label for="reason">Raison</label>
+            <input id="reason" class="input" placeholder="Ex. : accordage du piano" />
+          </div>
+          <label class="row"><span class="switch on"></span><span>Montrer la raison aux réservants</span></label>
+          <p class="xs muted">Personne ne pourra réserver sur ce créneau. Vous pourrez le débloquer à tout moment.</p>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn" data-close>Annuler</button>
+          <button class="btn primary" data-close><i data-lucide="ban"></i>Bloquer</button>
+        </div>
+      </section>
+
+      <section class="sheet" id="sheet-detail" aria-label="Réservation">
+        <div class="sheet-head">
+          <h3 class="grow" id="d-title"></h3>
+          <button class="btn icon ghost" data-close aria-label="Fermer"><i data-lucide="x"></i></button>
+        </div>
+        <div class="sheet-body" id="d-body"></div>
+        <div class="sheet-foot" id="d-foot"></div>
+      </section>
+    </div>
+
+    <script>
+      MK.shell({ active: 'bookings' });
+      const F = MK.fmt;
+      const days = [
+        { label: 'lun.', num: 26, long: 'Lundi 26 oct.', open: [[480, 1380]], past: true,
+          items: [{ s: 1080, e: 1200, kind: 'taken', title: 'Marie D.', sub: '+2' }] },
+        { label: 'mar.', num: 27, long: 'Mardi 27 oct.', open: [[480, 1380]], today: true,
+          items: [
+            { s: 540, e: 630, kind: 'taken', title: 'Hugo L.' },
+            { s: 1020, e: 1080, kind: 'taken', title: 'Alex B.', sub: '+1' },
+            { s: 1200, e: 1320, kind: 'taken', title: 'Groupe Jazz (Inès R.)', sub: '+3' },
+          ] },
+        { label: 'mer.', num: 28, long: 'Mercredi 28 oct.', open: [[480, 1380]],
+          items: [
+            { s: 720, e: 840, kind: 'blocked', title: 'Bloqué', sub: 'Accordage du piano' },
+            { s: 1140, e: 1260, kind: 'taken', title: 'Paul T.' },
+          ] },
+        { label: 'jeu.', num: 29, long: 'Jeudi 29 oct.', open: [[480, 1380]],
+          items: [{ s: 1110, e: 1230, kind: 'taken', title: 'Sarah K.', sub: '+1' }] },
+        { label: 'ven.', num: 30, long: 'Vendredi 30 oct.', open: [[480, 1380]],
+          items: [
+            { s: 1020, e: 1140, kind: 'taken', title: 'Lucas M.' },
+            { s: 1260, e: 1380, kind: 'taken', title: 'Chloé V.', sub: '+2' },
+          ] },
+        { label: 'sam.', num: 31, long: 'Samedi 31 oct.', open: [[600, 1380]],
+          items: [{ s: 840, e: 1020, kind: 'taken', title: 'Orchestre (Emma P.)', sub: '+3' }] },
+        { label: 'dim.', num: 1, long: 'Dimanche 1er nov.', open: [], closedLabel: 'Fermé · Toussaint' },
+      ];
+
+      function blockSheet(day, s, e) {
+        document.getElementById('block-when').textContent = days[day].long + ' · ' + F(s) + ' – ' + F(e);
+        MK.openSheet('sheet-block');
+      }
+      function detail(it, day) {
+        const d = days[day];
+        document.getElementById('d-title').textContent = it.kind === 'blocked' ? 'Créneau bloqué' : 'Réservation';
+        let body = '<div class="row">' + MK.icon('clock') + '<span class="strong">' + d.long + ' · ' + F(it.s) + ' – ' + F(it.e) + '</span></div>';
+        let foot = '<button class="btn" data-close>Fermer</button>';
+        if (it.kind === 'blocked') {
+          body += '<p>' + it.sub + ' <span class="pill">raison visible</span></p>';
+          foot += '<button class="btn danger" data-close>' + MK.icon('unlock') + 'Débloquer</button>';
+        } else {
+          body +=
+            '<div class="stack tight"><span class="xs strong">Réservé par</span><div class="row"><span class="avatar sm">' + it.title.charAt(0) + '</span>' + it.title + '</div>' +
+            (it.sub ? '<span class="xs muted">et ' + it.sub.slice(1) + ' participant(s)</span>' : '') + '</div>' +
+            '<div class="xs muted">Réservé le 22 oct. à 21:14</div>';
+          foot += day === 0 || (day === 1 && it.s < 860) ? '' : '<button class="btn danger" data-close>' + MK.icon('x') + 'Annuler la réservation</button>';
+        }
+        document.getElementById('d-body').innerHTML = body;
+        document.getElementById('d-foot').innerHTML = foot;
+        MK.paintIcons();
+        MK.openSheet('sheet-detail');
+      }
+
+      const base = { startMin: 480, endMin: 1380, step: 30, mode: 'block', nowMin: 860, scrollTo: 780,
+        narrowClosed: true, onSelect: blockSheet, onItem: detail };
+      MK.weekGrid(document.getElementById('grid-week'), Object.assign({}, base, { days }));
+      let di = 1;
+      function drawDay() {
+        MK.weekGrid(document.getElementById('grid-day'), Object.assign({}, base, {
+          days: [days[di]], narrowClosed: false, hideHead: true,
+          onSelect: (_i, s, e) => blockSheet(di, s, e), onItem: (it) => detail(it, di),
+        }));
+        document.getElementById('strip').innerHTML = days.map((x, i) =>
+          '<button data-i="' + i + '" class="' + (i === di ? 'on' : '') + (x.today ? ' today' : '') + '">' + x.label + '<b>' + x.num + '</b><span class="free ' + ((x.items || []).length ? '' : 'none') + '"></span></button>').join('');
+      }
+      document.getElementById('strip').addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (b) { di = +b.dataset.i; drawDay(); }
+      });
+      drawDay();
+
+      /* upcoming: grouped by day, each row a cancel that opens in place */
+      const groups = [
+        ['Aujourd\'hui', [[1020, 1080, 'Alex B.', 'avec Léa M.'], [1200, 1320, 'Inès R.', 'Groupe Jazz · 4 personnes']]],
+        ['Demain', [[1140, 1260, 'Paul T.', 'seul']]],
+        ['Jeudi 29 oct.', [[1110, 1230, 'Sarah K.', 'avec Nathan B.']]],
+        ['Vendredi 30 oct.', [[1020, 1140, 'Lucas M.', 'seul'], [1260, 1380, 'Chloé V.', '3 personnes']]],
+      ];
+      let n = 0;
+      document.getElementById('upcoming').innerHTML = groups.map(([g, rows]) =>
+        '<div class="list-row xs strong muted" style="padding-bottom:4px">' + g + '</div><div class="list">' +
+        rows.map(([s, e, who, more]) => {
+          const id = 'c' + n++;
+          return '<div><div class="list-row"><div style="width:96px;white-space:nowrap" class="strong xs">' + F(s) + ' – ' + F(e) + '</div>' +
+            '<span class="avatar sm">' + who.charAt(0) + '</span><div class="grow"><div class="ellipsis">' + who + '</div><div class="xs muted ellipsis">' + more + '</div></div>' +
+            '<button class="btn sm ghost" data-cancel="' + id + '" aria-label="Annuler">' + MK.icon('x', 'icon-sm') + '<span>Annuler</span></button></div>' +
+            '<div id="' + id + '" class="stack tight" style="display:none;padding:0 16px 12px">' +
+            '<textarea class="input" placeholder="Message pour ' + who + ' (facultatif)"></textarea>' +
+            '<div class="row"><span class="xs muted grow">' + who.split(' ')[0] + ' et ses participants seront prévenus.</span>' +
+            '<button class="btn sm" data-cancel="' + id + '">Garder</button><button class="btn sm danger">Annuler la réservation</button></div></div></div>';
+        }).join('') + '</div>').join('');
+      document.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-cancel]');
+        if (b) {
+          const el = document.getElementById(b.dataset.cancel);
+          el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        }
+        const t = e.target.closest('#tabs a');
+        if (t) {
+          e.preventDefault();
+          document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a === t));
+          document.getElementById('plan').style.display = t.dataset.t === 'plan' ? '' : 'none';
+          document.getElementById('up').style.display = t.dataset.t === 'up' ? '' : 'none';
+        }
+      });
+      if (matchMedia('(max-width: 767px)').matches) document.getElementById('plan').style.display = 'none';
+      MK.paintIcons();
+    </script>
+  </body>
+</html>
