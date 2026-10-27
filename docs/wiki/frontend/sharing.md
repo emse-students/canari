@@ -3,8 +3,7 @@
 The OS share sheet, both ways, the way Messenger or Discord use it (user, 2026-10-11; made a
 priority 2026-10-21). **In**: another app's "Partager" offers Canari, the member picks a conversation
 or a salon, and the content waits in that conversation's composer. **Out**: "Partager..." on a
-message, a picture or a post opens the system sheet. CanaRun (activity cards from a GPX/FIT file)
-builds on the IN half later and is not started.
+message, a picture or a post opens the system sheet.
 
 ## The lots and where each stands
 
