@@ -27,15 +27,13 @@ export type LydiaOrderRef =
  * estate has. And a uuid in second place is only ever looked up as an attempt row: one that names
  * no stored attempt settles nothing.
  *
- * The form grammar is `form:<submissionId>:<attempt uuid>` since one order_ref is issued per request,
- * and the legacy `form:<submissionId>` of the requests issued before that still parses: a request
- * open at the deploy keeps calling back with it.
+ * The form grammar is `form:<submissionId>:<8 hex digits>` since one order_ref is issued per
+ * request (social-service `formOrderRef`), and the legacy `form:<submissionId>` of the requests
+ * issued before that still parses: a request open at the deploy keeps calling back with it.
  */
 export function parseLydiaOrderRef(orderRef: string | null | undefined): LydiaOrderRef | null {
   if (!orderRef) return null;
-  const formMatch = new RegExp(`^form:([a-zA-Z0-9_-]{1,128})(?::${UUID_RE_PART})?$`, 'i').exec(
-    orderRef
-  );
+  const formMatch = /^form:([a-zA-Z0-9_-]{1,128})(?::[0-9a-f]{8})?$/.exec(orderRef);
   if (formMatch) return { kind: 'form', submissionId: formMatch[1] };
   const productMatch = new RegExp(`^product:(${UUID_RE_PART}):(${UUID_RE_PART})$`, 'i').exec(
     orderRef

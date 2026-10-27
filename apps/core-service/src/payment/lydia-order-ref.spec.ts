@@ -15,17 +15,20 @@ describe('parseLydiaOrderRef', () => {
 
   it('decodes a per-request form order_ref to its submission, whichever attempt it names', () => {
     const submissionId = '22222222-2222-2222-2222-222222222222';
-    const first = `form:${submissionId}:${checkoutId}`;
-    const second = `form:${submissionId}:44444444-4444-4444-4444-444444444444`;
+    const first = `form:${submissionId}:0a1b2c3d`;
+    const second = `form:${submissionId}:ffffffff`;
     // The attempt decides nothing: a callback about an older attempt still names the same row.
     expect(parseLydiaOrderRef(first)).toEqual({ kind: 'form', submissionId });
     expect(parseLydiaOrderRef(second)).toEqual({ kind: 'form', submissionId });
-    expect(first.length).toBe(78);
+    expect(first.length).toBe(50);
   });
 
-  it('rejects a form order_ref whose attempt is not a UUID, or that has a third part', () => {
-    expect(parseLydiaOrderRef('form:submission-42:not-a-uuid')).toBeNull();
-    expect(parseLydiaOrderRef(`form:submission-42:${checkoutId}:${checkoutId}`)).toBeNull();
+  it('rejects a form order_ref whose attempt is not 8 lowercase hex digits, or that has a third part', () => {
+    expect(parseLydiaOrderRef('form:submission-42:not-hex!')).toBeNull();
+    expect(parseLydiaOrderRef('form:submission-42:0a1b2c3')).toBeNull();
+    expect(parseLydiaOrderRef('form:submission-42:0A1B2C3D')).toBeNull();
+    expect(parseLydiaOrderRef(`form:submission-42:${checkoutId}`)).toBeNull();
+    expect(parseLydiaOrderRef('form:submission-42:0a1b2c3d:0a1b2c3d')).toBeNull();
     expect(parseLydiaOrderRef('form:submission-42:')).toBeNull();
   });
 

@@ -27,7 +27,7 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const ASSO = '00000000-0000-4000-8000-0000000000b8';
-const UUID_RE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const ATTEMPT_RE = '[0-9a-f]{8}';
 
 maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', () => {
   const schema = `form_order_ref_it_${Math.random().toString(36).slice(2, 10)}`;
@@ -153,7 +153,7 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     });
     expect(orderRefs).toHaveLength(2);
     expect(orderRefs[0]).not.toBe(orderRefs[1]);
-    for (const ref of orderRefs) expect(ref).toMatch(new RegExp(`^form:${id}:${UUID_RE}$`));
+    for (const ref of orderRefs) expect(ref).toMatch(new RegExp(`^form:${id}:${ATTEMPT_RE}$`));
 
     // A callback about the OLD request (its order_ref names the same submission): the cancel is
     // not the row's current request, and the confirm reads the row's OWN request, still open.

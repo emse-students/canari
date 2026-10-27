@@ -1199,9 +1199,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         .filter((c) => c.route === 'create-checkout-session')
         .map((c) => c.body.idempotencyKey as string);
       expect(keys).toHaveLength(2);
-      const perAttempt = new RegExp(
-        `^form:${rows[0].id}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
-      );
+      const perAttempt = new RegExp(`^form:${rows[0].id}:[0-9a-f]{8}$`);
       for (const key of keys) expect(key).toMatch(perAttempt);
       expect(keys[0]).not.toBe(keys[1]);
     });

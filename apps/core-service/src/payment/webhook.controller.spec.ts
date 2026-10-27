@@ -103,7 +103,7 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     await expect(
       controller.handleLydiaRequestCallback(outcome, {
         request_id: 'r1',
-        order_ref: `form:sub-1:${CHECKOUT_ID}`,
+        order_ref: 'form:sub-1:0a1b2c3d',
         sig: 'valid-sig',
       })
     ).resolves.toEqual({ received: true });

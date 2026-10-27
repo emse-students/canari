@@ -1,13 +1,19 @@
-import { formOrderRef } from './form-order-ref';
+import { FORM_ORDER_REF_MAX_LENGTH, formOrderRef } from './form-order-ref';
 
 describe('formOrderRef', () => {
   const submissionId = '22222222-2222-2222-2222-222222222222';
-  const attemptId = '33333333-3333-3333-3333-333333333333';
 
-  it('names the submission and the attempt, inside the 109 characters Lydia was measured to accept', () => {
-    const ref = formOrderRef(submissionId, attemptId);
-    expect(ref).toBe(`form:${submissionId}:${attemptId}`);
-    expect(ref.length).toBe(78);
+  it('names the submission and an 8-hex-digit attempt', () => {
+    expect(formOrderRef(submissionId)).toMatch(new RegExp(`^form:${submissionId}:[0-9a-f]{8}$`));
+  });
+
+  // Lydia's apiDoc names no maximum; 109 characters is what was measured accepted. A longer
+  // order_ref would be refused on EVERY form payment, so the length is pinned, not described.
+  it(`never exceeds ${FORM_ORDER_REF_MAX_LENGTH} characters for a uuid submission id`, () => {
+    expect(FORM_ORDER_REF_MAX_LENGTH).toBe(50);
+    for (let i = 0; i < 100; i++) {
+      expect(formOrderRef(submissionId).length).toBe(FORM_ORDER_REF_MAX_LENGTH);
+    }
   });
 
   // Lydia refuses a second request/do with an order_ref it has seen (error 3, 2026-10-21).
