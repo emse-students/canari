@@ -53,7 +53,7 @@ function buildVersionName() {
     }).trim();
   } catch (e) {
     throw new Error(
-      `svelte.config.js: cannot read the commit being built (git rev-parse HEAD failed) - a build must run from a checkout: ${e instanceof Error ? e.message : e}`,
+      `kit.config.js: cannot read the commit being built (git rev-parse HEAD failed) - a build must run from a checkout: ${e instanceof Error ? e.message : e}`,
       { cause: e }
     );
   }
@@ -66,7 +66,7 @@ const config = {
   // SvelteKit 3 REMOVED THE IMPLICIT `$lib` and prefers `#lib` (a package.json subpath import), which
   // TypeScript resolves only with the file extension spelled out - 7645 imports in 1566 files would
   // each have to gain one. This alias is the way the removal message itself names to keep `$lib`; it
-  // is deprecated (a warning at sync/dev/build) and its replacement is tracked in docs/wiki/backlog.md.
+  // is deprecated (a warning at sync/dev/build); why it stays and how it goes: architecture.md, "Two build warnings".
   alias: { $lib: 'src/lib' },
   // NO PRECOMPRESS: nothing serves the result. nginx serves `build/client` from its own COPY
   // (infrastructure/local/Dockerfile.frontend) with no `gzip_static`, so every `.gz`/`.br` was

@@ -99,7 +99,7 @@ such rule, and four real pages were being handed to an enricher as an id: `/form
 `src/lib/seo/staticRoutes.ts` carries that precedence rule. Its set of static paths is **derived**
 from the route tree with `import.meta.glob` at build time, not listed, so a new static route joins
 it by existing and the rule cannot rot. It is a separate module because `serverSeo.ts` reaches
-`internalApi.ts` and therefore `$env/dynamic/private`, which no test can import - the same reason
+`internalApi.ts` and therefore `$app/env/private`, which no test can import - the same reason
 `sitemap.ts` stands alone. `staticRoutes.test.ts` pins the four collisions, which nothing else
 states now that the set is derived.
 

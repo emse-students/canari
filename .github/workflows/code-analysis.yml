@@ -251,16 +251,9 @@ jobs:
         include:
           # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
           # bun's default level; every service skips scripts and is audited at `moderate`.
-          #
-          # TWO SUPPRESSIONS, 2026-10-24, and they wait on a decision rather than a reachability
-          # argument: GHSA-pfhg-q3qv-9q6r and GHSA-27mw-82g8-phjj are LOW SvelteKit advisories fixed
-          # only in `@sveltejs/kit` 3.x, and the user put the kit 3 major after the stable, as its
-          # own chantier (Dependabot's #2154). They are deleted WITH that upgrade - and the step
-          # `Every ignored advisory is still reported` below fails the day kit 3 lands and the audit
-          # stops naming them, so they cannot outlive it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: --ignore=GHSA-pfhg-q3qv-9q6r --ignore=GHSA-27mw-82g8-phjj
+            audit: ""
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate
