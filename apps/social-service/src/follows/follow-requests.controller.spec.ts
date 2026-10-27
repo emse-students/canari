@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { FollowRequestsController } from './follow-requests.controller';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
+import { FOLLOW_ASKS_PER_MINUTE, FollowRequestsController } from './follow-requests.controller';
 
 /**
  * What the controller itself decides before the service runs: nobody follows themselves, and a
@@ -34,6 +35,16 @@ describe('FollowRequestsController', () => {
     const { ctl, ask } = controller(false);
     expect(await ctl.followUser('me', 'you')).toEqual({ ok: true, status: 'pending' });
     expect(ask).toHaveBeenCalledWith('me', 'you');
+  });
+
+  it('throttles the ask per caller, and only the ask', () => {
+    const proto = FollowRequestsController.prototype as unknown as Record<string, object>;
+    expect(Reflect.getMetadata('__guards__', proto.followUser)).toContain(
+      UserResourceThrottlerGuard
+    );
+    expect(Reflect.getMetadata('__guards__', proto.accept)).toBeUndefined();
+    expect(FOLLOW_ASKS_PER_MINUTE).toBeGreaterThanOrEqual(10);
+    expect(FOLLOW_ASKS_PER_MINUTE).toBeLessThanOrEqual(60);
   });
 
   it('answers following: true for a pending request, the meaning older clients give it', async () => {

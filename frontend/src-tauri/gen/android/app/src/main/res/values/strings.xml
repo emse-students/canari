@@ -102,7 +102,7 @@
     <string name="notif_social_follow_request_title">%1$s demande à vous suivre</string>
     <string name="notif_social_follow_request_body">Appuyez pour répondre</string>
     <string name="notif_social_follow_accepted_title">%1$s a accepté votre demande</string>
-    <string name="notif_social_follow_accepted_body">Vous voyez maintenant ses publications</string>
+    <string name="notif_social_follow_accepted_body">Votre demande a été acceptée</string>
     <string name="notif_social_live_cut_title">Votre live a été interrompu</string>
     <string name="notif_social_live_cut_body">La modération a coupé votre live. Ceci est un avertissement.</string>
     <string name="notif_social_live_suspended_title">Lives suspendus</string>

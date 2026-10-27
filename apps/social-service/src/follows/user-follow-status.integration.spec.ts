@@ -142,6 +142,9 @@ maybe('FollowsService against PostgreSQL: the request is ONE idempotent insert',
         "followedUserId" varchar(255) NOT NULL,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         CONSTRAINT "UQ_user_follows_pair" UNIQUE ("followerUserId", "followedUserId"));
+      CREATE TABLE users (id varchar(255) PRIMARY KEY);
+      CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
+      INSERT INTO users (id) VALUES ('target'), ('star');
     `);
     await admin.query(MIGRATION_114);
     ds = new DataSource({

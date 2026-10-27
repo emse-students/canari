@@ -31,10 +31,20 @@ function fakeRepo(rows: Row[]) {
     count: jest.fn(({ where }: { where: Partial<Row> }) =>
       Promise.resolve(rows.filter((r) => matches(r, where)).length)
     ),
-    // The one raw statement the service sends: `recordFollowRequest`'s INSERT ... ON CONFLICT DO
-    // NOTHING RETURNING status. Its real behaviour under concurrency is proven against PostgreSQL
-    // in `user-follow-status.integration.spec.ts`; this stands in for its single-caller semantics.
+    // The two raw statements the service sends: `recordFollowRequest`'s INSERT ... SELECT ... ON
+    // CONFLICT DO NOTHING RETURNING status, and `unfollowUser`'s DELETE ... RETURNING status (in
+    // the driver's `[rows, rowCount]` shape). Their real behaviour - concurrency, the person and
+    // block conditions - is proven against PostgreSQL in `user-follow-status.integration.spec.ts`
+    // and `follow-requests.integration.spec.ts`; this stands in for their single-caller semantics.
     query: jest.fn((sql: string, params: string[]) => {
+      if (/^\s*DELETE FROM user_follows/.test(sql)) {
+        const [followerUserId, followedUserId] = params;
+        const gone = rows.filter((r) => matches(r, { followerUserId, followedUserId }));
+        const keep = rows.filter((r) => !gone.includes(r));
+        rows.length = 0;
+        rows.push(...keep);
+        return Promise.resolve([gone.map((r) => ({ status: r.status })), gone.length]);
+      }
       if (!/^\s*INSERT INTO user_follows/.test(sql)) throw new Error(`unexpected SQL: ${sql}`);
       const [, followerUserId, followedUserId, status] = params;
       if (rows.some((r) => matches(r, { followerUserId, followedUserId }))) {
@@ -173,11 +183,11 @@ describe('FollowsService', () => {
 
     it('withdraws a pending request and unfollows an accepted one, then refuses with a typed not-found', async () => {
       await service().followUser('u1', 'u2');
-      expect(await service().unfollowUser('u1', 'u2')).toEqual({ ok: true });
+      expect(await service().unfollowUser('u1', 'u2')).toEqual({ ok: true, removed: 'pending' });
       expect(await service().userFollowStatus('u1', 'u2')).toBeNull();
       await service().followUser('u1', 'u2');
       accept('u1', 'u2');
-      expect(await service().unfollowUser('u1', 'u2')).toEqual({ ok: true });
+      expect(await service().unfollowUser('u1', 'u2')).toEqual({ ok: true, removed: 'accepted' });
       await expect(service().unfollowUser('u1', 'u2')).rejects.toBeInstanceOf(NotFoundException);
     });
 

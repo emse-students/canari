@@ -1029,21 +1029,33 @@ WP-F3, not built.
 of `PostsController` into `FollowRequestsController` (same URLs), in a module of its own because it
 notifies through `PostsModule` - which already imports `FollowsModule`.
 
-- **Ask**: the person asked gets ONE `follow_request` (bell row + push), from the call whose insert
-  wrote the row. **Across a block, either direction, nothing is written, nobody is told, and the
-  answer is the one a fresh request gets** - a block is never discoverable by asking. A MUTED
-  account may not ask (403): a request is a push to a person.
-- **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which takes the
-  row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
+- **Ask**: ONE `INSERT ... SELECT ... ON CONFLICT DO NOTHING` whose SELECT carries both conditions,
+  so neither is a check-then-insert: the target is a PERSON (a `users` row; an association's id or
+  an unknown one is 404 `FOLLOW_TARGET_NOT_FOUND`) and no block stands, either direction (403
+  `FOLLOW_BLOCKED` - core-service's block status already tells either side, so refusing hides
+  nothing). A MUTED account may not ask (403): a request is a push to a person. The route is
+  throttled per CALLER (`FOLLOW_ASKS_PER_MINUTE`, all targets together).
+- **Told once per pair, from durable state**: the first `follow_request` (and the first
+  `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies, so
+  ask -> withdraw -> ask in a loop pushes once. Never a clock. The request itself still shows in the
+  inbox, which reads `user_follows`; a claim whose notification then failed is logged and not
+  retried.
+- **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which dates
+  `acceptedAt` and takes the row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
   block term is in the statement because the block severing is a best-effort cross-service call.
   The asker gets `follow_accepted`.
 - **Refuse**: the row is deleted, nobody is told, the asker may ask again. The request's bell row
   goes with it, as it does on a withdraw; an acceptance keeps its history.
-- **Pushes**: `social_follow_request` / `social_follow_accepted`, with their native strings in
-  both languages on both platforms. Both carry the `notifications` target until the inbox page
+- **Withdraw / unfollow**: ONE `DELETE ... RETURNING status`, so a withdrawn REQUEST's bell row is
+  dropped on the status the delete itself returned, never a read a racing accept could outdate.
+- **Pushes**: `social_follow_request` / `social_follow_accepted`, mapped by
+  `PostNotificationsService.pushContent` (pinned through the REAL mapping in
+  `follow-requests.integration.spec.ts`), with their native strings in both languages on both
+  platforms. Both carry the `notifications` target until the inbox page
   exists (WP-F4), and belong to NO category in chat-delivery: they always go out.
 - **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
-  pending or accepted, both directions - pinned in `follow-requests.integration.spec.ts`.
+  pending or accepted, both directions, and the `follow_request` bell rows between them (an
+  acceptance's stays, as history) - pinned in `follow-requests.integration.spec.ts`.
 
 ### Who may touch a calendar event
 
