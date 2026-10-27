@@ -191,12 +191,14 @@ describe('FollowsService', () => {
     });
 
     it('does not mix the two follow kinds: an association is followed at once, with no request', async () => {
-      await service().followUser('u1', 'a1');
-      accept('u1', 'a1');
+      await service().followUser('u1', 'u2');
       await service().followAssociation('u1', 'a1');
-      expect(await service().getFollowedUserIdsForUser('u1')).toEqual(['a1']);
+      // The person's follow waits for an answer; the association's is a follow at once.
+      expect(await service().getFollowedUserIdsForUser('u1')).toEqual([]);
       expect(await service().getFollowedAssociationIdsForUser('u1')).toEqual(['a1']);
-      await service().unfollowUser('u1', 'a1');
+      accept('u1', 'u2');
+      expect(await service().getFollowedUserIdsForUser('u1')).toEqual(['u2']);
+      await service().unfollowUser('u1', 'u2');
       expect(await service().isFollowing('u1', 'a1')).toBe(true);
     });
   });

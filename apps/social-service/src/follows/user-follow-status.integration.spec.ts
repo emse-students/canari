@@ -68,6 +68,32 @@ maybe('migration 114: user_follows.status against PostgreSQL', () => {
     expect(await rows()).toEqual(['a->b:accepted', 'b->a:accepted', 'c->a:accepted']);
     await client.query(MIGRATION_114);
     expect(await rows()).toEqual(['a->b:accepted', 'b->a:accepted', 'c->a:accepted']);
+    // Each existing follow is dated: never asked, so accepted when it was made.
+    const { rows: dated } = await client.query(
+      `SELECT count(*)::int AS n FROM user_follows WHERE "acceptedAt" = "createdAt"`
+    );
+    expect(dated[0].n).toBe(3);
+  });
+
+  it('keeps every accepted follow dated, and a notice recorded once per pair and kind', async () => {
+    await expect(
+      client.query(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ('x', 'y', 'accepted')`
+      )
+    ).rejects.toMatchObject({ code: '23514' });
+    await client.query(
+      `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind) VALUES ('x', 'y', 'request')`
+    );
+    const again = await client.query(
+      `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind) VALUES ('x', 'y', 'request')
+       ON CONFLICT DO NOTHING RETURNING kind`
+    );
+    expect(again.rows).toEqual([]);
+    await expect(
+      client.query(
+        `INSERT INTO user_follow_notices ("followerUserId", "followedUserId", kind) VALUES ('x', 'y', 'spam')`
+      )
+    ).rejects.toMatchObject({ code: '23514' });
   });
 
   it('writes a row with no status as a PENDING request: the default fails closed', async () => {
@@ -149,7 +175,9 @@ maybe('FollowsService against PostgreSQL: the request is ONE idempotent insert',
 
   it('a second ask leaves an ACCEPTED follow accepted, and says so', async () => {
     await follows.followUser('fan', 'star');
-    await admin.query(`UPDATE user_follows SET status = 'accepted' WHERE "followerUserId" = 'fan'`);
+    await admin.query(
+      `UPDATE user_follows SET status = 'accepted', "acceptedAt" = now() WHERE "followerUserId" = 'fan'`
+    );
     expect(await follows.followUser('fan', 'star')).toEqual({ ok: true, status: 'accepted' });
     expect(await follows.getFollowedUserIdsForUser('fan')).toEqual(['star']);
   });
