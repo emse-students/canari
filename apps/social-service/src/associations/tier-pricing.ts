@@ -139,3 +139,38 @@ export function fixedPriceFor(
   }
   return { amountCents: product.amountCents, preferential: false };
 }
+
+/**
+ * What a settlement decides for a paid tier, from what the checkout OPENING froze (migration 112)
+ * and which tiers the buyer holds NOW - never from a price, which an admin can edit in between:
+ *
+ * - `held`: the target tier itself is held now (obtained since the opening) - not granted;
+ * - `nothing-held`: no tier is held - granted, the sibling XOR replaces nothing;
+ * - `as-opened`: every tier held now is the one the opening ranked against - granted, which is
+ *   exactly what the opening decided;
+ * - `held-changed`: a tier the opening did not rank against is held (obtained since, or held where
+ *   the opening saw none, or a second tier beside the frozen one) - not granted, so the XOR cannot
+ *   replace a tier nobody ranked this purchase against.
+ */
+export type SettlementVerdict = 'held' | 'nothing-held' | 'as-opened' | 'held-changed';
+
+/**
+ * The settlement's decision (`SettlementVerdict`). `frozenKeys` is the CURRENT `variantKey` of the
+ * tier frozen at the opening - one entry, or none when nothing was held then (or its product is
+ * gone) - read by product id, so a retag in between still matches.
+ */
+export function settlementVerdict(
+  targetKey: string | null,
+  heldKeys: readonly (string | null)[],
+  frozenKeys: readonly (string | null)[]
+): SettlementVerdict {
+  if (heldKeys.includes(targetKey)) return 'held';
+  if (heldKeys.length === 0) return 'nothing-held';
+  if (heldKeys.every((k) => frozenKeys.includes(k))) return 'as-opened';
+  return 'held-changed';
+}
+
+/** True when a settlement verdict grants the tier paid for. */
+export function settlementGrants(verdict: SettlementVerdict): boolean {
+  return verdict === 'nothing-held' || verdict === 'as-opened';
+}

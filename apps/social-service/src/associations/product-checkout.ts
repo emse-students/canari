@@ -96,3 +96,23 @@ export function withCheckoutReturnKey(
  * lock, since it calls another service - and the moment the attempt is written under that lock.
  */
 export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+
+/**
+ * The `code` of the 409 a closing gets when the purchase record is not marked `paid_not_granted`:
+ * only a tier paid for and not granted is owed an outcome (docs/wiki/cotisations.md "Rising to a
+ * higher tier").
+ */
+export const PURCHASE_NOT_CLOSABLE = 'PURCHASE_NOT_CLOSABLE';
+
+/**
+ * The `code` of the 409 a closing gets when that payment's outcome was already recorded: a payment
+ * is closed once (the unique index of migration 113), and the first outcome stands.
+ */
+export const PURCHASE_ALREADY_CLOSED = 'PURCHASE_ALREADY_CLOSED';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the tier the payment was for can no longer
+ * be granted: its product was deleted or is no longer a tier, or its form no longer grants one.
+ * Nothing is written; the payment can still be closed as `refunded`.
+ */
+export const PURCHASE_TIER_GONE = 'PURCHASE_TIER_GONE';

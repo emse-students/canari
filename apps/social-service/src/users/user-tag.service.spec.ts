@@ -387,6 +387,36 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
   });
 
   // A paid form's grant is ranked like a settlement: it never swaps out a dearer tier by the XOR.
+  describe('grantCotisantWithin', () => {
+    it("grants inside the CALLER's transaction, under the buyer's lock, never opening its own", async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+        { name: 'Sans alcool', variantKey: 'sans-alcool' },
+      ]);
+      repo.findOne.mockResolvedValue(null);
+
+      const tag = await service.grantCotisantWithin(
+        repo.manager,
+        'asso1',
+        'user1',
+        'admin1',
+        'avec-alcool',
+        { purchaseRecordId: 'rec-1' }
+      );
+
+      expect(tag).toMatchObject({ tagName: 'cotisant:cercle-avec-alcool', grantedBy: 'admin1' });
+      expect(repo.manager.transaction).not.toHaveBeenCalled();
+      expect(
+        repo.manager.query.mock.calls.some(
+          ([sql, params]: [string, unknown[]]) =>
+            String(sql).includes('pg_advisory_xact_lock(hashtextextended($1, 0))') &&
+            params?.[0] === 'tier:asso1:user1'
+        )
+      ).toBe(true);
+    });
+  });
+
   describe('grantCotisantIfARise', () => {
     const priced = [
       { name: 'Sans alcool', variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null },

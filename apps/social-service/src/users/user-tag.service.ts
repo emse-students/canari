@@ -338,65 +338,108 @@ export class UserTagService {
     metadata: Record<string, unknown>,
     rule: GrantRule
   ): Promise<RankedGrantOutcome | null> {
-    return this.repo.manager.transaction(async (manager) => {
-      await lockBuyerTiers(manager, assocId, userId);
-      const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
-        `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
-        [assocId]
-      );
-      const asso = rows[0];
-      if (!asso) throw new NotFoundException('Association not found');
-      if (!asso.cotisationMode) {
-        throw new BadRequestException('Cotisation is not enabled for this association');
-      }
+    return this.repo.manager.transaction((manager) =>
+      this.grantCotisantIn(manager, assocId, userId, grantedBy, variantKey, metadata, rule)
+    );
+  }
 
-      const tiers = await this.listCotisationTiers(assocId, { manager });
-      // Validate the tier against the association's own catalogue. An arbitrary variantKey would
-      // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
-      if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
-        throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
-      }
-      // The same trap in reverse: an association that dropped its base tier in favour of named ones
-      // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
-      if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
-        throw new BadRequestException('This association has no base tier - a tier must be chosen');
-      }
+  /**
+   * `grantCotisant` - the manager's grant, NOT ranked - inside the CALLER's transaction: the closing
+   * of a payment paid for and not granted (`ProductsService.closePaidNotGranted`) grants the tier and
+   * writes its closing row in one commit. Takes the buyer's tier lock on `manager` itself; a caller
+   * that already holds it on the same transaction simply holds it twice (advisory locks stack within
+   * one session, and both are released by the one commit or rollback).
+   */
+  async grantCotisantWithin(
+    manager: EntityManager,
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>
+  ): Promise<UserTag> {
+    const outcome = await this.grantCotisantIn(
+      manager,
+      assocId,
+      userId,
+      grantedBy,
+      variantKey,
+      metadata,
+      'manual'
+    );
+    if (!outcome || !('granted' in outcome)) {
+      throw new Error('grantCotisantWithin: a manual grant is never skipped nor refused');
+    }
+    return outcome.granted;
+  }
 
-      const { tagName, expiresAt } = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        variantKey
-      );
+  /** The body of `grantCotisantLocked`, on the transaction `manager` belongs to. */
+  private async grantCotisantIn(
+    manager: EntityManager,
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>,
+    rule: GrantRule
+  ): Promise<RankedGrantOutcome | null> {
+    await lockBuyerTiers(manager, assocId, userId);
+    const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
+      `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    const asso = rows[0];
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!asso.cotisationMode) {
+      throw new BadRequestException('Cotisation is not enabled for this association');
+    }
+
+    const tiers = await this.listCotisationTiers(assocId, { manager });
+    // Validate the tier against the association's own catalogue. An arbitrary variantKey would
+    // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
+    if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
+      throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
+    }
+    // The same trap in reverse: an association that dropped its base tier in favour of named ones
+    // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
+    if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
+      throw new BadRequestException('This association has no base tier - a tier must be chosen');
+    }
+
+    const { tagName, expiresAt } = deriveCotisationTag(
+      asso.slug,
+      asso.cotisationMode,
+      new Date(),
+      variantKey
+    );
+    this.logger.debug(
+      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
+    );
+    if (
+      rule === 'unless-holding-any' &&
+      (await this.heldVariantKeys(userId, tiers, manager)).length > 0
+    ) {
       this.logger.debug(
-        `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
+        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
       );
-      if (
-        rule === 'unless-holding-any' &&
-        (await this.heldVariantKeys(userId, tiers, manager)).length > 0
-      ) {
-        this.logger.debug(
-          `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+      return null;
+    }
+    if (rule === 'only-a-rise') {
+      const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
+      if (relation === 'lower' || relation === 'unranked') {
+        this.logger.error(
+          `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
+            `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
         );
-        return null;
+        return { refused: relation };
       }
-      if (rule === 'only-a-rise') {
-        const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
-        if (relation === 'lower' || relation === 'unranked') {
-          this.logger.error(
-            `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
-              `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
-          );
-          return { refused: relation };
-        }
-      }
-      const tag = await this.grantOrRenew(
-        { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
-        manager
-      );
-      await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
-      return { granted: tag };
-    });
+    }
+    const tag = await this.grantOrRenew(
+      { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
+      manager
+    );
+    await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
+    return { granted: tag };
   }
 
   /**

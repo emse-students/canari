@@ -248,16 +248,53 @@ paid. That runs before the lock, so two tabs could both pass it; under the lock 
 refuses `CHECKOUT_IN_PROGRESS` while ANY open attempt of a sibling tier exists
 (`assertNoSiblingAttemptOpen`) - the partial unique index covers only the same product.
 
-**Paid and not granted is a durable state, `paid_not_granted`.** The settlement re-ranks: a tier
-paid while it is no longer `none` or `higher` against what the buyer holds NOW is not granted, so
-the XOR cannot replace the held tier. The payment is recorded with status `paid_not_granted` on
-`purchase_records` (a varchar with no CHECK - no migration), logged at ERROR, listed with a "Not
-granted" mark in the association's purchases and its export (it is money received), never counted
-as having bought the product, and counted every hour by `PaidNotGrantedScheduler` (:29, `count=0`
-at log, ERROR while non-zero). A refund or a manual grant is owed; nothing yet clears the mark once
-that is done. The settlement ranks on the prices of NOW, so an admin who lowers or grids the target
-between the opening and the payment also lands here: ranking against what the opening decided would
-need that decision stored on the checkout row, a column `product_checkouts` does not have.
+**The settlement grants on what the opening decided, never on a price (user, 2026-10-27).** The
+opening freezes WHICH tier it ranked against on the attempt row: `product_checkouts.heldTierProductId`
+(migration 112), the product id of `pickHeldTier`'s choice, null when nothing was held. A product id
+rather than the tier key, because a retag renames the key between an opening and its settlement while
+the id stays; and an opened checkout over a held tier always has that tier's product (a held tag with
+no product is `unranked`, refused at the opening). The settlement re-reads, under the buyer's lock,
+only WHICH tiers the buyer holds now, and `settlementVerdict` (`tier-pricing.ts`) decides with no
+price at all:
+
+| Held now | Verdict | Granted |
+|---|---|---|
+| nothing | `nothing-held` | yes - the XOR replaces nothing |
+| only the frozen tier (matched by product id, so a retag still matches) | `as-opened` | yes - what the opening decided |
+| the target itself | `held` | no |
+| any other tier: obtained since, held where the opening saw none, or a second one beside the frozen tier | `held-changed` | no |
+
+An admin who edits a tier's price between the opening and the payment therefore changes nothing. A
+row opened before migration 112 carries NULL and settles as "nothing was held": the cautious reading,
+since a buyer who holds a tier then lands in `paid_not_granted` - reported, and closed by a person -
+rather than having it replaced. No `status` value was added to `product_checkouts`: a paid rise not
+granted is still a `paid` attempt.
+
+**Paid and not granted is a durable state, `paid_not_granted`.** A verdict that does not grant
+records the payment with status `paid_not_granted` on `purchase_records` (a varchar with no CHECK),
+logs at ERROR, lists it with a "Not granted" mark in the association's purchases and its export (it
+is money received), never counts it as having bought the product, and the hourly
+`PaidNotGrantedScheduler` (:29, `count=0` at log, ERROR while non-zero) counts it until a person
+CLOSES it.
+
+**Closing a marked payment (user, 2026-10-27).** A refund or a grant by hand is owed; the manager
+records which one happened from the purchases list ("Mark refunded" / "Mark granted", an in-app
+confirmation). `POST /api/associations/:id/purchases/:purchaseId/close` with `{ outcome }`, guarded
+`MANAGE_PRODUCTS` like the rest of that list, writes ONE row in `purchase_record_closings` (migration
+113: the record id, `refunded` or `granted`, `closedByUserId`, `createdAt` from the server's own
+`now()`), unique per purchase record. `granted` grants the tier paid for IN the same transaction,
+through the manual grant path (`grantCotisantWithin`, not ranked, the XOR replacing the held tier as
+the manager decided): a boutique record's tier is its product's, a paid form's is the form's
+`cotisationVariantKey`. The record keeps `paid_not_granted` as history, the list and the export show
+the outcome beside the mark, and the hourly count reads only the marked records with NO closing row
+(`countUnclosedPaidNotGranted`). No clock closes anything. Refusals, typed: 404 for a record of
+another association, 409 `PURCHASE_NOT_CLOSABLE` (not marked), `PURCHASE_ALREADY_CLOSED` (the first
+outcome stands; under the locks a second closing reads the first one's row, and the unique index is
+the durable guarantee), `PURCHASE_TIER_GONE` (`granted` asked for a tier whose product or form no
+longer grants one; nothing written, `refunded` stays possible). Each closing writes one `[SHOP]
+[AUDIT]` line naming the outcome, the manager, the association and the buyer. A paid form is NOT
+covered by the freeze: it has no checkout row, and `grantCotisantIfARise` still ranks it on the
+prices of its settlement.
 
 **One lock per buyer per association decides the order, behind one per association.** Every
 per-buyer path takes, in `lockBuyerTiers` (`users/buyer-tier-lock.ts`, the one implementation),
@@ -280,6 +317,7 @@ other.
 | Legacy claim (`grantCotisantUnlessHeld`: "already holds one" read under the locks) | association shared + buyer |
 | Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | association shared + buyer |
 | Tag revocation (`revoke`: the holder read from the row, then the delete) | association shared + buyer |
+| Closing a `paid_not_granted` payment (`closePaidNotGranted`: the record `FOR UPDATE`, then a `granted` grant) | association shared + buyer |
 | Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
 
 **The retag is ONE transaction under the exclusive lock**: it re-reads the product, checks the key,
@@ -308,9 +346,13 @@ opened, and trying again uses the new account.
 through `pg_locks` rather than a timer: two concurrent settlements; a settlement and a checkout
 opening each blocked on a held lock, then re-reading the grant made under it; a manual grant and a
 settlement on one buyer, ending on one tier; two tabs opening two sibling tiers, one refused; a
-retag and a settlement of the same tier, never leaving the old tag; a price lowered between opening
-and payment, marked `paid_not_granted`; and every locked path run on a pool of ONE connection. With
-the lock, the sibling check or the manager-bound read removed, the matching case fails.
+retag and a settlement of the same tier, never leaving the old tag; and every locked path run on a
+pool of ONE connection. With the lock, the sibling check or the manager-bound read removed, the
+matching case fails. The same file proves the 2026-10-27 half: migrations 112 and 113 run twice
+cleanly; an opening freezes the tier it ranked against; a price lowered between opening and payment
+is still GRANTED; a tier obtained since the opening still marks the payment; a payment is closed once,
+two concurrent closings leave one row and one typed refusal, `granted` grants by hand; and the hourly
+count drops by exactly the closed payment.
 
 A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The
 provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in core-service) still answers `AMOUNT_OUT_OF_RANGE`
@@ -835,6 +877,7 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
+| POST | `/api/associations/:id/purchases/:purchaseId/close` | Record how a `paid_not_granted` payment was settled, `refunded` or `granted` (grants the tier by hand); once per payment (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/webhook-failures/:deliveryId/retry` | Re-fire a failed Cercle delivery (`MANAGE_PRODUCTS`, scoped to `:id`) |
 | DELETE | `/api/associations/:id/webhook-failures/:deliveryId` | Drop a failed delivery settled by hand (`MANAGE_PRODUCTS`) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |

@@ -2,6 +2,8 @@ import {
   fixedPriceFor,
   linkedTierKey,
   pickHeldTier,
+  settlementGrants,
+  settlementVerdict,
   tierRelation,
   tierRelationOf,
 } from './tier-pricing';
@@ -149,5 +151,36 @@ describe("fixedPriceFor - the preferential price is the admin's, never computed"
       amountCents: 3000,
       preferential: false,
     });
+  });
+});
+
+describe('settlementVerdict - a settlement grants on what the opening froze, never on a price', () => {
+  it.each([
+    ['nothing held now, nothing frozen', 'avec', [], [], 'nothing-held', true],
+    [
+      'nothing held now, a tier frozen (it expired since)',
+      'avec',
+      [],
+      ['sans'],
+      'nothing-held',
+      true,
+    ],
+    ['the frozen tier is still the one held', 'avec', ['sans'], ['sans'], 'as-opened', true],
+    ['the frozen tier is the base tier', 'avec', [null], [null], 'as-opened', true],
+    ['the target itself was obtained since', 'avec', ['avec'], ['sans'], 'held', false],
+    ['another tier replaced the frozen one', 'avec', ['autre'], ['sans'], 'held-changed', false],
+    ['a tier is held where the opening saw none', 'avec', ['sans'], [], 'held-changed', false],
+    [
+      'a second tier beside the frozen one',
+      'avec',
+      ['sans', null],
+      ['sans'],
+      'held-changed',
+      false,
+    ],
+  ] as const)('%s', (_name, target, held, frozen, verdict, grants) => {
+    const v = settlementVerdict(target, held, frozen);
+    expect(v).toBe(verdict);
+    expect(settlementGrants(v)).toBe(grants);
   });
 });

@@ -128,6 +128,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'proposals.proposedBy': { action: 'anonymise' },
   'proposals.decidedBy': { action: 'anonymise' },
   'user_tags.grantedBy': { action: 'anonymise' },
+  // Who recorded how a payment paid and not granted was settled (migration 113): an accounting
+  // record, kept, its author anonymised like every other authorship column.
+  'purchase_record_closings.closedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -568,6 +571,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `UPDATE channel_workspaces SET "createdBy" = $2 WHERE "createdBy" = $1`,
   },
   { label: 'tags_granted', sql: `UPDATE user_tags SET "grantedBy" = $2 WHERE "grantedBy" = $1` },
+  {
+    label: 'purchase_closings',
+    sql: `UPDATE purchase_record_closings SET "closedByUserId" = $2 WHERE "closedByUserId" = $1`,
+  },
   {
     label: 'moderation_muted',
     sql: `UPDATE user_moderation SET "mutedBy" = $2 WHERE "mutedBy" = $1`,

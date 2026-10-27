@@ -13,6 +13,10 @@
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- product-tier-lock.integration
  *
  * Everything happens in a throwaway schema, dropped at the end.
+ *
+ * It also holds the two halves decided on 2026-10-27 (migrations 112 and 113): the settlement grants
+ * on the tier the OPENING froze, whatever price an admin edits in between, and a payment marked
+ * `paid_not_granted` is closed ONCE by a manager, which is what takes it out of the hourly count.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,6 +30,7 @@ import { Association } from './entities/association.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
+import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
 import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
@@ -43,6 +48,11 @@ const TIER_C = '00000000-0000-4000-8000-0000000000c3';
 const TIER_D = '00000000-0000-4000-8000-0000000000c4';
 const TAG_A = 'cotisant:cercle-it-a';
 const TAG_B = 'cotisant:cercle-it-b';
+const TAG_D = 'cotisant:cercle-it-d';
+const MIGRATION_HELD_TIER = '112_product_checkouts_held_tier.sql';
+const MIGRATION_CLOSINGS = '113_purchase_record_closings.sql';
+
+const migration = (name: string) => readFileSync(join(__dirname, '../migrations', name), 'utf8');
 
 maybe("a buyer's cotisation tiers are ranked and written under one lock (PostgreSQL)", () => {
   const schema = `tier_lock_it_${Math.random().toString(36).slice(2, 10)}`;
@@ -68,6 +78,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   });
   const ENTITIES = (): Function[] => [
     ProductCheckout,
+    PurchaseRecordClosing,
     PurchaseRecord,
     AssociationProduct,
     UserTag,
@@ -125,10 +136,19 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const others = new DataSource(options(true, entities));
     await others.initialize();
     await others.destroy();
-    ds = new DataSource(options(false, [ProductCheckout, ...entities]));
+    ds = new DataSource(options(false, [ProductCheckout, PurchaseRecordClosing, ...entities]));
     await ds.initialize();
     await ds.query(
       readFileSync(join(__dirname, '../migrations/101_product_checkouts.sql'), 'utf8')
+    );
+    // On the admin connection: their `SET lock_timeout` must not stay on a pool connection that
+    // later waits on an advisory lock.
+    await admin.query(migration(MIGRATION_HELD_TIER));
+    await admin.query(migration(MIGRATION_CLOSINGS));
+    await admin.query('RESET lock_timeout');
+    // The buyers' display names a purchases row is answered with (`enrichPurchaseRecords`).
+    await admin.query(
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
     );
 
     await ds.getRepository(Association).save(
@@ -176,9 +196,13 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
   beforeEach(() => error.mockClear());
 
-  /** A fresh buyer per test, so no test reads another's tags. */
-  const newBuyer = () => `buyer-${++buyerSeq}`.padEnd(64, '0');
+  /**
+   * A fresh buyer per test, so no test reads another's tags. The sequence is zero-padded BEFORE the
+   * id is padded, or `buyer-1` and `buyer-10` would pad to the same id.
+   */
+  const newBuyer = () => `buyer-${String(++buyerSeq).padStart(4, '0')}`.padEnd(64, '0');
 
+  /** An attempt written directly, as opened over NO held tier (`heldTierProductId` null). */
   const openAttempt = (userId: string, productId: string) =>
     ds.getRepository(ProductCheckout).save(
       ds.getRepository(ProductCheckout).create({
@@ -195,6 +219,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
         status: 'open',
         expiresAt: new Date(Date.now() + 30 * 60_000),
         settledAt: null,
+        heldTierProductId: null,
         purchaseRecordId: null,
       })
     );
@@ -211,6 +236,35 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
   const refundsLogged = () =>
     error.mock.calls.filter(([m]) => String(m).includes('a refund is owed')).length;
+
+  /** Gives `userId` a tier tag directly, as a held tier the next opening ranks against. */
+  const grantRawTag = (userId: string, tag: string) =>
+    ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
+      [userId, tag, ASSO]
+    );
+
+  /** The typed `code` of a refusal, or null. */
+  const codeOf = (e: unknown): string | null =>
+    e instanceof ConflictException ? (e.getResponse() as { code: string }).code : null;
+
+  /**
+   * A payment of `productId` recorded `paid_not_granted`, as production makes one: opened over tier A
+   * (frozen), then a manager grants tier B before the payment lands, so the buyer no longer holds the
+   * tier the opening ranked against. The buyer ends holding B. Answers the purchase record id.
+   */
+  async function markedRecord(userId: string, productId: string): Promise<string> {
+    await grantRawTag(userId, TAG_A);
+    const { checkoutId } = await service.createCheckoutSession(ASSO, productId, userId);
+    await tags.grantCotisant(ASSO, userId, 'manager', 'b');
+    await settle(checkoutId);
+    const [record] = await ds.query(
+      `SELECT id, status FROM purchase_records WHERE "userId" = $1 AND "productId" = $2`,
+      [userId, productId]
+    );
+    expect(record.status).toBe('paid_not_granted');
+    return record.id as string;
+  }
 
   /**
    * Takes the buyer's tier lock on the test's own connection, grants `tag` inside that transaction,
@@ -423,23 +477,80 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags(holder)).toEqual(['cotisant:cercle-it-c2']);
   });
 
-  it('a price edited between opening and settlement: the payment is MARKED paid and not granted', async () => {
-    const buyer = newBuyer();
-    await ds.query(
-      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
-      [buyer, TAG_B, ASSO]
+  it('migrations 112 and 113 run a second time cleanly, and leave one column and one unique index', async () => {
+    await admin.query(migration(MIGRATION_HELD_TIER));
+    await admin.query(migration(MIGRATION_CLOSINGS));
+    await admin.query('RESET lock_timeout');
+
+    const columns = await ds.query(
+      `SELECT data_type, is_nullable FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = 'product_checkouts' AND column_name = 'heldTierProductId'`,
+      [schema]
     );
+    expect(columns).toEqual([{ data_type: 'uuid', is_nullable: 'YES' }]);
+    const indexes = await ds.query(
+      `SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = 'purchase_record_closings'
+          AND indexname = 'purchase_record_closings_one_per_record'`,
+      [schema]
+    );
+    expect(indexes).toHaveLength(1);
+    expect(indexes[0].indexdef).toMatch(/UNIQUE/);
+    // The checkout status CHECK is untouched: no new state.
+    const [check] = await ds.query(
+      `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+         JOIN pg_namespace n ON n.oid = c.connamespace
+        WHERE c.conname = 'product_checkouts_status' AND n.nspname = $1`,
+      [schema]
+    );
+    expect(check.def).not.toMatch(/not_granted/);
+  });
+
+  it('an opening FREEZES the tier it ranked against on its row', async () => {
+    const buyer = newBuyer();
+    await grantRawTag(buyer, TAG_B);
+
+    const { checkoutId } = await service.createCheckoutSession(ASSO, TIER_D, buyer);
+
+    const [row] = await ds.query(
+      `SELECT "heldTierProductId" FROM product_checkouts WHERE id = $1`,
+      [checkoutId]
+    );
+    expect(row.heldTierProductId).toBe(TIER_B);
+  });
+
+  it('a price edited between opening and settlement changes nothing: the frozen rise is GRANTED', async () => {
+    const buyer = newBuyer();
+    await grantRawTag(buyer, TAG_B);
     // Opened as a rise (2000 over 1500) ...
-    const d = await openAttempt(buyer, TIER_D);
-    // ... then the association lowers the tier below the one held, before the payment lands.
+    const { checkoutId } = await service.createCheckoutSession(ASSO, TIER_D, buyer);
+    // ... then the association lowers the tier below the one held, before the payment lands. Ranked
+    // on today's prices this would be `lower`; ranked on what the opening decided, it is the rise paid.
     await ds.query(`UPDATE association_products SET "amountCents" = 1000 WHERE id = $1`, [TIER_D]);
     try {
-      await settle(d.id);
+      await settle(checkoutId);
     } finally {
       await ds.query(`UPDATE association_products SET "amountCents" = 2000 WHERE id = $1`, [
         TIER_D,
       ]);
     }
+
+    expect(await heldTags(buyer)).toEqual([TAG_D]);
+    const records = await ds.query(
+      `SELECT status FROM purchase_records WHERE "userId" = $1 AND "productId" = $2`,
+      [buyer, TIER_D]
+    );
+    expect(records).toEqual([{ status: 'paid' }]);
+    expect(refundsLogged()).toBe(0);
+  });
+
+  it('a tier obtained since the opening is still re-checked: the payment is MARKED, the tier kept', async () => {
+    const buyer = newBuyer();
+    await grantRawTag(buyer, TAG_A);
+    const { checkoutId } = await service.createCheckoutSession(ASSO, TIER_D, buyer);
+    // A manager grants tier B meanwhile; the XOR drops A, the tier the opening ranked against.
+    await tags.grantCotisant(ASSO, buyer, 'manager', 'b');
+
+    await settle(checkoutId);
 
     expect(await heldTags(buyer)).toEqual([TAG_B]);
     const records = await ds.query(
@@ -447,8 +558,80 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       [buyer, TIER_D]
     );
     expect(records).toEqual([{ status: 'paid_not_granted' }]);
-    expect(
-      await new PurchaseRecordService(ds.getRepository(PurchaseRecord)).countPaidNotGranted()
-    ).toBeGreaterThan(0);
+    expect(refundsLogged()).toBe(1);
+  });
+
+  it('a marked payment is closed ONCE: a second closing is refused with a typed code', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'refunded');
+    expect(closed).toMatchObject({ id: record, notGranted: true, closedOutcome: 'refunded' });
+    expect(closed.closedAt).not.toBeNull();
+
+    const again = await settled(service.closePaidNotGranted(ASSO, record, 'manager-2', 'granted'));
+    expect(codeOf(again.error)).toBe('PURCHASE_ALREADY_CLOSED');
+    // The first outcome stands, the mark stays as history, and the refused `granted` granted nothing.
+    const rows = await ds.query(
+      `SELECT outcome, "closedByUserId" FROM purchase_record_closings WHERE "purchaseRecordId" = $1`,
+      [record]
+    );
+    expect(rows).toEqual([{ outcome: 'refunded', closedByUserId: 'manager-1' }]);
+    const [status] = await ds.query(`SELECT status FROM purchase_records WHERE id = $1`, [record]);
+    expect(status.status).toBe('paid_not_granted');
+    expect(await heldTags(buyer)).toEqual([TAG_B]);
+  });
+
+  it('two closings of one payment at once: exactly one row, the other refused', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+
+    const outcomes = await Promise.all([
+      settled(service.closePaidNotGranted(ASSO, record, 'manager-1', 'refunded')),
+      settled(service.closePaidNotGranted(ASSO, record, 'manager-2', 'refunded')),
+    ]);
+
+    expect(outcomes.filter((o) => o.error === null)).toHaveLength(1);
+    expect(outcomes.map((o) => codeOf(o.error)).filter(Boolean)).toEqual([
+      'PURCHASE_ALREADY_CLOSED',
+    ]);
+    const rows = await ds.query(
+      `SELECT count(*)::int AS n FROM purchase_record_closings WHERE "purchaseRecordId" = $1`,
+      [record]
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it('closing as GRANTED grants the tier paid for, by hand, and swaps the held tier out', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted');
+
+    expect(closed.closedOutcome).toBe('granted');
+    expect(await heldTags(buyer)).toEqual([TAG_D]);
+  });
+
+  it('a payment that is not marked cannot be closed', async () => {
+    const buyer = newBuyer();
+    const { checkoutId } = await service.createCheckoutSession(ASSO, TIER_A, buyer);
+    await settle(checkoutId);
+    const [paid] = await ds.query(`SELECT id FROM purchase_records WHERE "userId" = $1`, [buyer]);
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, paid.id, 'm', 'refunded'));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_NOT_CLOSABLE');
+  });
+
+  it('the hourly count reads only the marked payments nobody has closed', async () => {
+    const purchases = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
+    const before = await purchases.countUnclosedPaidNotGranted();
+    const first = await markedRecord(newBuyer(), TIER_D);
+    await markedRecord(newBuyer(), TIER_D);
+    expect(await purchases.countUnclosedPaidNotGranted()).toBe(before + 2);
+
+    await service.closePaidNotGranted(ASSO, first, 'manager-1', 'refunded');
+
+    expect(await purchases.countUnclosedPaidNotGranted()).toBe(before + 1);
   });
 });

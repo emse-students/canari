@@ -26,6 +26,9 @@ import {
   TIER_NOT_A_RISE,
   TIER_NOT_RANKABLE,
   PAYMENT_ROUTING_CHANGED,
+  PURCHASE_ALREADY_CLOSED,
+  PURCHASE_NOT_CLOSABLE,
+  PURCHASE_TIER_GONE,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -40,6 +43,10 @@ import {
   PurchaseRecord,
   type PurchasePaymentMethod,
 } from '../users/entities/purchase-record.entity';
+import {
+  PurchaseRecordClosing,
+  type PurchaseClosingOutcome,
+} from '../users/entities/purchase-record-closing.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
@@ -47,6 +54,8 @@ import {
   fixedPriceFor,
   linkedTierKey,
   pickHeldTier,
+  settlementGrants,
+  settlementVerdict,
   tierRelationOf,
   type HeldTier,
   type TierRelation,
@@ -205,6 +214,33 @@ interface PreparedPurchase {
   profile: { promo: number | null; formation: string | null };
 }
 
+/**
+ * One row of an association's purchases list and export: money received, with the buyer's display
+ * name, and - for a cotisation tier paid for and not granted - whether a person closed it, and how.
+ */
+export interface PurchaseListRow {
+  id: string;
+  userId: string | null;
+  source: 'form' | 'product';
+  productId: string | null;
+  formId: string | null;
+  productName: string;
+  amountCents: number;
+  paymentMethod: PurchasePaymentMethod;
+  paidAt: string;
+  firstName: string | null;
+  lastName: string | null;
+  /** A cotisation tier paid for and NOT granted (`paid_not_granted`): a refund or a grant is owed. */
+  notGranted: boolean;
+  /**
+   * How a `notGranted` payment was closed (`closePaidNotGranted`, migration 113): `refunded` or
+   * `granted`, null while nobody has recorded it - the mark stays, the closing says it is settled.
+   */
+  closedOutcome: PurchaseClosingOutcome | null;
+  /** When the closing was recorded, by the server's clock; null while open. */
+  closedAt: string | null;
+}
+
 /** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
 interface ResolvedPurchase {
   asso: Association;
@@ -213,6 +249,11 @@ interface ResolvedPurchase {
   paymentTarget: PaymentTarget;
   /** The paying Business's `vendor_token`: never null once the purchase is allowed. */
   vendorToken: string;
+  /**
+   * The product id of the tier this purchase was ranked against (`TierFacts.held`), frozen on the
+   * attempt row: null when nothing was held or the product is not a tier.
+   */
+  heldTierProductId: string | null;
 }
 
 /** True when a create/update request sets any column member pricing is validated on. */
@@ -1378,6 +1419,7 @@ export class ProductsService {
             status: 'open',
             expiresAt: new Date(Date.now() + PRODUCT_REQUEST_LIFETIME_SECONDS * 1000),
             settledAt: null,
+            heldTierProductId: resolved.heldTierProductId,
             purchaseRecordId: null,
           })
         );
@@ -1742,13 +1784,15 @@ export class ProductsService {
   }
 
   /**
-   * Re-ranks a paid cotisation tier against the tier its buyer holds NOW, at settlement: the rank
-   * the checkout checked is the rank of the moment it opened, and the buyer may have obtained
-   * another tier since (another attempt paid, a manual grant). Granting only `none` and `higher`
-   * keeps the sibling XOR from replacing a tier it should not; anything else is a payment taken
-   * for a tier that is not granted, so it is logged at ERROR - a refund is owed - and the payment
-   * is recorded `paid_not_granted`, the durable marker the association's purchases and the hourly
-   * report read. Reads through `manager`, under the locks.
+   * Decides at settlement whether a paid cotisation tier is granted, on what the checkout OPENING
+   * decided and never on a price read now (user, 2026-10-27; migration 112). The opening ranked the
+   * tier against the tier the buyer held then and froze that tier's product id on the row
+   * (`heldTierProductId`), so a price an admin edits between the opening and the payment changes
+   * nothing here. What the settlement re-reads, under the buyer's lock, is WHICH tiers the buyer
+   * holds now (`settlementVerdict`): nothing, or only the frozen tier, is granted; the target itself
+   * or any other tier held is a payment taken for a tier that is not granted - logged at ERROR, a
+   * refund or a manual grant is owed, and recorded `paid_not_granted`, the durable marker the
+   * association's purchases and the hourly report read. Reads through `manager`, under the locks.
    */
   private async settlementMayGrant(
     product: AssociationProduct,
@@ -1758,12 +1802,27 @@ export class ProductsService {
     if (product.type !== 'membership') return true;
     const asso = await manager.findOne(Association, { where: { id: product.associationId } });
     const facts = asso ? await this.tierFactsOf(asso, row.userId, manager) : null;
-    const relation = this.relationOf(product, facts);
-    if (relation === 'none' || relation === 'higher') return true;
+    const heldKeys = facts?.heldKeys ?? [];
+    // The frozen tier by PRODUCT id, as it is named now: a retag in between still matches it. A
+    // product deleted since, like a row opened before migration 112, freezes nothing.
+    const frozen = row.heldTierProductId
+      ? facts?.tiers.find((t) => t.id === row.heldTierProductId)
+      : undefined;
+    const frozenKeys = frozen ? [frozen.variantKey] : [];
+    const verdict = settlementVerdict(product.variantKey, heldKeys, frozenKeys);
+    const describe =
+      `product=${product.id.slice(0, 8)} user=${row.userId.slice(0, 8)} ` +
+      `held=[${heldKeys.map((k) => k ?? 'base').join(',')}] ` +
+      `opened-over=${frozen ? (frozen.variantKey ?? 'base') : row.heldTierProductId ? 'a deleted tier' : 'none'}`;
+    if (settlementGrants(verdict)) {
+      this.logger.debug(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: tier granted (${verdict}) ${describe}`
+      );
+      return true;
+    }
     this.logger.error(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier product=${product.id.slice(0, 8)} is ` +
-        `${relation} against the tier user=${row.userId.slice(0, 8)} now holds ` +
-        `(${facts?.held?.variantKey ?? 'base'}) - payment recorded, tier NOT granted; a refund is owed`
+      `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier is ${verdict} at settlement (${describe}) - ` +
+        'payment recorded, tier NOT granted; a refund is owed'
     );
     return false;
   }
@@ -2138,30 +2197,19 @@ export class ProductsService {
       throw new BadRequestException('No amount provided for this product');
     }
 
-    return { asso, product, amountCents, paymentTarget, vendorToken };
+    // What the opening decided, frozen on the row: the tier it ranked against. The settlement grants
+    // on it and never re-reads a price (`settlementMayGrant`). An opened tier checkout over a held
+    // tier always has that tier's product: a held tag with no product is `unranked`, refused above.
+    const heldTierProductId =
+      product.type === 'membership' ? this.heldTierProductIdOf(facts) : null;
+    return { asso, product, amountCents, paymentTarget, vendorToken, heldTierProductId };
   }
 
   /**
    * Lists all completed purchases for an association (boutique + paid forms).
    * Requires MANAGE_PRODUCTS on the association (enforced by controller).
    */
-  async listAssociationPurchases(associationId: string): Promise<
-    Array<{
-      id: string;
-      userId: string | null;
-      source: 'form' | 'product';
-      productId: string | null;
-      formId: string | null;
-      productName: string;
-      amountCents: number;
-      paymentMethod: PurchasePaymentMethod;
-      paidAt: string;
-      firstName: string | null;
-      lastName: string | null;
-      /** A cotisation tier paid for and NOT granted (`paid_not_granted`): a refund or a grant is owed. */
-      notGranted: boolean;
-    }>
-  > {
+  async listAssociationPurchases(associationId: string): Promise<PurchaseListRow[]> {
     const records = await this.purchaseRecordService.listPaidByAssociation(associationId);
     return this.enrichPurchaseRecords(records);
   }
@@ -2210,7 +2258,14 @@ export class ProductsService {
         paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'En ligne',
         paidAt: new Date(p.paidAt),
         // A tier paid for and not granted is money received that a refund or a grant must settle.
-        status: p.notGranted ? 'Payé, non accordé : à régulariser' : 'Payé',
+        // Closed or not, the mark stays: the column says how it was settled, if it was.
+        status: !p.notGranted
+          ? 'Payé'
+          : p.closedOutcome === 'refunded'
+            ? 'Payé, non accordé : remboursé'
+            : p.closedOutcome === 'granted'
+              ? 'Payé, non accordé : accordé à la main'
+              : 'Payé, non accordé : à régulariser',
       });
     });
 
@@ -2242,35 +2297,31 @@ export class ProductsService {
     return this.enrichPurchaseRecords(records);
   }
 
-  /** Attaches buyer display names to purchase records. */
-  private async enrichPurchaseRecords(records: PurchaseRecord[]): Promise<
-    Array<{
-      id: string;
-      userId: string | null;
-      source: 'form' | 'product';
-      productId: string | null;
-      formId: string | null;
-      productName: string;
-      amountCents: number;
-      paymentMethod: PurchasePaymentMethod;
-      paidAt: string;
-      firstName: string | null;
-      lastName: string | null;
-      /** A cotisation tier paid for and NOT granted (`paid_not_granted`): a refund or a grant is owed. */
-      notGranted: boolean;
-    }>
-  > {
+  /**
+   * Attaches buyer display names, and the closing of each record marked `paid_not_granted`, to
+   * purchase records. `manager` reads inside the caller's transaction (a closing answering its row).
+   */
+  private async enrichPurchaseRecords(
+    records: PurchaseRecord[],
+    manager: EntityManager = this.productRepo.manager
+  ): Promise<PurchaseListRow[]> {
     // A guest's payment on a public form names no buyer (migration 103): nobody to look up.
     const userIds = [...new Set(records.map((r) => r.userId).filter((id) => id != null))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {
       const rows: { id: string; firstName: string | null; lastName: string | null }[] =
-        await this.productRepo.manager.query(
-          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
-        );
+        await manager.query(`SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`, [
+          userIds,
+        ]);
       rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
     }
+
+    // Only a record marked `paid_not_granted` can have been closed: nothing to read without one.
+    const marked = records.filter((r) => r.status === 'paid_not_granted').map((r) => r.id);
+    const closings =
+      marked.length > 0
+        ? await this.purchaseRecordService.closingsOf(marked, manager)
+        : new Map<string, PurchaseRecordClosing>();
 
     return records.map((r) => ({
       id: r.id,
@@ -2285,6 +2336,8 @@ export class ProductsService {
       firstName: nameMap.get(r.userId)?.firstName ?? null,
       lastName: nameMap.get(r.userId)?.lastName ?? null,
       notGranted: r.status === 'paid_not_granted',
+      closedOutcome: closings.get(r.id)?.outcome ?? null,
+      closedAt: closings.get(r.id)?.createdAt.toISOString() ?? null,
     }));
   }
 
@@ -2363,8 +2416,19 @@ export class ProductsService {
   }
 
   /**
+   * The product id of the tier a purchase is ranked against (`TierFacts.held`, picked by
+   * `pickHeldTier`), which a checkout opening freezes on its row: null when nothing is held.
+   */
+  private heldTierProductIdOf(facts: TierFacts | null): string | null {
+    const held = facts?.held;
+    if (!held) return null;
+    return facts.tiers.find((t) => t.variantKey === held.variantKey)?.id ?? null;
+  }
+
+  /**
    * Where a tier product stands against what the viewer holds (`tierRelationOf`): `none` without
-   * facts. ONE call shared by the listing, the checkout and the settlement.
+   * facts. ONE call shared by the listing and the checkout; the settlement decides on what the
+   * checkout froze (`settlementMayGrant`).
    */
   private relationOf(product: AssociationProduct, facts: TierFacts | null): TierRelation {
     return facts ? tierRelationOf(product, facts.heldKeys, facts.held) : 'none';
@@ -2619,6 +2683,169 @@ export class ProductsService {
     });
     const [enriched] = await this.enrichPurchaseRecords([record]);
     return enriched;
+  }
+
+  /**
+   * CLOSES a payment marked `paid_not_granted` (user, 2026-10-27; migration 113): a manager records
+   * WHICH outcome settled it - `refunded` (the money went back, outside Canari) or `granted` (the tier
+   * is granted by hand, here, by the manual grant path `grantCotisantWithin`). One durable row per
+   * purchase record, its time the server's own `now()`; the record keeps its mark as history, and the
+   * hourly report stops counting it (`PaidNotGrantedScheduler`). No clock closes anything.
+   *
+   * Everything runs in ONE transaction, in the order every tier path takes: the association's and the
+   * buyer's tier locks (`lockBuyerTiers`), the purchase record row (`FOR UPDATE`), then the tags. So a
+   * grant here cannot interleave with a settlement or another grant of that buyer, and two closings of
+   * one payment run one after the other: the second reads the first one's row and is refused
+   * `PURCHASE_ALREADY_CLOSED`. The unique index is the durable guarantee under that check.
+   *
+   * Refusals, typed: 404 when the record is not this association's; 409 `PURCHASE_NOT_CLOSABLE` when
+   * it is not marked `paid_not_granted`; 409 `PURCHASE_ALREADY_CLOSED`; 409 `PURCHASE_TIER_GONE` for
+   * `granted` when the tier paid for can no longer be granted (nothing is written: `refunded` stays
+   * open to the manager).
+   */
+  async closePaidNotGranted(
+    associationId: string,
+    purchaseId: string,
+    closedBy: string,
+    outcome: PurchaseClosingOutcome
+  ): Promise<PurchaseListRow> {
+    this.logger.debug(
+      `[SHOP] closing purchase=${purchaseId.slice(0, 8)} association=${associationId.slice(0, 8)} as ${outcome}`
+    );
+    // Buyer and association never change on a record, so they can be read before any lock; the
+    // locks come FIRST, then the row - the order every tier path takes.
+    const head = await this.productRepo.manager.findOne(PurchaseRecord, {
+      where: { id: purchaseId, associationId },
+    });
+    if (!head) {
+      this.logger.warn(
+        `[SHOP] closing refused: purchase=${purchaseId.slice(0, 8)} is not a purchase of association=${associationId.slice(0, 8)}`
+      );
+      throw new NotFoundException('Purchase not found');
+    }
+    if (head.status !== 'paid_not_granted' || !head.userId) {
+      throw this.purchaseNotClosable(head);
+    }
+    const buyer = head.userId;
+    let closed: PurchaseListRow;
+    try {
+      closed = await this.productRepo.manager.transaction(async (manager) => {
+        await this.lockBuyerTiers(manager, associationId, buyer);
+        const record = await manager.findOne(PurchaseRecord, {
+          where: { id: purchaseId, associationId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!record || record.status !== 'paid_not_granted') {
+          throw this.purchaseNotClosable(record ?? head);
+        }
+        if ((await this.purchaseRecordService.closingsOf([record.id], manager)).has(record.id)) {
+          throw this.purchaseAlreadyClosed(record.id);
+        }
+        if (outcome === 'granted') await this.grantClosedTier(manager, record, closedBy);
+        await manager.insert(PurchaseRecordClosing, {
+          purchaseRecordId: record.id,
+          outcome,
+          closedByUserId: closedBy,
+        });
+        const [row] = await this.enrichPurchaseRecords([record], manager);
+        return row;
+      });
+    } catch (err) {
+      // The unique index answering a closing that slipped past the check above: still the 409.
+      if (isUniqueViolation(err)) throw this.purchaseAlreadyClosed(purchaseId);
+      throw err;
+    }
+    // The audit line of a money decision: who recorded which outcome for which payment.
+    this.logger.log(
+      `[SHOP] [AUDIT] purchase=${purchaseId.slice(0, 8)} paid and not granted CLOSED as ${outcome} ` +
+        `by=${closedBy.slice(0, 8)} association=${associationId.slice(0, 8)} buyer=${buyer.slice(0, 8)}`
+    );
+    return closed;
+  }
+
+  /**
+   * Grants, by hand, the tier a `paid_not_granted` record paid for, inside the closing's transaction:
+   * a boutique record's tier is its product's (`variantKey`, read now, so a retag still matches), a
+   * paid form's is the form's `cotisationVariantKey`. A manager's grant, NOT ranked, exactly like the
+   * roster's: the sibling XOR replaces whatever tier the buyer holds, which is the decision the
+   * manager is recording. Refuses `PURCHASE_TIER_GONE` when that tier no longer exists.
+   */
+  private async grantClosedTier(
+    manager: EntityManager,
+    record: PurchaseRecord,
+    closedBy: string
+  ): Promise<void> {
+    let variantKey: string | null;
+    if (record.source === 'product') {
+      const product = record.productId
+        ? await manager.findOne(AssociationProduct, {
+            where: { id: record.productId, associationId: record.associationId },
+          })
+        : null;
+      if (product?.type !== 'membership') throw this.purchaseTierGone(record, 'its product');
+      variantKey = product.variantKey;
+    } else {
+      const rows: { grantsCotisation: boolean; cotisationVariantKey: string | null }[] =
+        record.formId
+          ? await manager.query(
+              `SELECT "grantsCotisation", "cotisationVariantKey" FROM forms WHERE id = $1 AND "associationId" = $2`,
+              [record.formId, record.associationId]
+            )
+          : [];
+      if (!rows[0]?.grantsCotisation) throw this.purchaseTierGone(record, 'its form');
+      variantKey = rows[0].cotisationVariantKey;
+    }
+    await this.userTagService.grantCotisantWithin(
+      manager,
+      record.associationId,
+      record.userId as string,
+      closedBy,
+      variantKey,
+      {
+        purchaseRecordId: record.id,
+        paymentIntentId: record.stripePaymentIntentId,
+        manualGrant: true,
+      }
+    );
+    this.logger.log(
+      `[SHOP] purchase=${record.id.slice(0, 8)}: tier ${variantKey ?? 'base'} granted by hand ` +
+        `to user=${(record.userId as string).slice(0, 8)} by=${closedBy.slice(0, 8)}`
+    );
+  }
+
+  /** The typed 409 of a closing asked of a record that is not marked `paid_not_granted`, logged. */
+  private purchaseNotClosable(record: PurchaseRecord): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_NOT_CLOSABLE}): purchase=${record.id.slice(0, 8)} is ` +
+        `${record.status}${record.userId ? '' : ' with no buyer account'}`
+    );
+    return new ConflictException({
+      code: PURCHASE_NOT_CLOSABLE,
+      message: 'Only a membership paid for and not granted can be closed.',
+    });
+  }
+
+  /** The typed 409 of a second closing of one payment, logged. */
+  private purchaseAlreadyClosed(purchaseId: string): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_ALREADY_CLOSED}): purchase=${purchaseId.slice(0, 8)} was already closed`
+    );
+    return new ConflictException({
+      code: PURCHASE_ALREADY_CLOSED,
+      message: 'The outcome of this payment was already recorded.',
+    });
+  }
+
+  /** The typed 409 of a `granted` closing whose tier can no longer be granted, logged. */
+  private purchaseTierGone(record: PurchaseRecord, what: string): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_TIER_GONE}): purchase=${record.id.slice(0, 8)} - ${what} ` +
+        'no longer grants a membership tier'
+    );
+    return new ConflictException({
+      code: PURCHASE_TIER_GONE,
+      message: 'The membership tier this payment was for no longer exists.',
+    });
   }
 
   // ── Post-purchase ─────────────────────────────────────────────────────────

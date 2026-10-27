@@ -13,6 +13,11 @@ const TAG = '[PAID_NOT_GRANTED]';
  * the durable marker every hour and prints ONE line - `log` with `count=0`, `error` while any row
  * carries it. The association's purchases list and export show which rows.
  *
+ * A marked payment leaves the count only when a person CLOSES it from the purchases list, recording
+ * whether the money was refunded or the tier granted by hand (`ProductsService.closePaidNotGranted`,
+ * migration 113). No clock decides anything: a marked payment stays reported until its outcome is
+ * recorded, and the mark itself stays on the record as history.
+ *
  * NO USER DATA in the line: a count only. On zero it still prints, because that line is the report's
  * own liveness proof - without it, a report that stopped running would read like an empty count.
  */
@@ -37,15 +42,15 @@ export class PaidNotGrantedScheduler {
 
   /** One reading and its line, separated so a test can call it without a scheduler. */
   async reportOnce(): Promise<number> {
-    this.logger.debug(`${TAG} counting the purchases paid and not granted`);
-    const count = await this.purchases.countPaidNotGranted();
+    this.logger.debug(`${TAG} counting the purchases paid, not granted and not closed`);
+    const count = await this.purchases.countUnclosedPaidNotGranted();
     if (count === 0) {
       this.logger.log(`${TAG} count=0`);
       return count;
     }
     this.logger.error(
-      `${TAG} count=${count}: cotisation tier(s) paid for and NOT granted - a refund or a manual ` +
-        "grant is owed; the rows are marked in the association's purchases"
+      `${TAG} count=${count}: cotisation tier(s) paid for, NOT granted and not closed - a refund ` +
+        "or a manual grant is owed, then its outcome recorded in the association's purchases"
     );
     return count;
   }

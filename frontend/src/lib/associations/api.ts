@@ -1846,7 +1846,17 @@ export interface AssociationPurchase {
    * when the payment landed. A refund or a manual grant is owed.
    */
   notGranted?: boolean;
+  /**
+   * How a `notGranted` payment was closed by a manager (`closePaidNotGranted`): `refunded` or
+   * `granted`, null while nobody has recorded it. The `notGranted` mark stays either way.
+   */
+  closedOutcome?: PurchaseClosingOutcome | null;
+  /** When that outcome was recorded, by the server's clock; null while open. */
+  closedAt?: string | null;
 }
+
+/** The two outcomes that close a payment paid for and not granted. */
+export type PurchaseClosingOutcome = 'refunded' | 'granted';
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
@@ -1964,6 +1974,22 @@ export async function grantProductPurchase(
     { method: 'POST', body: JSON.stringify(payload) }
   );
   return row;
+}
+
+/**
+ * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
+ * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
+ * call is refused `PURCHASE_ALREADY_CLOSED`. Requires MANAGE_PRODUCTS.
+ */
+export async function closePaidNotGranted(
+  associationId: string,
+  purchaseId: string,
+  outcome: PurchaseClosingOutcome
+): Promise<AssociationPurchase> {
+  return request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
+    { method: 'POST', body: JSON.stringify({ outcome }) }
+  );
 }
 
 /** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */

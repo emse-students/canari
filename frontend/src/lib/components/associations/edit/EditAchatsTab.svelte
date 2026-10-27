@@ -4,9 +4,11 @@
     listAssociationProductsForManage,
     listAssociationPurchases,
     grantProductPurchase,
+    closePaidNotGranted,
     type Association,
     type AssociationProduct,
     type AssociationPurchase,
+    type PurchaseClosingOutcome,
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -16,6 +18,8 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { closingRefusalMessage } from '$lib/associations/purchaseClosing';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -33,6 +37,8 @@
   let grantProductId = $state('');
   let grantAmountEuros = $state<number | ''>('');
   let grantingProduct = $state(false);
+  /** The purchase whose outcome is being recorded, so its two buttons cannot be clicked twice. */
+  let closingId = $state<string | null>(null);
 
   /**
    * Products a cash sale may be recorded against. A `balance_topup` is excluded on purpose: it
@@ -82,6 +88,47 @@
     if (method === 'cash') return m.asso_achats_payment_cash();
     if (method === 'online' || method === 'stripe') return m.asso_achats_payment_online();
     return method;
+  }
+
+  /** The amount of a purchase as the table shows it. */
+  function amountLabel(purchase: AssociationPurchase): string {
+    return `${(purchase.amountCents / 100).toFixed(2)} €`;
+  }
+
+  /**
+   * Records how a payment paid for and not granted was settled, after an in-app confirmation. The
+   * server answers the updated row, which replaces this one: the mark stays, the outcome shows.
+   * `granted` grants the tier by hand on the server, replacing the tier the buyer holds.
+   */
+  async function handleClose(purchase: AssociationPurchase, outcome: PurchaseClosingOutcome) {
+    const buyer = purchaseBuyerName(purchase);
+    const confirmed = await showConfirm(
+      outcome === 'refunded'
+        ? m.asso_achats_close_refunded_confirm({ buyer, amount: amountLabel(purchase) })
+        : m.asso_achats_close_granted_confirm({ buyer, item: purchase.productName }),
+      {
+        confirmLabel:
+          outcome === 'refunded'
+            ? m.asso_achats_close_refunded_button()
+            : m.asso_achats_close_granted_button(),
+      }
+    );
+    if (!confirmed) return;
+    closingId = purchase.id;
+    purchasesError = '';
+    try {
+      const row = await closePaidNotGranted(asso.id, purchase.id, outcome);
+      purchases = purchases.map((p) => (p.id === row.id ? row : p));
+      Log.i('ASSO', `purchase ${purchase.id.slice(0, 8)} closed as ${outcome}`);
+    } catch (e) {
+      Log.i(
+        'ASSO',
+        `closing purchase ${purchase.id.slice(0, 8)} as ${outcome} refused: ${String(e)}`
+      );
+      purchasesError = closingRefusalMessage(e);
+    } finally {
+      closingId = null;
+    }
   }
 
   async function handleGrantProduct() {
@@ -257,6 +304,41 @@
                   >
                     {m.asso_achats_not_granted()}
                   </span>
+                  {#if purchase.closedOutcome}
+                    <span
+                      class="bg-cn-bg text-text-muted ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                      title={purchase.closedAt
+                        ? m.asso_achats_closed_hint({
+                            date: new Date(purchase.closedAt).toLocaleString(
+                              getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                            ),
+                          })
+                        : undefined}
+                    >
+                      {purchase.closedOutcome === 'refunded'
+                        ? m.asso_achats_closed_refunded()
+                        : m.asso_achats_closed_granted()}
+                    </span>
+                  {:else}
+                    <span class="mt-1 flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        disabled={closingId === purchase.id}
+                        onclick={() => handleClose(purchase, 'refunded')}
+                        class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {m.asso_achats_close_refunded_button()}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={closingId === purchase.id}
+                        onclick={() => handleClose(purchase, 'granted')}
+                        class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {m.asso_achats_close_granted_button()}
+                      </button>
+                    </span>
+                  {/if}
                 {/if}
               </td>
               <td class="px-4 py-3">
@@ -274,7 +356,7 @@
               <td class="text-text-muted px-4 py-3">{paymentMethodLabel(purchase.paymentMethod)}</td
               >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
-                {(purchase.amountCents / 100).toFixed(2)} €
+                {amountLabel(purchase)}
               </td>
             </tr>
           {/each}
