@@ -4063,4 +4063,9 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
   the conversation id changes: the page remounts on any route change, so an edit left open there
   left the edited message's text as the draft, with no banner, for Send to post twice. Test:
   `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
-  derived and its late writers gated.
+  derived and its late writers gated - and created BEFORE the await or callback they outlive.
+- **Two keys, one risk.** Drafts are keyed by `convs.selectedContact`, which for a DM is the map key
+  (its display name), while the edit's reset follows `conversation.id`. A DM whose map key changes
+  under an open conversation (a name resolved late, a rename) strands the draft under the old key:
+  invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
+  "vanishes" from a DM.
