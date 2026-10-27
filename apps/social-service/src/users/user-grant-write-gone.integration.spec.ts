@@ -142,7 +142,9 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
   it('a renewal across a revoke grants a NEW row, never the revoked one written back', async () => {
     const userId = crypto.randomUUID();
     const first = await grant(userId, 'first-grantor', { first: true });
-    const ran = interleave(tags, () => tagService.revokeByName(userId, first.tagName));
+    const ran = interleave(tags, () =>
+      tagService.revokeByName(userId, first.tagName, first.issuingAssocId as string)
+    );
     await grant(userId, 'second-grantor', { second: true });
     expect(ran()).toBe(true);
     const row = await tagOf(userId);

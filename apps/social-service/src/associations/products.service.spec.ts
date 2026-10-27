@@ -202,9 +202,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
       hasActiveTag: jest.fn(),
+      hasActiveTagFromAnyIssuer: jest.fn(),
       getActiveTag: jest.fn(
-        (_userId: string, _tagName: string): Promise<{ expiresAt: Date | null } | null> =>
-          Promise.resolve(null)
+        (
+          _userId: string,
+          _tagName: string,
+          _issuer: string
+        ): Promise<{ expiresAt: Date | null } | null> => Promise.resolve(null)
       ),
       listByUser: jest.fn(() => Promise.resolve([])),
       listHeldCotisationTiers: jest.fn(() => Promise.resolve([])),
@@ -305,6 +309,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
       'user1',
       'cotisant:bde',
+      'asso1',
       expect.anything()
     );
   });
@@ -1100,6 +1105,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
         'user1',
         'cotisant:cercle-sans-alcool',
+        'asso1',
         expect.anything()
       );
     });
@@ -1270,7 +1276,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo, userTagService } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
       productRepo.findOne.mockResolvedValue(product({ requiredTags: ['tag:a', 'tag:b'] }));
-      userTagService.hasActiveTag.mockResolvedValue(false);
+      userTagService.hasActiveTagFromAnyIssuer.mockResolvedValue(false);
 
       await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
         ForbiddenException
@@ -1281,8 +1287,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo, userTagService } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
       productRepo.findOne.mockResolvedValue(product({ requiredTags: ['tag:a', 'tag:b'] }));
-      userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
-        Promise.resolve(tagName === 'tag:b')
+      userTagService.hasActiveTagFromAnyIssuer.mockImplementation(
+        (_userId: string, tagName: string) => Promise.resolve(tagName === 'tag:b')
       );
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
@@ -1296,8 +1302,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         product({ membersOnly: true, requiredTags: ['tag:vip'] })
       );
       // Buyer holds neither the association's base cotisant tag nor any tier - only tag:vip.
-      userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
-        Promise.resolve(tagName === 'tag:vip')
+      userTagService.hasActiveTagFromAnyIssuer.mockImplementation(
+        (_userId: string, tagName: string) => Promise.resolve(tagName === 'tag:vip')
       );
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
@@ -1375,7 +1381,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         .mockResolvedValueOnce([avecAlcool, sansAlcool]) // listAllActive's own products query
         .mockResolvedValueOnce([avecAlcool, sansAlcool]); // cotisantStatusFor's tier query
       assoRepo.find.mockResolvedValue([cercle]);
-      userTagService.listByUser.mockResolvedValue([{ tagName: 'cotisant:cercle-sans-alcool' }]);
+      userTagService.listByUser.mockResolvedValue([
+        { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+      ]);
 
       const result = await service.listAllActive('user1');
 
@@ -1732,7 +1740,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const tiers = [sansAlcool(), avecAlcool()];
       productRepo.find.mockResolvedValue(tiers);
       assoRepo.find.mockResolvedValue([cercle()]);
-      userTagService.listByUser.mockResolvedValue([{ tagName: 'cotisant:cercle-sans-alcool' }]);
+      userTagService.listByUser.mockResolvedValue([
+        { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+      ]);
 
       const mine = await service.listByAssoc('asso1', 'user1');
       expect(mine.find((p) => p.id === 'prod-avec')).toMatchObject({
@@ -1771,13 +1781,19 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
 
     describe('the shop listing says where each tier stands, and what it would charge', () => {
-      async function listed(heldTags: string[], extra: AssociationProduct[] = []) {
+      async function listed(
+        heldTags: string[],
+        extra: AssociationProduct[] = [],
+        issuingAssocId = 'asso1'
+      ) {
         const { service, productRepo, assoRepo, userTagService } = makeService();
         const all = [sansAlcool(), avecAlcool(), ...extra];
         const tiers = all.filter((p) => p.type === 'membership');
         productRepo.find.mockResolvedValueOnce(all).mockResolvedValueOnce(tiers);
         assoRepo.find.mockResolvedValue([cercle()]);
-        userTagService.listByUser.mockResolvedValue(heldTags.map((tagName) => ({ tagName })));
+        userTagService.listByUser.mockResolvedValue(
+          heldTags.map((tagName) => ({ tagName, issuingAssocId }))
+        );
         const result = await service.listAllActive('user1');
         return (id: string) => {
           const p = result.find((r) => r.id === id)!;
@@ -1795,6 +1811,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const of = await listed(['cotisant:cercle-avec-alcool']);
         expect(of('prod-sans')).toEqual({ relation: 'lower', due: null });
         expect(of('prod-avec')).toEqual({ relation: 'held', due: null });
+      });
+
+      it('a tag of the same name issued by ANOTHER association holds no tier here', async () => {
+        const of = await listed(['cotisant:cercle-avec-alcool'], [], 'asso2');
+        expect(of('prod-sans')).toEqual({ relation: 'none', due: 1500 });
+        expect(of('prod-avec')).toEqual({ relation: 'none', due: 3000 });
       });
 
       it('a viewer holding nothing: none, each at its full price', async () => {

@@ -1,5 +1,6 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { UserTagService } from './user-tag.service';
+import { TAG_OUTSIDE_ISSUER_NAMESPACE, tagNamespacePart, UserTagService } from './user-tag.service';
 import { UserTag } from './entities/user-tag.entity';
 
 describe('UserTagService.listCotisants / exportCotisants', () => {
@@ -255,12 +256,97 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
+  describe('tagNamespacePart', () => {
+    it('is the part after the category, and null without a category or a rest', () => {
+      expect(tagNamespacePart('cotisant:bde-2026-2027')).toBe('bde-2026-2027');
+      expect(tagNamespacePart('cotisant:')).toBeNull();
+      expect(tagNamespacePart(':bde')).toBeNull();
+      expect(tagNamespacePart('bde')).toBeNull();
+    });
+  });
+
+  // A tag grant is scoped to the association that grants it.
+  describe('grantTagForAssociation', () => {
+    /** Answers the namespace owner lookup with `owner`; every other query (the locks) with []. */
+    const ownerIs = (repo: { manager: { query: jest.Mock } }, owner: string | null) =>
+      repo.manager.query.mockImplementation((sql: string) =>
+        Promise.resolve(sql.includes('FROM associations') && owner ? [{ id: owner }] : [])
+      );
+
+    it('grants a tag in its own namespace, issued by itself, after the buyer lock', async () => {
+      const { service, repo } = makeService();
+      ownerIs(repo, 'asso1');
+
+      const tag = await service.grantTagForAssociation('asso1', {
+        userId: 'user1',
+        tagName: 'cotisant:bde-2026-2027',
+        grantedBy: 'admin1',
+      });
+
+      expect(tag).toMatchObject({ tagName: 'cotisant:bde-2026-2027', issuingAssocId: 'asso1' });
+      const sqls = (repo.manager.query as jest.Mock).mock.calls.map(([sql]) => String(sql));
+      const lockAt = sqls.findIndex((s) => s.includes('pg_advisory_xact_lock('));
+      const ownerAt = sqls.findIndex((s) => s.includes('FROM associations'));
+      expect(lockAt).toBeGreaterThanOrEqual(0);
+      expect(ownerAt).toBeGreaterThan(lockAt);
+      expect(repo.manager.query.mock.calls[ownerAt][1]).toEqual(['bde-2026-2027']);
+    });
+
+    it.each([
+      ['another association', 'asso2'],
+      ['no association', null],
+    ])(
+      "refuses (403 TAG_OUTSIDE_ISSUER_NAMESPACE) a name in %s's namespace, writing nothing",
+      async (_label, owner) => {
+        const { service, repo } = makeService();
+        ownerIs(repo, owner);
+
+        const refused = service.grantTagForAssociation('asso1', {
+          userId: 'user1',
+          tagName: 'cotisant:cercle-avec-alcool-2026-2027',
+          grantedBy: 'admin1',
+        });
+
+        await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(refused).rejects.toMatchObject({
+          response: { code: TAG_OUTSIDE_ISSUER_NAMESPACE },
+        });
+        expect(repo.query).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses a name with no category without looking up an owner', async () => {
+      const { service, repo } = makeService();
+      ownerIs(repo, 'asso1');
+
+      await expect(
+        service.grantTagForAssociation('asso1', {
+          userId: 'user1',
+          tagName: 'bde-2026-2027',
+          grantedBy: 'admin1',
+        })
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getActiveTag', () => {
+    it('reads only the rows the asked association issued', async () => {
+      const { service, repo } = makeService();
+      repo.findOne.mockResolvedValue(null);
+
+      await service.getActiveTag('user1', 'cotisant:bde', 'asso1');
+
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'user1', tagName: 'cotisant:bde', issuingAssocId: 'asso1' },
+      });
+    });
+
     it('returns null when the user holds no such tag', async () => {
       const { service, repo } = makeService();
       repo.findOne.mockResolvedValue(null);
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde')).toBeNull();
+      expect(await service.getActiveTag('user1', 'cotisant:bde', 'asso1')).toBeNull();
     });
 
     it('returns the tag row when it never expires', async () => {
@@ -268,7 +354,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const tag = { userId: 'user1', tagName: 'cotisant:bde', expiresAt: null };
       repo.findOne.mockResolvedValue(tag);
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde')).toBe(tag);
+      expect(await service.getActiveTag('user1', 'cotisant:bde', 'asso1')).toBe(tag);
     });
 
     it('returns null once the tag has expired', async () => {
@@ -279,7 +365,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         expiresAt: new Date('2020-01-01T00:00:00Z'),
       });
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026')).toBeNull();
+      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026', 'asso1')).toBeNull();
     });
 
     it('returns the tag row while it is still valid', async () => {
@@ -291,7 +377,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       };
       repo.findOne.mockResolvedValue(tag);
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026')).toBe(tag);
+      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026', 'asso1')).toBe(tag);
     });
   });
 
@@ -360,10 +446,12 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.delete).toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
       });
       expect(repo.delete).not.toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-avec-alcool',
+        issuingAssocId: 'asso1',
       });
     });
 
@@ -393,8 +481,13 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       { name: 'Avec alcool', variantKey: 'avec-alcool', amountCents: 3000, priceMatrix: null },
     ];
     const holding = (repo: { findOne: jest.Mock }, tagName: string | null) =>
-      repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
-        Promise.resolve(where.tagName === tagName ? { tagName, expiresAt: null } : null)
+      repo.findOne.mockImplementation(
+        ({ where }: { where: { tagName: string; issuingAssocId: string } }) =>
+          Promise.resolve(
+            where.tagName === tagName && where.issuingAssocId === 'asso1'
+              ? { tagName, expiresAt: null }
+              : null
+          )
       );
 
     it('refuses a cheaper tier than the one held, and grants and revokes nothing', async () => {
@@ -426,6 +519,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.delete).toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
       });
     });
   });

@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { lockBuyerTiers } from './buyer-tier-lock';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
@@ -11,6 +17,39 @@ import {
   type RankedTier,
   type TierRelation,
 } from '../associations/tier-pricing';
+
+/**
+ * Refusal code of a raw tag grant whose name lies outside the granting association's namespace
+ * (`UserTagService.grantTagForAssociation`): a 403 carrying `{ code, message }`, read by its code.
+ */
+export const TAG_OUTSIDE_ISSUER_NAMESPACE = 'TAG_OUTSIDE_ISSUER_NAMESPACE';
+
+/**
+ * The part of a tag name after its `<category>:` prefix (`"cotisant:bde-2026-2027"` ->
+ * `"bde-2026-2027"`), or null when the name carries no category or nothing after it. That part
+ * starts with the issuing association's slug, by the convention `deriveCotisationTag` follows.
+ */
+export function tagNamespacePart(tagName: string): string | null {
+  const sep = tagName.indexOf(':');
+  if (sep <= 0) return null;
+  const rest = tagName.slice(sep + 1);
+  return rest.length > 0 ? rest : null;
+}
+
+/**
+ * The key of a tag AS ISSUED: its name and the association that issued it. Tier-holding reads that
+ * match many tags in memory compare on this, never on the name alone, so a tag counts only for the
+ * association that issued it.
+ */
+export function issuedTagKey(issuingAssocId: string | null, tagName: string): string {
+  return `${issuingAssocId ?? ''}\u0000${tagName}`;
+}
+
+/** Whether a tag row exists and has not expired (`expiresAt` null meaning permanent). */
+function isActive(tag: UserTag | null): tag is UserTag {
+  if (!tag) return false;
+  return !tag.expiresAt || tag.expiresAt > new Date();
+}
 
 /** Data required to grant or renew a membership tag. */
 export interface GrantTagData {
@@ -156,13 +195,21 @@ export class UserTagService {
   /**
    * Deletes a user's tag by name (rather than by primary key like `revoke`) - used for XOR
    * sibling-tier enforcement, where the tag id isn't known ahead of time. No-op if not held.
-   * Pass `manager` to run within an existing transaction.
+   * Scoped to `issuingAssocId` like `revoke`: an association's tier switch deletes only the rows it
+   * issued. Pass `manager` to run within an existing transaction.
    */
-  async revokeByName(userId: string, tagName: string, manager?: EntityManager): Promise<void> {
+  async revokeByName(
+    userId: string,
+    tagName: string,
+    issuingAssocId: string,
+    manager?: EntityManager
+  ): Promise<void> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
-    const res = await repo.delete({ userId, tagName });
+    const res = await repo.delete({ userId, tagName, issuingAssocId });
     if (res.affected) {
-      this.logger.log(`[UserTag] Revoked ${tagName} for ${userId} (sibling-tier switch)`);
+      this.logger.log(
+        `[UserTag] Revoked ${tagName} for ${userId} (sibling-tier switch, assoc=${issuingAssocId})`
+      );
     }
   }
 
@@ -226,7 +273,7 @@ export class UserTagService {
     if (tiers.length < 2) return;
     for (const tier of tiers) {
       if (tier.variantKey === keepVariantKey) continue;
-      await this.revokeByName(userId, tier.tagName, manager);
+      await this.revokeByName(userId, tier.tagName, assocId, manager);
     }
   }
 
@@ -316,11 +363,55 @@ export class UserTagService {
    * Grants a raw tag in the name of `assocId` (the admin's "grant a tag" endpoint) under the
    * buyer's tier lock: the tag may be one of the association's tier tags, so it must not interleave
    * with a settlement or another grant ranking or swapping that buyer's tiers.
+   *
+   * A tag grant is scoped to the association that grants it: the name must lie in `assocId`'s own
+   * namespace (`assertTagInIssuerNamespace`), read after the locks like everything else here.
    */
   async grantTagForAssociation(assocId: string, data: GrantTagData): Promise<UserTag> {
     return this.repo.manager.transaction(async (manager) => {
       await lockBuyerTiers(manager, assocId, data.userId);
+      await this.assertTagInIssuerNamespace(assocId, data.tagName, manager);
       return this.grantOrRenew({ ...data, issuingAssocId: assocId }, manager);
+    });
+  }
+
+  /**
+   * Refuses (403 `TAG_OUTSIDE_ISSUER_NAMESPACE`) a tag name that is not in `assocId`'s namespace.
+   *
+   * The rule: a name is `<category>:<rest>`, and `<rest>` belongs to the association whose slug is
+   * the LONGEST one equal to `<rest>` or followed in it by `-` (`cotisant:bde-2026-2027` is `bde`'s;
+   * `cotisant:bde-sport-2026-2027` is `bde-sport`'s when that association exists, not `bde`'s). The
+   * grant passes only when that owner is `assocId`. A name with no category, or whose `<rest>` names
+   * no association, is in nobody's namespace and is refused too. Slugs are `[a-z0-9-]`, compared
+   * with `left()` rather than `LIKE`, so no character of a slug is read as a pattern.
+   */
+  private async assertTagInIssuerNamespace(
+    assocId: string,
+    tagName: string,
+    manager: EntityManager
+  ): Promise<void> {
+    const rest = tagNamespacePart(tagName);
+    const owners: { id: string }[] = rest
+      ? await manager.query(
+          `SELECT id FROM associations
+            WHERE slug = $1 OR left($1, length(slug) + 1) = slug || '-'
+            ORDER BY length(slug) DESC
+            LIMIT 1`,
+          [rest]
+        )
+      : [];
+    const owner = owners[0]?.id ?? null;
+    this.logger.debug(
+      `[UserTag] tag namespace: tag=${tagName} grantor=${assocId.slice(0, 8)} owner=${owner?.slice(0, 8) ?? 'none'}`
+    );
+    if (owner === assocId) return;
+    this.logger.warn(
+      `[UserTag] raw grant of "${tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
+        `the name is in ${owner ? `assoc=${owner.slice(0, 8)}'s` : "no association's"} namespace`
+    );
+    throw new ForbiddenException({
+      code: TAG_OUTSIDE_ISSUER_NAMESPACE,
+      message: "The tag name is outside the granting association's namespace",
     });
   }
 
@@ -373,7 +464,7 @@ export class UserTagService {
       );
       if (
         rule === 'unless-holding-any' &&
-        (await this.heldVariantKeys(userId, tiers, manager)).length > 0
+        (await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0
       ) {
         this.logger.debug(
           `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
@@ -416,7 +507,7 @@ export class UserTagService {
         WHERE "associationId" = $1 AND type = 'membership'`,
       [assocId]
     );
-    const heldKeys = await this.heldVariantKeys(userId, tiers, manager);
+    const heldKeys = await this.heldVariantKeys(userId, assocId, tiers, manager);
     const product = (key: string | null) => priced.find((t) => t.variantKey === key) ?? null;
     const target = product(variantKey);
     const held = pickHeldTier(heldKeys.map((k) => ({ variantKey: k, product: product(k) })));
@@ -490,7 +581,7 @@ export class UserTagService {
       );
       return false;
     }
-    return (await this.heldVariantKeys(userId, wanted, manager)).length > 0;
+    return (await this.heldVariantKeys(userId, assocId, wanted, manager)).length > 0;
   }
 
   /**
@@ -513,7 +604,7 @@ export class UserTagService {
       );
       return [];
     }
-    return this.heldVariantKeys(userId, tiers, manager);
+    return this.heldVariantKeys(userId, assocId, tiers, manager);
   }
 
   /**
@@ -521,7 +612,8 @@ export class UserTagService {
    * number: the associations' modes, their membership products, and the user's active tags. A list
    * of spaces judged on cotisation conditions (the bookings' Reservations page) asks this once
    * rather than once per association. Same answer per association: the variant keys held, `null`
-   * being the base tier, and nothing for an association that sells no cotisation.
+   * being the base tier, and nothing for an association that sells no cotisation. A tag counts for
+   * an association only when that association issued it (`issuedTagKey`).
    */
   async heldCotisationTiersByAssociation(
     userId: string,
@@ -534,7 +626,7 @@ export class UserTagService {
     const [assos, products, active]: [
       { id: string; slug: string; cotisationMode: CotisationMode | null }[],
       { associationId: string; variantKey: string | null }[],
-      { tagName: string }[],
+      { tagName: string; issuingAssocId: string }[],
     ] = await Promise.all([
       runner.query(`SELECT id, slug, "cotisationMode" FROM associations WHERE id = ANY($1)`, [ids]),
       runner.query(
@@ -543,12 +635,13 @@ export class UserTagService {
         [ids]
       ),
       runner.query(
-        `SELECT "tagName" FROM user_tags
-          WHERE "userId" = $1 AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
-        [userId]
+        `SELECT "tagName", "issuingAssocId" FROM user_tags
+          WHERE "userId" = $1 AND "issuingAssocId" = ANY($2)
+            AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
+        [userId, ids]
       ),
     ]);
-    const activeNames = new Set(active.map((t) => t.tagName));
+    const activeKeys = new Set(active.map((t) => issuedTagKey(t.issuingAssocId, t.tagName)));
     const now = new Date();
     for (const asso of assos) {
       if (!asso.cotisationMode) continue;
@@ -556,7 +649,9 @@ export class UserTagService {
       const keys = held.get(asso.id) ?? [];
       for (const p of products.filter((x) => x.associationId === asso.id)) {
         const { tagName } = deriveCotisationTag(asso.slug, mode, now, p.variantKey);
-        if (activeNames.has(tagName) && !keys.includes(p.variantKey)) keys.push(p.variantKey);
+        if (activeKeys.has(issuedTagKey(asso.id, tagName)) && !keys.includes(p.variantKey)) {
+          keys.push(p.variantKey);
+        }
       }
       held.set(asso.id, keys);
     }
@@ -565,43 +660,68 @@ export class UserTagService {
   }
 
   /**
-   * Which of the given tiers the user has an active tag for. The one place a tier list becomes a
-   * membership answer, so `holdsOneOfTiers` and `listHeldCotisationTiers` cannot disagree.
+   * Which of `assocId`'s given tiers the user has an active tag for, counting only tags `assocId`
+   * issued. The one place a tier list becomes a membership answer, so `holdsOneOfTiers` and
+   * `listHeldCotisationTiers` cannot disagree.
    */
   private async heldVariantKeys(
     userId: string,
+    assocId: string,
     tiers: CotisationTierInfo[],
     manager?: EntityManager
   ): Promise<(string | null)[]> {
     const held: (string | null)[] = [];
     for (const tier of tiers) {
-      if (await this.hasActiveTag(userId, tier.tagName, manager)) held.push(tier.variantKey);
+      if (await this.hasActiveTag(userId, tier.tagName, assocId, manager)) {
+        held.push(tier.variantKey);
+      }
     }
     return held;
   }
 
   /**
-   * Returns true when the user has an active (non-expired) tag with the given name. Pass `manager`
-   * inside a transaction (under the buyer's tier lock), so the read uses ITS connection.
+   * Returns true when the user has an active (non-expired) tag with the given name ISSUED BY
+   * `issuingAssocId` - the tier-holding question, which only the tier's own association answers.
+   * Pass `manager` inside a transaction (under the buyer's tier lock), so the read uses ITS
+   * connection.
    */
-  async hasActiveTag(userId: string, tagName: string, manager?: EntityManager): Promise<boolean> {
+  async hasActiveTag(
+    userId: string,
+    tagName: string,
+    issuingAssocId: string,
+    manager?: EntityManager
+  ): Promise<boolean> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
-    const tag = await repo.findOne({ where: { userId, tagName } });
-    if (!tag) return false;
-    if (!tag.expiresAt) return true;
-    return tag.expiresAt > new Date();
+    return isActive(await repo.findOne({ where: { userId, tagName, issuingAssocId } }));
   }
 
   /**
-   * Returns the user's active (non-expired) tag row with the given name, or null if absent or
-   * expired. Like `hasActiveTag` but also surfaces `expiresAt` - used where a caller needs the
-   * expiry itself, not just a yes/no (e.g. the Cercle inbound cotisant-status check).
+   * Returns true when the user has an active tag with the given name, whoever issued it. Only for a
+   * gate that names tags freely across associations (a product's `requiredTags`); a tier-holding
+   * read uses `hasActiveTag`, which counts only the tier's own association's rows.
    */
-  async getActiveTag(userId: string, tagName: string): Promise<UserTag | null> {
-    const tag = await this.repo.findOne({ where: { userId, tagName } });
-    if (!tag) return null;
-    if (tag.expiresAt && tag.expiresAt <= new Date()) return null;
-    return tag;
+  async hasActiveTagFromAnyIssuer(
+    userId: string,
+    tagName: string,
+    manager?: EntityManager
+  ): Promise<boolean> {
+    const repo = manager ? manager.getRepository(UserTag) : this.repo;
+    return isActive(await repo.findOne({ where: { userId, tagName } }));
+  }
+
+  /**
+   * Returns the user's active (non-expired) tag row with the given name issued by
+   * `issuingAssocId`, or null if absent or expired. Like `hasActiveTag` but also surfaces
+   * `expiresAt` - used where a caller needs the expiry itself, not just a yes/no (e.g. the Cercle
+   * inbound cotisant-status check).
+   */
+  async getActiveTag(
+    userId: string,
+    tagName: string,
+    issuingAssocId: string
+  ): Promise<UserTag | null> {
+    const tag = await this.repo.findOne({ where: { userId, tagName, issuingAssocId } });
+    return isActive(tag) ? tag : null;
   }
 
   /**

@@ -33,7 +33,7 @@ import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
-import { UserTagService } from '../users/user-tag.service';
+import { issuedTagKey, UserTagService } from '../users/user-tag.service';
 import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
@@ -742,7 +742,8 @@ export class ProductsService {
       }),
       this.userTagService.listByUser(userId),
     ]);
-    const activeTagNames = new Set(activeTags.map((t) => t.tagName));
+    // A tier tag counts only for the association that issued it.
+    const activeTagKeys = new Set(activeTags.map((t) => issuedTagKey(t.issuingAssocId, t.tagName)));
     const tiersByAssoc = new Map<string, AssociationProduct[]>();
     for (const p of tierProducts) {
       const list = tiersByAssoc.get(p.associationId) ?? [];
@@ -751,7 +752,7 @@ export class ProductsService {
     }
     for (const asso of assos) {
       const facts = await this.tierFactsFrom(asso, tiersByAssoc.get(asso.id) ?? [], (tag) =>
-        activeTagNames.has(tag)
+        activeTagKeys.has(issuedTagKey(asso.id, tag))
       );
       if (!facts) continue;
       byAssoc.set(asso.id, {
@@ -2316,7 +2317,7 @@ export class ProductsService {
         new Date(),
         variantKey
       );
-      const tag = await this.userTagService.getActiveTag(userId, tagName);
+      const tag = await this.userTagService.getActiveTag(userId, tagName, asso.id);
       if (tag) {
         return {
           isCotisant: true,
@@ -2345,7 +2346,8 @@ export class ProductsService {
 
   /**
    * `tierFactsFrom` for one user in one association, reading the association's tiers (on sale or
-   * not - holding a withdrawn tier's tag still makes you a cotisant) and the user's tags.
+   * not - holding a withdrawn tier's tag still makes you a cotisant) and the user's tags ISSUED BY
+   * that association: a tag of the same name issued elsewhere holds no tier here.
    */
   private async tierFactsOf(
     asso: Association,
@@ -2358,7 +2360,7 @@ export class ProductsService {
       select: TIER_RANK_COLUMNS,
     });
     return this.tierFactsFrom(asso, tiers, (tag) =>
-      this.userTagService.hasActiveTag(userId, tag, manager)
+      this.userTagService.hasActiveTag(userId, tag, asso.id, manager)
     );
   }
 
@@ -2437,7 +2439,9 @@ export class ProductsService {
     manager: EntityManager
   ): Promise<boolean> {
     for (const tagName of tagNames) {
-      if (await this.userTagService.hasActiveTag(userId, tagName, manager)) return true;
+      if (await this.userTagService.hasActiveTagFromAnyIssuer(userId, tagName, manager)) {
+        return true;
+      }
     }
     return false;
   }
@@ -2513,7 +2517,12 @@ export class ProductsService {
       // so the check stays correct across a yearly rollover.
       const grant = await this.resolveGrantTag(product, manager);
       if (grant) {
-        const hasTag = await this.userTagService.hasActiveTag(userId, grant.tagName, manager);
+        const hasTag = await this.userTagService.hasActiveTag(
+          userId,
+          grant.tagName,
+          product.associationId,
+          manager
+        );
         if (!hasTag) return;
       }
     }

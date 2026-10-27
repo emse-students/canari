@@ -31,6 +31,26 @@ Table `user_tags`, entity `UserTag` (`apps/social-service/src/users/entities/use
 Unique on `(userId, tagName)`. A user "is a cotisant" of an association when they hold an **active**
 (non-expired) tag issued by that association.
 
+### A tag counts only for the association that issued it
+
+Two halves of one invariant, both on `UserTagService`:
+
+- **A grant is scoped to its grantor's namespace.** A tag name is `<category>:<rest>`, and `<rest>`
+  belongs to the association whose slug is the LONGEST one equal to it or followed in it by `-`
+  (`cotisant:bde-2026-2027` is `bde`'s; `cotisant:bde-sport-2026-2027` is `bde-sport`'s when that
+  association exists). The raw grant (`grantTagForAssociation`) accepts a name only when that owner
+  is the granting association, and answers `403 TAG_OUTSIDE_ISSUER_NAMESPACE` otherwise - a name
+  with no category, or naming no association, included. Read after the buyer's tier lock.
+- **Tier-holding reads count only rows issued by the tier's own association**: `hasActiveTag` and
+  `getActiveTag` take the issuer, so `heldVariantKeys` (the rank of a grant, `holdsAnyCotisation`,
+  `listHeldCotisationTiers`), `heldCotisationTiersByAssociation`, the shop's `tierFactsOf` and
+  listing facts (relation, preferential price, rank), the renewal check and the Cercle status all
+  ask "issued by THIS association". The sibling-tier XOR (`revokeByName`) deletes only the
+  association's own rows, like `revoke`. A product's `requiredTags`, a gate that names tags across
+  associations by design, is the one reader of `hasActiveTagFromAnyIssuer`.
+
+`tag-issuer-scope.integration.spec.ts` proves both halves against a real PostgreSQL.
+
 ### The canonical cotisation tag (single source of truth)
 
 `deriveCotisationTag(slug, mode)` in `apps/social-service/src/associations/cotisation-tag.util.ts`
@@ -461,7 +481,8 @@ never inside it, and of two first grants the second renews the first. Proven by 
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
   `MANAGE_PRODUCTS`.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
-  (`MANAGE_MEMBERS`); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
+  (`MANAGE_MEMBERS`), the name held to the association's own namespace
+  ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
   `:id`, not to the tag id alone: `MANAGE_MEMBERS` is granted per association, so an unscoped delete
   let an admin of any association revoke any other association's cotisant (WP-COT-9).
 
