@@ -4,11 +4,17 @@ import { FollowsService } from './follows.service';
 /**
  * The follow rules the service itself owns, against in-memory repositories (the repo's pattern, see
  * association-push-mutes.service.spec.ts). Deliberately NOT pinned, because the service does not do
- * them: refusing a self-follow, blocks, a counts API and a visibility rule for a follow list. The
- * follow of a USER has no HTTP route either; the only caller of the user half is this spec. Those
- * absences are recorded in docs/wiki/mechanism-audit.md rather than frozen here as if intended.
+ * them: refusing a self-follow (the controller does), blocks, a counts API and a visibility rule
+ * for a follow list. Those absences are recorded in docs/wiki/mechanism-audit.md rather than frozen
+ * here as if intended. The SQL readers' `status = 'accepted'` term is proven against PostgreSQL
+ * (`follows/user-follow-status.integration.spec.ts`, `spaces/reader-spaces.integration.spec.ts`).
  */
-type Row = { followerUserId: string; associationId?: string; followedUserId?: string };
+type Row = {
+  followerUserId: string;
+  associationId?: string;
+  followedUserId?: string;
+  status?: string;
+};
 
 function matches(row: Row, where: Partial<Row>): boolean {
   return Object.entries(where).every(([k, v]) => row[k as keyof Row] === v);
@@ -115,23 +121,50 @@ describe('FollowsService', () => {
     });
   });
 
-  describe('user follows', () => {
-    it('follows once however many times it is asked (idempotent)', async () => {
+  describe('user follows (every person is private: a follow is a request first, WP-F1)', () => {
+    /** The followed person's yes - written here by hand until WP-F2 gives it a route. */
+    function accept(followerUserId: string, followedUserId: string) {
+      const row = userRows.find(
+        (r) => r.followerUserId === followerUserId && r.followedUserId === followedUserId
+      );
+      if (!row) throw new Error('no request to accept');
+      row.status = 'accepted';
+    }
+
+    it('a follow of a person lands PENDING, and a request is not a follow', async () => {
+      expect(await service().followUser('u1', 'u2')).toEqual({ ok: true, status: 'pending' });
+      expect(userRows).toEqual([{ followerUserId: 'u1', followedUserId: 'u2', status: 'pending' }]);
+      expect(await service().userFollowStatus('u1', 'u2')).toBe('pending');
+      // Nothing that means "u1 follows u2" counts it: the Suivis feed reads no pending row.
+      expect(await service().getFollowedUserIdsForUser('u1')).toEqual([]);
+    });
+
+    it('asks once however many times it is asked, and never turns a follow back into a request', async () => {
       await service().followUser('u1', 'u2');
-      await service().followUser('u1', 'u2');
-      expect(userRows).toEqual([{ followerUserId: 'u1', followedUserId: 'u2' }]);
-      expect(await service().isFollowingUser('u1', 'u2')).toBe(true);
+      expect(await service().followUser('u1', 'u2')).toEqual({ ok: true, status: 'pending' });
+      expect(userRows).toHaveLength(1);
+      accept('u1', 'u2');
+      expect(await service().followUser('u1', 'u2')).toEqual({ ok: true, status: 'accepted' });
+      expect(userRows).toEqual([
+        { followerUserId: 'u1', followedUserId: 'u2', status: 'accepted' },
+      ]);
+      expect(await service().getFollowedUserIdsForUser('u1')).toEqual(['u2']);
     });
 
     it('is directional: following does not make the other side follow back', async () => {
       await service().followUser('u1', 'u2');
-      expect(await service().isFollowingUser('u2', 'u1')).toBe(false);
+      accept('u1', 'u2');
+      expect(await service().userFollowStatus('u2', 'u1')).toBeNull();
       expect(await service().getFollowedUserIdsForUser('u2')).toEqual([]);
       expect(await service().getFollowedUserIdsForUser('u1')).toEqual(['u2']);
     });
 
-    it('unfollows, and refuses a second unfollow with a typed not-found', async () => {
+    it('withdraws a pending request and unfollows an accepted one, then refuses with a typed not-found', async () => {
       await service().followUser('u1', 'u2');
+      expect(await service().unfollowUser('u1', 'u2')).toEqual({ ok: true });
+      expect(await service().userFollowStatus('u1', 'u2')).toBeNull();
+      await service().followUser('u1', 'u2');
+      accept('u1', 'u2');
       expect(await service().unfollowUser('u1', 'u2')).toEqual({ ok: true });
       await expect(service().unfollowUser('u1', 'u2')).rejects.toBeInstanceOf(NotFoundException);
     });
@@ -139,13 +172,15 @@ describe('FollowsService', () => {
     it('keeps each follower apart: one user unfollowing never removes another follow', async () => {
       await service().followUser('u1', 'u2');
       await service().followUser('u3', 'u2');
+      accept('u3', 'u2');
       await service().unfollowUser('u1', 'u2');
-      expect(await service().isFollowingUser('u3', 'u2')).toBe(true);
-      expect(await service().isFollowingUser('u1', 'u2')).toBe(false);
+      expect(await service().userFollowStatus('u3', 'u2')).toBe('accepted');
+      expect(await service().userFollowStatus('u1', 'u2')).toBeNull();
     });
 
-    it('does not mix the two follow kinds', async () => {
+    it('does not mix the two follow kinds: an association is followed at once, with no request', async () => {
       await service().followUser('u1', 'a1');
+      accept('u1', 'a1');
       await service().followAssociation('u1', 'a1');
       expect(await service().getFollowedUserIdsForUser('u1')).toEqual(['a1']);
       expect(await service().getFollowedAssociationIdsForUser('u1')).toEqual(['a1']);

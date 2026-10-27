@@ -906,7 +906,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's followers (`user_follows`) who can see it |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's ACCEPTED followers (`user_follows`, [WP-F1](#a-follow-of-a-person-is-a-request-first-wp-f1-migration-112-decided-2026-10-25)) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -982,6 +982,32 @@ still applies first, in chat-delivery.
 old container).** Association post, recipients: follower, muted follower, non-follower member. The
 new build logged `push withheld from 1 muted of 3` and pushed the other two; the pre-mute container
 pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
+
+### A follow of a PERSON is a request first (WP-F1, migration 112; decided 2026-10-25)
+
+Every personal account is private (Q1 of the
+[backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
+`POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
+only the followed person's answer makes it `accepted`. An association, a list or an institution
+(`association_follows`) is followed at once and has no status.
+
+**Only an ACCEPTED row is a follow, and every reader says so through ONE fragment**,
+`acceptedFollowSql` in `follows/follow-status.ts`: the Suivis feed
+(`FollowsService.getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`),
+the personal republication's newly-reached rule (whose follower exclusion must match the sweep's,
+or a pending follower is told by neither) and the live push (`liveAudienceSql`). The erasure and
+the block severing delete rows whatever their status. A pending row in each of the three
+PostgreSQL specs fails its assertion when the fragment is replaced by `TRUE` (control, 2026-10-27).
+
+**The two defaults of migration 112 are deliberate.** The column is added with `DEFAULT 'accepted'`,
+which records every existing follow as accepted (decision 3); the default is then set to
+`'pending'`, so a writer that forgets the column fails closed - and the old image, serving the
+seconds of a deploy, writes requests rather than follows.
+
+`GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
+too, the meaning a client older than the request screens gives it
+([legacy-compatibility](../legacy-compatibility.md)). Answering, listing and removing followers are
+WP-F2 and WP-F3, not built.
 
 ### Who may touch a calendar event
 

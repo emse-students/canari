@@ -79,11 +79,11 @@ INSERT INTO "association_follows" ("id", "followerUserId", "associationId") VALU
   ('4817f4e5-d2a9-486a-9b26-5b52d14c9eee', 'b2a05e5eef0e716f368f1208cd546fb8c49aeddd8b0c2f85cbf5e625a752690e', 'c5de75b7-27ea-4915-abe7-658df6d69b8e'),
   ('7ddf1a9f-c43d-4977-a4c1-5cab0626ed8f', '581bd0a6249a78e29171490b63525d831454283ba1671c474b62f317684cb12a', '97db8795-6284-46b1-bd94-b1a3c94ee10e');
 
-INSERT INTO "user_follows" ("id", "followerUserId", "followedUserId") VALUES
-  ('64d1496f-7bc9-4f00-9cb7-b7dd9813bb5a', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941'),
-  ('ed8454f8-936f-4d3d-b9ae-9454740a869c', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43'),
-  ('089c9d85-6561-403d-b674-17bd639dff76', '41f06a4461fe731be226dbe48e1eebc8fc417d1b9b30fd2e4c083d1cf5958175', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43'),
-  ('695f6375-f097-450c-86c4-3c4ee1c99de9', 'b2a05e5eef0e716f368f1208cd546fb8c49aeddd8b0c2f85cbf5e625a752690e', '82f0b331ad115e344f6e19d01c364798f7cb7b6bdd44ba112d6aa2c1044594d1');
+INSERT INTO "user_follows" ("id", "followerUserId", "followedUserId", "status") VALUES
+  ('64d1496f-7bc9-4f00-9cb7-b7dd9813bb5a', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941', 'accepted'),
+  ('ed8454f8-936f-4d3d-b9ae-9454740a869c', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43', 'accepted'),
+  ('089c9d85-6561-403d-b674-17bd639dff76', '41f06a4461fe731be226dbe48e1eebc8fc417d1b9b30fd2e4c083d1cf5958175', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43', 'accepted'),
+  ('695f6375-f097-450c-86c4-3c4ee1c99de9', 'b2a05e5eef0e716f368f1208cd546fb8c49aeddd8b0c2f85cbf5e625a752690e', '82f0b331ad115e344f6e19d01c364798f7cb7b6bdd44ba112d6aa2c1044594d1', 'accepted');
 
 INSERT INTO "association_calendar_events" ("id", "associationId", "title", "description", "startsAt", "endsAt", "createdBy", "kind", "status", "validatedAt", "validatedBy") VALUES
   ('028ed208-bb48-45fd-8005-26a0a7497653', 'f1ddbfe2-ad95-4a40-8fb1-a0a50d5f8851', 'Tournoi fictif', 'Evenement fictif organise par Club Echecs Fictif.', date_trunc('day', now()) + interval '5 days 14 hours', date_trunc('day', now()) + interval '5 days 16 hours', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941', 'event', 'validated', now() - interval '1 days 0 hours', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43'),

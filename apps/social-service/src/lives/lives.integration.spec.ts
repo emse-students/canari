@@ -270,7 +270,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     await q(`CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255))`);
     // And the three the announcement reads (WP-L7), in the columns it reads.
     await q(
-      `CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255))`
+      `CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
+         status varchar(16) NOT NULL)`
     );
     await q(
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
@@ -776,17 +777,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
   });
 
   describe('the push to the followers when a live goes on air (WP-L7)', () => {
-    const follow = (follower: string, followed = ALICE) =>
-      q(`INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ($1, $2)`, [
-        follower,
-        followed,
-      ]);
+    const follow = (follower: string, followed = ALICE, status = 'accepted') =>
+      q(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ($1, $2, $3)`,
+        [follower, followed, status]
+      );
 
-    it("tells the broadcaster's followers ONCE, at the first stored segment - minus a block and a removal", async () => {
+    it("tells the broadcaster's followers ONCE, at the first stored segment - minus a block, a removal and a request", async () => {
       await follow(BOB);
       await follow(CAROL);
       await follow(EVE);
       await follow(DAVE, BOB); // follows somebody else: not told
+      await follow(DAVE, ALICE, 'pending'); // only ASKED to follow Alice (WP-F1): not told
       await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [CAROL, ALICE]);
       const live = await start();
       await lives.removeViewer(ALICE, live.id, EVE);

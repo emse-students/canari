@@ -57,6 +57,11 @@ const MIGRATION_078 = readFileSync(
   join(__dirname, '..', 'migrations', '078_read_grants.sql'),
   'utf8'
 );
+// Follow requests (WP-F1): `user_follows.status`, every row present when it runs recorded accepted.
+const MIGRATION_112 = readFileSync(
+  join(__dirname, '..', 'migrations', '112_user_follow_status.sql'),
+  'utf8'
+);
 
 /** The cast. Ids are readable on purpose: a failure names a person, not a uuid. */
 const USERS = {
@@ -221,6 +226,11 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(
       `INSERT INTO user_follows VALUES ('icmSe2', 'icmSe'), ('isminGa', 'icmSe'), ('outsider', 'icmSe')`
     );
+    // 112 runs over the three follows above, which it records accepted (decision 3) - then adminIcm,
+    // who sees icmSe's post, ASKS to follow icmSe and is not answered: the column's default is a
+    // request, and a request is not a follow.
+    await client.query(MIGRATION_112);
+    await client.query(`INSERT INTO user_follows VALUES ('adminIcm', 'icmSe')`);
     for (const p of POSTS) {
       await client.query(
         `INSERT INTO posts (id, "authorId", "associationId", anonymous) VALUES ($1, $2, $3, $4)`,
@@ -410,7 +420,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
   });
 
   it("announces a personal post to its author's followers who can see it, and no other", async () => {
-    // Three follow icmSe; isminGa (Gardanne) and outsider (no space) cannot see the post.
+    // Three follow icmSe; isminGa (Gardanne) and outsider (no space) cannot see the post, and
+    // adminIcm, who can, only ASKED (pending): a request is never announced to.
     const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
     expect(rows.map((r) => r.id as string)).toEqual(['icmSe2']);
   });

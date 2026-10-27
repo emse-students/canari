@@ -176,7 +176,10 @@ export class PostsController {
 
   // ── User follows (under /api/posts/users/:userId/follow) ─────────────────
 
-  /** Follows a user. */
+  /**
+   * Asks to follow a user: a `pending` request the user answers (every personal account is
+   * private, WP-F1). Answers `{ ok, status }`, the status the row has after the call.
+   */
   @UseGuards(NginxAuthGuard)
   @HttpPost('users/:userId/follow')
   followUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
@@ -184,20 +187,25 @@ export class PostsController {
     return this.followsService.followUser(xUserId, userId);
   }
 
-  /** Unfollows a user. */
+  /** Unfollows a user, or withdraws a request not answered yet. */
   @UseGuards(NginxAuthGuard)
   @Delete('users/:userId/follow')
   unfollowUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
     return this.followsService.unfollowUser(xUserId, userId);
   }
 
-  /** Returns whether the calling user follows the given user. */
+  /**
+   * Where the calling user stands with the given user: `status` is `accepted`, `pending` or `null`.
+   * `following` keeps the meaning a client older than the request screens gives it - its button
+   * shows the leave action - so it is true for a pending request too, and that client can withdraw
+   * what it asked ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+   */
   @UseGuards(NginxAuthGuard)
   @Get('users/:userId/follow-status')
   getUserFollowStatus(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
     return this.followsService
-      .isFollowingUser(xUserId, userId)
-      .then((following) => ({ following }));
+      .userFollowStatus(xUserId, userId)
+      .then((status) => ({ following: status !== null, status }));
   }
 
   /** Creates a new post on behalf of the calling user or a managed association. */
