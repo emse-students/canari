@@ -1749,6 +1749,16 @@ already takes, for the same reason: rung 1 (replaying the log) cannot help a dev
 behind but beside. The evidence is the base the server stored WITH the accepted commit (strictly
 monotonic, so the first base of an epoch owns it); a commit from a client too old to carry one
 leaves the base to a holder's repair, which is the one way that base could itself be a branch.
+**The base is read where the group keeps it** (`groupInfoChannel`): a key group's lives on
+social-service, and chat-delivery's base route refuses a key group by construction, so a check
+reading there failed every key-group removal before comparing anything. Reading it through the scope
+transport means **`diverged` now reaches key groups too**, which widens the forked-holder P2 in
+[backlog](../backlog.md#p2---a-forked-holders-republished-base-can-send-honest-members-to-rung-2-review-of-2269-2026-10-24-not-built).
+**A conversation that never published a base** has nothing to compare against: its departed-member
+removal is staged as before the check (logged), because refusing would keep the departed member's
+leaves forever - nothing publishes a base on a sweep's behalf; a key group's base is published with
+the group, so its absence stays a refusal. Measured 2026-10-27 on production: every one-to-one
+conversation and all but one group conversation have a base.
 The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
 device, and a stolen signature key is answered by revocation (next section), not by a refresh.
 

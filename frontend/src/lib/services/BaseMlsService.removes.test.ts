@@ -10,6 +10,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 import { BaseMlsService } from './BaseMlsService';
 import { recordingStage } from '../../test/recordingStage';
 import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 /**
  * A STAGED REMOVE DECLARES WHOM IT REMOVES (third review of #1878). The server's half of a removal
@@ -121,7 +122,12 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
         removeDepartedMembers(g: string, u: string[]): Promise<void>;
       }
     ).removeDepartedMembers.call(
-      { runCommitTransaction, assertOnPublishedBranch, stageRemoveMembers },
+      {
+        runCommitTransaction,
+        assertOnPublishedBranch,
+        stageRemoveMembers,
+        isDistributionGroup: () => false,
+      },
       'g-1',
       ['user-b']
     );
@@ -129,5 +135,87 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
     expect(runCommitTransaction.mock.calls[0][2]).toEqual({ removes: [{ userId: 'user-b' }] });
     // The check runs INSIDE the stage, against the state the commit is built from.
     expect(order).toEqual(['base:departed-member removal', 'transaction', 'vouched', 'staged']);
+  });
+});
+
+/**
+ * THE BASE IS READ WHERE THE GROUP KEEPS IT. A key group's base lives on social-service, and
+ * chat-delivery's route answers 403 for it by construction - read there, every key-group departure
+ * failed before comparing anything. These run the REAL check and the REAL routing: only the two
+ * transports, the epoch and the context comparison are stubbed.
+ */
+describe('BaseMlsService - the departed-member removal reads the base through the group transport', () => {
+  const GI = 'Zm9v';
+  const scope = workspaceScope('ws-1');
+  const real = BaseMlsService.prototype as unknown as Record<string, unknown>;
+  const remove = (ctx: object, g: string) =>
+    (real.removeDepartedMembers as (this: object, g: string, u: string[]) => Promise<void>).call(
+      ctx,
+      g,
+      ['user-b']
+    );
+
+  function ctxFor(opts: {
+    keyGroup: boolean;
+    base: { groupInfo: string; baseEpoch: number; activeEpoch: number } | null;
+  }) {
+    const runCommitTransaction = vi.fn(
+      async (_g: string, stage: (intent: Uint8Array) => Promise<unknown>, _opts: unknown) => {
+        await stage(new Uint8Array());
+        return {};
+      }
+    );
+    const transport = { fetch: vi.fn().mockResolvedValue(opts.base), publish: vi.fn() };
+    const delivery = {
+      fetchGroupInfo: opts.keyGroup
+        ? vi.fn().mockRejectedValue(new Error('403 from chat-delivery'))
+        : vi.fn().mockResolvedValue(opts.base),
+    };
+    return {
+      runCommitTransaction,
+      transport,
+      delivery,
+      distributionGroupInfo: transport,
+      distributionScopeByGroup: new Map(opts.keyGroup ? [['kg-1', scope]] : []),
+      knownDistributionGroups: new Set(opts.keyGroup ? ['kg-1'] : []),
+      freshEpoch: vi.fn().mockResolvedValue(5),
+      ownContextMatchesBase: vi.fn().mockResolvedValue(true),
+      stageRemoveMembers: vi.fn().mockResolvedValue({}),
+      isDistributionGroup: real.isDistributionGroup,
+      groupInfoChannel: real.groupInfoChannel,
+      assertOnPublishedBranch: real.assertOnPublishedBranch,
+    };
+  }
+
+  it('reads a key group base from its scope transport, never from chat-delivery', async () => {
+    const ctx = ctxFor({ keyGroup: true, base: { groupInfo: GI, baseEpoch: 5, activeEpoch: 5 } });
+
+    await remove(ctx, 'kg-1');
+
+    expect(ctx.transport.fetch).toHaveBeenCalledWith(scope);
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+    expect(ctx.stageRemoveMembers).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a key group whose scope publishes no base, staging nothing', async () => {
+    const ctx = ctxFor({ keyGroup: true, base: null });
+
+    await expect(remove(ctx, 'kg-1')).rejects.toMatchObject({
+      name: 'UnpublishedBranchError',
+      reason: 'no-base',
+    });
+    expect(ctx.runCommitTransaction).not.toHaveBeenCalled();
+  });
+
+  it('stages a conversation departure when no base was ever published for it', async () => {
+    const ctx = ctxFor({ keyGroup: false, base: null });
+
+    await remove(ctx, 'conv-1');
+
+    // Refusing here would keep the departed member's leaves forever: nothing publishes a base for
+    // a conversation on a sweep's behalf.
+    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('conv-1');
+    expect(ctx.stageRemoveMembers).toHaveBeenCalledOnce();
+    expect(ctx.ownContextMatchesBase).not.toHaveBeenCalled();
   });
 });
