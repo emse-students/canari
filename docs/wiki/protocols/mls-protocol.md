@@ -1732,8 +1732,11 @@ settlement, and if it had landed that device is one epoch behind its own commit 
 
 **Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
 device that merged a commit nobody else did is at the right number on the wrong branch, and its
-refresh would be accepted and break every healthy member. The two commits a MECHANISM decides on
-its own - `refreshOwnLeaf` and the revoked-leaf removal (`removeMemberDevice`, next section) - go
+refresh would be accepted and break every healthy member. The commits a MECHANISM decides on its
+own - `refreshOwnLeaf`, the revoked-leaf removal (`removeMemberDevice`, next section) and, since
+2026-10-27, the departed-member removal a roster DIFF decides (`removeDepartedMembers`: the
+conversation stray sweep and the key-group roster pass; until then it went through the unchecked
+`removeMember`, which stays the path of a removal a PERSON asked for) - go
 through ONE check, `BaseMlsService.assertOnPublishedBranch` (`mls-client/publishedBranch.ts`): it
 reads the published base (outside the MLS lock) and, under the lock, stages only when its epoch is
 ours and our group context - tree hash and confirmed transcript hash - is the one it describes

@@ -7485,6 +7485,27 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Removes every leaf of the named users in ONE commit - the commit a roster DIFF decides (the
+   * conversation stray sweep in `strayLeaves.ts`, the key-group roster pass in `rosterReconcile.ts`),
+   * not a person. So it is staged only on the branch the server publishes, through the same check
+   * as {@link removeMemberDevice}: a forked device's removal would be accepted by the epoch gate and
+   * break every healthy member. {@link removeMember} stays the path of a removal a person asked for.
+   *
+   * @throws {UnpublishedBranchError} having staged nothing, when the published base cannot vouch.
+   */
+  async removeDepartedMembers(groupId: string, userIds: string[]): Promise<void> {
+    const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'departed-member removal');
+    await this.runCommitTransaction(
+      groupId,
+      async (intent) => {
+        await assertOnBranch();
+        return this.stageRemoveMembers(groupId, userIds, intent);
+      },
+      { removes: commitRemovals({ userIds }) }
+    );
+  }
+
+  /**
    * Replaces this device's own leaf in `groupId` - the periodic refresh (`leafRefresh.ts`). A commit
    * like any other: staged, submitted to the epoch gate, merged on its accept (which dates the leaf
    * in the refresh ledger) or cleared on its refusal, which throws {@link CommitRefusedError}.

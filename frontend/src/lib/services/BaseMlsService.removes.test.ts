@@ -95,4 +95,39 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       removes: [{ userId: 'user-c', deviceId: 'web-c1' }],
     });
   });
+
+  it('removeDepartedMembers names each person, and asks the published branch before staging', async () => {
+    const order: string[] = [];
+    const runCommitTransaction = vi.fn(
+      async (_g: string, stage: (intent: Uint8Array) => Promise<unknown>, _opts: unknown) => {
+        order.push('transaction');
+        await stage(new Uint8Array());
+        return {};
+      }
+    );
+    const assertOnPublishedBranch = vi.fn(async (_g: string, what: string) => {
+      order.push(`base:${what}`);
+      return async () => {
+        order.push('vouched');
+      };
+    });
+    const stageRemoveMembers = vi.fn(async () => {
+      order.push('staged');
+      return {};
+    });
+
+    await (
+      BaseMlsService.prototype as unknown as {
+        removeDepartedMembers(g: string, u: string[]): Promise<void>;
+      }
+    ).removeDepartedMembers.call(
+      { runCommitTransaction, assertOnPublishedBranch, stageRemoveMembers },
+      'g-1',
+      ['user-b']
+    );
+
+    expect(runCommitTransaction.mock.calls[0][2]).toEqual({ removes: [{ userId: 'user-b' }] });
+    // The check runs INSIDE the stage, against the state the commit is built from.
+    expect(order).toEqual(['base:departed-member removal', 'transaction', 'vouched', 'staged']);
+  });
 });
