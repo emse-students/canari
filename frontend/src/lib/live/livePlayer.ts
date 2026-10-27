@@ -1,6 +1,7 @@
 /**
  * THE LIVE VIEWER'S PLAYER: a growing fMP4 source fed through Media Source Extensions, one sealed
- * segment at a time, kept about one segment behind the live edge (WP-L5).
+ * segment at a time, kept behind the live edge by the buffer policy (`liveBufferPolicy.ts`): the
+ * longest delivery gap it measured, never under one segment plus one poll (WP-L5, L-F1).
  *
  * The sequence is the one the WP-L1 bench measured (0 append errors in ~2 200 segments, Chromium
  * `MediaSource` and iOS WebKit `ManagedMediaSource`; `tools/live-bench/bench.js` on
@@ -8,9 +9,10 @@
  *
  * 1. `GET /api/lives/:id` - the key, and a seat on the host's viewer cap.
  * 2. One `SourceBuffer` of {@link LIVE_RECORDER_MIME}, `mode = 'segments'`.
- * 3. The JOIN on the newest segment. Every segment is SELF-CONTAINED - the recorder's init (`ftyp` +
- *    `moov`) then one fragment (`moof` + `mdat`), the broadcaster's shape (#2115) - so the newest is
- *    enough: its init, its fragment, then a seek to the live edge. A later segment's init is
+ * 3. The JOIN on the newest {@link LIVE_PLAYER_JOIN_SEGMENTS} segments. Every segment is
+ *    SELF-CONTAINED - the recorder's init (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the
+ *    broadcaster's shape (#2115) - so no hunt for segment 0: their inits, their fragments, then a
+ *    seek to the policy's target behind the edge. A later segment's init is
  *    appended only when it DIFFERS from the last one (a camera re-acquired mid-live); its media
  *    timestamps then jump FORWARD, leaving a time gap that a `waiting` seeks across at once.
  * 4. A manifest poll every {@link LIVE_MANIFEST_POLL_MS} from the last index taken; each new
@@ -39,12 +41,17 @@ import { LiveSegmentOpenError, openLiveSegment } from './liveCrypto';
 import { Fmp4ParseError, initSegmentEnd } from './fmp4Segments';
 import { liveViewerCount } from './liveViewerCount';
 import {
+  classifyLiveWait,
+  LiveBufferPolicy,
+  type LiveCadenceBreak,
+  type LiveTimeRanges,
+} from './liveBufferPolicy';
+import {
   LIVE_BROADCASTER_QUIET_MS,
   LIVE_MANIFEST_POLL_MS,
   LIVE_PLAYER_CATCHUP_SEGMENTS,
+  LIVE_PLAYER_JOIN_SEGMENTS,
   LIVE_PLAYER_KEEP_BEHIND_MS,
-  LIVE_PLAYER_MAX_BEHIND_MS,
-  LIVE_PLAYER_TARGET_BUFFER_MS,
   LIVE_RECORDER_MIME,
 } from './constants';
 import {
@@ -55,12 +62,7 @@ import {
 } from './liveViewerState';
 import type { LiveChatBlock, LiveChatQuery, LiveManifest, LiveManifestSegment } from './types';
 
-/** The `buffered` ranges of a source buffer, as MSE gives them. */
-export interface LiveTimeRanges {
-  readonly length: number;
-  start(index: number): number;
-  end(index: number): number;
-}
+export type { LiveTimeRanges } from './liveBufferPolicy';
 
 /** The part of a `SourceBuffer` the player uses. */
 export interface LiveSourceBufferLike extends EventTarget {
@@ -88,6 +90,8 @@ export interface LiveMediaSourceKind {
 export interface LiveVideoLike {
   currentTime: number;
   readonly paused: boolean;
+  /** True while the engine completes a seek: a `waiting` then is the seek's own, never a stall. */
+  readonly seeking: boolean;
   play(): Promise<void>;
   pause(): void;
 }
@@ -105,6 +109,11 @@ export interface LivePlayerDeps {
   attach(source: LiveMediaSourceLike): () => void;
   /** Runs `fn` after `ms`; returns its cancel. */
   schedule(fn: () => void, ms: number): () => void;
+  /**
+   * A monotonic clock in ms (`performance.now`). Read, never waited on: the buffer policy measures
+   * the gap between two deliveries with it, and no decision is ever deferred by it.
+   */
+  now(): number;
 }
 
 /**
@@ -183,6 +192,7 @@ const defaultDeps: Omit<LivePlayerDeps, 'attach'> = {
     const t = setTimeout(fn, ms);
     return () => clearTimeout(t);
   },
+  now: () => performance.now(),
 };
 
 /** How many segments in a row may fail to open or append before the live is called unplayable. */
@@ -237,6 +247,8 @@ export class LivePlayer {
   private running = false;
   private stalled = false;
   private broadcasterQuiet = false;
+  /** How far behind the edge to sit, from the delivery cadence this run measures. */
+  private readonly policy = new LiveBufferPolicy();
   private state: LiveViewerState = { kind: 'connecting' };
 
   private appended = 0;
@@ -310,25 +322,33 @@ export class LivePlayer {
     this.fail(this.generation, error, async () => {});
   }
 
-  /** The video ran dry (`waiting`): the next segment that lands seeks back to the live edge. */
+  /**
+   * The `<video>` fired `waiting`. Classified ONCE ({@link classifyLiveWait}): the wait of a seek is
+   * no stall and changes nothing; a hole ahead is crossed now; a starved buffer makes the next
+   * delivery re-anchor at the policy's target - which that delivery's own gap has already raised.
+   */
   noteStall(): void {
     if (!this.joined || this.stalled) return;
-    console.debug(`[LIVE] viewer ${this.liveId} stalled at ${this.video.currentTime.toFixed(2)}`);
-    // Media already buffered PAST the position is a time gap (the broadcaster re-acquired its
-    // camera, its timestamps moved forward): no engine plays across it, so seek now - once.
-    const ranges = this.buffer?.buffered;
-    if (
-      ranges &&
-      ranges.length > 0 &&
-      ranges.end(ranges.length - 1) > this.video.currentTime + 0.5
-    ) {
-      const last = ranges.start(ranges.length - 1);
-      if (last > this.video.currentTime) {
+    const at = this.video.currentTime;
+    const wait = classifyLiveWait(this.video.seeking, at, this.buffer?.buffered ?? null);
+    switch (wait.kind) {
+      case 'seeking':
+        console.debug(
+          `[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`
+        );
+        return;
+      case 'time-gap':
+        // The broadcaster re-acquired its camera, its timestamps moved forward: no engine plays
+        // across the hole, so seek now - once.
         this.seekToEdge('time gap');
         return;
-      }
+      case 'starved':
+        console.debug(
+          `[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${this.policy.targetMs} ms)`
+        );
+        this.stalled = true;
+        return;
     }
-    this.stalled = true;
   }
 
   /**
@@ -372,6 +392,7 @@ export class LivePlayer {
     this.appendFailures = 0;
     this.stalled = false;
     this.broadcasterQuiet = false;
+    this.policy.reset();
     this.appended = 0;
     this.skipped = 0;
     this.seeks = 0;
@@ -438,6 +459,7 @@ export class LivePlayer {
         : // Once the key was served, the live existed for this viewer: a 404 is its end.
           liveFailureOutcome(error, this.joined || this.keyHex !== null);
     if (outcome === 'retry') {
+      this.interruptCadence('retry');
       this.retryAttempt++;
       const wait = liveRetryDelayMs(this.retryAttempt);
       console.warn(
@@ -543,10 +565,14 @@ export class LivePlayer {
       return;
     }
     // Every segment is self-contained (its init, then one fragment - the broadcaster's shape), so
-    // the newest one is enough to join on; it cannot be skipped.
-    if (newest.index > this.last) await this.take(gen, newest, true);
-    if (!this.alive(gen)) return;
+    // any one can start the picture. The newest LIVE_PLAYER_JOIN_SEGMENTS are taken, so the first
+    // frame has the policy's smallest target ahead of it; the newest one cannot be skipped.
+    for (const s of manifest.segments.slice(-LIVE_PLAYER_JOIN_SEGMENTS)) {
+      if (s.index > this.last) await this.take(gen, s, s === newest);
+      if (!this.alive(gen)) return;
+    }
     this.joined = true;
+    this.policy.delivered(this.deps.now());
     this.seekToEdge('join');
     this.resume();
     console.log(`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`);
@@ -582,14 +608,17 @@ export class LivePlayer {
           );
           this.skipped += Math.max(0, newest.index - this.last - 1);
         }
+        this.interruptCadence('catch-up');
         edge = true;
       }
       if (fresh.length > 0) {
+        const before = this.appended;
         for (const s of fresh) {
           await this.take(gen, s);
           if (!this.alive(gen)) return;
         }
-        if (edge || this.behindMs() > LIVE_PLAYER_MAX_BEHIND_MS) {
+        if (this.appended > before) this.noteDelivery();
+        if (edge || this.behindMs() > this.policy.maxBehindMs) {
           this.seekToEdge(edge ? (this.stalled ? 'stall' : 'catch-up') : 'drift');
         }
         this.stalled = false;
@@ -731,18 +760,35 @@ export class LivePlayer {
     return (ranges.end(ranges.length - 1) - this.video.currentTime) * 1000;
   }
 
-  /** Puts the video one target buffer behind the newest buffered media, and plays. */
+  /** Puts the video the policy's target behind the newest buffered media, and plays. */
   private seekToEdge(why: string): void {
     const ranges = this.buffer?.buffered;
     if (!ranges || ranges.length === 0) return;
     const end = ranges.end(ranges.length - 1);
     const start = ranges.start(ranges.length - 1);
-    this.video.currentTime = Math.max(start, end - LIVE_PLAYER_TARGET_BUFFER_MS / 1000);
+    const target = this.policy.targetMs;
+    this.video.currentTime = Math.max(start, end - target / 1000);
     this.seeks++;
     console.debug(
-      `[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}`
+      `[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`
     );
     this.resume();
+  }
+
+  /** Media was appended by a poll: its gap since the previous one feeds the buffer policy. */
+  private noteDelivery(): void {
+    const d = this.policy.delivered(this.deps.now());
+    if (d.grew) {
+      console.debug(
+        `[LIVE] viewer ${this.liveId}: a delivery gap of ${Math.round(d.gapMs ?? 0)} ms - target buffer now ${Math.round(d.targetMs)} ms`
+      );
+    }
+  }
+
+  /** The gap running now is an outage, not the producer's cadence: it is not measured. */
+  private interruptCadence(why: LiveCadenceBreak): void {
+    console.debug(`[LIVE] viewer ${this.liveId}: delivery gap not measured (${why})`);
+    this.policy.interrupt(why);
   }
 
   private resume(): void {
@@ -769,6 +815,7 @@ export class LivePlayer {
     if (quiet !== this.broadcasterQuiet) {
       console.debug(`[LIVE] viewer ${this.liveId}: broadcaster ${quiet ? 'quiet' : 'back'}`);
       this.broadcasterQuiet = quiet;
+      if (quiet) this.interruptCadence('broadcaster-quiet');
     }
   }
 

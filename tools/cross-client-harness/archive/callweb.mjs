@@ -8,17 +8,22 @@
  * W4 and W8 (every device of the callee) and reopens them afterwards.
  *
  * EACH SEAT CAPTURES ITS OWN TONE, AND THAT IS A FACT READ, NOT A FLAG ASSUMED. Before the row, every
- * seat's fake microphone is sampled in its own page (one `getUserMedia`, an FFT, the peak frequency).
- * A seat not on its `SEAT_TONES` frequency is relaunched on a WAV of it
- * (`--use-file-for-fake-audio-capture`) and its encryption gate passed again; a seat still off its
- * tone after that is an ERROR, never a row played on a shared beep (CALL-WEB-2's six rig FAILs).
+ * seat's fake microphone is sampled in its own page (one `getUserMedia`, frames of an FFT, the peak
+ * frequency and how far its level swings). A seat not on its `SEAT_TONES` frequency, or not PULSED,
+ * is relaunched on a WAV of it (`--use-file-for-fake-audio-capture`) and its encryption gate passed
+ * again; a seat still off its tone after that is an ERROR, never a row played on a shared beep
+ * (CALL-WEB-2's six rig FAILs) or on a steady one a noise suppressor may learn.
+ *
+ * AND EACH ROW READS THE CALL'S RECORD IN THE CONVERSATION (B15, `RECORD_SEATS`): the newest system
+ * pill of the DM on each end, once it has finalised - an answered call must read as one that lasted,
+ * an unanswered one must not.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { subjectFor } from '../accounts.mjs';
 import { pin } from '../atoms.mjs';
-import { CALL_WEB_ROWS, FLOW_SECONDS, ROUND_MS, SEAT_TONES, UNANSWERED_ROUNDS, WAIT_ROUNDS, callNarration, callOwn, toneWav } from '../callrows.mjs';
+import { CALL_SOCKET_PATH, CALL_WEB_ROWS, FLOW_SECONDS, RECORD_SEATS, ROUND_MS, SEAT_TONES, UNANSWERED_ROUNDS, WAIT_ROUNDS, callNarration, callOwn, recordForm, toneWav } from '../callrows.mjs';
 import { TRACK_PCS, SAMPLE } from '../callpeer.mjs';
 import { client, evaluate, openConversation, realClick } from '../chat.mjs';
 import { resolveDevices, tabMatchFor } from '../device.mjs';
@@ -67,36 +72,54 @@ async function rounds(pred, max = WAIT_ROUNDS) {
 
 // ── the seat's own tone ────────────────────────────────────────────────────────────────────────────
 
-/** The peak frequency of this page's fake microphone, in Hz: one capture, an FFT, closed again. */
-const PEAK_HZ = `(async () => {
+/**
+ * This page's fake microphone, read once and closed again: its peak frequency in Hz, and how far the
+ * level of that frequency swings between frames in dB - the PULSE (callrows.mjs toneWav). A steady
+ * tone swings by almost nothing, so `swingDb` is what tells a seat on the pulsed file from one still
+ * on a steady file with the same frequency. No smoothing, and frames shorter than the pulse's
+ * silence, so some frames fall wholly in one.
+ */
+const PEAK = `(async () => {
   const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
   const ac = new AudioContext();
   const an = ac.createAnalyser();
-  an.fftSize = 8192;
+  an.fftSize = 4096;
+  an.smoothingTimeConstant = 0;
   ac.createMediaStreamSource(s).connect(an);
-  await new Promise((r) => setTimeout(r, 1500));
   const bins = new Float32Array(an.frequencyBinCount);
-  an.getFloatFrequencyData(bins);
-  let best = 0;
-  for (let i = 1; i < bins.length; i++) if (bins[i] > bins[best]) best = i;
+  const frames = [];
+  for (let f = 0; f < 24; f++) {
+    await new Promise((r) => setTimeout(r, 60));
+    an.getFloatFrequencyData(bins);
+    frames.push(Float32Array.from(bins));
+  }
   s.getTracks().forEach((t) => t.stop());
   await ac.close();
-  return Math.round((best * ac.sampleRate) / an.fftSize);
+  let best = 1;
+  let bestDb = -Infinity;
+  for (const fr of frames) for (let i = 1; i < fr.length; i++) if (fr[i] > bestDb) { bestDb = fr[i]; best = i; }
+  const levels = frames.map((fr) => (Number.isFinite(fr[best]) ? fr[best] : -200));
+  return { hz: Math.round((best * ac.sampleRate) / an.fftSize), swingDb: Math.round(Math.max(...levels) - Math.min(...levels)) };
 })()`;
-/** Within one FFT bin either side at 48 kHz / 8192, with room for the window. */
+/** Within one FFT bin either side at 48 kHz / 4096 (11.7 Hz), with room for the window. */
 const TONE_TOLERANCE_HZ = 20;
+/** The least swing a pulsed tone shows between a frame in a pulse and a frame in a silence. */
+const PULSE_SWING_DB = 20;
 
 async function peakOf(seat) {
   const [target] = resolveDevices(['--device', seat]);
   const c = await client(target.port, tabMatchFor(target), { focus: false });
   try {
-    return await evaluate(c, PEAK_HZ);
+    return await evaluate(c, PEAK);
   } finally {
     c.close();
   }
 }
 
-/** The WAV a seat's fake microphone plays, written once under `STATE_DIR`. */
+/**
+ * The WAV a seat's fake microphone plays, under `STATE_DIR`, REWRITTEN on every call: Chrome reopens
+ * the file at each capture, so a running seat picks a new tone up at its next call without a relaunch.
+ */
 function wavOf(seat) {
   const dir = join(STATE_DIR, 'call-tones');
   mkdirSync(dir, { recursive: true });
@@ -123,19 +146,21 @@ async function relaunch(seat, flags) {
   log(`${seat} relaunched${flags.length ? ' on fake media' : ''}`);
 }
 
-/** Every seat of the row on its own tone - read, relaunched once if not, an ERROR if still not. */
+/** Every seat of the row on its own PULSED tone - read, relaunched once if not, an ERROR if still not. */
 async function tonesSet() {
   const read = {};
+  const onTone = (p, want) => p !== null && Math.abs(p.hz - want) <= TONE_TOLERANCE_HZ && p.swingDb >= PULSE_SWING_DB;
   for (const seat of spec.devices) {
     const want = SEAT_TONES[seat];
-    let hz = await peakOf(seat).catch(() => null);
-    if (hz === null || Math.abs(hz - want) > TONE_TOLERANCE_HZ) {
-      log(`${seat} captures ${hz ?? 'nothing'} Hz, not its ${want} Hz - relaunching it on its tone`);
+    wavOf(seat);
+    let p = await peakOf(seat).catch(() => null);
+    if (!onTone(p, want)) {
+      log(`${seat} captures ${JSON.stringify(p)}, not its pulsed ${want} Hz - relaunching it on its tone`);
       await relaunch(seat, mediaFlags(seat));
-      hz = await peakOf(seat);
+      p = await peakOf(seat);
     }
-    if (Math.abs(hz - want) > TONE_TOLERANCE_HZ) throw new Error(`${seat} captures ${hz} Hz after its relaunch, not its ${want} Hz`);
-    read[seat] = hz;
+    if (!onTone(p, want)) throw new Error(`${seat} captures ${JSON.stringify(p)} after its relaunch, not its pulsed ${want} Hz (swing >= ${PULSE_SWING_DB} dB)`);
+    read[seat] = p;
   }
   return read;
 }
@@ -264,6 +289,42 @@ const PLAY = {
   },
 };
 
+// ── the call's record in the conversation (B15) ─────────────────────────────────────────────────────
+
+/** The system pills of the open thread, in order (`ChatMessageGroups.svelte` centres each in `my-3 flex justify-center`). */
+const PILLS = `[...document.querySelectorAll('div.my-3.flex.justify-center')].map((e) => e.innerText.trim()).filter(Boolean)`;
+const nameOf = (seat) => displayNameOf(subjectFor(resolveDevices(['--device', seat])[0].account));
+
+/** Each record seat on its DM, and how many pills that DM held before the row's call. */
+async function recordsBefore(plan) {
+  const before = {};
+  for (const [seat, other] of Object.entries(plan ?? {})) {
+    await openConversation(cx(seat), nameOf(other));
+    before[seat] = (await evaluate(cx(seat), PILLS)).length;
+  }
+  return before;
+}
+
+/**
+ * The row's record on each seat: the newest pill once the DM holds one more than before the call
+ * and it is no longer a bare "started" - a record finalises when the end reaches it, so this waits
+ * on that fact, in rounds. `null` when no new pill came at all.
+ */
+async function recordsAfter(plan, before) {
+  const out = {};
+  for (const [seat, other] of Object.entries(plan ?? {})) {
+    await openConversation(cx(seat), nameOf(other));
+    let last = null;
+    await rounds(async () => {
+      const pills = await evaluate(cx(seat), PILLS);
+      last = pills.length > before[seat] ? pills[pills.length - 1] : null;
+      return last !== null && recordForm(last) !== 'started';
+    });
+    out[seat] = last;
+  }
+  return out;
+}
+
 /** The measurement shaped for its judge: a missing ring leaves every later fact `null`, never absent. */
 function filled(scenario, m) {
   const none = { W2: null, W4: null };
@@ -287,12 +348,17 @@ try {
   for (const caller of spec.devices.filter((d) => d !== 'W4')) log(`${caller} -> ${calleeName}: ${await createDM(cx(caller), calleeName, { label: id })}`);
   for (const d of spec.devices) await evaluate(cx(d), TRACK_PCS);
 
-  const measured = filled(spec.scenario, await PLAY[spec.scenario](calleeName));
+  const plan = RECORD_SEATS[spec.scenario] ?? null;
+  const pillsBefore = await recordsBefore(plan);
+  const played = await PLAY[spec.scenario](calleeName);
+  const measured = filled(spec.scenario, { ...played, ...(plan ? { records: await recordsAfter(plan, pillsBefore) } : {}) });
   const { verdict, failures } = callOwn(spec.scenario, measured);
   for (const f of failures) log(f);
   log(`assertions: ${verdict}`);
   const logs = Object.fromEntries(spec.devices.map((d) => [d, callNarration(id, d)]));
-  const observers = await observersOf(seats, { logs });
+  // THE CALL SOCKET'S OWN CLOSE IS THE HANG-UP (`forgivingSocketCloses`): every seat of the row may close `/api/call`, nothing else.
+  const sockets = Object.fromEntries(spec.devices.map((d) => [d, [CALL_SOCKET_PATH]]));
+  const observers = await observersOf(seats, { logs, sockets });
   await finishObserved(
     id,
     verdict,
