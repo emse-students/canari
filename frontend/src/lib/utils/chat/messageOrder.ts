@@ -66,8 +66,8 @@ export function isNoticeRow(msg: Pick<ChatMessage, 'isSystem' | 'senderId' | 'co
 /**
  * The `lastMessageAt` seed after `messages` arrived: it advances on REAL messages only.
  *
- * A system NOTICE is not activity (a call record is, see {@link isNoticeRow}), so it never moves the conversation up the list (user,
- * 2026-10-27). Every writer of the seed goes through here, so none can restate the rule.
+ * A system NOTICE is not activity (a call record is, see {@link isNoticeRow}), so it never moves
+ * the conversation up the list (user, 2026-10-27). Every writer of the seed goes through here, so none can restate the rule.
  *
  * @param previous the seed before the arrival
  * @param messages the rows that arrived (or the merged row set - only the newest real one counts)

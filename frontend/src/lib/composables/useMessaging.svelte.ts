@@ -1065,7 +1065,7 @@ export function useMessaging() {
   /**
    * Appends multiple messages in a single reactive update and one batch IndexedDB write.
    * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
-   * cause UI jank. Updates `lastMessageAt` to the max timestamp in the batch.
+   * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,

@@ -95,8 +95,9 @@ export function toConversationMeta(
         ? canonicalDirectName(userId, convo.directPeerId ?? convo.contactName)
         : convo.name,
     lifecycle: convo.lifecycle,
-    // The last-message timestamp, so the sidebar sort order survives DB reloads. Never the local
-    // clock: a conversation with no message has recency 0, identical on every device.
+    // The ordering key, so the sidebar sort order survives DB reloads: the newest real message,
+    // else the seed (a conversation created on this device is seeded with its creation moment,
+    // the one local-clock value here), else `startedAt`, else 0.
     updatedAt: conversationRecency(convo),
     readWatermarks: convo.readWatermarks,
     historyFloor: convo.historyFloor,
@@ -1171,8 +1172,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 /**
  * THE ONE SIDEBAR ORDERING KEY: the sent time of the conversation's newest message, in ms.
  *
- * A SYSTEM NOTICE IS NOT ACTIVITY, A CALL RECORD IS ({@link isNoticeRow}; user, 2026-10-27: "X a ajoute un appareil" moved the conversation
- * up the list). Only real messages count, and a conversation holding notices alone keeps the
+ * A SYSTEM NOTICE IS NOT ACTIVITY, A CALL RECORD IS ({@link isNoticeRow}).
+ * User, 2026-10-27: "X a ajoute un appareil" moved the conversation up the list. Only real messages count, and a conversation holding notices alone keeps the
  * position of its seed, which no notice ever advances ({@link advanceLastMessageAt}), then of its
  * creation (`startedAt`), then 0 - never the arrival time of a notice.
  *
