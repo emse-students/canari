@@ -47,6 +47,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === TIER_NOT_RANKABLE) {
     return m.shop_tier_not_rankable();
   }
+  if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
+    return m.shop_cotisation_disabled();
+  }
   if (err instanceof SocialApiError && err.code === PAYMENT_ROUTING_CHANGED) {
     return m.shop_payment_routing_changed();
   }
@@ -97,6 +100,12 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
  * the two has no fixed price (a grid or a free amount), so no rank can be established online.
  */
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+
+/**
+ * The body `code` of social-service's 409 when a membership product is bought (or sold for cash)
+ * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 
 /**
  * The body `code` of social-service's 409 when the association's payment account changed while

@@ -31,6 +31,7 @@ import { Association } from './entities/association.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
+import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
 import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
@@ -93,11 +94,20 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     const others = new DataSource(options(true, entities));
     await others.initialize();
     await others.destroy();
-    ds = new DataSource(options(false, [ProductCheckout, ...entities]));
+    ds = new DataSource(options(false, [ProductCheckout, PurchaseRecordClosing, ...entities]));
     await ds.initialize();
     await ds.query(
       readFileSync(join(__dirname, '../migrations/101_product_checkouts.sql'), 'utf8')
     );
+    // On the admin connection: their `SET lock_timeout` must not stay on a pool connection that
+    // later waits on an advisory lock.
+    for (const name of [
+      '112_product_checkouts_held_tier.sql',
+      '113_purchase_record_closings.sql',
+    ]) {
+      await admin.query(readFileSync(join(__dirname, '../migrations', name), 'utf8'));
+    }
+    await admin.query('RESET lock_timeout');
 
     await ds.getRepository(Association).save(
       ds.getRepository(Association).create({
@@ -407,13 +417,14 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       [newBuyer(), `cotisant:${SLUG}-xb`, OTHER_ASSO]
     );
     expect(await tags.countActiveTierHolders(ASSO, SLUG, 'xb', ds.manager)).toBe(0);
-    // A row no association issued is counted: nobody else owns it.
+    // A row no association issued is held for nobody here (every tier read is issuer-scoped) and
+    // no manager can revoke it, so it does not block either.
     const unissued = newBuyer();
     await admin.query(
       `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, NULL, 'it')`,
       [unissued, `cotisant:${SLUG}-xb`]
     );
-    expect(await tags.countActiveTierHolders(ASSO, SLUG, 'xb', ds.manager)).toBe(1);
+    expect(await tags.countActiveTierHolders(ASSO, SLUG, 'xb', ds.manager)).toBe(0);
     await admin.query(`DELETE FROM user_tags WHERE "userId" = $1`, [unissued]);
 
     await service.delete(ASSO, CROSSED);

@@ -16,6 +16,11 @@ const ORPHAN_TAG = '[ORPHAN_TIER_TAGS]';
  * the durable marker every hour and prints ONE line - `log` with `count=0`, `error` while any row
  * carries it. The association's purchases list and export show which rows.
  *
+ * A marked payment leaves the count only when a person CLOSES it from the purchases list, recording
+ * whether the money was refunded or the tier granted by hand (`ProductsService.closePaidNotGranted`,
+ * migration 113). No clock decides anything: a marked payment stays reported until its outcome is
+ * recorded, and the mark itself stays on the record as history.
+ *
  * The same hour counts the ACTIVE tags of a tier that no longer exists (`countOrphanTierTags`): each
  * holder is refused every other tier (`TIER_NOT_RANKABLE`) until a manager grants them one, so a
  * non-zero count is a WARN naming work owed - and it is said here once an hour, never once per
@@ -57,15 +62,16 @@ export class PaidNotGrantedScheduler {
 
   /** One reading and its line, separated so a test can call it without a scheduler. */
   async reportOnce(): Promise<number> {
-    this.logger.debug(`${TAG} counting the purchases paid and not granted`);
-    const count = await this.purchases.countPaidNotGranted();
+    this.logger.debug(`${TAG} counting the purchases paid, not granted and not closed`);
+    const count = await this.purchases.countUnclosedPaidNotGranted();
     if (count === 0) {
       this.logger.log(`${TAG} count=0`);
       return count;
     }
     this.logger.error(
-      `${TAG} count=${count}: cotisation tier(s) paid for and NOT granted - a refund or a manual ` +
-        "grant is owed; the rows are marked in the association's purchases"
+      `${TAG} count=${count}: purchase(s) paid for, NOT delivered and not closed (a tier, a deleted ` +
+        'product, a form paid with no seat) - check what each buyer holds now, then refund or grant ' +
+        "by hand and record the outcome in the association's purchases"
     );
     return count;
   }

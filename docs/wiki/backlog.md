@@ -27,9 +27,76 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Cotisation-disabled follow-ups (after the tier stack lands)
+
+Left by the review of #2584; none is built. Start after the tier stack has merged.
+
+- **P2 - a paid form that grants a cotisation still takes money after its association disables
+  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
+  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
+  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
+  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
+  record is written), but the grant is still retried as if it could succeed. Fix it like the
+  product path: refuse opening the payment of a granting form while the association has no
+  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
+- **P3 - the purchases tab mislabels a refusal.** `EditAchatsTab.svelte` logs "cash grant refused:
+  amount out of range" for ANY code `providerRefusalMessage` words (`COTISATION_DISABLED`
+  included): log the code.
+- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
+  membership product with a cotisation mode but no stored tag opens a checkout, then ends
+  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
+  operator, privately.
+- **P3 - `/shop` still offers the buy button for a membership product of an association whose
+  cotisations are disabled**: hide or disable it, as for a refused tier.
+- **P3 - the changelog fragment `tag-grant-scoped-to-issuer.md` does not mention
+  `COTISATION_DISABLED`**: add the clause.
+- **P3 - test nit:** the negative assertion in the "renews the dearer" test should use
+  `expect.objectContaining({ tagName })`.
+- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
+  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
+  never one whose tier is no longer a rise when the sweep settles it.
+- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
+  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
+- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
+  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
+  local fresh-database run only - CI never shows it. Make the spec create what it reads.
+
+## Display follow-ups to the shop pricing (after the tier stack lands)
+
+Left by the review of #2544; none is built. Start after the tier stack (#2544 and its followers)
+has merged.
+
+- **P2 - the association page does not show what the checkout charges.** It lists the same products
+  as `/shop` but prints the product's `amountCents` (a holder of the linked tier sees the full price
+  while the preferential one is charged) and offers the buy button for a `held`, `lower` or
+  `unranked` tier, which answers a 409. Reuse `/shop`'s `preferentialDueCents` and `tierNotOffered`
+  rather than a second computation (`frontend` `AssociationDetailView.svelte`, the product list).
+- **P3 - two docs claim the settlement's rule for a form grant.** `rankTier`'s and
+  `RankedGrantOutcome`'s comments in `user-tag.service.ts` say a form grant is ranked like a
+  settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
+- **P3 - a legacy `memberPriceTag` row WARNs on every quote** (`fixedPriceOf`,
+  `products.service.ts`): warn once per product per process, or move it to the hourly report.
+- **P3 - the shop can name the wrong held tier** for a viewer holding two legacy tiers
+  (`heldTierName`, `shop/+page.svelte`); wording only.
+- **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
+  message (fr, en).
+- **P3 - the tier-lock integration spec builds its lock key by hand** (`waitersReach`): use
+  `buyerTierLockKey()`.
+- **Decision owed to the user - the cash sale's amount.** `grantProductPurchase` records the full
+  `amountCents` by default even when the beneficiary qualifies for the preferential price: decide
+  whether the cash path records the preferential amount.
+
+## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more (decision owed, 2026-10-28)
+
+A form that grants a cotisation tier and charges for more than the tier (an event, a meal) applies
+the shop's rise rule to the whole answer: a holder of that tier or a dearer one is refused before
+any payment ([cotisations](cotisations.md#rising-to-a-higher-tier)). Kept that way by the review of
+#2597 rather than splitting the payment from the grant. Owed: the user's confirmation, or the rule a
+form should follow instead (sell the rest and skip the grant, or a form without the grant).
+
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Not built. Starts AFTER the stable `1.4.1`, not before.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -89,44 +156,123 @@ shown on the first open after a future update, covering many features of the app
 product work for after the stable, none is designed yet; ask the user for the wording and the
 placement of (b) and the scope of (c) before building.
 
-### The work packages, in order, each with its starting point and its proof
+### The work packages, in order: one small pull request each, its starting point and its proof
 
-- **WP-F1 - follow status and the setting** (a DATA MIGRATION: it ships with a stable only on the
-  user's go). Add `status` (`pending` / `accepted`) to `user_follows`, every existing row
-  `accepted`; NO setting (every person is private, user 2026-10-25). Start: `apps/social-service/src/follows/entities/user-follow.entity.ts`,
-  `follows/follows.service.ts:81` (`followUser`), `posts/posts.controller.ts:181`. Proof:
-  migration idempotence spec, a follow of a person lands `pending`, of an entity `accepted`.
-- **WP-F2 - every reader of `user_follows` reads accepted rows only.** Enumerate the consumers, not
-  only the feed: the Suivis arm (`posts/posts.service.ts` ~1361 and `getFollowedUserIdsForUser`),
-  the announce sweep (`spaces/reader-spaces.ts`, the two `user_follows` subqueries), the live start
-  push (`lives/live-announcer.ts`), the account erasure. Proof: a pending follower gets no Suivis
-  row, no announce, no live push.
-- **WP-F3 - the request inbox, the followers list and "remove follower".** Reuse the D38b inbox
-  pattern (`/notifications/requests`); accept, refuse, remove; a refusal and a removal tell nobody.
-  User-facing strings through Paraglide. Proof: component tests plus a rig row (two contexts: ask,
-  accept, see; remove, stop seeing).
-- **WP-F4 - a block deletes pending requests both ways**, beside the existing severing
-  (`apps/core-service/src/users/user-blocks.service.ts:164`). Proof: a block leaves no row in
-  either direction, whatever its status.
-- **WP-F5 - the visibility predicate** (a DISCLOSURE change: adversarial Opus review mandatory).
-  Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
-  (`spaces/reader-spaces.ts:204-242`), NEVER for an anonymous post (following someone must not
-  unmask what they posted anonymously), never through a read grant, and keep it monotone for the
-  newly-reached computation. Ships only after WP-F3 is live, so every user can see and prune the
-  grandfathered followers before those followers gain cross-space reach (see risks). Proof: an
-  integration matrix (accepted / pending / none x same space / other space x personal / anonymous
-  / association post), and the existing read-grants spec unchanged.
-- **WP-F6 - member reposts.** The consent setting (per author, per post); the SQL alongside the
-  republication kinds (`posts/republication-sql.ts:6` and `:14` restrict republishers to entities
-  today); the consent check modelled on `posts/personal-republications.service.ts:159`; feed
-  placement in Suivis at the repost time; the newly-reached notification; the cascades (hide,
-  delete, block, erasure); reels included; the share action in
-  `frontend/src/lib/posts/sharePost.ts`. Proof: the D38b refusal list re-run for a member
-  reposter, a hide removing every repost, a notification only for the newly reached.
-- **WP-F7 - texts.** Privacy policy (`/legal/privacy`), register C5
-  ([register](compliance/register-of-processing.md)), terms (`/legal/cgu`), in the same pull
-  request as the code that makes them true, and the D34-D41 tables of
-  [profiles-and-access](profiles-and-access.md).
+Planned 2026-10-27 against `main` at `a97e1cea5`. **Releases, not merges, are the unit that
+matters here:** WP-F1 to WP-F4 and WP-F7 reach users in ONE stable - F1 alone would turn every new
+follow into a request nobody can answer - and that stable carries a data migration, so it ships on
+the user's go. WP-F5 and WP-F6 each follow in a LATER stable. **The two packages marked DISCLOSURE
+(F5, F6) get an adversarial Opus security review before the lead arms them**; the others get the
+ordinary review.
+
+- **WP-F1 - the data model, the migration, and every reader counting accepted rows only. BUILT,
+  draft pull request #2589.** Migration 114 adds `user_follows.status` (`pending` / `accepted`, a
+  CHECK) with every existing row `accepted` (decision 3), then sets the default to `pending` so a
+  writer that forgets the column fails closed; a partial index on what is pending FOR a person
+  serves F2's inbox. `POST /api/posts/users/:id/follow` now writes a `pending` request and answers
+  `{ ok, status }`; `DELETE` unfollows or withdraws; `GET .../follow-status` answers
+  `{ following, status }` (`following` kept true for a request, for older clients -
+  [legacy-compatibility](legacy-compatibility.md)). NO setting (Q1). Old WP-F2 is folded in, because
+  a pending row read as a follow would be a leak the day F1 merges: the Suivis arm
+  (`getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`), the personal
+  republication's newly-reached rule and the live push (`liveAudienceSql`) all AND ONE fragment,
+  `acceptedFollowSql` (`follows/follow-status.ts`); the erasure and the block severing delete
+  whatever the status. Proof: `user-follow-status.integration.spec.ts` (existing rows accepted,
+  replay a no-op, a status-less insert pending, the CHECK), a pending follower in the reader-spaces,
+  personal-republication and lives PostgreSQL specs - all three fail when the fragment is `TRUE` -
+  and `follows.service.spec.ts` (a follow lands pending, a re-ask never downgrades an accepted one).
+  Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25).
+- **WP-F2 - the request API: inbox, accept, refuse, and the one notification. BUILT, draft pull
+  request #2601, stacked on #2589.** Start:
+  `follows/follows.service.ts`, `posts/posts.controller.ts` (the follow routes), the D38b request
+  queue in `posts/personal-republications.service.ts` for the shape. `GET` the pending requests FOR
+  the caller (the partial index of 114), `POST .../accept` (pending -> accepted, under a row lock so
+  a concurrent withdraw cannot be accepted), `POST .../refuse` (the row is deleted; a refusal tells
+  nobody and does not stop a later ask). A new request notifies ONE person through the existing
+  `PostNotificationsService` (a `follow_request` type: a bell row and a push, `contentKey` for the
+  native renderers, NOT in `MUTABLE_PUSH_TYPES`); an acceptance notifies the requester
+  (`follow_accepted`) - each at most ONCE per pair, from a `user_follow_notices` row (never a
+  clock), and the ask route is throttled per caller. An ask of an id that is not a person is 404
+  `FOLLOW_TARGET_NOT_FOUND`, an ask across a block 403 `FOLLOW_BLOCKED`, both decided inside the one
+  `INSERT ... SELECT`. The block severing deletes both directions whatever the status, and the
+  request bell rows with them: a spec pins it.
+  Proof: unit specs for each transition, a PostgreSQL spec for accept-vs-withdraw, the
+  `post-notifications` spec for the two types, and the block case.
+- **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #2605, stacked
+  on #2601.** `GET` my ACCEPTED followers (a person sees
+  only their own list), `DELETE` one of them (the row goes, the removed person is told nothing and
+  may ask again), and `GET` my own outgoing requests so a request can be withdrawn from a list.
+  Start: `FollowsService`, the controller. Proof: a spec that a removed follower drops out of the
+  Suivis arm, the announce and the live push at once (the F1 readers), and that one person cannot
+  read another's list.
+- **WP-F4 - the client screens, every string through Paraglide (`messages/fr.json` and `en.json`).
+  BUILT, draft pull request #2616 (stacked on #2605).** As built: the inbox is
+  `/notifications/follow-requests` (banner on `/notifications`, host `follow-requests`); "Mes
+  abonnes" is the profile section `followers`, with the sent requests under it; the push renderers
+  were F2's; a `follows` notification category with its switch; the rig row is FOL-REQ-1 on
+  [cross-client-testing](cross-client-testing.md). The plan as written:
+  The profile button in three states (Suivre / Demande envoyee / Abonne(e)), reading `status`; the
+  request inbox beside the D38b requests in the notifications screen (accept / refuse); "Mes
+  abonnes" with "Retirer" in the profile; the bell rows of `follow_request` / `follow_accepted`
+  and their push renderers (Kotlin, Swift, web). Start:
+  `frontend/src/routes/profile/[id]/+page.svelte:175`, `frontend/src/lib/posts/api.ts:669`.
+  Proof: component tests, `bun run check`, and a rig row (two contexts: ask, see "Demande envoyee",
+  accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
+  until the floor passes this stable.
+  **Left open by the 2026-10-27 review, each owed before the item it names:**
+  - **Pagination of the three lists, a PRECONDITION OF WP-F5.** The inbox, "Mes abonnes" and the
+    sent requests each load the first 100 rows (`FOLLOW_PAGE_MAX`) and no more. Harmless while a
+    follower only means Suivis; once F5 makes a follower a READER across spaces, a person must be
+    able to see and prune every one of them, so F5 does not arm until the screens page.
+  - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
+    the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
+    through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
+    that saves any switch silently re-enables `follows` - and the same holds for every category
+    added after a build shipped. The server cannot tell what the caller knew: the fix is a client
+    that sends the categories it knows (`known`) so the server keeps the rest, and it protects only
+    builds that send it - the floor (`minClientVersion`) closes the rest. Measured: not yet; the
+    window is a person who turned `follows` off on a new build and then saves a switch on an old one.
+  - **Should `minClientVersion` move with this stable?** A build older than WP-F4 reads
+    `following: true` for a PENDING request (the legacy field, [legacy-compatibility](legacy-compatibility.md)),
+    so it shows "Suivi" for an ask nobody has answered, and it has no inbox to answer one. Nothing
+    leaks - the reader filters are server-side - but the person asked can only answer from a new
+    build. A decision for the user when the stable is cut, with the share of old clients measured
+    from the version header then.
+  - **P3 - a row the block severing missed comes back when the block is lifted.** The severing is
+    a best-effort cross-service call: when it does not run, the request or follow stays in
+    `user_follows`, hidden by every reader while the block stands - and visible again, as it was,
+    the moment the block is lifted. The unblock reaches social-service only as a feed-cache drop,
+    which does not name the pair. The fix is an unblock call that names the pair and deletes what
+    is left between them; until then the stale row is a pending request the person may still
+    refuse, or a follow either side may end.
+  - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
+    one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
+- **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
+  arming).** Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
+  someone must not unmask what they posted anonymously), never through a read grant, and monotone
+  for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else
+  (decision 5). Ships only in a stable AFTER the one carrying F3 and F4, with a one-time notice to
+  every person that their followers will see their posts across spaces, so the grandfathered
+  followers can be pruned first. Proof: an integration matrix (accepted / pending / none x same
+  space / other space x personal / anonymous / association post), the read-grants spec unchanged,
+  and the privacy-policy paragraph in the same pull request.
+- **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
+  review before arming).** The consent setting (per author, per post); the SQL beside the
+  republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
+  on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
+  reaching the reposter's ACCEPTED followers only (Q2); never an anonymous post; blocks both ways;
+  the cascades (hide, delete, block, erasure); feed placement in Suivis at the repost time; the
+  D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
+  Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
+  notification only for the newly reached, and the policy paragraph in the same pull request.
+- **WP-F7 - the register and the privacy policy for follow requests.** Register C5
+  ([register](compliance/register-of-processing.md)): the request, its answer, the followers list,
+  retention (a request until answered or withdrawn; a follow until removed or either account is
+  erased). The privacy policy (`/legal/privacy`, its public face - both change together), the
+  terms (`/legal/cgu`) if they name following, and the D34-D41 tables of
+  [profiles-and-access](profiles-and-access.md). Merges before the stable carrying F1-F4; F5 and F6
+  each amend these texts in their own pull request.
 
 ### Risks, and what proves each away
 
@@ -176,6 +322,258 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
 - **The rig's volume lines and its own probes** (JOIN_*, WELCOME_REQ, DISCOVERY, 409/400/403 probes,
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
+
+## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
+
+A production count of legacy tier tags without a consistent issuer is owed to the operator after
+the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
+
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
+
+On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
+reviewed it and published it. The app's logs and the system's own records agree on two short,
+unrequested opens. Nothing stayed open: the session released the late stream itself.
+
+| When | App log (`[camera-session]`, `[camera]`, `[reel-capture]`) | System record |
+| --- | --- | --- |
+| The gallery picker returns, before the pick reaches its review | `back on screen - reopening` / `start user (#3)`, then `ready -> review on picked`, `stop`, `opened user`, `#3 came back after the session moved on - releasing it` | `dumpsys audio`: a CAMCORDER recording for ~0.5 s |
+| After Publish, with the feed already on screen | `published`, `the screen is being left: the take is dropped`, `the take was dismissed`, `start user (#5)`, `stop`, `opened user: camera 1, facing front`, `#5 came back ... releasing it`, `released` | `dumpsys media.camera`: CONNECT then DISCONNECT of the front camera; `dumpsys audio`: a CAMCORDER recording for ~0.33 s |
+| +33 s, +78 s, and in the reel viewer | nothing | no camera client, no recording |
+
+Causes, the fix and its tests: [reels](frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28).
+**Owed: one reading on the Mi 9T** - no CONNECT and no CAMCORDER window after a publish or a gallery
+return.
+
+## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
+
+A member joins a community mid-session, so the client starts a full listing of that community's
+salons. Another member creates a salon while the listing is in flight. The member hears of the new
+salon live (`onChannelMemberJoined` in `ChatBackgroundService.svelte` logs `Joined channel ...` after
+`addChannelToWorkspace` and the conversation row are written). Then the listing returns without the
+salon, because it was read before the salon existed. Its clean-up removes the salon from the list.
+The server still lists it, so it comes back at the next full listing (a reload or a reconnect).
+
+The line is in `frontend/src/lib/composables/useChannelWorkspaces.svelte.ts`, `pruneAfterLoad`:
+
+```ts
+const bornAfterTheRequest = (id: string) => (locallyCreatedChannels.get(id) ?? 0) > epochAtRequest;
+```
+
+Only a salon created ON THIS DEVICE after the request is spared. A salon heard of live is not in
+`locallyCreatedChannels`, so it lands in `staleLocalChannelIds`. The loop then runs
+`ctx.conversations.delete(staleId)` and `removeChannelFromWorkspaces(staleId)` with no log line. The
+later `removed N salon row(s)` count covers only the second pass, so nothing records this removal.
+Communities carry the same guard by `createdEpoch` for the same reason; salons heard of live never
+got one.
+
+**Why the web seats passed and the phone did not.** They run the same code, and timing decides which
+salons are lost. The phone's in-session listing took 6.4 s, and the creation fell inside it. The web
+seats had joined earlier, so their listings had ended before the salon was created. The rig gesture
+was ruled out: the community was open with its sidebar shown and listed only `général`. The DOM was
+re-read by hand.
+
+**The deciding rows.** LIST-RACE-1 is a RED/GREEN pair on a web seat and on the phone:
+1. Hold the per-community listing GET once.
+2. Have another member create a salon while the GET is held.
+3. Release the GET, then read whether the salon is listed, counting rounds rather than clock time.
+4. Run the same steps without the hold as the control.
+
+RED runs on `1.4.1-alpha.6` and must show the salon lost. GREEN replays the pair on the pre-release
+that carries the fix, together with BIG-3-noI1 and the COMM rows. The fix, in review, gives salons
+created on this device AND salons heard of live one shared epoch record. A live deletion wins, and
+every removal is logged.
+
+## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
+
+**BUILT 2026-10-27 (draft PR): see [calls](frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27); owed the web-row readings.**
+
+- **P3 left: render a call row from `callEvent.outcome` and `starterId`** instead of the text baked per side at write time, so a locale change or a second device reads the same row in its own words.
+
+**These block the `calls_mode` flip, not the stable** (B15 and B16 in
+[calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence)). They are user-visible as soon
+as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
+
+- **An unanswered call is written as a call with a duration.** The calls never answered were the
+  cancelled one (CALL-WEB-5), the declined one (-4), the unreachable one (-6, which ends at the
+  server's 60 s window) and the busy one (-7). All of them read "X a démarré un appel qui a duré moins
+  d'une minute" (or "1 minute"), and the caller sees "Appel terminé · 00:00".
+  - Cause, in `frontend/src/lib/utils/chat/callSystemMessages.ts`:
+    - `handleCallSignalForChat` writes a rung invite with `recordCallStarted`.
+    - Every later hang-up goes through `recordCallEnded`, which writes the duration.
+    - `chat_system_call_missed` is written only for an invite that will NOT ring (the permission is
+      off or calls are unavailable).
+  - The fix needs a fact the signal does not carry today: whether the call was ever answered. The
+    `answered` signal exists and is ignored here.
+- **A busy callee gives the second caller nothing** (CALL-WEB-7). W5 called W4 while W4 was in a call
+  with W2.
+  - `CallService` does not ring a second invite over a call in progress. That is by design
+    (`BUSY: ... nothing is sent for it`).
+  - So W5 rang for the whole 60 s window and then ended. The call in progress kept flowing, which is
+    correct.
+  - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
+    call.
+
+## P3 - The live viewer's stall line prints its target buffer unrounded (LIVE-STALL-1, `1.5.1-alpha.1`, 2026-10-27)
+
+- `livePlayer.ts` writes `stalled at <t> (target ${this.policy.targetMs} ms)` and printed
+  `target 4634.20000000298 ms`. The gap and seek lines round the same value (`Math.round`).
+- One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
+- Owed: round it where it is printed, as the other two lines do.
+
+## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
+
+This is a finding, not design. It is open until it is known why the frame arrives late.
+
+Group `7820dd5c` is DEV-6's group. The first minted device (W3) is a member at epoch 1. At start-up,
+while `WasmMlsClient::new` loads its state, it meets an epoch-1 application frame when the group is
+already at epoch 2:
+
+```
+verbose [RUST::DEBUG] Sender data decryption error
+info [RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=1 group_epoch=2 group=7820dd5c-... err=ValidationError(UnableToDecrypt(AeadError))
+info [21:28:49.670] [HISTORY] 7820dd5c… holds 1 frame(s) it can never read - reconciling (e.g. k1:137qgdw)
+```
+
+The second minted device (W6) reports the same frame key at 21:30:09. The invariant held, and HISTORY
+reconciled the frame. The message is not lost to the user. The loss is on the MLS path.
+
+The failure is `AeadError`, not `TooDistantInThePast`. The epoch-1 secret was still held, so the frame
+could not be opened with a secret this device had at epoch 1.
+
+What the console shows about the order: W3 took a Welcome into the group at 21:27:48. At 21:28:34 it
+rejoined by its own external commit ("`[READD] ... roster seat with NO queued Welcome and NO add in
+flight - nobody owes us anything; serving ourselves`", then "externalJoin succeeded ... (base epoch
+1...)"). That rejoin is what took the group to epoch 2. The questions to answer:
+
+- why a device that had just been Welcomed rejoined by external commit;
+- whether the epoch-1 frame was encrypted before or after that rejoin;
+- whether delivery order (the frame before the rejoin's commit) would have prevented the loss.
+
+In the same load, the other groups show the expected case: frames older than the joiner's membership,
+`TooDistantInThePast`. W3 logged 65 such lines. For example, six on group `1589de4c`:
+
+```
+info [RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=2 group_epoch=54 group=1589de4c-... err=ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInThePast)))
+info [21:28:49.602] [HISTORY] 1589de4c… holds 6 frame(s) it can never read - reconciling (e.g. oz:hnqfta, jd:326tvj, ...)
+```
+
+Those `TooDistantInThePast` lines are the item already filed above (*A past-epoch frame older than
+the joiner's own Welcome is logged at WARN*). This item is the `AeadError` alone.
+
+## P3 - A commit that has its answer waits for a history bundle applied under its loan (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
+
+The cause is to be read. On the second minted device (W6), two stray-leaf removals of the revoked
+first device each got the server's answer while a frame of ANOTHER group held the loan of the MLS
+mutex. Both times the borrower was a `history_bundle` system event:
+
+```
+info [21:30:12.853] [MLS_LOCK] a frame of a1c4da59… is applied while the commit of b1ecb448… awaits its answer
+info [21:30:12.854] [MLS] System event 'history_bundle' from <member> in a1c4da59…
+info [21:30:12.856] [MLS_LOCK] the commit of b1ecb448… has its answer - waiting for the frame applied under its loan
+info [21:30:12.951] [STRAY] b1ecb448... is now at epoch 74 - the revoked leaves are gone from the tree
+
+info [21:30:13.589] [MLS_LOCK] a frame of 10ddf2b7… is applied while the commit of 1589de4c… awaits its answer
+info [21:30:13.615] [MLS_LOCK] the commit of 1589de4c… has its answer - waiting for the frame applied under its loan
+info [21:30:13.674] [STRAY] 1589de4c... is now at epoch 57 - the revoked leaves are gone from the tree
+```
+
+Each merge was held for about 95 ms and 59 ms (`lendMlsLockWhile` in `mlsPerGroupScheduler.ts`).
+Each wait ended without a cut or an error. A bundle's application (store, authorship check, encrypted
+checkpoint) is longer than a commit's round trip, so a commit that lends to one waits for it.
+
+Questions:
+
+- should a frame whose application persists a checkpoint be allowed to borrow at all;
+- or should the loan be bounded to frames whose cost is known.
+
+The reclaim wait counts against the commit's lock-hold budget (`mayStartCommitRequest`). On a slow
+device or a large bundle, this wait could turn a commit's outcome into "unknown".
+
+## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
+
+The salon creator (W1) asked the same member the same question twice: same devices, same community,
+same epoch:
+
+```
+[21:49:56.321] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
+[21:49:56.367] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
+[21:49:56.446] [GRAINE] ignoring "I hold nothing" for community 53844ba7 from <member>: it answers request d6b6eb63…, not the history ask in flight (addressed to <member>)
+```
+
+The second ask replaced the first in `historyRequest`. Both devices' answers to the first ask were
+then dropped at `debug` (`noteHistoryHeldNothing` in `graine/repair.ts`), so W1 printed the
+`ignoring` line twice, and the member answered again. Nothing was lost; the cost is one extra round
+trip per member. The row's other seats (W2, W4) show the same line shape.
+
+The `ignoring` line is correct for a genuinely superseded ask. The defect is the second ask: two
+triggers fire `requestCommunityHistory` for one epoch with nothing deduplicating them.
+
+To do: name the two callers (the log context shows a key-group epoch move to 5 just before), and make
+an ask for an epoch that already has one in flight to the same member a no-op.
+
+## P3 - "Made private" is logged for a privacy flip the removal bound then refuses (RM-6, `1.4.1-alpha.6`, 2026-10-26)
+
+`updateChannelAccess` (`channel.service.ts`) logs `[CHANNEL_ACCESS] made private by <actor>, granting
+them channel=<salon>` when it adds the actor to the list it is about to compute. The removal bound
+is checked after that. On RM-6, the moderator's flip was refused `403 REMOVAL_EXCEEDS_ACTOR`: the salon
+stayed public and no group was minted. The server log still says the salon was made private.
+
+A line that states an outcome before the outcome is decided is false whenever the write is refused,
+so it cannot be narrated. Log the grant after the save, with the save's result, or reword it as the
+intent ("flip to private by ... would grant them").
+
+## P3 - A refused Welcome's leaf stays in a private salon's tree, and the next Add reads it as "already holds a leaf" (RM-5, `1.4.1-alpha.6`, 2026-10-26)
+
+RM-5 cycle 1: the grant landed before the kick. The granter's Add put the subject's two devices in the
+salon's distribution group, and the server refused both Welcomes:
+
+```
+[COMMIT] 357b4af8... the gate did not record the admit of <subject>:<device> (not_entitled) - its Welcome is sent and answered as before
+[WELCOME] 357b4af8... Welcome REFUSED for <subject>...: the roster does not name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray sweep collects it
+```
+
+That much is designed. But 25 s later (cycle 2) and 2.5 min later (cycle 5), the granter's next grant
+to the same subject decided:
+
+```
+[21:56:26.961] [GRAINE] ADMIT <subject> into salon 114d3327 of c2886ebf: all 2 device(s) already hold a leaf - no commit
+```
+
+The leaves the Welcome never reached were still in the tree, and the Add treated them as members
+that need nothing.
+
+**What each person sees, read from this run's consoles:**
+
+- **The granter: nothing.** The panel shows the grant as made (`200`). The refused Welcome is an
+  `error` in the console only. The later `already hold a leaf - no commit` is silent.
+- **The subject, in this run: the salon appears, then is refused.** Each time the grant reached them
+  live, their client logged `Joined channel 114d3327…` and `[CHANNEL] #114d3327… updated -
+  canWrite=true`, so the salon shows as writable. The next read of its distribution group answered
+  `403`, logged as `this user is NOT entitled to its distribution group (403) - no join is owed and
+  no retry can help`, at 21:56:01, 21:56:26 and 21:58:40. Every cycle ended with the kick, so the
+  subject was never entitled and nothing was withheld from a member.
+- **The case this run did not reach: a grant that stands after a refused Welcome.** Reading
+  `ensureJoined` (`graine/distributionGroup.ts`): the subject's device does not hold the group. Its
+  seat was never written (the Welcome was refused), so no Welcome is owed to it. Its own door is
+  therefore an external commit. Nothing waits on the admitter, so by the code it should self-heal.
+  What is unobserved is the outcome of that external commit when the tree already holds a leaf for
+  the same device (the duplicate-leaf case that GRP-4 closed for conversations). If the gate refuses
+  it, the member has the salon in their list and can never read it: a **P2**.
+
+**The row that decides it: RM-5 with a closing uncontested grant.** After the race cycles, with at
+least one cycle where the grant landed first (a refused Welcome), rejoin the subject and grant them
+without a kick. Then assert three things within the bound:
+
+- the subject's device is `active` in the salon's distribution group;
+- a message sent in the salon is readable on the subject's seat;
+- the stale leaf is gone or reused, not duplicated.
+
+**Read on `1.5.0-alpha.2` (2026-10-27): no duplicate.** All five cycles had the grant land first; the closing grant seated both of the subject's devices (`active`, one row each), a salon message reached the subject's seat, and the subject's own roster check counted 8 leaves for 8 active devices. The stale leaf is gone or reused, so the P2 does not arise; this stays a P3 for the two reads below.
+
+To read:
+
+- when the stray sweep runs for a salon group;
+- whether `ADMIT ... already hold a leaf` should check the seat (`active`) rather than the leaf.
 
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
@@ -232,6 +630,16 @@ brings back the stored case. The creator's own sidebar shows the stored case thr
 `1.4.1-alpha.3`; the name is stored in its original case. Where the case is lost on the receiving
 path is not yet read. The salon runner now mints lower-case salon names, so its rows no longer
 depend on this.
+
+## P3 - A field change heard during a listing is overwritten by its older answer (2026-10-26)
+
+The existence half is fixed: a salon or community heard of, or removed, while a listing is in flight
+is dated against it ([chat](frontend/modules/chat.md#a-live-fact-heard-during-a-listing-is-newer-than-its-answer-2026-10-26)).
+FIELDS are not: a rename or a `viewerCanWrite` change (`channel.updated`), a role change
+(`workspace.role.changed`) or a cover/history change (`workspace.updated`) heard in that window is
+overwritten by the listing's older row (`upsertChannelRow`, `upsertWorkspaceFromDto`) until the next
+listing. Owed: whether it is seen at all (a demoted admin keeping controls for one listing is the
+case that matters), then the same ledger keyed per field if it is.
 
 ## P3 - A re-fetch after a late Welcome re-reads frames the live socket already delivered (DUP-2, 2026-10-25)
 
@@ -523,6 +931,13 @@ read of one's own publication rather than a new status on the shared one; old cl
 404 get a [legacy-compatibility](legacy-compatibility.md) row with its removal date. Until it lands
 the DEV rows stay `PASS-DIRTY` on this line, named.
 
+**Seen again on DEV-6 of `1.4.1-alpha.6` (2026-10-26)**, on the second minted device. The 404 is
+that device's read of ITS OWN package: the URL names its own device id. It is not a read of the
+revoked first device's package. It is followed by
+`[MLS] externalJoin b8ea5710... finds NO KeyPackage published for this device (absent) and no round
+running - starting the round` at `warn`, which is the same item. It is not a separate finding about
+revoked devices.
+
 ## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
 
 The web send now reads a non-JSON 2xx as no answer
@@ -600,6 +1015,62 @@ What was running at the same time: the rig's own replay chain, on the operator c
 different worktree. `sourcestamp-selftest` writes a file into its tree and hashes the tree twice, so
 something writing to the same tree would break it. No writer was found. If either step fails again,
 keep the full output, not the tail.
+
+## P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)
+
+Seen on dev `1.5.0-alpha.1`. W4 and W8 are two devices of ONE account, which a user with two devices
+can produce by joining from both. They external-joined the community's key group in the same second.
+
+- W8 was refused `concurrent_commit` twice, then joined at base 2.
+- W4 was refused `epoch_mismatch` three times: base 0 at group 1, base 1 at group 2, base 2 at group 3.
+  It reached `EXTERNAL_JOIN_MAX_ATTEMPTS` and logged
+  `[GRAINE] could not join the distribution group of community ... (refused)`.
+- 0.9 s later another path joined it at base 4. An application frame of epoch 4 then reached it at
+  epoch 5: `[GRAINE] frame on ... is unreadable for good (past-epoch-application) - acknowledged; its
+  seed comes back through a history request`.
+
+The row still passed, but this is a heal after a race on the normal path, which the rules count as
+a defect: the bounded retry lost to its own sibling's commits, and a frame was lost and had to be
+recovered. The give-up line had appeared in no row since 2026-08-27
+([cross-client-campaign](cross-client-campaign.md)). Evidence: the run's W4 and W8 consoles
+(`logs/consoles/LIST-RACE-1-W-2026-10-26T23-45-59-975Z-*`, W4 lines 123-171, in the rig's state
+directory). Owed: say what serialises two joins of one account into one key group. That fact
+deletes the overlap; a larger retry bound only widens it. Then re-measure with LIST-RACE-1-W, which
+reproduces the pair. Not narrated: it stays dirt until fixed.
+
+## P3 - "they can still read it" after a refusal whose commit log has just applied the departure (BIG-3-noI1, 2026-10-27)
+
+`rosterReconcile.ts` logs `[GRAINE] could not remove N departed member(s) from ...: <error> - they
+can still read it` on every failure of its Remove. On dev `1.5.0-alpha.1` the failure was
+`concurrent_commit`. The line just before it in the same console says the commit log was read and the
+concurrent commit WAS that departure (`refused concurrent_commit at epoch 7: read the commit log, 1
+commit(s) applied, now epoch 8`, with the member gone from the tree). So the line states something
+false, and a reader told "they can still read it" is sent after a leak that did not happen. Owed:
+classify the refusal against the commit log the client just read. Say "still read it" only when the
+departed member's leaves are still in the tree after that read; say "removed by another member's
+commit" when the log already removed them. Never branch on the error's message: the outcome is a
+fact the caller already holds.
+
+## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
+
+`watchUsers` / `unwatchUsers` (`presenceStore.ts`) add to and delete from one `Set`. Several holders
+watch the same peer at once: the DM's `ChatHeader`, that DM's sidebar `ConversationTile`, and a
+salon's `ChannelMembersList` (`ChannelMembersList.svelte:59` releases every member id it watched).
+When one of them releases, the peer leaves the poll for all of them. Leaving a DM therefore stops
+polling a peer whose sidebar tile is still on screen, and the dot freezes until something else
+watches that peer again. Owed: count the holders per id, with the release decrementing. Add a unit
+test with two holders and one release, which must still poll. The WP-PRESENCE push that replaces the
+poll needs the same count for its watch set.
+
+## P3 - A conversation tile watches the presence of the peer it MOUNTED with, never the one it shows later (review of #2618, 2026-10-27)
+
+`ConversationTile.svelte` calls `watchUsers([contactName])` in `onMount`. A tile whose `contactName`
+or `isDirect` changes while it stays mounted (a keyed list that reuses the component, or a row whose
+identity resolves after mount) keeps watching the first peer. Owed: an `$effect` on `contactName` and
+`isDirect`, capturing the watched id in its body as `ChatHeader` does
+([architecture](frontend/architecture.md#a-teardown-sees-the-values-its-effect-saw-and-a-derived-read-there-keeps-them-2026-10-27)),
+with a test that changes the prop and asserts the watch moves. It is cheap to fix together with the
+ref-count entry above.
 
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
@@ -846,6 +1317,64 @@ than the rule still auto-Adds a link joiner and "only by a member" holds only fr
 ([legacy-compatibility](legacy-compatibility.md)); the `[UNINVITED_ENTRY] kind=new-person` count on
 production once the build serves both stores; and a second step on the receiving side (private
 operations notes).
+
+## An unseen device of a member is asked about before it is added (2026-10-27): interim built
+
+Built: an automatic Add no longer brings in a device of a member unless its own leaf is in that
+group's tree or a member approved it, one device at a time, under the key it showed; a pin never
+counts. A further device of a member asks a member rather than joining itself, decided on the tree
+of the GroupInfo its commit would be built on (a device whose own leaf is there, and a user's first
+device in a group, keep their own door); one that does join itself is reported and written in the
+conversation, decided per group, with "Not me" on the owner's alert, and is answered no history
+until a member vouches for it; and a waiting device shows its owner its own key
+([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). The user
+confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons. Owed:
+
+- the production rate of device enrolments per week (and how many are a second device of an
+  account), which is the number of taps it costs - and how often a device enrols while none of its
+  conversations has a member online, which now waits instead of joining itself;
+- **the hourly stranded report cannot tell a device waiting for a member's tap from a stranded
+  one**: both are a `pending` seat with no Welcome, no add in flight and no admission. The device
+  knows which it is (its join answers `further_device`); the report needs that fact on the seat - e.g. the
+  `welcome_request` the waiting device sends, recorded per seat - before its count can be read as
+  defects again;
+- a hardware reading of the owner's own new phone approved from the old one, the two keys compared;
+- **who can still be flagged honestly**: a device on a client older than this change still joins
+  by itself beside its user's other devices, and is flagged wherever it was never in the group - the
+  rollout's cost, until `minClientVersion` carries the tree-based door. A current client cannot be:
+  its door is the observer's predicate without the departure half. The departure record's cap
+  (`MAX_RECORDED_DEPARTURES`, 8192 per device, oldest evicted) and an observer that joined after a
+  device left only widen what reads as `firstInGroup`, so they matter for those older clients alone;
+- **an honest device flagged during the rollout** (an older client joining by itself) that then adds
+  a new person makes that person's device withheld too, by this member, until another member's Add
+  or an approval lifts it;
+- the native background engine keeps no record of withheld devices, so it never marks a device added
+  by one (`added_by_unvouched` is set by the app alone); history is answered only by the app, so
+  this costs a notice, not a message;
+- **the same class, not gated**: the member-initiated paths that add a user's devices with no tree
+  to check them against (details in the private operations notes) close with the real fix;
+- the Android background welcome now stages nothing (only a device already in the tree passes its
+  rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
+  native callers if the real fix is not built;
+- **a seal is for good, and an honest user can reach one**: a conversation is sealed (no history
+  answered there by this member) when the native queue of device events overflowed for it. The
+  queue holds 512 events and is emptied only by the app, so a phone whose background engine merges
+  for a long time while the app stays closed, in busy communities, can pass it. No path unseals.
+  Owed: the seals counted (each is an ERROR line naming its cause; a report of their rate per week);
+  and, as a design option NOT built, a lift once every leaf added at or after the overflow's epoch
+  has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
+  device events taken from an account's state while it is being unbound seal their conversations in
+  that account's record, for good, by the same rule - the option above would lift those as well;
+- **two tabs of one account merge their records and err towards withholding**: a tab that loaded
+  before another tab lifted a device can write that device back, and after a restart it is withheld
+  again until a member's approval lifts it once more - a cost in availability only, never an answer
+  to a device that should not have one;
+- **the departed bound costs detection**: past it, a conversation is sealed and the records of its
+  departed withheld devices dropped, so one of them that later comes back by itself is no longer
+  known as withheld there - what it then adds gets no line. History stays closed (the seal); only
+  the notice is lost;
+- the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
+  after which this ask remains only as a shim for users without one.
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 
@@ -1121,13 +1650,16 @@ key groups, and they are NOT the same question:
   old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
   caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
   re-measured with it.
-- **The revoked device's leaf.** The roster collector (`reconcileDistributionGroupRoster`) does not
-  read the `revoked` answer, so a revoked device's leaf stays in every key group it was in and can
-  read every seed distributed there until the group is re-created. The server now refuses its
-  COMMITS (`validateCommit`, `DEVICE_REVOKED`) and its routing is purged, so it receives nothing new
-  through the delivery service - what is left is the cryptographic half. Owed: the same allowlist
-  there, staged on the published branch like the conversation one; a removal IS a departure, so it
-  rotates, as it should.
+- **The revoked device's leaf - BUILT 2026-10-27, not shipped.** The key-group roster pass now asks
+  `POST mls/groups/:groupId/revoked-leaves` which of the leaves it keeps belong to a revoked device
+  and removes exactly those by device, staged on the published branch
+  ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+  Owed: its run on dev, and the row that revokes a device of a community member and reads the key
+  group's tree afterwards. It runs on every community load; the revoking device itself does not
+  trigger a pass (not built). **Its scope is limited by the
+  binding** (a key group's device rows); widening it is a schema change, approved 2026-10-27 and
+  BUILT as its own draft pull request (`dm_revoked_device_groups`, chat-delivery migration 041,
+  written by the revocation's purge), reaching production only with the user's yes at the stable.
 
 ## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
 
@@ -1147,6 +1679,12 @@ epoch accuses the base, not the members); then either the server checks a republ
 the commit log's row for that epoch (its confirmed transcript hash), or a `diverged` is read as
 `unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
 in #2269 by decision of the review.
+
+**WIDENED 2026-10-27:** the departed-member removal of a roster diff now goes through the same check
+(#2580), and for a KEY GROUP too - its base read from social-service, where a holder also publishes
+it. So `diverged` now reaches community and salon key groups, and a forked holder's republished
+key-group base would send that key group's honest members to rung 2 the same way. The count owed
+above counts `[FORK]` lines on key groups as well.
 
 ## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
 
@@ -1480,57 +2018,87 @@ on that build. **READ later the same day, with the user's agreement to delete on
 sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
 build, signed in on the local estate only, which is stopped.
 
-## P2 - WP-CHECKPOINT-CAS: the foreground checkpoint writes over a file it did not load (2026-10-23, design: one MLS manager per process, owed a review before code)
+## P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)
 
-**The race.** `write_mls_state_blob` (`concurrency.rs`) writes `mls.bin` blind. Every background
-writer is a compare-and-swap over the bytes it loaded; the foreground is not. A live manager that
-never loaded what a background engine wrote - a resume reload refused as `live-ahead` (the WebView then
-persists the live state, `TauriMlsService.reloadStateFromDisk`) or as an epoch regression
-(`reload_into`) - writes over it. A staged background Add the server accepted is then `ACCEPTED AND
-NOT HELD`, and a background decrypt's ratchet advance is lost the same way. Both are now SAID at
-ERROR when they happen (`report_what_keeping_the_live_state_loses`, `report_background_stages`), not
-prevented. Decided 2026-10-23: not accepted as permanent; its own pull request, stacked after the
-recorded-stage background Welcome
-([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
+**What it changes.** On a phone, the visible app and the background engines share one process and one
+state file. Today a heartbeat deadline decides who may write that file, and on Android the page's
+visibility never changes, so the heartbeat keeps running while the app is hidden. This WP replaces
+the deadline with an explicit owner register held under the existing state-file write lock:
+`Vacant`, `Foreground` (the live manager owns the file and background work stays queued) or `Parked`
+(the app is hidden, the live manager is frozen and checkpointed, and background engines work from the
+file by compare-and-swap). Ownership follows a host-visibility flag that the platform's lifecycle
+callbacks write and that is re-read under the lock at every transition. A live call counts as
+visible. The unpark runs inside the WebView's mutex grant, so nothing waits for it.
 
-**REJECTED 2026-10-23: a per-group reconcile of the file into the live manager.** It needed a
-per-group unsaved-advance flag and a per-group transplant of openmls storage between two managers, and
-it reconciles two states afterwards - a heal, which the rules forbid.
+**Four pull requests, no runtime switch, each better than main alone:**
 
-**The design (for review; nothing built): ONE MLS MANAGER PER PROCESS.** Two managers of one state in
-one process are the race; removing the second removes it.
+1. **The outbox.** One Rust module owns both outbox files behind one OS file lock and writes them
+   atomically. Every sender claims its entries before sealing them and settles them incrementally.
+   Closes a queued reply erased by a concurrent rewrite, a message sent twice by the background and
+   the app, and a lost update of the sent log.
+2. **The teardown and the job fence.** Manager, device key and register are reset in one hold, and
+   every background job is fenced by the generation it started under. Closes state resurrected by a
+   background job after sign-out. **The one-hold teardown of the manager and the key is BUILT
+   (2026-10-27, `end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27));
+   the generation is what is left.** The native slot has no session generation today: a command issued
+   by a destroyed client A that lands after B's `initialiser_mls` acts on B's manager, since the slot
+   says only `Some` or `None`, never whose. Only the TypeScript side fences it (the holder retires A's
+   client before B's login opens anything). The fence: a generation the install stamps and every
+   command carries, refused typed on a mismatch.
+3. **The register.** The register itself; a native park that writes nothing when nothing changed;
+   an unpark that holds no command lock across a decrypt; one native visibility event for the page;
+   on Android, the socket paused while hidden; frames in flight tracked in both directions; a pending
+   external join skipped by every background writer. Closes background delivery starved while the app
+   is hidden, the resume that overwrote a background advance, the blind checkpoint, and a frame
+   stranded by a commit on either side. Jobs with a server effect keep today's refusal.
+4. **The stages.** A background key-group join is staged inside the state file, hidden from every
+   group listing until it is settled, and settled from the server's answer by whoever owns the file
+   next. Closes the joined-but-not-held loss, apart from a bounded late-landing window that is
+   reported. A host test settled the precondition on 2026-10-27: a pending external join survives a
+   save and reload, and dropping the group leaves the key store byte-identical. That test, and a
+   corrected docblock for the external join, land in their own small pull request ahead of PR4.
 
-- **What holds the manager today.** `AppState.mls_manager: Arc<Mutex<Option<MlsManager>>>`
-  (`state.rs`), created empty by `.manage(AppState { .. })` in `lib.rs` and filled by `initialiser_mls`
-  (`commands/mls.rs`) and a `reloaded` resume (`reload_into`, `commands/storage.rs`). The JNI entries
-  cannot reach it: they get no `AppHandle`, and the only process-wide statics are
-  `ANDROID_JAVA_VM` and `ANDROID_CLASS_LOADER` (`lib.rs`). Nothing sets it back to `None` at sign-out.
-- **A process-global handle to THE SAME `Arc`.** `static LIVE_MANAGER: OnceLock<Arc<Mutex<Option<MlsManager>>>>`
-  in `concurrency.rs`, set once in the builder with a clone of the `Arc` handed to `.manage`. Installed
-  means `Some` inside the mutex, so the handle never needs re-installing.
-- **A background engine borrows it while it is `Some`.** Each JNI engine (send, Welcome prepare and
-  settle, decrypt, worker) takes the manager mutex; `Some(manager)` - it runs on that manager, in
-  memory, and persists through the foreground's own checkpoint path (`write_mls_state_blob`, which is
-  then the ONLY writer of `mls.bin` in that process), then tells the WebView (an event, which runs
-  `syncGroupCachesFromNative` and `settleAfterStateReplaced`). `None` - a cold process the FCM service
-  started with no WebView - it loads `mls.bin` as today, by compare-and-swap. The decision is the
-  mutex's content, read under the mutex: no flag, no clock.
-- **Teardown.** Sign-out and `delete_mls_state` set the manager to `None` under its mutex BEFORE the
-  state files are removed, so an engine that waited on it finds `None`, then finds no file, and does
-  nothing. A sign-in installs `Some` again through `initialiser_mls`.
-- **Lock order, one for every path:** Kotlin `MlsStateLock` (background only, outermost) ->
-  `foreground_checkpoint_lock` -> the manager mutex -> `mls_bin_write_lock` (innermost). The foreground
-  never takes `MlsStateLock`, and a background engine that borrows takes the checkpoint lock before the
-  manager, as the foreground does, so no two paths take any pair in opposite orders.
-- **The foreground checkpoint becomes a GUARD.** Its compare-and-swap keeps a process-global digest of
-  the file its manager stands on; a mismatch can then only mean a second writer, which this design
-  removes, so it refuses at ERROR and never reconciles.
-- **The resume reload becomes moot** while a manager is installed (nothing else writes `mls.bin`), and
-  stays for a process restarted under a file a cold engine advanced.
-- **Tests first, with the foreground marked active as in real life:** a JNI send with a live manager
-  advances the live manager and writes nothing of its own; a JNI engine after teardown finds `None` and
-  loads the file; a cold engine and a foreground load in turn see each other's writes; a checkpoint
-  over a moved file refuses at ERROR.
+The design (lock order, interleavings, tests and device rows) is written into the wiki page of the code
+each pull request changes, as it lands. Until then this row is its summary. **Ahead of all four:** a
+small pull request lands the host test of the precondition and corrects the external join's
+docblock, which still calls the join's commit staged.
+
+**Decided.**
+
+- **REJECTED 2026-10-23:** a per-group reconcile of the file into the live manager (a heal).
+- **REJECTED 2026-10-27:** background engines borrowing the live manager; a park driven by the
+  WebView; a park triggered by the renderer's death (the process dies with it); a transition waiting
+  for background jobs; an outbox guarded by two lock families; a park request matched on the session;
+  exporting call keys from a parked manager; a server-side fence for the late landing.
+- **Lock order:** WebView MLS mutex -> background state lock -> checkpoint lock -> manager mutex ->
+  state-file write lock. The outbox lock (one file descriptor per acquisition), the key-group ledger
+  lock and the in-flight set lock are LEAVES: they may be taken under anything, and nothing is taken
+  under them.
+- **On Android the socket follows the host while no call is live**, so a hidden phone is reached by
+  push.
+
+**Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
+iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
+
+## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
+
+Every Tauri command returns `Result<_, String>`, and every code the TypeScript side reads
+(`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, `MLS_MANAGER_ABSENT`) crosses as the string's
+leading token, read by one predicate each (`isKeystoreKeyUnavailable`, `classifyStateLoadFailure`,
+`isMlsManagerAbsent`). Tauri can serialise an error object instead: one `{ code, message }` type for
+every command, decoded into typed errors at the one `invoke` boundary. All codes move in one pull
+request, never one at a time (two conventions would give every reader two shapes)
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
+
+A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
+makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" -> the rotation fails
+-> the session is lost -> PIN gate. Each lap costs the member one PIN entry and is logged at ERROR
+(`reportMlsSessionLost`); nothing is revoked or erased, so the loop is visible and harmless but not
+broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
+stops the unlock with its own typed outcome instead of another lap
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -1689,21 +2257,79 @@ carries the share out of it into the Android layout. Nothing on Windows compiles
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`). CanaRun waits.
+suggestions (`INSendMessageIntent`).
 
-## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
+## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
-`pending_share.json` holds the shared TEXT in the clear, in three places: the App Group (written by
-the iOS Share Extension), the app data directory on iOS (written by `app_group_share.rs`) and on
-Android (written by `IncomingShare.kt`). The copies in `shared_inbox/` are plaintext too. Since
-the review of the Share Extension (PR #2295) both iOS manifests and the App Group inbox are
-EXCLUDED FROM BACKUPS, and Android excludes its whole data domain, so what is left is the file on
-the device while it waits - the same exposure as the copy a system picker leaves in the cache. Not
-a small reuse of the native-cache seal (`native_cache.rs`): the Kotlin and Swift writers would need
-a twin of its envelope, and the extension holds no key (its entitlement is the App Group alone).
-The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT with the install's
-cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
-and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
+- **A text restored while an edit is open is LOST.** A refused send answered (or a share landing)
+  on the conversation being edited goes through `restoreFailedDraft` into the composer, which holds
+  the edited message's text; `cancel`, `confirm` and `reset` then put back the draft saved at
+  `begin` (`editSession.svelte.ts`), and the restored text is gone - or, on `confirm`, saved as part
+  of the edited message.
+- **The salon ledger detour stays, for durability.** A salon text resumed after the member left the
+  salon goes back to the ledger (`recordUnsentSalonText`), not straight into that salon's draft
+  through the gated writer: the ledger is persisted, the drafts are memory only, so a page closed
+  before the next visit would lose it. Simplifying it waits for drafts that outlive the page.
+- **A mention dropdown can outlive a conversation switch.** `useMentionAutocomplete` closes only on
+  input: type `@ali` in A, switch to B before the debounced search answers or with the list open,
+  and the list (A's members) stays over B's composer until the next keystroke.
+- **Drafts are never removed when a conversation is left or deleted**: the entry stays in
+  `draftByConversation` until sign-out. Memory only and per page life, so small - but a conversation
+  re-joined later shows the old text.
+
+[chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
+
+## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
+
+A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
+`CompleteUnlessOpen`, the app-side manifest's `Complete` - a locked read deletes nothing, and the
+unlock offers what the lock held back; Android keeps its credential-encrypted storage, with the
+reasoning written down. The app-level seal first sketched here was rejected, with its reasons:
+[sharing](frontend/sharing.md) ("At rest", iOS path item 5). Nothing here compiles iOS, so the
+Swift, the Objective-C and the iOS-only Rust ride the next iOS build.
+
+**Owed on the iPhone, with a passcode set, waiting more than 10 s after each lock** (the key is
+discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and category `share`:
+
+1. Cold launch, unlocked: the `launch sweep:` line appears, and no `deferred` line (the sweep and
+   import no longer ask UIKit before it exists).
+2. Share a text and a photo, unlocked: `moved copy protection = ...` names the expected class
+   (`NSFileProtectionCompleteUnlessOpen` for a copy), and no protection or `setAttributes` error.
+3. Share again with Canari killed, so it waits in the App Group undrained; lock, wait, send a push:
+   the launch import line says `locked with the device` - NOT `ERROR: the share could not be moved
+   or handed over` (a refused protection or create must classify as locked, by its code) - the
+   share is still in the App Group, and no `dropped`, `unreadable` or deletion line.
+   Seeing instead a refusal named `NSCocoaErrorDomain 513` WITHOUT an underlying POSIX error is the
+   outcome this reading exists to find, not a regression: Foundation then gave no code to classify
+   by. Record it here as measured, and the classification is redesigned from that fact.
+4. Unlock straight into Canari: the share is offered on the first activation.
+5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
+   and the locked push launch mounts the page: after the unlock it is offered with no new launch
+   (`a share waits (unlock), the page was told`).
+6. A large iCloud video, the phone locked during the capture: with nothing waiting, the share
+   survives; with an older share waiting, that one is not deleted and the new one is refused, said
+   on the extension's card and in its log. KEEP-OLD BY CHOICE: the locked older share cannot be
+   read, and the member was already told it is ready; the member sharing now is told of the
+   failure. The reasons, and the newest-wins alternative rejected, are in
+   [sharing](frontend/sharing.md) ("At rest"). The app side no longer meets this case while
+   locked: it consumes nothing until the unlock, where newest wins as usual.
+7. Sign out while locked, then unlock: the old share is dropped as stale.
+
+## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
+
+A share from another app opens "Envoyer a..." (`IncomingShareHost`), which reuses
+`ForwardMessageModal` and so `shareDestinations` with `order: 'alphabetical'`. The conversation
+list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent'`) all lead with
+the most recent conversation, so the one the member just left is at the top everywhere except
+there. Deciding: whether the forward and the share-in picker split their order, or both go to
+`'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
+
+Seen failing in a full `vitest run` on a loaded machine, and passing when the file runs alone.
+Not diagnosed: the test asserts a mount count, so a mount that has not settled yet when the
+assertion runs (a timing dependency) is the first suspect, not proven. Owed: run it under
+`--repeat` with the full sweep's load, and name the condition before touching the test.
 
 ## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
 
@@ -1732,12 +2358,18 @@ build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG
 default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
 request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
 
+**Also allowlisted on 2026-10-27 for the same image, same condition (a release that ships them):** dnspython 2.8.0 (`CVE-2026-114605`, fixed in 2.9.0), msgpack 1.2.1 (`CVE-2026-114613`, 1.2.3) and oauthlib 3.3.1 (`CVE-2026-49272`, 4.0.0). Each entry is scoped by purl and retires through the same check, so the bump pull request deletes all four together.
+
+**Frontend build tooling, 2026-10-28:** `GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1, prototype poisoning in `mergeObject()`, no fixed version published) is ignored in the frontend's dependency audit with its reachability argument in `code-analysis.yml`. Delete the ignore when a fixed `deepmerge` reaches the tree; the audit's retirement step fails until it is.
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
 about them is open work** - the story is in `CHANGELOG.md`, the mechanism on the wiki page named,
 the rule in [durable-rules](durable-rules.md). Delete the line once the measurement is taken. The
 phone passes already taken are history: [device-readings-2026-10](device-readings-2026-10.md).
+
+**#2329, the background Welcome staged in the state file (merged 2026-10-24), owes two things before its stable.** (a) One Mi 9T reading: open the app INSIDE a background Welcome's round trip, between the stage written and the server's answer; the app's load reports the stage and settles it exactly once - merged on an acceptance, cleared otherwise - with no second Add and no `ACCEPTED AND NOT HELD`. It is the "app opened inside the round trip" variant of [the background Welcome reading](#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22). (b) Its change to the iOS background-send FFI (a `max_attempts` argument, its header declaration and its Objective-C caller) agrees when read but has never been compiled: CI builds iOS only from a release or a manual dispatch. Owed: one manual `ios.yml` dispatch on `main`, green, before the next stable - otherwise the release is its first compile.
 
 **The native caches sealed at rest (2026-10-22, [mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - built and compiled for Android, the Swift and Objective-C++ halves compiled by CI alone.** Owed on BOTH the Mi 9T and the iPhone, on an UPGRADE over a build that left plaintext files: (a) the first launch logs the key created (`NativeCacheKey: ensure: created` / `[CanariIOS] nativeCacheKey: created`) and the legacy pass (`[NATIVE_CACHE] ... now sealed`); (b) a DM and a salon message pushed with the app KILLED still show their text in the banner; (c) `graine_seeds.json` and `fcm_message_cache.ndjson` start with `CNSEAL1` / `cs1:` (`run-as` on Android, `bench_native_store list` on the iPhone) and the next start injects the cached message; (d) on the iPhone, `graine_seeds.json` and `fcm_message_cache.ndjson` read `isExcludedFromBackup` after a fresh write, in the data directory and in the App Group, while `mls.bin` and `push_context.json` do NOT. **And one rig change**: `phone.mjs graineMirrorSessions` now answers a sealed Android mirror with an error, so NOTIF-20's mirror count needs the app to answer through `bench_native_store` on Android as the iPhone rig already does.
 
@@ -1842,6 +2474,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **decide whether a cash sale of a tier records the preferential amount** when the beneficiary qualifies (today the full price by default) | decision | [the entry](#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands) |
+| **confirm the rule for a paid form that grants a tier AND charges for more**: kept refused for a holder of an equal or dearer tier (review of #2597, 2026-10-28) | decision | [the entry](#a-paid-form-that-grants-a-tier-is-refused-to-a-holder-of-an-equal-or-dearer-tier-even-when-it-sells-more-decision-owed-2026-10-28) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
@@ -2334,7 +2968,7 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
+**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
 ### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
 
@@ -2586,7 +3220,7 @@ can discriminate, and the lines are to be EXPLAINED where they are read, never s
 
 ### P3 - ONE MAINTENANCE PASS IS ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED
 
-`prune_expired_key_packages` costs **10.08 ms** at a 1000-bundle pool (criterion, OXYGEN; 88 % is
+`prune_expired_key_packages` costs **10.08 ms** at a 1000-bundle pool (criterion, workstation; 88 % is
 `serde_json` decoding, [cold-start](frontend/cold-start.md)) inside `load_or_create`, in front of the
 first screen - NATIVE ONLY. It is maintenance (what it deletes must be deleted and nothing else deletes
 it), so moving it needs a TRIGGER, and a clock is forbidden. **The blocking condition**: name a durable
@@ -2716,6 +3350,10 @@ and FAILS the day an ignored id is no longer reported, naming the ignore, its pr
 with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
 webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
 step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
+### P3 - the $lib alias migration waits for a quiet frontend (2026-10-27)
+
+SvelteKit 3 deprecates `alias: { $lib: 'src/lib' }`; the deprecation warning prints on EVERY build and sync. The fix is `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`: 1567 files, 7645 imports gaining a `.js` extension. Tried and reverted on 2026-10-27 because it conflicts with every open frontend pull request. **Do it as ONE mechanical commit while the frontend is frozen; trigger: the open frontend pull requests are few.** It removes the alias in `kit.config.js` and, on Windows, the false `tsconfig_invalid` warning ([architecture](frontend/architecture.md#sveltekit-3-and-adapter-node-6-2026-10-27)).
 
 ### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
@@ -3137,6 +3775,18 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 The user decided that every Business is created by Canari's onboarding, never linked from outside ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)). The first production enrolments showed the screen leaves the manager with no next step: the dashboard link answers 404 when signed out, and the Lydia Pro app did not show a Business made by the Provider, even one created with the signed-in person's own phone ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). **Owed, in order:** Lydia's answer on how that Business's holder signs in to its console, and which documents an association gives; then the card rebuilt around the three steps of Lydia's activation e-mail, saying who does what; a "waiting for Lydia" state told apart from "validated", with error 5 of `request/do` as the measured signal; and the existing refuse-or-confirm item on a re-run onboarding below.
 
+**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* **One unmeasured lead, to ask Lydia before building:** `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). Never wired, never tried; test on the sandbox first.
+
+### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
+
+**State:** the first real top-up of the Cercle through Canari worked end to end (Lydia state `1`, purchase recorded paid once, delivery to the Cercle `delivered` on attempt 1, balance moved by the amount paid). The screens around it are what is left. **Decided:** (1) a member already holding the highest tier sees NO membership card (the profile page already says they are a member); (2) membership is ONE card with the tiers inside it; (3) a member of a lower tier is offered the rise, and pays the COMPLEMENT, not the full price - **owed first: read what the code does for tiers today** and measure it, since the user does not know; (4) a top-up is chosen with quick amounts plus "other amount" on an in-app keypad - no native `<input type="number">` (browser spinner on desktop, system keyboard on mobile) anywhere in a shop view; (5) no maximum top-up; (6) after a paid Lydia payment the payer returns to the shop with a banner ("+5 EUR credited", "membership active"), and when the Cercle cannot be reached the banner says the payment was received and the credit follows (the retry ladder already exists); (7) no Cercle balance on the card for now (it needs a route on the Cercle's host, which is not ours); (8) the WHOLE shop is in scope (`/shop`, the association page, `ProductPurchaseButton`), with the app's own tokens and the payment apps (Revolut, Lydia, Wero) as the visual reference; product names shown to people are never the technical ones (`balance_topup`), prices follow the locale (`15,00 EUR`). The Lydia card page itself is Lydia's and cannot be changed.
+
+**Measured and decided the same day (user, 2026-10-26).** (a) The audit (`resolvePurchase`, `grantPurchaseTag`) found that a tier holder pays the FULL price of a sibling tier unless the admin sets the existing preferential price (`memberPriceTag` + `amountCentsMember`), that buying a LOWER tier silently replaced a higher one, and that `variantLevel` (tier order) was NULL for both Cercle tiers. The Cercle admin then set the preferential price by hand (Alcool 30 EUR, 15 EUR for holders of Cotisation): **the complement is the admin's preferential price, nothing is computed automatically**; the server refuses a tier priced lower than or equal to the held one (typed code) and exposes per product `viewerTierRelation` and `viewerDueCents` so the client never recomputes money. (b) **The admin screen "Prix de la cotisation" is unclear** (the preferential-price fields, the tier identifier, the tier order) and the WHOLE Achats tab is in scope for a rework: a rise is described by a fill-in sentence ("a holder of X who moves to Y pays [15] EUR instead of 30 EUR") with a preview of what the member sees, and the order of the tiers is visible. (c) **A TECHNICAL ID IS NEVER SHOWN, NEVER TYPED AND NEVER EDITED BY A PERSON** - a real name is shown instead (the tier's `variantKey`, shown and editable today, is derived from the label at creation and fixed afterwards); the same rule found the id in the title of an association's page and a field to set it at creation of an association, list or institution, which serve no one. **Owed:** the sweep of every screen for a technical id shown or typed (the association page title and the creation form first), then the Achats rework.
+
+### P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)
+
+The sweep ([lydia-api](lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) acts only on an answer whose signature verifies over the row's amount written as `request/do` sent it (`"12.50"`). Lydia's documentation names the signed fields but not how the amount is written. The sweep ships OFF in production (`LYDIA_RECONCILE_ENABLED`, computed `false` there, `true` on dev). **Owed, in order:** (0) BEFORE production is switched on, all of: the user's one-off sandbox probe on a validated Business - the `0.50` format read by `request_uuid` AND by `order_ref`, the signature on a PAID and on a CANCELLED request (the command is in #2595); one full dev sweep read in its logs; a clean day of dev logs; and a read-only count on production of the open ended attempts the first tick will read and close (`count`, `min("expiresAt")`, the query is in [lydia-api](lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) - then `compute_lydia_reconcile_enabled` turned `true` for production in a commit; (1) the first real request the sweep reads - a `verified` line settles it; a `does NOT verify` ERROR on a row whose amount is right means the amount is signed another way, fixed in `lydiaStateSignedFields` and nowhere else; (2) then the payer's return and the callback's read made to verify too (they do not, and settling unverified there is unchanged by this lot); (3) a form answer keeps no snapshot of the Business its request was issued to, so one whose association re-linked meanwhile does not verify - a column, so a migration and the user's yes, only if it is ever seen. (4) On the sandbox, which Lydia refusal codes are PERMANENT for `request/state` and for `request/cancel` on a request Lydia ISSUED - first error `2` on an issued-then-expired uuid, measured so far only on a never-issued one: a refusal closes an attempt only from an allowlist, EMPTY for both calls until then, so every refusal is retried and accused at ERROR when the accused list changes - the starvation trade, taken knowingly; a durable bound on retries is a column, so a migration and the user's yes, not built.
+
 ### P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)
 
 Since #2210 social-service reads a request state through `toRequestState`, which knows `open | paid | declined | cancelled-or-expired | unknown`. An OLDER core-service still answering `closed` for state 6 during a deploy is read as `unknown` (one WARN, `readRequestState`'s wire-mismatch line), so a retry's `settleOpenRequest` refuses it with 409 `PREVIOUS_PAYMENT_OPEN` (WARN) instead of freeing the row. Deliberate (a deploy in either order refuses rather than releases) and TEMPORARY: it ends when the new core serves. **Owed:** nothing unless a deploy is observed to leave payers refused past the core restart - then check the deploy order rather than teach social-service the old word.
@@ -3179,9 +3829,19 @@ WHERE pr.status = 'paid' AND pr."paymentMethod" = 'online'
 
 The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) and needs WP-LYDIA-1.
 
-### P3 - an admin who never joined a private salon is not told when it is deleted
+### P2 - the history rule saved by an admin is not applied from the live frame
+
+Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's card resets to the old rule right after a `200` save, and the rule applies at the next listing. The server publishes `workspace.updated` with `historyVisibility`, but `channelEventHandler.ts:276-283` forwards only `workspaceId`, `imageMediaId` and `channelsReordered`, so `handleWorkspaceUpdated` never receives it; the frame replaces the sidebar entry with the old rule a millisecond after the save, and the panel re-reads it. A post-stable chantier: the fix turns on a path that has never run live.
+
+### P3 - a read mark for a salon that no longer exists is retried forever
+
+Seen on most rows of the `1.5.0-alpha.1` replay (2026-10-27): every load on W1 and W2 posts `POST /api/channels/<id>/read-mark` for a deleted salon, gets `404`, and `salonReadMarkQueue.ts` logs `[READ] salon mark ... not delivered - kept, and asked again at the next load`. A `404` there is an ANSWER - the salon is gone - and never a reason to retry: the mark must be dropped on that status (typed by status, never by message) and the drop logged once. Today it is dirt on nearly every row; a fix-after-stable item, not something to narrate.
+
+### P3 - an admin who never joined a private salon is not told when it is created or deleted
 
 Not on the roster, so no `channel.deleted`; the sidebar keeps a stale row until the next load. **Do not widen the audience** (that is what leaked private-salon traffic to non-members); the shape that would work is a contentless `channel.gone` addressed to the community, worth doing only if the stale row is ever seen to matter.
+
+**The creation half (COMM-13 on `1.5.0-alpha.1`, 2026-10-27):** a private salon's creation is announced as `channel.member.joined` to its audience, which is `allowedUsers` alone, so an administrator who is online sees no "join as administrator" row until their next full listing - though [channel-encryption](protocols/channel-encryption.md) intends that row to be visible to them. COMM-13's premise (the unjoined row on the admin's screen) therefore never arms on a live client; it passed on `0.16.3` (2026-09-05), and what brought the row to the admin then is not established. The same contentless shape (`channel.listed`, no name beyond what the listing already serves to a manager) would close both halves.
 
 ### P2 - WP-RESTORE-1: Zero-Tap Sign-In restoration, required by Google Play from April 2027
 
@@ -3232,10 +3892,6 @@ MiGallery's offsite backup copy still lands on the old VM. **DECIDED 2026-10-18:
 ### P2 - A DEPLOY NO LONGER ERASES THE LOGS, BUT NO ARCHIVE HAS BEEN SEEN YET (merged 2026-10-08)
 
 **Owed after the next deploy of each estate:** one `.log.gz` per container in `~/deploy-log-archive/<project>/` and `max-size` on a recreated container ([logging](infrastructure/logging.md)). Authentik's hand-run stack is bounded only when next recreated and is not archived.
-
-### P3 - docker-prune is built for the Portail-etu host but not installed there
-
-**Pruned by hand 2026-10-14, 80 % -> 67 %** (unused images and build cache; three empty orphan volumes removed with the user's go). The cron is still not installed. Measured 2026-10-10: the host's disk was filling at a rate that crosses the threshold within days. **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
@@ -3296,7 +3952,6 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 
 - **Standing release authority.** The lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release has been read on a phone and nothing blocks, informing the user each time. It replaces the 2026-10-01 rule (the stable only on the user's explicit go). Still asked first: a direct production change (a hand edit on the host, a production setting such as `minClientVersion`), a data migration or backfill, any deletion of data. Rule: [durable-rules](durable-rules.md#release-and-ci---cicd).
 - **`minClientVersion` is `1.2.7` on production AND dev since 2026-10-17** (the user's gesture; it was `1.0.3` from 2026-10-11): Graine G2-5's refusal of an arriving v1 seed is unblocked ([Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28)), and the `1.2.1` key-group epoch floor is met.
-- **Docker prune on the shared host: authorised above 75 % disk, images and build cache ONLY, never a volume.** This overrides the no-install-without-DSI-agreement rule for that one case and no other ([the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there)).
 - **No native camera access, anywhere.** The new-post composer and the chat each get ONE "Ouvrir la camera" entry that opens the in-app CanaReel camera; the gallery picker stays. This replaces the chat's `capture` inputs ([chat](frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). The media's retention class follows its DESTINATION: a post takes the post class, a published reel `reel` (30 days), a chat send `chat-reel` (30 days, [reels-in-chat](frontend/modules/reels-in-chat.md#91-decided---the-ui-target-is-snapchat-user-2026-10-09)). Not built.
 - **CanaReels in chats is a chantier, RC-0 to RC-11, and RC-0 (the measurement, no code) comes first** ([reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
 - **The Pixel 6a is the user's personal phone: observation only.** No install, reset, sign-in or driving by an agent; a reading on it is the user's own look ([device-verification](device-verification.md)). The bench is the Mi 9T and the iPhone 12.

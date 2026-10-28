@@ -4,6 +4,8 @@ import {
   orphanTierTags,
   pickHeldTier,
   tierRefusal,
+  settlementGrants,
+  settlementVerdict,
   tierRelation,
   tierRelationOf,
 } from './tier-pricing';
@@ -164,6 +166,64 @@ describe('tierRefusal - one mapping from a relation to the typed 409, for the sh
     expect(tierRefusal('held')?.code).toBe('PRODUCT_ALREADY_PURCHASED');
     expect(tierRefusal('lower')?.code).toBe('TIER_NOT_A_RISE');
     expect(tierRefusal('unranked')?.code).toBe('TIER_NOT_RANKABLE');
+  });
+});
+
+describe('settlementVerdict - a settlement grants on what the opening froze, never on a price', () => {
+  it.each([
+    ['nothing held now, nothing frozen', 'avec', [], [], false, 'nothing-held', true],
+    [
+      'nothing held now, a tier frozen (it expired since)',
+      'avec',
+      [],
+      ['sans'],
+      true,
+      'frozen-gone',
+      false,
+    ],
+    [
+      'nothing held now, a tier frozen whose product is deleted since',
+      'avec',
+      [],
+      [],
+      true,
+      'frozen-gone',
+      false,
+    ],
+    ['the frozen tier is still the one held', 'avec', ['sans'], ['sans'], true, 'as-opened', true],
+    ['the frozen tier is the base tier', 'avec', [null], [null], true, 'as-opened', true],
+    ['the target itself was obtained since', 'avec', ['avec'], ['sans'], true, 'held', false],
+    [
+      'another tier replaced the frozen one',
+      'avec',
+      ['autre'],
+      ['sans'],
+      true,
+      'held-changed',
+      false,
+    ],
+    [
+      'a tier is held where the opening saw none',
+      'avec',
+      ['sans'],
+      [],
+      false,
+      'held-changed',
+      false,
+    ],
+    [
+      'a second tier beside the frozen one',
+      'avec',
+      ['sans', null],
+      ['sans'],
+      true,
+      'held-changed',
+      false,
+    ],
+  ] as const)('%s', (_name, target, held, frozen, froze, verdict, grants) => {
+    const v = settlementVerdict(target, held, frozen, froze);
+    expect(v).toBe(verdict);
+    expect(settlementGrants(v)).toBe(grants);
   });
 });
 

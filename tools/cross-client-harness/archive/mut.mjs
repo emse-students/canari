@@ -915,7 +915,7 @@ async function pinStoreSnapshot(cx) {
 
 /** Diffs two snapshots and returns the single key that changed - the just-pinned conversation's
  *  key, found WITHOUT ever having to decode or guess an MLS group id. Throws if it is not exactly
- *  one key, which would mean something else touched pin state concurrently (Leon, or a stray tab). */
+ *  one key, which would mean something else touched pin state concurrently (another contributor, or a stray tab). */
 function diffPinKey(before, after) {
   const changed = new Set([...Object.keys(before), ...Object.keys(after)]).values();
   const hits = [...changed].filter((k) => before[k] !== after[k]);

@@ -127,6 +127,14 @@ export function tierRefusal(relation: TierRelation): TierRefusal | null {
 }
 
 /**
+ * The `code` of the 400 a product create or update gets when its `memberPriceTag` names no OTHER
+ * cotisation tier of the product's own association (another association's tag, a non-tier tag, the
+ * product's own tier). Refused at save because such a link prices nothing: `fixedPriceFor` would
+ * charge the full price, silently, to every buyer the admin meant to discount.
+ */
+export const MEMBER_PRICE_TAG_NOT_A_TIER = 'MEMBER_PRICE_TAG_NOT_A_TIER';
+
+/**
  * The sibling tier a stored `memberPriceTag` names, as its `variantKey`, or `undefined` when it
  * names none of `tierKeys`. The tag is matched against each tier's tag STEM (`cotisant:<slug>` or
  * `cotisant:<slug>-<variant>`), with or without an academic-year suffix: a `dated` association's
@@ -209,4 +217,49 @@ export function fixedPriceFor(
     return { amountCents: product.amountCentsMember, preferential: true };
   }
   return { amountCents: product.amountCents, preferential: false };
+}
+
+/**
+ * What a settlement decides for a paid tier, from what the checkout OPENING froze (migration 112)
+ * and which tiers the buyer holds NOW - never from a price, which an admin can edit in between:
+ *
+ * - `held`: the target tier itself is held now (obtained since the opening) - not granted;
+ * - `nothing-held`: no tier is held, and none was at the opening - granted, the XOR replaces nothing;
+ * - `frozen-gone`: the opening ranked against a tier (`heldTierProductId` set) and the buyer holds
+ *   none now (it expired or was revoked since) - not granted: the price paid was the rise over a tier
+ *   the buyer no longer has;
+ * - `as-opened`: every tier held now is the one the opening ranked against - granted, which is
+ *   exactly what the opening decided;
+ * - `held-changed`: a tier the opening did not rank against is held (obtained since, or held where
+ *   the opening saw none, or a second tier beside the frozen one) - not granted, so the XOR cannot
+ *   replace a tier nobody ranked this purchase against.
+ */
+export type SettlementVerdict =
+  | 'held'
+  | 'nothing-held'
+  | 'frozen-gone'
+  | 'as-opened'
+  | 'held-changed';
+
+/**
+ * The settlement's decision (`SettlementVerdict`). `frozenKeys` is the CURRENT `variantKey` of the
+ * tier frozen at the opening - one entry, or none when nothing was held then (or its product is
+ * gone) - read by product id, so a retag in between still matches. `frozeATier` is whether the
+ * opening froze a tier at all (`heldTierProductId` set), which stays true when that product is gone.
+ */
+export function settlementVerdict(
+  targetKey: string | null,
+  heldKeys: readonly (string | null)[],
+  frozenKeys: readonly (string | null)[],
+  frozeATier: boolean
+): SettlementVerdict {
+  if (heldKeys.includes(targetKey)) return 'held';
+  if (heldKeys.length === 0) return frozeATier ? 'frozen-gone' : 'nothing-held';
+  if (heldKeys.every((k) => frozenKeys.includes(k))) return 'as-opened';
+  return 'held-changed';
+}
+
+/** True when a settlement verdict grants the tier paid for. */
+export function settlementGrants(verdict: SettlementVerdict): boolean {
+  return verdict === 'nothing-held' || verdict === 'as-opened';
 }

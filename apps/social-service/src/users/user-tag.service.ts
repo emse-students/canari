@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -7,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { lockBuyerTiers } from './buyer-tier-lock';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, Repository, In } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import {
@@ -18,21 +19,50 @@ import {
 import {
   orphanTierTags,
   pickHeldTier,
-  tierRelationOf,
+  tierRelation,
   type OrphanTierTag,
   type RankedTier,
   type TierRelation,
 } from '../associations/tier-pricing';
 
 /**
- * Refusal code of a raw tag grant (`UserTagService.grantTagForAssociation`) whose name is in the
- * `cotisant:` namespace but is not one of the granting association's own tier tags: a 403 carrying
- * `{ code, message }`.
+ * Refusal code of a raw tag grant whose name is not one of the granting association's own
+ * cotisation tier tags (`UserTagService.grantTagForAssociation`): a 403 carrying `{ code, message }`.
  */
 export const TAG_NOT_ISSUER_TIER = 'TAG_NOT_ISSUER_TIER';
 
-/** Every cotisation tag starts with this (`deriveCotisationTag`). */
-const COTISATION_TAG_PREFIX = 'cotisant:';
+/** Refusal code of `TagHeldByAnotherIssuerError`. */
+export const TAG_HELD_BY_ANOTHER_ISSUER = 'TAG_HELD_BY_ANOTHER_ISSUER';
+
+/**
+ * Thrown by `grantOrRenew` when the user already holds a row of that tag NAME issued by another
+ * association (or by none): a grant never takes over or renews a row it did not issue, since every
+ * tier-holding read counts only the issuer's own rows. A 409 carrying `{ code, message }`; a payment
+ * path catches it by TYPE and records the payment as paid but not granted.
+ */
+export class TagHeldByAnotherIssuerError extends ConflictException {
+  constructor(tagName: string) {
+    super({
+      code: TAG_HELD_BY_ANOTHER_ISSUER,
+      message: `The user already holds "${tagName}" issued by another association`,
+    });
+  }
+}
+
+/**
+ * The key of a tag AS ISSUED: its name and the association that issued it. Tier-holding reads that
+ * match many tags in memory compare on this, never on the name alone, so a tag counts only for the
+ * association that issued it.
+ */
+export function issuedTagKey(issuingAssocId: string | null, tagName: string): string {
+  return `${issuingAssocId ?? ''}\u0000${tagName}`;
+}
+
+/** Whether a tag row exists and has not expired (`expiresAt` null meaning permanent). */
+function isActive(tag: UserTag | null): tag is UserTag {
+  if (!tag) return false;
+  return !tag.expiresAt || tag.expiresAt > new Date();
+}
 
 /** Data required to grant or renew a membership tag. */
 export interface GrantTagData {
@@ -47,9 +77,12 @@ export interface GrantTagData {
 /**
  * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted, or refused
  * because the tier is not a rise over the one the user holds (`lower`, `unranked`) - the same rule a
- * settlement applies, so a paid grant never swaps out a dearer tier by the XOR.
+ * settlement applies, so a paid grant never swaps out a dearer tier by the XOR - or because the
+ * user holds the tag's name under another issuer (`TAG_HELD_BY_ANOTHER_ISSUER`).
  */
-export type RankedGrantOutcome = { granted: UserTag } | { refused: TierRelation };
+export type RankedGrantOutcome =
+  | { granted: UserTag }
+  | { refused: TierRelation | typeof TAG_HELD_BY_ANOTHER_ISSUER };
 
 /** How `grantCotisantLocked` treats a tier the user may already hold. */
 type GrantRule = 'manual' | 'unless-holding-any' | 'only-a-rise';
@@ -132,8 +165,8 @@ export class UserTagService {
   constructor(@InjectRepository(UserTag) private readonly repo: Repository<UserTag>) {}
 
   /**
-   * Creates the tag or, if `(userId, tagName)` already exists, updates `expiresAt` (when given) and
-   * merges `metadata`, without changing `issuingAssocId` or `grantedBy`.
+   * Creates the tag or, if `(userId, tagName)` already exists AS ISSUED BY THE SAME ASSOCIATION,
+   * updates `expiresAt` (when given) and merges `metadata`, without changing `grantedBy`.
    * Pass `manager` to run within an existing transaction (e.g. alongside a sibling-tier revoke).
    *
    * ONE STATEMENT, `INSERT ... ON CONFLICT ("userId", "tagName") DO UPDATE`, never a read then a
@@ -141,6 +174,12 @@ export class UserTagService {
    * keep both their metadata keys (`||` merges in SQL), and a tag revoked concurrently is either
    * still there to renew or gone and granted anew - each a serial order, never the revoked row
    * written back. The unique index on the pair is the entity's `@Unique`.
+   *
+   * The update never crosses issuers: its `WHERE` keeps a row issued by another association (or by
+   * none) untouched, the statement then returns no row, and that is thrown as
+   * `TagHeldByAnotherIssuerError` - a grant that tier-holding reads would not count is never
+   * reported as granted. No SQL error is raised, so a caller may catch it and go on in the same
+   * transaction.
    */
   async grantOrRenew(data: GrantTagData, manager?: EntityManager): Promise<UserTag> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
@@ -150,6 +189,7 @@ export class UserTagService {
        ON CONFLICT ("userId", "tagName") DO UPDATE SET
          "expiresAt" = CASE WHEN CAST($7 AS boolean) THEN EXCLUDED."expiresAt" ELSE user_tags."expiresAt" END,
          metadata = user_tags.metadata || EXCLUDED.metadata
+       WHERE user_tags."issuingAssocId" IS NOT DISTINCT FROM EXCLUDED."issuingAssocId"
        RETURNING *, (xmax = 0) AS inserted`,
       [
         data.userId,
@@ -162,7 +202,13 @@ export class UserTagService {
       ]
     )) as Array<UserTag & { inserted: boolean }>;
     const row = rows[0];
-    if (!row) throw new Error(`grantOrRenew: no row returned for ${data.tagName}`);
+    if (!row) {
+      this.logger.error(
+        `[UserTag] grant of ${data.tagName} to ${data.userId} by assoc=${data.issuingAssocId ?? 'none'} ` +
+          'NOT written: the user holds that name under another issuer'
+      );
+      throw new TagHeldByAnotherIssuerError(data.tagName);
+    }
     const { inserted, ...columns } = row;
     const tag = repo.create(columns);
     if (inserted) {
@@ -178,13 +224,21 @@ export class UserTagService {
   /**
    * Deletes a user's tag by name (rather than by primary key like `revoke`) - used for XOR
    * sibling-tier enforcement, where the tag id isn't known ahead of time. No-op if not held.
-   * Pass `manager` to run within an existing transaction.
+   * Scoped to `issuingAssocId` like `revoke`: an association's tier switch deletes only the rows it
+   * issued. Pass `manager` to run within an existing transaction.
    */
-  async revokeByName(userId: string, tagName: string, manager?: EntityManager): Promise<void> {
+  async revokeByName(
+    userId: string,
+    tagName: string,
+    issuingAssocId: string,
+    manager?: EntityManager
+  ): Promise<void> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
-    const res = await repo.delete({ userId, tagName });
+    const res = await repo.delete({ userId, tagName, issuingAssocId });
     if (res.affected) {
-      this.logger.log(`[UserTag] Revoked ${tagName} for ${userId} (sibling-tier switch)`);
+      this.logger.log(
+        `[UserTag] Revoked ${tagName} for ${userId} (sibling-tier switch, assoc=${issuingAssocId})`
+      );
     }
   }
 
@@ -248,17 +302,13 @@ export class UserTagService {
     if (tiers.length >= 2) {
       for (const tier of tiers) {
         if (tier.variantKey === keepVariantKey) continue;
-        await this.revokeByName(userId, tier.tagName, manager);
+        await this.revokeByName(userId, tier.tagName, assocId, manager);
       }
     }
     // A tag of a tier that no longer exists is a sibling like any other: it is the tier the user
     // held, and the tier just granted replaces it. Scoped to the rows this association issued.
-    const runner = manager ?? this.repo.manager;
     for (const orphan of await this.heldOrphanTierTags(userId, assocId, tiers, manager)) {
-      await runner.query(
-        `DELETE FROM user_tags WHERE "userId" = $1 AND "tagName" = $2 AND "issuingAssocId" = $3`,
-        [userId, orphan.tagName, assocId]
-      );
+      await this.revokeByName(userId, orphan.tagName, assocId, manager);
       this.logger.warn(
         `[UserTag] Revoked ${orphan.tagName} for ${userId}: its tier no longer exists in ` +
           `assoc=${assocId.slice(0, 8)}, replaced by tier ${keepVariantKey ?? 'base'}`
@@ -281,35 +331,54 @@ export class UserTagService {
     tiers: readonly { variantKey: string | null }[],
     manager?: EntityManager
   ): Promise<OrphanTierTag[]> {
+    return (await this.heldOrphanTierTagsOf([userId], assocId, tiers, manager)).get(userId) ?? [];
+  }
+
+  /**
+   * `heldOrphanTierTags` for many users in one query, by user id (a user holding none is absent):
+   * what a listing of many buyers reads - the purchases list and its closing - so the count of
+   * queries does not grow with the rows.
+   */
+  async heldOrphanTierTagsOf(
+    userIds: readonly string[],
+    assocId: string,
+    tiers: readonly { variantKey: string | null }[],
+    manager?: EntityManager
+  ): Promise<Map<string, OrphanTierTag[]>> {
+    const byUser = new Map<string, OrphanTierTag[]>();
+    if (userIds.length === 0) return byUser;
     const runner = manager ?? this.repo.manager;
     const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await runner.query(
       `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
       [assocId]
     );
     const asso = rows[0];
-    if (!asso?.cotisationMode) return [];
+    if (!asso?.cotisationMode) return byUser;
     const root = `cotisant:${asso.slug}`;
-    const held: { tagName: string }[] = await runner.query(
-      `SELECT "tagName" FROM user_tags
-        WHERE "userId" = $1 AND "issuingAssocId" = $2
+    const held: { userId: string; tagName: string }[] = await runner.query(
+      `SELECT "userId", "tagName" FROM user_tags
+        WHERE "userId" = ANY($1) AND "issuingAssocId" = $2
           AND ("expiresAt" IS NULL OR "expiresAt" > now())
           AND ("tagName" = $3 OR starts_with("tagName", $4))`,
-      [userId, assocId, root, `${root}-`]
+      [[...userIds], assocId, root, `${root}-`]
     );
-    const orphans = orphanTierTags(
-      held.map((t) => t.tagName),
-      asso.slug,
-      tierVariantKeys([...tiers])
-    );
-    // Counted every hour by `countOrphanTierTags` (the PaidNotGranted report); per request it is
-    // a decision input, not news.
-    if (orphans.length > 0) {
+    const keys = tierVariantKeys([...tiers]);
+    for (const userId of new Set(held.map((t) => t.userId))) {
+      const orphans = orphanTierTags(
+        held.filter((t) => t.userId === userId).map((t) => t.tagName),
+        asso.slug,
+        keys
+      );
+      if (orphans.length === 0) continue;
+      // Counted every hour by `countOrphanTierTags` (the PaidNotGranted report); per request it
+      // is a decision input, not news.
       this.logger.debug(
         `[UserTag] user=${userId.slice(0, 8)} holds ${orphans.length} tag(s) of a deleted tier ` +
           `of assoc=${assocId.slice(0, 8)}`
       );
+      byUser.set(userId, orphans);
     }
-    return orphans;
+    return byUser;
   }
 
   /**
@@ -354,10 +423,11 @@ export class UserTagService {
    * How many users hold, ACTIVE, a tag of tier `variantKey` of association `assocId` (slug `slug`):
    * the tier's tag stem (`cotisant:<slug>` or `cotisant:<slug>-<variant>`), alone or with an
    * academic-year suffix - every tag `linkedTierKey` reads as that tier, in either mode and any
-   * year. Counted on rows THIS association issued and rows no association issued (written before
-   * issuers were recorded): another association's rows are its own, which this association's
-   * managers can neither see on their roster nor revoke, so they never block its delete and their
-   * number is never told. What refuses deleting a tier people still hold (`ProductsService.delete`);
+   * year. Counted on the rows THIS association issued only, the rows every tier read counts
+   * (`hasActiveTag`) and the only ones its managers can see on their roster and revoke
+   * (`revokeByName`): another association's row, or a row no association issued, is held for nobody
+   * here, so it never blocks the delete and its number is never told. What refuses deleting a tier
+   * people still hold (`ProductsService.delete`);
    * read through `manager`, under the association's EXCLUSIVE tier lock, so no grant of that tier
    * commits between the count and the delete.
    */
@@ -370,7 +440,7 @@ export class UserTagService {
     const stem = deriveCotisationTag(slug, 'lifetime', new Date(), variantKey).tagName;
     const rows: { n: number }[] = await manager.query(
       `SELECT count(DISTINCT "userId")::int AS n FROM user_tags
-        WHERE ("issuingAssocId" = $4 OR "issuingAssocId" IS NULL)
+        WHERE "issuingAssocId" = $4
           AND ("expiresAt" IS NULL OR "expiresAt" > now())
           AND ("tagName" = $1
                OR (starts_with("tagName", $2) AND substr("tagName", $3) ~ '^[0-9]{4}-[0-9]{4}$'))`,
@@ -403,7 +473,7 @@ export class UserTagService {
       assocId,
       userId,
       grantedBy,
-      variantKey,
+      { variantKey },
       metadata,
       'manual'
     );
@@ -431,7 +501,7 @@ export class UserTagService {
       assocId,
       userId,
       grantedBy,
-      variantKey,
+      { variantKey },
       metadata,
       'only-a-rise'
     );
@@ -456,7 +526,7 @@ export class UserTagService {
       assocId,
       userId,
       grantedBy,
-      variantKey,
+      { variantKey },
       metadata,
       'unless-holding-any'
     );
@@ -464,112 +534,187 @@ export class UserTagService {
   }
 
   /**
-   * Grants a raw tag in the name of `assocId` (the admin's "grant a tag" endpoint) under the
-   * buyer's tier lock: the tag may be one of the association's tier tags, so it must not interleave
-   * with a settlement or another grant ranking or swapping that buyer's tiers. A name in the
-   * `cotisant:` namespace must be one of `assocId`'s own current tier tags, or it is refused
-   * `403 TAG_NOT_ISSUER_TIER`.
+   * The admin's "grant a tag" endpoint, in the name of `assocId`. A tag grant is scoped to the
+   * association that grants it: the name must be one of `assocId`'s OWN cotisation tier tags for the
+   * current academic year (its catalogue, `listCotisationTiers`), or it is refused
+   * `403 TAG_NOT_ISSUER_TIER`. The tier it names is then granted exactly like the roster's manual
+   * add (`grantCotisant`): under the buyer's tier lock, read after it, with the sibling-tier XOR, and
+   * unranked since it is a manager's decision. `data.expiresAt`, when given, replaces the derived
+   * expiry.
    */
   async grantTagForAssociation(assocId: string, data: GrantTagData): Promise<UserTag> {
-    return this.repo.manager.transaction(async (manager) => {
-      await lockBuyerTiers(manager, assocId, data.userId);
-      // The `cotisant:` namespace is derived, never typed: a raw name there is either one of this
-      // association's own tier tags, or a tag no tier derives - which the tier reads would take
-      // for a deleted tier of this association, or for another association's tier.
-      if (data.tagName.startsWith(COTISATION_TAG_PREFIX)) {
-        const tiers = await this.listCotisationTiers(assocId, { manager });
-        if (!tiers.some((t) => t.tagName === data.tagName)) {
-          this.logger.warn(
-            `[UserTag] raw grant of "${data.tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
-              'not one of its cotisation tier tags'
-          );
-          throw new ForbiddenException({
-            code: TAG_NOT_ISSUER_TIER,
-            message: "The tag is not one of the granting association's cotisation tiers",
-          });
-        }
-      }
-      return this.grantOrRenew({ ...data, issuingAssocId: assocId }, manager);
-    });
+    const outcome = await this.grantCotisantLocked(
+      assocId,
+      data.userId,
+      data.grantedBy,
+      { tagName: data.tagName },
+      data.metadata ?? {},
+      'manual',
+      data.expiresAt ?? undefined
+    );
+    if (!outcome || !('granted' in outcome)) {
+      throw new Error('grantTagForAssociation: a manual grant is never skipped nor refused');
+    }
+    return outcome.granted;
   }
 
   /**
-   * The body of `grantCotisant`, `grantCotisantUnlessHeld` and `grantCotisantIfARise`. EVERYTHING
-   * it reads - the association, its tiers, the tag to derive, what the user holds - is read through
-   * the transaction's `manager` AFTER the buyer's tier lock, so a retag or a grant committed while it
-   * waited is what it sees. Null: skipped because a tier is held (`unless-holding-any`).
+   * The body of `grantCotisant`, `grantCotisantUnlessHeld`, `grantCotisantIfARise` and
+   * `grantTagForAssociation`. EVERYTHING it reads - the association, its tiers, the tag to derive,
+   * what the user holds - is read through the transaction's `manager` AFTER the buyer's tier lock,
+   * so a retag or a grant committed while it waited is what it sees. Null: skipped because a tier is
+   * held (`unless-holding-any`). `tier` names the tier by key, or by the tag it grants (the raw
+   * grant), which must then be one of the association's own tier tags.
    */
   private async grantCotisantLocked(
     assocId: string,
     userId: string,
     grantedBy: string,
-    variantKey: string | null,
+    tier: { variantKey: string | null } | { tagName: string },
     metadata: Record<string, unknown>,
-    rule: GrantRule
+    rule: GrantRule,
+    expiresAtOverride?: Date
   ): Promise<RankedGrantOutcome | null> {
-    return this.repo.manager.transaction(async (manager) => {
-      await lockBuyerTiers(manager, assocId, userId);
-      const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
-        `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
-        [assocId]
-      );
-      const asso = rows[0];
-      if (!asso) throw new NotFoundException('Association not found');
-      if (!asso.cotisationMode) {
-        throw new BadRequestException('Cotisation is not enabled for this association');
-      }
+    return this.repo.manager.transaction((manager) =>
+      this.grantCotisantIn(
+        manager,
+        assocId,
+        userId,
+        grantedBy,
+        tier,
+        metadata,
+        rule,
+        expiresAtOverride
+      )
+    );
+  }
 
-      const tiers = await this.listCotisationTiers(assocId, { manager });
-      // Validate the tier against the association's own catalogue. An arbitrary variantKey would
-      // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
-      if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
-        throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
-      }
-      // The same trap in reverse: an association that dropped its base tier in favour of named ones
-      // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
-      if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
-        throw new BadRequestException('This association has no base tier - a tier must be chosen');
-      }
+  /**
+   * `grantCotisant` - the manager's grant, NOT ranked - inside the CALLER's transaction: the closing
+   * of a payment paid for and not granted (`ProductsService.closePaidNotGranted`) grants the tier and
+   * writes its closing row in one commit, after its own ranked verdict. Takes the buyer's tier lock on
+   * `manager` itself; a caller that already holds it on the same transaction simply holds it twice
+   * (advisory locks stack within one session, and both are released by the one commit or rollback).
+   */
+  async grantCotisantWithin(
+    manager: EntityManager,
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>
+  ): Promise<UserTag> {
+    const outcome = await this.grantCotisantIn(
+      manager,
+      assocId,
+      userId,
+      grantedBy,
+      { variantKey },
+      metadata,
+      'manual'
+    );
+    if (!outcome || !('granted' in outcome)) {
+      throw new Error('grantCotisantWithin: a manual grant is never skipped nor refused');
+    }
+    return outcome.granted;
+  }
 
-      const { tagName, expiresAt } = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        variantKey
-      );
-      this.logger.debug(
-        `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
-      );
-      // A tag of a DELETED tier does not count as held here: the legacy claim grants its tier and
-      // the sibling XOR below swaps the orphan out. No money changes hands, so there is no paid
-      // downgrade to prevent, and keeping the orphan would leave the holder with a tier nobody
-      // can rank - strictly worse than the claim.
-      if (
-        rule === 'unless-holding-any' &&
-        (await this.heldVariantKeys(userId, tiers, manager)).length > 0
-      ) {
-        this.logger.debug(
-          `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+  /** The body of `grantCotisantLocked`, on the transaction `manager` belongs to. */
+  private async grantCotisantIn(
+    manager: EntityManager,
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    tier: { variantKey: string | null } | { tagName: string },
+    metadata: Record<string, unknown>,
+    rule: GrantRule,
+    expiresAtOverride?: Date
+  ): Promise<RankedGrantOutcome | null> {
+    await lockBuyerTiers(manager, assocId, userId);
+    const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
+      `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    const asso = rows[0];
+    if (!asso) throw new NotFoundException('Association not found');
+    const tiers = asso.cotisationMode ? await this.listCotisationTiers(assocId, { manager }) : [];
+    let variantKey: string | null;
+    if ('tagName' in tier) {
+      const named = tiers.find((t) => t.tagName === tier.tagName);
+      if (!named) {
+        this.logger.warn(
+          `[UserTag] raw grant of "${tier.tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
+            'not one of its cotisation tier tags'
         );
-        return null;
+        throw new ForbiddenException({
+          code: TAG_NOT_ISSUER_TIER,
+          message: "The tag is not one of the granting association's cotisation tiers",
+        });
       }
-      if (rule === 'only-a-rise') {
-        const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
-        if (relation === 'lower' || relation === 'unranked') {
-          this.logger.error(
-            `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
-              `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
-          );
-          return { refused: relation };
-        }
+      variantKey = named.variantKey;
+    } else {
+      variantKey = tier.variantKey;
+    }
+    if (!asso.cotisationMode) {
+      throw new BadRequestException('Cotisation is not enabled for this association');
+    }
+
+    // Validate the tier against the association's own catalogue. An arbitrary variantKey would
+    // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
+    if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
+      throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
+    }
+    // The same trap in reverse: an association that dropped its base tier in favour of named ones
+    // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
+    if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
+      throw new BadRequestException('This association has no base tier - a tier must be chosen');
+    }
+
+    const derived = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), variantKey);
+    const tagName = derived.tagName;
+    const expiresAt = expiresAtOverride ?? derived.expiresAt;
+    this.logger.debug(
+      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
+    );
+    // A tag of a DELETED tier does not count as held here: the legacy claim grants its tier and
+    // the sibling XOR below swaps the orphan out. No money changes hands, so there is no paid
+    // downgrade to prevent, and keeping the orphan would leave the holder with a tier nobody
+    // can rank - strictly worse than the claim.
+    if (
+      rule === 'unless-holding-any' &&
+      (await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0
+    ) {
+      this.logger.debug(
+        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+      );
+      return null;
+    }
+    if (rule === 'only-a-rise') {
+      const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
+      if (relation === 'lower' || relation === 'unranked') {
+        this.logger.error(
+          `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
+            `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
+        );
+        return { refused: relation };
       }
-      const tag = await this.grantOrRenew(
+    }
+    let tag: UserTag;
+    try {
+      tag = await this.grantOrRenew(
         { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
         manager
       );
-      await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
-      return { granted: tag };
-    });
+    } catch (e) {
+      // A paid grant answers the refusal, so its caller records paid but not granted; the
+      // manager's paths let the typed 409 through.
+      if (rule === 'only-a-rise' && e instanceof TagHeldByAnotherIssuerError) {
+        return { refused: TAG_HELD_BY_ANOTHER_ISSUER };
+      }
+      throw e;
+    }
+    await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
+    return { granted: tag };
   }
 
   /**
@@ -592,8 +737,11 @@ export class UserTagService {
 
   /**
    * Where tier `variantKey` stands against what the user holds, read through `manager` under the
-   * buyer's tier lock: the same `pickHeldTier` / `tierRelationOf` decision a checkout and a
-   * settlement take, on the tiers' PRODUCT prices.
+   * buyer's tier lock, on the tiers' PRODUCT prices: ranked against the ONE tier `pickHeldTier`
+   * picks, as a checkout and a settlement rank. Unlike `tierRelationOf`, a target the user holds
+   * BESIDE a dearer (or unrankable) tier - two legacy tags - is NOT `held`: renewing it would run the
+   * sibling XOR and revoke the tier ranked above it, so it answers `lower` / `unranked` and is
+   * refused. `held` is only the top tier itself.
    */
   private async rankTier(
     assocId: string,
@@ -607,7 +755,7 @@ export class UserTagService {
         WHERE "associationId" = $1 AND type = 'membership'`,
       [assocId]
     );
-    const heldKeys = await this.heldVariantKeys(userId, tiers, manager);
+    const heldKeys = await this.heldVariantKeys(userId, assocId, tiers, manager);
     const orphans = await this.heldOrphanTierTags(userId, assocId, tiers, manager);
     const product = (key: string | null) => priced.find((t) => t.variantKey === key) ?? null;
     const target = product(variantKey);
@@ -617,7 +765,7 @@ export class UserTagService {
       ...heldKeys.map((k) => ({ variantKey: k, product: product(k) })),
       ...orphans.map((o) => ({ variantKey: o.variantKey, product: null })),
     ]);
-    const relation = target ? tierRelationOf(target, heldKeys, held) : 'unranked';
+    const relation = target ? tierRelation(target, held) : 'unranked';
     this.logger.debug(
       `[UserTag] tier rank: assoc=${assocId.slice(0, 8)} user=${userId.slice(0, 8)} ` +
         `tier=${variantKey ?? 'base'} held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`
@@ -687,7 +835,7 @@ export class UserTagService {
       );
       return false;
     }
-    return (await this.heldVariantKeys(userId, wanted, manager)).length > 0;
+    return (await this.heldVariantKeys(userId, assocId, wanted, manager)).length > 0;
   }
 
   /**
@@ -710,7 +858,7 @@ export class UserTagService {
       );
       return [];
     }
-    return this.heldVariantKeys(userId, tiers, manager);
+    return this.heldVariantKeys(userId, assocId, tiers, manager);
   }
 
   /**
@@ -718,7 +866,8 @@ export class UserTagService {
    * number: the associations' modes, their membership products, and the user's active tags. A list
    * of spaces judged on cotisation conditions (the bookings' Reservations page) asks this once
    * rather than once per association. Same answer per association: the variant keys held, `null`
-   * being the base tier, and nothing for an association that sells no cotisation.
+   * being the base tier, and nothing for an association that sells no cotisation. A tag counts for
+   * an association only when that association issued it (`issuedTagKey`).
    */
   async heldCotisationTiersByAssociation(
     userId: string,
@@ -731,7 +880,7 @@ export class UserTagService {
     const [assos, products, active]: [
       { id: string; slug: string; cotisationMode: CotisationMode | null }[],
       { associationId: string; variantKey: string | null }[],
-      { tagName: string }[],
+      { tagName: string; issuingAssocId: string }[],
     ] = await Promise.all([
       runner.query(`SELECT id, slug, "cotisationMode" FROM associations WHERE id = ANY($1)`, [ids]),
       runner.query(
@@ -740,12 +889,13 @@ export class UserTagService {
         [ids]
       ),
       runner.query(
-        `SELECT "tagName" FROM user_tags
-          WHERE "userId" = $1 AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
-        [userId]
+        `SELECT "tagName", "issuingAssocId" FROM user_tags
+          WHERE "userId" = $1 AND "issuingAssocId" = ANY($2)
+            AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
+        [userId, ids]
       ),
     ]);
-    const activeNames = new Set(active.map((t) => t.tagName));
+    const activeKeys = new Set(active.map((t) => issuedTagKey(t.issuingAssocId, t.tagName)));
     const now = new Date();
     for (const asso of assos) {
       if (!asso.cotisationMode) continue;
@@ -753,7 +903,9 @@ export class UserTagService {
       const keys = held.get(asso.id) ?? [];
       for (const p of products.filter((x) => x.associationId === asso.id)) {
         const { tagName } = deriveCotisationTag(asso.slug, mode, now, p.variantKey);
-        if (activeNames.has(tagName) && !keys.includes(p.variantKey)) keys.push(p.variantKey);
+        if (activeKeys.has(issuedTagKey(asso.id, tagName)) && !keys.includes(p.variantKey)) {
+          keys.push(p.variantKey);
+        }
       }
       held.set(asso.id, keys);
     }
@@ -762,43 +914,119 @@ export class UserTagService {
   }
 
   /**
-   * Which of the given tiers the user has an active tag for. The one place a tier list becomes a
-   * membership answer, so `holdsOneOfTiers` and `listHeldCotisationTiers` cannot disagree.
+   * Which of `assocId`'s given tiers the user has an active tag for, counting only tags `assocId`
+   * issued. The one place a tier list becomes a membership answer, so `holdsOneOfTiers` and
+   * `listHeldCotisationTiers` cannot disagree.
    */
   private async heldVariantKeys(
     userId: string,
+    assocId: string,
     tiers: CotisationTierInfo[],
     manager?: EntityManager
   ): Promise<(string | null)[]> {
     const held: (string | null)[] = [];
     for (const tier of tiers) {
-      if (await this.hasActiveTag(userId, tier.tagName, manager)) held.push(tier.variantKey);
+      if (await this.hasActiveTag(userId, tier.tagName, assocId, manager)) {
+        held.push(tier.variantKey);
+      }
     }
     return held;
   }
 
   /**
-   * Returns true when the user has an active (non-expired) tag with the given name. Pass `manager`
-   * inside a transaction (under the buyer's tier lock), so the read uses ITS connection.
+   * Returns true when the user has an active (non-expired) tag with the given name ISSUED BY
+   * `issuingAssocId` - the tier-holding question, which only the tier's own association answers.
+   * Pass `manager` inside a transaction (under the buyer's tier lock), so the read uses ITS
+   * connection.
    */
-  async hasActiveTag(userId: string, tagName: string, manager?: EntityManager): Promise<boolean> {
+  async hasActiveTag(
+    userId: string,
+    tagName: string,
+    issuingAssocId: string,
+    manager?: EntityManager
+  ): Promise<boolean> {
     const repo = manager ? manager.getRepository(UserTag) : this.repo;
-    const tag = await repo.findOne({ where: { userId, tagName } });
-    if (!tag) return false;
-    if (!tag.expiresAt) return true;
-    return tag.expiresAt > new Date();
+    return isActive(await repo.findOne({ where: { userId, tagName, issuingAssocId } }));
   }
 
   /**
-   * Returns the user's active (non-expired) tag row with the given name, or null if absent or
-   * expired. Like `hasActiveTag` but also surfaces `expiresAt` - used where a caller needs the
-   * expiry itself, not just a yes/no (e.g. the Cercle inbound cotisant-status check).
+   * Returns true when the user has an active tag with the given name, whoever issued it. Only for a
+   * gate that names tags freely across associations (a product's `requiredTags`); a tier-holding
+   * read uses `hasActiveTag`, which counts only the tier's own association's rows.
    */
-  async getActiveTag(userId: string, tagName: string): Promise<UserTag | null> {
-    const tag = await this.repo.findOne({ where: { userId, tagName } });
-    if (!tag) return null;
-    if (tag.expiresAt && tag.expiresAt <= new Date()) return null;
-    return tag;
+  async hasActiveTagFromAnyIssuer(
+    userId: string,
+    tagName: string,
+    manager?: EntityManager
+  ): Promise<boolean> {
+    const repo = manager ? manager.getRepository(UserTag) : this.repo;
+    return isActive(await repo.findOne({ where: { userId, tagName } }));
+  }
+
+  /**
+   * Returns the user's active (non-expired) tag row with the given name issued by
+   * `issuingAssocId`, or null if absent or expired. Like `hasActiveTag` but also surfaces
+   * `expiresAt` - used where a caller needs the expiry itself, not just a yes/no (e.g. the Cercle
+   * inbound cotisant-status check).
+   */
+  async getActiveTag(
+    userId: string,
+    tagName: string,
+    issuingAssocId: string
+  ): Promise<UserTag | null> {
+    const tag = await this.repo.findOne({ where: { userId, tagName, issuingAssocId } });
+    return isActive(tag) ? tag : null;
+  }
+
+  /**
+   * The ACTIVE rows, issued by `issuingAssocId`, of any of `tagNames` held by any of `userIds` - in
+   * ONE query, for a reader deciding over many buyers at once (the closing of a payment paid for and
+   * not granted, and the purchases list's advice on it). Reads through `manager`, after its locks.
+   */
+  async activeTagsOf(
+    userIds: string[],
+    tagNames: string[],
+    issuingAssocId: string,
+    manager: EntityManager
+  ): Promise<UserTag[]> {
+    if (userIds.length === 0 || tagNames.length === 0) return [];
+    const rows = await manager.getRepository(UserTag).find({
+      where: { userId: In(userIds), tagName: In(tagNames), issuingAssocId },
+    });
+    return rows.filter(isActive);
+  }
+
+  /**
+   * Stamps tag `tagId` as the DELIVERY of purchase record `purchaseRecordId` (metadata key
+   * `purchaseRecordId`), when a payment paid for and not granted is closed because the tier it bought
+   * is already held as its delivery. Touches nothing else - no expiry, no grantor - so it is not a
+   * renewal. Writes only a tag no record has stamped yet: false when one already has (one delivery
+   * closes at most one payment), and the caller refuses.
+   */
+  async stampDelivery(
+    tagId: string,
+    purchaseRecordId: string,
+    manager: EntityManager
+  ): Promise<boolean> {
+    const rows: unknown[] = await manager.query(
+      `UPDATE user_tags SET metadata = metadata || jsonb_build_object('purchaseRecordId', $2::text)
+        WHERE id = $1 AND metadata -> 'purchaseRecordId' IS NULL
+        RETURNING id`,
+      [tagId, purchaseRecordId]
+    );
+    // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+    const written = Array.isArray(rows[0]) ? (rows[0] as unknown[]).length : rows.length;
+    if (written === 0) {
+      this.logger.warn(
+        `[UserTag] tag ${tagId.slice(0, 8)} NOT stamped for purchase=${purchaseRecordId.slice(0, 8)}: ` +
+          'it is already the delivery of another payment'
+      );
+      return false;
+    }
+    this.logger.log(
+      `[UserTag] tag ${tagId.slice(0, 8)} stamped as the delivery of purchase=${purchaseRecordId.slice(0, 8)}`
+    );
+    return true;
   }
 
   /**

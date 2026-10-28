@@ -28,7 +28,11 @@ Reservations pour un espace personnel.
 - **General** : nom, description, **affiche**, fuseau horaire. L'affiche (JPEG, PNG ou WebP) est
   chiffree sur votre appareil, comme l'image d'une publication. Elle est enregistree des que vous la
   choisissez, sans passer par le bouton d'enregistrement.
-- **Ressources et disponibilites** : semaine type, exceptions, pas regulier ou creneaux fixes.
+- **Ressources et disponibilites** : semaine type, exceptions, pas regulier ou creneaux fixes. Un
+  espace nait avec **une seule colonne, invisible** : vous reglez directement ses horaires, et les
+  membres ne voient aucun nom de colonne. **Ajouter une colonne** (plusieurs salles, instruments ou
+  personnes) fait apparaitre les colonnes, chacune avec ses horaires. Tant qu'il n'y a qu'une
+  colonne, elle porte le nom de l'espace et le suit quand vous le renommez.
 - **Qui et comment** : public autorise, noms visibles ou non, espace liste ou par lien, questions.
   Les questions "fichier" sont acceptees.
 - **Regles de reservation** : ouverture, delai de prevenance, horizon, quotas, nombre de personnes.

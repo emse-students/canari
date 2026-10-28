@@ -636,7 +636,16 @@
     {/if}
 
     {#if ShareSheet && shareFor}
-      <ShareSheet open postId={shareFor} onClose={() => (shareFor = null)} />
+      <ShareSheet
+        open
+        postId={shareFor}
+        onClose={() => (shareFor = null)}
+        onSentInApp={() => {
+          // The link waits in a conversation's composer, under this viewer: step aside for it.
+          console.debug('[reel-viewer] closed: the reel was sent into a conversation');
+          overlay.dismissFromUi();
+        }}
+      />
     {/if}
   </div>
 </div>

@@ -2,6 +2,7 @@
  * The rules of a boutique checkout attempt, as data and pure functions (migration 101,
  * docs/wiki/frontend/modules/payments.md "A product checkout is a row, one per attempt").
  */
+import { LYDIA_REQUEST_UUID_RE } from '../forms/seat-hold';
 
 /**
  * How long a product's Lydia request stays payable, in whole seconds (Lydia's `expire_time`). Set
@@ -53,6 +54,13 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
  * sibling XOR would replace the held tier.
  */
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+
+/**
+ * The `code` of the 409 a checkout or a cash sale of a membership product gets while its
+ * association has no cotisation mode: no tier tag can be derived, so nothing would be granted for
+ * the money. Refused before any payment is requested or recorded.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 
 /**
  * The `code` of the 409 a manager gets when deleting a cotisation tier that people still hold,
@@ -113,9 +121,85 @@ export function withCheckoutReturnKey(
 export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
 
 /**
+ * Which request a state read of this attempt names, as core-service's `payments/request-state`
+ * takes it: the `request_uuid` the issuing call answered, or - for an attempt whose issuing call
+ * never answered one - its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
+ * The ONE choice, made for the payer's return, the confirm callback and the reconciliation sweep.
+ */
+export function productCheckoutLookup(attempt: {
+  id: string;
+  productId: string;
+  requestUuid: string | null;
+}): { sessionId: string } | { orderRef: string } {
+  return attempt.requestUuid && LYDIA_REQUEST_UUID_RE.test(attempt.requestUuid)
+    ? { sessionId: attempt.requestUuid }
+    : { orderRef: productOrderRef(attempt.productId, attempt.id) };
+}
+
+/**
  * The `code` of the 409 a checkout gets when its product's price grid came to depend on the buyer's
  * profile (promo, formation) between the moment the purchase was prepared - before the buyer's tier
  * lock, where the profile is fetched since it calls another service - and the moment it is priced
  * under that lock. Nothing is opened; trying again fetches what the grid now needs.
  */
 export const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';
+
+/**
+ * The `code` of the 409 a closing gets when the purchase record is not marked `paid_not_granted`:
+ * only a tier paid for and not granted is owed an outcome (docs/wiki/cotisations.md "Rising to a
+ * higher tier").
+ */
+export const PURCHASE_NOT_CLOSABLE = 'PURCHASE_NOT_CLOSABLE';
+
+/**
+ * The `code` of the 409 a closing gets when that payment's outcome was already recorded: a payment
+ * is closed once (the unique index of migration 113), and the first outcome stands.
+ */
+export const PURCHASE_ALREADY_CLOSED = 'PURCHASE_ALREADY_CLOSED';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the tier the payment was for can no longer
+ * be granted: its product was deleted or is no longer a tier, or its form no longer grants one.
+ * Nothing is written; the payment can still be closed as `refunded`.
+ */
+export const PURCHASE_TIER_GONE = 'PURCHASE_TIER_GONE';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer's account was erased: every
+ * erased account shares one id, so a grant would make a cotisant of nobody. `refunded` stays open.
+ */
+export const PURCHASE_BUYER_ERASED = 'PURCHASE_BUYER_ERASED';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer ALREADY holds the tier paid for:
+ * the payment bought nothing, so a refund is the outcome owed; granting would only renew the tier
+ * and take the payment off the report while the refund is still owed.
+ */
+export const PURCHASE_TARGET_ALREADY_HELD = 'PURCHASE_TARGET_ALREADY_HELD';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when what the list showed is no longer what the
+ * closing would do: the list said the tier is already delivered ("nothing is granted") and it no
+ * longer is, or the reverse. Nothing was written; the list is re-read, then the manager decides again.
+ */
+export const PURCHASE_CLOSING_CHANGED = 'PURCHASE_CLOSING_CHANGED';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer holds a tier the one paid for is
+ * not a rise over (worth as much or more, or not comparable): granting would move them down. A
+ * refund is the outcome left.
+ */
+export const PURCHASE_NOT_A_RISE = 'PURCHASE_NOT_A_RISE';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the payment was for an academic year that
+ * is over (a `dated` association): the tier it bought cannot be granted any more, only refunded.
+ */
+export const PURCHASE_YEAR_OVER = 'PURCHASE_YEAR_OVER';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the tier paid for or the tier the buyer
+ * holds has no fixed price (a grid or a free amount): the two cannot be ranked, so the grant cannot
+ * be told from a move down. A refund is the outcome left.
+ */
+export const PURCHASE_TIER_NOT_COMPARABLE = 'PURCHASE_TIER_NOT_COMPARABLE';

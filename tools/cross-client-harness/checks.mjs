@@ -3,6 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADMIT_ROWS } from './admitrows.mjs';
 import { BIG_ROWS } from './bigrows.mjs';
+import { LIST_RACE_ROWS } from './listracerows.mjs';
+import { LIVE_ROWS } from './liverows.mjs';
+import { CALL_WEB_ROWS } from './callrows.mjs';
+import { REMOVAL_ROWS } from './removalrows.mjs';
 import { DEV_ROWS } from './devicerows.mjs';
 import { FLOOR_ROWS } from './floorrows.mjs';
 import { KILL_ROWS } from './killrows.mjs';
@@ -540,6 +544,35 @@ export const PHASES = {
     scripts: ['big.mjs --row BIG-1-noI1', 'big.mjs --row BIG-2-noI1', 'big.mjs --row BIG-3-noI1'],
     needs: ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'A1'],
   },
+  // A SALON HEARD OF LIVE WHILE ITS COMMUNITY'S LISTING IS HELD (LIST-RACE-1, 2026-10-26), browsers
+  // only: the web row and its control. The `-A1` pair is class B and in no phase, preflighted with
+  // the phone through `ROW_TABLES`: `bun run.mjs --file listrace.mjs --row LIST-RACE-1-A1`.
+  LISTRACE: {
+    title: "1.4.1 - a salon heard of live while its community's listing is held, and its control",
+    scripts: ['listrace.mjs --row LIST-RACE-1-W', 'listrace.mjs --row LIST-RACE-1-W-CTL'],
+    needs: ['W1', 'W4', 'W8'],
+  },
+  // A REMOVAL COMMITTED, NOT ONLY UNROUTED (KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP,
+  // 2026-10-27). DEVREVOKE-KEYGROUP drives the device panel from W6 and mints W3 as its subject.
+  REMOVALS: {
+    title: '1.5.0 - a removal is committed, not only unrouted',
+    scripts: Object.keys(REMOVAL_ROWS).map((row) => `removals.mjs --row ${row}`),
+    needs: ['W1', 'W2', 'W3', 'W6'],
+  },
+  // IN-APP 1:1 AUDIO CALLS BETWEEN TWO BROWSERS (CALL-WEB-1..8, 2026-10-26). W8 is only closed and
+  // reopened (CALL-WEB-6: no device of the callee may answer); each seat is put on its own tone.
+  CALLWEB: {
+    title: '1.4.1 - in-app 1:1 audio calls between two browsers',
+    scripts: Object.keys(CALL_WEB_ROWS).map((row) => `callweb.mjs --row ${row}`),
+    needs: ['W2', 'W4', 'W5', 'W8'],
+  },
+  // A LIVE FROM THE MI 9T WATCHED FROM TWO BROWSERS (LIVE-WEB-2, and L-F1's LIVE-STALL-1, 2026-10-27).
+  // Every row names A1, the broadcaster, so `ROW_TABLES` arms the phone and stamps its build.
+  LIVEWEB: {
+    title: '1.5.0 - a live from the Mi 9T, watched from two browsers',
+    scripts: Object.keys(LIVE_ROWS).map((row) => `liveweb.mjs --row ${row}`),
+    needs: ['W2', 'W4', 'A1'],
+  },
 };
 
 /**
@@ -667,6 +700,10 @@ export const ROW_TABLES = {
   'admit.mjs': ADMIT_ROWS,
   'devrows.mjs': DEV_ROWS,
   'big.mjs': BIG_ROWS,
+  'listrace.mjs': LIST_RACE_ROWS,
+  'removals.mjs': REMOVAL_ROWS,
+  'callweb.mjs': CALL_WEB_ROWS,
+  'liveweb.mjs': LIVE_ROWS,
   'floor.mjs': Object.fromEntries(Object.entries(FLOOR_ROWS).map(([k, v]) => [k.replace(/^FLOOR-/, ''), v])),
 };
 

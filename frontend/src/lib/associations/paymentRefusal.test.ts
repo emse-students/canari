@@ -159,6 +159,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          "This association's cotisations are disabled: the product cannot be sold.",
+          'COTISATION_DISABLED',
+          409
+        )
+      )
+    ).toBe(m.shop_cotisation_disabled());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'The payment account of this association changed while the purchase was opened.',
           'PAYMENT_ROUTING_CHANGED',
           409

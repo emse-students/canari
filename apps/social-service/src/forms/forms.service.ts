@@ -51,6 +51,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
+import { formOrderRef } from './form-order-ref';
 import {
   GUEST_RECEIPT_NOT_FOUND,
   guestReference,
@@ -981,7 +982,9 @@ export class FormsService {
    * and so ran no grant - the answer is read from what the submitter holds NOW: without a seat
    * nothing was granted, otherwise the form's tier is held or it is not. A form that grants no tier,
    * or a guest's payment (nobody to grant to, logged where it is claimed), is delivered as paid.
-   * Every "not delivered" is logged at ERROR: a refund or a manual grant is owed.
+   * Every "not delivered" is logged at ERROR. The read can OVER-mark - a replay racing the run that
+   * is still granting, a failed grant a later replay retries, a tier risen from since - and nothing
+   * clears a mark, so the mark says "check before refunding", never "refund".
    */
   private async formTierDelivered(
     form: Pick<Form, 'id' | 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
@@ -997,7 +1000,7 @@ export class FormsService {
     if (!seatGiven) {
       this.logger.error(
         `[Forms] submission ${submission.id} on form ${form.id} paid with no seat given: tier ` +
-          `${tier} NOT granted - recorded paid_not_granted, a refund is owed`
+          `${tier} NOT granted - recorded paid_not_granted, a refund is owed unless it is granted by hand`
       );
       return false;
     }
@@ -1014,8 +1017,8 @@ export class FormsService {
     }
     this.logger.error(
       `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held at record ` +
-        `time (grant ${grant ?? 'decided by an earlier run'}) - recorded paid_not_granted, a refund ` +
-        'or a grant is owed'
+        `time (grant ${grant ?? 'decided by another run'}) - recorded paid_not_granted; check the ` +
+        'tier is still not held before refunding (a concurrent or later grant does not clear the mark)'
     );
     return false;
   }
@@ -1578,7 +1581,8 @@ export class FormsService {
               `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
           );
         }
-        const idempotencyKey = `form:${savedSubmission.id}`;
+        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
+        const idempotencyKey = formOrderRef(savedSubmission.id);
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
         // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
@@ -2141,24 +2145,27 @@ export class FormsService {
    * Moves a `pending` row whose request the provider reports declined or cancelled / expired to
    * `cancelled`, under the row lock and only while the row still names that request (`sessionId`).
    * A row that already left `pending` (expired by the job, cancelled by a callback) is left as is.
+   * Also the release of the reconciliation sweep (`lydia-reconciliation.ts`), on a verified read.
    */
-  private async releaseSettledRefusedRow(
+  async releaseSettledRefusedRow(
     submissionId: string,
     sessionId: string,
-    state: RequestState
-  ): Promise<void> {
+    state: RequestState,
+    by = 'confirmPayment'
+  ): Promise<boolean> {
     const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
       named: (s) => s.stripeSessionId === sessionId,
     });
     if (typeof outcome === 'object') {
       this.logger.log(
-        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state} at the provider - answer released, the payer may retry`
+        `[Forms] ${by} ${submissionId}: request ${sessionId} is ${state} at the provider - answer released, the payer may retry`
       );
-    } else {
-      this.logger.log(
-        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state}, row left as is (${outcome})`
-      );
+      return true;
     }
+    this.logger.log(
+      `[Forms] ${by} ${submissionId}: request ${sessionId} is ${state}, row left as is (${outcome})`
+    );
+    return false;
   }
 
   /**
@@ -2502,6 +2509,18 @@ export class FormsService {
   }
 
   /**
+   * The instant a `pending` online answer's hold has ended by, read ONCE from the database clock
+   * (`PENDING_HOLD_CUTOFF_SQL`, the clock every hold count reads) - so the reconciliation and the
+   * expiry of one tick select by the SAME instant.
+   */
+  async pendingHoldCutoff(): Promise<Date> {
+    const [{ cutoff }] = await this.submissionRepo.query(
+      `SELECT ${PENDING_HOLD_CUTOFF_SQL} AS cutoff`
+    );
+    return new Date(cutoff);
+  }
+
+  /**
    * Moves every online `pending` submission past the hold to `expired` (PP3).
    *
    * THE SEAT IS ALREADY FREE BEFORE THIS RUNS: every count reads the hold from the row itself
@@ -2509,14 +2528,20 @@ export class FormsService {
    * list and the export. It never deletes: the row is the trace a late payment is matched against
    * (`markPaid`). Idempotent from the row - the `WHERE` names the only state it moves out of, so a
    * second run, or two overlapping ones, find nothing left to move.
+   *
+   * `cutoff` is the tick's ONE hold cutoff (`pendingHoldCutoff`), the same instant the Lydia
+   * reconciliation selected its rows by just before: a row whose hold ends between the two is then
+   * neither read nor expired this tick, but both next tick - never expired unread.
    */
-  async expireStalePendingPayments(): Promise<number> {
+  async expireStalePendingPayments(cutoff: Date): Promise<number> {
     const result = await this.submissionRepo
       .createQueryBuilder()
       .update()
       .set({ paymentStatus: 'expired' })
       .where('"paymentStatus" = :status', { status: 'pending' })
-      .andWhere(`"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
+      // An INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp` with no
+      // zone, and an uncast parameter would be read as one, dropping the offset the driver sends.
+      .andWhere('"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)', { cutoff })
       .execute();
     const count = result.affected ?? 0;
     if (count > 0) {

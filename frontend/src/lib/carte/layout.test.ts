@@ -20,9 +20,9 @@ import type { PosterMemberRef } from './generator';
 function member(over: Partial<PosterMemberRef> = {}): PosterMemberRef {
   return {
     userId: 'u1',
-    name: 'Jeanne BOUSSONNIERE',
+    name: 'Jeanne VALCOURNIERE',
     firstName: 'Jeanne',
-    lastName: 'BOUSSONNIERE',
+    lastName: 'VALCOURNIERE',
     role: 'Tresoriere',
     isAdmin: true,
     ...over,
