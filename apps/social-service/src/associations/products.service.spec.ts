@@ -2588,6 +2588,103 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const of = await listed(['cotisant:cercle-avec-alcool'], [goodies]);
         expect(of('prod-goodies')).toEqual({ relation: 'none', due: 300 });
       });
+
+      // The checkout refuses a holder of TWO tiers any other tier (`TIER_NOT_RANKABLE`): the
+      // listing reads the same `relationOf`, so it offers nothing the checkout would refuse.
+      it('a holder of TWO tiers: unranked (not buyable) for a third, held for both held', async () => {
+        const premium = product({
+          id: 'prod-premium',
+          type: 'membership',
+          variantKey: 'premium',
+          amountCents: 5000,
+        });
+        const of = await listed(
+          ['cotisant:cercle-sans-alcool', 'cotisant:cercle-avec-alcool'],
+          [premium]
+        );
+        expect(of('prod-premium')).toEqual({ relation: 'unranked', due: null });
+        expect(of('prod-sans')).toEqual({ relation: 'held', due: null });
+        expect(of('prod-avec')).toEqual({ relation: 'held', due: null });
+      });
+
+      it('CONTROL: a holder of ONE tier is offered the dearer third tier', async () => {
+        const premium = product({
+          id: 'prod-premium',
+          type: 'membership',
+          variantKey: 'premium',
+          amountCents: 5000,
+        });
+        const of = await listed(['cotisant:cercle-sans-alcool'], [premium]);
+        expect(of('prod-premium')).toEqual({ relation: 'higher', due: 5000 });
+      });
+    });
+
+    describe('the listing names what the checkout refuses or prices', () => {
+      it('a membership of an association whose cotisations are disabled: not offered, no price', async () => {
+        const { service, productRepo, assoRepo, userTagService } = makeService();
+        const goodies = product({ id: 'prod-goodies', type: 'other', amountCents: 500 });
+        productRepo.find.mockResolvedValue([sansAlcool(), goodies]);
+        assoRepo.find.mockResolvedValue([
+          asso({ id: 'asso1', slug: 'cercle', cotisationMode: null }),
+        ]);
+        userTagService.listByUser.mockResolvedValue([]);
+
+        for (const listing of [
+          await service.listByAssoc('asso1', 'user1'),
+          await service.listByAssoc('asso1'),
+        ]) {
+          expect(listing.find((p) => p.id === 'prod-sans')).toMatchObject({
+            cotisationDisabled: true,
+            viewerDueCents: null,
+          });
+          expect(listing.find((p) => p.id === 'prod-goodies')).toMatchObject({
+            cotisationDisabled: false,
+            viewerDueCents: 500,
+          });
+        }
+      });
+
+      it('CONTROL: an association with a cotisation mode sells its memberships', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        productRepo.find.mockResolvedValue([sansAlcool()]);
+        assoRepo.find.mockResolvedValue([cercle()]);
+
+        const [sans] = await service.listByAssoc('asso1');
+        expect(sans).toMatchObject({ cotisationDisabled: false, viewerDueCents: 1500 });
+      });
+
+      it('names the tier a preferential price is linked to, whichever tier the viewer holds first', async () => {
+        const { service, productRepo, assoRepo, userTagService } = makeService();
+        productRepo.find.mockResolvedValue([sansAlcool(), avecAlcool()]);
+        assoRepo.find.mockResolvedValue([cercle()]);
+        userTagService.listByUser.mockResolvedValue([
+          { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+        ]);
+
+        const listing = await service.listByAssoc('asso1', 'user1');
+        expect(listing.find((p) => p.id === 'prod-avec')?.memberPriceTierKey).toBe('sans-alcool');
+        expect(listing.find((p) => p.id === 'prod-sans')).not.toHaveProperty('memberPriceTierKey');
+      });
+
+      it('warns ONCE per product about a member-price tag naming no tier, however many quotes read it', async () => {
+        const { service, productRepo, assoRepo, userTagService } = makeService();
+        const warn = jest.spyOn((service as any).logger, 'warn');
+        productRepo.find.mockResolvedValue([
+          sansAlcool(),
+          avecAlcool({ memberPriceTag: 'cotisant:elsewhere' }),
+        ]);
+        assoRepo.find.mockResolvedValue([cercle()]);
+        userTagService.listByUser.mockResolvedValue([
+          { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+        ]);
+
+        await service.listByAssoc('asso1', 'user1');
+        const second = await service.listByAssoc('asso1', 'user1');
+        expect(second.find((p) => p.id === 'prod-avec')).toMatchObject({ viewerDueCents: 3000 });
+        expect(
+          warn.mock.calls.filter(([line]) => String(line).includes('memberPriceTag names no'))
+        ).toHaveLength(1);
+      });
     });
   });
 

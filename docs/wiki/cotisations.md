@@ -273,8 +273,9 @@ another tier of the same association, and `amountCentsMember` must be above zero
 price (checked only when a request touches one of the three columns, so an older row still saves its
 other edits). Renaming a tier's `variantKey` re-points the siblings linked to it in the same
 transaction. A link that still names no tier (a row from before these rules) applies no
-preferential price and logs at WARN - judged only when the viewer's tiers were read: a guest
-holds nothing, so the link is not judged on every public page view.
+preferential price and logs at WARN, once per product per process (`memberPriceTierKeyOf`) - judged
+only when the viewer's tiers were read: a guest holds nothing, so the link is not judged on every
+public page view.
 
 **What the server refuses (`assertTierIsARise`, on every `membership` checkout).** Rank comes from
 DATA with no stored ordinal and no migration: `variantLevel` is null in production and only ever
@@ -294,9 +295,14 @@ purchase records are read, so the code does not depend on how the held tier was 
 
 **A paid form that grants a tier is held to the same rule, before any payment.** `submit` asks
 `UserTagService.rankCotisationTier` (the same `rankTier` decision the ranked grant takes) for every
-answer that owes money, online or in cash, and refuses through `tierRefusal` (`tier-pricing.ts`, the
-ONE relation -> 409 mapping the checkout uses too) - same codes, so the form page words them with the
-shop's sentences. It is a pre-check outside any lock; the grant re-ranks under the buyer's lock when
+answer that owes money, online or in cash, and refuses through `formTierRefusal` (`tier-pricing.ts`:
+the checkout's `tierRefusal` mapping, with two codes a form words its own way). `lower` and
+`unranked` answer the shop's codes and sentences; the tier already held answers
+`409 FORM_TIER_ALREADY_HELD` ("you already hold the membership this form grants", not the shop's
+"already bought this product"); and a form whose `cotisationVariantKey` names a tier the association
+no longer sells answers `409 FORM_TIER_NOT_SOLD` to EVERY submitter, a holder of nothing included,
+checked against the tier catalogue before any rank (the grant validates against that catalogue and
+would throw on it). It is a pre-check outside any lock; the grant re-ranks under the buyer's lock when
 the money lands (`grantCotisantIfARise`), and a refusal there is the `paid_not_granted` case below.
 
 **Two attempts, one tier.** Opening a checkout of a tier first settles the buyer's open attempts of
@@ -406,7 +412,9 @@ before keys were unique per association) freeze the smallest product id and log 
 product is deleted before the settlement, the frozen key goes with it and the settlement reads
 `held-changed`: marked, reported, closed by a person. A buyer holding TWO tiers at once is refused at
 the OPENING (`TIER_NOT_RANKABLE`, WARN): ranked against one and frozen on it, the settlement would read
-the other as `held-changed` every time and take the money for nothing. Production held no such buyer
+the other as `held-changed` every time and take the money for nothing. The rule lives in
+`relationOf`, the call the listings share with the checkout, so such a buyer is shown every other
+tier as `unranked` and offered no button. Production held no such buyer
 on 2026-10-27 (every cotisant held one tier), so the refusal is cheaper than storing every held tier.
 A paid form is NOT
 covered by the freeze: it has no checkout row, and `grantCotisantIfARise` still ranks it on the
@@ -481,21 +489,22 @@ provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in core-service) still answers `A
 before any request is issued.
 
 **What the listings get.** `/products/all` and the per-association listing annotate every product
-with `viewerTierRelation` (the table's relation, `none` for a non-tier or a guest) and
+with `viewerTierRelation` (the checkout's `relationOf`, `none` for a non-tier or a guest),
 `viewerDueCents`: what a checkout would charge THIS viewer now - null for a refused tier, the grid's
-cell for a gridded product, null for a free amount. Purchase caps and tag gates are not folded into
-it. `/shop` displays it and never recomputes money - it shows `viewerDueCents` and offers no button
-for a `held`, `lower` or `unranked` tier (see "Where it lives in the UI" below);
-`paymentRefusal.ts` words each refusal code. **Only `/shop` does so today**: the association page
-lists the same products from its own fields and still shows the full price and a buy button for a
-refused tier - it follows later
-([backlog](backlog.md#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands)).
+cell for a gridded product, null for a free amount - `cotisationDisabled` (a membership product of
+an association with no cotisation mode, which the checkout refuses `COTISATION_DISABLED`; its
+`viewerDueCents` is null too), and `memberPriceTierKey` (the tier the product's `memberPriceTag`
+names, read by `linkedTierKey`, absent when there are no tier facts). Purchase caps and tag gates are
+not folded in. `/shop` and the association page display them through the SAME helpers
+(`lib/pricing/viewerPrice.ts`) and never recompute money: the preferential price is `viewerDueCents`,
+and a refused or disabled membership gets the reason instead of a button (see "Where it lives in the
+UI" below); `paymentRefusal.ts` words each refusal code.
 
 **A `memberPriceTag` that prices nothing is refused at save.** Create and update answer
 `400 MEMBER_PRICE_TAG_NOT_A_TIER` when the tag names no OTHER cotisation tier of the product's own
 association (another association's tag, a non-tier tag, the product's own tier): such a link would
 charge every buyer the full price, silently. Two rows can still carry one, and both are charged in
-full with a `WARN` at every quote: a row written before the rule (an unrelated edit still saves), and
+full with a `WARN` once per product per process: a row written before the rule (an unrelated edit still saves), and
 a sibling whose linked tier product was DELETED - deleting a tier does not clear or refuse the links
 naming it, so the admin re-points or clears them by hand.
 
@@ -678,10 +687,13 @@ End-user (paying) surfaces:
   Members-only products are disabled with a hint. The price is the server's: a preferential price is
   shown struck-through next to the full one exactly when `viewerDueCents` is below `amountCents`
   (`preferentialDueCents` in `lib/pricing/viewerPrice.ts`), and a tier whose `viewerTierRelation` is
-  `held`, `lower` or `unranked` gets no purchase button, only the sentence saying why
-  (`tierNotOffered`) - the checkout would refuse it with a 409. Nothing on the page decides who
-  qualifies for a member price; the tier the viewer holds (`viewerActiveTier`) only names the "for
-  holders of" suffix and the "your current tier" badge. `viewerActiveTier` is the specific tier
+  `held`, `lower` or `unranked`, or a membership whose association disabled its cotisations
+  (`cotisationDisabled`), gets no purchase button, only the sentence saying why (`tierNotOffered`,
+  `tierNotOfferedText`) - the checkout would refuse it with a 409. Nothing on the page decides who
+  qualifies for a member price; the "for holders of" suffix names the tier the server read the tag
+  as naming (`memberPriceTierKey`, `linkedTierName`), and the tier the viewer holds
+  (`viewerActiveTier`) only lights the "your current tier" badge. The association page's product
+  list renders the same price, suffix and refusal through the same helpers. `viewerActiveTier` is the specific tier
   `variantKey` the viewer currently holds for that association, if any (`null` for a single-tier
   association or a non-cotisant).
 - **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller
