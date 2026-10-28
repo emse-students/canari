@@ -956,6 +956,27 @@ departed member's leaves are still in the tree after that read; say "removed by 
 commit" when the log already removed them. Never branch on the error's message: the outcome is a
 fact the caller already holds.
 
+## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
+
+`watchUsers` / `unwatchUsers` (`presenceStore.ts`) add to and delete from one `Set`. Several holders
+watch the same peer at once: the DM's `ChatHeader`, that DM's sidebar `ConversationTile`, and a
+salon's `ChannelMembersList` (`ChannelMembersList.svelte:59` releases every member id it watched).
+When one of them releases, the peer leaves the poll for all of them. Leaving a DM therefore stops
+polling a peer whose sidebar tile is still on screen, and the dot freezes until something else
+watches that peer again. Owed: count the holders per id, with the release decrementing. Add a unit
+test with two holders and one release, which must still poll. The WP-PRESENCE push that replaces the
+poll needs the same count for its watch set.
+
+## P3 - A conversation tile watches the presence of the peer it MOUNTED with, never the one it shows later (review of #2618, 2026-10-27)
+
+`ConversationTile.svelte` calls `watchUsers([contactName])` in `onMount`. A tile whose `contactName`
+or `isDirect` changes while it stays mounted (a keyed list that reuses the component, or a row whose
+identity resolves after mount) keeps watching the first peer. Owed: an `$effect` on `contactName` and
+`isDirect`, capturing the watched id in its body as `ChatHeader` does
+([architecture](frontend/architecture.md#a-teardown-sees-the-values-its-effect-saw-and-a-derived-read-there-keeps-them-2026-10-27)),
+with a test that changes the prop and asserts the watch moves. It is cheap to fix together with the
+ref-count entry above.
+
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
 When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the
