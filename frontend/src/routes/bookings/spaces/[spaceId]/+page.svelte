@@ -205,9 +205,11 @@
   /** The week shown, read when it is not already (or `force`d after a write). */
   async function ensureSlots(force = false) {
     if (!space) return;
+    // Bumped on EVERY call, the cache hit included: a slow read for a week left behind must not
+    // land once the view came back to a week already held.
+    const mine = ++slotsRead;
     const { from, to } = weekReadRange(date);
     if (!force && loaded && loaded.from <= from && to <= loaded.to) return;
-    const mine = ++slotsRead;
     slotsError = '';
     try {
       const read = await getSlots(space.id, from, to);
