@@ -67,6 +67,12 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
   settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
 - **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
   message (fr, en).
+- **P3 - a cash sale's default price is computed outside `lockBuyerTiers`, one tier stale at worst.**
+  `grantProductPurchase` reads the beneficiary's tiers (`tierFactsOf`, or the grid's
+  `listHeldCotisationTiers`) before `fulfillProductPurchase` takes the buyer's lock, so a tier granted
+  or revoked in the same instant can leave the recorded default one tier off; the tag and the record
+  stay correct, and a cashier is present. Compute the default inside the locked transaction, both
+  branches ([cotisations](cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
 
 ## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more - decided by the user on 2026-10-29
 
