@@ -212,6 +212,21 @@ if (routeMap && tokenMap && refererMap) {
         '/login?query-redacted',
       ],
       ['/x?a=/c/join/PLAIN-SECRET&b=/g/join/OTHER-SECRET', '/x?query-redacted'],
+      ['/login?returnTo=%252Fc%252Fjoin%252FTWICE-SECRET', '/login?query-redacted'],
+      ['/login?returnTo=%252Fchat%252Fjoin', '/login?returnTo=%252Fchat%252Fjoin'],
+      ['/login?returnTo=%2525c', '/login?returnTo=%2525c'],
+      ['/c/join/FIRST-SECRET/more?x=1', '/c/join/redacted/more?query-redacted'],
+      // An invite route passes its query on to the query rules (2026-10-28): a join path quoted in it
+      // goes, the invite in the path goes, and a plain query stays.
+      [
+        '/api/channels/invites/FIRST-SECRET?returnTo=%2Fc%2Fjoin%2FSECOND-SECRET',
+        '/api/channels/invites/redacted?query-redacted',
+      ],
+      [
+        '/api/mls/group-invites/FIRST-SECRET/accept?r=%252Fg%252Fjoin%252FSECOND-SECRET',
+        '/api/mls/group-invites/redacted/accept?query-redacted',
+      ],
+      ['/api/channels/invites/FIRST-SECRET?ref=share', '/api/channels/invites/redacted?ref=share'],
       ['/login?returnTo=%2Fc%2Fjoinx%2Fkeep', '/login?returnTo=%2Fc%2Fjoinx%2Fkeep'],
       ['/login?returnTo=%2Fabc%2Fjoin%2Fkeep', '/login?returnTo=%2Fabc%2Fjoin%2Fkeep'],
       ['/api/channels/invites/INVITE-SECRET', '/api/channels/invites/redacted'],
@@ -243,6 +258,14 @@ if (routeMap && tokenMap && refererMap) {
     ['https://canari.emse.fr/auth/callback/?code=SECRET', 'https://canari.emse.fr/redacted'],
     ['https://canari.emse.fr/c/join/%41SECRET', 'https://canari.emse.fr/redacted'],
     [
+      'https://canari.emse.fr/login?returnTo=%252Fc%252Fjoin%252FTWICE-SECRET',
+      'https://canari.emse.fr/redacted',
+    ],
+    [
+      'https://canari.emse.fr/login?returnTo=%252Fchat',
+      'https://canari.emse.fr/login?returnTo=%252Fchat',
+    ],
+    [
       'https://canari.emse.fr/login?returnTo=%2Fc%2Fjoin%2FA-SECRET&n=%2Fg%2Fjoin%2FB-SECRET',
       'https://canari.emse.fr/redacted',
     ],
@@ -268,12 +291,15 @@ if (routeMap && tokenMap && refererMap) {
     if (got !== expected) fail(`referer ${input} logs as ${got}, expected ${expected}`);
   }
 
-  // EVERY RULE IS LINEAR (2026-10-28). A request line or a Referer is attacker-chosen and up to the
-  // header buffer (8 kB by default) long; a rule that backtracks quadratically costs ~100 ms per line
-  // there and, at the PCRE match limit, makes nginx write an alert and log the field as "-". Each
-  // rule runs on 16 000-character inputs shaped against it (a host with no delimiter, runs of `&`,
-  // of `/`, of `?`, of near-miss keys and near-miss join paths). A quadratic rule takes hundreds of
-  // milliseconds on these; a linear one well under one, so the budget leaves room for a slow runner.
+  // NO RULE BACKTRACKS QUADRATICALLY ON THESE SHAPES (2026-10-28). A request line or a Referer is
+  // attacker-chosen and up to the header buffer (8 kB by default) long; a rule that backtracks
+  // quadratically costs ~100 ms per line there and, at the PCRE match limit, makes nginx write an
+  // alert and log the field as "-". Each rule runs on 16 000-character inputs shaped against the
+  // rules (a host with no delimiter, runs of `&`, of `/`, of `?`, of near-miss keys and near-miss
+  // join paths, a join token with no end). A quadratic rule takes tens to hundreds of milliseconds on
+  // these; a linear one well under one, so the budget leaves room for a slow runner. WHAT THIS
+  // PROVES: the JavaScript engine's behaviour on these shapes, a proxy for nginx's PCRE (no JIT by
+  // default). The 2026-10-28 rules were also run through pcre2test on the same shapes, by hand.
   const n = 16000;
   const adversarial = {
     longHost: `https://${'a'.repeat(n)}`,
@@ -287,6 +313,13 @@ if (routeMap && tokenMap && refererMap) {
     nearJoins: `/x?${'%2fc%2fjoi'.repeat(n / 10)}`,
     questionMarks: '?'.repeat(n),
     joinPathRuns: `/c/join/${'a/'.repeat(n / 2)}`,
+    // A join token with no end: the shape that made the join-page rules quadratic when the token
+    // and the tail after it could both take the same characters.
+    joinToken: `/c/join/${'a'.repeat(n)}`,
+    joinTokenQuery: `/c/join/${'a'.repeat(n)}?`,
+    joinTokenNoQuestion: `/c/join/${'a'.repeat(n)}#`,
+    joinEncoded: `/c/join/${'%41'.repeat(n / 3)}`,
+    joinEncodedQuery: `/c/join/${'%41'.repeat(n / 3)}?`,
   };
   const BUDGET_MS = 25;
   for (const [mapName, map] of [

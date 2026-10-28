@@ -352,15 +352,17 @@ capability. The table is what the container's own config does:
 | `/auth/callback?code=&state=`, `/auth/callback/?...` | `/auth/callback?query-redacted` (slash kept) | `strict-origin` |
 | `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
 | `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
-| a query naming a join path anywhere, plain or percent-encoded (`/login?returnTo=%2Fc%2Fjoin%2F<token>`) | `<path>?query-redacted`, so a second invite in it goes too | `strict-origin` on `/login` (any query) |
+| a query naming a join path anywhere, plain, percent-encoded or encoded twice (`/login?returnTo=%2Fc%2Fjoin%2F<token>`, `%252F...`), on any route including the invite API routes | `<path>?query-redacted`, so a second invite in it goes too | `strict-origin` on `/login` (any query) |
 | a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
 
 How it is built, in `Dockerfile.frontend`:
 
 - **Two chained maps for the request line.** `$route_redacted_request_uri` holds the route rules;
-  `$logged_request_uri` runs the token rules on ITS output. A map applies one rule, so one map could
-  not redact both an invite path and a `token=` on the same line. The token map redacts the whole
-  query whenever the key appears twice or in any spelling other than one literal `token=`: a regex
+  `$logged_request_uri` runs the query rules on ITS output. A map applies one rule, so one map could
+  not redact both an invite path and a `token=`, or a join path quoted in the query, on the same
+  line. The join-in-query rule is in the second map for that reason: an invite API route keeps its
+  query in the first map, and the second still drops it when it names a join path. The query map
+  redacts the whole query whenever the key appears twice or in any spelling other than one literal `token=`: a regex
   rewrites one occurrence, and the services decode the key before reading it. A query with ONE
   literal `token=` keeps everything except the value, so the `/api/ws` line keeps `userId` and
   `deviceId`.
@@ -368,15 +370,23 @@ How it is built, in `Dockerfile.frontend`:
   receipt or callback query, or any `token` key is logged as `<origin>/redacted`. Every other referer
   is unchanged, and a request without one still logs `"-"`: nginx writes `"-"` for an absent header
   but writes `""` for a map's empty value (measured), so the map gives `""` the stock `"-"`.
-- **Every rule is linear in its input.** A request line or a Referer is chosen by the client and can
-  be as long as the header buffer (8 kB by default). The first referer map had an optional origin group
-  (`[^/?#]*`) followed by a wildcard, so a long host with no delimiter was re-split against the
-  wildcard at every length: ~100 ms per 8 kB line. With PCRE's JIT off by default, the match limit
-  then makes nginx write an alert and log the field as `"-"`. The origin group now has to end at a
-  delimiter (a lookahead), and each repetition in the token map can stop only at `&`. The gate runs
-  every rule on 16 000-character inputs shaped against it, with a 25 ms budget (the old form took
-  ~200-250 ms there; the new one takes well under 1 ms). On the built image, an 8 kB adversarial
-  Referer is answered in 5 ms, logged whole, and leaves no alert.
+- **Every rule is written to be linear in its input.** A request line or a Referer is chosen by the
+  client and can be as long as the header buffer (8 kB by default). A rule whose two repetitions can
+  take the same characters backtracks quadratically, and two did:
+  - The first referer map had an optional origin group (`[^/?#]*`) followed by a wildcard, so a long
+    host with no delimiter was re-split against the wildcard at every length: ~100 ms per 8 kB line.
+  - The join-page rules had a token (`[^/?]+`) followed by a tail (`[^?]*`): 48 ms on an 8 kB token,
+    and the `match limit exceeded` error on the bare form.
+
+  With PCRE's JIT off by default, the match limit makes nginx write an alert and log the field as
+  `"-"`. Now the origin group must end at a delimiter (a lookahead), a join tail must start with
+  `/`, and each repetition in the query map can stop only at `&`.
+- **What proves it, and with which engine.** The gate runs every rule on 16 000-character inputs
+  shaped against the rules, with a 25 ms budget. That measures the JavaScript engine, a proxy for
+  nginx's PCRE: each old form takes ~200-250 ms there and fails, the new ones take well under 1 ms.
+  PCRE was checked separately by hand (2026-10-28), with `pcre2test` from Alpine 3.20's `pcre2-tools`
+  and no JIT, on the same shapes at 8 000 characters: every new rule took 1.4 ms or less. On the built
+  image, an 8 kB adversarial Referer is answered in 5 ms, logged whole, and leaves no alert.
 - **The referrer policy is the existing `$capability_referrer_policy` map** (until 2026-10-28 called
   `$public_form_referrer_policy`), sent by `@ssr` and `@app_shell`. It is keyed on `$request_uri`, so
   the degraded shell gets it too. `/login` is covered because a join page sends a signed-out reader

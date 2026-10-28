@@ -92,13 +92,15 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # link check keep their path and drop their query (the URL a reader opened), the OIDC callback drops\n\
 # its query (with or without a trailing slash), and an invite keeps its route with its token replaced -\n\
 # the two join pages (their whole path segment, whatever its alphabet, and their query if any) and the\n\
-# two API routes that read an invite. A query naming a join path anywhere, plain or percent-encoded (a\n\
-# login returnTo), loses its WHOLE query, so a second invite in it cannot survive the first.\n\
-# TWO MAPS, CHAINED: a map applies ONE rule, so the route rules run first and the token rules then\n\
-# run on their output - an invite path that also carries a token= is redacted twice, not once.\n\
-# EVERY RULE HERE IS LINEAR IN THE LENGTH OF ITS INPUT: no optional group a later wildcard can re-scan,\n\
-# and each repetition can stop only at a delimiter. A rule that backtracks quadratically costs ~100 ms\n\
-# per 8 kB line and, at the PCRE match limit, makes nginx write an alert and log the field as "-".\n\
+# two API routes that read an invite.\n\
+# TWO MAPS, CHAINED: a map applies ONE rule, so the route rules run first and the query rules then\n\
+# run on their output - an invite path that also carries a token= or a quoted join path is redacted\n\
+# twice, not once.\n\
+# EVERY RULE IS WRITTEN TO BE LINEAR IN ITS INPUT: no optional group or repetition a later one can\n\
+# re-split, each one stopping only at a delimiter the next cannot consume. A rule that backtracks\n\
+# quadratically costs ~100 ms per 8 kB line and, at the PCRE match limit, makes nginx write an alert\n\
+# and log the field as "-". access-log-redaction.test.mjs times every rule on adversarial inputs in\n\
+# the JavaScript engine, a proxy for PCRE; the 2026-10-28 rules were also run through pcre2test.\n\
 map $request_uri $route_redacted_request_uri {\n\
     "~^/api/mls/gifs/media(?:[?]|$)" "/api/mls/gifs/media?query-redacted";\n\
     "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
@@ -106,30 +108,34 @@ map $request_uri $route_redacted_request_uri {\n\
     "~^(?<link_path>/api/mls/link-(?:preview|preview/image|safety))[?]" "${link_path}?query-redacted";\n\
     "~^(?<callback_path>/auth/callback/?)[?]" "${callback_path}?query-redacted";\n\
     "~^(?<invite_head>/api/(?:channels/invites|mls/group-invites)/)[^/?]+(?<invite_tail>.*)$" "${invite_head}redacted${invite_tail}";\n\
-    "~^(?<join_page>/[cg]/join/)[^/?]+(?<join_page_tail>[^?]*)[?]" "${join_page}redacted${join_page_tail}?query-redacted";\n\
-    "~^(?<join_page_bare>/[cg]/join/)[^/?]+(?<join_page_bare_tail>[^?]*)$" "${join_page_bare}redacted${join_page_bare_tail}";\n\
-    "~*^(?<join_query_path>[^?]*)[?].*?(?:/|%%2f)[cg](?:/|%%2f)join(?:/|%%2f)" "${join_query_path}?query-redacted";\n\
+    "~^(?<join_page>/[cg]/join/)[^/?]+(?<join_page_tail>(?:/[^?]*)?)[?]" "${join_page}redacted${join_page_tail}?query-redacted";\n\
+    "~^(?<join_page_bare>/[cg]/join/)[^/?]+(?<join_page_bare_tail>(?:/[^?]*)?)$" "${join_page_bare}redacted${join_page_bare_tail}";\n\
     default $request_uri;\n\
 }\n\
-# THE token KEY, HOWEVER IT IS SPELLED. A query holding the key twice, or spelled percent-encoded, in\n\
-# another case or as an array (token[]) loses its WHOLE query: a map rewrites one occurrence, and the\n\
-# services decode the key before reading it, so a literal match alone would log the others. A query\n\
-# holding it once, literally, keeps everything but its value (the /api/ws line keeps userId/deviceId).\n\
+# THE QUERY RULES, on what the route rules left. A query naming a join path anywhere - plain,\n\
+# percent-encoded or encoded twice (a login returnTo, or one passed on by an invite route) - loses its\n\
+# WHOLE query, so a second invite in it cannot survive the first. THE token KEY, HOWEVER IT IS\n\
+# SPELLED: a query holding the key twice, or spelled percent-encoded, in another case or as an array\n\
+# (token[]) loses its WHOLE query too: a map rewrites one occurrence, and the services decode the key\n\
+# before reading it, so a literal match alone would log the others. A query holding it once,\n\
+# literally, keeps everything but its value (the /api/ws line keeps userId/deviceId).\n\
 map $route_redacted_request_uri $logged_request_uri {\n\
+    "~*^(?<join_query_path>[^?]*)[?].*?(?:/|%%2f|%%252f)[cg](?:/|%%2f|%%252f)join(?:/|%%2f|%%252f)" "${join_query_path}?query-redacted";\n\
     "~*^(?<query_path>[^?]*)[?](?:[^&]*&)*?(?:(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)[^&]*&(?:[^&]*&)*?(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)|(?!token=)(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b))" "${query_path}?query-redacted";\n\
     "~*^(?<uri_before_token>.*[?&])(?<token_key>token)=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}${token_key}=redacted${uri_after_token}";\n\
     default $route_redacted_request_uri;\n\
 }\n\
 # THE REFERER OF A CAPABILITY PAGE KEEPS ITS ORIGIN ONLY. Those pages send none or only their origin\n\
 # (the policy below), but a client that ignores the policy, or a page reached before it applied, would\n\
-# write the same URL into the referer field. A referer naming a join token, a receipt or callback query, or any token key is\n\
-# logged as its origin; every other referer is unchanged. A request with none keeps the stock "-": nginx\n\
+# write the same URL into the referer field. A referer naming a join token (plain, percent-encoded or\n\
+# encoded twice), a receipt or callback query, or any token key is logged as its origin; every other\n\
+# referer is unchanged. A request with none keeps the stock "-": nginx\n\
 # writes "-" for an absent header, but a map hands it an EMPTY value, which it writes as "" (measured).\n\
 # The origin group ends at a delimiter (the lookahead), so a long host cannot be re-split against the\n\
-# wildcard after it: linear, like the request maps above.\n\
+# wildcard after it, as in the request maps above.\n\
 map $http_referer $logged_http_referer {\n\
     "" "-";\n\
-    "~*^(?:(?<ref_join_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?.*?(?:/|%%2f)[cg](?:/|%%2f)join(?:/|%%2f)(?:[a-z0-9_.~-]|%%[0-9a-f]{2})" "${ref_join_origin}/redacted";\n\
+    "~*^(?:(?<ref_join_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?.*?(?:/|%%2f|%%252f)[cg](?:/|%%2f|%%252f)join(?:/|%%2f|%%252f)(?:[a-z0-9_.~-]|%%[0-9a-f]{2})" "${ref_join_origin}/redacted";\n\
     "~*^(?:(?<ref_page_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?/(?:f/[^/?#]+/receipt|auth/callback/?)[?]" "${ref_page_origin}/redacted";\n\
     "~*^(?:(?<ref_query_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?[^?#]*[?](?:.*&)?(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)" "${ref_query_origin}/redacted";\n\
     default $http_referer;\n\
