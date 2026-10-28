@@ -36,7 +36,9 @@ import { Throttle } from '@nestjs/throttler';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
+  sanitizeLeafIdentity,
   assertCallerOwnsUserId,
+  type LeafIdentity,
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
@@ -912,16 +914,19 @@ export class MembersController {
       caller
     );
 
-    // `userId:deviceId`, exactly one colon - the shape every leaf carries; anything else is refused.
-    const pairs = [...new Set(requested.map((v) => sanitizeQueryValue(v, 'identity')))].map(
-      (identity) => {
-        const parts = identity.split(':');
-        if (parts.length !== 2 || !parts[0] || !parts[1]) {
-          throw new BadRequestException('identity must be userId:deviceId');
-        }
-        return { identity, sentUser: parts[0], user: parts[0].toLowerCase(), device: parts[1] };
-      }
-    );
+    // `userId:deviceId`, exactly one colon, each half under its own rule - never the generic 128
+    // bound on the whole, which every real identity exceeds ({@link sanitizeLeafIdentity}).
+    const leaves = new Map<string, LeafIdentity>();
+    for (const value of requested) {
+      const leaf = sanitizeLeafIdentity(value, 'identity');
+      leaves.set(leaf.identity, leaf);
+    }
+    const pairs = [...leaves.values()].map(({ identity, userId, deviceId }) => ({
+      identity,
+      sentUser: userId,
+      user: userId.toLowerCase(),
+      device: deviceId,
+    }));
     if (pairs.length === 0) return { revoked: [] };
 
     // The user half both as sent and lowercased: the column holds whichever casing was written.
