@@ -63,7 +63,10 @@ One invariant, enforced at four points:
   (`associations/cotisation-namespace.ts`, `409 COTISATION_TAG_COLLISION`) refuses a new stem that
   collides with another association's slug or tier stem, on every path that creates one: the
   association's creation, a tier's creation and a tier's retag. **A future path that derives a slug
-  or a tier key calls it with the derived value.** A retag is also refused
+  or a tier key calls it with the derived value.** It takes no lock: no lock of the order spans
+  two associations, and a race between two creations is bounded by the two points above (a
+  collision can refuse a grant, never let one association's row count for another's tier). A retag
+  is also refused
   (`409 TIER_TAG_NAME_TAKEN`) when a holder of the old tag already holds a row of the new name.
 
 `tag-issuer-scope.integration.spec.ts` proves each point against a real PostgreSQL.
@@ -98,9 +101,13 @@ label/price and lets admins add further tiers (WP-COT-6).
 `type: 'membership'` product from the association's `slug`/`cotisationMode` + the product's own
 `variantKey` - a client-supplied `grantedTagName` is always ignored for this type, so the tag string
 never drifts from `deriveCotisationTag`. `ProductsService.update` drops `grantedTagName` and
-`tagExpiresAt` for a membership product the same way, and `resolveGrantTag` grants NOTHING for a
+`tagExpiresAt` for a membership product the same way, and `resolveGrantTag` derives NOTHING for a
 membership product whose association has no `cotisationMode`: a stored tag string is never granted as
-typed, so every tag a membership purchase issues is a derived tier tag. Creating a membership product
+typed, so every tag a membership purchase issues is a derived tier tag. **What is recorded then:**
+with cotisations disabled, the checkout opening and the cash sale of such a product are refused
+`409 COTISATION_DISABLED` before any payment is requested or recorded; a payment that lands anyway
+(an attempt opened before the switch) is recorded `paid_not_granted` with an ERROR line, like any
+paid tier not granted, so the hourly report and the purchases tab see it. Creating a membership product
 requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived
 otherwise.
 

@@ -51,6 +51,9 @@ const maybe = URL ? describe : describe.skip;
 const OWN = '00000000-0000-4000-8000-0000000000e1';
 /** Another association, with its own (unrelated) cotisation. */
 const OTHER = '00000000-0000-4000-8000-0000000000e2';
+/** An association whose cotisations are DISABLED (no mode) while a membership product remains. */
+const DISABLED = '00000000-0000-4000-8000-0000000000e4';
+const DISABLED_TIER = '00000000-0000-4000-8000-0000000000f4';
 /** An association whose slug EXTENDS `OWN`'s. */
 const LONGER = '00000000-0000-4000-8000-0000000000e3';
 const TIER_A = '00000000-0000-4000-8000-0000000000f1';
@@ -153,9 +156,45 @@ maybe('a tag grant is scoped to the association that grants it (PostgreSQL)', ()
       purchaseRecordService: new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
       userTagService: tags,
       config: { get: () => undefined },
-      httpService: { post: () => of({ data: { ok: true } }) },
+      httpService: {
+        post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
+      },
       pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      // Payments are routed and ready: what is under test is the grant, not the routing.
+      activePaymentProvider: () => Promise.resolve('lydia'),
+      routeWith: (asso: Association) =>
+        Promise.resolve({
+          ready: true,
+          delegated: false,
+          connectAccountId: 'vendor-test',
+          targetAssociationId: asso.id,
+          provider: 'lydia',
+        }),
     }) as unknown as ProductsService;
+    // A membership product left behind by cotisations that were enabled, then disabled.
+    await assos.save(
+      assos.create({
+        id: DISABLED,
+        name: 'off-it',
+        slug: 'off-it',
+        createdBy: 'it',
+        cotisationEnabled: false,
+        cotisationMode: null,
+      } as Partial<Association>)
+    );
+    await productRepo.save(
+      productRepo.create({
+        id: DISABLED_TIER,
+        associationId: DISABLED,
+        name: 'Cotisation',
+        type: 'membership',
+        variantKey: null,
+        amountCents: 1500,
+        currency: 'eur',
+        isActive: true,
+        grantedTagName: 'cotisant:off-it',
+      })
+    );
   });
 
   afterAll(async () => {
@@ -181,6 +220,26 @@ maybe('a tag grant is scoped to the association that grants it (PostgreSQL)', ()
       [userId]
     )) as { tagName: string; issuingAssocId: string | null }[];
 
+  /** An OPEN checkout attempt, written directly, ready to be settled. */
+  const openAttempt = (userId: string, productId: string, associationId = OWN) =>
+    ds.getRepository(ProductCheckout).save(
+      ds.getRepository(ProductCheckout).create({
+        productId,
+        userId,
+        associationId,
+        paymentAssociationId: associationId,
+        vendorToken: 'vendor-test',
+        amountCents: 1500,
+        currency: 'eur',
+        productName: 'Tier',
+        requestUuid: null,
+        requestId: `${productId.slice(-2)}${userId.slice(11, 14)}`,
+        status: 'open',
+        expiresAt: new Date(Date.now() + 30 * 60_000),
+        settledAt: null,
+        purchaseRecordId: null,
+      })
+    );
   /** The tiers' relation and due amount in the association's own listing, for `userId`. */
   const listed = async (userId: string) => {
     const rows = await products.listByAssoc(OWN, userId);
@@ -295,25 +354,6 @@ maybe('a tag grant is scoped to the association that grants it (PostgreSQL)', ()
   });
 
   describe('no grant path renews or takes over a same-name row issued elsewhere', () => {
-    const openAttempt = (userId: string, productId: string) =>
-      ds.getRepository(ProductCheckout).save(
-        ds.getRepository(ProductCheckout).create({
-          productId,
-          userId,
-          associationId: OWN,
-          paymentAssociationId: OWN,
-          vendorToken: 'vendor-test',
-          amountCents: 1500,
-          currency: 'eur',
-          productName: 'Tier',
-          requestUuid: null,
-          requestId: `${productId.slice(-2)}${userId.slice(11, 14)}`,
-          status: 'open',
-          expiresAt: new Date(Date.now() + 30 * 60_000),
-          settledAt: null,
-          purchaseRecordId: null,
-        })
-      );
     const heldElsewhere = (p: Promise<unknown>) =>
       expect(p).rejects.toBeInstanceOf(TagHeldByAnotherIssuerError);
 
@@ -382,6 +422,54 @@ maybe('a tag grant is scoped to the association that grants it (PostgreSQL)', ()
         );
         expect(await rowsOf(user)).toEqual([{ tagName: TAG_A, issuingAssocId: issuer }]);
       });
+    });
+  });
+
+  describe('a membership product whose association has no cotisation mode takes no money for nothing', () => {
+    const disabled = (p: Promise<unknown>) =>
+      expect(p).rejects.toMatchObject({ response: { code: 'COTISATION_DISABLED' } });
+
+    it('the checkout opening is refused, and nothing is opened', async () => {
+      const user = newUser();
+
+      await disabled(products.createCheckoutSession(DISABLED, DISABLED_TIER, user));
+      expect(await ds.query(`SELECT 1 FROM product_checkouts WHERE "userId" = $1`, [user])).toEqual(
+        []
+      );
+    });
+
+    it('the cash sale is refused, and nothing is recorded', async () => {
+      const user = newUser();
+      const product = await ds
+        .getRepository(AssociationProduct)
+        .findOneByOrFail({ id: DISABLED_TIER });
+
+      await disabled(
+        (products as any).fulfillProductPurchase({
+          product,
+          userId: user,
+          amountCents: 1500,
+          paymentMethod: 'cash',
+          stripePaymentIntentId: null,
+          grantedBy: 'it',
+        })
+      );
+      expect(await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [user])).toEqual(
+        []
+      );
+    });
+
+    it('a payment already taken is recorded paid but not granted, and grants nothing', async () => {
+      const user = newUser();
+      const attempt = await openAttempt(user, DISABLED_TIER, DISABLED);
+
+      await (products as any).settlePaidCheckout(attempt.id);
+
+      const [record] = await ds.query(`SELECT status FROM purchase_records WHERE "userId" = $1`, [
+        user,
+      ]);
+      expect(record.status).toBe('paid_not_granted');
+      expect(await rowsOf(user)).toEqual([]);
     });
   });
 

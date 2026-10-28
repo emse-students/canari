@@ -19,6 +19,14 @@ const logger = new Logger('CotisationNamespace');
  * Called by every path that brings a new stem into existence: an association's creation (its
  * slug), a tier's creation and a tier's retag (its key). `associationId` is the association the
  * stem belongs to (null while it is being created), whose own stems are not compared.
+ *
+ * It holds NO lock, deliberately: the two stems it compares belong to two DIFFERENT associations,
+ * and no lock of the existing order (association -> buyer -> checkout row -> `user_tags`) spans two
+ * associations, so taking one would serialise nothing that matters here. Two creations racing on
+ * colliding stems within one instant can both pass; what bounds that case is not this check but the
+ * grants and reads behind it - a grant never renews a row another association issued
+ * (`TagHeldByAnotherIssuerError`), and every tier read counts only its own association's rows - so
+ * a collision can refuse a grant, never let one association's row stand for the other's tier.
  */
 export async function assertCotisationStemFree(
   manager: EntityManager,

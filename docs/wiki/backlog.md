@@ -177,6 +177,11 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
+
+A production count of legacy tier tags without a consistent issuer is owed to the operator after
+the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is

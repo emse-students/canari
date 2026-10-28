@@ -20,6 +20,7 @@ import {
   CHECKOUT_EXPIRY_MARGIN_MS,
   CHECKOUT_IN_PROGRESS,
   CHECKOUT_ISSUE_WINDOW_MS,
+  COTISATION_DISABLED,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
@@ -1893,7 +1894,7 @@ export class ProductsService {
         granted = await this.settlementMayGrant(product, row, manager);
         if (granted) {
           try {
-            await this.grantPurchaseTag(
+            granted = await this.grantPurchaseTag(
               manager,
               product,
               row.userId,
@@ -2168,6 +2169,7 @@ export class ProductsService {
       });
     }
 
+    this.assertMembershipGrantable(asso, product);
     const facts = await this.tierFactsOf(asso, userId, manager);
     const isCotisant = (facts?.heldKeys.length ?? 0) > 0;
     if (product.type === 'membership') {
@@ -2808,6 +2810,27 @@ export class ProductsService {
   }
 
   /**
+   * Refuses (409 `COTISATION_DISABLED`) a membership product whose association has no cotisation
+   * mode, BEFORE any money is requested or recorded: `resolveGrantTag` derives no tag without one,
+   * so the purchase would grant nothing. The checkout opening and the cash sale call it, under the
+   * buyer's tier lock, on the association they re-read there.
+   */
+  private assertMembershipGrantable(
+    asso: Pick<Association, 'id' | 'cotisationMode'>,
+    product: Pick<AssociationProduct, 'id' | 'type'>
+  ): void {
+    if (product.type !== 'membership' || asso.cotisationMode) return;
+    this.logger.warn(
+      `[SHOP] refused (${COTISATION_DISABLED}): membership product=${product.id.slice(0, 8)} of ` +
+        `assoc=${asso.id.slice(0, 8)}, whose cotisations are disabled`
+    );
+    throw new ConflictException({
+      code: COTISATION_DISABLED,
+      message: "This association's cotisations are disabled: the product cannot be sold.",
+    });
+  }
+
+  /**
    * Resolves the tag name and expiry to grant for a product purchase.
    * Returns null for non-membership products or membership products with no tag configured.
    * For an association with an active cotisation mode, the tag is derived fresh from the current
@@ -2846,9 +2869,18 @@ export class ProductsService {
     grantedBy: string,
     paymentIntentId: string | null,
     manualGrant: boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     const grant = await this.resolveGrantTag(product, manager);
-    if (!grant) return;
+    if (!grant) {
+      if (product.type !== 'membership') return true;
+      // A membership product that resolves to no tag grants nothing for the money taken: the
+      // caller records the payment `paid_not_granted`, the durable marker the reports read.
+      this.logger.error(
+        `[SHOP] membership product=${product.id.slice(0, 8)} resolves to no tag - payment by ` +
+          `user=${userId.slice(0, 8)} recorded paid but NOT granted; a refund or a grant is owed`
+      );
+      return false;
+    }
     await this.userTagService.grantOrRenew(
       {
         userId,
@@ -2871,6 +2903,7 @@ export class ProductsService {
       product.variantKey,
       manager
     );
+    return true;
   }
 
   /**
@@ -2894,7 +2927,13 @@ export class ProductsService {
       // Re-read after the locks: a retag committed while this sale waited renamed the tier's tag.
       const current =
         (await manager.findOne(AssociationProduct, { where: { id: product.id } })) ?? product;
-      await this.grantPurchaseTag(
+      // Read after the locks too: cotisations disabled meanwhile refuse the sale, nothing recorded.
+      if (current.type === 'membership') {
+        const asso = await manager.findOne(Association, { where: { id: product.associationId } });
+        if (!asso) throw new NotFoundException('Association not found');
+        this.assertMembershipGrantable(asso, current);
+      }
+      const granted = await this.grantPurchaseTag(
         manager,
         current,
         userId,
@@ -2909,7 +2948,7 @@ export class ProductsService {
           productId: product.id,
           amountCents,
           paymentMethod,
-          status: 'paid',
+          status: granted ? 'paid' : 'paid_not_granted',
           stripePaymentIntentId,
           associationId: product.associationId,
           productName: product.name,
