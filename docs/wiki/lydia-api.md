@@ -60,7 +60,19 @@ the numeric `request_id` (what callbacks carry) AND the `request_uuid` (**32 hex
 - **Amount range: 0.50 to 1000.00 EUR** (csm, 2026-10-04); Canari refuses outside it before calling.
 - **`order_ref` must be UNIQUE per request**: a second `request/do` with an `order_ref` already used
   answers error 3, "order_ref deja utilise" (measured 2026-10-21). Canari's boutique reused one string per
-  product and user, so a declined purchase could never be retried (tracked in [backlog](backlog.md)).
+  product and user, so a declined purchase could never be retried; it names the attempt since migration
+  101. A paid FORM had the same defect - a retry reuses the pending row, and every request of it carried
+  `form:<submissionId>` - and sends `form:<submissionId>:<8 hex digits>` (50 characters) since 2026-10-27
+  ([payments](frontend/modules/payments.md#a-form-answer-sends-one-order_ref-per-request-2026-10-27)).
+- **`order_ref` has NO documented maximum length**: the apiDoc (`POST /api/request/do`, field `order_ref`)
+  says only "used to identify a remote request, must be unique". Measured accepted: 109 characters on the
+  sandbox (2026-10-21, the pre-101 boutique form) and the 41-character `form:<uuid>`. No production log
+  retains an accepted order_ref's length (core logs live as long as the container). Canari keeps every
+  order_ref inside the measured 109 with a margin: forms 50 (pinned by a test), products 81.
+- **A Business that is not validated answers error 5 BEFORE any order_ref check** (sandbox, 2026-10-27): a
+  Business fresh from `business/create` answered error 5 to the first `request/do` AND to a second carrying
+  the same order_ref, never error 3. So error 3 can only be re-measured with a validated sandbox Business;
+  the dev association that had one lost its link at a dev data reset.
 - **`expire_time` is an integer number of SECONDS from creation** (measured 2026-10-15): `60` expired after
   about 79 s, `120` after about 181 s (a sweep of roughly one minute); absent and `0` never expired in the
   window watched (`0` is NOT "expire now"); no ceiling refused (one year accepted); `abc`, `-5` or a date
@@ -78,8 +90,23 @@ Works with `request_uuid` alone (measured). `vendor_token` is optional and only 
 answer; `request_id + vendor_token` and `order_ref + vendor_token` also find the request (measured
 2026-10-15); an unknown id answers error 2, "Requete introuvable".
 Answer: `{state, used_ease_of_payment[, signature]}` - **no amount, no expiry date, never `order_ref`**
-(so the answer cannot say which Canari row it is about: the caller must already know). The `signature` is
-not verified by Canari (scheme undocumented; the read is server to server over TLS).
+(so the answer cannot say which Canari row it is about: the caller must already know).
+
+**The `signature`** (doc, read 2026-10-27; **the composition is not measured**): MD5, built like every
+Lydia signature (pairs sorted by key, `&`, then `&` and the key), over **`amount`** and **the id the call
+named** (`request_id`, `request_uuid` or `order_ref`), with the **Business private token**. So
+`md5("amount=<amount>&request_uuid=<uuid>&<key>")` for a read by uuid. Two consequences:
+
+- The answer carries no amount, so the signature can only be recomputed over the amount the CALLER
+  expects - which makes one comparison prove both the origin and the amount the request was issued for.
+  Canari writes the amount exactly as `request/do` sent it (`"12.50"`, `lydiaAmountString`); whether
+  Lydia signs that same string, or `"12.5"`, is the unmeasured part, and a wrong guess fails closed.
+- **The `state` is not in the signed set.** The signature proves which request and which amount the
+  answer is about, not what it says about them: the state still rests on the TLS read from Lydia's host.
+
+Canari verifies it only where it asks to (`payments/request-state` with `expectedAmountCents`, used by the
+reconciliation sweep, [section 7](#7-reconciliation---the-sweep-lydias-documentation-asks-for)); the payer's
+return and the callback's read do not verify it yet.
 
 | `state` | Meaning | Source |
 |---|---|---|
@@ -190,6 +217,10 @@ knows which one it is (Lydia does not say).
 
 ## 6. Still unknown
 
+- The exact `request/state` signature: whether the amount is signed as sent (`"12.50"`) or normalised
+  (section 2). **Settled by the first reconciliation of a real request**: a `verified` line, or a
+  `does NOT verify` ERROR on a row whose amount is right.
+
 - The default lifetime of a request with no `expire_time` (at least 47 minutes on the sandbox).
 - Whether `api_token_id` is the Business private token, and whether `business/create` ever returns the
   private token itself.
@@ -199,6 +230,121 @@ knows which one it is (Lydia does not say).
 - Whether a callback is retried after a non-2xx, and from which addresses Lydia calls.
 - Whether `expire_time` has a ceiling.
 - Whether Lydia accepts the app's deep link as `end_mobile_url` and appends anything to it.
+
+## 7. Reconciliation - the sweep Lydia's documentation asks for
+
+Lydia's documentation asks a merchant to reconcile through at least two of: the callback, `request/state`
+and `transaction/list` - and, for every request whose callback has not arrived, to call `request/state`.
+Canari had the callback and two `request/state` readers that both need a person (the payer's return, and
+a retry). A payment whose `confirm` was lost and whose payer closed the tab was recorded by nothing. **The
+sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the missing reader:
+
+- **What it reads, and when.** A form answer still `pending` whose request has ENDED (`paymentRequestedAt`
+  past the hold cutoff, the hold = the request's `expire_time` + Lydia's measured expiry margin), and a
+  boutique attempt still `open` past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`. The threshold is the
+  request's own lifetime, not a chosen clock: past it the request cannot change, so ONE answer is final.
+  The form half runs in the 5-minute expiry tick, **before** the expiry, and both select by ONE cutoff read
+  from the database clock at the start of the tick (`FormsService.pendingHoldCutoff`): with a clock each, a
+  row whose hold ended between the read's SELECT and the expiry's UPDATE was expired unread. It stops
+  starting reads after 60 s (`FORM_SWEEP_BUDGET_MS`), so the expiry waits at most that plus one read; what it
+  did not reach is expired unread, at ERROR. The boutique half runs on its own 5-minute cron, OLDEST first.
+  At most 50 rows per kind per tick.
+- **An answer is acted on once; no answer is retried.**
+  - A form answer is read once: what the read did not settle is expired by the expiry that follows.
+  - A boutique attempt leaves `open` as soon as its read gave a FINAL answer: settled or released from a
+    verified state; a verified `open` past its end is **cancelled at Lydia first**
+    (`ProductsService.cancelStillOpenCheckout`, the cancel the buyer's next attempt makes - a request left
+    payable after Canari closed it is a double charge), then closed; a cancel answering "already processed"
+    is read once more at once, and still `open` then is closed; a mismatch, `unsigned`, no usable key (a key
+    that does not open answers `no-key`), an unknown state, and a refusal whose Lydia code is MEASURED final
+    close it `expired` (`ProductsService.expireUnprovenCheckout`, logged at ERROR).
+  - **Closing is not free.** Nothing reads a closed attempt again: if its request was in fact PAID and its
+    confirm callback was lost, nothing records the payment (the payer's return asks only of an open
+    attempt). A callback that DOES arrive still records over an expired attempt (`settlePaidCheckout`,
+    at ERROR, asserted by the integration spec) - that is the one path left, not a guarantee.
+  - **A refusal closes only from an ALLOWLIST** (`LYDIA_REFUSALS_FINAL`,
+    `apps/social-service/src/common/core-payment-error.ts`), because a refusal can be a state of Lydia (a
+    Business temporarily blocked, a revoked provider token) as much as a word about the request. **Both
+    lists are EMPTY.** Read: error `2` ("Requete introuvable") was measured on a uuid Lydia NEVER issued
+    (2026-10-15); the sweep reads uuids Lydia DID issue, and what error 2 means for one issued then purged,
+    archived or moved between environments is unmeasured - a PAID request answered that way would be closed
+    for good. Cancel: no refusal is measured final, so after a refused cancel the attempt stays open and the
+    request stays PAYABLE at Lydia until it expires; the next tick reads it again, and a later callback
+    records over the attempt as above. Every refusal is therefore retried and accused. The mechanism and its
+    tests stay (a test subclass overrides the services' readonly `refusalsFinal`).
+  - **Core answers about ITSELF with a 503, never a 400.** On `request-state` and `cancel-request` the only
+    400 is Lydia's typed `PAYMENT_PROVIDER_REFUSED`; payments switched off, Lydia not configured and a
+    payload core will not read answer `503 PAYMENT_SERVICE_NOT_READY` (`PaymentController.aboutTheRequest`).
+    The read and the cancel go through ONE classifier (`classifyCoreCallFailure`): `refused` (closes only if
+    allowlisted), `core-fault` (401/403, the 503 above, any other 4xx), `no-answer` (no response, 408, 429,
+    other 5xx).
+  - Everything else leaves the attempt `open`, read again next tick: no answer, a core fault, a refusal not
+    known final, a verdict social-service does not know (an older core mid-deploy), a cancel that did not go
+    through, and a settlement WRITE that failed after a verified read - above all a verified PAID, whose only
+    automatic path this is and which is never closed. Each tick says so in ONE line per cause, never one per
+    row: a WARN with the count of calls that got no answer; an ERROR with the failed writes that names every
+    attempt and which ones Lydia said PAID; and an ERROR that ACCUSES every attempt left open on a core fault
+    or a refusal not known final, each with its cause (the first 20 named, the rest counted) - written when
+    that list (ids or causes) CHANGES, not every tick, with a log-level line once it empties; its size is
+    its own field of the hourly line, since core faults count as `unavailable` there. The per-row "still
+    OPEN at Lydia" WARN is likewise said once while it lasts (once per tick too, across the re-read after
+    "already processed"), and the "more than 50 due" WARN when the backlog starts, a log line when it ends.
+  - **Fairness, and what this does not bound.** While such a cause lasts (an outage, a revoked token, a
+    refusal code nobody has measured) its attempts are re-read every tick. When more than 50 are due, the
+    ones accused on the previous tick go LAST, so newer attempts are reached; this lives in process memory,
+    which is enough for fairness and reporting (never idempotence): a restart forgets it and costs one line.
+    It is still the starvation trade for every unmeasured refusal code, taken knowingly. A bound on retries
+    needs durable state (a column, so a migration and the user's decision): deliberately not built.
+- **What it does with the answer.** Only a `verified` answer is acted on: `paid` through the ONE writer
+  of each kind (`FormsService.markPaid`; `ProductsService.applyRequestState` -> `settlePaidCheckout`),
+  `declined` and `cancelled-or-expired` through the release the payer's return uses. A `mismatch` is
+  logged at ERROR and settles nothing. A Business with no stored key is not read at all: a form answer is
+  then expired as before, a boutique attempt stays `open` (counted in the hourly line) for its buyer's next
+  attempt or its callback. The one unsigned answer acted on is a boutique attempt read by its order_ref that
+  Lydia does not hold (error 2, core's verdict `unsigned` - an unknown verdict is not one): no request
+  exists, no money moved, it is closed `cancelled` as the return closes it.
+- **Why it cannot double-record.** Every write goes through a settle path that locks the row and moves it
+  out of the status the sweep selects on; the sweep races the callback and the return on the same locks.
+  Measured on a real PostgreSQL (`lydia-reconciliation.integration.spec.ts`): the sweep and seven returns
+  settling one payment write ONE purchase record, for a form and for an attempt; with the attempt's row
+  lock removed, the boutique case wrote more than one. Two replicas sweeping in one tick (a deploy's
+  overlap) take the same locks, so the same argument covers them - but what was MEASURED is one sweep
+  against seven returns, not two sweeps.
+- **The switch: OFF in production until the amount format is measured** (decided 2026-10-27).
+  `LYDIA_RECONCILE_ENABLED`, social-service, COMPUTED by `render-env.sh`
+  (`compute_lydia_reconcile_enabled`) like `LIVE_ENABLED`: `true` on dev, `false` on production, `true`
+  on a local estate. Anything but exactly `true` is OFF: no row is selected, Lydia is not called, and the
+  only trace is ONE startup line (`[RECONCILE] Lydia reconciliation sweep OFF ...`); the hourly line is
+  not written. Production is turned on by a commit changing that function, after the measurement below.
+- **What is owed before production is switched on** (the user's, one-off; the probe command is in the
+  pull request that built the sweep, #2595):
+  1. On a VALIDATED sandbox Business: which amount string the `request/state` `signature` is computed
+     over (`0.50`, `0.5`, `50`, `0,50`), read by `request_uuid` AND by `order_ref`, and on a PAID and on a
+     CANCELLED request. The probe runs inside the dev core container (it holds the sandbox Provider
+     token); the Business key and vendor token come from a `chmod 600` file on the host, never from the
+     command line. Anything but `0.50` everywhere: fix `lydiaStateSignedFields` first.
+  2. One full dev sweep read in its logs (a `verified` line per row, the hourly line), then one clean day
+     of dev logs: no `does NOT verify`, no `still unproven` close that a callback later contradicts.
+  3. A READ-ONLY count on production of what the first tick will read and then close:
+     `SELECT count(*), min("expiresAt") FROM product_checkouts c WHERE c.status = 'open' AND
+     c."expiresAt" <= now() - interval '5 minutes' AND EXISTS (SELECT 1 FROM associations a WHERE
+     a."lydiaAccountId" = c."vendorToken" AND a."lydiaBusinessKeyCiphertext" IS NOT NULL)`. Every one of
+     them is read, oldest first, 50 per tick, and settled, cancelled at Lydia or closed `expired` on its answer.
+  4. On the sandbox: which Lydia refusal codes are PERMANENT, for `request/state` and for `request/cancel`,
+     on a request Lydia ISSUED - above all error `2` on an issued-then-expired uuid (measured only on a
+     never-issued one), then a Business blocked then unblocked, a revoked then restored token, a uuid under
+     another vendor token. Only a code measured final joins its allowlist; until then such rows are retried
+     every tick.
+- **What it reports.** One line per row it reads, and once an hour
+  `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= refused=
+  unavailable= errors=; boutique: ...; boutique attempts left open on an answer not final: M; ended
+  boutique attempts left open with no Business key: N`, even when all zero.
+
+**Not covered, known:** a form answer the expiry moved to `expired` before any read (a backlog over 50 in
+one tick, logged at ERROR; Lydia unreachable in that tick; no key) - its payment is still recorded by its
+callback or its payer's return, which read `expired` rows. A form keeps no snapshot of the Business its
+request went to, so a form whose association re-linked another Business meanwhile is read with the new one
+and does not verify (ERROR). `transaction/list` is not used.
 
 ## See also
 

@@ -8,7 +8,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import type { BookerResource, BookerSpace, SlotUnit } from '$lib/bookings/api';
-import type { GridRow } from '$lib/bookings/grid';
+import { weekLayout } from '$lib/bookings/grid';
 import SpaceGrid from './SpaceGrid.svelte';
 
 const START = Date.parse('2026-11-02T08:00:00Z');
@@ -21,17 +21,6 @@ function unit(index: number, state: 'free' | 'blocked' = 'free'): SlotUnit {
     endMs: START + (index + 1) * STEP,
     state,
   } as SlotUnit;
-}
-
-function rowsOf(units: SlotUnit[]): GridRow[] {
-  return units.map((u, i) => ({
-    key: String(i),
-    startMs: u.startMs,
-    endMs: u.endMs,
-    label: `row ${i}`,
-    nextDay: false,
-    cells: [u],
-  }));
 }
 
 const resource = { id: 'r1', name: 'Salle' } as BookerResource;
@@ -49,11 +38,18 @@ const spaceOf = (maxSteps: number, slotMode: 'step' | 'slots' = 'step') =>
 const mounted: (() => void)[] = [];
 const onPick = vi.fn();
 
-/** Mounts a grid of `units` and returns its cells by row. */
+/** Mounts one day of `units` and returns its cells in time order. */
 async function open(units: SlotUnit[], space = spaceOf(4)) {
   const app = mount(SpaceGrid, {
     target: document.body,
-    props: { space, resources: [resource], rows: rowsOf(units), nowMs: START, onPick },
+    props: {
+      space,
+      resource,
+      layout: weekLayout(units, ['2026-11-02'], space, START),
+      mode: 'day',
+      nowMs: START,
+      onPick,
+    },
   });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
@@ -61,7 +57,7 @@ async function open(units: SlotUnit[], space = spaceOf(4)) {
   return [...document.querySelectorAll<HTMLElement>('[data-cell]')];
 }
 
-/** A pointer event on `target`; `y` is the ROW the stubbed hit-test will answer with. */
+/** A pointer event on `target`; `y` is the UNIT (its index in the day) the stubbed hit-test will answer with. */
 function pointer(type: string, target: Element, kind: 'mouse' | 'touch', x = 0, y = 0) {
   const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
   Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: kind } });
@@ -72,10 +68,10 @@ function pointer(type: string, target: Element, kind: 'mouse' | 'touch', x = 0, 
 beforeEach(() => {
   onPick.mockReset();
   vi.spyOn(console, 'debug').mockImplementation(() => {});
-  // jsdom has no layout and no pointer capture: the hit-test answers by the row number in `clientY`.
+  // jsdom has no layout and no pointer capture: the hit-test answers by the unit index in `clientY`.
   Element.prototype.setPointerCapture = vi.fn();
   document.elementFromPoint = (_x: number, y: number) =>
-    document.querySelector(`[data-cell][data-row="${y}"]`);
+    document.querySelector(`[data-cell][data-day="0"][data-idx="${y}"]`);
 });
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
@@ -87,6 +83,27 @@ afterEach(() => {
 const free = (n: number) => Array.from({ length: n }, (_, i) => unit(i));
 
 describe('SpaceGrid - drag a range', () => {
+  it('draws a closed day of the week as a folded strip with no unit to press', async () => {
+    const app = mount(SpaceGrid, {
+      target: document.body,
+      props: {
+        space: spaceOf(4),
+        resource,
+        layout: weekLayout(free(2), ['2026-11-02', '2026-11-03'], spaceOf(4), START),
+        mode: 'week',
+        nowMs: START,
+        onPick,
+      },
+    });
+    mounted.push(() => unmount(app, { outro: false }));
+    flushSync();
+    await tick();
+    const groups = [...document.querySelectorAll('[role="group"][aria-label]')];
+    expect(document.querySelectorAll('[data-cell]')).toHaveLength(2);
+    expect(groups.some((g) => g.getAttribute('aria-label')?.includes('mardi'))).toBe(true);
+    expect(document.querySelector('[data-day="1"]')).toBeNull();
+  });
+
   it('a mouse press and drag down picks the units it crossed, once, and is not also a click', async () => {
     const units = free(6);
     const cells = await open(units);

@@ -1,10 +1,15 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
+import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
+import {
+  AcceptedCommitNotMergedError,
+  CommitOutcomeUnknownError,
+} from '$lib/mls-client/commitSubmission';
 
 /**
  * Making a departure move the community's distribution-group epoch.
@@ -83,14 +88,119 @@ export function diffRosterAgainstTree(input: {
  * tree of everybody but this device. Same rule as every other destructive sweep here - absence is
  * a reason to ask again later, never to destroy.
  *
+ * **ONE PASS PER SCOPE AT A TIME, AND A CALLER ARRIVING DURING ONE GETS THE NEXT.** Since
+ * 2026-10-27 the actor of a removal runs a pass the moment the server accepts it
+ * (`commitRemoval.ts`), so a pass can now start while a load's pass is reading or committing. Two
+ * passes reading one tree would both decide the same Remove, and the loser's refusal would be
+ * logged as a removal that failed. So a pass waits for the one running on its scope - which may
+ * have read the roster BEFORE the caller's server write, so sharing it would not do - and callers
+ * that arrive while a pass is still WAITING share that one, since it has read nothing yet. A shared
+ * pass logs through EVERY caller's `log`, so each caller's trail shows the pass it got.
+ *
+ * **TERMINATION IS THE TRANSPORTS' OWN, NOT A TIMER HERE.** A pass awaits a local tree read, the
+ * roster read and the base read (`apiFetch`: a response-head deadline that throws the typed
+ * `RequestDeadlineError`), at most one commit (submitted under the MLS lock-hold budget, which
+ * aborts a hung submission as a typed failure) and a local persist. Each therefore settles - a
+ * failure is caught and logged by the pass - and the lane is released whatever the outcome: a
+ * rejected pass is swallowed by the tail, never left holding the scope. A timer on the lane would
+ * only race those deadlines and abandon a commit whose fate is unknown.
+ *
  * @returns the user ids removed; empty when there was nothing to do OR nothing could be decided.
  */
-export async function reconcileDistributionGroupRoster(
+export function reconcileDistributionGroupRoster(
   channelService: ChannelService,
   scope: DistributionScope,
   log: (message: string) => void = () => {}
 ): Promise<string[]> {
-  if (!isGraineReady()) return [];
+  const pass = reconcileDistributionGroupRosterReported(channelService, scope, log);
+  // A SHARED pass is the same promise for every caller that shares it, here as in the report.
+  let removed = removedByPass.get(pass);
+  if (!removed) {
+    removed = pass.then((report) => report.removedUserIds);
+    removedByPass.set(pass, removed);
+  }
+  return removed;
+}
+
+/** The removed-ids view of each pass, so callers sharing a pass share one promise. */
+const removedByPass = new WeakMap<Promise<RosterPassReport>, Promise<string[]>>();
+
+/**
+ * What one roster pass did, for a caller that must know more than who it removed: the actor of a
+ * removal, which releases a Remove it claimed only on a PROOF that it did not commit it
+ * (`commitRemoval.ts`).
+ */
+export interface RosterPassReport {
+  /** The user ids this pass removed. */
+  removedUserIds: string[];
+  /**
+   * The users holding a leaf of the tree as this pass LEFT it, read inside the lane; `null` when
+   * that is unknown - a commit of this pass whose outcome is unknown (it may yet land), a tree
+   * that could not be read, or no group held. A user named here is one this pass knows it did not
+   * remove: nothing was staged, or the commit was definitively refused.
+   */
+  heldUserIds: string[] | null;
+}
+
+/** {@link reconcileDistributionGroupRoster}, with the pass's {@link RosterPassReport}. Same lane. */
+export function reconcileDistributionGroupRosterReported(
+  channelService: ChannelService,
+  scope: DistributionScope,
+  log: (message: string) => void = () => {}
+): Promise<RosterPassReport> {
+  const key = scopeKey(scope);
+  const lane = passes.get(key) ?? { tail: Promise.resolve(), waiting: null };
+  if (lane.waiting) {
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: a roster pass is already waiting to read - sharing it rather than queuing another`
+    );
+    lane.waiting.logs.push(log);
+    return lane.waiting.pass;
+  }
+  const logs = [log];
+  const fanOut = (message: string) => {
+    for (const each of logs) each(message);
+  };
+  const pass: Promise<RosterPassReport> = lane.tail.then(() => {
+    // Started: it reads from here on, so a caller arriving now needs the pass after it.
+    if (lane.waiting?.pass === pass) lane.waiting = null;
+    return reconcileOnce(channelService, scope, fanOut);
+  });
+  lane.waiting = { pass, logs };
+  const tail = pass.then(
+    () => undefined,
+    () => undefined
+  );
+  lane.tail = tail;
+  passes.set(key, lane);
+  void tail.then(() => {
+    if (passes.get(key) === lane && lane.tail === tail) passes.delete(key);
+  });
+  return pass;
+}
+
+/**
+ * Roster passes by scope key: the tail every new pass starts after, and the pass that has not
+ * started reading yet (shared by whoever arrives before it does). Module-level because the callers
+ * - a load, a join, the actor of a removal - live in different modules; it holds promises for the
+ * duration of the passes only, so logging out leaves nothing behind.
+ */
+const passes = new Map<
+  string,
+  {
+    tail: Promise<void>;
+    waiting: { pass: Promise<RosterPassReport>; logs: Array<(message: string) => void> } | null;
+  }
+>();
+
+/** One pass of {@link reconcileDistributionGroupRoster}, unserialised. Never called directly. */
+async function reconcileOnce(
+  channelService: ChannelService,
+  scope: DistributionScope,
+  log: (message: string) => void
+): Promise<RosterPassReport> {
+  const unknown: RosterPassReport = { removedUserIds: [], heldUserIds: null };
+  if (!isGraineReady()) return unknown;
   const { mlsService, userId, deviceKey } = requireGraineRuntime(
     'reconcileDistributionGroupRoster'
   );
@@ -101,10 +211,10 @@ export async function reconcileDistributionGroupRoster(
     // simply is not the one that reconciles - and saying so is what distinguishes this from a pass
     // that ran and found nothing.
     log(`[GRAINE] no distribution group held for ${scopeLabel(scope)} - roster not reconciled`);
-    return [];
+    return unknown;
   }
 
-  let leafIdentities: string[];
+  let leafIdentities: string[] | null = null;
   let rosterUserIds: string[];
   try {
     // Read together, and the tree first: a roster fetched before a leaf joined would name that
@@ -128,10 +238,12 @@ export async function reconcileDistributionGroupRoster(
     log(
       `[GRAINE] could not compare ${scopeLabel(scope)} with its distribution group: ${String(e)} - nobody removed`
     );
-    return [];
+    // Nothing was staged: the tree as read (if it was) is the tree this pass leaves.
+    return { removedUserIds: [], heldUserIds: leafIdentities ? leafUsers(leafIdentities) : null };
   }
 
-  const diff = diffRosterAgainstTree({ leafIdentities, rosterUserIds, selfUserId: userId });
+  const tree = leafIdentities as string[];
+  const diff = diffRosterAgainstTree({ leafIdentities: tree, rosterUserIds, selfUserId: userId });
   if (diff.strayUserIds.length === 0) {
     // A CONVERGED PASS SAYS SO. The branch above claims to distinguish "this device does not hold
     // the group" from "a pass ran and found nothing" - and it could not, because this one was
@@ -140,7 +252,7 @@ export async function reconcileDistributionGroupRoster(
     log(
       `[GRAINE] ${scopeLabel(scope)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove`
     );
-    return [];
+    return { removedUserIds: [], heldUserIds: leafUsers(tree) };
   }
 
   log(
@@ -148,16 +260,34 @@ export async function reconcileDistributionGroupRoster(
   );
 
   try {
-    await mlsService.removeMember(groupId, diff.strayUserIds);
+    // A commit the DIFF decided, nobody asked for: staged only on the branch the server publishes
+    // (`publishedBranch.ts`), like the conversation stray sweep - a forked device must not be the
+    // one that removes anybody from a key group.
+    await mlsService.removeDepartedMembers(groupId, diff.strayUserIds);
   } catch (e) {
+    if (e instanceof UnpublishedBranchError) {
+      // NOT a refusal: nothing was staged. A `diverged` state was handed to the recovery ladder
+      // where it was thrown; a stale base is republished by the next ordinary read of the scope.
+      log(
+        `[GRAINE] ${diff.strayUserIds.length} departed member(s) NOT removed from ${scopeLabel(scope)}: the published base cannot vouch for this device's state (${e.reason}) - nothing staged`
+      );
+      return { removedUserIds: [], heldUserIds: leafUsers(tree) };
+    }
     // Loud, and not swallowed into a boolean: until this commit lands, everyone named here can
-    // still read every message the community sends. A rejected commit (another device won the
-    // epoch) is the benign case and the next pass carries it; anything else is a real failure and
-    // this line is the only place it is visible.
-    log(
-      `[GRAINE] could not remove ${diff.strayUserIds.length} departed member(s) from ${scopeLabel(scope)}: ${String(e)} - they can still read it`
-    );
-    return [];
+    // still read every message the community sends - IF they are still in the tree. A refused
+    // commit is usually another device having removed them first (the actor and a load, or two
+    // elected devices), so the tree is read AGAIN and the line says what is actually left.
+    return {
+      removedUserIds: [],
+      heldUserIds: await reportRefusedRemoval(
+        mlsService,
+        groupId,
+        scope,
+        diff.strayUserIds,
+        e,
+        log
+      ),
+    };
   }
 
   // Persisted here for the same reason the join is: an epoch that only ever existed in memory is
@@ -167,7 +297,70 @@ export async function reconcileDistributionGroupRoster(
   log(
     `[GRAINE] ${scopeLabel(scope)} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the next send mints a session they cannot open`
   );
-  return diff.strayUserIds;
+  const removed = new Set(diff.strayUserIds);
+  return {
+    removedUserIds: diff.strayUserIds,
+    heldUserIds: leafUsers(tree).filter((u) => !removed.has(u)),
+  };
+}
+
+/** The distinct canonical users holding a leaf of `leafIdentities`. PURE. */
+function leafUsers(leafIdentities: string[]): string[] {
+  return [...new Set(leafIdentities.map(userIdOfLeaf).filter((u): u is string => Boolean(u)))];
+}
+
+/**
+ * Says what a failed departed-member removal LEFT, read from the tree after the failure rather than
+ * assumed - the rule `strayLeaves.ts` follows for conversations. "They can still read it" about
+ * members another device already removed is false, and a line its reader learns to skip.
+ *
+ * A commit whose OUTCOME IS UNKNOWN (`CommitOutcomeUnknownError`) is not a refusal: it may yet land,
+ * so it is said as such and the tree it leaves is unknown (`null`). Nor is a commit the server
+ * ACCEPTED and this device failed to merge (`AcceptedCommitNotMergedError`): it landed, and the tree
+ * read here would be the one before it - also `null`. Only a failure that proves nothing landed
+ * leaves a tree to report.
+ *
+ * @returns the users holding a leaf after the failure, or `null` when that is unknown.
+ */
+async function reportRefusedRemoval(
+  mlsService: { getGroupMemberIdentities(groupId: string): Promise<string[]> },
+  groupId: string,
+  scope: DistributionScope,
+  strayUserIds: string[],
+  error: unknown,
+  log: (message: string) => void
+): Promise<string[] | null> {
+  const label = scopeLabel(scope);
+  const strays = new Set(strayUserIds.map(canonicalUserId));
+  if (error instanceof CommitOutcomeUnknownError) {
+    log(
+      `[GRAINE] the removal of ${strays.size} departed member(s) from ${label} was sent and NOT answered (${String(error)}) - it may yet land; the next resubmission decides`
+    );
+    return null;
+  }
+  if (error instanceof AcceptedCommitNotMergedError) {
+    log(
+      `[GRAINE] the removal of ${strays.size} departed member(s) from ${label} was ACCEPTED by the server and NOT merged here (${String(error)}) - it landed; this device's tree is behind`
+    );
+    return null;
+  }
+  let held: string[];
+  let left: number;
+  try {
+    held = leafUsers(await mlsService.getGroupMemberIdentities(groupId));
+    left = held.filter((u) => strays.has(u)).length;
+  } catch (e) {
+    log(
+      `[GRAINE] could not remove ${strays.size} departed member(s) from ${label}: ${String(error)} - and the tree could not be read again (${String(e)}), so whether they can still read it is unknown`
+    );
+    return null;
+  }
+  log(
+    left === 0
+      ? `[GRAINE] removal of ${strays.size} departed member(s) from ${label} refused (${String(error)}), and they are already gone from the tree - another device removed them first`
+      : `[GRAINE] could not remove ${strays.size} departed member(s) from ${label}: ${String(error)} - ${left} of them still hold a leaf and can still read it`
+  );
+  return held;
 }
 
 /**

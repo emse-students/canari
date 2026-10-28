@@ -201,3 +201,15 @@ describe('mergeFcmMessagesAndAnnounce', () => {
     expect(announce).not.toHaveBeenCalled();
   });
 });
+
+describe('a system notice from the FCM cache is not activity', () => {
+  it('leaves the seed where it was', () => {
+    const conversations = new Map([['grp-aaaa-bbbb', existing({ lastMessageAt: 100 })]]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'n1', senderId: 'system', timestamp: 900 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.lastMessageAt).toBe(100);
+  });
+});

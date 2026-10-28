@@ -1,9 +1,9 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
 import { renderSeoTags, renderSeoTitle } from '$lib/seo/renderHead';
 import { resolveServerSeo } from '$lib/seo/serverSeo';
 import { SITE } from '$lib/seo/site';
 import { degradedHeaders } from '$lib/seo/upstream';
-// Lives in its own module so a test can import it WITHOUT pulling `$env/dynamic/private` in
+// Lives in its own module so a test can import it WITHOUT pulling `$app/env/private` in
 // through the SEO chain above - the same reason `handleError` is not written here either.
 import { preloadableAsset } from '$lib/server/preload';
 import { WASM_PRELOAD_MARKER, renderWasmPreloadMeta } from '$lib/server/wasmPreload';
@@ -51,7 +51,7 @@ const STATIC_TITLE = `<title>${SITE.defaultTitle}</title>`;
 /**
  * SvelteKit reads the error hook from this file, and only from this file. The implementation lives
  * in `$lib/server/handleError` so it can be unit-tested without the SEO imports above - and the
- * `$env/dynamic/private` under them - having to resolve.
+ * `$app/env/private` under them - having to resolve.
  */
 export { handleError } from '$lib/server/handleError';
 

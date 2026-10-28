@@ -96,6 +96,119 @@ see who else booked.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
 
+## WP-R1 as built - the hidden default column (D44, 2026-10-27)
+
+- **`POST spaces` creates the space's ONE column** (`writeDefaultColumn` in
+  `booking-spaces.service.ts`), named after the space, at position 0, in the creation's own
+  transaction. It answers `{ id, resourceId }`.
+- **The first hours may come in the same call** (`CreateSpaceDto.availability`, the same nested
+  `AvailabilityDto` as `PUT resources/:id/availability`). They are parsed before the transaction (a
+  malformed line is a 400 and nothing is written) and inserted inside it, so the creation wizard
+  (D52, WP-R7) can never leave a space without its hours. Without them the column starts closed.
+- **THE HIDDEN COLUMN IS ONE PREDICATE, SHARED BY BOTH SIDES** (review of #2590): exactly one
+  column AND it bears the space's name - `columnsHidden(spaceName, resources)` in
+  `frontend/src/lib/bookings/columns.ts`, and the server's rename rule below. A single column named
+  otherwise (a space set up before WP-R1, "Piano" in "Foyer") is a VISIBLE column, renamable and
+  deletable. Renaming a single column to the space's own name makes it the hidden column, and it
+  follows the space's later renames from then on.
+- **A renamed space carries its hidden column's name** (`renameDefaultColumn`, under the update's
+  space lock): only when the space has exactly one column and that column still bears the space's
+  former name - the former name IS the discriminator. This keeps the name read in "my bookings",
+  the `.ics` and the export right without any client rule.
+- **The editor's copy of a column's name follows the server** (review of #2590, the blocker):
+  `ResourceEditor` re-seeds its name from the resource when the organiser has not edited it, and
+  sends a name ONLY when the organiser typed one. Before, a space renamed "Old" -> "New", then a
+  column added, then the first column's fields saved, wrote "Old" back.
+- **The screens hide the columns level for the hidden column.** In `SpaceEditor` it shows its hours
+  and linked account only (no name, no delete, and its texts only when it already carries some, so
+  nothing the server serves is out of sight); an "Une seule colonne" card offers **Ajouter une
+  colonne**, which names the new column and reveals the level; the save bar says "Modifications non
+  enregistrées" rather than "1 ressource(s)". `SpaceGrid` and `SpacePlanning` draw no column name
+  (the grid's caption already names the space). The entity tab's list drops the count of a space
+  with one column.
+- **A place is never read twice**: `bookingPlace(space, column)` names the space alone when the
+  column bears its name, on the client (calendar titles, "my bookings", which also drops the
+  column line) and in the `.ics` summary (`booking-calendar.ts`). The sheets' titles already read
+  the column's name, which IS the space's. The export keeps its column column: it is data.
+- **No new cap**: the hours of a creation go through `AvailabilityDto`, which already caps lines
+  (200) and closures (100) with `ArrayMaxSize`.
+**Proof.** `bookings.service.integration.spec.ts`, "the hidden default column (WP-R1, D44)", on a
+real PostgreSQL 18: one column named after the space; the first hours written and a booking accepted
+at once; a malformed line refused with no space written; a failure INSIDE the transaction (the
+database's weekday CHECK, reached by calling the service directly) leaving neither space nor column;
+the rename followed by the hidden column and by nothing the organiser named, and by a single column
+once renamed to the space's name. Control: with the rename call disabled, the rename test fails.
+`SpaceEditor.hiddenColumn.svelte.test.ts` mounts the editor and runs the blocker's sequence (rename,
+reveal, save): the former name is never sent; control: with the old copy restored, it fails. `dto/create-space.dto.spec.ts` (the nested hours
+validated as a 400), `columns.test.ts`, `booking-calendar.spec.ts` (no doubled summary). **Seen** at 390 and 1280 on a local build, on a fixture space
+(a temporary signed-out preview route, not committed): the card reads its title, hint and button;
+at 390 the button had crushed the hint to one word a line, so the hint now holds a basis and the
+button wraps below it. Not yet seen against a running API.
+
+## WP-R2 as built - the booker's week (D45-D48, 2026-10-27)
+
+Front only: no route, no migration. The page still reads `GET spaces/:id/slots`, now ONE read of
+the week plus the day before it (`weekReadRange`, the same day-before rule as `slotsReadRange`: the
+server keeps a unit by its WINDOW's date, so Monday 00:30 of a Sunday-night window is in no read that
+starts on Monday).
+
+- **One view, chosen by the width** (`SCHEDULE_AGENDA_QUERY`, as the agenda). **`SpacePlanning` and the
+  grid/planning switch are deleted** (D47, Q-R8): so are `gridRows`, `gridOpeningDate`, `planning` and
+  their messages. A unit sits in the column of the day it STARTS on, so the grid needs no "window
+  date" and no "next day" row.
+- **`weekLayout` (pure, `lib/bookings/grid.ts`)** lays ONE column's units out: a unit's top is the
+  WALL minute of its start and its height its elapsed length, so 18:00 is 18:00 every day, daylight
+  saving included, and nothing is ever shifted. The one disagreement between wall and elapsed time
+  is a fall-back night's doubled hour: its two units sit at the same wall time, overlap, and share
+  the width in lanes like two slots of a list (allowed since WP-B2), so every later unit keeps its
+  own wall time. (A first version displaced the second one and carried the shift: the rest of that
+  day sat an hour low, found in review.) The
+  axis is whole hours around what the week offers; an hour is tall enough for the shortest unit to
+  hold a line (4 to 12 rem). A night window crossing midnight is two columns, as its two days.
+- **A day is `open`, `none` (nothing left to take on the device's clock) or `closed` (nothing
+  offered).** On a desktop a closed day FOLDS to a narrow strip (Q-R10); on a phone the strip's dot says
+  `open` / `none` / closed, from the same read as the day under it.
+- **Desktop (`WeekBar`)**: previous / next week, "Aujourd'hui" only when the week shown does not hold
+  today, the week's dates, and the legend, whose words are the grid's own (`bookings_cell_*`).
+  **Phone (`DayStrip`)**: the seven days of the week, the chosen one marked, a week step either side,
+  and ONE day on its own axis below. The chosen weekday is kept when the week moves.
+- **The column selector (`ColumnSelect`, D46) shows only for several columns** (D44): pills up to five,
+  a list beyond, each with how many units one may take in the week read. The drag, the 250 ms finger
+  hold, the step ceiling and the chip are unchanged, now along a DAY (`dragRange` is untouched).
+- **The poster is already a banner on this page** (`SpacePoster`, WP-B5): nothing changed there.
+- **Kept on purpose**: the sentence that nobody is notified (D13) stays until WP-N lands, since it is
+  true until then.
+
+**Proof.** `grid.test.ts` (the week's dates, the read's first day, wall-time placement across both
+2026-10-24..26, the 25 contiguous hours of the fall-back day, a Friday night and a Sunday night, folded and full days, lanes,
+the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every drag case along a day,
+plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
+next paragraph says.
+
+## Decisions taken by Master on 2026-10-27 (user delegated)
+
+The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
+Master, who took the default the mockups drew for each, except Q-R1, Q-R2, Q-R4, Q-R5 and Q-R15.
+
+| # | Question | Decision |
+|---|---|---|
+| Q-R1 | Who sets the reminder delay (D53) | **The organiser sets the space's default; each person may change it on their booking; "no reminder" is allowed.** |
+| Q-R2 | Notify on a holder's own cancellation, a participant's withdrawal | **Yes, both ways**: a holder's cancellation notifies the participants, a withdrawal notifies the holder. |
+| Q-R3 | An optional message with an organiser's cancellation | Yes, carried by the notification only, not stored in the history. |
+| Q-R4 | Notify the people of coming bookings when a space is deleted | **Yes.** |
+| Q-R5 | What a push shows on a lock screen for a LINK-ONLY space | **A neutral text, never the space's name.** |
+| Q-R6 | A booking made inside its reminder delay | No reminder. |
+| Q-R7 | Tell the organiser when someone books or cancels | No. |
+| Q-R8 | Keep the one-day grid of all columns for the organiser | No: removed with the planning. |
+| Q-R9 | A space back to one column | Its column hides again (D44's rule is "exactly one column", WP-R1). |
+| Q-R10 | Closed days fold to a narrow strip in the week | Yes. |
+| Q-R11 | The painter's grain; a finger on the painter | 30 min, the text rows for exact times; a finger paints at once. |
+| Q-R12 | "Apply these hours to every column" | Not built. |
+| Q-R13 | Section placement and titles | As drawn: the people ceiling and the after-booking info in section 3; titles L'essentiel / Quand peut-on réserver ? / Qui peut réserver, et que demande-t-on ? / Règles de réservation / Données. |
+| Q-R14 | When the wizard is offered | On every creation, skippable ("Je règle tout moi-même"). |
+| Q-R15 | A "Réservations" category in the notification settings | **Yes.** |
+| Q-R16 | The dashboard's counters | Yes, as drawn. |
+
 ## Accords recorded
 
 User, 2026-10-15, in session (relayed by the planning session, recorded at Master's request),
