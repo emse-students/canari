@@ -7307,16 +7307,16 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** Who the device events go to - the new-device notices (`deviceNotices.svelte.ts`). */
-  private deviceEventConsumer: ((events: DeviceEvent[]) => Promise<void>) | null = null;
+  private deviceEventConsumer: ((events: DeviceEvent[]) => Promise<boolean>) | null = null;
   /** Serialises the hand-overs, so two drains ending together deliver in order. */
-  private deviceEventHandOver: Promise<void> = Promise.resolve();
+  private deviceEventHandOver: Promise<unknown> = Promise.resolve();
 
   /**
    * Registers the consumer of device events, or removes it (`null`, sign-out). Registering hands it
    * whatever the state already holds - events recorded while nothing listened (a previous session,
    * a background Add written to `mls.bin`) - so the bounded store drains rather than filling.
    */
-  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void {
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void {
     this.deviceEventConsumer = consumer;
     console.debug(`[TRUST] device-event consumer ${consumer ? 'registered' : 'removed'}`);
     if (consumer) void this.handOverDeviceEvents('consumer registered');
@@ -7332,20 +7332,24 @@ export abstract class BaseMlsService implements IMlsService {
    * the user will never see; the consumer isolates each event itself so one cannot cost the others.
    */
   /** {@link IMlsService.settleDeviceEvents}: one more hand-over, chained after any pending one. */
-  settleDeviceEvents(why: string): Promise<void> {
+  settleDeviceEvents(why: string): Promise<boolean> {
     return this.handOverDeviceEvents(why);
   }
 
-  protected handOverDeviceEvents(why: string): Promise<void> {
-    const run = this.deviceEventHandOver.then(async () => {
+  /** @returns whether the events were handed over and decided ({@link settleDeviceEvents}). */
+  protected handOverDeviceEvents(why: string): Promise<boolean> {
+    const run = this.deviceEventHandOver.then(async (): Promise<boolean> => {
       const consumer = this.deviceEventConsumer;
-      if (!consumer) return;
+      if (!consumer) {
+        console.debug(`[TRUST] no device-event consumer registered (${why}) - nothing decided`);
+        return false;
+      }
       let events: DeviceEvent[];
       try {
         events = await this.takeDeviceEventsNative();
       } catch (e) {
         console.error(`[TRUST] device events not taken (${why}) - they stay in the state:`, e);
-        return;
+        return false;
       }
       // AN EMPTY TAKE IS HANDED OVER TOO: the consumer parks an event whose evidence the server did
       // not answer, and each hand-over - registration, every drain end, every own Add - is the
@@ -7354,12 +7358,13 @@ export abstract class BaseMlsService implements IMlsService {
         console.debug(`[TRUST] ${events.length} device event(s) handed to the notices (${why})`);
       }
       try {
-        await consumer(events);
+        return await consumer(events);
       } catch (e) {
         console.error(
           `[TRUST] the device-notice consumer failed - ${events.length} event(s) lost:`,
           e
         );
+        return false;
       }
     });
     this.deviceEventHandOver = run;

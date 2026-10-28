@@ -21,7 +21,7 @@ export function createMlsServiceStub(
     leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
     setDeviceEventConsumer: vi.fn(),
-    settleDeviceEvents: vi.fn().mockResolvedValue(undefined),
+    settleDeviceEvents: vi.fn().mockResolvedValue(true),
     // Default: a device never seen - a verifier test overrides it with the key it pins.
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
     // Default: no departure seen.

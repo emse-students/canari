@@ -50,8 +50,10 @@ use std::collections::{HashMap, VecDeque};
 use crate::members::credential_identity;
 
 /// The most device events kept while nobody takes them. An event is a few hundred bytes of
-/// `mls.bin`; past this bound the OLDEST is dropped, with a WARN, because a record nobody reads must
-/// not grow the state without limit.
+/// `mls.bin`, and a record nobody reads must not grow the state without limit. Past this bound the
+/// OLDEST are KEPT and the newer ones dropped, each group that lost one marked by ONE
+/// [`DeviceEvent::events_dropped`] marker - so the app can fail closed on that group rather than
+/// decide on a partial record (an entry kept, what it then added lost).
 pub const MAX_PENDING_DEVICE_EVENTS: usize = 512;
 
 /// How a leaf's signature key relates to what this device had pinned for its identity.
@@ -117,9 +119,32 @@ pub struct DeviceEvent {
     /// `false` when absent, and not written when false, so the wire is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub added_by_unvouched: bool,
+    /// A MARKER, not a device: events of `group_id` were dropped past
+    /// [`MAX_PENDING_DEVICE_EVENTS`], so what this queue says about that group is incomplete. It
+    /// names no identity and announces nothing; the app withholds history in that group on it.
+    /// Not written when false, so the wire is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub events_dropped: bool,
 }
 
 impl DeviceEvent {
+    /// The marker that events of `dropped`'s group were lost past the bound
+    /// ([`DeviceEvent::events_dropped`]).
+    fn dropped_marker(dropped: &DeviceEvent) -> DeviceEvent {
+        DeviceEvent {
+            group_id: dropped.group_id.clone(),
+            epoch: dropped.epoch,
+            identity: String::new(),
+            key_fingerprint: String::new(),
+            trust: LeafTrust::FirstSight,
+            added_by: None,
+            first_in_group: false,
+            member_already_present: false,
+            added_by_unvouched: false,
+            events_dropped: true,
+        }
+    }
+
     /// Whether this event is "a device was added" - the fact both notices are built from (user
     /// decision 2026-10-22, `docs/wiki/protocols/mls-protocol.md#new-device-notices`):
     ///
@@ -736,23 +761,32 @@ impl DeviceTrust {
     ///
     /// @returns whether this call reported the queue full.
     fn push_event(&mut self, event: DeviceEvent) -> bool {
-        let mut reported = false;
-        if self.events.len() >= MAX_PENDING_DEVICE_EVENTS
-            && let Some(dropped) = self.events.pop_front()
-            && !self.full_reported
-        {
-            self.full_reported = true;
-            reported = true;
-            log::warn!(
-                "[TRUST] {MAX_PENDING_DEVICE_EVENTS} device events are waiting and nothing took \
-                 them - the oldest are dropped from now on (first: {} on {} at epoch {})",
-                dropped.identity,
-                dropped.group_id,
-                dropped.epoch
-            );
+        let queued = self.events.iter().filter(|e| !e.events_dropped).count();
+        if queued < MAX_PENDING_DEVICE_EVENTS {
+            self.events.push_back(event);
+            return false;
         }
-        self.events.push_back(event);
-        reported
+        // FULL: the oldest stay - they are what the newer ones are judged against - and the group
+        // of the dropped one is marked once, so its record is known to be incomplete.
+        if !self
+            .events
+            .iter()
+            .any(|e| e.events_dropped && e.group_id == event.group_id)
+        {
+            self.events.push_back(DeviceEvent::dropped_marker(&event));
+        }
+        if self.full_reported {
+            return false;
+        }
+        self.full_reported = true;
+        log::error!(
+            "[TRUST] {MAX_PENDING_DEVICE_EVENTS} device events are waiting - the newer ones are \
+             dropped from now on, their groups marked incomplete (first: {} on {} at epoch {})",
+            event.identity,
+            event.group_id,
+            event.epoch
+        );
+        true
     }
 
     /// Drops the pins of identities no held tree contains, when there are more than
@@ -873,6 +907,7 @@ impl DeviceTrust {
                     // A joined tree has no "before": nothing here was added by a commit we merged.
                     first_in_group: false,
                     added_by_unvouched: false,
+                    events_dropped: false,
                     member_already_present: false,
                 });
                 wrote = true;
@@ -980,6 +1015,7 @@ impl DeviceTrust {
                 added_by: added_by.map(str::to_string),
                 first_in_group,
                 added_by_unvouched: false,
+                events_dropped: false,
                 member_already_present,
             });
             wrote = true;
@@ -1125,6 +1161,7 @@ mod tests {
             added_by: None,
             first_in_group: false,
             added_by_unvouched: false,
+            events_dropped: false,
             member_already_present: false,
         };
         let mut t = DeviceTrust::default();
@@ -1136,8 +1173,20 @@ mod tests {
             "a full queue is said once, not at every admission"
         );
         let taken = t.take_events();
-        assert_eq!(taken.len(), MAX_PENDING_DEVICE_EVENTS);
-        assert_eq!(taken[0].epoch, 3);
+        // The oldest are kept, and ONE marker says the group's record is incomplete.
+        assert_eq!(taken.len(), MAX_PENDING_DEVICE_EVENTS + 1);
+        assert_eq!(taken[0].epoch, 0);
+        assert!(
+            taken[..MAX_PENDING_DEVICE_EVENTS]
+                .iter()
+                .all(|e| !e.events_dropped)
+        );
+        let marker = taken.last().expect("marker");
+        assert!(marker.events_dropped);
+        assert_eq!(marker.group_id, "g");
+        assert!(!marker.announces_new_device());
+        assert!(!marker.is_owner_alert("u", "x"));
+        assert_eq!(marker.notice_key(), None);
         assert!(t.take_events().is_empty());
 
         // Taken, then full again: said again, once.
@@ -1247,6 +1296,7 @@ mod tests {
             added_by: Some("v:e".into()),
             first_in_group: true,
             added_by_unvouched: false,
+            events_dropped: false,
             member_already_present: true,
         };
         assert_eq!(

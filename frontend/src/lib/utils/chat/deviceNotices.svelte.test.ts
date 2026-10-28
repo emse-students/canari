@@ -718,6 +718,36 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     warn.mockRestore();
   });
 
+  it('a group whose events the queue dropped is sealed, and the marker announces nothing', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, addMessageToChat } = makeCtx();
+    const decided = await deliverDeviceEvents(
+      [
+        event({
+          groupId: 'group-1',
+          identity: '',
+          keyFingerprint: '',
+          addedBy: null,
+          eventsDropped: true,
+        }),
+      ],
+      ctx
+    );
+    expect(decided).toBe(true);
+    expect(historyWithheldFrom('group-1', 'alice:phone-b')).toBe(true);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('says it decided nothing with no account bound, so an answer refuses', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    forgetDeviceNotices();
+    const { ctx } = makeCtx();
+    expect(await deliverDeviceEvents([selfEntry()], ctx)).toBe(false);
+    error.mockRestore();
+  });
+
   it('withholds history from a device that changed its own key by its own commit', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});

@@ -85,6 +85,12 @@ export interface DeviceEvent {
    * unvouched too. Set by the app before deciding (`deliverDeviceEvents`), never by the MLS layer.
    */
   addedByUnvouched?: boolean;
+  /**
+   * A MARKER, not a device (`DeviceEvent::events_dropped` in Rust): events of `groupId` were dropped
+   * past the queue's bound, so what was handed over about that group is incomplete. It names no
+   * identity; history is withheld in that group on it (`historyWithheld.ts`).
+   */
+  eventsDropped?: boolean;
 }
 
 /**

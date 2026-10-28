@@ -25,6 +25,7 @@ import {
   isWithheldDevice,
   historySealedGroups,
   inheritsWithholding,
+  sealHistoryIn,
   noteDeviceAddedByAMember,
   withholdHistoryFrom,
   type LeafStillIn,
@@ -356,14 +357,24 @@ function contactLineId(groupId: string, key: string): string {
 /**
  * Turns device events into the notices above, one event at a time - a failure costs that event
  * alone and is logged. Owner alerts are claimed in the native ledger (phones) once recorded.
+ *
+ * @returns whether who is withheld was decided for every event (`settleDeviceEvents`): `false` with
+ * no account bound, or when the account changed during the delivery - a history answer then refuses.
  */
 export async function deliverDeviceEvents(
-  delivered: DeviceEvent[],
+  handed: DeviceEvent[],
   ctx: DeviceNoticeContext
-): Promise<void> {
+): Promise<boolean> {
   if (!boundAccount) {
-    console.error(`[DEVICE_NOTICE] no account bound - ${delivered.length} device event(s) dropped`);
-    return;
+    console.error(`[DEVICE_NOTICE] no account bound - ${handed.length} device event(s) dropped`);
+    return false;
+  }
+  // A GROUP WHOSE EVENTS THE QUEUE DROPPED (`eventsDropped`) has an incomplete record: an entry may
+  // be there without what it then added. No history is answered in it - fail closed.
+  const delivered: DeviceEvent[] = [];
+  for (const event of handed) {
+    if (event.eventsDropped === true) sealHistoryIn(event.groupId, 'device events were dropped');
+    else delivered.push(event);
   }
   // An empty hand-over with nothing parked is every drain's: nothing to do, nothing to say.
   if (
@@ -372,7 +383,7 @@ export async function deliverDeviceEvents(
     owedLines.length === 0 &&
     owedUninvited.length === 0
   ) {
-    return;
+    return true;
   }
   // One tree read per conversation per delivery, whatever the number of events (not reactive).
   const trees: Record<string, Promise<string[]>> = {};
@@ -393,7 +404,7 @@ export async function deliverDeviceEvents(
       console.error(
         `[DEVICE_NOTICE] the account changed during a delivery - ${delivered.length - events.length} device event(s) not decided`
       );
-      return;
+      return false;
     }
     // WHAT AN UNVOUCHED DEVICE ADDS IS UNVOUCHED TOO: marked before anything decides on the event,
     // so the line, the report and the withholding all follow.
@@ -412,10 +423,13 @@ export async function deliverDeviceEvents(
         );
       }
     } catch (e) {
+      // FAIL CLOSED: an event whose withholding was not decided may be an entry - its group answers
+      // no history from now on.
       console.error(
         `[HISTORY_WITHHELD] withholding not decided for one device event in ${event.groupId.slice(0, 8)}...:`,
         e
       );
+      sealHistoryIn(event.groupId, 'a device event could not be decided');
     }
   }
   await noteUninvitedEntries(events, ctx);
@@ -502,6 +516,7 @@ export async function deliverDeviceEvents(
       console.error('[DEVICE_NOTICE] native ledger claim failed:', e);
     }
   }
+  return true;
 }
 
 /** The events, stably ordered by epoch - the order their commits were merged in. */
@@ -539,6 +554,8 @@ function leafStillIn(
   trees: Record<string, Promise<string[]>>
 ): LeafStillIn {
   return async (groupId, identity) => {
+    // A conversation this device no longer holds: its records name nobody it could answer.
+    if (!ctx.localGroups().includes(groupId)) return 'group-not-held';
     if (!Object.hasOwn(trees, groupId)) trees[groupId] = ctx.memberIdentities(groupId);
     try {
       return (await trees[groupId]).some((leaf) => sameDeviceIdentity(leaf, identity));

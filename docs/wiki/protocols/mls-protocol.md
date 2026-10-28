@@ -1409,9 +1409,13 @@ conversation row is loaded yet (the line waits for the row, the withholding does
 when a device that is not withheld there adds it, or when this member approves it under the key it
 entered with. The decision is PER MEMBER: each device withholds on its own verdict, and the record
 persists with that account's device notices. An approval is account-wide and lasts the session. A
-history answer reads the record only after every device event already merged has been decided. Past its overall bound only records whose device has left its conversation are dropped; past
-a per-conversation bound, that conversation is sealed and answers no history to anyone - both fail
-closed.
+history answer reads the record only after every device event already merged has been decided, and
+answers nothing when they could not be (no consumer, a failed take, a failed delivery). Past its
+overall bound only records of conversations this device no longer holds are dropped - a device that
+left a conversation still held keeps its record, since it could come back; past a per-conversation
+bound, or when the native queue of device events dropped some of a conversation's events past its own
+bound (it keeps the oldest and marks each such conversation), or when one event could not be decided,
+that conversation is sealed and answers no history to anyone - all fail closed.
 
 **What it costs.** Every new device id is unseen by everyone, and a device id lives in the install:
 a new phone, a new browser, a reinstall or factory wipe, a device that lost its state - each enrols

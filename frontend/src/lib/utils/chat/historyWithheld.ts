@@ -34,9 +34,10 @@ import { memberDeviceAnswer } from './memberDeviceAnswers';
  * entry the same way may still answer. Held in memory for the session, and persisted with the device
  * notices of the account (`deviceNotices.svelte.ts`), so a restart does not lift it.
  *
- * BOUNDED WITHOUT EVER RE-OPENING: past {@link MAX_HISTORY_WITHHELD} records in all, the ones whose
- * device has LEFT its conversation's tree go first, and only where no withheld device remains; a
- * record whose device is still there is never dropped. Past {@link MAX_WITHHELD_PER_GROUP} withheld
+ * BOUNDED WITHOUT EVER RE-OPENING: past {@link MAX_HISTORY_WITHHELD} records in all, only the ones
+ * of conversations this device no longer holds are dropped; a record of a conversation still held is
+ * never dropped, its device present or not. A conversation whose device events were dropped
+ * upstream is sealed ({@link sealHistoryIn}). Past {@link MAX_WITHHELD_PER_GROUP} withheld
  * devices still in ONE conversation, that conversation is SEALED: no history is answered there to
  * anyone, for good, said once at ERROR - fail closed, at a size no honest conversation reaches. The
  * seal gates answers only, never who an Add is marked against.
@@ -49,66 +50,66 @@ export interface WithheldDevice {
   fingerprint: string;
 }
 
-/** Past this many records, the ones whose device left its tree are dropped. */
+/** Past this many records, the ones of conversations this device no longer holds are dropped. */
 export const MAX_HISTORY_WITHHELD = 256;
 
 /** Past this many withheld devices in one conversation, it is sealed: no history answered there. */
 export const MAX_WITHHELD_PER_GROUP = 32;
 
-/** Whether `identity` still holds a leaf in `groupId`'s tree, or `'unreadable'`. */
-export type LeafStillIn = (groupId: string, identity: string) => Promise<boolean | 'unreadable'>;
+/**
+ * Whether `identity` still holds a leaf in `groupId`'s tree; `'unreadable'` when the read failed (the
+ * record is kept), `'group-not-held'` when this device no longer holds the conversation at all.
+ */
+export type LeafStillIn = (
+  groupId: string,
+  identity: string
+) => Promise<boolean | 'unreadable' | 'group-not-held'>;
 
 let withheld: WithheldDevice[] = [];
 /** The conversations past {@link MAX_WITHHELD_PER_GROUP}: no history answered there at all. */
 let sealed = new Set<string>();
 let persist: (() => void) | null = null;
+/** Whether the bound being full was said this session - once, not at every record. */
+let fullReported = false;
 
 function matches(entry: WithheldDevice, groupId: string, identity: string): boolean {
   return entry.groupId === groupId && sameDeviceIdentity(entry.identity, identity);
 }
 
-/** Whether a withheld device of `groupId` still holds a leaf there - or its tree is unreadable. */
-async function groupHoldsAWithheldDevice(
-  groupId: string,
-  leafStillIn: LeafStillIn
-): Promise<boolean> {
-  for (const entry of withheld) {
-    if (entry.groupId === groupId && (await leafStillIn(groupId, entry.identity)) !== false) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
- * Drops, oldest first, the records past {@link MAX_HISTORY_WITHHELD} whose device is no longer in its
- * tree - and only in a conversation where NO withheld device remains, since one that does could add
- * the departed device back under its pinned key, which no event announces. A record whose device is
- * still there, or whose tree cannot be read, is kept: fail closed.
+ * Drops, oldest first, the records past {@link MAX_HISTORY_WITHHELD} of conversations this device no
+ * longer holds - and ONLY those. A record whose device left a conversation still held is kept: the
+ * device could come back by its own commit under its pinned key, which no event announces, and the
+ * record is then all that withholds from it. Past the bound with nothing to drop, the list grows:
+ * fail closed, said once per session.
  */
 async function trimToBound(leafStillIn: LeafStillIn): Promise<void> {
   let excess = withheld.length - MAX_HISTORY_WITHHELD;
   if (excess <= 0) return;
+  const notHeld = new Map<string, boolean>();
   const gone = new Set<WithheldDevice>();
-  const guarded = new Map<string, boolean>();
   for (const entry of withheld) {
     if (excess === 0) break;
-    if ((await leafStillIn(entry.groupId, entry.identity)) !== false) continue;
-    if (!guarded.has(entry.groupId)) {
-      guarded.set(entry.groupId, await groupHoldsAWithheldDevice(entry.groupId, leafStillIn));
+    if (!notHeld.has(entry.groupId)) {
+      notHeld.set(
+        entry.groupId,
+        (await leafStillIn(entry.groupId, entry.identity)) === 'group-not-held'
+      );
     }
-    if (guarded.get(entry.groupId)) continue;
+    if (!notHeld.get(entry.groupId)) continue;
     gone.add(entry);
     excess--;
   }
   withheld = withheld.filter((e) => !gone.has(e));
-  if (excess > 0) {
-    console.error(
-      `[HISTORY_WITHHELD] ${withheld.length} devices withheld, past the bound of ${MAX_HISTORY_WITHHELD} - every one still in its conversation (or unreadable), so none is dropped`
-    );
-  } else {
+  if (gone.size > 0) {
     console.log(
-      `[HISTORY_WITHHELD] ${gone.size} record(s) of devices no longer in their conversation dropped at the bound`
+      `[HISTORY_WITHHELD] ${gone.size} record(s) of conversations no longer held dropped at the bound`
+    );
+  }
+  if (excess > 0 && !fullReported) {
+    fullReported = true;
+    console.error(
+      `[HISTORY_WITHHELD] ${withheld.length} devices withheld, past the bound of ${MAX_HISTORY_WITHHELD} - every one in a conversation still held, so none is dropped`
     );
   }
 }
@@ -147,9 +148,9 @@ export async function withholdHistoryFrom(
 async function presentIn(groupId: string, leafStillIn: LeafStillIn): Promise<number> {
   let present = 0;
   for (const entry of withheld) {
-    if (entry.groupId === groupId && (await leafStillIn(groupId, entry.identity)) !== false) {
-      present++;
-    }
+    if (entry.groupId !== groupId) continue;
+    const there = await leafStillIn(groupId, entry.identity);
+    if (there === true || there === 'unreadable') present++;
   }
   return present;
 }
@@ -175,6 +176,19 @@ export function committerIsWithheld(
   // THE RECORD, NEVER THE SEAL: a sealed conversation answers nobody, but that says nothing about
   // who made an Add - reading the seal here would mark every later Add there as unvouched.
   return recordWithholds(groupId, addedBy);
+}
+
+/**
+ * Seals `groupId`: no history is answered there to anyone, for good - the fail-closed answer to a
+ * record this device knows to be incomplete. Said once per conversation.
+ */
+export function sealHistoryIn(groupId: string, why: string): void {
+  if (sealed.has(groupId)) return;
+  sealed = new Set([...sealed, groupId]);
+  console.error(
+    `[HISTORY_WITHHELD] ${groupId.slice(0, 8)}... sealed - ${why}; no history is answered there to anyone`
+  );
+  persist?.();
 }
 
 /**
@@ -288,6 +302,7 @@ export function bindHistoryWithheld(
   withheld = [...entries];
   sealed = new Set(sealedGroups);
   persist = onChange;
+  fullReported = false;
 }
 
 /** Whether a persisted value is a {@link WithheldDevice}. */

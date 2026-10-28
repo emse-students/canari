@@ -4,6 +4,7 @@ import {
   committerIsWithheld,
   historyWithheldEntries,
   historySealedGroups,
+  sealHistoryIn,
   historyWithheldFrom,
   inheritsWithholding,
   MAX_HISTORY_WITHHELD,
@@ -74,19 +75,33 @@ describe('historyWithheld', () => {
     error.mockRestore();
   });
 
-  it('past the bound keeps a departed record while a withheld device remains in its conversation', async () => {
-    // The remaining one could add the departed device back under its pinned key, which no event says.
-    const leafStillIn = async (groupId: string, identity: string) =>
-      !(groupId === 'g0' && identity === 'bob:left') && groupId !== 'g1';
+  it('past the bound keeps every record of a conversation still held, its device present or not', async () => {
+    // A departed device can come back by its own commit under its pinned key, which no event says.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leafStillIn = async (_g: string, identity: string) => identity !== 'bob:left';
     await withholdHistoryFrom('g0', 'bob:left', 'fp', leafStillIn);
-    await withholdHistoryFrom('g0', 'bob:stays', 'fp', leafStillIn);
-    await withholdHistoryFrom('g1', 'bob:gone', 'fp', leafStillIn);
-    for (let i = 2; i < MAX_HISTORY_WITHHELD; i++) {
+    for (let i = 1; i <= MAX_HISTORY_WITHHELD; i++) {
       await withholdHistoryFrom(`g${i}`, 'bob:web-9', 'fp', leafStillIn);
     }
-    await withholdHistoryFrom('g-new', 'bob:web-9', 'fp', leafStillIn);
     expect(historyWithheldFrom('g0', 'bob:left')).toBe(true);
-    expect(historyWithheldFrom('g1', 'bob:gone')).toBe(false);
+    expect(historyWithheldEntries()).toHaveLength(MAX_HISTORY_WITHHELD + 1);
+    // Said once, not at every record past the bound.
+    await withholdHistoryFrom('g-more', 'bob:web-9', 'fp', leafStillIn);
+    expect(error.mock.calls.filter(([l]) => String(l).includes('past the bound'))).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it('seals a conversation on demand, persisted with the records', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const persist = vi.fn();
+    bindHistoryWithheld([], persist);
+    sealHistoryIn('g1', 'device events were dropped');
+    sealHistoryIn('g1', 'device events were dropped');
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(true);
+    expect(historySealedGroups()).toEqual(['g1']);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
   });
 
   it('seals a conversation past its bound: no history answered there to anyone, and it survives a restore', async () => {
@@ -140,9 +155,10 @@ describe('historyWithheld', () => {
     expect(persist).toHaveBeenCalledTimes(2);
   });
 
-  it('past the bound drops only records whose device left its tree', async () => {
-    const gone = new Set(['g3', 'g5']);
-    const leafStillIn = async (groupId: string) => !gone.has(groupId);
+  it('past the bound drops only records of conversations no longer held', async () => {
+    const notHeld = new Set(['g3', 'g5']);
+    const leafStillIn = async (groupId: string, identity: string) =>
+      notHeld.has(groupId) ? ('group-not-held' as const) : identity !== 'bob:web-9';
     for (let i = 0; i < MAX_HISTORY_WITHHELD; i++) {
       await withholdHistoryFrom(`g${i}`, 'bob:web-9', 'fp', leafStillIn);
     }
@@ -150,6 +166,7 @@ describe('historyWithheld', () => {
     expect(historyWithheldEntries()).toHaveLength(MAX_HISTORY_WITHHELD);
     expect(historyWithheldFrom('g3', 'bob:web-9')).toBe(false);
     expect(historyWithheldFrom('g5', 'bob:web-9')).toBe(true);
+    // Departed from a conversation still held: kept.
     expect(historyWithheldFrom('g0', 'bob:web-9')).toBe(true);
   });
 

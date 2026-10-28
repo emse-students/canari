@@ -816,14 +816,17 @@ export interface IMlsService {
    * and once at registration for what the state already holds - or removes it with `null`. The
    * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
    */
-  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void;
   /**
    * Hands every device event already merged to the consumer and resolves once it has decided them,
    * after any hand-over still running. A history answer awaits it before reading who is withheld
    * (`historyWithheld.ts`): the drain's own hand-over is not awaited by anything, so an answer
    * scheduled in the same drain as an entry would otherwise read the record before it exists.
+   *
+   * @returns whether the events were decided: `false` when no consumer is registered, the take
+   * failed, or the consumer failed or could not decide them - and an answer then refuses.
    */
-  settleDeviceEvents(why: string): Promise<void>;
+  settleDeviceEvents(why: string): Promise<boolean>;
   /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF

@@ -286,6 +286,7 @@ describe('history is withheld from an unverified device', () => {
     const { mlsService, log, done } = serveTo(REQUESTER);
     vi.mocked(mlsService.settleDeviceEvents).mockImplementation(async () => {
       await withholdHistoryFrom(GROUP, REQUESTER, 'fp-1', stillThere);
+      return true;
     });
     await done;
 
@@ -293,6 +294,29 @@ describe('history is withheld from an unverified device', () => {
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('no history answered to it'));
     vi.restoreAllMocks();
+  });
+
+  it('answers nothing when the device events could not be decided - fail closed', async () => {
+    const { mlsService, log, done } = serveTo(REQUESTER);
+    vi.mocked(mlsService.settleDeviceEvents).mockResolvedValue(false);
+    await done;
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('device events not decided'));
+  });
+
+  it('pushes nothing either from a full bundle when the device events could not be decided', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.settleDeviceEvents).mockResolvedValue(false);
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith([]),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      to: REQUESTER,
+    });
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
   });
 
   it('broadcasts nothing where a device is withheld - every leaf reads a broadcast', async () => {

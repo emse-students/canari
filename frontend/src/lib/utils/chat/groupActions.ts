@@ -1054,8 +1054,8 @@ export async function sendFullHistoryBundle(
 /**
  * Whether `to` is withheld in `groupId`, read only AFTER every device event already merged has been
  * decided (`settleDeviceEvents`): an answer scheduled in the drain that carried an unvouched entry
- * must not read the record before that entry wrote it. A settle that fails is logged and the record
- * read as it stands.
+ * must not read the record before that entry wrote it. Events that could not be decided withhold:
+ * fail closed, the next answer settles again.
  */
 async function historyWithheldAfterSettling(
   groupId: string,
@@ -1063,12 +1063,11 @@ async function historyWithheldAfterSettling(
   mlsService: IMlsService,
   log: (msg: string) => void
 ): Promise<boolean> {
-  try {
-    await mlsService.settleDeviceEvents('history answer');
-  } catch (e) {
+  if (!(await mlsService.settleDeviceEvents('history answer'))) {
     log(
-      `[HISTORY_BUNDLE] device events not settled before answering in ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+      `[HISTORY_BUNDLE] device events not decided before answering in ${groupId.slice(0, 8)}... - nothing answered, withheld until they are`
     );
+    return true;
   }
   return historyWithheldFrom(groupId, to);
 }
