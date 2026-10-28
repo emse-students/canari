@@ -128,6 +128,11 @@ the other.
 
 ## On the Portail-etu host (nothing is installed yet)
 
+**The host is the school IT department's: neither the script nor the cron entry below is installed
+or run there without their written agreement, asked before**
+([durable-rules](../../docs/wiki/durable-rules.md)). The steps are kept so the request can name
+exactly what would be installed.
+
 Read-only census of 2026-10-08: `docker system df` showed 67 images (12.15 GB, **6.5 GB
 reclaimable**), 133 build-cache entries (**6.98 GB, all reclaimable**), 16 volumes (1.43 GB), and `/`
 at **88 % used** (38 G of 45 G, 5.5 G free). Of the 67 images, 24 are Canari releases (`v1.1.0`, `v1.1.1`, `v1.1.2`, eight each, so a
