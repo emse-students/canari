@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -255,7 +256,7 @@
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
         goto(resolve('/posts'));
       } else {
-        goto(resolve(internalPath(returnTo)));
+        void gotoAppPath(returnTo);
       }
     } catch (e: any) {
       error = e.message;

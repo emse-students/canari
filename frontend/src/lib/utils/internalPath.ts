@@ -1,4 +1,15 @@
 import { resolve } from '$app/paths';
+import type { PathnameWithSearchOrHash } from '$app/types';
+
+/**
+ * An app path (base-less, leading `/`) whose SHAPE the compiler has matched against the route
+ * table: `/posts/${string}` is one, `/no-such-page` is not. A producer that builds its destination
+ * from code - a notification's, a deep link's - returns this, so a route renamed or deleted under
+ * it fails `bun run check` instead of a tap at runtime. SvelteKit 3's `goto` REJECTS a URL that
+ * matches no route (`navigation_route_missing`), where 2 navigated natively; a path of unknown
+ * origin, which no type can vouch for, goes through `gotoAppPath` instead.
+ */
+export type AppPath = `/${PathnameWithSearchOrHash}`;
 
 /** The one backslash, spelt by code point: a literal one in a string or template is an escape. */
 const BACKSLASH = String.fromCharCode(92);

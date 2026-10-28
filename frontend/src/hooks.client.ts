@@ -28,6 +28,8 @@ import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 import { shopReturnPath } from '$lib/shop/checkoutReturn';
+import { resolve } from '$app/paths';
+import type { AppPath } from '$lib/utils/internalPath';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -297,7 +299,7 @@ if (isTauriRuntime()) {
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
 
-              const navigate = (target: string) => {
+              const navigate = (target: AppPath) => {
                 import('$app/navigation')
                   .then(({ goto }) => goto(target))
                   .catch(() => {
@@ -354,7 +356,7 @@ if (isTauriRuntime()) {
                 `[hooks] unknown deep-link host, opening notifications: ${describeDeepLink(url)}`
               );
               import('$app/navigation')
-                .then(({ goto }) => goto('/notifications'))
+                .then(({ goto }) => goto(resolve('/notifications')))
                 .catch((err) => console.error('[hooks] Notifications navigation failed', err));
               continue;
             }

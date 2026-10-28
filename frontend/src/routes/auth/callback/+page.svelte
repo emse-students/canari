@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
-  import { resolve } from '$app/paths';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { handleOidcCallback, getOidcReturnTo, OidcSignInError } from '$lib/stores/auth';
@@ -43,7 +42,7 @@
       status = m.auth_callback_success();
       const returnTo = await getOidcReturnTo();
       console.debug('[callback] goto ->', returnTo);
-      await goto(resolve(internalPath(returnTo)), { replace: true });
+      await gotoAppPath(returnTo, { replace: true });
       console.debug('[callback] goto resolved');
     } catch (e: unknown) {
       console.error('[callback] error:', e);

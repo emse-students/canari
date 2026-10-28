@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
@@ -403,7 +403,7 @@
         successMessage = res.alreadyPaid
           ? m.form_view_submission_already_paid()
           : m.form_view_submission_success();
-        setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
+        setTimeout(() => gotoAppPath(redirectTo), 1500);
       }
     } catch (e: any) {
       error = providerRefusalMessage(e) ?? (e.message || m.form_view_error_payment_failed());
@@ -488,7 +488,7 @@
   <div class="mb-6 flex items-center justify-between">
     <button
       class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-sm font-semibold transition-colors"
-      onclick={() => goto(resolve(internalPath(redirectTo)))}
+      onclick={() => gotoAppPath(redirectTo)}
     >
       <ArrowLeft size={15} />
       {m.common_back()}
@@ -530,7 +530,7 @@
       <p class="text-red-err font-semibold">{error}</p>
       <button
         class="text-text-muted text-sm hover:underline"
-        onclick={() => goto(resolve(internalPath(redirectTo)))}>{m.common_back()}</button
+        onclick={() => gotoAppPath(redirectTo)}>{m.common_back()}</button
       >
     </div>
   {:else if form}

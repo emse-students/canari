@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { appPathFromPathname, internalPath, safeInternalPath } from '$lib/utils/internalPath';
-  import { resolve } from '$app/paths';
-  import { goto } from '$app/navigation';
+  import { appPathFromPathname, safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { onMount } from 'svelte';
   import {
     startOidcLogin,
@@ -139,7 +138,7 @@
           // Only redirect when not already on the target page, and never twice in a row to a
           // target that just bounced back here.
           if (target !== current && shouldAutoRedirectTo(target)) {
-            await goto(resolve(internalPath(target)), { replace: true });
+            await gotoAppPath(target, { replace: true });
           }
         } catch {
           // Token expired or invalid: stay on login so the user can re-authenticate.
@@ -174,7 +173,7 @@
       const attempt = await attemptRestore();
       if (attempt.outcome === 'restored') {
         console.debug('[LOGIN] session restored, leaving /login');
-        await goto(resolve(internalPath(getSafeReturnTarget())), { replace: true });
+        await gotoAppPath(getSafeReturnTarget(), { replace: true });
         return;
       }
       if (attempt.outcome === 'refused' && attempt.shown) loginError = attempt.shown;
