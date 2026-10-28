@@ -2167,8 +2167,13 @@ publishing a reel from a gallery video works, its sheet draws the grid, "Copier 
 "Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
 read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
 was deleted from that page's menu - the viewer itself has no author menu.
-**Still owed on the Mi 9T:** the undrained half of kill-and-relaunch (S6 from a reel and #2609's
-dismissal read `PASS` once the defect below was fixed).
+**The undrained half of kill-and-relaunch `PASS`** (Mi 9T, rig build `3ea795fd5`, 2026-10-28): a
+text share into a killed app is written natively at once (`ready` 10 ms after `share received`) and
+drained only at the page's mount, about 2 s later. A `force-stop` 0.8 s after the share left
+`pending_share.json` on disk with no drain line; a plain launcher relaunch drained it on mount (before
+the PIN), and after unlock "Envoyer a..." was offered; choosing the bench DM staged the shared text in
+the composer, unsent. (S6 from a reel and #2609's dismissal read `PASS` once the defect below was
+fixed.)
 **Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
 system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
 `<name> (1).mp3`, no longer `<name>.mp3 (1)`.
@@ -2199,6 +2204,15 @@ waiting in its composer, NOT sent (#2609's dismissal; `[sharePost] sending the l
 `[SHARE] landing on <conversation>`). "Partager via..." opens the system chooser on the link, and
 "Copier le lien" logs `copying the public link of <id>`. No error in the window. The draft was cleared
 and the reel deleted.
+
+## P3 - A late native-library pick after "Rouvrir la camera" still reaches the review (#2655 review, 2026-10-28)
+
+On the native library path (`ReelCapture.openGallery`, the iOS app), tapping "Rouvrir la camera"
+while `pickNatively` is still pending runs `endPicking` early; the promise's later `.finally` is then
+a no-op, but a file it hands over still goes through `takePickedVideo` and replaces the live camera
+with a review. Arguably right (the member did pick it), and untested either way: owed a test that
+settles the native promise after the reopen, and a decision on whether a pick that arrives after the
+member chose the camera is kept or dropped.
 
 ## P3 - New-device alerts queue one at a time, never forget a device that has left, and push the full-screen camera down (Mi 9T, 2026-10-28)
 
