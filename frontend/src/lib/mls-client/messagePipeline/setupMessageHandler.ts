@@ -215,6 +215,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       addMessageToChat: deps.addMessageToChat,
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,
+      onChannelRemovalReleased: deps.onChannelRemovalReleased,
       onChannelUpdated: deps.onChannelUpdated,
       onRolePermissionsChanged: deps.onRolePermissionsChanged,
       onChannelDeleted: deps.onChannelDeleted,

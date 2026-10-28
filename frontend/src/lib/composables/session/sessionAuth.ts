@@ -1968,6 +1968,7 @@ export async function loginImpl(
       loadHistoryForConversation: cb.onLoadHistoryForConversation,
       onChannelMemberJoined: cb.onChannelMemberJoined,
       onChannelMemberKicked: cb.onChannelMemberKicked,
+      onChannelRemovalReleased: cb.onChannelRemovalReleased,
       onChannelUpdated: cb.onChannelUpdated,
       onRolePermissionsChanged: cb.onRolePermissionsChanged,
       onChannelDeleted: cb.onChannelDeleted,

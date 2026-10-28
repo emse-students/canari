@@ -18,7 +18,10 @@ import {
   SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
 } from '$lib/mls-client/CommitRefusedError';
 import { commitRateLimitRemainingMs, resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
-import { CommitOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
+import {
+  AcceptedCommitNotMergedError,
+  CommitOutcomeUnknownError,
+} from '$lib/mls-client/commitSubmission';
 import {
   dischargeRefusedBacklog,
   noteUnackedFrame,
@@ -576,5 +579,23 @@ describe('BaseMlsService - a commit refused concurrent_commit', () => {
       1
     );
     vi.restoreAllMocks();
+  });
+});
+
+describe('BaseMlsService - a commit ACCEPTED and then not merged here', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('throws its own type, never one a caller reads as a refusal: the commit landed', async () => {
+    // A caller that read a raw merge failure as "refused" released a Remove every member
+    // already had, and the receivers elected a second commit of it.
+    const ctx = makeCtx({ mergePendingCommit: vi.fn().mockRejectedValue(new Error('wasm merge')) });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 196 });
+
+    const thrown = await runCommit(ctx, 'g-merge').catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(AcceptedCommitNotMergedError);
+    expect(thrown).not.toBeInstanceOf(CommitRefusedError);
+    expect(String(thrown)).toContain('wasm merge');
+    expect((thrown as AcceptedCommitNotMergedError).baseEpoch).toBe(195);
   });
 });

@@ -28,7 +28,10 @@ vi.mock('$lib/services/ChannelService', () => ({ channelService: service }));
 const admitSalonGrantee = vi.hoisted(() => vi.fn().mockResolvedValue({ kind: 'not-held' }));
 vi.mock('$lib/utils/graine/admitNewcomer', () => ({ admitSalonGrantee }));
 const commitSalonRevoke = vi.hoisted(() => vi.fn().mockResolvedValue({ kind: 'not-held' }));
-vi.mock('$lib/utils/graine/commitRemoval', () => ({ commitSalonRevoke }));
+vi.mock('$lib/utils/graine/commitRemoval', () => ({
+  commitSalonRevoke,
+  committingDeviceId: () => 'web-actor',
+}));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
 const showConfirmMock = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: showConfirmMock }));
@@ -199,7 +202,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     remove!.click();
     await settle();
 
-    expect(service.removeMemberFromChannel).toHaveBeenCalledWith('salon-a', 'owner');
+    expect(service.removeMemberFromChannel).toHaveBeenCalledWith('salon-a', 'owner', 'web-actor');
     expect(document.querySelector('[role=alert]')?.textContent).toBe(
       m.chat_community_removal_exceeds_actor_error()
     );
@@ -227,7 +230,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     ).click();
     await settle();
 
-    expect(service.removeMemberFromChannel).toHaveBeenCalledWith('salon-a', 'owner');
+    expect(service.removeMemberFromChannel).toHaveBeenCalledWith('salon-a', 'owner', 'web-actor');
     expect(commitSalonRevoke).toHaveBeenCalledWith(
       service,
       'salon-a',
