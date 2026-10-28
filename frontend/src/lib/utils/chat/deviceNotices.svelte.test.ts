@@ -24,6 +24,7 @@ import {
   historySealedGroups,
   historyWithheldEntries,
   historyWithheldFrom,
+  noteDeviceAddedByAMember,
   sealHistoryIn,
 } from './historyWithheld';
 
@@ -812,6 +813,37 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     // And this tab answers by it from now on.
     expect(historyWithheldFrom('group-elsewhere', 'carol:p')).toBe(true);
     error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('keeps a record another tab added when this tab writes, and never revives one it lifted', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const key = ACCOUNT_KEY.deviceNotices('alice');
+    const write = (historyWithheld: unknown[]) => {
+      const stored = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
+      localStorage.setItem(key, JSON.stringify({ ...stored, historyWithheld }));
+    };
+    const lifted = { groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' };
+    write([lifted]);
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    // This tab lifts it: a member's Add vouches for the device.
+    noteDeviceAddedByAMember('group-1', 'bob:tab', 'carol:p');
+    expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(false);
+
+    // The processing tab, which loaded before the lift, writes its own copy back - with the lifted
+    // record, and one it added since this tab loaded.
+    const added = { groupId: 'group-1', identity: 'bob:web-2', fingerprint: 'bb' };
+    write([lifted, added]);
+    // This tab writes for an unrelated reason (a notice dismissed).
+    sealHistoryIn('group-no-bob', 'device events were dropped');
+
+    const written = JSON.parse(localStorage.getItem(key) ?? '{}') as {
+      historyWithheld?: { identity: string }[];
+    };
+    expect(written.historyWithheld?.map((e) => e.identity)).toEqual(['bob:web-2']);
+    expect(historyWithheldFrom('group-1', 'bob:web-2')).toBe(true);
+    expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(false);
     warn.mockRestore();
   });
 
