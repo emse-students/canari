@@ -156,7 +156,7 @@ the fixtures assume:
 
 Bench build of `main` at `4af29a0a0` (`ios.yml` run 36865179190, `local_url` = the workstation's LAN address, port 8081),
 signed and installed by `sign-install.mjs`, iOS 27.0.1. `PYMOBILEDEVICE3` must name the exe when it
-is not on `PATH` (on OXYGEN it is in the user's Python `Scripts` directory).
+is not on `PATH` (on the workstation it is in the user's Python `Scripts` directory).
 
 **Confirmed on the device:**
 

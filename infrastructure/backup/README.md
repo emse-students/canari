@@ -328,10 +328,10 @@ un mecanisme de securite non attaque n est qu une intention :
 
 | Tentative | Resultat |
 | --- | --- |
-| `ssh authentik-target whoami` | octets gzip d un dump - la commande demandee est ignoree |
+| `ssh <alias> whoami` | octets gzip d un dump - la commande demandee est ignoree |
 | Session interactive (`ssh -T`) | idem, le dump |
 | Redirection de port `-L` vers `127.0.0.1:9000`, sollicitee pendant la session | rien ne passe, 25 tentatives |
-| **Temoin** : meme client, meme mecanisme, cle SANS commande forcee | `SSH-2.0-OpenSSH_9.2p` traverse |
+| **Temoin** : meme client, meme mecanisme, cle SANS commande forcee | la banniere `SSH-2.0-OpenSSH_<version>` traverse |
 
 Le temoin est ce qui rend le "rien ne passe" lisible : sans lui, il aurait aussi
 bien pu decrire un tunnel jamais ouvert - la forme exacte d une mesure de

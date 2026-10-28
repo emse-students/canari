@@ -328,7 +328,7 @@ because the manifest is per-viewer by design (the segment names are the capabili
   lets load shape itself without a deploy.
 - **Connections, the ceiling that remains.** A seated viewer holds up to four connections, three once
   its segments come from the edge (app, WebSocket and its upstream leg). The shared host's proxy has
-  about 1 500 across ALL its sites and raising it is the school IT department's decision. **So even
+  one connection budget for ALL its sites and raising it is the school IT department's decision. **So even
   with the edge, "no cap" is an audience of several hundred, not unbounded**, until the manifest too
   stops reaching the host. That figure goes to the user as it is.
 
@@ -374,7 +374,7 @@ production.
    against its ~19 Mb/s, with dev's traffic running.
 5. **Manifest QPS and its cost**: requests a second at N, social-service CPU, Postgres pool wait and
    Redis scripts a second, before and after the gate/tail split.
-6. **Host connections held** at N viewers (`ss` on the host: the 1 500 budget, read, never raised by us).
+6. **Host connections held** at N viewers (`ss` on the host: the host-wide budget, read, never raised by us).
 7. **Latency to the live edge** with the edge in the path: does the cache add to the 5-10 s?
 8. **The admission spike**: the real size of a follower fan-out at the moment of a push.
 9. **A 1033 during a live**: what a viewer sees, and for how long the cache covers it.

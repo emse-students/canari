@@ -1758,7 +1758,7 @@ export async function loginImpl(
     // **THIS LINE USED TO BE GUARDED BY `!isTauriRuntime()`, AND THE GUARD WAS THE DEFECT.** Native
     // was not without a census: it printed one from INSIDE `load_or_create`, on the awaited path of
     // `initialiser_mls`, in front of the first screen - the one place this call site's own comment
-    // said it must not be. Measured on OXYGEN 2026-09-17, 5 groups, a 1000-package pool: a cold load
+    // said it must not be. Measured on the workstation 2026-09-17, 5 groups, a 1000-package pool: a cold load
     // costs 24.5 ms with that diagnostic and 12.9 ms without, so HALF of it was this. The native
     // census is now `recenser_key_packages`, called from here like the web one.
     //

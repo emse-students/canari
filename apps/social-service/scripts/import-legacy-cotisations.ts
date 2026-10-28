@@ -22,7 +22,7 @@
  * and must not be committed - a path outside the repository, then:
  *
  *   bun scripts/import-legacy-cotisations.ts --source cercle --file ... --emit-sql /tmp/cercle.sql
- *   ssh canari 'docker exec -i infrastructure-postgres-1 psql -U canari -d auth_db -v ON_ERROR_STOP=1' \
+ *   ssh <prod-host> 'docker exec -i infrastructure-postgres-1 psql -U canari -d auth_db -v ON_ERROR_STOP=1' \
  *     < /tmp/cercle.sql
  */
 import { readFileSync, writeFileSync } from 'fs';

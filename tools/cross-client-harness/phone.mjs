@@ -475,8 +475,8 @@ export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
 /**
  * TAPS THE NOTIFICATION CARRYING `needle`, RESOLVED BY ELEMENT.
  *
- * REPLACES `archive/a1.py`, WHICH WAS NEVER IN GIT. That script was machine-local to the LITHIUM
- * rig and was not carried into OXYGEN, so `notif7.mjs` had been shelling out to a file that does not
+ * REPLACES `archive/a1.py`, WHICH WAS NEVER IN GIT. That script was machine-local to the previous
+ * machine's rig and was not carried over, so `notif7.mjs` had been shelling out to a file that does not
  * exist - which made NOTIF-7, -7b, -7c and -7d unrunnable since the reconstitution. Worse, the
  * failure it produced read `no shade row contains <marker>`, which accuses the PRODUCT for a missing
  * interpreter script. A campaign row must never be able to fail that way, so this lives in the

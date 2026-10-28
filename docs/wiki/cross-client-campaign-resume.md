@@ -103,7 +103,7 @@ classifies as an ABSENT run rather than a failing one.
 ## 4. Bringing the rig up, from nothing
 
 **The rig root moved to `../../canari-harness` on 2026-09-03** - one level further out than before,
-so that nothing of the LITHIUM rig can be inherited by accident. Everything machine-local lives
+so that nothing of the previous machine's rig can be inherited by accident. Everything machine-local lives
 there, and that split is structural rather than a policy: a credential outside the work tree cannot
 be committed to a public repository at all.
 

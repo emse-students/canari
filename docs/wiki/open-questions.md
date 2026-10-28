@@ -205,7 +205,7 @@ A crash between the two steps costs one of these, never a group:
   until the 84-day prune; the server never hands the bundle out again.
 - **A mint lost before publication:** nothing.
 
-**Measured 2026-10-14** (`heavy_state_checkpoint.rs` `key_package_share_of_a_checkpoint`, OXYGEN,
+**Measured 2026-10-14** (`heavy_state_checkpoint.rs` `key_package_share_of_a_checkpoint`, workstation,
 release): 80 groups are 7.70 MB and 11.1-11.6 ms; adding 2535 bundles makes 12.53 MB and
 15.6-16.1 ms. **The pile is 39 % of the bytes and ~28 % of the encode-and-seal time.** That is the
 ceiling of a split, and it is CPU on a desktop. What a phone checkpoint spends on writing to disk and

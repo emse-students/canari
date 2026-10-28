@@ -260,10 +260,10 @@ fi
 # whose result would have to escape a subshell.
 reserved_host_ports() {
   cat <<'PORTS'
-22 the DSI sshd
-80 the host nginx, which fronts all eight vhosts
-443 the host nginx, which fronts all eight vhosts
-8080 CrowdSec's Local API
+22 the host's ssh service
+80 the host nginx, which fronts every vhost on the host
+443 the host nginx, which fronts every vhost on the host
+8080 a host security service
 PORTS
 }
 

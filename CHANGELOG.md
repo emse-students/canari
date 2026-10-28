@@ -5390,11 +5390,10 @@ publication, inoffensive sur un reseau prive et exposee aux co-locataires sur l'
 
 ### Changed - la question des certificats ne bloque plus, et la demande DSI est ecrite
 
-Les deux certificats que l'ecole sert deja portent UN SEUL nom chacun, emis par GEANT TCS pour ~6,5
-mois : un certificat par nom, aucun ACME, donc rien ici ne peut renouveler. `canari.emse.fr` est
-vivant, sert le Portail Etudiant ICM depuis une AUTRE machine que portail-etu.emse.fr, et son
-certificat a ete reemis le 22/09 - la reaffectation demandee prend un nom a un site qui tourne. La
-demande DSI est desormais ecrite mot pour mot, la question du certificat en moins.
+Les certificats que l'ecole sert deja portent UN SEUL nom chacun et ne sont pas renouveles par ACME,
+donc rien ici ne peut les renouveler. `canari.emse.fr` etait deja attribue a un autre site - la
+reaffectation demandee prend un nom a un site qui tourne. La demande DSI est desormais ecrite mot
+pour mot, la question du certificat en moins.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - la reconciliation ne sonde plus un groupe ou l'appareil n'a pas de feuille
@@ -6805,7 +6804,7 @@ generale de l'association plutot que l'evenement precis.
 La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
 decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
 compte, pas le temps.
-[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-workstation-2026-09-18).
 
 ### Added - l'estimation de versement suit desormais le bareme du prestataire actif, Stripe ou Lydia
 
@@ -7014,7 +7013,7 @@ deux presentations dessiner.
 
 ### Changed - le recensement des key packages quittait le premier ecran natif, ou il coutait la moitie d'un chargement a froid
 
-Le banc ajoute la veille dit ceci, sur OXYGEN, 5 groupes, release, 20 echantillons : un chargement a
+Le banc ajoute la veille dit ceci, sur le poste de travail, 5 groupes, release, 20 echantillons : un chargement a
 froid coute **24,5 ms avec un logger installe et 12,9 ms sans**, a un pool de 1000 key packages.
 L'ecart n'est pas du bruit, c'est l'argument d'une ligne de log. `log::info!` se compile en
 `if niveau_actif { ... }` : sans logger, ses arguments ne sont jamais evalues, et l'un d'eux est
@@ -7036,7 +7035,7 @@ RETOURNE la ligne au lieu de la journaliser, pour que l'endroit qui decide ou va
 l'appelant, comme du cote wasm. La ligne de COMPOSITION reste dans le chargement : 0,209 ms au meme
 pool, mesuree dans la meme serie.
 
-**Ce que cela ne regle pas** : les 1644 ms de `mls-load-state` relevees sur un Mi 9T. OXYGEN n'est
+**Ce que cela ne regle pas** : les 1644 ms de `mls-load-state` relevees sur un Mi 9T. Le poste de travail n'est
 pas un Mi 9T et son pool est une fixture ; ce qui est etabli c'est la forme, et la moitie environ de
 ce chargement etait du travail qu'il n'avait pas besoin de faire. **Il en reste une moitie** :
 `prune_expired_key_packages`, 11,49 ms au meme pool, tourne toujours sur le chemin attendu. Elle
@@ -7046,7 +7045,7 @@ declencheur, et ce depot interdit qu'un declencheur soit une horloge.
 ### Changed - la purge des key packages ne fait plus prouver mille lignes pour en supprimer zero, et la mesure a refute l'hypothese qui l'argumentait
 
 `prune_expired_key_packages` tourne sur le chemin attendu de chaque demarrage a froid et coutait
-**11,39 ms a un pool de 1000** (criterion, OXYGEN, 5 groupes, release). Elle partageait une passe
+**11,39 ms a un pool de 1000** (criterion, poste de travail, 5 groupes, release). Elle partageait une passe
 avec le recensement, qui PROUVE chaque ligne - un `hash_ref` recalcule sur le key package plus une
 serialisation, par bundle - alors que le test d'expiration n'a besoin que de la duree de vie decodee.
 Sur un appareil qui n'a rien a recuperer, c'est-a-dire le cas ordinaire, mille preuves etaient prises
@@ -7118,7 +7117,7 @@ son `hash_ref` et fait une recherche de sous-chaine sur sa cle. Un appareil inst
 aveugle. Les bancs installent maintenant un logger qui jette tout, et font tourner chaque chargement
 DEUX fois - l'ecart est un nombre dans la sortie, plus une affirmation dans un commentaire.
 
-Criterion, 20 echantillons, OXYGEN, 5 groupes, release :
+Criterion, 20 echantillons, poste de travail, 5 groupes, release :
 
 | pool de key packages | chargement, logger a INFO | chargement, logger OFF | ce que coutent les deux lignes |
 | --- | --- | --- | --- |
@@ -7132,7 +7131,7 @@ froid a ce pool, c'est donc environ 1 ms de decodage, 11,5 ms de purge et 11,6 m
 personne n'a lu. Les trois sont en O(pool) et aucun n'est necessaire avant le premier ecran.
 
 **Ce que cela ne regle pas, et c'est dit ici pour que personne ne le cite autrement** : cela
-n'explique pas les 1644 ms. OXYGEN n'est pas un Mi 9T et son pool est une fixture. Ce qui est etabli,
+n'explique pas les 1644 ms. Le poste de travail n'est pas un Mi 9T et son pool est une fixture. Ce qui est etabli,
 c'est la FORME - le cout est lineaire en un pool que rien ne recupere, et la moitie environ est du
 travail que le chargement n'a pas besoin de faire - et un premier nombre reproductible que n'importe
 qui peut refaire tourner.

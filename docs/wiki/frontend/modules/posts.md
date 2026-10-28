@@ -1857,7 +1857,7 @@ key would fail to open on every later read.
 was measured on the desktop: a bench page (scratch, not committed) replaying exactly the read
 `loadStoredFeed` makes - a fresh IndexedDB connection, one `get`, AES-256-GCM decryption, `JSON.parse`
 and the rights strip - on a synthetic page shaped like a real one (a 600-character body, five
-comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on OXYGEN, 7 reads,
+comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on the workstation, 7 reads,
 median (max):
 
 | page | sealed size | CPU 1x | CPU 6x |

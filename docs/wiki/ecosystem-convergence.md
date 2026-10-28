@@ -710,7 +710,7 @@ the container on `migrate-drop-profile-columns.js` - renamed to `migrate-drop-de
 stages are now `oven/bun:1.4.0-alpine`.
 
 `deploy.yml` lost its pm2 cutover step, and not on faith: the host no longer has the binary at all
-(`/home/mitv/.bun/bin/pm2` absent), so both lines could only ever be no-ops behind their `|| true`.
+(`<home>/.bun/bin/pm2` absent), so both lines could only ever be no-ops behind their `|| true`.
 
 **Verified locally, then IN PRODUCTION.** Locally: `docker build` green, container started, four
 migrations ran, `GET /api/health` 200. In production after the deploy went green on `1e9d62d`:
