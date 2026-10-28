@@ -30,8 +30,8 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn(), afterNavigate: vi.fn() }));
 vi.mock('$app/state', () => ({
   page: { url: new URL('http://localhost/associations/bde'), params: { slug: 'bde' } },
 }));
-vi.mock('$app/environment', () => ({ browser: true, dev: false, building: false }));
-vi.mock('$app/paths', () => ({ base: '', resolve: (p: string) => p }));
+vi.mock('$app/env', () => ({ browser: true, dev: false, building: false }));
+vi.mock('$app/paths', () => ({ resolve: (p: string) => (p.startsWith('/') ? p : `/${p}`) }));
 
 import AssociationDetailView from './AssociationDetailView.svelte';
 import { m } from '$lib/paraglide/messages';

@@ -1,20 +1,12 @@
 {
-  "extends": "./.svelte-kit/tsconfig.json",
+  "extends": "$app/tsconfig",
   "compilerOptions": {
     "allowArbitraryExtensions": true,
-    "allowJs": true,
-    "checkJs": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
     "sourceMap": true,
-    "strict": true,
-    "moduleResolution": "bundler"
-  }
-  // Do not set `compilerOptions.paths` here - it overrides SvelteKit's generated `$lib` / `$app/*`.
-  // Extra aliases belong in `kit.alias` (svelte.config.js) only when truly needed.
-  //
-  // If you want to overwrite includes/excludes, make sure to copy over the relevant includes/excludes
-  // from the referenced tsconfig.json - TypeScript does not merge them in
+    "strict": true
+  },
+  // `$app/tsconfig` carries no `include`/`exclude`. The two generated JS bundles are imported (so
+  // typed through their `.d.ts`) but never checked as source.
+  "include": ["src", "*.js", "*.ts"],
+  "exclude": ["src/lib/proto/canari.js", "src/lib/wasm/**/*.js"]
 }

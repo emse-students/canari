@@ -1070,12 +1070,12 @@ So the same bundle answered differently depending on WHEN it was asked. A1's bun
 `builtAt` under two commits is impossible, and only a query against a MOVING ref produces it.
 
 `resolveStamp` once REQUIRED the ref for that reason. **It is gone since 2026-10-05**: the build names
-its own commit (`kit.version.name` is `<builtAtMs>-<sha>`, written by `frontend/svelte.config.js`,
+its own commit (`kit.version.name` is `<builtAtMs>-<sha>`, written by `frontend/kit.config.js`,
 which throws without git), and `parseBuildStamp` in `tools/cross-client-harness/buildstamp.mjs` reads
 it back. No ref, no clock, no inference - the question "which history" cannot be asked wrongly
 because it is not asked. A bundle built before this stamp (a bare number) is refused, not guessed.
 
-**The stamp is computed ONCE per process** (a `Symbol.for` slot on `globalThis`, in `svelte.config.js`): a
+**The stamp is computed ONCE per process** (a `Symbol.for` slot on `globalThis`, in `kit.config.js`): a
 build loads that config more than once, and #1476 stamped at every load, so one output carried two build
 ids and `check-bundle-consistency.mjs` refused it (release `v1.0.4-alpha.1`, 2026-10-06). Deliberately not
 an env var: it would outlive the build and pin a stale stamp. `src/svelteConfigStamp.test.ts` loads the

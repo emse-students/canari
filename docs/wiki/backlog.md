@@ -3161,6 +3161,10 @@ with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's D
 webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
 step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
 
+### P3 - the $lib alias migration waits for a quiet frontend (2026-10-27)
+
+SvelteKit 3 deprecates `alias: { $lib: 'src/lib' }`; the deprecation warning prints on EVERY build and sync. The fix is `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`: 1567 files, 7645 imports gaining a `.js` extension. Tried and reverted on 2026-10-27 because it conflicts with every open frontend pull request. **Do it as ONE mechanical commit while the frontend is frozen; trigger: the open frontend pull requests are few.** It removes the alias in `kit.config.js` and, on Windows, the false `tsconfig_invalid` warning ([architecture](frontend/architecture.md#sveltekit-3-and-adapter-node-6-2026-10-27)).
+
 ### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
 The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/host-updates.md)). **The shared

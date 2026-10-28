@@ -16,7 +16,7 @@
   onMount(() => {
     if (!currentUserId()) {
       const back = encodeURIComponent(page.url.pathname);
-      void goto(resolve(`/login?returnTo=${back}`), { replaceState: true });
+      void goto(resolve(`login?returnTo=${back}`), { replace: true });
     }
   });
 </script>

@@ -1,4 +1,4 @@
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
 
 /** The one backslash, spelt by code point: a literal one in a string or template is an escape. */
 const BACKSLASH = String.fromCharCode(92);
@@ -16,14 +16,16 @@ const BACKSLASH = String.fromCharCode(92);
  * the base. A producer that reads `location.pathname` / `url.pathname` (which include the base) must
  * go through `appPathFromPathname` first, or `resolve` would prefix the base a second time.
  *
- * WHY THE TYPE IS `'/'`: `resolve`'s parameter type is a distributed union over every route, which
- * no single union-typed value satisfies, so the assertion names one member - the root, which has
- * no parameters, so `resolve` treats the value as a plain pathname. It asserts and does not check:
- * `resolve` throws on a path that does not start with `/`, so a value of unknown origin goes through
- * `safeInternalPath` first.
+ * WHY THE TYPE IS `''` AND THE LEADING SLASH IS DROPPED (SvelteKit 3): `resolve` reads a string that starts
+ * with `/` as a ROUTE ID - it strips `(groups)` and demands parameters for every `[segment]` - and
+ * anything else as a plain PATHNAME. A computed path is a pathname, so it must go in the second
+ * form, or a value carrying a `[` would throw. `resolve`'s parameter type is a union over every
+ * route, which no single union-typed value satisfies, so the assertion names one member - the root
+ * `''`, which has no parameters. It asserts and does not check: a value of unknown origin goes
+ * through `safeInternalPath` first.
  */
-export function internalPath(path: string): '/' {
-  return path as '/';
+export function internalPath(path: string): '' {
+  return (path.startsWith('/') ? path.slice(1) : path) as '';
 }
 
 /**
@@ -45,6 +47,8 @@ export function safeInternalPath(raw: string | null | undefined, fallback: strin
  * and `resolve` expects. At `base === ''` it is the identity.
  */
 export function appPathFromPathname(pathname: string): string {
+  // `$app/paths` no longer exports `base`; `resolve('')` is the base and a closing slash.
+  const base = resolve('').replace(/\/$/, '');
   if (base && (pathname === base || pathname.startsWith(`${base}/`))) {
     return pathname.slice(base.length) || '/';
   }

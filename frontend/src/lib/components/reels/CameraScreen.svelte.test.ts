@@ -74,7 +74,7 @@ describe('CameraScreen close', () => {
     (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
 
     expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/dashboard'), {
-      replaceState: true,
+      replace: true,
     });
   });
 
@@ -86,7 +86,7 @@ describe('CameraScreen close', () => {
     (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
 
     expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/posts'), {
-      replaceState: true,
+      replace: true,
     });
   });
 });

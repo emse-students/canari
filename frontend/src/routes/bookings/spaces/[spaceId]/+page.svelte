@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
   import { onMount, untrack } from 'svelte';
   import { page } from '$app/state';
   import { resolve } from '$app/paths';
@@ -304,7 +305,7 @@
           </button>
           {#if space.canManage}
             <a
-              href={resolve(spaceEditorHref(space.id))}
+              href={resolve(internalPath(spaceEditorHref(space.id)))}
               class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
               aria-label={m.bookings_space_manage()}
               title={m.bookings_space_manage()}

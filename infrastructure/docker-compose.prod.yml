@@ -547,10 +547,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node's ONE public origin, which is `FRONTEND_URL` and never the CORS allowlist.
-      # This read `${ALLOW_ORIGIN}` until 2026-08-30 and was measured holding all five entries of
-      # it, comma-separated, as a single origin.
-      ORIGIN: ${FRONTEND_URL:-https://canari.emse.fr}
+      # adapter-node 6 has no `ORIGIN`: the origin is derived per request (scheme https by default,
+      # host from `Host`, which nginx @ssr forwards). No PROTOCOL_HEADER: it would trust a value a
+      # client can send. Nothing guards a form action today; see architecture.md.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012

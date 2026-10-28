@@ -186,7 +186,7 @@
         composer.onpublished(identity);
         return;
       }
-      await goto(resolve('/posts'), { replaceState: true });
+      await goto(resolve('/posts'), { replace: true });
     } catch (err) {
       const cause = err instanceof ReelPublishError ? err.cause : err;
       if (isVideoPrepareError(cause) && cause.fault === 'aborted') {

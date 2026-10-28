@@ -37,7 +37,7 @@ export function checkoutReturnView(status: ProductCheckoutStatus): CheckoutRetur
  * (`withCheckoutReturnKey`), all required, since the confirm route is addressed by all three.
  */
 export function checkoutReturnTarget(
-  params: URLSearchParams
+  params: Pick<URLSearchParams, 'get'>
 ): { associationId: string; productId: string; checkoutId: string } | null {
   const checkoutId = params.get('checkout_id');
   const associationId = params.get('association_id');

@@ -43,7 +43,7 @@
       status = m.auth_callback_success();
       const returnTo = await getOidcReturnTo();
       console.debug('[callback] goto ->', returnTo);
-      await goto(resolve(internalPath(returnTo)), { replaceState: true });
+      await goto(resolve(internalPath(returnTo)), { replace: true });
       console.debug('[callback] goto resolved');
     } catch (e: unknown) {
       console.error('[callback] error:', e);
@@ -65,7 +65,7 @@
         <h2 class="text-text-main text-lg font-bold">{m.auth_callback_error_title()}</h2>
         <p class="text-red-err text-sm">{error}</p>
         <button
-          onclick={() => goto('/login', { replaceState: true })}
+          onclick={() => goto('/login', { replace: true })}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
         >
           {m.auth_callback_retry()}

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
+import kitConfig from './kit.config.js';
 import tailwindcss from '@tailwindcss/vite';
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
@@ -150,7 +151,7 @@ export default defineConfig(async () => ({
       outdir: './src/lib/paraglide',
       strategy: ['localStorage', 'preferredLanguage', 'baseLocale'],
     }),
-    sveltekit(),
+    sveltekit(kitConfig),
     oneWasmAsset(),
     protobufPatch(),
   ],

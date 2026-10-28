@@ -133,7 +133,7 @@
       .catch(() => false)
       .then((allowed) => {
         if (allowed) ready = true;
-        else void goto(resolve('/dashboard'), { replaceState: true });
+        else void goto(resolve('/dashboard'), { replace: true });
       });
     void load();
   });

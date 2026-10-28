@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import {
     listAssociationCalendarEvents,
     createAssociationCalendarEvent,

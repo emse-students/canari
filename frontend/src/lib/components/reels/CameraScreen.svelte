@@ -187,7 +187,10 @@
 
   /** The tab this camera was opened from (see {@link cameraOriginFrom}). */
   let origin = CAMERA_DEFAULT_ORIGIN;
-  afterNavigate(({ from }) => {
+  afterNavigate(({ from, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     origin = cameraOriginFrom(from?.url);
   });
 
@@ -204,7 +207,7 @@
       return;
     }
     console.debug(`[camera] close, back to ${origin}`);
-    void goto(resolve(origin as '/'), { replaceState: true });
+    void goto(resolve(origin as '/'), { replace: true });
   }
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.

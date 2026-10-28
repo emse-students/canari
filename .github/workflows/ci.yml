@@ -300,10 +300,10 @@ jobs:
 
           # The PRODUCTION BUILD runs on a pull request only when what it consumes changed: the
           # dependency set (`package.json`, `bun.lock`, `patches/`), the build configuration
-          # (`svelte.config`, `vite.config`, so the adapters too) and the image that serves the
+          # (`kit.config`, `vite.config`, so the adapters too) and the image that serves the
           # output. An `adapter-node` bump broke the main-only build AFTER its pull request had
           # passed every gate here, because nothing ran the build before the merge.
-          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/svelte.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
+          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/kit.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
             echo "frontend_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend_build=false" >> "$GITHUB_OUTPUT"

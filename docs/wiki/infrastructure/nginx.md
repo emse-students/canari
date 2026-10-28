@@ -194,7 +194,7 @@ Two details that are the whole point:
   deep it worked**, `./` being the root there, which is why `/chat` and `/posts` hid it for the whole
   life of the feature. Measured both directions on the local estate with `frontend-ssr` stopped:
   `/_app/immutable/chunks/<hash>.js` answers `200 application/javascript`, `/auth/_app/...` answers
-  `200 text/html`. `svelte.config.js` now sets `paths: { relative: !buildsForWeb }` - the polarity
+  `200 text/html`. `kit.config.js` now sets `paths: { relative: !buildsForWeb }` - the polarity
   follows the adapter, like everything else in that file. **A degraded path is verified on a route
   with more than one segment, or it is not verified.**
 

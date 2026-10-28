@@ -126,7 +126,10 @@
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
-  beforeNavigate(({ from, to }) => {
+  beforeNavigate(({ from, to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';
@@ -177,7 +180,7 @@
       endSession: async (userId) => {
         await clearAuthLocally();
         await globalSession.releaseDeletedAccount(userId);
-        await goto(resolve('/login'), { replaceState: true });
+        await goto(resolve('/login'), { replace: true });
       },
     });
 
@@ -513,6 +516,7 @@
    * loses is the slide - `afterNavigate` still plays the entrance the app had before.
    */
   onNavigate((navigation) => {
+    if (navigation.shallow && navigation.type === 'goto') return;
     const slide = swipeNavSlide;
     swipeNavSlide = null;
     if (!slide) return;
@@ -602,7 +606,10 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(() => {
+  afterNavigate(({ shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;
