@@ -1,5 +1,6 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
+  import { internalPath } from '$lib/utils/internalPath';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Log } from '$lib/utils/Log';
@@ -224,7 +225,7 @@
     if (loading || !asso || !activeSection) return;
     if (!mayOpenPublicSection(activeSection, content)) {
       Log.d('AssociationDetailView: section refused, back to the hub', activeSection);
-      void goto(resolve(publicSectionHref(base, slug)), { replaceState: true });
+      void goto(resolve(internalPath(publicSectionHref(base, slug))), { replace: true });
     }
   });
 
@@ -241,14 +242,14 @@
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.
       if (loaded.type === 'list' && kind !== 'list') {
-        await goto(resolve(publicSectionHref('/lists', slug, activeSection)), {
-          replaceState: true,
+        await goto(resolve(internalPath(publicSectionHref('/lists', slug, activeSection))), {
+          replace: true,
         });
         return;
       }
       if (loaded.type !== 'list' && kind === 'list') {
-        await goto(resolve(publicSectionHref('/associations', slug, activeSection)), {
-          replaceState: true,
+        await goto(resolve(internalPath(publicSectionHref('/associations', slug, activeSection))), {
+          replace: true,
         });
         return;
       }
