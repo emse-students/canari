@@ -19,6 +19,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
@@ -71,6 +72,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: getRepositoryToken(GroupInvite), useValue: groupInviteRepo },
           { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
           { provide: getRepositoryToken(RevokedDevice), useValue: revokedRepo },
+          { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
           { provide: getRepositoryToken(QueuedMessage), useValue: {} },
           { provide: 'REDIS_CLIENT', useValue: {} },
           { provide: MessagingService, useValue: {} },
@@ -146,6 +148,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
           { provide: getRepositoryToken(QueuedMessage), useValue: {} },
           { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+          { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
           { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
           { provide: 'REDIS_CLIENT', useValue: {} },
           { provide: DataSource, useValue: { manager: { query: jest.fn() } } },
@@ -205,6 +208,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
         providers: [
           { provide: getRepositoryToken(PinVerifier), useValue: pinRepo },
           { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+          { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
           { provide: getRepositoryToken(KeyPackage), useValue: {} },
           { provide: MessagingService, useValue: {} },
         ],

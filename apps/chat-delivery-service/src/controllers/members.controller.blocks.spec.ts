@@ -14,6 +14,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { writePendingSeats } from '../utils/group-membership';
 
@@ -66,6 +67,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+        { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
         {
           provide: getRepositoryToken(MlsGroupInfo),
           useValue: { find: jest.fn().mockResolvedValue([]) },

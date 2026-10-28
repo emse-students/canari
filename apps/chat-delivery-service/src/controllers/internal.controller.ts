@@ -23,6 +23,7 @@ import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { Group } from '../entities/group.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
@@ -964,6 +965,8 @@ export class InternalController {
       // The account's eviction records: what refuses a claim it took before this erasure is the
       // group's generation the cut above moved, never these rows (`utils/seat-eviction.ts`).
       manager.query(`DELETE FROM dm_seat_evictions WHERE "userId" = $1`, [userId]),
+      // The key groups its revoked devices held: a binding for a person nothing will answer for.
+      manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);

@@ -2152,7 +2152,16 @@ hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The
 converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
 
 **Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
-the server line counts a leaf it cannot bind as `outside`. Widening the binding is tracked in the
+the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge
+deletes** (2026-10-27): the device deletion (`DELETE mls/devices/...`, the one purge that revokes)
+writes one `dm_revoked_device_groups` row per KEY group the device held, `(groupId, userId,
+deviceId)`, in the transaction that deletes its device rows, and the question binds that exact
+device through it. Not a status on the device row, which every routing and admission path reads. A
+row ends on state: an accepted commit whose declared `removes` names that device (or its user
+alone) deletes it (`endRevokedDeviceBindings`) - a declaration the server cannot prove, so a false
+one ends a binding early and returns that leaf to the state before the table - and the group's end
+(`GROUP_OWNED_TABLES`) and the account's erasure take the rest. **Forward-only**: a device revoked
+before the table existed has no row and nothing reconstructs one; what those leaves need is in the
 [backlog](../backlog.md).
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
