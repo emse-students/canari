@@ -483,7 +483,9 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       ]);
     });
 
-    it('the legacy claim keeps the tag of a DELETED tier rather than swap it out', async () => {
+    // No money changes hands in a legacy claim, so there is no paid downgrade to prevent: keeping a
+    // tier nobody can rank would leave the holder worse off than the claim.
+    it('the legacy claim grants its tier over the tag of a DELETED tier, and swaps it out', async () => {
       const { service, repo } = makeService();
       mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
         'cotisant:cercle-premium',
@@ -492,8 +494,40 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
       expect(
         await service.grantCotisantUnlessHeld('asso1', 'user1', 'legacy', 'sans-alcool', {})
-      ).toBeNull();
+      ).toMatchObject({ tagName: 'cotisant:cercle-sans-alcool' });
+      const deletes = (repo.manager.query as jest.Mock).mock.calls.filter(([sql]) =>
+        String(sql).startsWith('DELETE FROM user_tags')
+      );
+      expect(deletes).toEqual([
+        [expect.any(String), ['user1', 'cotisant:cercle-premium', 'asso1']],
+      ]);
+    });
+
+    it('a raw grant in the cotisant namespace must be one of the association own tier tags', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+
+      const refused = await service
+        .grantTagForAssociation('asso1', {
+          userId: 'user1',
+          tagName: 'cotisant:other',
+          grantedBy: 'admin1',
+        })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect((refused as { getResponse(): unknown }).getResponse()).toMatchObject({
+        code: 'TAG_NOT_ISSUER_TIER',
+      });
       expect(repo.query).not.toHaveBeenCalled();
+
+      // CONTROL: its own tier tag, and a tag outside the namespace, are granted as before.
+      for (const tagName of ['cotisant:cercle-sans-alcool', 'staff:cercle']) {
+        await expect(
+          service.grantTagForAssociation('asso1', { userId: 'user1', tagName, grantedBy: 'a' })
+        ).resolves.toMatchObject({ tagName });
+      }
     });
 
     it('rankCotisationTier answers none for an association without cotisation', async () => {

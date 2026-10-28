@@ -48,6 +48,10 @@ const HELD = '00000000-0000-4000-8000-0000000000d3';
 const UNHELD = '00000000-0000-4000-8000-0000000000d4';
 const RACED = '00000000-0000-4000-8000-0000000000d5';
 const WAITED = '00000000-0000-4000-8000-0000000000d6';
+/** A tier of ASSO whose tag stem is ANOTHER association's base stem (its slug extends ASSO's). */
+const CROSSED = '00000000-0000-4000-8000-0000000000d7';
+const OTHER_ASSO = '00000000-0000-4000-8000-0000000000b8';
+const OTHER_BASE = '00000000-0000-4000-8000-0000000000d8';
 const tag = (key: string) => `cotisant:${SLUG}-${key}`;
 /** The tag of a tier that no longer exists, as a row written before deleting one was refused. */
 const GONE = tag('gone');
@@ -112,6 +116,7 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       [UNHELD, 'unheld', 2000],
       [RACED, 'raced', 2000],
       [WAITED, 'waited', 2000],
+      [CROSSED, 'xb', 2000],
     ] as const) {
       await ds.getRepository(AssociationProduct).save(
         ds.getRepository(AssociationProduct).create({
@@ -127,6 +132,32 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
         })
       );
     }
+
+    // Another association whose slug extends this one's: its base tag is `cotisant:orph-it-xb`,
+    // the very name tier `xb` of ASSO derives.
+    await ds.getRepository(Association).save(
+      ds.getRepository(Association).create({
+        id: OTHER_ASSO,
+        name: 'Other IT',
+        slug: `${SLUG}-xb`,
+        createdBy: 'it',
+        cotisationEnabled: true,
+        cotisationMode: 'lifetime',
+      } as Partial<Association>)
+    );
+    await ds.getRepository(AssociationProduct).save(
+      ds.getRepository(AssociationProduct).create({
+        id: OTHER_BASE,
+        associationId: OTHER_ASSO,
+        name: 'Other base',
+        type: 'membership',
+        variantKey: null,
+        amountCents: 1000,
+        currency: 'eur',
+        isActive: true,
+        grantedTagName: `cotisant:${SLUG}-xb`,
+      })
+    );
 
     tags = new UserTagService(ds.getRepository(UserTag));
     service = Object.assign(Object.create(ProductsService.prototype) as object, {
@@ -187,13 +218,25 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
   const conflictBody = (e: unknown) =>
     (e as ConflictException).getResponse() as { code: string; holderCount?: number };
 
-  /** Reads `pg_locks` until `n` sessions wait on an advisory lock; a read loop, never a clock. */
-  async function advisoryWaiters(n: number): Promise<number> {
+  /**
+   * Reads `pg_locks` until `n` OTHER sessions wait on the advisory lock of `key` (its one-key 64-bit
+   * form: `classid` the high half, `objid` the low half, `objsubid` 1), or a bounded number of reads
+   * has gone by; answers the last count. Filtered on the key and on another backend, so a parallel
+   * spec waiting on some other lock cannot stand in for the wait under test. A read loop, never a
+   * clock.
+   */
+  async function advisoryWaiters(key: string, n: number): Promise<number> {
     let waiting = 0;
     for (let i = 0; i < 10_000 && waiting < n; i++) {
       const [row] = (
         await admin.query(
-          `SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype = 'advisory'`
+          `WITH k AS (SELECT hashtextextended($1, 0) AS h)
+           SELECT count(*)::int AS n FROM pg_locks, k
+            WHERE NOT granted AND locktype = 'advisory' AND pid <> pg_backend_pid()
+              AND objsubid = 1
+              AND classid::bigint = ((k.h >> 32) & 4294967295)
+              AND objid::bigint = (k.h & 4294967295)`,
+          [key]
         )
       ).rows as { n: number }[];
       waiting = row.n;
@@ -235,7 +278,8 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     ]);
     await giveTag(buyer, tag('waited'));
     const deletion = settled(service.delete(ASSO, WAITED));
-    const waited = await advisoryWaiters(1);
+    // The delete waits on the association key, held shared above, which it wants exclusive.
+    const waited = await advisoryWaiters(`tier:${ASSO}`, 1);
     await admin.query('COMMIT');
     const { error } = await deletion;
 
@@ -279,17 +323,22 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       held: await heldTags(buyer),
       payment: record.status as string,
     };
-    // Exactly one of two serial orders, never a tag left naming a deleted tier.
+    // Either serial order refuses the delete and grants the tier paid for: settled first, the buyer
+    // holds it; deleted first, the open attempt refuses the delete. Never a refund owed, never a
+    // tag naming a deleted tier.
     expect([
-      // The settlement committed first: the buyer holds the tier, so the delete was refused.
       {
         tierExists: true,
         deleteRefused: 'TIER_HAS_HOLDERS',
         held: [tag('raced')],
         payment: 'paid',
       },
-      // The delete committed first: nothing granted, the payment marked for a refund.
-      { tierExists: false, deleteRefused: null, held: [], payment: 'paid_not_granted' },
+      {
+        tierExists: true,
+        deleteRefused: 'TIER_CHECKOUT_OPEN',
+        held: [tag('raced')],
+        payment: 'paid',
+      },
     ]).toContainEqual(outcome);
   });
 
@@ -327,5 +376,59 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
 
     expect(await heldTags(buyer)).toEqual([tag('low')]);
     expect(await heldTags(stranger)).toEqual([GONE, tag('low')]);
+  });
+
+  it('the legacy claim grants its tier over the tag of a DELETED tier, and swaps it out', async () => {
+    const buyer = newBuyer();
+    await giveTag(buyer, GONE);
+
+    expect(await tags.grantCotisantUnlessHeld(ASSO, buyer, 'legacy', 'low', {})).toMatchObject({
+      tagName: tag('low'),
+    });
+    expect(await heldTags(buyer)).toEqual([tag('low')]);
+  });
+
+  it('a raw grant in the cotisant namespace that is not one of its own tier tags is refused', async () => {
+    const buyer = newBuyer();
+    const refused = await settled(
+      tags.grantTagForAssociation(ASSO, { userId: buyer, tagName: GONE, grantedBy: 'manager' })
+    );
+    expect(((refused.error as ConflictException).getResponse() as { code: string }).code).toBe(
+      'TAG_NOT_ISSUER_TIER'
+    );
+    expect(await heldTags(buyer)).toEqual([]);
+  });
+
+  it("a count that crosses associations: another association's holders neither block a delete nor are told", async () => {
+    // Held under the other association's base tier - the same name tier `xb` of ASSO derives.
+    await ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
+      [newBuyer(), `cotisant:${SLUG}-xb`, OTHER_ASSO]
+    );
+    expect(await tags.countActiveTierHolders(ASSO, SLUG, 'xb', ds.manager)).toBe(0);
+    // A row no association issued is counted: nobody else owns it.
+    const unissued = newBuyer();
+    await admin.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, NULL, 'it')`,
+      [unissued, `cotisant:${SLUG}-xb`]
+    );
+    expect(await tags.countActiveTierHolders(ASSO, SLUG, 'xb', ds.manager)).toBe(1);
+    await admin.query(`DELETE FROM user_tags WHERE "userId" = $1`, [unissued]);
+
+    await service.delete(ASSO, CROSSED);
+
+    expect(await productExists(CROSSED)).toBe(false);
+  });
+
+  it('the hourly report counts every active orphan row, and only those', async () => {
+    const [{ n }] = await ds.query(
+      `SELECT count(*)::int AS n FROM user_tags
+        WHERE "tagName" = $1 AND "issuingAssocId" = $2
+          AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
+      [GONE, ASSO]
+    );
+    expect(n).toBeGreaterThan(0);
+    // The other association's base tag is its own tier, not an orphan of either.
+    expect(await tags.countOrphanTierTags()).toBe(n);
   });
 });

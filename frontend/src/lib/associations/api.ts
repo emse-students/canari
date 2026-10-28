@@ -437,6 +437,12 @@ export class SocialApiError extends ApiRefusalError {
  */
 export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
 
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier while one of its
+ * payments may still land (at most about 35 minutes after it was opened).
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
 /** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
 export function holderCountOf(body: unknown): number | null {
   if (!body || typeof body !== 'object') return null;

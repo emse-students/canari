@@ -12,6 +12,7 @@
     updateProduct,
     deleteProduct,
     SocialApiError,
+    TIER_CHECKOUT_OPEN,
     TIER_HAS_HOLDERS,
     type Association,
     type AssociationProduct,
@@ -509,10 +510,12 @@
   }
 
   /**
-   * Deletes a tier. Allowed for the base tier too - a multi-tier association typically wants the
-   * auto-provisioned base gone, since holders of its un-suffixed tag report no forfait at all to
-   * consumers like Le Cercle. The server refuses to delete the last remaining tier, and a tier
-   * people still hold (`TIER_HAS_HOLDERS`, worded here with their count).
+   * Deletes a tier. The server refuses to delete the last remaining tier, a tier people still hold
+   * (`TIER_HAS_HOLDERS`, worded here with their count and the right that can move them), and a
+   * tier with a payment in progress (`TIER_CHECKOUT_OPEN`). A multi-tier association that wants
+   * its auto-provisioned base tier gone while people hold it RENAMES it into a named tier (a change
+   * of identifier carries every holder's tag over) or moves its holders first; only a tier nobody
+   * holds is deleted.
    */
   async function handleDeleteTier(product: AssociationProduct) {
     if (
@@ -531,6 +534,11 @@
       if (e instanceof SocialApiError && e.code === TIER_HAS_HOLDERS && e.holderCount !== null) {
         tiersError = m.asso_cotisations_tier_delete_has_holders({ count: e.holderCount });
         console.warn('[Cotisations] Tier delete refused: still held by', e.holderCount);
+        return;
+      }
+      if (e instanceof SocialApiError && e.code === TIER_CHECKOUT_OPEN) {
+        tiersError = m.asso_cotisations_tier_delete_checkout_open();
+        console.warn('[Cotisations] Tier delete refused: a payment of the tier is in progress');
         return;
       }
       tiersError = m.asso_cotisations_tier_delete_error();

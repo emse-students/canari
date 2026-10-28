@@ -63,6 +63,13 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
 
 /**
+ * The `code` of the 409 a manager gets when deleting a cotisation tier while one of its checkout
+ * attempts may still be paid (at most `PRODUCT_REQUEST_LIFETIME_SECONDS` + `CHECKOUT_EXPIRY_MARGIN_MS`
+ * after it opened): deleted then, that payment could deliver nothing and a refund would be owed.
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */

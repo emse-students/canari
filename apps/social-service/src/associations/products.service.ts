@@ -25,6 +25,7 @@ import {
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
   PURCHASE_PRICING_CHANGED,
+  TIER_CHECKOUT_OPEN,
   TIER_HAS_HOLDERS,
   productOrderRef,
   withCheckoutReturnKey,
@@ -1212,8 +1213,11 @@ export class ProductsService {
    * the delete run under the association's tier lock EXCLUSIVE (`lockAssociationTiers`, the retag's
    * lock): it waits for every per-buyer transaction in flight (a settlement, a grant) and holds the
    * next ones back until it commits, so no grant of the tier lands between the count and the delete,
-   * and no new order of locks is introduced. A payment of the tier settling after the delete finds
-   * no product and is recorded `paid_not_granted`, like any payment for a deleted product.
+   * and no new order of locks is introduced. Holders are counted on this association's rows and on
+   * rows no association issued - never another association's, which this manager can neither see
+   * nor revoke - and whether or not cotisations are switched on. It also refuses
+   * `409 TIER_CHECKOUT_OPEN` while an attempt of the tier may still be paid
+   * (`assertNoOpenTierCheckout`), which would otherwise land as `paid_not_granted`.
    */
   async delete(associationId: string, productId: string): Promise<void> {
     const product = await this.productRepo.findOne({
@@ -1232,7 +1236,8 @@ export class ProductsService {
       });
       if (!current) throw new NotFoundException('Product not found');
       const asso = await manager.findOne(Association, { where: { id: associationId } });
-      if (asso?.cotisationMode) {
+      if (!asso) throw new NotFoundException('Association not found');
+      if (asso.cotisationMode) {
         const remaining = await manager.count(AssociationProduct, {
           where: { associationId, type: 'membership' },
         });
@@ -1241,28 +1246,58 @@ export class ProductsService {
             'Cannot delete the last cotisation tier while cotisations are enabled'
           );
         }
-        const holderCount = await this.userTagService.countActiveTierHolders(
-          asso.slug,
-          current.variantKey,
-          manager
-        );
-        if (holderCount > 0) {
-          this.logger.log(
-            `[COTISATION] refused (${TIER_HAS_HOLDERS}): tier ${current.id.slice(0, 8)} of ` +
-              `association=${associationId.slice(0, 8)} has ${holderCount} active holder(s)`
-          );
-          throw new ConflictException({
-            code: TIER_HAS_HOLDERS,
-            message: 'People still hold this cotisation tier; move them to another tier first',
-            holderCount,
-          });
-        }
       }
+      // Asked with cotisations switched off too: the tags stay held while the mode is off, and
+      // switching it back on must not find them orphaned. The stem does not depend on the mode.
+      const holderCount = await this.userTagService.countActiveTierHolders(
+        associationId,
+        asso.slug,
+        current.variantKey,
+        manager
+      );
+      if (holderCount > 0) {
+        this.logger.log(
+          `[COTISATION] refused (${TIER_HAS_HOLDERS}): tier ${current.id.slice(0, 8)} of ` +
+            `association=${associationId.slice(0, 8)} has ${holderCount} active holder(s)`
+        );
+        throw new ConflictException({
+          code: TIER_HAS_HOLDERS,
+          message:
+            'People still hold this cotisation tier; a member manager must move them to another tier first',
+          holderCount,
+        });
+      }
+      await this.assertNoOpenTierCheckout(current.id, manager);
       await manager.remove(current);
       // `remove` clears the entity's id, so the log names the one asked for.
       this.logger.log(
         `[COTISATION] tier ${productId.slice(0, 8)} of association=${associationId.slice(0, 8)} deleted`
       );
+    });
+  }
+
+  /**
+   * Refuses `409 TIER_CHECKOUT_OPEN` while an attempt of tier `productId` may still be paid: open,
+   * and not past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`, after which every other path treats it
+   * as closed too. Deleting the tier then would turn that payment into `paid_not_granted`, a refund
+   * owed. Asked under the association's exclusive tier lock, which a checkout opening holds shared
+   * while it writes its attempt, so an attempt being opened is committed (and seen) or not begun.
+   */
+  private async assertNoOpenTierCheckout(productId: string, manager: EntityManager): Promise<void> {
+    const rows: { n: number }[] = await manager.query(
+      `SELECT count(*)::int AS n FROM product_checkouts
+        WHERE "productId" = $1 AND status = 'open'
+          AND "expiresAt" > now() - make_interval(secs => $2)`,
+      [productId, CHECKOUT_EXPIRY_MARGIN_MS / 1000]
+    );
+    const open = rows[0]?.n ?? 0;
+    if (open === 0) return;
+    this.logger.log(
+      `[COTISATION] refused (${TIER_CHECKOUT_OPEN}): tier ${productId.slice(0, 8)} has ${open} payment(s) in progress`
+    );
+    throw new ConflictException({
+      code: TIER_CHECKOUT_OPEN,
+      message: 'A payment for this cotisation tier is in progress; try again once it is settled',
     });
   }
 

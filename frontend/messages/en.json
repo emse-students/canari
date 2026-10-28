@@ -1946,11 +1946,12 @@
       "declarations": ["input count", "local countPlural = count: plural"],
       "selectors": ["countPlural"],
       "match": {
-        "countPlural=one": "{count} member still holds this tier: give them another tier or revoke it before deleting this one.",
-        "countPlural=other": "{count} members still hold this tier: give them another tier or revoke it before deleting this one."
+        "countPlural=one": "{count} member still holds this tier. Someone with the \"Manage members\" right must give them another tier, revoke it, or rename this tier before it can be deleted.",
+        "countPlural=other": "{count} members still hold this tier. Someone with the \"Manage members\" right must give them another tier, revoke it, or rename this tier before it can be deleted."
       }
     }
   ],
+  "asso_cotisations_tier_delete_checkout_open": "A payment for this tier is in progress. Try again in about thirty minutes, once it is settled or expired.",
   "asso_cotisations_tier_variant_key_label": "Tier identifier *",
   "asso_cotisations_tier_variant_key_hint": "Unique technical identifier (e.g. \"avec-alcool\") used to distinguish this tier.",
   "asso_cotisations_tier_variant_key_change_hint": "Changing this identifier moves this tier's cotisants over to the new one automatically: nobody loses their cotisation.",

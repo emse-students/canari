@@ -1552,7 +1552,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           code: 'TIER_HAS_HOLDERS',
           holderCount: 3,
         });
+        // Scoped to THIS association: another one's count is never read, nor told.
         expect(userTagService.countActiveTierHolders).toHaveBeenCalledWith(
+          'asso1',
           'cercle',
           'sans-alcool',
           manager
@@ -1569,6 +1571,36 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const { service, manager } = deleting(0);
         await service.delete('asso1', 'prod-sans');
         expect(manager.remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'prod-sans' }));
+      });
+
+      it('counts the holders with cotisations switched OFF too', async () => {
+        const made = deleting(1);
+        made.assoRepo.findOne.mockResolvedValue(
+          asso({ id: 'asso1', slug: 'cercle', cotisationMode: null })
+        );
+        const err = await made.service.delete('asso1', 'prod-sans').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'TIER_HAS_HOLDERS'
+        );
+        expect(made.manager.remove).not.toHaveBeenCalled();
+      });
+
+      it('is refused 409 TIER_CHECKOUT_OPEN while a payment of the tier may still land', async () => {
+        const { service, manager } = deleting(0);
+        manager.query.mockImplementation((sql: string) =>
+          Promise.resolve(sql.includes('FROM product_checkouts') ? [{ n: 1 }] : [])
+        );
+        const err = await service.delete('asso1', 'prod-sans').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'TIER_CHECKOUT_OPEN'
+        );
+        expect(manager.remove).not.toHaveBeenCalled();
       });
     });
 

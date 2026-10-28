@@ -1978,11 +1978,12 @@
       "declarations": ["input count", "local countPlural = count: plural"],
       "selectors": ["countPlural"],
       "match": {
-        "countPlural=one": "{count} cotisant détient encore ce palier : attribuez-lui un autre palier ou retirez-le avant de supprimer celui-ci.",
-        "countPlural=other": "{count} cotisants détiennent encore ce palier : attribuez-leur un autre palier ou retirez-les avant de supprimer celui-ci."
+        "countPlural=one": "{count} cotisant détient encore ce palier. Un responsable avec le droit « Gérer les membres » doit lui attribuer un autre palier ou le retirer, ou renommer ce palier, avant de le supprimer.",
+        "countPlural=other": "{count} cotisants détiennent encore ce palier. Un responsable avec le droit « Gérer les membres » doit leur attribuer un autre palier ou les retirer, ou renommer ce palier, avant de le supprimer."
       }
     }
   ],
+  "asso_cotisations_tier_delete_checkout_open": "Un paiement de ce palier est en cours. Réessayez dans une trentaine de minutes, une fois ce paiement réglé ou expiré.",
   "asso_cotisations_tier_variant_key_label": "Identifiant du palier *",
   "asso_cotisations_tier_variant_key_hint": "Identifiant technique unique (ex : \"avec-alcool\"), utilisé pour distinguer ce palier.",
   "asso_cotisations_tier_variant_key_change_hint": "Modifier cet identifiant transfère automatiquement les cotisants de ce palier vers le nouveau : personne ne perd sa cotisation.",
