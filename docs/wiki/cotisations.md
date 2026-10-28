@@ -569,7 +569,10 @@ for all the list's buyers at once by `heldOrphanTierTagsOf`). The sibling XOR
 the issuer, so a manager's grant of any tier is the repair, logged at WARN. The legacy claim COUNTS
 an orphan as held (`unless-holding-any`): granting would run the XOR and DELETE it - possibly the tag of
 a dearer PAID tier, the only record of what the holder paid - on a claim no manager made. The claim
-grants nothing and swaps nothing; the holder is left to a manager's explicit grant. An orphan is NOT added to `heldKeys`: a tier that is gone still grants no
+grants nothing and swaps nothing; the holder is left to a manager's explicit grant. That legacy row is
+then closed `already-held` (`LegacyCotisationService`, a null grant closes the row), and closed for
+good: a later manager regrant does not reopen it, and the next sign-in does not retry it - the
+manager's grant IS the outcome. An orphan is NOT added to `heldKeys`: a tier that is gone still grants no
 member price and opens no gate, as before. Reading one is a decision input, logged at debug; the
 estate's count is ONE line an hour, `[ORPHAN_TIER_TAGS] count=N` (`countOrphanTierTags`, in the
 `PaidNotGrantedScheduler` run, its own `try`), `log` at zero and WARN while any is held.
@@ -586,17 +589,23 @@ from now on.
 `assertVariantKeyFree`, at creation and on a retag). Its tag would be the very name of a `dated` tag
 of another tier - `cotisant:<slug>-2024-2025` is the base tier's - so `linkedTierKey` could not tell
 the two apart, and once such a tier was deleted its holders' tag would read as the base tier's
-rather than as an orphan. Refused with a 400; a tier that already has such a key keeps it until it is
-retagged.
+rather than as an orphan. Refused with a 400 typed `TIER_KEY_YEAR_SHAPED`, which the Cotisations
+tab words with the shape to avoid (`tierKeyRefusalMessage`, on a creation and on a save); a tier
+that already has such a key keeps it until it is retagged, and a retag AWAY from it is accepted.
 
 `tier-orphan-holders.integration.spec.ts` proves both halves against a real PostgreSQL: a delete
 refused with its count (an expired holder not counted), a delete with none, a delete blocked on a
 per-buyer lock then counting the grant made under it (the wait asserted through `pg_locks`, filtered
 on that lock's key and on another backend), a delete racing a settlement refused either way and the
-tier granted, an orphan refusing a lower tier at the checkout and the form pre-check, a manager's
-grant revoking the orphan but not another issuer's row of the same name, the legacy claim swapping
-an orphan out, a raw grant in the namespace refused, another association's holders of the same name
-neither counted nor blocking, and the hourly count.
+tier granted, a delete refused `TIER_CHECKOUT_OPEN` while a form answer granting the tier waits for
+its money (a live online answer, and cash; an expired answer and a paid one do not block), an orphan
+refusing a lower tier at the checkout and the form pre-check, a manager's grant revoking the orphan
+but not another issuer's row of the same name, the legacy claim leaving an orphan as it is (nothing
+granted, nothing swapped), a raw grant in the namespace refused, another association's holders of
+the same name neither counted nor blocking, the hourly count, a closing as `granted` for an orphan
+holder refused `PURCHASE_HELD_TIER_DELETED` with nothing written - and then accepted once a
+manager's roster grant has swapped the orphan out - and a retag TO a year-shaped key refused while
+one FROM it is accepted.
 
 **Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
 30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real

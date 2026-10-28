@@ -41,6 +41,7 @@ import {
   TIER_NOT_RANKABLE,
   TIER_CHECKOUT_OPEN,
   TIER_HAS_HOLDERS,
+  TIER_KEY_YEAR_SHAPED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -1492,9 +1493,10 @@ export class ProductsService {
       this.logger.debug(
         `[COTISATION] tier key "${variantKey}" refused: shaped like an academic year`
       );
-      throw new BadRequestException(
-        `Tier "${variantKey}" cannot be named like an academic year (YYYY-YYYY)`
-      );
+      throw new BadRequestException({
+        code: TIER_KEY_YEAR_SHAPED,
+        message: `Tier "${variantKey}" cannot be named like an academic year (YYYY-YYYY)`,
+      });
     }
     const siblings = await manager.find(AssociationProduct, {
       where: { associationId, type: 'membership' },
