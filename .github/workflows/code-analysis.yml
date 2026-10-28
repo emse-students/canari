@@ -258,9 +258,19 @@ jobs:
           # own chantier (Dependabot's #2154). They are deleted WITH that upgrade - and the step
           # `Every ignored advisory is still reported` below fails the day kit 3 lands and the audit
           # stops naming them, so they cannot outlive it.
+          #
+          # A THIRD, 2026-10-28, and this one rests on a reachability argument: GHSA-gcqx-w48m-w2h4
+          # is LOW, `deepmerge` <= 4.3.1 (`mergeObject()` lets a crafted SOURCE object poison the
+          # prototype of the result), and NO fixed version is published. Read from the lockfile: it
+          # arrives only through `@sveltejs/vite-plugin-svelte` and `@rollup/plugin-node-resolve`
+          # (under `@sveltejs/adapter-node`), build tooling; the frontend declares no dependency of its
+          # own on it, and the branch that moves to kit 3 and adapter-node 6 still resolves 4.3.1.
+          # The inputs it merges there are the project's own configuration, which no outsider
+          # supplies. NOT verified: that no copy ends up in the shipped bundle. Retires itself - the
+          # step `Every ignored advisory is still reported` fails once the audit stops naming it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: --ignore=GHSA-pfhg-q3qv-9q6r --ignore=GHSA-27mw-82g8-phjj
+            audit: --ignore=GHSA-pfhg-q3qv-9q6r --ignore=GHSA-27mw-82g8-phjj --ignore=GHSA-gcqx-w48m-w2h4
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate

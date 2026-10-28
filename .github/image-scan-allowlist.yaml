@@ -174,6 +174,31 @@ vulnerabilities:
       - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
     statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
 
+  # Three Python libraries in the same authentik image (2026-10-27), each HIGH with a published fix
+  # and none in a release: 2026.8.5 (2026-10-21) is the newest. Read from authentik's own lockfile
+  # at that tag (not from running the image): dnspython arrives only through `email-validator`;
+  # msgpack through `django-channels-postgres` (its own workspace package) and `autobahn`; oauthlib
+  # through `requests-oauthlib`, authentik's client side of an external OAuth source. Scoped by
+  # purl, so a different build of any of them is not covered, and the retirement check reads each
+  # entry as `id package version`. A second msgpack copy (1.1.2, outside the lockfile read
+  # here, so its origin is unverified; fixed in 1.2.3 too) is covered by a second purl on the
+  # same entry. NOT verified for any of the three: which authentik process imports it at runtime, and whether input an outsider controls
+  # reaches the vulnerable call; the advisories name denial of service (dnspython, msgpack), and
+  # oauthlib's text was not read in full.
+  - id: CVE-2026-114605
+    purls:
+      - "pkg:pypi/dnspython@2.8.0"
+    statement: "dnspython 2.8.0 (denial of service on a crafted DNS compression pointer chain) in authentik 2026.8.5: required only by email-validator, which resolves a domain when it checks an address; whether that check runs with deliverability on, and on whose input, was not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-114613
+    purls:
+      - "pkg:pypi/msgpack@1.2.1"
+      - "pkg:pypi/msgpack@1.1.2"
+    statement: "msgpack 1.2.1 and 1.1.2 (memory leak while deserializing a map) in authentik 2026.8.5: required by django-channels-postgres and autobahn, so it decodes authentik's own internal messages; whether any of that input comes from outside the deployment was not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-49272
+    purls:
+      - "pkg:pypi/oauthlib@3.3.1"
+    statement: "oauthlib 3.3.1 in authentik 2026.8.5: required by requests-oauthlib, the client side of authentik's external OAuth sources, which the blueprints may use for a sign-in source (not checked whether it is an OAuth one); whether the advisory's conditions can arise there, and the full advisory text, were not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+
   # --- curl 8.22.0-r0, in the same four Alpine 3.24 images (2026-10-26) -------------------------
   # CVE-2026-92392 (HTTP/2 upload use-after-free), fixed by Alpine in 8.23.0-r0. Reported as `curl`
   # in adminer, nginx:1.31.8-alpine and nginx:stable-alpine, and as `libcurl` in postgres:18-alpine.

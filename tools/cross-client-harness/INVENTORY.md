@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-111 scripts.
+112 scripts.
 
 | script | what it is |
 |---|---|
@@ -150,7 +150,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-94 scripts.
+95 scripts.
 
 | script | what it is |
 |---|---|
@@ -254,7 +254,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-65 scripts.
+66 scripts.
 
 | script | what it is |
 |---|---|
@@ -382,4 +382,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-318 scripts in total.
+321 scripts in total.
