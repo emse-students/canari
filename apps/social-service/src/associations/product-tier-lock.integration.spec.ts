@@ -783,11 +783,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
     await settle(attempt.id);
 
-    const [record] = await ds.query(
-      `SELECT "userId", status FROM purchase_records WHERE "productId" = $1 AND "userId" = $2`,
-      [TIER_A, `[deleted]:${attempt.id}`]
+    const [settledRow] = await ds.query(
+      `SELECT "purchaseRecordId" FROM product_checkouts WHERE id = $1`,
+      [attempt.id]
     );
-    expect(record).toEqual({ userId: `[deleted]:${attempt.id}`, status: 'paid_not_granted' });
+    const [record] = await ds.query(`SELECT "userId", status FROM purchase_records WHERE id = $1`, [
+      settledRow.purchaseRecordId,
+    ]);
+    // The same form the erasure writes on purchase_records, not the checkout's `[deleted]:<id>`.
+    expect(record).toEqual({ userId: '[deleted]', status: 'paid_not_granted' });
     expect(await heldTags(`[deleted]:${attempt.id}`)).toEqual([]);
     expect(await heldTags(buyer)).toEqual([]);
     expect(refundsLogged()).toBe(1);
@@ -800,11 +804,12 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     // and has written its purchase record, not committed yet.
     await admin.query('BEGIN');
     await admin.query(`SELECT id FROM product_checkouts WHERE id = $1 FOR UPDATE`, [attempt.id]);
-    await admin.query(
+    const inserted = await admin.query(
       `INSERT INTO purchase_records ("userId", source, "productId", "amountCents", "paymentMethod", status, "associationId", "productName")
-       VALUES ($1, 'product', $2, 1500, 'online', 'paid', $3, 'Tier')`,
+       VALUES ($1, 'product', $2, 1500, 'online', 'paid', $3, 'Tier') RETURNING id`,
       [buyer, TIER_A, ASSO]
     );
+    const recordId = (inserted.rows[0] as { id: string }).id;
     const erasure = settled(
       ds.transaction(async (m) => {
         for (const st of erasureTierStatements()) await m.query(st.sql, erasureParams(st, buyer));
@@ -818,11 +823,13 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(outcome.error).toBeNull();
     // Checkouts first: the erasure waited on the row, so the record was committed before it was
     // rewritten. Records first would have missed it and left the real id behind.
-    const records = await ds.query(
-      `SELECT "userId" FROM purchase_records WHERE "productId" = $1 AND "userId" IN ($2, '[deleted]')`,
-      [TIER_A, buyer]
-    );
-    expect(records.map((r: { userId: string }) => r.userId)).not.toContain(buyer);
+    // THAT record, by its id - not a scan that an absent row would pass.
+    const records = await ds.query(`SELECT "userId" FROM purchase_records WHERE id = $1`, [
+      recordId,
+    ]);
+    expect(records).toEqual([{ userId: '[deleted]' }]);
+    const left = await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [buyer]);
+    expect(left).toHaveLength(0);
   });
 
   it('closing GRANTED over a buyer holding TWO tiers ranks against the dearer and leaves ONE tier', async () => {

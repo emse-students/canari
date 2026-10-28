@@ -325,7 +325,10 @@ settlement mid-flight waits on its checkout row, so the record that settlement i
 before the erasure rewrites `purchase_records` - records first would miss it and leave the real id
 (the interleaving is tested against PostgreSQL). An erasure first is seen by both: a closing refuses
 `PURCHASE_BUYER_ERASED`, and a settlement of a checkout already rewritten to `[deleted]:<id>` records
-`paid_not_granted`, grants nothing and dispatches no top-up (a refund is owed). One that runs second
+`paid_not_granted`, grants nothing and dispatches no top-up (a refund is owed). That record carries
+`[deleted]`, the one form the erasure writes on `purchase_records` - the `[deleted]:<id>` form stays
+on `product_checkouts`, whose partial unique index needs one value per row - so a count by `userId`
+on `purchase_records` finds every erased buyer's payment. One that runs second
 rewrites the record the other committed and deletes its tag.
 
 **The frozen tier, and a buyer holding two.** Two tier products sharing the held key (a catalogue from

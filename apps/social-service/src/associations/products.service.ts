@@ -39,7 +39,7 @@ import {
 } from './product-checkout';
 import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
-import { isErasedAccount } from '../internal/account-erasure';
+import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
@@ -1981,7 +1981,10 @@ export class ProductsService {
       }
       const record = await this.purchaseRecordService.create(
         {
-          userId: row.userId,
+          // ONE form of an erased buyer on `purchase_records`: the erasure writes `DELETED_ACCOUNT`
+          // there, so a record written after it does too, never the checkout's `[deleted]:<id>`, and
+          // a count of erased buyers' purchases by `userId` finds both.
+          userId: isErasedAccount(row.userId) ? DELETED_ACCOUNT : row.userId,
           source: 'product',
           productId: row.productId,
           amountCents: row.amountCents,
