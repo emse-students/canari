@@ -256,7 +256,7 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
-## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix MERGED (#2647), read `PASS`, not shipped
 
 On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
 reviewed it and published it. The app's logs and the system's own records agree on two short,
@@ -269,8 +269,11 @@ unrequested opens. Nothing stayed open: the session released the late stream its
 | +33 s, +78 s, and in the reel viewer | nothing | no camera client, no recording |
 
 Causes, the fix and its tests: [reels](frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28).
-**Owed: one reading on the Mi 9T** - no CONNECT and no CAMCORDER window after a publish or a gallery
-return.
+**Read `PASS` on the Mi 9T, rig build `5c362c0e1` on dev (2026-10-28)**, the same path with a
+synthetic video: one CONNECT when the camera opened and one DISCONNECT when the gallery picker
+opened, the CAMCORDER recording stopping with it; after the pick's return and after Publish, no
+CONNECT, no recording, and `appops` still dating the last camera and microphone access to the
+picker's open. Logcat's `CameraService` shows the same single pair. Owed: nothing but the release.
 
 ## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
 
@@ -2166,6 +2169,9 @@ read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the
 was deleted from that page's menu - the viewer itself has no author menu.
 **Still owed on the Mi 9T:** S6 from a reel once the defect below is fixed (the in-app send, then
 the viewer closing on it, #2609), and the undrained half of kill-and-relaunch.
+**Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
+system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
+`<name> (1).mp3`, no longer `<name>.mp3 (1)`.
 **S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
 Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
