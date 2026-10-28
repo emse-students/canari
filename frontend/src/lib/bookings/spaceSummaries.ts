@@ -49,8 +49,8 @@ export function sectionSummaries(draft: SettingsDraft, columnCount: number): Sec
     essentials: m.bookings_summary_essentials(),
     when: [mode, columnCount > 1 ? m.bookings_summary_columns({ count: columnCount }) : null]
       .filter(Boolean)
-      .join(' · '),
-    who: who.join(' · '),
+      .join(' \u00b7 '),
+    who: who.join(' \u00b7 '),
     rules: m.bookings_summary_rules(),
     data: m.bookings_summary_data(),
   };

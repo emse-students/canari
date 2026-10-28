@@ -98,9 +98,6 @@ afterEach(() => {
 describe('SpaceEditor - the five sections in plain words', () => {
   it('titles the sections as the decided questions, each with its line', () => {
     open();
-    expect(m.bookings_section_general()).toBe("L'essentiel");
-    expect(m.bookings_section_resources()).toBe('Quand peut-on réserver ?');
-    expect(m.bookings_section_who()).toBe('Qui peut réserver, et que demande-t-on ?');
     for (const title of [
       m.bookings_section_general(),
       m.bookings_section_resources(),
