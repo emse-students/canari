@@ -17,7 +17,9 @@ import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimatio
 // `adoptTransitionAnimations`.
 afterAll(adoptTransitionAnimations());
 
-vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
+vi.mock('$app/paths', () => ({
+  resolve: (path: string) => (path.startsWith('/') ? path : `/${path}`),
+}));
 vi.mock('$lib/components/reels/ReelViewer.svelte', async () => ({
   default: (await import('./ReelViewerStub.test-helper.svelte')).default,
 }));

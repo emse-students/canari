@@ -41,7 +41,7 @@
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { ensureContentModerator } from '$lib/associations/api';
-  import { goto, replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -57,7 +57,7 @@
   const TABS = ['reports', 'hidden', 'muted'] as const;
   type Tab = (typeof TABS)[number];
 
-  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let tab = $state<Tab>(parseTab(page.url.searchParams.get('tab'), TABS, 'reports'));
   let reports = $state<ContentReport[]>([]);
   let mutedUsers = $state<MutedUser[]>([]);
@@ -178,7 +178,11 @@
   async function switchTab(t: Tab) {
     tab = t;
     error = '';
-    replaceState(resolve(internalPath(tabUrl(page.url, t, 'reports'))), page.state);
+    void goto(resolve(internalPath(tabUrl(page.url, t, 'reports'))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
     if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
     if (t === 'hidden' && hiddenPosts.length === 0) void loadHidden();
   }
