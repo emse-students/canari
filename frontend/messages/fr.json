@@ -1983,7 +1983,7 @@
       }
     }
   ],
-  "asso_cotisations_tier_delete_checkout_open": "Un paiement de ce palier est en cours. Réessayez dans une trentaine de minutes, une fois ce paiement réglé ou expiré.",
+  "asso_cotisations_tier_delete_checkout_open": "Un paiement de ce palier est en cours. Retirez d'abord le palier de la vente pour qu'aucun autre ne commence, puis réessayez dans une trentaine de minutes, une fois ce paiement réglé ou expiré.",
   "asso_cotisations_tier_variant_key_label": "Identifiant du palier *",
   "asso_cotisations_tier_variant_key_hint": "Identifiant technique unique (ex : \"avec-alcool\"), utilisé pour distinguer ce palier.",
   "asso_cotisations_tier_variant_key_change_hint": "Modifier cet identifiant transfère automatiquement les cotisants de ce palier vers le nouveau : personne ne perd sa cotisation.",

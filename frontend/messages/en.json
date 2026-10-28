@@ -1951,7 +1951,7 @@
       }
     }
   ],
-  "asso_cotisations_tier_delete_checkout_open": "A payment for this tier is in progress. Try again in about thirty minutes, once it is settled or expired.",
+  "asso_cotisations_tier_delete_checkout_open": "A payment for this tier is in progress. Take the tier off sale first so no new one starts, then try again in about thirty minutes, once it is settled or expired.",
   "asso_cotisations_tier_variant_key_label": "Tier identifier *",
   "asso_cotisations_tier_variant_key_hint": "Unique technical identifier (e.g. \"avec-alcool\") used to distinguish this tier.",
   "asso_cotisations_tier_variant_key_change_hint": "Changing this identifier moves this tier's cotisants over to the new one automatically: nobody loses their cotisation.",

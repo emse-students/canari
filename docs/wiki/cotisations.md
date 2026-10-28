@@ -375,11 +375,32 @@ tier swaps the tag out, a retag renames it for everybody (the way to drop a held
 removes it. The old rule stays: the LAST tier of an association with cotisations enabled is never
 deletable.
 
-**The `cotisant:` namespace is derived, never typed.** The raw tag grant (`POST :id/tags`,
-`grantTagForAssociation`) refuses `403 TAG_NOT_ISSUER_TIER` for a name starting `cotisant:` that is
-not one of the granting association's own current tier tags. Otherwise a raw name would be read as a
-deleted tier of the granter (refusing its holder every tier, and swapped out by the next grant), or
-written under another association's name.
+**A tier tag name is derived by the server, never taken from a typed field.** Three doors, each
+closed:
+
+- the raw tag grant (`POST :id/tags`, `grantTagForAssociation`) refuses `403 TAG_NOT_ISSUER_TIER` for
+  a name starting `cotisant:` that is not one of the granting association's own current tier tags;
+- a product EDIT drops `grantedTagName` and `tagExpiresAt` for a `membership` product, whatever the
+  cotisation mode (creation and the retag already derive them);
+- a purchase of a membership product of an association with NO cotisation mode grants its stored tag
+  (a legacy arbitrary tag) only when it is outside the `cotisant:` namespace or inside the
+  association's OWN one (`cotisant:<slug>`, `cotisant:<slug>-...`); any other stored `cotisant:` name
+  grants nothing and is logged at ERROR (`resolveGrantTag`).
+
+Otherwise a typed name would be read as a deleted tier of the granter (refusing its holder every
+tier, and swapped out by the next grant), or written under another association's name. The tier
+READS (`hasActiveTag` and the listings' tag set) still recognise a name whoever issued the row;
+scoping them to the issuer is the next change on this page's stack and is not repeated here.
+
+**A row no association issued** (written before issuers were recorded; none exists today) counts as a
+holder and blocks the delete. Today a manual grant of another tier swaps it out, since the sibling
+revoke goes by name; once revokes are scoped to the issuer, such a row is out of every manager's
+reach and needs an operator.
+
+**A retag renames only the CURRENT tag of the old stem.** A `lifetime` tag, or another year's tag, of
+the old key is left as it was - and, the key being gone, it becomes an orphan of the association.
+That predates this section; the hourly `[ORPHAN_TIER_TAGS]` count is what shows it, and the swap of
+the next grant clears it.
 
 **A tag of a tier already gone is read by NAME, as a held tier with no price.** An orphan is an
 ACTIVE row the association itself ISSUED (`issuingAssocId`), in its cotisation namespace

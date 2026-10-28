@@ -21,7 +21,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { of } from 'rxjs';
 import { DataSource } from 'typeorm';
@@ -393,7 +393,8 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     const refused = await settled(
       tags.grantTagForAssociation(ASSO, { userId: buyer, tagName: GONE, grantedBy: 'manager' })
     );
-    expect(((refused.error as ConflictException).getResponse() as { code: string }).code).toBe(
+    expect(refused.error).toBeInstanceOf(ForbiddenException);
+    expect(((refused.error as ForbiddenException).getResponse() as { code: string }).code).toBe(
       'TAG_NOT_ISSUER_TIER'
     );
     expect(await heldTags(buyer)).toEqual([]);

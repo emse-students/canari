@@ -987,7 +987,21 @@ export class ProductsService {
     // `priceMatrix` is resolved above and deliberately kept out of the blanket assign: the DTO
     // holds the RAW document a client sent, and copying it over the parsed one would store a grid
     // nothing validated.
-    const { priceMatrix: _rawMatrix, ...assignable } = dto;
+    //
+    // A membership product's tag is DERIVED by the server (`deriveCotisationTag`, at creation and on
+    // a retag), never taken from a typed field: an edit's `grantedTagName` / `tagExpiresAt` are
+    // dropped for one, whatever the association's cotisation mode.
+    const { priceMatrix: _rawMatrix, ...edits } = dto;
+    const assignable: Partial<UpdateProductDto> = { ...edits };
+    if (product.type === 'membership') {
+      if (dto.grantedTagName !== undefined || dto.tagExpiresAt !== undefined) {
+        this.logger.debug(
+          `[SHOP] product=${productId.slice(0, 8)}: a typed tag on a membership product is ignored - it is derived`
+        );
+      }
+      delete assignable.grantedTagName;
+      delete assignable.tagExpiresAt;
+    }
     const applyEdits = async (target: AssociationProduct, manager: EntityManager) => {
       if (dto.isActive !== undefined) target.activationWithheld = false;
       if (dto.priceMatrix !== undefined) target.priceMatrix = product.priceMatrix;
@@ -1297,7 +1311,8 @@ export class ProductsService {
     );
     throw new ConflictException({
       code: TIER_CHECKOUT_OPEN,
-      message: 'A payment for this cotisation tier is in progress; try again once it is settled',
+      message:
+        'A payment for this cotisation tier is in progress; take it off sale, then try again once it is settled',
     });
   }
 
@@ -2864,7 +2879,10 @@ export class ProductsService {
    * academic year and the product's `variantKey` (see `deriveCotisationTag`), so a purchase always
    * grants the current period's tier-specific tag even when the stored product tag has not been
    * re-provisioned since the last yearly rollover. Falls back to the product's stored tag for
-   * membership products without a cotisation mode (arbitrary/legacy tags).
+   * membership products without a cotisation mode (arbitrary/legacy tags) - except a stored
+   * `cotisant:` name outside the association's OWN namespace (`cotisant:<slug>`,
+   * `cotisant:<slug>-...`): a cotisation tag name is derived by the server, never taken from a
+   * typed field, and such a row can only predate that rule. It grants nothing, logged at ERROR.
    */
   private async resolveGrantTag(
     product: AssociationProduct,
@@ -2875,7 +2893,19 @@ export class ProductsService {
     if (asso?.cotisationMode) {
       return deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), product.variantKey);
     }
-    return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
+    const stored = product.grantedTagName;
+    const root = asso ? `cotisant:${asso.slug}` : null;
+    if (
+      stored.startsWith('cotisant:') &&
+      (!root || (stored !== root && !stored.startsWith(`${root}-`)))
+    ) {
+      this.logger.error(
+        `[SHOP] product=${product.id.slice(0, 8)} stores a cotisation tag outside its association's ` +
+          'namespace - nothing granted'
+      );
+      return null;
+    }
+    return { tagName: stored, expiresAt: product.tagExpiresAt ?? null };
   }
 
   /**

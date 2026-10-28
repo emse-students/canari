@@ -580,7 +580,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
       const legacy = product({
         type: 'membership',
-        grantedTagName: 'cotisant:legacy',
+        grantedTagName: 'cotisant:bde-legacy',
         tagExpiresAt: null,
       });
 
@@ -588,7 +588,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         legacy,
         (service as any).productRepo.manager
       );
-      expect(grant.tagName).toBe('cotisant:legacy');
+      expect(grant.tagName).toBe('cotisant:bde-legacy');
       expect(grant.expiresAt).toBeNull();
     });
 
@@ -700,6 +700,51 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(
         service.update('asso1', 'prod1', { name: 'New name' }, false)
       ).resolves.toBeDefined();
+    });
+
+    // A tier tag name is derived by the server, never taken from a typed field - in any mode.
+    it('ignores a typed grantedTagName / tagExpiresAt on a MEMBERSHIP product, mode on or off', async () => {
+      for (const cotisationMode of ['lifetime', null] as const) {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ slug: 'bde', cotisationMode }));
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'membership', grantedTagName: 'cotisant:bde', tagExpiresAt: null })
+        );
+        const saved = await service.update(
+          'asso1',
+          'prod1',
+          { grantedTagName: 'cotisant:other', tagExpiresAt: '2099-01-01', name: 'Renamed' },
+          false
+        );
+        expect(saved.grantedTagName).toBe('cotisant:bde');
+        expect(saved.tagExpiresAt).toBeNull();
+        expect(saved.name).toBe('Renamed');
+      }
+    });
+
+    it('CONTROL: a non-membership product still saves its tag fields', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ type: 'other', grantedTagName: null }));
+      const saved = await service.update('asso1', 'prod1', { grantedTagName: 'vip' }, false);
+      expect(saved.grantedTagName).toBe('vip');
+    });
+
+    it('without a cotisation mode, a stored cotisant tag outside the own namespace grants nothing', async () => {
+      const { service, assoRepo, manager } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'bde', cotisationMode: null }));
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const resolve = (grantedTagName: string) =>
+        (service as any).resolveGrantTag(
+          product({ type: 'membership', grantedTagName, tagExpiresAt: null }),
+          manager
+        );
+      expect(await resolve('cotisant:other')).toBeNull();
+      expect(await resolve('cotisant:bdeski')).toBeNull();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('outside its association'));
+      // CONTROL: its own namespace, and a tag outside the cotisant namespace, still grant.
+      expect(await resolve('cotisant:bde-gold')).toMatchObject({ tagName: 'cotisant:bde-gold' });
+      expect(await resolve('legacy-vip')).toMatchObject({ tagName: 'legacy-vip' });
+      error.mockRestore();
     });
 
     it('persists badgeText on update, and clears it with null', async () => {
