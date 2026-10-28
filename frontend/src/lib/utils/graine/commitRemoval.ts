@@ -1,5 +1,9 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
+import {
+  scopeLabel,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
@@ -92,6 +96,41 @@ export async function commitRemovalNow(
     );
     return { kind: 'failed' };
   }
+}
+
+/**
+ * Commits the Removes owed by kicking `kickedUserId` from the community `workspaceId`: from the
+ * community's key group, and from every PRIVATE salon's key group of that community this device
+ * holds - the kick strips the person from every salon's access in the same server call, so each
+ * of those groups owes a Remove as much as the community's does.
+ *
+ * SEQUENTIAL, community first, as the admission is: the groups are independent, but one commit at
+ * a time keeps the log in the order a reader expects. A salon this device does not hold is not
+ * listed (it holds nothing to commit from), and its holders' next pass removes the person there.
+ */
+export async function commitCommunityKick(
+  channelService: ChannelService,
+  workspaceId: string,
+  kickedUserId: string,
+  log: (message: string) => void
+): Promise<RemovalCommitOutcome[]> {
+  const why = `${kickedUserId.slice(0, 8)} kicked from the community`;
+  const community = workspaceScope(workspaceId);
+  const outcomes = [await commitRemovalNow(channelService, community, why, log)];
+  // Only once the community pass could run: every gate it refused on (runtime, leadership) refuses
+  // the salons for the same reason, and has already said so.
+  if (outcomes[0].kind !== 'ran' && outcomes[0].kind !== 'not-held') return outcomes;
+  const { mlsService } = requireGraineRuntime('commitCommunityKick');
+  const salons = mlsService
+    .distributionScopes()
+    .filter((s) => s.kind === 'channel' && s.workspaceId === workspaceId);
+  log(
+    `[GRAINE] REMOVE ${kickedUserId.slice(0, 8)}: ${salons.length} private salon(s) of ${workspaceId.slice(0, 8)} registered here - each committed in turn`
+  );
+  for (const salon of salons) {
+    outcomes.push(await commitRemovalNow(channelService, salon, why, log));
+  }
+  return outcomes;
 }
 
 /**
