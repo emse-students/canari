@@ -81,6 +81,7 @@
   import {
     commitDepartureIfElected,
     commitReleasedDepartureIfElected,
+    forgetDeferredRemovals,
   } from '$lib/utils/graine/departureCommitter';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
@@ -728,6 +729,8 @@
     forgetPostComposerMedia();
     // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
     salonGrants.clear();
+    // ...and the removals this device deferred to an actor, which a release is matched against.
+    forgetDeferredRemovals();
     _loginInProgress = false;
   }
 

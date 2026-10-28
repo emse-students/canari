@@ -1886,10 +1886,18 @@ longer in the scope, throttles per user, and publishes `channel.member.removal-r
 `releasedBy` and `releasedByDevice` to the scope's remaining members. Every receiver of THAT event,
 and only of it, decides that ONE scope without the claim (`commitReleasedDepartureIfElected`) - one
 scope per release, because the actor commits its scopes one after another and a salon's commit may
-still be in flight when the community's is released. **Only a receiver whose tree holds the
-releasing device's leaf re-decides** (`not-deferred` otherwise): only it deferred to that device on
-the removal event, and every other receiver already elected then, without the claim - a second
-election there would race the first. **And no leaf of the releasing actor is elected**: its device
+still be in flight when the community's is released. **Only a receiver that DEFERRED to the
+releasing device re-decides** (`not-deferred` otherwise, at debug level): each receiver remembers, in
+memory, which device it left a (key group, departed user) Remove to on the removal event, and a
+release must name exactly that device; the entry is consumed by it and emptied at sign-out. The
+server binds a release only to a leaf of its CALLER, not to the removal it releases - any user
+allowed to remove members could name one of their own devices - so the receiver's own deferral is
+the fact that decides, and a release naming any other device changes nothing: every receiver that
+did not defer already elected on the removal event, and a second election there would race the
+first. (The alternative, the server recording each removal's actor and refusing anybody else's
+release, needs a durable record per removal; the receiver already holds the one fact the decision
+needs.) A receiver that reloaded in between forgot its deferral, and its load's own roster pass is
+the backstop. **And no leaf of the releasing actor is elected**: its device
 is online and holds a leaf, and a window starting on it would hand the Remove back to the one
 device that just declined it.
 **What is covered, said honestly**: an actor whose pass ended without removing them is covered at
@@ -1898,7 +1906,16 @@ ended, whose release was not announced (it says so), or whose commit outcome sta
 nothing, and the Remove waits for a holder's next roster pass - **at worst the next app load**. A
 member offline at the release is covered the same way. So are two cases nothing re-decides: a
 receiver whose tree read saw its epoch move (`unreadable`) does not read it again, and an actor
-commit whose outcome was unknown and is LATER refused releases nothing. No clock anywhere: two receivers reading
+commit whose outcome was unknown and is LATER refused releases nothing. **The other residuals, each
+left to that same backstop**: an actor that lost tab leadership between the kick and its commit
+(`not-leader`) releases nothing; a salon the actor's tree holds but this session never registered
+has no scope to commit or release from; receivers at different epochs may compute different windows
+(the epoch gate keeps one commit); the actor's OWN other devices are outside the release's audience,
+so they never re-decide it. A release refused by the per-user throttle (60 per minute, across all
+communities) is logged `NOT announced` and falls to the backstop too. An actor holding no key group
+for the scope releases to every member: the ones that did not defer say `not-deferred` at debug
+level only. **Rollout**: the deferral, the release and the route's `400` without a device ship in
+one build; no pre-release may carry part of them. No clock anywhere: two receivers reading
 presence a moment apart may still elect two devices - the epoch gate keeps one commit and the other
 pass reads the tree again - or none, and then the Remove waits for a holder's next roster pass.
 **Presence says online, not able to commit**: an elected device that does not hold the group, or an
