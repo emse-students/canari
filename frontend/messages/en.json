@@ -1897,7 +1897,7 @@
   "asso_achats_source_form": "Form",
   "asso_achats_payment_cash": "Cash / manual",
   "asso_achats_not_granted": "Not granted",
-  "asso_achats_not_granted_hint": "Paid, but the membership tier was not granted: it was not a rise over the tier the buyer held. Refund the buyer or grant the tier by hand.",
+  "asso_achats_not_granted_hint": "Paid, but what was bought was not delivered (a membership tier that was not a rise, a product since deleted, or a form paid after it was full). Check what the buyer holds now before refunding: it may have been delivered since. Otherwise refund the buyer or grant it by hand.",
   "asso_achats_payment_online": "Online",
   "asso_achats_count_label": [
     {

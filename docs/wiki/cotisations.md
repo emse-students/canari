@@ -271,8 +271,10 @@ with no seat (`paid_over_capacity`), so no grant ran; and a form payment whose r
 call that ran no grant itself (a replay after the record write failed) - that call reads whether the
 submitter holds the form's tier NOW (`formTierDelivered`), the only durable trace of what the earlier
 grant decided. A grant that FAILED (retryable) in the same call is marked too, since nothing is held
-when the record is written; a later replay that grants it does not clear the mark. A refund or a manual grant is owed; nothing yet clears the mark once
-that is done. The settlement ranks on the prices of NOW, so an admin who lowers or grids the target
+when the record is written; a later replay that grants it does not clear the mark. That read
+OVER-marks by design - a replay racing the run still granting, a retried grant, a tier risen from
+since - so the mark, the purchases hint and the hourly line all say to check what the buyer holds
+before refunding, never that a refund is owed. Nothing yet clears the mark once that is settled. The settlement ranks on the prices of NOW, so an admin who lowers or grids the target
 between the opening and the payment also lands here: ranking against what the opening decided would
 need that decision stored on the checkout row, a column `product_checkouts` does not have.
 

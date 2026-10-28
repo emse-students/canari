@@ -1929,7 +1929,7 @@
   "asso_achats_source_form": "Formulaire",
   "asso_achats_payment_cash": "Espèces / manuel",
   "asso_achats_not_granted": "Non accordé",
-  "asso_achats_not_granted_hint": "Payé, mais la cotisation n'a pas été accordée : elle n'était pas une montée par rapport à celle que l'acheteur détenait. Remboursez-le ou accordez la cotisation à la main.",
+  "asso_achats_not_granted_hint": "Payé, mais l'achat n'a pas été délivré (une cotisation qui n'était pas une montée, un article supprimé depuis, ou un formulaire payé une fois complet). Vérifiez ce que l'acheteur détient avant de rembourser : il a pu être délivré depuis. Sinon, remboursez-le ou accordez-le à la main.",
   "asso_achats_payment_online": "En ligne",
   "asso_achats_count_label": [
     {

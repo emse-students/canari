@@ -520,6 +520,10 @@ describe('FormsService - cotisation configuration and granting', () => {
         },
         claimed: ['cotisationGrantedAt'],
       });
+      const error = jest.spyOn(
+        (service as unknown as { logger: { error: jest.Mock } }).logger,
+        'error'
+      );
 
       await service.markPaid('s1', 'cs_test_1');
 
@@ -532,6 +536,9 @@ describe('FormsService - cotisation configuration and granting', () => {
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'paid_not_granted' })
       );
+      // The read may over-mark (a concurrent run still granting), so the line asks for a check
+      // before any refund rather than asserting one is owed.
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('before refunding'));
     });
 
     it('CONTROL: a replay that runs no grant records paid when the tier is held', async () => {

@@ -981,7 +981,9 @@ export class FormsService {
    * and so ran no grant - the answer is read from what the submitter holds NOW: without a seat
    * nothing was granted, otherwise the form's tier is held or it is not. A form that grants no tier,
    * or a guest's payment (nobody to grant to, logged where it is claimed), is delivered as paid.
-   * Every "not delivered" is logged at ERROR: a refund or a manual grant is owed.
+   * Every "not delivered" is logged at ERROR. The read can OVER-mark - a replay racing the run that
+   * is still granting, a failed grant a later replay retries, a tier risen from since - and nothing
+   * clears a mark, so the mark says "check before refunding", never "refund".
    */
   private async formTierDelivered(
     form: Pick<Form, 'id' | 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
@@ -997,7 +999,7 @@ export class FormsService {
     if (!seatGiven) {
       this.logger.error(
         `[Forms] submission ${submission.id} on form ${form.id} paid with no seat given: tier ` +
-          `${tier} NOT granted - recorded paid_not_granted, a refund is owed`
+          `${tier} NOT granted - recorded paid_not_granted, a refund is owed unless it is granted by hand`
       );
       return false;
     }
@@ -1014,8 +1016,8 @@ export class FormsService {
     }
     this.logger.error(
       `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held at record ` +
-        `time (grant ${grant ?? 'decided by an earlier run'}) - recorded paid_not_granted, a refund ` +
-        'or a grant is owed'
+        `time (grant ${grant ?? 'decided by another run'}) - recorded paid_not_granted; check the ` +
+        'tier is still not held before refunding (a concurrent or later grant does not clear the mark)'
     );
     return false;
   }
