@@ -207,6 +207,44 @@ downloaded when its row nears the viewport and it is the right one; the decrypte
 in its row; a space with no poster fetches nothing and keeps a glyph. Control: without the
 `nearViewport` gate, the first test fails (three downloads on mount). **Not yet seen** on a phone.
 
+## WP-R4 as built - the painted week (D49, 2026-10-27)
+
+Front only: the painter writes the same `PUT resources/:id/availability`, the stored lines are
+unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint (`WeekPainter`),
+"En clair" (the weekly lines, to read and to type exact times in), the dated lines apart, closures.
+
+- **One model: the editor's `rows`.** The painter, the templates and the typed lines all edit the
+  same `rows`, so they cannot disagree and the save, the dirty flag, the 24/7 warning and the D29
+  refusal (`StrandedBookings`, each booking with its cancel) are untouched. The painter reads
+  `weekRunsOf(rows)` and writes `paintRows(...)`.
+- **RUNS, not cells** (`lib/bookings/availabilityPaint.ts`, pure): per weekday, the merged open
+  `[start, end)` minutes. A gesture is 30 min (Q-R11) but an edge typed at 18:45 stays 18:45 when
+  something else is painted; only the part a rectangle covers changes. A run is written back through
+  `fromStoredLines`, so Friday 22:00-24:00 plus Saturday 00:00-02:00 is ONE line again; the days are
+  written Monday last because Monday's morning is Sunday night's tail.
+- **One gesture, no brush**: pressing a closed cell opens the rectangle, pressing an open one closes
+  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); the keyboard and
+  screen readers use the typed lines, and each day column is named with its hours.
+- **A line the editor refuses** (a start equal to its end) is not drawn as a run and is never
+  normalised by a paint or a template: it stays in the typed lines, flagged, until fixed. The
+  painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
+  its height is clamped (30 to 40 rem). **The keyboard's route is the typed lines below**, said in
+  the hint under the painter.
+- **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
+  Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
+  Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
+  without a confirmation: nothing is saved until the button, and leaving warns.
+- **Dated lines have their own list** and the per-line "type" select is gone (a line is weekly or
+  dated by the list it sits in). Not built: hiding the week under the event template, as the mockup
+  draws - the painted week stays visible.
+
+**Proof.** `availabilityPaint.test.ts` (round trips incl. a night and a Sunday night, merge, split,
+off-grain edges kept, to 24:00, the same rows back when nothing changes, mode from the pressed cell,
+templates, dated lines kept) and `AvailabilityEditor.painter.svelte.test.ts` (templates, a drag over
+days, a close splitting a run, a night as two stored halves, one cell, dated lines kept) on the real
+editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
+readings owed.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
