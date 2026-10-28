@@ -1934,6 +1934,16 @@ every command, decoded into typed errors at the one `invoke` boundary. All codes
 request, never one at a time (two conventions would give every reader two shapes)
 ([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
+## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
+
+A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
+makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" -> the rotation fails
+-> the session is lost -> PIN gate. Each lap costs the member one PIN entry and is logged at ERROR
+(`reportMlsSessionLost`); nothing is revoked or erased, so the loop is visible and harmless but not
+broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
+stops the unlock with its own typed outcome instead of another lap
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
 A key-group external commit and a key group's Welcome target are now asked of social-service

@@ -52,6 +52,7 @@ import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
+  type LoginStop,
   hardwareKeyLoginFailure,
   isExpectedLoginOutcome,
   isVaultRefusal,
@@ -264,6 +265,15 @@ let loginInFlightSettled: Promise<void> | null = null;
  * network chose. The sign-out ends those waits by cancelling them, not a clock. Null when no login runs.
  */
 let loginInFlightAbort: AbortController | null = null;
+
+/**
+ * What stopped the flow in flight, read from its abort: `endLostSessionImpl` aborts with the
+ * {@link LoginStop} `'lost session'` as the reason, a sign-out with none. A typed value the abort
+ * carries, never a message.
+ */
+function loginStopOf(signal: AbortSignal): LoginStop {
+  return signal.reason === 'lost session' ? 'lost session' : 'sign-out';
+}
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -1054,7 +1064,9 @@ export async function loginImpl(
   const untilSignedOut = <T>(work: Promise<T>, stage: string): Promise<T> =>
     new Promise<T>((resolveWork, rejectWork) => {
       const onAbort = (): void =>
-        rejectWork(new LoginStoppedBySignOutError(`${stage} (cancelled)`));
+        rejectWork(
+          new LoginStoppedBySignOutError(`${stage} (cancelled)`, loginStopOf(loginAbort.signal))
+        );
       if (loginAbort.signal.aborted) {
         onAbort();
         void work.catch(() => {});
@@ -1100,10 +1112,16 @@ export async function loginImpl(
   // the login completed afterwards and set `isLoggedIn` for a signed-out user. A sign-out can only
   // run while this function is suspended, so a re-read right after each await is enough for nothing
   // below it to act for a signed-out account. Thrown as a type; the catch releases what was taken.
+  //
+  // A LOST MLS SESSION STOPS IT THE SAME WAY (`endLostSessionImpl`): no sign-out runs then, so the
+  // generation does not move, and the stop is read from this login's abort, whose reason names it.
   const signOutsAtStart = signOutGeneration();
   const signedOutSinceStart = (): boolean => signOutGeneration() !== signOutsAtStart;
   const stopIfSignedOut = (stage: string): void => {
     if (signedOutSinceStart()) throw new LoginStoppedBySignOutError(stage);
+    if (loginAbort.signal.aborted) {
+      throw new LoginStoppedBySignOutError(stage, loginStopOf(loginAbort.signal));
+    }
   };
 
   // THE PREVIOUS ACCOUNT'S FINAL CHECKPOINT LANDS FIRST. A sign-out retires its MLS client once that
@@ -2531,9 +2549,14 @@ export async function loginImpl(
       _e instanceof LoginStoppedBySignOutError ||
       (signedOutSinceStart() && loginErrorCode(_e) !== 'device_revoked')
     ) {
-      withdrawLandingPreview('signed out during the login');
+      const lost = _e instanceof LoginStoppedBySignOutError && _e.by === 'lost session';
+      withdrawLandingPreview(
+        lost ? 'MLS session lost during the login' : 'signed out during the login'
+      );
       cb.log(
-        `[INIT] Login stopped - the account signed out during it (${
+        `[INIT] Login stopped - ${
+          lost ? 'its MLS session was lost during it' : 'the account signed out during it'
+        } (${
           _e instanceof LoginStoppedBySignOutError
             ? `after ${_e.stage}`
             : `${_e instanceof Error ? _e.name : typeof _e} thrown after the sign-out`
@@ -3027,8 +3050,9 @@ export async function recoverPinImpl(
   /** Throws, typed, once a sign-out has stopped this recovery - checked before each step on the state. */
   const stillWanted = (stage: string): void => {
     if (!recoveryAbort.signal.aborted) return;
-    cb.log(`[PIN_RECOVER] Stopped by a sign-out before ${stage} - the state is left as it was.`);
-    throw new LoginStoppedBySignOutError(stage);
+    const by = loginStopOf(recoveryAbort.signal);
+    cb.log(`[PIN_RECOVER] Stopped (${by}) before ${stage} - the state is left as it was.`);
+    throw new LoginStoppedBySignOutError(stage, by);
   };
   try {
     await recoverPinSteps(
@@ -3431,7 +3455,25 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
  * session behind it. The unlock then reads the state as the disk holds it, through every gate.
  */
 export function endLostSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+  // A LOGIN (OR A RECOVERY) IN FLIGHT IS STOPPED, as a sign-out stops it: it may already have raised
+  // `isLoggedIn` (a rotation failing in its connection sync), and left running it went on to build a
+  // client in the holder this retires, while the PIN gate's unlock could start a second login beside
+  // its tail. Its abort carries the cause, its next stage check throws on it, and the client is
+  // retired on its END - which the next login awaits (`whenMlsRetired`) before it opens anything.
+  // The abort and not a generation of its own: the abort is already this flow's one stop signal,
+  // and it also cancels the network waits a generation would leave the retirement waiting on.
+  const stopping = loginInFlightSettled;
+  if (stopping) {
+    loginInFlightAbort?.abort('lost session' satisfies LoginStop);
+    cb.log(
+      '[SESSION] MLS session lost during a login - it is stopped; its client retires once it has.'
+    );
+  }
   if (!ctx.isLoggedIn()) {
+    if (stopping) {
+      void ctx.retireMls(stopping, 'lost session');
+      return;
+    }
     cb.log('[SESSION] MLS session lost with no live session on this device - nothing to stop.');
     return;
   }
@@ -3441,8 +3483,11 @@ export function endLostSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks
     cb.log(`[SESSION] Could not release the socket - frames may still arrive: ${String(e)}`);
   }
   const nothingWritten = tearDownLiveSession(ctx, cb, 'lost');
+  const retiredOn = stopping
+    ? Promise.all([nothingWritten, stopping]).then(() => undefined)
+    : nothingWritten;
   void ctx
-    .retireMls(nothingWritten, 'lost session')
+    .retireMls(retiredOn, 'lost session')
     .then(() => cb.log('[SESSION] MLS client retired - the unlock opens the state afresh.'));
   ctx.setStorage(null);
   cb.log('[SESSION] Live session stopped on this device - the credential is kept.');

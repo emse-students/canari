@@ -99,7 +99,8 @@ vi.mock('$lib/utils/chat/connection', async (importOriginal) => {
 });
 
 const { clearAuth, setSignOutHandler } = await import('$lib/stores/auth');
-const { loginImpl, endSessionImpl, recoverPinImpl } = await import('./sessionAuth');
+const { loginImpl, endSessionImpl, endLostSessionImpl, recoverPinImpl } =
+  await import('./sessionAuth');
 const { loadMlsState } = await import('$lib/utils/hex');
 const { LoginStoppedBySignOutError } = await import('./loginErrors');
 const { createMlsHolder } = await import('./mlsHolder');
@@ -172,7 +173,7 @@ function session(clients: IMlsService[], pin = '') {
     whenMlsRetired: () => holder.whenRetired(),
     ensureMls: () => holder.ensure(),
     resetMls: (only) => holder.reset(only),
-    retireMls: (w) => holder.retire(w),
+    retireMls: (w, why) => holder.retire(w, why),
     getStorage: () => held,
     setStorage: (v) => (held = v),
     getHistoryBaseUrl: () => '',
@@ -534,7 +535,43 @@ describe('a sign-out during the PIN recovery', () => {
     expect(a.known.init).not.toHaveBeenCalled();
     expect(Object.keys(a.known)).not.toContain('openLocalStateWithKey');
     expect(logs(s.cb)).toContain('[LOGOUT] Signed out during a login');
-    expect(logs(s.cb)).toContain('[PIN_RECOVER] Stopped by a sign-out before the new PIN check');
+    expect(logs(s.cb)).toContain('[PIN_RECOVER] Stopped (sign-out) before the new PIN check');
     expect(s.endNative).toHaveBeenCalledWith('sign-out');
+  });
+});
+
+/**
+ * A LOST MLS SESSION DURING A LOGIN STOPS THAT LOGIN. A rotation failing in the connection sync
+ * reports the loss with `isLoggedIn` already raised; no sign-out runs, so the sign-out generation does
+ * not move. Left running, the login went on to group discovery and built a stray client in the holder
+ * the loss had retired, beside the PIN gate's next unlock.
+ */
+describe('a lost MLS session during a login', () => {
+  it('stops it after the connection sync: no stray client, retired on its end, the native session ended', async () => {
+    const a = fakeClient();
+    const b = fakeClient();
+    const untouched = Object.keys(b.known);
+    const s = session([a.client, b.client]);
+    // The shell's reaction to the loss reported inside the sync (`reopenAtPinGate`).
+    syncConnectionAfterWsOpen.mockImplementationOnce(async () => {
+      endLostSessionImpl(s.ctx, s.cb);
+      return undefined;
+    });
+
+    await loginImpl(s.ctx, s.cb);
+    await s.holder.whenRetired();
+
+    expect(syncConnectionAfterWsOpen).toHaveBeenCalledTimes(1);
+    expect(logs(s.cb)).toContain(
+      '[INIT] Login stopped - its MLS session was lost during it (after connection-sync)'
+    );
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    // Nothing built a second client: the stopped login never reached group discovery.
+    expect(Object.keys(b.known)).toEqual(untouched);
+    expect(a.known.destroy).toHaveBeenCalledTimes(1);
+    expect(s.endNative).toHaveBeenCalledWith('lost session');
+    // Nothing of a sign-out: no error shown, no expired session.
+    expect(s.cb.onSessionExpired).not.toHaveBeenCalled();
+    expect(s.shownErrors()).toEqual([]);
   });
 });

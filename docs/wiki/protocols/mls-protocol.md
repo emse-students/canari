@@ -2442,7 +2442,11 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   call `reportMlsSessionLost` (`lib/mls-client/mlsSessionLoss.ts`, at ERROR); the shell answers with
   `reopenAtPinGate`: `endLostSessionImpl` stops the socket, the timers and the conversations, retires
   the client WITHOUT a final checkpoint (it no longer describes what is installed) and ends the native
-  session (`lost session`), then the PIN gate opens for the same account. NOT `clearAuth`: a lost MLS
+  session (`lost session`), then the PIN gate opens for the same account. A login or a recovery in
+  flight is STOPPED by it, as by a sign-out: its abort carries `'lost session'`, its next stage check
+  throws `LoginStoppedBySignOutError` (`by: 'lost session'`), and the client retires on its end, which
+  the gate's next login awaits - so a rotation failing in a login's connection sync no longer lets that
+  login run on into group discovery. NOT `clearAuth`: a lost MLS
   session is a local fact, not a 401/403, and a sign-out would revoke the server session and the
   identity provider's, clear the restore key, the push registration and the shares - and an offline
   user could not sign back in. NOT a re-initialisation either: re-installing in place would choose an
