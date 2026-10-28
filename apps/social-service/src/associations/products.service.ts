@@ -41,6 +41,7 @@ import {
   TIER_NOT_RANKABLE,
   TIER_CHECKOUT_OPEN,
   TIER_HAS_HOLDERS,
+  TIER_KEY_YEAR_SHAPED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -150,14 +151,30 @@ export type ShopProduct = AssociationProduct & {
   viewerIsCotisant: boolean;
   viewerActiveTier: string | null;
   viewerPrice: ViewerPrice;
-  /** This product against the tier the viewer holds (`tierRelation`); `none` for a non-tier. */
+  /**
+   * This product against the tier the viewer holds (`relationOf`, the checkout's own call); `none`
+   * for a non-tier.
+   */
   viewerTierRelation: TierRelation;
   /**
    * Cents a checkout would charge this viewer now, from the same `fixedPriceFor` / grid cell the
-   * checkout uses. Null when the server would refuse the tier (`held`, `lower`), when the grid does
-   * not sell this combination, and for a free amount. Purchase caps and tag gates are not folded in.
+   * checkout uses. Null when the server would refuse the tier (`held`, `lower`, `unranked`) or the
+   * membership (`cotisationDisabled`), when the grid does not sell this combination, and for a free
+   * amount. Purchase caps and tag gates are not folded in.
    */
   viewerDueCents: number | null;
+  /**
+   * A membership product whose association has no cotisation mode: the checkout refuses it
+   * (`COTISATION_DISABLED`), so the listing says so rather than offer a button that cannot work.
+   */
+  cotisationDisabled: boolean;
+  /**
+   * The `variantKey` of the tier this product's `memberPriceTag` names (`linkedTierKey`), so a
+   * preferential price can be worded "for holders of" THAT tier - not the first tier the viewer
+   * holds. Absent when there is no tag, when it names no tier, or when the viewer's tiers in the
+   * association were not read (a guest, no cotisation mode).
+   */
+  memberPriceTierKey?: string | null;
 };
 
 /**
@@ -268,7 +285,11 @@ export interface PurchaseListRow {
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
-  /** A cotisation tier paid for and NOT granted (`paid_not_granted`): a refund or a grant is owed. */
+  /**
+   * Money received for something NOT delivered (`paid_not_granted`, `PurchaseStatus`): a boutique
+   * tier not granted at settlement, a product deleted or a buyer erased before the payment landed,
+   * or a paid form that grants a tier and did not grant it. A refund or a grant is owed.
+   */
   notGranted: boolean;
   /**
    * How a `notGranted` payment was closed (`closePaidNotGranted`, migration 113): `refunded` or
@@ -513,6 +534,8 @@ export interface FailedDelivery {
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** Products whose `memberPriceTag` names no tier, already said at WARN (`memberPriceTierKeyOf`). */
+  private readonly warnedMemberPriceTags = new Set<string>();
   /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); a test overrides it. */
   protected readonly refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
@@ -857,20 +880,53 @@ export class ProductsService {
       ? await this.cotisantStatusFor(userId, [...new Set(products.map((p) => p.associationId))])
       : new Map<string, CotisantStatus>();
     const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
+    const disabled = await this.cotisationDisabledAssociations(products);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
+      const facts = status?.facts ?? null;
       const viewerPrice = viewerPrices.get(p.id) ?? FIXED_PRICE;
       const viewerTierRelation: TierRelation =
-        p.type === 'membership' ? this.relationOf(p, status?.facts ?? null) : 'none';
+        p.type === 'membership' ? this.relationOf(p, facts) : 'none';
+      const cotisationDisabled = p.type === 'membership' && disabled.has(p.associationId);
+      const memberPriceTierKey = this.memberPriceTierKeyOf(p, facts);
       return this.toSafeProduct({
         ...p,
         viewerIsCotisant: status?.isCotisant ?? false,
         viewerActiveTier: status?.activeTier ?? null,
         viewerPrice,
         viewerTierRelation,
-        viewerDueCents: this.dueCentsFor(p, viewerTierRelation, viewerPrice, status?.facts ?? null),
+        viewerDueCents: cotisationDisabled
+          ? null
+          : this.dueCentsFor(p, viewerTierRelation, viewerPrice, facts),
+        cotisationDisabled,
+        ...(memberPriceTierKey !== undefined ? { memberPriceTierKey } : {}),
       });
     });
+  }
+
+  /**
+   * The associations, among those `products` sell a membership of, whose cotisations are disabled
+   * (no cotisation mode): what the checkout refuses with `COTISATION_DISABLED`
+   * (`assertMembershipGrantable`), read once for the listing. No query without a membership product.
+   */
+  private async cotisationDisabledAssociations(
+    products: AssociationProduct[]
+  ): Promise<Set<string>> {
+    const ids = [
+      ...new Set(products.filter((p) => p.type === 'membership').map((p) => p.associationId)),
+    ];
+    if (ids.length === 0) return new Set();
+    const assos = await this.assoRepo.find({
+      where: { id: In(ids) },
+      select: { id: true, cotisationMode: true },
+    });
+    const disabled = new Set(assos.filter((a) => !a.cotisationMode).map((a) => a.id));
+    if (disabled.size > 0) {
+      this.logger.debug(
+        `[SHOP] listing: membership products of ${disabled.size} association(s) with cotisations disabled - not offered`
+      );
+    }
+    return disabled;
   }
 
   /**
@@ -894,32 +950,17 @@ export class ProductsService {
   /**
    * `fixedPriceFor` for one buyer, from their tier facts (null: no cotisation in this association).
    * The preferential price of a `memberPriceTag` product applies when the buyer holds, TODAY, the
-   * sibling tier the tag names (`linkedTierKey`). A tag naming no tier of the association applies no
-   * preferential price and is logged at WARN: create and update refuse to save one, so it is a row
-   * written before that rule, or a tier renamed outside `update`. Without facts (a guest, or an
-   * association with no cotisation mode) nothing is held, so no preferential price applies and the
-   * link is not judged: the tiers it would be judged against were not read.
+   * sibling tier the tag names (`memberPriceTierKeyOf`). Without facts (a guest, or an association
+   * with no cotisation mode) nothing is held, so no preferential price applies.
    */
   private fixedPriceOf(
     product: AssociationProduct,
     amountCents: number,
     facts: TierFacts | null
   ): { amountCents: number; preferential: boolean } {
-    let holdsLinkedTier = false;
-    if (product.memberPriceTag && facts) {
-      const linked = linkedTierKey(
-        product.memberPriceTag,
-        facts.slug,
-        facts.tiers.map((t) => t.variantKey)
-      );
-      if (linked === undefined) {
-        this.logger.warn(
-          `[SHOP] product=${product.id.slice(0, 8)} memberPriceTag names no cotisation tier of its association - preferential price not applied`
-        );
-      } else {
-        holdsLinkedTier = facts.heldKeys.includes(linked);
-      }
-    }
+    const linked = this.memberPriceTierKeyOf(product, facts);
+    const holdsLinkedTier =
+      linked !== undefined && facts !== null && facts.heldKeys.includes(linked);
     return fixedPriceFor(
       {
         amountCents,
@@ -928,6 +969,33 @@ export class ProductsService {
       },
       { isCotisant: (facts?.heldKeys.length ?? 0) > 0, holdsLinkedTier }
     );
+  }
+
+  /**
+   * The `variantKey` of the sibling tier `product.memberPriceTag` names (`linkedTierKey`), or
+   * `undefined` when the product has no tag, when there are no facts (the tiers it would be judged
+   * against were not read), or when it names no tier of the association. That last case applies no
+   * preferential price and is logged at WARN ONCE per product per process (`warnedMemberPriceTags`):
+   * create and update refuse to save such a tag, so it is a row written before that rule, or a tier
+   * renamed outside `update` - a fact about the row, not about each quote that reads it.
+   */
+  private memberPriceTierKeyOf(
+    product: AssociationProduct,
+    facts: TierFacts | null
+  ): string | null | undefined {
+    if (!product.memberPriceTag || !facts) return undefined;
+    const linked = linkedTierKey(
+      product.memberPriceTag,
+      facts.slug,
+      facts.tiers.map((t) => t.variantKey)
+    );
+    if (linked === undefined && !this.warnedMemberPriceTags.has(product.id)) {
+      this.warnedMemberPriceTags.add(product.id);
+      this.logger.warn(
+        `[SHOP] product=${product.id.slice(0, 8)} memberPriceTag names no cotisation tier of its association - preferential price not applied (said once per product until restart)`
+      );
+    }
+    return linked;
   }
 
   /**
@@ -1492,9 +1560,10 @@ export class ProductsService {
       this.logger.debug(
         `[COTISATION] tier key "${variantKey}" refused: shaped like an academic year`
       );
-      throw new BadRequestException(
-        `Tier "${variantKey}" cannot be named like an academic year (YYYY-YYYY)`
-      );
+      throw new BadRequestException({
+        code: TIER_KEY_YEAR_SHAPED,
+        message: `Tier "${variantKey}" cannot be named like an academic year (YYYY-YYYY)`,
+      });
     }
     const siblings = await manager.find(AssociationProduct, {
       where: { associationId, type: 'membership' },
@@ -3036,11 +3105,16 @@ export class ProductsService {
 
   /**
    * Where a tier product stands against what the viewer holds (`tierRelationOf`): `none` without
-   * facts. ONE call shared by the listing and the checkout; the settlement decides on what the
-   * checkout froze (`settlementMayGrant`).
+   * facts. A viewer holding TWO tiers at once is `unranked` for any tier but one they hold: ranked
+   * against one of them, a checkout would freeze only that one and its settlement would read the
+   * other as `held-changed`, taking the money for nothing (`assertTierIsARise` words that case).
+   * ONE call shared by the listing and the checkout, so the screen never offers what the checkout
+   * refuses; the settlement decides on what the checkout froze (`settlementMayGrant`).
    */
   private relationOf(product: AssociationProduct, facts: TierFacts | null): TierRelation {
-    return facts ? tierRelationOf(product, facts.heldKeys, facts.held) : 'none';
+    if (!facts) return 'none';
+    const relation = tierRelationOf(product, facts.heldKeys, facts.held);
+    return relation !== 'held' && facts.heldKeys.length > 1 ? 'unranked' : relation;
   }
 
   /**
@@ -3094,11 +3168,10 @@ export class ProductsService {
       `[SHOP] tier rank: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
         `held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`
     );
-    // A buyer holding TWO tiers at once would be ranked against one of them and freeze only that
-    // one, so the settlement would read the other as `held-changed` and refuse every time: the
-    // money would be taken for nothing. Refused here instead, before any request is opened. (Not
-    // seen in production on 2026-10-27; holding two is a data fault the roster corrects.)
-    if (relation !== 'held' && (facts?.heldKeys.length ?? 0) > 1) {
+    // A buyer holding TWO tiers at once is `unranked` (`relationOf`), refused here before any
+    // request is opened, with the sentence that names the cause. (Not seen in production on
+    // 2026-10-27; holding two is a data fault the roster corrects.)
+    if (relation === 'unranked' && (facts?.heldKeys.length ?? 0) > 1) {
       this.logger.warn(
         `[SHOP] refused (${TIER_NOT_RANKABLE}): product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
           `holds ${facts?.heldKeys.length} tiers at once - no single tier to rank against`

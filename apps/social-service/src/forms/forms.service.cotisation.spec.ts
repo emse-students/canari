@@ -661,7 +661,8 @@ describe('FormsService - cotisation configuration and granting', () => {
     it.each([
       ['lower', 'TIER_NOT_A_RISE'],
       ['unranked', 'TIER_NOT_RANKABLE'],
-      ['held', 'PRODUCT_ALREADY_PURCHASED'],
+      // A form words "already held" its own way: it is not a product the submitter bought.
+      ['held', 'FORM_TIER_ALREADY_HELD'],
     ])('refuses a %s tier with %s and writes nothing', async (relation, code) => {
       const { service, userTagService, submissionRepo } = makeService({ form: grantingForm });
       userTagService.rankCotisationTier.mockResolvedValue(relation);
@@ -676,6 +677,44 @@ describe('FormsService - cotisation configuration and granting', () => {
         'sans-alcool'
       );
       expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    // A form naming a tier the association no longer sells refuses EVERYONE, a holder of nothing
+    // included, with its own code - never `TIER_NOT_RANKABLE`, which speaks of a membership held.
+    it('refuses a tier the association no longer sells with FORM_TIER_NOT_SOLD, before ranking', async () => {
+      const { service, userTagService, submissionRepo } = makeService({
+        form: grantingForm,
+        tiers: [
+          {
+            variantKey: 'avec-alcool',
+            name: 'Avec alcool',
+            tagName: 'cotisant:cercle-avec-alcool',
+          },
+        ],
+      });
+
+      await expect(submitCash(service)).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'FORM_TIER_NOT_SOLD' }),
+      });
+      expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
+      expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: a tier still sold is ranked, and a holder of nothing is taken', async () => {
+      const { service, userTagService } = makeService({
+        form: grantingForm,
+        tiers: [
+          {
+            variantKey: 'sans-alcool',
+            name: 'Sans alcool',
+            tagName: 'cotisant:cercle-sans-alcool',
+          },
+        ],
+      });
+
+      await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
+      expect(userTagService.rankCotisationTier).toHaveBeenCalled();
     });
 
     it('CONTROL: a rise is taken', async () => {

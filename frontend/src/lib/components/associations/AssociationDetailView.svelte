@@ -67,7 +67,15 @@
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
-  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
+  import {
+    gridPriceIsProvisional,
+    gridPriceLabel,
+    gridRefuses,
+    linkedTierName,
+    preferentialPriceLabel,
+    tierNotOffered,
+    tierNotOfferedText,
+  } from '$lib/pricing/viewerPrice';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
 
@@ -600,6 +608,9 @@
         </div>
         <div class={CARD_GRID}>
           {#each products as product (product.id)}
+            {@const preferential = preferentialPriceLabel(product)}
+            {@const linkedTier = linkedTierName(product, products)}
+            {@const notOffered = tierNotOffered(product)}
             <CardTile
               iconUrl={product.iconUrl}
               fallbackIcon={productFallbackIcon(product.type)}
@@ -617,8 +628,23 @@
                       A grid answers first and alone: while one is set the product's own amount
                       decides nothing, so printing it would name a figure no checkout charges.
                     -->
+                    <!--
+                      A preferential price is the server's `viewerDueCents`, the amount the
+                      checkout charges this viewer - shown as /shop shows it, never recomputed.
+                    -->
                     {#if gridPriceLabel(product) !== null}
                       {gridPriceLabel(product)}
+                    {:else if preferential && product.amountCents}
+                      <span class="line-through"
+                        >{(product.amountCents / 100).toFixed(2)}
+                        {product.currency.toUpperCase()}</span
+                      >
+                      <span class="font-semibold text-emerald-600 dark:text-emerald-400"
+                        >{preferential}</span
+                      >
+                      {linkedTier
+                        ? m.shop_tier_upgrade_price_suffix({ tier: linkedTier })
+                        : m.shop_member_price_suffix()}
                     {:else if product.amountCents}
                       {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
                     {:else if product.allowCustomAmount}
@@ -661,12 +687,19 @@
                 {:else if gridPriceIsProvisional(product, userId !== null)}
                   <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
                 {/if}
-                <ProductPurchaseButton
-                  {product}
-                  customAmountEuros={shopCustomAmounts[product.id]}
-                  disabled={gridRefuses(product)}
-                  class="w-full"
-                />
+                <!-- A tier the checkout would refuse (409) gets its reason, never a button. -->
+                {#if notOffered}
+                  <p class="text-text-muted text-xs" data-tier-not-offered={notOffered}>
+                    {tierNotOfferedText(notOffered)}
+                  </p>
+                {:else}
+                  <ProductPurchaseButton
+                    {product}
+                    customAmountEuros={shopCustomAmounts[product.id]}
+                    disabled={gridRefuses(product)}
+                    class="w-full"
+                  />
+                {/if}
               </div>
             </CardTile>
           {/each}

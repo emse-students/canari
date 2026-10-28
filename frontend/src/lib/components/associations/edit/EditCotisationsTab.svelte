@@ -42,6 +42,7 @@
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
+  import { tierKeyRefusalMessage } from '$lib/associations/tierKeyRefusal';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -383,8 +384,11 @@
       resetAddTierForm();
       await Promise.all([loadTierProducts(), loadCotisationTiers()]);
     } catch (e) {
-      tiersError = m.asso_cotisations_tier_create_error();
-      console.error('[Cotisations] Failed to create tier:', e);
+      // A key the server refuses for its shape is the manager's to change: say why.
+      const keyRefusal = tierKeyRefusalMessage(e);
+      tiersError = keyRefusal ?? m.asso_cotisations_tier_create_error();
+      if (keyRefusal) console.warn('[Cotisations] Tier create refused: key shaped like a year');
+      else console.error('[Cotisations] Failed to create tier:', e);
     } finally {
       addingTier = false;
     }
@@ -502,8 +506,10 @@
       // roster's Forfait column are stale until refetched.
       await Promise.all([loadCotisationTiers(), loadRoster(0, true)]);
     } catch (e) {
-      tiersError = m.asso_cotisations_membership_save_error();
-      console.error('[Cotisations] Failed to save tier:', e);
+      const keyRefusal = tierKeyRefusalMessage(e);
+      tiersError = keyRefusal ?? m.asso_cotisations_membership_save_error();
+      if (keyRefusal) console.warn('[Cotisations] Tier save refused: key shaped like a year');
+      else console.error('[Cotisations] Failed to save tier:', e);
     } finally {
       savingTierId = null;
     }

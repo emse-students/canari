@@ -29,7 +29,7 @@ half, the shipped half is a pointer, never a retelling.
 
 ## Cotisation-disabled follow-ups (after the tier stack lands)
 
-Left by the review of #2584; none is built. Start after the tier stack has merged.
+Left by the review of #2584. Start after the tier stack has merged.
 
 - **P2 - a paid form that grants a cotisation still takes money after its association disables
   cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
@@ -39,19 +39,10 @@ Left by the review of #2584; none is built. Start after the tier stack has merge
   record is written), but the grant is still retried as if it could succeed. Fix it like the
   product path: refuse opening the payment of a granting form while the association has no
   cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
-- **P3 - the purchases tab mislabels a refusal.** `EditAchatsTab.svelte` logs "cash grant refused:
-  amount out of range" for ANY code `providerRefusalMessage` words (`COTISATION_DISABLED`
-  included): log the code.
 - **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
   membership product with a cotisation mode but no stored tag opens a checkout, then ends
   `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
   operator, privately.
-- **P3 - `/shop` still offers the buy button for a membership product of an association whose
-  cotisations are disabled**: hide or disable it, as for a refused tier.
-- **P3 - the changelog fragment `tag-grant-scoped-to-issuer.md` does not mention
-  `COTISATION_DISABLED`**: add the clause.
-- **P3 - test nit:** the negative assertion in the "renews the dearer" test should use
-  `expect.objectContaining({ tagName })`.
 - **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
   `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
   never one whose tier is no longer a rise when the sweep settles it.
@@ -69,25 +60,13 @@ Left by the review of #2584; none is built. Start after the tier stack has merge
 
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 
-Left by the review of #2544; none is built. Start after the tier stack (#2544 and its followers)
-has merged.
+Left by the review of #2544. Start after the tier stack (#2544 and its followers) has merged.
 
-- **P2 - the association page does not show what the checkout charges.** It lists the same products
-  as `/shop` but prints the product's `amountCents` (a holder of the linked tier sees the full price
-  while the preferential one is charged) and offers the buy button for a `held`, `lower` or
-  `unranked` tier, which answers a 409. Reuse `/shop`'s `preferentialDueCents` and `tierNotOffered`
-  rather than a second computation (`frontend` `AssociationDetailView.svelte`, the product list).
 - **P3 - two docs claim the settlement's rule for a form grant.** `rankTier`'s and
   `RankedGrantOutcome`'s comments in `user-tag.service.ts` say a form grant is ranked like a
   settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
-- **P3 - a legacy `memberPriceTag` row WARNs on every quote** (`fixedPriceOf`,
-  `products.service.ts`): warn once per product per process, or move it to the hourly report.
-- **P3 - the shop can name the wrong held tier** for a viewer holding two legacy tiers
-  (`heldTierName`, `shop/+page.svelte`); wording only.
 - **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
   message (fr, en).
-- **P3 - the tier-lock integration spec builds its lock key by hand** (`waitersReach`): use
-  `buyerTierLockKey()`.
 - **Decision owed to the user - the cash sale's amount.** `grantProductPurchase` records the full
   `amountCents` by default even when the beneficiary qualifies for the preferential price: decide
   whether the cash path records the preferential amount.
