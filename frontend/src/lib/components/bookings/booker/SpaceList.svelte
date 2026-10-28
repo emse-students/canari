@@ -18,9 +18,12 @@
 
   let { spaces, label }: Props = $props();
 
-  /** The line under a name: who runs it, and how many columns it has. */
+  /** The line under a name: who runs it, and how many columns from two (D44: one says nothing). */
   const summary = (s: ListedSpace) =>
-    [s.associationName, m.bookings_tab_resources_count({ count: s.resourceCount })]
+    [
+      s.associationName,
+      s.resourceCount > 1 ? m.bookings_tab_resources_count({ count: s.resourceCount }) : null,
+    ]
       .filter(Boolean)
       .join(' \u00b7 ');
 </script>

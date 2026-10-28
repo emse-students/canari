@@ -197,7 +197,8 @@ the same look, a 48 px box leading it).
   spaces therefore decrypts what is on screen and what is just below it, never twenty posters on
   arrival. A failed one is an icon with no sentence in a thumbnail's room.
 - **A space with no poster keeps the calendar glyph in the same box**, so names line up. The line
-  under the name is unchanged (who runs it, the column count).
+  under the name is who runs it, then the column count FROM TWO (a single column says nothing, D44 -
+  as the entity tab's list since WP-R1).
 - **Not done**: the entity tab's own list of spaces is a different list (the organiser's) and is
   untouched.
 

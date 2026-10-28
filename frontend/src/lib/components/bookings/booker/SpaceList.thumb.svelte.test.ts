@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import type { ListedSpace } from '$lib/bookings/api';
+import { m } from '$lib/paraglide/messages';
 
 const download = vi.hoisted(() => vi.fn());
 vi.mock('$lib/media', () => ({
@@ -101,10 +102,17 @@ describe('SpaceList - the poster as a thumbnail', () => {
     expect(document.querySelector('a[data-hub-row="a"] svg')).not.toBeNull();
   });
 
+  it('says nothing of columns for a one-column space, and counts them from two', async () => {
+    await open([space('a', false), { ...space('b', false), resourceCount: 3 }]);
+    const line = (id: string) => document.querySelector(`a[data-hub-row="${id}"]`)!.textContent;
+    expect(line('a')).not.toContain(m.bookings_tab_resources_count({ count: 1 }));
+    expect(line('b')).toContain(m.bookings_tab_resources_count({ count: 3 }));
+  });
+
   it('is a real link to the space, named by its name', async () => {
     await open([space('a', true)]);
     const link = document.querySelector<HTMLAnchorElement>('a[data-hub-row="a"]')!;
-    expect(link.getAttribute('href')).toContain('a');
+    expect(link.getAttribute('href')).toBe('/bookings/spaces/a');
     expect(link.textContent).toContain('Espace a');
   });
 });
