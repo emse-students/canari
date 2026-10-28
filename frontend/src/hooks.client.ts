@@ -30,6 +30,7 @@ import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 import { shopReturnPath } from '$lib/shop/checkoutReturn';
+import { handleClientError } from '$lib/navigation/handleClientError';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -56,20 +57,11 @@ installBootBenchDevTools();
 markBoot('app-first-line');
 
 /**
- * Called on every client-side error SvelteKit catches; logs to console (its default behaviour).
- *
- * SvelteKit 3 calls it for the EXPECTED ones too (a 404 on navigation arrives as a `framework`
- * error), so the level follows the status: a correct answer is a warning, an error nobody named
- * (`unknown`) or a 5xx is this application failing.
+ * Called on every client-side error SvelteKit catches, a page that throws while it renders included
+ * (Kit 3's own boundary around every route node routes it here). `handleClientError` is the one
+ * owner of that report; it lives apart so it can be tested without this file's side effects.
  */
-export const handleError: HandleClientError = (caught) => {
-  const status = caught.kind === 'unknown' ? 500 : caught.error.status;
-  if (status < 500) {
-    console.warn(`[App] Client navigation error ${status}:`, caught.error);
-    return;
-  }
-  console.error('[App] Client error:', caught.error);
-};
+export const handleError: HandleClientError = handleClientError;
 
 /**
  * Optional init hook - called once before the app starts. No setup needed here.

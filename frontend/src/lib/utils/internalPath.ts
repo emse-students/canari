@@ -40,14 +40,52 @@ export function internalPath(path: string): '' {
 }
 
 /**
+ * The origin a candidate path is resolved against to learn where a browser would send it. Reserved
+ * (`.invalid`, RFC 2606), so no real page can ever share it.
+ */
+const PROBE_ORIGIN = 'https://internal-path.invalid';
+
+/** Whether `value` holds a C0 control character or a backslash, at any position. */
+function hasControlOrBackslash(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || value[i] === BACKSLASH) return true;
+  }
+  return false;
+}
+
+/**
  * Validates a path of UNKNOWN origin (a query parameter, a stored value) as an in-app path.
  *
- * Returns it when it starts with a single `/`, and `fallback` otherwise - an empty value, a relative
- * one, a protocol-relative `//host` or `/\host` (both leave the app), or an absolute URL. Decided
- * here, at the source, as a value: `resolve` would otherwise THROW on a non-absolute path.
+ * Returns it when it starts with `/`, carries no control character and no backslash anywhere, and
+ * resolves to the SAME origin it was resolved against; `fallback` otherwise. The verdict is the
+ * URL parser's own, not a reading of the first characters: what decides where a link goes is how a
+ * browser parses it, so that is what is asked. Decided here, at the source, as a value: `resolve`
+ * would otherwise THROW on a non-absolute path, and every consumer (a `goto`, an `href`, a stored
+ * sign-in return) receives a value already held to the page's origin.
  */
 export function safeInternalPath(raw: string | null | undefined, fallback: string): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw[1] === BACKSLASH) {
+  if (!raw) return fallback;
+  if (!raw.startsWith('/') || hasControlOrBackslash(raw)) {
+    console.warn(
+      `[nav] safeInternalPath refused a target (length ${raw.length}) - not an in-app path`
+    );
+    return fallback;
+  }
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, `${PROBE_ORIGIN}/`);
+  } catch (err) {
+    // The error's name only: a parser message may quote the value, and the value is not logged.
+    console.warn(
+      `[nav] safeInternalPath refused a target the URL parser rejects (${(err as Error).name})`
+    );
+    return fallback;
+  }
+  if (resolved.origin !== PROBE_ORIGIN) {
+    console.warn(
+      `[nav] safeInternalPath refused a target (length ${raw.length}) - it leaves the origin`
+    );
     return fallback;
   }
   return raw;

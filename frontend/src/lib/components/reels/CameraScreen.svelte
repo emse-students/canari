@@ -76,6 +76,14 @@
      */
     deferOpen?: boolean;
     /**
+     * THE WAY OUT OF A DEFERRAL NOBODY ENDS. The owner lifts `deferOpen` when the picker answers, and
+     * some pickers never do: an engine with no `cancel` event on a file input (Chromium < 113, Safari
+     * < 16.4) or a native dismissal its plugin never settles. So while the camera is stopped, the
+     * open deferred and the page on screen, the stand-in offers to open the camera, and this is the
+     * member's tap on it: the owner lifts the deferral. A gesture, never a clock.
+     */
+    onreopen?: () => void;
+    /**
      * Called just before the app's going to the background takes the camera away, so a take in
      * progress can be ended - and kept - while its tracks still flow.
      */
@@ -101,6 +109,7 @@
     faultActions,
     paused = false,
     deferOpen = false,
+    onreopen,
     onBeforeRelease,
     onclose,
     microphoneAsked = true,
@@ -121,6 +130,23 @@
   const standInShown = $derived(
     session.phase !== 'error' && !(session.phase === 'live' && frameReady)
   );
+
+  /** The page is on screen: the member can see, and tap, what the stand-in offers. */
+  let onScreen = $state(typeof document === 'undefined' || document.visibilityState !== 'hidden');
+
+  /**
+   * The camera is stopped because the owner deferred its open, and the member is looking at it: the
+   * stand-in's "opening" would be a lie, so it offers the open instead (`onreopen`).
+   */
+  const reopenOffered = $derived(
+    !!onreopen && deferOpen && !paused && onScreen && session.phase === 'stopped'
+  );
+
+  /** The member asked for the camera while its open was deferred: the owner lifts the deferral. */
+  function reopen() {
+    console.debug('[camera] reopen tapped while the open was deferred: the owner lifts it');
+    onreopen?.();
+  }
 
   function onFrame() {
     if (!video || video.videoWidth === 0 || frameReady) return;
@@ -236,7 +262,8 @@
    * Android takes the device from a backgrounded holder anyway.
    */
   function onVisibility() {
-    if (document.visibilityState === 'hidden') {
+    onScreen = document.visibilityState !== 'hidden';
+    if (!onScreen) {
       console.debug('[camera] app hidden - releasing the camera');
       onBeforeRelease?.();
       // `suspend`, not `stop`: the permission dialog backgrounds the app, and its answer is awaited.
@@ -358,13 +385,31 @@
     class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-linear-to-b text-white/70 transition-opacity duration-200 motion-reduce:transition-none {standInShown
       ? 'opacity-100'
       : 'opacity-0'}"
-    role={standInShown ? 'status' : undefined}
-    aria-hidden={!standInShown}
+    role={standInShown && !reopenOffered ? 'status' : undefined}
+    aria-hidden={!standInShown || reopenOffered}
     data-camera-standin={standInShown ? 'shown' : 'gone'}
   >
-    <Camera size={40} strokeWidth={1.5} class="motion-safe:animate-pulse" />
-    <p class="text-sm">{m.reels_camera_starting()}</p>
+    {#if !reopenOffered}
+      <Camera size={40} strokeWidth={1.5} class="motion-safe:animate-pulse" />
+      <p class="text-sm">{m.reels_camera_starting()}</p>
+    {/if}
   </div>
+
+  <!-- A deferred open that nothing ended (a picker that never said it closed): the member's tap is
+       the way back, on the stand-in's own surface. -->
+  {#if reopenOffered}
+    <div class="absolute inset-0 flex items-center justify-center">
+      <button
+        type="button"
+        class="inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-500"
+        data-camera-reopen
+        onclick={reopen}
+      >
+        <Camera size={40} strokeWidth={1.5} />
+        {m.reels_camera_reopen()}
+      </button>
+    </div>
+  {/if}
 
   {#if session.phase === 'error' && session.fault}
     {@const text = FAULT_TEXT[session.fault]}

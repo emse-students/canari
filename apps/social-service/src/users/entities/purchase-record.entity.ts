@@ -19,6 +19,15 @@ export type PurchaseStatus = 'paid' | 'paid_not_granted' | 'pending_cash' | 'can
 /** The statuses of money actually received: what the association's purchases list. */
 export const RECEIVED_PURCHASE_STATUSES: PurchaseStatus[] = ['paid', 'paid_not_granted'];
 
+/**
+ * The status of money received, from whether what it paid for was delivered: `paid`, or
+ * `paid_not_granted` - the durable marker a refund or a manual grant is owed on. ONE decision for
+ * every path that records a payment (a boutique settlement, a form's fulfilment).
+ */
+export function receivedStatus(delivered: boolean): 'paid' | 'paid_not_granted' {
+  return delivered ? 'paid' : 'paid_not_granted';
+}
+
 /** Immutable audit record for a completed purchase (form submission or boutique product). */
 @Entity('purchase_records')
 export class PurchaseRecord {
