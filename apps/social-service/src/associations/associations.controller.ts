@@ -1377,7 +1377,8 @@ export class AssociationsController {
       purchaseId,
       closedBy,
       dto.outcome,
-      dto.expectDelivered ?? null
+      // Validated present for `granted` (`ClosePaidNotGrantedDto`); a refund reads no tier.
+      dto.expectDelivered ?? false
     );
   }
 

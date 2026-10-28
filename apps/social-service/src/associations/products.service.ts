@@ -316,6 +316,12 @@ interface ClosingGrantVerdict {
   detail: string;
 }
 
+/**
+ * The `submissions.paymentStatus` values of an answer whose money is in (`Submission`): what
+ * `closingContextOf` counts as a buyer's paid answers to a form.
+ */
+const PAID_ANSWER_STATUSES = ['paid', 'paid_over_capacity'];
+
 /** What `closingGrantVerdict` reads, loaded once for many records (`closingContextOf`). */
 interface ClosingContext {
   asso: Association | null;
@@ -331,7 +337,8 @@ interface ClosingContext {
   tagsByBuyer: Map<string, UserTag[]>;
   /**
    * Whether `submissionId` is an answer to the form `record` paid for, by its buyer, who has exactly
-   * ONE paid record for that form - so that answer can only be this record's (`deliveryOf`).
+   * ONE paid record and ONE paid answer for that form - so that answer can only be this record's
+   * (`deliveryOf`).
    */
   ownFormAnswer: (record: PurchaseRecord, submissionId: unknown) => boolean;
 }
@@ -342,8 +349,9 @@ interface ClosingContext {
  * - `metadata.purchaseRecordId` set: the tag already closed (or was granted by) a payment - one
  *   delivery closes at most one payment, so it is not this one's;
  * - `metadata.submissionId` set: a form answer's grant - this payment's only when the record is that
- *   form's, the answer is this buyer's, AND this buyer has exactly ONE paid record for that form
- *   (`ownSubmission`, `ClosingContext.ownFormAnswer`: a record names no answer, so with two the
+ *   form's, the answer is this buyer's, AND this buyer has exactly ONE paid record AND ONE paid
+ *   answer for that form - the answer counted too, since fulfilment writes the record after the
+ *   grant and apart from it (`ownSubmission`, `ClosingContext.ownFormAnswer`: a record names no answer, so with two the
  *   answer cannot be told to be this one's) - a replay that raced the run still granting - whatever
  *   the times say;
  * - `metadata.legacy` set: a legacy claim's grant, not a payment's;
@@ -3167,7 +3175,7 @@ export class ProductsService {
     purchaseId: string,
     closedBy: string,
     outcome: PurchaseClosingOutcome,
-    expectDelivered: boolean | null = null
+    expectDelivered: boolean
   ): Promise<PurchaseListRow> {
     this.logger.debug(
       `[SHOP] closing purchase=${purchaseId.slice(0, 8)} association=${associationId.slice(0, 8)} as ${outcome}`
@@ -3208,7 +3216,7 @@ export class ProductsService {
           const verdict = await this.closingGrantVerdict(record, ctx);
           if (verdict.refusal) throw this.closingGrantRefused(record.id, verdict);
           // What the manager confirmed must still be what happens: "nothing is granted" never grants.
-          if (expectDelivered !== null && expectDelivered !== Boolean(verdict.deliveredTagId)) {
+          if (expectDelivered !== Boolean(verdict.deliveredTagId)) {
             throw this.closingChanged(record.id, expectDelivered);
           }
           if (verdict.deliveredTagId) {
@@ -3423,6 +3431,18 @@ export class ProductsService {
             [namedAnswers]
           )
         : [];
+    // The buyer's PAID answers to each form, counted where they are settled - before fulfilment
+    // writes the grant, then the record, apart and outside the tier lock - so an answer whose record
+    // is not written yet is still counted.
+    const paidAnswerCounts: { formId: string; userId: string; n: number }[] = formIds.length
+      ? await manager.query(
+          `SELECT "formId"::text AS "formId", "userId", count(*)::int AS n FROM submissions
+            WHERE "formId" = ANY($1) AND "userId" = ANY($2)
+              AND "paymentStatus" = ANY($3) AND "totalPaid" > 0
+            GROUP BY 1, 2`,
+          [formIds, formBuyers, PAID_ANSWER_STATUSES]
+        )
+      : [];
     const paidCounts: { formId: string; userId: string; n: number }[] = formIds.length
       ? await manager.query(
           `SELECT "formId"::text AS "formId", "userId", count(*)::int AS n FROM purchase_records
@@ -3436,6 +3456,7 @@ export class ProductsService {
     const pair = (formId: string, userId: string) => `${formId}|${userId}`;
     const answersById = new Map(answers.map((a) => [a.id, a]));
     const paidCount = new Map(paidCounts.map((c) => [pair(c.formId, c.userId), c.n]));
+    const paidAnswerCount = new Map(paidAnswerCounts.map((c) => [pair(c.formId, c.userId), c.n]));
     const tagsByBuyer = new Map<string, UserTag[]>();
     for (const t of tags) tagsByBuyer.set(t.userId, [...(tagsByBuyer.get(t.userId) ?? []), t]);
     return {
@@ -3452,8 +3473,11 @@ export class ProductsService {
         if (!answer) return false;
         const sameForm = answer.formId === record.formId;
         const sameBuyer = answer.userId === record.userId;
-        const onlyPaidRecord = paidCount.get(pair(record.formId, record.userId)) === 1;
-        return sameForm && sameBuyer && onlyPaidRecord;
+        const key = pair(record.formId, record.userId);
+        const onlyPaidRecord = paidCount.get(key) === 1;
+        // The stricter of the two: a paid answer whose record is not written yet still counts.
+        const onlyPaidAnswer = paidAnswerCount.get(key) === 1;
+        return sameForm && sameBuyer && onlyPaidRecord && onlyPaidAnswer;
       },
     };
   }

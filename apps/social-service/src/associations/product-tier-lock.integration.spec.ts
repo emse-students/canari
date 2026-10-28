@@ -158,7 +158,8 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
     // The columns a closing reads of a form answer a held tag names (`isOwnFormAnswer`).
     await admin.query(
-      `CREATE TABLE submissions (id uuid PRIMARY KEY, "formId" uuid NOT NULL, "userId" varchar(255))`
+      `CREATE TABLE submissions (id uuid PRIMARY KEY, "formId" uuid NOT NULL, "userId" varchar(255),
+         "paymentStatus" varchar NOT NULL DEFAULT 'paid', "totalPaid" int NOT NULL DEFAULT 1500)`
     );
     // The columns a closing reads of a paid form (`grantClosedTier`).
     await admin.query(
@@ -590,11 +591,13 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const buyer = newBuyer();
     const record = await markedRecord(buyer, TIER_D);
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'refunded');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'refunded', false);
     expect(closed).toMatchObject({ id: record, notGranted: true, closedOutcome: 'refunded' });
     expect(closed.closedAt).not.toBeNull();
 
-    const again = await settled(service.closePaidNotGranted(ASSO, record, 'manager-2', 'granted'));
+    const again = await settled(
+      service.closePaidNotGranted(ASSO, record, 'manager-2', 'granted', false)
+    );
     expect(codeOf(again.error)).toBe('PURCHASE_ALREADY_CLOSED');
     // The first outcome stands, the mark stays as history, and the refused `granted` granted nothing.
     const rows = await ds.query(
@@ -612,8 +615,8 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const record = await markedRecord(buyer, TIER_D);
 
     const outcomes = await Promise.all([
-      settled(service.closePaidNotGranted(ASSO, record, 'manager-1', 'refunded')),
-      settled(service.closePaidNotGranted(ASSO, record, 'manager-2', 'refunded')),
+      settled(service.closePaidNotGranted(ASSO, record, 'manager-1', 'refunded', false)),
+      settled(service.closePaidNotGranted(ASSO, record, 'manager-2', 'refunded', false)),
     ]);
 
     expect(outcomes.filter((o) => o.error === null)).toHaveLength(1);
@@ -631,7 +634,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const buyer = newBuyer();
     const record = await markedRecord(buyer, TIER_D);
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted', false);
 
     expect(closed.closedOutcome).toBe('granted');
     expect(await heldTags(buyer)).toEqual([TAG_D]);
@@ -643,7 +646,9 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await settle(checkoutId);
     const [paid] = await ds.query(`SELECT id FROM purchase_records WHERE "userId" = $1`, [buyer]);
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, paid.id, 'm', 'refunded'));
+    const refused = await settled(
+      service.closePaidNotGranted(ASSO, paid.id, 'm', 'refunded', false)
+    );
 
     expect(codeOf(refused.error)).toBe('PURCHASE_NOT_CLOSABLE');
   });
@@ -680,7 +685,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const buyer = newBuyer();
     const record = await markedFormRecord(buyer, 'a');
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted', false);
 
     expect(closed).toMatchObject({ source: 'form', closedOutcome: 'granted' });
     expect(await heldTags(buyer)).toEqual([TAG_A]);
@@ -690,7 +695,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const buyer = newBuyer();
     const record = await markedFormRecord(buyer, 'no-such-tier');
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_TIER_GONE');
     expect(await heldTags(buyer)).toEqual([]);
@@ -704,11 +709,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   it('an ERASED buyer cannot be closed as granted - no cotisant is minted - but can be refunded', async () => {
     const record = await markedFormRecord('[deleted]', 'a');
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
     expect(codeOf(refused.error)).toBe('PURCHASE_BUYER_ERASED');
     expect(await heldTags('[deleted]')).toEqual([]);
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'refunded');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'refunded', false);
     expect(closed).toMatchObject({ closedOutcome: 'refunded' });
   });
 
@@ -719,7 +724,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     // The erasure's anonymisation of the record, held open on the test's connection.
     await admin.query('BEGIN');
     await admin.query(`UPDATE purchase_records SET "userId" = '[deleted]' WHERE id = $1`, [record]);
-    const closing = settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const closing = settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
     const waits = await waitersReach(1, null);
     await admin.query('COMMIT');
     const outcome = await closing;
@@ -737,7 +742,9 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       const buyer = newBuyer();
       const record = await markedRecord(buyer, TIER_D);
 
-      const refused = await settled(service.closePaidNotGranted(OTHER_ASSO, record, 'm', outcome));
+      const refused = await settled(
+        service.closePaidNotGranted(OTHER_ASSO, record, 'm', outcome, false)
+      );
 
       expect(refused.error).toBeInstanceOf(NotFoundException);
       const rows = await ds.query(
@@ -763,7 +770,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const purchases = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
     const unclosed = await purchases.countUnclosedPaidNotGranted();
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted', true);
 
     expect(closed.closedOutcome).toBe('granted');
     // The very row the roster wrote: no renewal, no validity extension - only the ONE stamp key.
@@ -786,7 +793,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await settle(checkoutId);
     expect(await heldTags(buyer)).toEqual([TAG_D]);
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, first, 'm', 'granted'));
+    const refused = await settled(service.closePaidNotGranted(ASSO, first, 'm', 'granted', false));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
     const rows = await ds.query(
@@ -802,8 +809,8 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const second = await markedFormRecord(buyer, 'd');
     await tags.grantCotisant(ASSO, buyer, 'manager', 'd');
 
-    const closed = await service.closePaidNotGranted(ASSO, first, 'm', 'granted');
-    const refused = await settled(service.closePaidNotGranted(ASSO, second, 'm', 'granted'));
+    const closed = await service.closePaidNotGranted(ASSO, first, 'm', 'granted', true);
+    const refused = await settled(service.closePaidNotGranted(ASSO, second, 'm', 'granted', false));
 
     expect(closed.closedOutcome).toBe('granted');
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
@@ -831,7 +838,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   const formOf = async (record: string): Promise<string> =>
     (await ds.query(`SELECT "formId" FROM purchase_records WHERE id = $1`, [record]))[0].formId;
 
-  /** A REAL answer to `formId` by `userId` (null: a guest's). Answers its id. */
+  /** A REAL answer to `formId` by `userId` (null: a guest's), PAID. Answers its id. */
   async function answerTo(formId: string, userId: string | null): Promise<string> {
     const id = `00000000-0000-4000-8000-${String(++buyerSeq).padStart(12, '0')}`;
     await ds.query(`INSERT INTO submissions (id, "formId", "userId") VALUES ($1, $2, $3)`, [
@@ -866,6 +873,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     ['an answer to ANOTHER form, by the same buyer', 'other-form'],
     ["ANOTHER buyer's answer to the same form", 'other-buyer'],
     ['a FIRST answer to the same form, when the buyer paid it twice', 'second-answer'],
+    ['a SECOND paid answer to the same form whose record is not written yet', 'unrecorded-answer'],
   ] as const)("is not this payment's delivery: %s", async (_case, variant) => {
     const buyer = newBuyer();
     const record = await markedFormRecord(buyer, 'd');
@@ -875,6 +883,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       answer = await answerTo(await formOf(await markedFormRecord(newBuyer(), 'd')), buyer);
     } else if (variant === 'other-buyer') {
       answer = await answerTo(formId, newBuyer());
+    } else if (variant === 'unrecorded-answer') {
+      // This record's own answer, then a second one paid and granted whose record fulfilment has
+      // not written yet: the record count still reads ONE, the paid answers TWO.
+      await answerTo(formId, buyer);
+      answer = await answerTo(formId, buyer);
     } else {
       // The buyer answered this form twice: the first answer was granted and recorded paid, the
       // second is the marked one. The record names no answer, so the tag cannot be told its.
@@ -897,7 +910,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     }
     await formGrant(buyer, answer);
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
     const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
@@ -931,7 +944,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const purchases = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
     const before = await purchases.countUnclosedPaidNotGranted();
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(before);
@@ -969,7 +982,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
     await tags.grantCotisant(ASSO, buyer, 'manager', variantKey);
 
-    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_NOT_A_RISE');
     expect(await heldTags(buyer)).toEqual([`cotisant:cercle-it-${variantKey}`]);
@@ -1048,7 +1061,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     // markedRecord leaves B; A is added beside it: two tiers held at once (both 1500).
     await grantRawTag(buyer, TAG_A);
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted', false);
 
     expect(closed.closedOutcome).toBe('granted');
     // D (2000) is a rise over the dearer held (1500); the sibling XOR revoked BOTH held tiers.
@@ -1062,7 +1075,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await markedRecord(newBuyer(), TIER_D);
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(before + 2);
 
-    await service.closePaidNotGranted(ASSO, first, 'manager-1', 'refunded');
+    await service.closePaidNotGranted(ASSO, first, 'manager-1', 'refunded', false);
 
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(before + 1);
   });
