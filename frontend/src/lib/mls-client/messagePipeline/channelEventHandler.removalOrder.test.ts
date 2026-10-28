@@ -128,15 +128,45 @@ describe('a released Remove', () => {
     await handleChannelEvent(
       {
         type: 'channel.member.removal-released',
-        data: { workspaceId: 'ws-1', channelId: null, removedUserId: 'bob', releasedBy: 'carol' },
+        data: {
+          workspaceId: 'ws-1',
+          channelId: null,
+          removedUserId: 'bob',
+          releasedBy: 'carol',
+          releasedByDevice: 'dev-c',
+        },
       },
       ctx()
     );
+    // WHO released it and BY WHICH DEVICE travel on: the actor is never elected for it, and only a
+    // tree holding that device's leaf re-decides.
     expect(onChannelRemovalReleased).toHaveBeenCalledExactlyOnceWith({
       workspaceId: 'ws-1',
       channelId: '',
       removedUserId: 'bob',
+      releasedBy: 'carol',
+      releasedByDevice: 'dev-c',
     });
+  });
+
+  it('is lost loudly without the actor or its device - either would elect wrongly', async () => {
+    await handleChannelEvent(
+      {
+        type: 'channel.member.removal-released',
+        data: { workspaceId: 'ws-1', removedUserId: 'bob', releasedByDevice: 'dev-c' },
+      },
+      ctx()
+    );
+    await handleChannelEvent(
+      {
+        type: 'channel.member.removal-released',
+        data: { workspaceId: 'ws-1', removedUserId: 'bob', releasedBy: 'carol' },
+      },
+      ctx()
+    );
+    expect(onChannelRemovalReleased).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('arrived with no releasedBy'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('arrived with no releasedByDevice'));
   });
 
   it('is lost loudly, not silently, without the person it names', async () => {

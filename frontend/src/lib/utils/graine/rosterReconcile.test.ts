@@ -4,7 +4,10 @@ import {
   reconcileDistributionGroupRoster,
   reconcileDistributionGroupRosterReported,
 } from './rosterReconcile';
-import { CommitOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
+import {
+  AcceptedCommitNotMergedError,
+  CommitOutcomeUnknownError,
+} from '$lib/mls-client/commitSubmission';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
@@ -483,6 +486,21 @@ describe('the pass report - what the actor of a removal releases on', () => {
       )
     ).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
     expect(lines.join(' | ')).toContain('sent and NOT answered');
+    expect(lines.join(' | ')).not.toContain('can still read it');
+  });
+
+  it('a commit the server ACCEPTED and this device failed to merge is no refusal - it landed', async () => {
+    const lines: string[] = [];
+    removeDepartedMembers.mockRejectedValue(
+      new AcceptedCommitNotMergedError('dist-group', 26, new Error('merge failed'))
+    );
+    await expect(
+      reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      )
+    ).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
+    // The tree here is the one BEFORE the commit: read again, it would say he still holds a leaf.
+    expect(lines.join(' | ')).toContain('ACCEPTED by the server and NOT merged here');
     expect(lines.join(' | ')).not.toContain('can still read it');
   });
 

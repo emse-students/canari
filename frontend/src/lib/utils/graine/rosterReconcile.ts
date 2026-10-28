@@ -6,7 +6,10 @@ import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
-import { CommitOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
+import {
+  AcceptedCommitNotMergedError,
+  CommitOutcomeUnknownError,
+} from '$lib/mls-client/commitSubmission';
 
 /**
  * Making a departure move the community's distribution-group epoch.
@@ -312,7 +315,10 @@ function leafUsers(leafIdentities: string[]): string[] {
  * members another device already removed is false, and a line its reader learns to skip.
  *
  * A commit whose OUTCOME IS UNKNOWN (`CommitOutcomeUnknownError`) is not a refusal: it may yet land,
- * so it is said as such and the tree it leaves is unknown (`null`).
+ * so it is said as such and the tree it leaves is unknown (`null`). Nor is a commit the server
+ * ACCEPTED and this device failed to merge (`AcceptedCommitNotMergedError`): it landed, and the tree
+ * read here would be the one before it - also `null`. Only a failure that proves nothing landed
+ * leaves a tree to report.
  *
  * @returns the users holding a leaf after the failure, or `null` when that is unknown.
  */
@@ -329,6 +335,12 @@ async function reportRefusedRemoval(
   if (error instanceof CommitOutcomeUnknownError) {
     log(
       `[GRAINE] the removal of ${strays.size} departed member(s) from ${label} was sent and NOT answered (${String(error)}) - it may yet land; the next resubmission decides`
+    );
+    return null;
+  }
+  if (error instanceof AcceptedCommitNotMergedError) {
+    log(
+      `[GRAINE] the removal of ${strays.size} departed member(s) from ${label} was ACCEPTED by the server and NOT merged here (${String(error)}) - it landed; this device's tree is behind`
     );
     return null;
   }

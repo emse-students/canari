@@ -43,7 +43,8 @@ import { isGraineReady, rawChannelId, requireGraineRuntime } from './runtime';
  *
  * THE ELECTION. Otherwise ONE remaining device, ELECTED THE SAME WAY BY EVERY RECEIVER, commits it:
  * the first device the roster reports online, in a window of {@link ELECTION_WINDOW} leaves of the
- * tree (the departed user's excluded) whose user is on the scope's roster. The window is a function
+ * tree (the departed user's excluded, and on a release the releasing actor's) whose user is on the
+ * scope's roster. The window is a function
  * of the tree and its epoch, read together under the MLS lock, so receivers that have merged the same
  * commits agree on it without asking anything - and only a
  * receiver whose own leaf IS in the window reads the roster with presence: a departure in a
@@ -71,7 +72,10 @@ import { isGraineReady, rawChannelId, requireGraineRuntime } from './runtime';
  * elected device that does not hold the group, sits in an epoch gap, runs on a follower tab, or is
  * an older client that predates this election commits nothing - the first three say so in their
  * own log, the last cannot. No capability travels with presence today, so each of those cases is
- * left to the backstop: a holder's next roster pass, at worst the next app load. Whoever is elected
+ * left to the backstop: a holder's next roster pass, at worst the next app load. The same backstop
+ * covers two cases nothing re-decides: a tree read while its epoch moved (`unreadable`) is not
+ * read again, and an actor commit whose outcome was unknown and is later refused releases nothing.
+ * Whoever is elected
  * runs the roster DIFF, which no event payload steers, so an election can only remove somebody the
  * scope's roster no longer names.
  */
@@ -98,21 +102,23 @@ export function windowOffset(departedUserId: string, epoch: number, leafCount: n
 
 /**
  * The canonical identities that may be elected for `departedUserId`'s removal at `epoch`, in
- * election order: {@link ELECTION_WINDOW} leaves of the sorted tree (the departed user's excluded),
- * starting at {@link windowOffset} and wrapping around. PURE, and a function of the tree and its
- * epoch alone, so every receiver computes the same window without a request.
+ * election order: {@link ELECTION_WINDOW} leaves of the sorted tree (the departed user's excluded,
+ * and every leaf of each `excludedUserIds` user - the actor who RELEASED it, who said it will not
+ * commit), starting at {@link windowOffset} and wrapping around. PURE, and a function of the tree,
+ * its epoch and the event alone, so every receiver computes the same window without a request.
  */
 export function electionWindow(
   leafIdentities: string[],
   departedUserId: string,
-  epoch: number
+  epoch: number,
+  excludedUserIds: readonly string[] = []
 ): string[] {
-  const departed = canonicalUserId(departedUserId);
+  const excluded = new Set([departedUserId, ...excludedUserIds].map(canonicalUserId));
   const sorted = [
     ...new Set(
       leafIdentities
         .map((identity) => canonicalIdentity(identity))
-        .filter((key): key is string => key !== null && userIdOfLeaf(key) !== departed)
+        .filter((key): key is string => key !== null && !excluded.has(userIdOfLeaf(key) ?? ''))
     ),
   ].sort();
   const start = windowOffset(departedUserId, epoch, sorted.length);
@@ -128,6 +134,8 @@ export function electDepartureCommitter(input: {
   rosterRows: PresenceRow[];
   departedUserId: string;
   epoch: number;
+  /** Users none of whose leaves may be elected: the actor of a release. */
+  excludedUserIds?: readonly string[];
 }): string | null {
   const online = new Map<string, Set<string>>();
   for (const row of input.rosterRows) {
@@ -136,15 +144,19 @@ export function electDepartureCommitter(input: {
     online.set(canonicalUserId(String(row.userId)), new Set(row.onlineDevices));
   }
   return (
-    electionWindow(input.leafIdentities, input.departedUserId, input.epoch).find(
-      (key) => online.get(userIdOfLeaf(key))?.has(deviceIdOfLeaf(key)) === true
-    ) ?? null
+    electionWindow(
+      input.leafIdentities,
+      input.departedUserId,
+      input.epoch,
+      input.excludedUserIds
+    ).find((key) => online.get(userIdOfLeaf(key))?.has(deviceIdOfLeaf(key)) === true) ?? null
   );
 }
 
 /** What one receiver decided about one scope, in the terms its log line reports. */
 export type DepartureDecision =
   | 'actor-commits'
+  | 'not-deferred'
   | 'not-in-tree'
   | 'outside-window'
   | 'elected-here'
@@ -163,6 +175,17 @@ interface DepartureFacts {
   actorUserId?: string | null;
   /** The actor's device that commits it, when the actor named one (`committingDeviceId`). */
   actorDeviceId?: string | null;
+  /**
+   * The actor who RELEASED this Remove (`releasedBy`): it said it will not commit it, so no leaf of
+   * that user is elected - its device is online and holds a leaf, and electing it would leave the
+   * Remove to the one device that just declined it.
+   */
+  releasedByUserId?: string;
+  /**
+   * The device that released it. Only a receiver whose tree holds THAT leaf deferred to it on the
+   * removal event; any other elected then, and re-deciding there would race its own election.
+   */
+  releasedByDeviceId?: string;
 }
 
 /**
@@ -211,11 +234,18 @@ export async function commitDepartureIfElected(
  * scope's Remove of `departedUserId` and KNOWS it did not commit it. Decided for that ONE scope -
  * the community's key group when `channelId` is empty, else the private salon's - with no claim, so
  * the election runs. One scope per release: the actor commits its scopes one after another, and a
- * salon's commit may still be in flight when the community's is released. Never throws.
+ * salon's commit may still be in flight when the community's is released. The releasing actor's
+ * leaves are out of the election ({@link DepartureFacts.releasedByUserId}). Never throws.
  */
 export async function commitReleasedDepartureIfElected(
   channelService: ChannelService,
-  release: { workspaceId: string; channelId: string; departedUserId: string },
+  release: {
+    workspaceId: string;
+    channelId: string;
+    departedUserId: string;
+    releasedByUserId: string;
+    releasedByDeviceId: string;
+  },
   log: (message: string) => void
 ): Promise<DepartureDecision> {
   if (!isGraineReady()) {
@@ -228,7 +258,16 @@ export async function commitReleasedDepartureIfElected(
   log(
     `[GRAINE] DEPARTURE ${release.departedUserId.slice(0, 8)} from ${scopeLabel(scope)}: released by the actor, who did not commit it - deciding it without the claim`
   );
-  return decideForScope(channelService, scope, { departedUserId: release.departedUserId }, log);
+  return decideForScope(
+    channelService,
+    scope,
+    {
+      departedUserId: release.departedUserId,
+      releasedByUserId: release.releasedByUserId,
+      releasedByDeviceId: release.releasedByDeviceId,
+    },
+    log
+  );
 }
 
 async function decideForScope(
@@ -271,6 +310,22 @@ async function decideForScope(
       event.actorUserId && event.actorDeviceId
         ? canonicalIdentity(`${event.actorUserId}:${event.actorDeviceId}`)
         : null;
+    // A RELEASE IS RE-DECIDED ONLY WHERE THE REMOVAL DEFERRED TO THE RELEASING DEVICE: a tree
+    // without its leaf elected a committer on the removal event itself, without the claim.
+    if (event.releasedByUserId) {
+      const releasingLeaf = canonicalIdentity(
+        `${event.releasedByUserId}:${event.releasedByDeviceId ?? ''}`
+      );
+      if (
+        !releasingLeaf ||
+        !leafIdentities.some((identity) => canonicalIdentity(identity) === releasingLeaf)
+      ) {
+        log(
+          `[GRAINE] DEPARTURE ${departed} from ${label}: released by a device that holds no leaf here - this scope was decided on the removal itself, without the claim; nothing to re-decide`
+        );
+        return 'not-deferred';
+      }
+    }
     if (actorLeaf && leafIdentities.some((identity) => canonicalIdentity(identity) === actorLeaf)) {
       log(
         `[GRAINE] DEPARTURE ${departed} from ${label}: the actor's device ${actorLeaf.slice(0, 8)} holds a leaf - left to it; decided again only if it releases it`
@@ -278,7 +333,8 @@ async function decideForScope(
       return 'actor-commits';
     }
     const self = canonicalIdentity(`${userId}:${mlsService.getDeviceId()}`);
-    const window = electionWindow(leafIdentities, event.departedUserId, epoch);
+    const excludedUserIds = event.releasedByUserId ? [event.releasedByUserId] : [];
+    const window = electionWindow(leafIdentities, event.departedUserId, epoch, excludedUserIds);
     if (!self || !window.includes(self)) {
       log(
         `[GRAINE] DEPARTURE ${departed} from ${label}: this device is not among the ${ELECTION_WINDOW} leaves that may be elected at epoch ${epoch} - left to them`
@@ -294,6 +350,7 @@ async function decideForScope(
       rosterRows,
       departedUserId: event.departedUserId,
       epoch,
+      excludedUserIds,
     });
     if (!elected) {
       // Said by EVERY member of the window, so a window that starves is visible in each of them.

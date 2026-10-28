@@ -591,14 +591,35 @@ describe('ChannelService security hardening', () => {
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
     memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
 
-    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).resolves.toEqual({
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')).resolves.toEqual({
       success: true,
     });
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
       'channel.member.removal-released',
-      { workspaceId: 'ws1', channelId: null, removedUserId: 'u-bob', releasedBy: 'u1' },
+      {
+        workspaceId: 'ws1',
+        channelId: null,
+        removedUserId: 'u-bob',
+        releasedBy: 'u1',
+        releasedByDevice: 'dev-1',
+      },
       ['u-carol']
     );
+  });
+
+  it('a release names its releasing device, or is refused before anything is read', async () => {
+    // Receivers re-decide only where they deferred to THAT device's leaf; a release without it
+    // would make every receiver re-decide, and race the election the removal already ran.
+    const { service, memberRepo, redis } = makeService();
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'not a device/id')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(memberRepo.findOne).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
   });
 
   it('a release about somebody still a member is refused, and nothing is announced', async () => {
@@ -608,9 +629,9 @@ describe('ChannelService security hardening', () => {
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
     memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob' }]);
 
-    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
-      ConflictException
-    );
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(redis.publishChannelEvent).not.toHaveBeenCalled();
   });
 
@@ -619,9 +640,9 @@ describe('ChannelService security hardening', () => {
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
 
-    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ForbiddenException);
     expect(redis.publishChannelEvent).not.toHaveBeenCalled();
   });
 
@@ -642,20 +663,26 @@ describe('ChannelService security hardening', () => {
       { userId: 'u-bob' },
     ]);
 
-    await service.releaseChannelRemoval('ch1', 'u-bob', 'u1');
+    await service.releaseChannelRemoval('ch1', 'u-bob', 'u1', 'dev-1');
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
       'channel.member.removal-released',
-      { workspaceId: 'ws1', channelId: 'ch1', removedUserId: 'u-bob', releasedBy: 'u1' },
+      {
+        workspaceId: 'ws1',
+        channelId: 'ch1',
+        removedUserId: 'u-bob',
+        releasedBy: 'u1',
+        releasedByDevice: 'dev-1',
+      },
       ['u-carol']
     );
 
-    await expect(service.releaseChannelRemoval('ch1', 'u-carol', 'u1')).rejects.toBeInstanceOf(
-      ConflictException
-    );
+    await expect(
+      service.releaseChannelRemoval('ch1', 'u-carol', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ConflictException);
     channelRepo.findOne.mockResolvedValue({ ...salon, isPrivate: false });
-    await expect(service.releaseChannelRemoval('ch1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
-      BadRequestException
-    );
+    await expect(
+      service.releaseChannelRemoval('ch1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('a release that cannot be announced is a 503 - the announcement is the release', async () => {
@@ -666,9 +693,9 @@ describe('ChannelService security hardening', () => {
     memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
     redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
 
-    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
-      ServiceUnavailableException
-    );
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('removeMemberFromChannel reports whether the channel was private', async () => {

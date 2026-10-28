@@ -81,7 +81,8 @@ describe('commitRemovalNow', () => {
       removedUserIds: [],
       released: true,
     });
-    expect(releaseRemoval).toHaveBeenCalledExactlyOnceWith(salon, 'Bob');
+    // With THIS device's id: only receivers that deferred to this leaf re-decide.
+    expect(releaseRemoval).toHaveBeenCalledExactlyOnceWith(salon, 'Bob', 'web-self');
     expect(lines.join(' | ')).toContain('released to the scope');
   });
 
@@ -121,13 +122,17 @@ describe('commitRemovalNow', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it('commits nothing when this device holds no key group for the scope, and says so', async () => {
+  it('commits nothing when this device holds no key group, and RELEASES the Remove it was named for', async () => {
+    // The request named this device; a tree may still hold its leaf (a state dropped, a salon
+    // registered and not held), and its members may have deferred to it. Nothing staged is a proof.
     runtime.held = false;
     await expect(commitRemovalNow(channels, salon, 'bob', 'access revoked', log)).resolves.toEqual({
       kind: 'not-held',
+      released: true,
     });
     expect(reconcile).not.toHaveBeenCalled();
-    expect(lines.join(' | ')).toContain("a holder's next roster pass removes them");
+    expect(releaseRemoval).toHaveBeenCalledExactlyOnceWith(salon, 'bob', 'web-self');
+    expect(lines.join(' | ')).toContain('it commits nothing, so it releases the Remove');
   });
 
   it('commits nothing before a Graine session is wired', async () => {

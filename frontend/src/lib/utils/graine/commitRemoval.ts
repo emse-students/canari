@@ -70,8 +70,11 @@ export type RemovalCommitOutcome =
   | { kind: 'no-runtime' }
   /** This tab is not the leader: only the leader commits (`FollowerTabCommitError`). */
   | { kind: 'not-leader' }
-  /** This device holds no key group for the scope: a holder's next roster pass commits it. */
-  | { kind: 'not-held' }
+  /**
+   * This device holds no key group for the scope, so it committed nothing; `released` says whether
+   * it released the Remove to the members that deferred to it.
+   */
+  | { kind: 'not-held'; released: boolean }
   /** The salon was never registered in this session, so its scope is unknown. */
   | { kind: 'unknown-scope' }
   /** The pass threw - a defect in a dependency, logged with its cause. */
@@ -106,10 +109,15 @@ export async function commitRemovalNow(
   const { mlsService } = requireGraineRuntime('commitRemovalNow');
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId || !holdsGroupState(mlsService, groupId)) {
+    // THE REQUEST NAMED THIS DEVICE (a leader with a runtime always does), and a tree may still hold
+    // its leaf - a state dropped, a salon registered and not held - so receivers may have deferred
+    // to it. It stages nothing, which is a proof: released, and only a receiver whose tree holds
+    // this device's leaf re-decides (`departureCommitter.ts`).
     log(
-      `[GRAINE] REMOVE ${label}: this device holds no key group for it - a holder's next roster pass removes them`
+      `[GRAINE] REMOVE ${label}: this device holds no key group for it - it commits nothing, so it releases the Remove`
     );
-    return { kind: 'not-held' };
+    const released = await announceRelease(channelService, scope, departedUserId, log);
+    return { kind: 'not-held', released };
   }
 
   try {
@@ -155,15 +163,37 @@ async function releaseIfStillHeld(
     return false;
   }
   if (!heldUserIds.includes(canonicalUserId(departedUserId))) return false;
+  log(
+    `[GRAINE] REMOVE ${departed} from ${label}: this device did not commit it and they still hold a leaf - releasing it`
+  );
+  return announceRelease(channelService, scope, departedUserId, log);
+}
+
+/**
+ * Announces the release of `scope`'s Remove of `departedUserId` from THIS device
+ * (`releaseRemoval`, with this device's id): the members that deferred to this device elect a
+ * committer among everybody but this actor. Never throws.
+ *
+ * @returns whether the release was announced.
+ */
+async function announceRelease(
+  channelService: ChannelService,
+  scope: DistributionScope,
+  departedUserId: string,
+  log: (message: string) => void
+): Promise<boolean> {
+  const label = scopeLabel(scope);
+  const departed = departedUserId.slice(0, 8);
   try {
-    await channelService.releaseRemoval(scope, departedUserId);
+    const { mlsService } = requireGraineRuntime('announceRelease');
+    await channelService.releaseRemoval(scope, departedUserId, mlsService.getDeviceId());
     log(
-      `[GRAINE] REMOVE ${departed} from ${label}: this device did not commit it and they still hold a leaf - released to the scope's members, who elect a committer`
+      `[GRAINE] REMOVE ${departed} from ${label}: released to the scope's members that deferred to this device - they elect a committer`
     );
     return true;
   } catch (e) {
     log(
-      `[GRAINE] REMOVE ${departed} from ${label}: this device did not commit it, and the release was NOT announced (${String(e)}) - a holder's next roster pass removes them`
+      `[GRAINE] REMOVE ${departed} from ${label}: the release was NOT announced (${String(e)}) - a holder's next roster pass removes them`
     );
     return false;
   }

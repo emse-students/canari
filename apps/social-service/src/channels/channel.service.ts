@@ -199,9 +199,7 @@ const DEVICE_ID_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
  * The `actorDeviceId` field of a removal event: the device the ACTOR says will commit the key-group
  * Remove, so the receivers leave it to that device instead of electing one (`departureCommitter.ts`
  * on the client). Echoed only in its plain shape; anything else is dropped, and the receivers then
- * elect - the same answer an older client that names no device gets. It vouches for nothing: a
- * device that names itself and does not commit only delays the Remove to a holder's next roster
- * pass, which any member's client could already do by not committing.
+ * elect - the same answer an older client that names no device gets. It vouches for nothing.
  */
 export function committingDevice(actorDeviceId?: string): { actorDeviceId?: string } {
   return actorDeviceId && DEVICE_ID_SHAPE.test(actorDeviceId) ? { actorDeviceId } : {};
@@ -4100,14 +4098,24 @@ export class ChannelService implements OnApplicationBootstrap {
    * a release about a member is refused `409`. A spurious release costs one election for a person
    * the roster already excludes, which the roster diff decides anyway - it can never remove a member.
    *
+   * THE RELEASING DEVICE TRAVELS WITH IT (`releasedByDevice`, the same plain shape as
+   * {@link committingDevice}), and is required: a receiver re-decides only a scope whose tree holds
+   * that device's leaf - the receivers that deferred to it. One whose tree does not hold it already
+   * elected on the removal event itself, and a second election there would race the first.
+   *
    * The announcement IS the release, so a failure to publish is answered `503`, not swallowed.
    */
   private async releaseRemoval(
     workspaceId: string,
     channel: Channel | null,
     removedUserId: string,
-    actorUserId: string
+    actorUserId: string,
+    actorDevice: string | undefined
   ): Promise<{ success: true }> {
+    const releasedByDevice = committingDevice(actorDevice).actorDeviceId;
+    if (!releasedByDevice) {
+      throw new BadRequestException('actorDevice must name the releasing device');
+    }
     await this.assertActorMayRemoveMembers(workspaceId, actorUserId, [], 'skip');
     let audience: string[];
     if (channel) {
@@ -4131,6 +4139,7 @@ export class ChannelService implements OnApplicationBootstrap {
           channelId: channel?.id ?? null,
           removedUserId,
           releasedBy: actorUserId,
+          releasedByDevice,
         },
         audience.filter((u) => u !== actorUserId)
       );
@@ -4150,23 +4159,31 @@ export class ChannelService implements OnApplicationBootstrap {
   async releaseWorkspaceRemoval(
     workspaceId: string,
     removedUserId: string,
-    actorUserId: string
+    actorUserId: string,
+    actorDevice?: string
   ): Promise<{ success: true }> {
-    return this.releaseRemoval(workspaceId, null, removedUserId, actorUserId);
+    return this.releaseRemoval(workspaceId, null, removedUserId, actorUserId, actorDevice);
   }
 
   /** {@link releaseRemoval} for a PRIVATE salon's key group - a public salon has none. */
   async releaseChannelRemoval(
     channelId: string,
     removedUserId: string,
-    actorUserId: string
+    actorUserId: string,
+    actorDevice?: string
   ): Promise<{ success: true }> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
     if (!channel.isPrivate) {
       throw new BadRequestException('A public salon has no key group of its own');
     }
-    return this.releaseRemoval(channel.workspaceId, channel, removedUserId, actorUserId);
+    return this.releaseRemoval(
+      channel.workspaceId,
+      channel,
+      removedUserId,
+      actorUserId,
+      actorDevice
+    );
   }
 
   /**

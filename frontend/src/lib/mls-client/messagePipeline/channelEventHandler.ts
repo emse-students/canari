@@ -242,12 +242,20 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const data = event.data || {};
     const workspaceId = String(data.workspaceId || '');
     const removedUserId = String(data.removedUserId || '');
+    // WHO released it: its leaves are out of the election, or the releaser is elected again.
+    const releasedBy = String(data.releasedBy || '');
+    // ...and BY WHICH DEVICE: only a receiver that deferred to that device's leaf re-decides.
+    const releasedByDevice = String(data.releasedByDevice || '');
     if (!workspaceId) return unaddressable(log, event.type, 'workspaceId');
     if (!removedUserId) return unaddressable(log, event.type, 'removedUserId');
+    if (!releasedBy) return unaddressable(log, event.type, 'releasedBy');
+    if (!releasedByDevice) return unaddressable(log, event.type, 'releasedByDevice');
     onChannelRemovalReleased?.({
       workspaceId,
       channelId: String(data.channelId || ''),
       removedUserId,
+      releasedBy,
+      releasedByDevice,
     });
     return;
   }

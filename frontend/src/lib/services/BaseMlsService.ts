@@ -198,6 +198,7 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
 import {
   CommitOutcomeUnknownError,
+  AcceptedCommitNotMergedError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
   PreviousCommitUnresolvedError,
@@ -5045,7 +5046,13 @@ export abstract class BaseMlsService implements IMlsService {
           // ...TO THE DEVICES THE GATE ADMITTED. One it did not record, for a reason no Welcome can
           // get past, is owed none (`undeliverableAdmits`): the answer already said so.
           const notAdmitted = undeliverableAdmits(groupId, validation.refusedAdmits);
-          await this.mergeAccepted(submission, notAdmitted);
+          // ACCEPTED, SO IT LANDED: a merge failure from here on is typed as such, so no caller
+          // reads it as a refusal of a commit every member already has.
+          try {
+            await this.mergeAccepted(submission, notAdmitted);
+          } catch (mergeError) {
+            throw new AcceptedCommitNotMergedError(groupId, baseEpoch, mergeError);
+          }
           const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
           return {
             welcome: staged.welcome,

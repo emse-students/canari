@@ -85,6 +85,10 @@ export interface MessageHandlerDeps {
     workspaceId: string;
     channelId: string;
     removedUserId: string;
+    /** The actor who released it - never elected for it. */
+    releasedBy: string;
+    /** The actor's device that released it - re-decided only where the tree holds its leaf. */
+    releasedByDevice: string;
   }) => void;
   onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {

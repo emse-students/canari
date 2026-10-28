@@ -338,6 +338,56 @@ describe('commitDepartureIfElected', () => {
 
 describe('a departure left to the actor is decided again ONLY on its release', () => {
   const kickedByCarol = { ...salonLeave, actorUserId: 'carol', actorDeviceId: 'dev-c' };
+  /** Carol's device - a leaf of the tree, so the removal deferred to it - released Bob's Remove. */
+  const releasedByCarol = {
+    workspaceId: 'ws-1',
+    channelId: 'chan-1',
+    departedUserId: 'bob',
+    releasedByUserId: 'Carol',
+    releasedByDeviceId: 'dev-c',
+  };
+
+  it('a release NEVER elects the actor that released it, online and first in the window as it is', async () => {
+    // Carol released it: she will not commit it. Her device is online and holds a leaf, and at an
+    // epoch whose window starts on her she was elected again - every receiver then said
+    // "elected elsewhere" and nobody committed.
+    rosterRows = [
+      { userId: 'alice', onlineDevices: ['dev-a'] },
+      { userId: 'carol', onlineDevices: ['dev-c'] },
+    ];
+    const leaves = runtime.leaves as string[];
+    runtime.epoch = [...Array(200).keys()].find(
+      (e) => electionWindow(leaves, 'bob', e)[0] === 'carol:dev-c'
+    )!;
+    expect(
+      electDepartureCommitter({
+        leafIdentities: leaves,
+        rosterRows: rosterRows as never,
+        departedUserId: 'bob',
+        epoch: runtime.epoch,
+      })
+    ).toBe('carol:dev-c');
+
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'elected-here'
+    );
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(electionWindow(leaves, 'bob', runtime.epoch, ['CAROL'])).not.toContain('carol:dev-c');
+  });
+
+  it('a release by a device the tree does not hold re-decides nothing: the removal already elected', async () => {
+    // The removal event found no leaf of the acting device here and elected on it, without the
+    // claim; a second election on the release would race that one.
+    await expect(
+      commitReleasedDepartureIfElected(
+        channels,
+        { ...releasedByCarol, releasedByDeviceId: 'dev-c-phone' },
+        log
+      )
+    ).resolves.toBe('not-deferred');
+    expect(channels.listMembers).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
 
   it('nothing but the release decides it again - not the next removal broadcast', async () => {
     await commitDepartureIfElected(channels, kickedByCarol, log);
@@ -348,11 +398,7 @@ describe('a departure left to the actor is decided again ONLY on its release', (
 
   it('a release elects for the one released scope, without the claim', async () => {
     await expect(
-      commitReleasedDepartureIfElected(
-        channels,
-        { workspaceId: 'ws-1', channelId: 'chan-1', departedUserId: 'bob' },
-        log
-      )
+      commitReleasedDepartureIfElected(channels, { ...releasedByCarol, channelId: 'chan-1' }, log)
     ).resolves.toBe('elected-here');
     expect(reconcile).toHaveBeenCalledOnce();
     expect(lines.join(' | ')).toContain('released by the actor');
@@ -363,11 +409,7 @@ describe('a departure left to the actor is decided again ONLY on its release', (
       { kind: 'channel', workspaceId: 'ws-1', channelId: 'chan-1' },
       { kind: 'workspace', workspaceId: 'ws-1' },
     ];
-    await commitReleasedDepartureIfElected(
-      channels,
-      { workspaceId: 'ws-1', channelId: '', departedUserId: 'bob' },
-      log
-    );
+    await commitReleasedDepartureIfElected(channels, { ...releasedByCarol, channelId: '' }, log);
     expect(reconcile).toHaveBeenCalledOnce();
     expect(reconcile.mock.calls[0][1]).toEqual({ kind: 'workspace', workspaceId: 'ws-1' });
   });
@@ -375,11 +417,7 @@ describe('a departure left to the actor is decided again ONLY on its release', (
   it('a release about somebody already gone from the tree decides nothing', async () => {
     runtime.leaves = ['alice:dev-a', 'carol:dev-c'];
     await expect(
-      commitReleasedDepartureIfElected(
-        channels,
-        { workspaceId: 'ws-1', channelId: 'chan-1', departedUserId: 'bob' },
-        log
-      )
+      commitReleasedDepartureIfElected(channels, { ...releasedByCarol, channelId: 'chan-1' }, log)
     ).resolves.toBe('not-in-tree');
     expect(reconcile).not.toHaveBeenCalled();
   });

@@ -680,12 +680,18 @@ export class ChannelService {
    * commit (`commitRemoval.ts`): the scope's remaining members elect a committer on the event the
    * server publishes. Throws on any answer but a 2xx - the caller logs it.
    */
-  async releaseRemoval(scope: DistributionScope, userId: string): Promise<void> {
+  async releaseRemoval(
+    scope: DistributionScope,
+    userId: string,
+    releasingDeviceId: string
+  ): Promise<void> {
     const path =
       scope.kind === 'workspace'
         ? `workspaces/${encodeURIComponent(scope.workspaceId)}/members/${encodeURIComponent(userId)}/removal-released`
         : `${this.normalizeChannelId(scope.channelId)}/members/${encodeURIComponent(userId)}/removal-released`;
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${path}`, {
+    // The releasing device: receivers re-decide only where they deferred to THAT device's leaf.
+    const query = `?actorDevice=${encodeURIComponent(releasingDeviceId)}`;
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${path}${query}`, {
       method: 'POST',
     });
     await this.handleError(res);

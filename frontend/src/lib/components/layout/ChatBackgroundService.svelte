@@ -1102,14 +1102,19 @@
         workspaceId: string;
         channelId: string;
         removedUserId: string;
+        releasedBy: string;
+        releasedByDevice: string;
       }) => {
-        // The actor did not commit a Remove it claimed, and said so: elect for that one scope.
+        // The actor did not commit a Remove it claimed, and said so: elect for that one scope,
+        // among everybody but the actor.
         void commitReleasedDepartureIfElected(
           channelService,
           {
             workspaceId: event.workspaceId,
             channelId: event.channelId,
             departedUserId: event.removedUserId,
+            releasedByUserId: event.releasedBy,
+            releasedByDeviceId: event.releasedByDevice,
           },
           appendLog
         );

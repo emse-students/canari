@@ -185,7 +185,7 @@ added later without the pipe fails there.
 | DELETE | `/api/channels/:channelId` | Delete a salon outright - its row, its `channel_messages` and its distribution group. MANAGE_CHANNEL **or** MANAGE_WORKSPACE, and no confirmation argument - see "Deleting a channel" |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member, irreversibly. MANAGE_WORKSPACE **only**, and the body must carry `{confirmationName}` equal to the community name or it is refused with `WORKSPACE_CONFIRMATION_MISMATCH` - see "Deleting a community" |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS). Optional `?actorDevice=`: the actor's committing device, echoed as `actorDeviceId` in `channel.member.kicked` |
-| POST | `/api/channels/workspaces/:workspaceId/members/:userId/removal-released`, `/api/channels/:channelId/members/:userId/removal-released` | The actor of a removal RELEASES the key-group Remove it claimed and knows it did not commit; same permission as the removal, `409` while the person is still in the scope, `503` when it cannot be announced. Publishes `channel.member.removal-released` ([channel-encryption](../protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)) |
+| POST | `/api/channels/workspaces/:workspaceId/members/:userId/removal-released`, `/api/channels/:channelId/members/:userId/removal-released` | The actor of a removal RELEASES the key-group Remove it claimed and knows it did not commit; `?actorDevice=` (the releasing device) required, same permission as the removal, `409` while the person is still in the scope, `503` when it cannot be announced, throttled per user (60/min). Publishes `channel.member.removal-released` with `releasedBy` and `releasedByDevice` ([channel-encryption](../protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PATCH | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`). The whole-list PUT is gone since `minClientVersion` 1.2.7. MANAGE_WORKSPACE / MANAGE_ROLES |
@@ -1139,7 +1139,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.joined` | **channel creation**, join, invite accept, admin join, member added |
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
-| `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor |
+| `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor; carries `releasedBy` and `releasedByDevice` |
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |

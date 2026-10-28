@@ -1873,20 +1873,32 @@ decided against the claim on its own - on a reconnect, a timer, the next event -
 still in flight at the same epoch, two writers that heal only because the epoch gate keeps one. So
 the pass reports the users holding a leaf of the tree it LEFT (`reconcileDistributionGroupRosterReported`,
 read inside the lane), or nothing at all when one of its commits has an unknown outcome
-(`CommitOutcomeUnknownError`: it may yet land). When the departed user is still named there - nothing
-staged, a definite refusal, a roster it could not read - the actor posts
+(`CommitOutcomeUnknownError`: it may yet land) or was ACCEPTED by the server and failed to merge here
+(`AcceptedCommitNotMergedError`: it landed, and the tree this device still holds is the one before
+it). When the departed user is still named there - nothing staged, a definite refusal, a roster it
+could not read - the actor posts
 `POST /api/channels/workspaces/:workspaceId/members/:userId/removal-released` or
-`POST /api/channels/:channelId/members/:userId/removal-released` (`commitRemoval.ts`). The server
-checks the same permission as the removal and that the person is no longer in the scope, and
-publishes `channel.member.removal-released` to the scope's remaining members. Every receiver of
-THAT event, and only of it, decides that ONE scope without the claim
-(`commitReleasedDepartureIfElected`) - one scope per release, because the actor commits its scopes
-one after another and a salon's commit may still be in flight when the community's is released.
+`POST /api/channels/:channelId/members/:userId/removal-released` with `?actorDevice=` its own device
+(`commitRemoval.ts`). An actor whose device holds no key group for the scope (a state dropped, a
+salon registered and not held) stages nothing, which is a proof too, and releases at once. The
+server requires the device, checks the same permission as the removal and that the person is no
+longer in the scope, throttles per user, and publishes `channel.member.removal-released` with
+`releasedBy` and `releasedByDevice` to the scope's remaining members. Every receiver of THAT event,
+and only of it, decides that ONE scope without the claim (`commitReleasedDepartureIfElected`) - one
+scope per release, because the actor commits its scopes one after another and a salon's commit may
+still be in flight when the community's is released. **Only a receiver whose tree holds the
+releasing device's leaf re-decides** (`not-deferred` otherwise): only it deferred to that device on
+the removal event, and every other receiver already elected then, without the claim - a second
+election there would race the first. **And no leaf of the releasing actor is elected**: its device
+is online and holds a leaf, and a window starting on it would hand the Remove back to the one
+device that just declined it.
 **What is covered, said honestly**: an actor whose pass ended without removing them is covered at
 once, by every remaining member online at the release; an actor whose app closed before its pass
 ended, whose release was not announced (it says so), or whose commit outcome stayed unknown releases
 nothing, and the Remove waits for a holder's next roster pass - **at worst the next app load**. A
-member offline at the release is covered the same way. No clock anywhere: two receivers reading
+member offline at the release is covered the same way. So are two cases nothing re-decides: a
+receiver whose tree read saw its epoch move (`unreadable`) does not read it again, and an actor
+commit whose outcome was unknown and is LATER refused releases nothing. No clock anywhere: two receivers reading
 presence a moment apart may still elect two devices - the epoch gate keeps one commit and the other
 pass reads the tree again - or none, and then the Remove waits for a holder's next roster pass.
 **Presence says online, not able to commit**: an elected device that does not hold the group, or an
