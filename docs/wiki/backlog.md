@@ -1407,7 +1407,6 @@ key groups, and they are NOT the same question:
   binding** (a key group's device rows); widening it is a schema change, approved 2026-10-27 and
   BUILT as its own draft pull request (`dm_revoked_device_groups`, chat-delivery migration 041,
   written by the revocation's purge), reaching production only with the user's yes at the stable.
-  Forward-only; earlier revocations are tracked separately.
 
 ## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
 

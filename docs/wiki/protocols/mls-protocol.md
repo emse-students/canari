@@ -2159,7 +2159,7 @@ deviceId)`, in the transaction that deletes its device rows, and the question bi
 device through it. Not a status on the device row, which every routing and admission path reads. A
 row ends with the group (`GROUP_OWNED_TABLES`) and with the account's erasure - never on a commit's
 declared `removes`, which the server cannot prove. A row that outlives its leaf answers only about a
-leaf no tree holds. **Forward-only**; earlier revocations are tracked separately.
+leaf no tree holds.
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
 commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
