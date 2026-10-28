@@ -86,12 +86,17 @@ export function serverLivesMode(): LivesMode {
 
 /**
  * Whether this estate's gateway takes presence ids in a POST body, as the last `/api/version` answer
- * said - or `null` when no server has answered yet, which is "not known", never "no". Read by
- * `presenceStore.ts`, which asks nothing until it is known rather than guessing a route.
+ * said - or `null` when no server has ever answered this session, which is "not known", never "no".
+ * Read by `presenceStore.ts`, which asks nothing until it is known rather than guessing a route.
+ *
+ * THE CACHED ANSWER COUNTS. {@link lastCheck} is adopted from the cache only for a BLOCKING verdict
+ * (offline, or a probe that failed its whole ladder), so a healthy cache plus one failed probe leaves
+ * it `null` - and presence would go dark until the next focus. The cache is the same server's answer,
+ * stored by this module, so it is read here whenever no live answer is held.
  */
 export function serverPresencePost(): boolean | null {
-  if (!lastCheck || lastCheck.serverVersion === null) return null;
-  return lastCheck.presencePost;
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.presencePost;
+  return loadCachedServerInfo()?.presencePost ?? null;
 }
 
 /** True when the client is below the server-enforced minimum version. */

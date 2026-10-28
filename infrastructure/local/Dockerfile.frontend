@@ -618,6 +618,9 @@ server {\n\
     }\n\
     \n\
     location /api/presence {\n\
+    # THE PRESENCE BODY IS AT MOST 1000 IDS (~70 kB), so the server-wide 100m upload limit is no\n\
+    # bound here: the gateway reads a body before it can refuse an anonymous caller (2026-10-28).\n\
+    client_max_body_size 128k;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\

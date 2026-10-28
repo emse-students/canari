@@ -100,9 +100,11 @@ fn unavailable(reason: &str) -> axum::response::Response {
 /// size is bounded by [`MAX_PRESENCE_USERS`] here and by the client's split.
 ///
 /// Answered exactly as [`answer_presence`] says, after two refusals of its own: 401 for an
-/// anonymous caller (checked BEFORE the body is read, so a stranger learns nothing about the shape
-/// it expects), and 400 for a body that is not `{ "users": [string, ...] }` with a JSON
-/// `Content-Type`.
+/// anonymous caller, whatever its body, and 400 for a body that is not `{ "users": [string, ...] }`
+/// with a JSON `Content-Type`. The 401 is decided first, so an anonymous caller is never told what
+/// shape is expected - but the body has already been READ by then: the JSON extractor runs before
+/// this function, up to axum's body limit, and nginx bounds it before that
+/// (`client_max_body_size` on `location /api/presence`).
 pub async fn post_presence(
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
@@ -115,9 +117,9 @@ pub async fn post_presence(
         Ok(Json(body)) => body,
         Err(rejection) => {
             tracing::warn!(
-                "[presence] {} sent a body that is not {{ users: [string] }} - refused: {}",
+                "[presence] {} sent a body that is not {{ users: [string] }} - refused ({})",
                 viewer,
-                rejection.body_text()
+                rejection_kind(&rejection)
             );
             return (
                 StatusCode::BAD_REQUEST,
@@ -132,6 +134,19 @@ pub async fn post_presence(
         requested_ids(body.users.iter().map(String::as_str)),
     )
     .await
+}
+
+/// What kind of refusal a body earned, and NOTHING of what it held. `JsonRejection::body_text()`
+/// quotes the offending input (serde's messages name the value they choke on), and a presence body
+/// is a list of user ids - which is precisely what this route exists to keep out of logs.
+fn rejection_kind(rejection: &JsonRejection) -> &'static str {
+    match rejection {
+        JsonRejection::JsonDataError(_) => "not { users: [string] }",
+        JsonRejection::JsonSyntaxError(_) => "not JSON",
+        JsonRejection::MissingJsonContentType(_) => "no JSON content-type",
+        JsonRejection::BytesRejection(_) => "body unreadable or over the limit",
+        _ => "unknown rejection",
+    }
 }
 
 // ── GET /api/presence (legacy) ────────────────────────────────────────────
@@ -660,9 +675,9 @@ mod tests {
     // ── POST: the body, and what it refuses ──────────────────────────────
 
     #[tokio::test]
-    async fn an_anonymous_post_is_refused_before_its_body_is_read() {
-        // A body that is not even JSON: the 401 must come first, so a stranger learns nothing
-        // about the shape the route expects.
+    async fn an_anonymous_post_is_refused_whatever_its_body() {
+        // A body that is not even JSON: the 401 is decided first, so a stranger learns nothing
+        // about the shape the route expects (the body has been READ by the extractor by then).
         let services = sharing(&["bob"], &[]);
         let (status, _) = send(services.clone(), post_raw("not json", None)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -720,6 +735,52 @@ mod tests {
         let (status, _) = ask(services.clone(), &users.join(","), Some("alice")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(services.hits() > 0, "the audience was never asked");
+    }
+
+    /// The rejection a body earns, through the real extractor.
+    async fn rejection_of(body: &str, content_type: Option<&str>) -> JsonRejection {
+        use axum::extract::FromRequest;
+        let mut builder = Request::builder().method("POST").uri("/api/presence");
+        if let Some(value) = content_type {
+            builder = builder.header("content-type", value);
+        }
+        let request = builder.body(Body::from(body.to_string())).unwrap();
+        match Json::<PresenceBody>::from_request(request, &()).await {
+            Ok(_) => panic!("{body} was accepted"),
+            Err(rejection) => rejection,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_body_is_logged_by_its_kind_never_by_what_it_held() {
+        // serde names the value it chokes on, so the body text of these rejections would carry
+        // the very ids this route keeps out of logs.
+        let secret = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6abcd";
+        let json = Some("application/json");
+        for (body, content_type, kind) in [
+            (
+                format!(r#"{{"users":"{secret}"}}"#),
+                json,
+                "not { users: [string] }",
+            ),
+            (
+                format!(r#"{{"users":["{secret}",1]}}"#),
+                json,
+                "not { users: [string] }",
+            ),
+            (format!(r#"{{"users":["{secret}""#), json, "not JSON"),
+            (
+                format!(r#"{{"users":["{secret}"]}}"#),
+                None,
+                "no JSON content-type",
+            ),
+        ] {
+            let rejection = rejection_of(&body, content_type).await;
+            assert_eq!(rejection_kind(&rejection), kind, "{body}");
+        }
+        // The property the kind replaces: the raw text DOES quote the input.
+        let raw = rejection_of(&format!(r#"{{"users":"{secret}"}}"#), json).await;
+        assert!(raw.body_text().contains(secret), "{}", raw.body_text());
     }
 
     // ── GET: the legacy shim answers exactly as the POST does ────────────

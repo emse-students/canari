@@ -400,13 +400,19 @@ same audience, the same 1000-id cap, the same 401/400/503. `presenceStore.ts` cu
 requests of at most `PRESENCE_IDS_PER_REQUEST` (= the contract's `maxUserIds`, pinned by
 `presenceStore.contract.test.ts`) in ONE function, `presenceChunks`, in watchlist order; the requests
 of one poll go one after the other, and any of them giving no usable answer leaves the whole map as it
-was. Nothing is timed. nginx needed no change for the POST: the same `location /api/presence`, the
-same `auth_request` (its sub-request carries no body), the CORS layer already allowed POST and mirrors
+was. Nothing is timed. nginx serves the POST through the same `location /api/presence` and the same
+`auth_request` (its sub-request carries no body), with ONE addition: `client_max_body_size 128k`
+there (1000 ids are ~70 kB), because the server-wide 100m upload limit is no bound and the gateway
+READS a body before it can refuse an anonymous caller - the JSON extractor runs before the handler,
+so the 401 is decided first but not before the read. The CORS layer already allowed POST and mirrors
 the preflight's headers; `apiFetch` logs it at debug like the GET (`POLL_ROUTES` matches the path,
-whatever the method).
+whatever the method). A refused body is logged by its KIND only (`rejection_kind`): serde's message
+quotes the value it choked on, and a presence body is a list of ids.
 
 **The client sends the POST only to an estate that says it serves it**: `presencePost: true` in
-`GET /api/version`, read through `serverPresencePost()`. A stable ships both stores BEFORE production
+`GET /api/version`, read through `serverPresencePost()` - the live answer, or the session's CACHED
+answer when no live one is held (a failed probe, offline, the window before the first refresh), so a
+healthy cache never leaves presence dark until the next focus. A stable ships both stores BEFORE production
 deploys, so for days a new phone build talks to the old gateway, which would answer the POST `405`;
 there the client keeps the legacy GET, one request as before. Before `/api/version` has answered at
 all, the client asks nothing (one debug line) rather than guessing a route. **core-service publishes
