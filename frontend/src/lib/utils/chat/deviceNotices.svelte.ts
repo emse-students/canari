@@ -23,6 +23,7 @@ import {
   bindHistoryWithheld,
   historyWithheldEntries,
   isWithheldDevice,
+  adoptHistorySeals,
   historySealedGroups,
   inheritsWithholding,
   sealHistoryIn,
@@ -262,6 +263,12 @@ function readStored(userId: string): Stored {
 }
 
 function writeStored(userId: string): void {
+  // SEALS ARE MERGED, NEVER OVERWRITTEN: another tab (or `sealInAccount` for an account this tab
+  // does not hold) may have sealed a conversation in the stored copy since it was read. A seal is
+  // never lifted, so the union is the truth - and this tab adopts it too.
+  const sealedHere = new Set(historySealedGroups());
+  const sealedElsewhere = readStoredSeals(userId).filter((g) => !sealedHere.has(g));
+  if (sealedElsewhere.length > 0) adoptHistorySeals(sealedElsewhere);
   const stored: Stored = {
     pending: [...pending.values()],
     announced,
@@ -278,6 +285,17 @@ function writeStored(userId: string): void {
   } catch (e) {
     // Shown for this session; only its survival across a reload is lost.
     console.error(`[DEVICE_NOTICE] notices not persisted, a reload will forget them: ${String(e)}`);
+  }
+}
+
+/** The seals in `userId`'s stored copy as it is now ({@link writeStored}). */
+function readStoredSeals(userId: string): string[] {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_KEY.deviceNotices(userId));
+    return raw ? strings((JSON.parse(raw) as Partial<Stored>).historySealed) : [];
+  } catch (e) {
+    console.error(`[HISTORY_WITHHELD] stored seals unreadable, none merged: ${String(e)}`);
+    return [];
   }
 }
 
@@ -373,7 +391,7 @@ export async function deliverDeviceEvents(
   ctx: DeviceNoticeContext
 ): Promise<boolean> {
   if (boundAccount !== ctx.ownUserId) {
-    sealInAccount(ctx.ownUserId, handed, 'its device events reached no bound account');
+    sealInAccount(ctx.ownUserId, handed, 'its device events reached no bound account', ctx);
     return false;
   }
   // A GROUP WHOSE EVENTS THE QUEUE DROPPED (`eventsDropped`) has an incomplete record: an entry may
@@ -412,7 +430,8 @@ export async function deliverDeviceEvents(
       sealInAccount(
         ctx.ownUserId,
         ordered.slice(events.length),
-        'the account changed before its device events were decided'
+        'the account changed before its device events were decided',
+        ctx
       );
       return false;
     }
@@ -446,7 +465,8 @@ export async function deliverDeviceEvents(
       sealInAccount(
         ctx.ownUserId,
         ordered.slice(events.length - 1),
-        'the account changed while its device events were decided'
+        'the account changed while its device events were decided',
+        ctx
       );
       return false;
     }
@@ -580,9 +600,17 @@ function sealUnlessKeyGroup(groupId: string, why: string, ctx: DeviceNoticeConte
  * Seals, in `userId`'s record, every conversation `events` name - events taken from that account's
  * state that were not decided, and that no later take will hand over again. Bound or not, the
  * account's next answer there refuses: written through the bound record, or into its stored copy.
+ * Key groups are skipped ({@link sealUnlessKeyGroup}).
  */
-function sealInAccount(userId: string, events: DeviceEvent[], why: string): void {
-  const groups = [...new Set(events.map((e) => e.groupId))];
+function sealInAccount(
+  userId: string,
+  events: DeviceEvent[],
+  why: string,
+  ctx: DeviceNoticeContext
+): void {
+  const groups = [
+    ...new Set(events.map((e) => e.groupId).filter((g) => !ctx.isDistributionGroup(g))),
+  ];
   console.error(
     `[DEVICE_NOTICE] ${events.length} device event(s) of another account not decided (${why}) - ${groups.length} conversation(s) sealed in its record`
   );
