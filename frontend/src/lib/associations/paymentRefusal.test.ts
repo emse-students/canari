@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
-import { amountBoundsOf, SocialApiError, socialRefusal } from './api';
+import { amountBoundsOf, holderCountOf, SocialApiError, socialRefusal } from './api';
 import { providerRefusalMessage } from './paymentRefusal';
 import { formatAmount } from '$lib/forms/fillAnswers';
 import { setLocale } from '$lib/paraglide/runtime';
@@ -83,6 +83,21 @@ describe('providerRefusalMessage', () => {
     expect(amountBoundsOf({ minCents: 50, maxCents: '100' })).toBeNull();
     expect(amountBoundsOf({ minCents: 50 })).toBeNull();
     expect(amountBoundsOf(null)).toBeNull();
+  });
+
+  // A tier delete refused because people still hold it: the count survives `socialRefusal`.
+  it('reads the holder count of a refused tier delete, and only a whole positive one', async () => {
+    const res = new Response(
+      JSON.stringify({ code: 'TIER_HAS_HOLDERS', message: 'x', holderCount: 3 }),
+      { status: 409, headers: { 'content-type': 'application/json' } }
+    );
+    const err = await socialRefusal(res);
+    expect(err.code).toBe('TIER_HAS_HOLDERS');
+    expect(err.holderCount).toBe(3);
+    expect(holderCountOf({ holderCount: 0 })).toBeNull();
+    expect(holderCountOf({ holderCount: 1.5 })).toBeNull();
+    expect(holderCountOf({ holderCount: '2' })).toBeNull();
+    expect(holderCountOf(null)).toBeNull();
   });
 
   it('CONTROL: the range code with no bounds falls through to the generic line', () => {

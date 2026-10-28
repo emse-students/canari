@@ -11,10 +11,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository, In } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
-import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
 import {
+  CotisationMode,
+  deriveCotisationTag,
+  tierVariantKeys,
+} from '../associations/cotisation-tag.util';
+import {
+  orphanTierTags,
   pickHeldTier,
   tierRelation,
+  type OrphanTierTag,
   type RankedTier,
   type TierRelation,
 } from '../associations/tier-pricing';
@@ -293,11 +299,156 @@ export class UserTagService {
     manager?: EntityManager
   ): Promise<void> {
     const tiers = await this.listCotisationTiers(assocId, { manager });
-    if (tiers.length < 2) return;
-    for (const tier of tiers) {
-      if (tier.variantKey === keepVariantKey) continue;
-      await this.revokeByName(userId, tier.tagName, assocId, manager);
+    if (tiers.length >= 2) {
+      for (const tier of tiers) {
+        if (tier.variantKey === keepVariantKey) continue;
+        await this.revokeByName(userId, tier.tagName, assocId, manager);
+      }
     }
+    // A tag of a tier that no longer exists is a sibling like any other: it is the tier the user
+    // held, and the tier just granted replaces it. Scoped to the rows this association issued.
+    for (const orphan of await this.heldOrphanTierTags(userId, assocId, tiers, manager)) {
+      await this.revokeByName(userId, orphan.tagName, assocId, manager);
+      this.logger.warn(
+        `[UserTag] Revoked ${orphan.tagName} for ${userId}: its tier no longer exists in ` +
+          `assoc=${assocId.slice(0, 8)}, replaced by tier ${keepVariantKey ?? 'base'}`
+      );
+    }
+  }
+
+  /**
+   * The ACTIVE tags `assocId` issued to the user for a cotisation tier it no longer has
+   * (`orphanTierTags`): what a holder keeps when a tier product was deleted before deleting one
+   * was refused while held. Ranking reads them as a held tier with no price (`unranked`), and the
+   * sibling XOR revokes them, so a deleted tier never turns its holders into people who hold
+   * nothing. `tiers` is the association's current catalogue (`listCotisationTiers`). Empty when the
+   * association has no cotisation mode. Read through `manager` when given, so a caller under the
+   * buyer's tier lock reads on its own connection.
+   */
+  async heldOrphanTierTags(
+    userId: string,
+    assocId: string,
+    tiers: readonly { variantKey: string | null }[],
+    manager?: EntityManager
+  ): Promise<OrphanTierTag[]> {
+    return (await this.heldOrphanTierTagsOf([userId], assocId, tiers, manager)).get(userId) ?? [];
+  }
+
+  /**
+   * `heldOrphanTierTags` for many users in one query, by user id (a user holding none is absent):
+   * what a listing of many buyers reads - the purchases list and its closing - so the count of
+   * queries does not grow with the rows.
+   */
+  async heldOrphanTierTagsOf(
+    userIds: readonly string[],
+    assocId: string,
+    tiers: readonly { variantKey: string | null }[],
+    manager?: EntityManager
+  ): Promise<Map<string, OrphanTierTag[]>> {
+    const byUser = new Map<string, OrphanTierTag[]>();
+    if (userIds.length === 0) return byUser;
+    const runner = manager ?? this.repo.manager;
+    const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await runner.query(
+      `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    const asso = rows[0];
+    if (!asso?.cotisationMode) return byUser;
+    const root = `cotisant:${asso.slug}`;
+    const held: { userId: string; tagName: string }[] = await runner.query(
+      `SELECT "userId", "tagName" FROM user_tags
+        WHERE "userId" = ANY($1) AND "issuingAssocId" = $2
+          AND ("expiresAt" IS NULL OR "expiresAt" > now())
+          AND ("tagName" = $3 OR starts_with("tagName", $4))`,
+      [[...userIds], assocId, root, `${root}-`]
+    );
+    const keys = tierVariantKeys([...tiers]);
+    for (const userId of new Set(held.map((t) => t.userId))) {
+      const orphans = orphanTierTags(
+        held.filter((t) => t.userId === userId).map((t) => t.tagName),
+        asso.slug,
+        keys
+      );
+      if (orphans.length === 0) continue;
+      // Counted every hour by `countOrphanTierTags` (the PaidNotGranted report); per request it
+      // is a decision input, not news.
+      this.logger.debug(
+        `[UserTag] user=${userId.slice(0, 8)} holds ${orphans.length} tag(s) of a deleted tier ` +
+          `of assoc=${assocId.slice(0, 8)}`
+      );
+      byUser.set(userId, orphans);
+    }
+    return byUser;
+  }
+
+  /**
+   * Every ACTIVE orphan tier tag on the estate (`orphanTierTags`, per issuing association with a
+   * cotisation mode), as ONE count for the hourly report: three reads whatever the number of
+   * associations, and no user data in the answer.
+   */
+  async countOrphanTierTags(): Promise<number> {
+    const runner = this.repo.manager;
+    const [rows, products]: [
+      { associationId: string; slug: string; tagName: string }[],
+      { associationId: string; variantKey: string | null }[],
+    ] = await Promise.all([
+      runner.query(
+        `SELECT a.id AS "associationId", a.slug AS slug, t."tagName" AS "tagName"
+           FROM user_tags t JOIN associations a ON a.id = t."issuingAssocId"
+          WHERE a."cotisationMode" IS NOT NULL
+            AND (t."expiresAt" IS NULL OR t."expiresAt" > now())
+            AND (t."tagName" = 'cotisant:' || a.slug OR starts_with(t."tagName", 'cotisant:' || a.slug || '-'))`
+      ),
+      runner.query(
+        `SELECT "associationId", "variantKey" FROM association_products WHERE type = 'membership'`
+      ),
+    ]);
+    const byAssoc = new Map<string, { slug: string; tagNames: string[] }>();
+    for (const r of rows) {
+      const entry = byAssoc.get(r.associationId) ?? { slug: r.slug, tagNames: [] };
+      entry.tagNames.push(r.tagName);
+      byAssoc.set(r.associationId, entry);
+    }
+    let count = 0;
+    for (const [associationId, { slug, tagNames }] of byAssoc) {
+      const keys = tierVariantKeys(products.filter((p) => p.associationId === associationId));
+      // One orphan per ROW: the same name held by two people is two holders to repair.
+      const orphanNames = new Set(orphanTierTags(tagNames, slug, keys).map((o) => o.tagName));
+      count += tagNames.filter((n) => orphanNames.has(n)).length;
+    }
+    return count;
+  }
+
+  /**
+   * How many users hold, ACTIVE, a tag of tier `variantKey` of association `assocId` (slug `slug`):
+   * the tier's tag stem (`cotisant:<slug>` or `cotisant:<slug>-<variant>`), alone or with an
+   * academic-year suffix - every tag `linkedTierKey` reads as that tier, in either mode and any
+   * year. Counted on the rows THIS association issued only, the rows every tier read counts
+   * (`hasActiveTag`) and the only ones its managers can see on their roster and revoke
+   * (`revokeByName`): another association's row, or a row no association issued, is held for nobody
+   * here, so it never blocks the delete and its number is never told. What refuses deleting a tier
+   * people still hold (`ProductsService.delete`);
+   * read through `manager`, under the association's EXCLUSIVE tier lock, so no grant of that tier
+   * commits between the count and the delete.
+   */
+  async countActiveTierHolders(
+    assocId: string,
+    slug: string,
+    variantKey: string | null,
+    manager: EntityManager
+  ): Promise<number> {
+    const stem = deriveCotisationTag(slug, 'lifetime', new Date(), variantKey).tagName;
+    const rows: { n: number }[] = await manager.query(
+      `SELECT count(DISTINCT "userId")::int AS n FROM user_tags
+        WHERE "issuingAssocId" = $4
+          AND ("expiresAt" IS NULL OR "expiresAt" > now())
+          AND ("tagName" = $1
+               OR (starts_with("tagName", $2) AND substr("tagName", $3) ~ '^[0-9]{4}-[0-9]{4}$'))`,
+      [stem, `${stem}-`, stem.length + 2, assocId]
+    );
+    const n = rows[0]?.n ?? 0;
+    this.logger.debug(`[UserTag] tier ${stem} has ${n} active holder(s)`);
+    return n;
   }
 
   /**
@@ -360,7 +511,8 @@ export class UserTagService {
 
   /**
    * `grantCotisant`, except that it grants NOTHING (and answers null) when the user already holds
-   * any tier of the association - asked UNDER the buyer's tier lock, so a tier paid for at the same
+   * any tier of the association, the tag of a DELETED tier included (`heldOrphanTierTags`: only a
+   * manager may swap one out) - asked UNDER the buyer's tier lock, so a tier paid for at the same
    * moment is seen and kept instead of being swapped out by the XOR. The legacy claim's path: a
    * cotisation bought in Canari outranks anything a legacy list says.
    */
@@ -525,12 +677,17 @@ export class UserTagService {
     this.logger.debug(
       `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
     );
+    // A tag of a DELETED tier counts as holding one here: granting would run the sibling XOR and
+    // delete it - possibly a dearer PAID tier, the only record of what the holder paid - on a
+    // claim no manager made. The claim neither grants nor swaps; a manager's explicit grant is
+    // what replaces an orphan.
     if (
       rule === 'unless-holding-any' &&
-      (await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0
+      ((await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0 ||
+        (await this.heldOrphanTierTags(userId, assocId, tiers, manager)).length > 0)
     ) {
       this.logger.debug(
-        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}, a deleted one included`
       );
       return null;
     }
@@ -601,9 +758,15 @@ export class UserTagService {
       [assocId]
     );
     const heldKeys = await this.heldVariantKeys(userId, assocId, tiers, manager);
+    const orphans = await this.heldOrphanTierTags(userId, assocId, tiers, manager);
     const product = (key: string | null) => priced.find((t) => t.variantKey === key) ?? null;
     const target = product(variantKey);
-    const held = pickHeldTier(heldKeys.map((k) => ({ variantKey: k, product: product(k) })));
+    // A held tag of a deleted tier is a held tier with no product, so no price: `pickHeldTier`
+    // ranks against it first, and anything else is `unranked`.
+    const held = pickHeldTier([
+      ...heldKeys.map((k) => ({ variantKey: k, product: product(k) })),
+      ...orphans.map((o) => ({ variantKey: o.variantKey, product: null })),
+    ]);
     const relation = target ? tierRelation(target, held) : 'unranked';
     this.logger.debug(
       `[UserTag] tier rank: assoc=${assocId.slice(0, 8)} user=${userId.slice(0, 8)} ` +

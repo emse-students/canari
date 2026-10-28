@@ -1917,6 +1917,7 @@
   "asso_achats_buyer_tier": "Holds now: {tier}",
   "asso_achats_close_not_a_rise": "The buyer holds a tier worth at least this one: granting it would move them down, only a refund can be recorded.",
   "asso_achats_close_not_comparable": "This tier or the one the buyer holds has no fixed price, so they cannot be compared: only a refund can be recorded.",
+  "asso_achats_close_held_tier_deleted": "The buyer holds a tier that was deleted, so it cannot be compared with this one. Someone with the \"Manage members\" right can grant this tier from the members list in the Cotisations tab (it replaces the deleted one), then this payment can be closed as granted. Otherwise, record a refund.",
   "asso_achats_close_target_held": "The buyer already holds this tier, and it was not delivered for this payment: a refund is owed.",
   "asso_achats_close_year_over": "This payment was for an academic year that is over: only a refund can be recorded.",
   "asso_achats_close_error": "Could not record this payment's outcome.",
@@ -1963,6 +1964,17 @@
   "asso_cotisations_tier_create_error": "Failed to create the tier.",
   "asso_cotisations_tier_delete_confirm": "Delete the tier \"{name}\"? This action is irreversible.",
   "asso_cotisations_tier_delete_error": "Failed to delete the tier.",
+  "asso_cotisations_tier_delete_has_holders": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} member still holds this tier. Someone with the \"Manage members\" right must give them another tier, revoke it, or rename this tier before it can be deleted.",
+        "countPlural=other": "{count} members still hold this tier. Someone with the \"Manage members\" right must give them another tier, revoke it, or rename this tier before it can be deleted."
+      }
+    }
+  ],
+  "asso_cotisations_tier_delete_checkout_open": "A payment for this tier is in progress, in the shop or through a form that grants it. Take the tier off sale and close those forms so no new one starts, then try again once it is settled or expired (about thirty minutes online; a cash payment waits until it is validated or cancelled).",
   "asso_cotisations_tier_variant_key_label": "Tier identifier *",
   "asso_cotisations_tier_variant_key_hint": "Unique technical identifier (e.g. \"avec-alcool\") used to distinguish this tier.",
   "asso_cotisations_tier_variant_key_change_hint": "Changing this identifier moves this tier's cotisants over to the new one automatically: nobody loses their cotisation.",

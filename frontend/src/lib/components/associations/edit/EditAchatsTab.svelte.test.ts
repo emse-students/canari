@@ -191,6 +191,7 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     'target-held',
     'not-a-rise',
     'not-comparable',
+    'held-tier-deleted',
   ] as const)(
     'offers only "Mark refunded" when the server would refuse the grant (%s), and says why',
     async (grantRefusal) => {
