@@ -3,7 +3,7 @@
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
@@ -112,14 +112,18 @@
     notCompleted: () => m.shop_return_not_completed(),
     unknown: () => m.shop_return_unknown(),
   };
-  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let shopTab = $state<ShopTab>(parseTab(page.url.searchParams.get('tab'), SHOP_TABS, 'products'));
 
   /** Opens a segment without adding a history entry: Back still leaves the shop. */
   function switchTab(next: ShopTab) {
     Log.d('shop: segment', next);
     shopTab = next;
-    replaceState(resolve(internalPath(tabUrl(page.url, next, 'products'))), page.state);
+    void goto(resolve(internalPath(tabUrl(page.url, next, 'products'))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
   }
 
   const isLoggedIn = $derived(!!currentUserId());
@@ -179,17 +183,18 @@
       loading = false;
     }
 
-    // The checkout return is consumed once. Through SvelteKit's `replaceState`, never the raw
+    // The checkout return is consumed once. Through SvelteKit's shallow `goto`, never the raw
     // History API: a raw write erased the router's own entry state, and the open `?tab=` with it.
     // Success and fail URLs land here alike: what the payer is told is the ATTEMPT's status, read
     // from the server, never which of Lydia's two URLs sent them back.
     const params = page.url.searchParams;
     if (CHECKOUT_RETURN_PARAMS.some((name) => params.has(name))) {
       const target = checkoutReturnTarget(params);
-      replaceState(
-        resolve(internalPath(withoutQuery(page.url, CHECKOUT_RETURN_PARAMS))),
-        page.state
-      );
+      void goto(resolve(internalPath(withoutQuery(page.url, CHECKOUT_RETURN_PARAMS))), {
+        shallow: true,
+        replace: true,
+        state: page.state,
+      });
       if (target) void followCheckout(target);
       else console.warn('[shop] checkout return names no attempt, nothing to confirm');
     }

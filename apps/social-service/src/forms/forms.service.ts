@@ -51,6 +51,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
+import { formOrderRef } from './form-order-ref';
 import {
   GUEST_RECEIPT_NOT_FOUND,
   guestReference,
@@ -1496,7 +1497,8 @@ export class FormsService {
               `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
           );
         }
-        const idempotencyKey = `form:${savedSubmission.id}`;
+        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
+        const idempotencyKey = formOrderRef(savedSubmission.id);
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
         // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that

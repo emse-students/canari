@@ -7485,6 +7485,34 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Removes every leaf of the named users in ONE commit - the commit a roster DIFF decides (the
+   * conversation stray sweep in `strayLeaves.ts`, the key-group roster pass in `rosterReconcile.ts`),
+   * not a person. So it is staged only on the branch the server publishes, through the same check
+   * as {@link removeMemberDevice}: a forked device's removal would be accepted by the epoch gate and
+   * break every healthy member. {@link removeMember} stays the path of a removal a person asked for.
+   *
+   * @throws {UnpublishedBranchError} having staged nothing, when the published base cannot vouch.
+   */
+  async removeDepartedMembers(groupId: string, userIds: string[]): Promise<void> {
+    // A CONVERSATION THAT NEVER PUBLISHED A BASE has nothing to compare against, and refusing there
+    // would keep its departed members' leaves forever: no base is ever published for it by a sweep.
+    // So for a conversation, a base never published is "nothing to vouch" (`classifyBase`'s
+    // `no-base-published`), and the removal is staged as it always was. A KEY GROUP's base is
+    // published with the group itself, so its absence stays a refusal.
+    const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'departed-member removal', {
+      withoutBase: this.isDistributionGroup(groupId) ? 'refuse' : 'stage-unvouched',
+    });
+    await this.runCommitTransaction(
+      groupId,
+      async (intent) => {
+        await assertOnBranch();
+        return this.stageRemoveMembers(groupId, userIds, intent);
+      },
+      { removes: commitRemovals({ userIds }) }
+    );
+  }
+
+  /**
    * Replaces this device's own leaf in `groupId` - the periodic refresh (`leafRefresh.ts`). A commit
    * like any other: staged, submitted to the epoch gate, merged on its accept (which dates the leaf
    * in the refresh ledger) or cleared on its refusal, which throws {@link CommitRefusedError}.
@@ -7522,14 +7550,29 @@ export abstract class BaseMlsService implements IMlsService {
    * whose branch cannot be trusted. Rung 1 (replaying the commit log) cannot help: the device is not
    * behind, it is beside. `no-base` and `other-epoch` accuse nothing and enter nothing.
    *
+   * **THE BASE IS READ WHERE THE GROUP KEEPS IT** ({@link groupInfoChannel}): a key group's lives on
+   * social-service, and chat-delivery's route answers 403 for it by construction - read there, every
+   * key-group check failed before comparing anything.
+   *
+   * `withoutBase: 'stage-unvouched'` is for a caller whose group may never have published a base
+   * (a conversation's departed-member removal): the check then has nothing to compare, says so, and
+   * lets the commit be staged as it was before the check existed. Every other caller refuses.
+   *
    * @throws {UnpublishedBranchError} from the returned check, and from here when no base exists.
    */
   private async assertOnPublishedBranch(
     groupId: string,
-    what: string
+    what: string,
+    opts: { withoutBase: 'refuse' | 'stage-unvouched' } = { withoutBase: 'refuse' }
   ): Promise<() => Promise<void>> {
-    const base = await this.delivery.fetchGroupInfo(groupId);
-    if (!base) throw new UnpublishedBranchError(groupId, 'no-base', what);
+    const base = await this.groupInfoChannel(groupId).fetch();
+    if (!base) {
+      if (opts.withoutBase === 'refuse') throw new UnpublishedBranchError(groupId, 'no-base', what);
+      console.log(
+        `[MLS] ${groupId.slice(0, 8)}... ${what}: no base was ever published for this conversation - nothing to vouch against, staged as before the check`
+      );
+      return async () => {};
+    }
     const baseBytes = fromBase64(base.groupInfo);
     return async () => {
       const epoch = await this.freshEpoch(groupId);

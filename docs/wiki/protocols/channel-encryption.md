@@ -1808,6 +1808,43 @@ it, whenever, converging to nothing to do.
 reading it as one would empty the tree of everybody but this device. Same rule as every other
 destructive sweep here.
 
+### The actor of a removal commits it - 2026-10-27
+
+"Lazily" turned out to mean "at the next app load": the pass ran only from the community LISTING,
+and selecting a salon or a community calls nothing that reaches it. So the device that had just
+revoked somebody from a private salon - holding the salon's group, online by construction - committed
+nothing while it stayed loaded, and every session minted meanwhile stayed at the epoch the removed
+devices hold, protected by server routing alone. The rig hid it for a while: the leave-and-re-enter
+gesture of its salon row was a full page load until it became a click, after which the row measured
+the real behaviour.
+
+**Whoever removes somebody commits the Remove**, the mirror of section 20's admission:
+`commitSalonRevoke` (`frontend/src/lib/utils/graine/commitRemoval.ts`) runs from the settings panel
+right after the server accepts the revoke, not awaited and never throwing. It is the SAME roster
+pass, not a second implementation - a diff read after the server write, so it removes exactly whom
+the server no longer lists - and the pass is now serialised per scope
+(`reconcileDistributionGroupRoster`): a pass waits for the one running on its scope, and callers
+arriving while a pass still waits share it, so the actor's pass and a load's cannot both commit the
+same Remove. One writer: the actor's own device, on its leader tab. A shared pass logs through every
+caller that shares it. **The lane is bounded by its transports, not by a timer**: each pass awaits a
+local tree read, the roster and base reads (`apiFetch`'s response-head deadline, a typed
+`RequestDeadlineError`), at most one commit (the MLS lock-hold budget) and a local persist, so every
+pass settles, and a failed one is swallowed by the lane's tail rather than holding the scope - a
+hung actor pass cannot stall a community's opening. A removal the gate refuses re-reads the tree:
+"already gone" when another device removed them first, "still hold a leaf" only when they do.
+
+**A community kick, the same way** (`commitCommunityKick`, from the community admin panel): the
+kick cuts and strips the person from the community AND from every private salon in one server call,
+so the actor commits in the community's key group and then in each private salon's group of that
+community it holds, one at a time. A `channel.member.kicked` broadcast about somebody else stays
+`ignore` on every receiver (`memberRemoval.ts`): the commit is the actor's, never the fan-out's.
+
+What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
+above, unchanged): an actor that holds no key group for the scope (an admin revoking a private salon
+they are not in), a follower tab, a session with no Graine runtime - and **an access-list rewrite**
+(`updateChannelAccess`: a salon's list edited wholesale, or a public salon made private with a
+shorter list), which runs no actor pass at all.
+
 ### Two primitives were missing, and one was inert
 
 `member_identities` / `get_member_identities` / `lister_identites_membres` (mls-core, wasm, Tauri):
