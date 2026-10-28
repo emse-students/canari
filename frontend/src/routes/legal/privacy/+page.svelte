@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="27/10/2026"
+  updated="28/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -129,9 +129,11 @@
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
-          (montant, produit, statut, identifiant de la transaction chez Lydia). Aucune donnée
-          bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
-          exemple un CV) sont lisibles par l'association qui l'a créé.
+          (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
+          d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
+          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Aucune
+          donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un
+          formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
         </dd>
       </div>
       <div>

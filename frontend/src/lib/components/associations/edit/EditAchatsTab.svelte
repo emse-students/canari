@@ -22,6 +22,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
+  import { formatAmount } from '$lib/forms/fillAnswers';
 
   interface Props {
     asso: Association;
@@ -93,7 +94,7 @@
 
   /** The amount of a purchase as the table shows it. */
   function amountLabel(purchase: AssociationPurchase): string {
-    return `${(purchase.amountCents / 100).toFixed(2)} €`;
+    return formatAmount(purchase.amountCents);
   }
 
   /**

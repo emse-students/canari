@@ -1947,7 +1947,7 @@
   "asso_achats_buyer_tier": "Détient actuellement : {tier}",
   "asso_achats_close_not_a_rise": "L'acheteur détient une cotisation qui vaut au moins celle-ci : l'accorder le rétrograderait, seul un remboursement peut être enregistré.",
   "asso_achats_close_not_comparable": "Cette cotisation ou celle que détient l'acheteur n'a pas de prix fixe, elles ne peuvent pas être comparées : seul un remboursement peut être enregistré.",
-  "asso_achats_close_target_held": "L'acheteur détient déjà cette cotisation : le paiement n'a rien acheté, un remboursement est dû.",
+  "asso_achats_close_target_held": "L'acheteur détenait déjà cette cotisation avant de payer : le paiement n'a rien acheté, un remboursement est dû.",
   "asso_achats_close_year_over": "Ce paiement portait sur une année universitaire terminée : seul un remboursement peut être enregistré.",
   "asso_achats_close_error": "Impossible d'enregistrer l'issue de ce paiement.",
   "asso_achats_payment_online": "En ligne",

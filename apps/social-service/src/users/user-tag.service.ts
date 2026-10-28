@@ -806,14 +806,17 @@ export class UserTagService {
    * Returns the user's active (non-expired) tag row with the given name issued by
    * `issuingAssocId`, or null if absent or expired. Like `hasActiveTag` but also surfaces
    * `expiresAt` - used where a caller needs the expiry itself, not just a yes/no (e.g. the Cercle
-   * inbound cotisant-status check).
+   * inbound cotisant-status check, and the closing of a payment whose tier was delivered since).
+   * Pass `manager` to read inside a transaction, after its locks.
    */
   async getActiveTag(
     userId: string,
     tagName: string,
-    issuingAssocId: string
+    issuingAssocId: string,
+    manager?: EntityManager
   ): Promise<UserTag | null> {
-    const tag = await this.repo.findOne({ where: { userId, tagName, issuingAssocId } });
+    const repo = manager ? manager.getRepository(UserTag) : this.repo;
+    const tag = await repo.findOne({ where: { userId, tagName, issuingAssocId } });
     return isActive(tag) ? tag : null;
   }
 

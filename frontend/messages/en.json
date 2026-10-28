@@ -1915,7 +1915,7 @@
   "asso_achats_buyer_tier": "Holds now: {tier}",
   "asso_achats_close_not_a_rise": "The buyer holds a tier worth at least this one: granting it would move them down, only a refund can be recorded.",
   "asso_achats_close_not_comparable": "This tier or the one the buyer holds has no fixed price, so they cannot be compared: only a refund can be recorded.",
-  "asso_achats_close_target_held": "The buyer already holds this tier: the payment bought nothing, a refund is owed.",
+  "asso_achats_close_target_held": "The buyer held this tier before paying: the payment bought nothing, a refund is owed.",
   "asso_achats_close_year_over": "This payment was for an academic year that is over: only a refund can be recorded.",
   "asso_achats_close_error": "Could not record this payment's outcome.",
   "asso_achats_payment_online": "Online",

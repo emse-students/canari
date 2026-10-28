@@ -170,30 +170,57 @@ describe('tierRefusal - one mapping from a relation to the typed 409, for the sh
 
 describe('settlementVerdict - a settlement grants on what the opening froze, never on a price', () => {
   it.each([
-    ['nothing held now, nothing frozen', 'avec', [], [], 'nothing-held', true],
+    ['nothing held now, nothing frozen', 'avec', [], [], false, 'nothing-held', true],
     [
       'nothing held now, a tier frozen (it expired since)',
       'avec',
       [],
       ['sans'],
-      'nothing-held',
       true,
+      'frozen-gone',
+      false,
     ],
-    ['the frozen tier is still the one held', 'avec', ['sans'], ['sans'], 'as-opened', true],
-    ['the frozen tier is the base tier', 'avec', [null], [null], 'as-opened', true],
-    ['the target itself was obtained since', 'avec', ['avec'], ['sans'], 'held', false],
-    ['another tier replaced the frozen one', 'avec', ['autre'], ['sans'], 'held-changed', false],
-    ['a tier is held where the opening saw none', 'avec', ['sans'], [], 'held-changed', false],
+    [
+      'nothing held now, a tier frozen whose product is deleted since',
+      'avec',
+      [],
+      [],
+      true,
+      'frozen-gone',
+      false,
+    ],
+    ['the frozen tier is still the one held', 'avec', ['sans'], ['sans'], true, 'as-opened', true],
+    ['the frozen tier is the base tier', 'avec', [null], [null], true, 'as-opened', true],
+    ['the target itself was obtained since', 'avec', ['avec'], ['sans'], true, 'held', false],
+    [
+      'another tier replaced the frozen one',
+      'avec',
+      ['autre'],
+      ['sans'],
+      true,
+      'held-changed',
+      false,
+    ],
+    [
+      'a tier is held where the opening saw none',
+      'avec',
+      ['sans'],
+      [],
+      false,
+      'held-changed',
+      false,
+    ],
     [
       'a second tier beside the frozen one',
       'avec',
       ['sans', null],
       ['sans'],
+      true,
       'held-changed',
       false,
     ],
-  ] as const)('%s', (_name, target, held, frozen, verdict, grants) => {
-    const v = settlementVerdict(target, held, frozen);
+  ] as const)('%s', (_name, target, held, frozen, froze, verdict, grants) => {
+    const v = settlementVerdict(target, held, frozen, froze);
     expect(v).toBe(verdict);
     expect(settlementGrants(v)).toBe(grants);
   });

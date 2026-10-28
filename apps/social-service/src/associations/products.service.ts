@@ -61,6 +61,7 @@ import {
   PurchaseRecordClosing,
   type PurchaseClosingOutcome,
 } from '../users/entities/purchase-record-closing.entity';
+import type { UserTag } from '../users/entities/user-tag.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import {
@@ -297,8 +298,32 @@ interface ClosingGrantVerdict {
   variantKey: string | null;
   /** The tier the buyer holds now, by name (`PurchaseListRow.buyerTier`). */
   buyerTier: string | null;
+  /**
+   * True when the buyer already holds the tier paid for because it was DELIVERED since the payment
+   * (`deliveredSince`): the closing records `granted` and writes no tag.
+   */
+  delivered: boolean;
   /** What the decision rests on, for its log line. */
   detail: string;
+}
+
+/**
+ * Why the held tag `tag` counts as the delivery of payment `record`, or null when it does not:
+ * - it was written by this very record's grant (`metadata.purchaseRecordId`, a retried paid grant);
+ * - or it was first granted AFTER the payment was recorded (`createdAt` > `paidAt`, both written by
+ *   the database), e.g. by a manager's roster grant, which the hourly report tells them to do.
+ * A tag that predates the payment is a renewal the payment did not buy - owed a refund - and so is
+ * one only renewed since: a renewal leaves no time on the row, so it cannot be told from that case.
+ */
+function deliveredSince(
+  tag: Pick<UserTag, 'createdAt' | 'metadata'>,
+  record: Pick<PurchaseRecord, 'id' | 'paidAt'>
+): string | null {
+  if (tag.metadata?.purchaseRecordId === record.id) return 'its tag was granted by this payment';
+  if (tag.createdAt.getTime() > record.paidAt.getTime()) {
+    return 'its tag was granted after the payment';
+  }
+  return null;
 }
 
 /** The typed 409 of each `ClosingGrantRefusal`. */
@@ -317,7 +342,7 @@ const CLOSING_GRANT_REFUSALS: Record<ClosingGrantRefusal, { code: string; messag
   },
   'target-held': {
     code: PURCHASE_TARGET_ALREADY_HELD,
-    message: 'The buyer already holds this tier: the payment is owed a refund.',
+    message: 'The buyer held this tier before paying: the payment is owed a refund.',
   },
   'not-a-rise': {
     code: PURCHASE_NOT_A_RISE,
@@ -2025,8 +2050,9 @@ export class ProductsService {
    * tier against the tier the buyer held then and froze that tier's product id on the row
    * (`heldTierProductId`), so a price an admin edits between the opening and the payment changes
    * nothing here. What the settlement re-reads, under the buyer's lock, is WHICH tiers the buyer
-   * holds now (`settlementVerdict`): nothing, or only the frozen tier, is granted; the target itself
-   * or any other tier held is a payment taken for a tier that is not granted - logged at ERROR, a
+   * holds now (`settlementVerdict`): only the frozen tier, or nothing when nothing was frozen, is
+   * granted; the target itself, any other tier held, or no tier where the opening ranked against one
+   * (`frozen-gone`) is a payment taken for a tier that is not granted - logged at ERROR, a
    * refund or a manual grant is owed, and recorded `paid_not_granted`, the durable marker the
    * association's purchases and the hourly report read. Reads through `manager`, under the locks.
    */
@@ -2040,12 +2066,18 @@ export class ProductsService {
     const facts = asso ? await this.tierFactsOf(asso, row.userId, manager) : null;
     const heldKeys = facts?.heldKeys ?? [];
     // The frozen tier by PRODUCT id, as it is named now: a retag in between still matches it. A
-    // product deleted since, like a row opened before migration 112, freezes nothing.
+    // product deleted since names no key, but the opening still froze a tier (`frozen-gone` when
+    // nothing is held); a row opened before migration 112 froze nothing.
     const frozen = row.heldTierProductId
       ? facts?.tiers.find((t) => t.id === row.heldTierProductId)
       : undefined;
     const frozenKeys = frozen ? [frozen.variantKey] : [];
-    const verdict = settlementVerdict(product.variantKey, heldKeys, frozenKeys);
+    const verdict = settlementVerdict(
+      product.variantKey,
+      heldKeys,
+      frozenKeys,
+      Boolean(row.heldTierProductId)
+    );
     const describe =
       `product=${product.id.slice(0, 8)} user=${row.userId.slice(0, 8)} ` +
       `held=[${heldKeys.map((k) => k ?? 'base').join(',')}] ` +
@@ -3060,7 +3092,8 @@ export class ProductsService {
    * tier lock, so an erasure or a grant committed while this waited is seen. `granted` is a manual
    * grant, but a protected one: it only ever grants a first tier or a RISE - never a renewal of the
    * tier held (that payment is owed a refund, and closing it as granted would take it off the report)
-   * nor a move down. Nothing is written by a refusal, and `refunded` stays open in each case, so the
+   * nor a move down. A tier held because it was DELIVERED since the payment (`deliveredSince`) is
+   * recorded `granted` with no tag written, so the books do not book a refund that never happened. Nothing is written by a refusal, and `refunded` stays open in each case, so the
    * report can always be drained.
    *
    * Only `granted` takes the buyer's tier lock: `refunded` writes no tag, and two closings of one
@@ -3109,7 +3142,16 @@ export class ProductsService {
           // Read on the LOCKED row: an erasure committed while this waited has rewritten its buyer.
           const verdict = await this.closingGrantVerdict(manager, record);
           if (verdict.refusal) throw this.closingGrantRefused(record.id, verdict);
-          await this.grantClosedTier(manager, record, verdict.variantKey, closedBy);
+          if (verdict.delivered) {
+            // Already delivered: recorded as granted, with no second tag write and no validity
+            // extension.
+            this.logger.log(
+              `[SHOP] purchase=${record.id.slice(0, 8)}: tier ${verdict.variantKey ?? 'base'} already ` +
+                `delivered (${verdict.detail}) - recorded granted, no tag written`
+            );
+          } else {
+            await this.grantClosedTier(manager, record, verdict.variantKey, closedBy);
+          }
         }
         await manager.insert(PurchaseRecordClosing, {
           purchaseRecordId: record.id,
@@ -3148,7 +3190,8 @@ export class ProductsService {
    *   current one - the tier it bought cannot be granted now;
    * - `target-held` / `not-a-rise` / `not-comparable`: ranked like a checkout (`tierRelationOf`, on
    *   the product prices) against what the buyer holds now: `held` is a renewal the payment did not
-   *   buy, `lower` would move the buyer down, `unranked` (a grid or a free amount on either side)
+   *   buy - unless that tag was delivered since the payment (`deliveredSince`), which closes as
+   *   `granted` with `delivered` set and no write - `lower` would move the buyer down, `unranked` (a grid or a free amount on either side)
    *   cannot be told from a move down. `none` and `higher` grant.
    * `buyerTier` is read BEFORE any of these, so every refusal still says what the buyer holds.
    */
@@ -3163,6 +3206,7 @@ export class ProductsService {
         refusal: 'buyer-erased',
         variantKey: null,
         buyerTier: null,
+        delivered: false,
         detail: 'its buyer account was erased',
       };
     }
@@ -3181,6 +3225,7 @@ export class ProductsService {
       refusal,
       variantKey: null,
       buyerTier,
+      delivered: false,
       detail,
     });
 
@@ -3221,13 +3266,26 @@ export class ProductsService {
     const relation = facts ? tierRelationOf(target, facts.heldKeys, held) : 'none';
     const against = `against the tier held (${held?.variantKey ?? 'base'})`;
     if (relation === 'held') {
-      return refused('target-held', `the buyer already holds tier ${tierLabel}`);
+      // Held BECAUSE it was delivered since: a manager's roster grant, or a grant of this very
+      // record (a retried paid grant). The closing then records `granted` and writes nothing.
+      const tagName = catalogue.find((t) => t.variantKey === variantKey)?.tagName;
+      const tag = tagName
+        ? await this.userTagService.getActiveTag(userId, tagName, record.associationId, manager)
+        : null;
+      const since = tag ? deliveredSince(tag, record) : null;
+      if (since) {
+        return { refusal: null, variantKey, buyerTier, delivered: true, detail: since };
+      }
+      return refused(
+        'target-held',
+        `the buyer already holds tier ${tierLabel}, from before the payment`
+      );
     }
     if (relation === 'lower') return refused('not-a-rise', `tier ${tierLabel} is lower ${against}`);
     if (relation === 'unranked') {
       return refused('not-comparable', `tier ${tierLabel} has no fixed price to rank ${against}`);
     }
-    return { refusal: null, variantKey, buyerTier, detail: relation };
+    return { refusal: null, variantKey, buyerTier, delivered: false, detail: relation };
   }
 
   /**

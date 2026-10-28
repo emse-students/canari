@@ -745,11 +745,34 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     }
   );
 
-  it('GRANTED is refused PURCHASE_TARGET_ALREADY_HELD when the buyer holds that tier: the payment stays reported', async () => {
+  it('a tier DELIVERED since the payment (a roster grant) closes as GRANTED, with no second tag write', async () => {
     const buyer = newBuyer();
     const record = await markedRecord(buyer, TIER_D);
-    // The buyer was granted the tier paid for since: the payment bought nothing, a refund is owed.
+    // The manager delivered the tier paid for by hand, as the hourly report asks.
     await tags.grantCotisant(ASSO, buyer, 'manager', 'd');
+    const tagRow = () =>
+      ds.query(
+        `SELECT id, "grantedBy", "expiresAt", metadata, "createdAt" FROM user_tags WHERE "userId" = $1`,
+        [buyer]
+      );
+    const before = await tagRow();
+    const purchases = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
+    const unclosed = await purchases.countUnclosedPaidNotGranted();
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted');
+
+    expect(closed.closedOutcome).toBe('granted');
+    // The very row the roster wrote: no renewal, no validity extension, no metadata merged.
+    expect(await tagRow()).toEqual(before);
+    expect(before[0].metadata).not.toHaveProperty('purchaseRecordId');
+    expect(await purchases.countUnclosedPaidNotGranted()).toBe(unclosed - 1);
+  });
+
+  it('GRANTED is refused PURCHASE_TARGET_ALREADY_HELD when the tier was held BEFORE the payment: it stays reported', async () => {
+    const buyer = newBuyer();
+    // Held first, then a payment for that same tier marked (a form paid for a renewal it did not buy).
+    await grantRawTag(buyer, TAG_D);
+    const record = await markedFormRecord(buyer, 'd');
     const purchases = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
     const before = await purchases.countUnclosedPaidNotGranted();
 
@@ -758,6 +781,27 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(before);
     expect(await heldTags(buyer)).toEqual([TAG_D]);
+    const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
+    expect(row).toMatchObject({ grantRefusal: 'target-held' });
+  });
+
+  it('a tier frozen at the opening and gone at the settlement is MARKED, not granted at the rise price', async () => {
+    const buyer = newBuyer();
+    await grantRawTag(buyer, TAG_B);
+    // Opened as the rise B -> D, at the price of that rise ...
+    const { checkoutId } = await service.createCheckoutSession(ASSO, TIER_D, buyer);
+    // ... then B is revoked before the payment lands: nothing is held, but the rise was ranked over B.
+    await ds.query(`DELETE FROM user_tags WHERE "userId" = $1`, [buyer]);
+
+    await settle(checkoutId);
+
+    expect(await heldTags(buyer)).toEqual([]);
+    const records = await ds.query(
+      `SELECT status FROM purchase_records WHERE "userId" = $1 AND "productId" = $2`,
+      [buyer, TIER_D]
+    );
+    expect(records).toEqual([{ status: 'paid_not_granted' }]);
+    expect(refundsLogged()).toBe(1);
   });
 
   it('GRANTED is refused PURCHASE_NOT_A_RISE when the buyer holds a tier worth as much: never a move down', async () => {

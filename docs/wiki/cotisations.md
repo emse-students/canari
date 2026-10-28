@@ -316,7 +316,8 @@ price at all:
 
 | Held now | Verdict | Granted |
 |---|---|---|
-| nothing | `nothing-held` | yes - the XOR replaces nothing |
+| nothing, and the opening froze nothing | `nothing-held` | yes - the XOR replaces nothing |
+| nothing, where the opening froze a tier (it expired or was revoked since, or its product is deleted) | `frozen-gone` | no - the price paid was a rise over a tier the buyer no longer has |
 | only the frozen tier (matched by product id, so a retag still matches) | `as-opened` | yes - what the opening decided |
 | the target itself | `held` | no |
 | any other tier: obtained since, held where the opening saw none, or a second one beside the frozen tier | `held-changed` | no |
@@ -366,7 +367,7 @@ the record LOCKED `FOR UPDATE`, and refuses with a typed 409, nothing written:
 | `buyer-erased` | `PURCHASE_BUYER_ERASED` | the buyer is an erased account (`[deleted]`, or `[deleted]:<id>`, `isErasedAccount`): a grant would mint a cotisant out of the placeholder |
 | `tier-gone` | `PURCHASE_TIER_GONE` | the product or form names no tier any more, the association has no mode, or the catalogue `grantCotisantWithin` validates against lacks it - so that grant's own 400s never surface |
 | `year-over` | `PURCHASE_YEAR_OVER` | a `dated` association, and the academic year of `paidAt` is over: the tier it bought cannot be granted for another year |
-| `target-held` | `PURCHASE_TARGET_ALREADY_HELD` | the buyer holds the tier paid for: granting would only renew it, and the closing row would take off the report a payment still owed a refund |
+| `target-held` | `PURCHASE_TARGET_ALREADY_HELD` | the buyer held the tier paid for BEFORE the payment: granting would only renew it, and the closing row would take off the report a payment still owed a refund. A tier held because it was DELIVERED since - its tag first granted after `paidAt` (a manager's roster grant, which the hourly report asks for), or written by this record's own grant (`metadata.purchaseRecordId`) - is not refused: the closing records `granted` and writes no tag, no validity extension (`deliveredSince`). A tag that predates the payment and was only renewed since stays refused: a renewal leaves no time on the row |
 | `not-a-rise` | `PURCHASE_NOT_A_RISE` | ranked like a checkout (`tierRelationOf`, product prices, against the DEARER tier when two are held), the tier is `lower`: granting would move the buyer DOWN, the XOR revoking a dearer tier bought since |
 | `not-comparable` | `PURCHASE_TIER_NOT_COMPARABLE` | the tier paid for or the one held has no fixed price (a grid, a free amount): `unranked`, which cannot be told from a move down |
 

@@ -21,6 +21,7 @@ import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
+import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
 
 /**
  * An in-memory `product_checkouts` keeping the two properties the service relies on: a conditional
@@ -876,8 +877,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     /**
      * A service whose purchase record lookups answer `records` in turn (the unlocked read, then the
      * locked one; the last one repeats) - and ONLY when asked within the record's own association, as
-     * the real `where` does - with the association's catalogue `catalogue`, its mode, and the tiers
-     * the buyer holds now (`held`, by key).
+     * the real `where` does - with the association's catalogue `catalogue`, its mode, the tiers
+     * the buyer holds now (`held`, by key), and the row of each held tag (`heldTag`; by default
+     * granted long before any payment).
      */
     function closing(
       records: (Record<string, unknown> | null)[],
@@ -886,6 +888,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         catalogue?: { variantKey: string | null; name?: string }[];
         held?: string[];
         mode?: 'lifetime' | 'dated' | null;
+        heldTag?: { createdAt: Date; metadata: Record<string, unknown> };
       } = {}
     ) {
       const t = makeService();
@@ -907,8 +910,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       (t.userTagService as any).listCotisationTiers = jest.fn(() =>
         Promise.resolve(
           opts.catalogue ?? [
-            { variantKey: 'sans-alcool', name: 'Sans alcool' },
-            { variantKey: 'avec-alcool', name: 'Avec alcool' },
+            { variantKey: 'sans-alcool', name: 'Sans alcool', tagName: tagOf('sans-alcool') },
+            { variantKey: 'avec-alcool', name: 'Avec alcool', tagName: tagOf('avec-alcool') },
           ]
         )
       );
@@ -921,6 +924,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const held = new Set((opts.held ?? []).map(tagOf));
       t.userTagService.hasActiveTag.mockImplementation((_user: string, tag: string) =>
         Promise.resolve(held.has(tag))
+      );
+      const heldTag = opts.heldTag ?? { createdAt: new Date(0), metadata: {} };
+      (t.userTagService.getActiveTag as jest.Mock).mockImplementation(
+        (_user: string, tag: string) => Promise.resolve(held.has(tag) ? heldTag : null)
       );
       return t;
     }
@@ -1060,13 +1067,36 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.manager.insert).not.toHaveBeenCalled();
     });
 
-    it('refuses PURCHASE_TARGET_ALREADY_HELD when the buyer holds the tier paid for: a refund is owed', async () => {
+    it('refuses PURCHASE_TARGET_ALREADY_HELD when the buyer held the tier paid for BEFORE paying: a refund is owed', async () => {
       const t = closing([marked({ productId: 'prod-tier' })], { held: ['avec-alcool'] });
       t.productRepo.findOne.mockResolvedValue(tierProduct());
       expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
       expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
       expect(t.manager.insert).not.toHaveBeenCalled();
     });
+
+    it.each([
+      [
+        'granted after the payment (a roster grant)',
+        { createdAt: new Date(Date.now() + 60_000), metadata: {} },
+      ],
+      [
+        'granted by this very payment (a retried grant)',
+        { createdAt: new Date(0), metadata: { purchaseRecordId: 'rec-1' } },
+      ],
+    ])(
+      'records GRANTED with no tag written when the tier held was delivered since: %s',
+      async (_case, heldTag) => {
+        const t = closing([marked({ productId: 'prod-tier' })], { held: ['avec-alcool'], heldTag });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        expect(await grantRefused(t)).toBeUndefined();
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+        expect(t.manager.insert).toHaveBeenCalledWith(
+          PurchaseRecordClosing,
+          expect.objectContaining({ purchaseRecordId: 'rec-1', outcome: 'granted' })
+        );
+      }
+    );
 
     it('refuses PURCHASE_NOT_A_RISE when the buyer holds a dearer tier: granting would move them down', async () => {
       const t = closing([marked({ productId: 'prod-sans' })], { held: ['avec-alcool'] });
