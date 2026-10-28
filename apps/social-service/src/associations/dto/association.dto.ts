@@ -18,6 +18,10 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  PURCHASE_CLOSING_OUTCOMES,
+  type PurchaseClosingOutcome,
+} from '../../users/entities/purchase-record-closing.entity';
 import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
 import { ALL_PERMISSION_FLAGS } from '../entities/association-member.entity';
 import { ASSOCIATION_IMAGE_URL_MAX_LENGTH } from '../association-image-url';
@@ -35,13 +39,18 @@ export class CreateAssociationDto {
   @MaxLength(100)
   name: string;
 
+  /**
+   * OPTIONAL since 2026-10-26: the server derives it from the name (a technical id is never typed
+   * by a person). Only an old client still sends one, and it is validated and refused if taken.
+   */
   @IsString()
+  @IsOptional()
   @IsNotEmpty()
   @MaxLength(60)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
     message: 'slug must be lowercase alphanumeric with hyphens',
   })
-  slug: string;
+  slug?: string;
 
   @IsString()
   @IsOptional()
@@ -454,7 +463,7 @@ export class CreateProductDto {
 
   /** Reduced price in cents for cotisants (defaults to `amountCents` when omitted). */
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   amountCentsMember?: number;
 
@@ -591,7 +600,7 @@ export class UpdateProductDto {
 
   /** Reduced price in cents for cotisants. Pass `null` to charge cotisants the same as everyone. */
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   amountCentsMember?: number | null;
 
@@ -692,6 +701,25 @@ export class GrantProductPurchaseDto {
   @Min(0)
   @IsOptional()
   amountCents?: number;
+}
+
+/**
+ * DTO for closing a payment marked `paid_not_granted`: which outcome settled it
+ * (`ProductsService.closePaidNotGranted`). Nothing else crosses: who closes it is the caller, and
+ * when is the server's own clock.
+ */
+export class ClosePaidNotGrantedDto {
+  @IsIn(PURCHASE_CLOSING_OUTCOMES)
+  outcome: PurchaseClosingOutcome;
+
+  /**
+   * For `granted`, what the purchases list showed: true when it said the tier is already delivered
+   * (`PurchaseListRow.delivered`, "nothing is granted"). The closing refuses
+   * `409 PURCHASE_CLOSING_CHANGED` when that is no longer so, rather than grant under that promise.
+   */
+  @ValidateIf((o: ClosePaidNotGrantedDto) => o.outcome === 'granted')
+  @IsBoolean()
+  expectDelivered?: boolean;
 }
 
 /** DTO for manually granting a cotisation tag to a user. */

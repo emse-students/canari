@@ -158,7 +158,7 @@ export function killAdbServer() {
  * What the app still holds on DISK, which is the half no CDP connection can see.
  *
  * `footprint.mjs` measures the WebView's stores; on a phone those are only part of the answer,
- * because `wipeDeviceToFactory` also calls the native `delete_mls_state` and `clear_app_data`, and
+ * because `wipeDeviceToFactory` also calls the native `terminer_session_mls` and `clear_app_data`, and
  * both write to the Tauri app data directory rather than to any web origin. A row that asks whether
  * a revoked PHONE was really erased and reads only localStorage has measured the smaller half.
  *
@@ -475,8 +475,8 @@ export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
 /**
  * TAPS THE NOTIFICATION CARRYING `needle`, RESOLVED BY ELEMENT.
  *
- * REPLACES `archive/a1.py`, WHICH WAS NEVER IN GIT. That script was machine-local to the LITHIUM
- * rig and was not carried into OXYGEN, so `notif7.mjs` had been shelling out to a file that does not
+ * REPLACES `archive/a1.py`, WHICH WAS NEVER IN GIT. That script was machine-local to the previous
+ * machine's rig and was not carried over, so `notif7.mjs` had been shelling out to a file that does not
  * exist - which made NOTIF-7, -7b, -7c and -7d unrunnable since the reconstitution. Worse, the
  * failure it produced read `no shade row contains <marker>`, which accuses the PRODUCT for a missing
  * interpreter script. A campaign row must never be able to fail that way, so this lives in the

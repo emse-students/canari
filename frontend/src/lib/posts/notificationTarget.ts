@@ -8,6 +8,12 @@ import { formResponsesRoute } from '$lib/forms/responsesLink';
 export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
 
 /**
+ * The reader's inbox of follow requests (WP-F4) - where a `follow_request` notification and its push
+ * (`fr.emse.canari://follow-requests`) both land.
+ */
+export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests';
+
+/**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
  *
  * The bell dropdown and `/notifications` render the same rows and, until this existed, each decided
@@ -57,6 +63,13 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     // the answer is given; `postId` is the post, which the inbox row links to.
     case 'repost_personal_requested':
       return REPUBLICATION_REQUESTS_ROUTE;
+    // A person asks to follow the reader (WP-F4): the inbox where it is answered. `postId` is the
+    // ASKER's id, never a post.
+    case 'follow_request':
+      return FOLLOW_REQUESTS_ROUTE;
+    // The person the reader asked accepted: their profile. `postId` is that person's id.
+    case 'follow_accepted':
+      return `/profile/${encodeURIComponent(notif.postId)}`;
     // The types whose `postId` IS a post.
     case 'comment':
     case 'reply':
@@ -113,6 +126,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_cut',
   'live_suspended',
   'live_withdrawn',
+  'follow_request',
+  'follow_accepted',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

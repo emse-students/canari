@@ -56,10 +56,10 @@ afterEach(() => {
   native = false;
 });
 
-function open(onClose = vi.fn()) {
+function open(onClose = vi.fn(), onSentInApp?: () => void) {
   const instance = mount(PostShareSheet, {
     target: document.body,
-    props: { open: true, postId: 'p1', onClose },
+    props: { open: true, postId: 'p1', onClose, onSentInApp },
   });
   mounted.push(() => unmount(instance));
   flushSync();
@@ -91,11 +91,48 @@ describe('PostShareSheet', () => {
     expect(sendPostLinkInApp).toHaveBeenCalledWith('p1', 'g-new');
   });
 
+  it('says the link was sent in the app only when its landing was published', () => {
+    const onSentInApp = vi.fn();
+    sendPostLinkInApp.mockReturnValueOnce(false);
+    open(vi.fn(), onSentInApp);
+    button('New').click();
+    expect(onSentInApp).not.toHaveBeenCalled();
+    sendPostLinkInApp.mockReturnValueOnce(true);
+    button('Old').click();
+    expect(onSentInApp).toHaveBeenCalledOnce();
+  });
+
   it('copies the link from the bottom row', () => {
     const onClose = open();
     button('Copier le lien').click();
     expect(copyPostLink).toHaveBeenCalledWith('p1');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('acts on its post even when closing it clears the id it was given (the reel viewer)', () => {
+    // The reel viewer passes `postId={shareFor}` and closes with `shareFor = null`: a row that
+    // read `postId` after the close acted on null and did nothing (Mi 9T, 2026-10-28).
+    native = true;
+    const props = $state({
+      open: true,
+      postId: 'p1' as string,
+      onClose: () => {
+        props.postId = null as unknown as string;
+      },
+    });
+    const instance = mount(PostShareSheet, { target: document.body, props });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    button('New').click();
+    expect(sendPostLinkInApp).toHaveBeenCalledWith('p1', 'g-new');
+    props.postId = 'p1';
+    flushSync();
+    button('Copier le lien').click();
+    expect(copyPostLink).toHaveBeenCalledWith('p1');
+    props.postId = 'p1';
+    flushSync();
+    button('Partager via').click();
+    expect(sharePostLinkOut).toHaveBeenCalledWith('p1');
   });
 
   it('offers the system sheet only where there is one', () => {

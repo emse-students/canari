@@ -449,7 +449,7 @@ the only copy. What it changes here:
   Owed: mobile data (no SIM in the Mi 9T), campus Wi-Fi, the iPhone (the probe page needs a public
   origin). A CREDENTIALED allocation is measured since (section 14, Q1). **Dev has no Cloudflare TURN pair**, so dev's
   `/api/calls/ice-servers` answers 503 until the user gives it one.
-- **The DSI rule (UDP 3478 out from `.67`) is needed only if the Rust SFU stays on the host.**
+- **The DSI rule (UDP 3478 out from the host's egress address) is needed only if the Rust SFU stays on the host.**
 
 ## 14. Probes of 2026-10-16: clients
 

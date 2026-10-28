@@ -1,8 +1,12 @@
 import {
+  cotisationStem,
+  cotisationStemsCollide,
   deriveCotisationTag,
   getAcademicYear,
   variantKeyCap,
+  VariantKeySpaceExhaustedError,
   variantKeyFromLabel,
+  YEAR_SHAPED_VARIANT_KEY,
 } from './cotisation-tag.util';
 
 /** Builds a label from code points, so this file stays ASCII. */
@@ -30,11 +34,37 @@ describe('variantKeyFromLabel', () => {
 
   it('drops a year-shaped tail, so a key never reads like the dated tag of another tier', () => {
     expect(variantKeyFromLabel('Cotisation 2026-2027', [])).toBe('cotisation');
-    expect(variantKeyFromLabel('Cotisation 2026', [])).toBe('cotisation');
+    // A single year is not year-shaped: `promo-2024` is a key the server accepts.
+    expect(variantKeyFromLabel('Promo 2024', [])).toBe('promo-2024');
     expect(variantKeyFromLabel('Cotisation 2026-2027', ['cotisation'])).toBe('cotisation-2');
     expect(variantKeyFromLabel('2026-2027', [])).toBe('palier');
     // Only a TAIL: a year inside the label is part of its name.
     expect(variantKeyFromLabel('Gala 2026 VIP', [])).toBe('gala-2026-vip');
+  });
+
+  it('derives a key the server accepts from exactly a year-shaped label (TIER_KEY_YEAR_SHAPED)', () => {
+    for (const label of ['Cotisation 2024-2025', 'Cotisation 2023-2024-2025', '2024-2025']) {
+      const key = variantKeyFromLabel(label, []);
+      expect(key).not.toMatch(YEAR_SHAPED_VARIANT_KEY);
+    }
+    expect(variantKeyFromLabel('Cotisation 2024-2025', [])).toBe('cotisation');
+  });
+
+  it('removes a year tail the length cap exposes', () => {
+    // Uncut, the year is inside the label; cut at 13 it would be the tail `abc-2024-2025`.
+    expect(variantKeyFromLabel('abc 2024-2025 foo', [], 13)).toBe('abc');
+  });
+
+  it('stops at -999 with a typed error rather than a key that would overflow the tag', () => {
+    const taken = ['gold', ...Array.from({ length: 997 }, (_, i) => `gold-${i + 2}`)];
+    expect(variantKeyFromLabel('Gold', taken)).toBe('gold-999');
+    expect(() => variantKeyFromLabel('Gold', [...taken, 'gold-999'])).toThrow(
+      VariantKeySpaceExhaustedError
+    );
+  });
+
+  it('steps past a key another association already makes collide', () => {
+    expect(variantKeyFromLabel('Gold', [], 60, (key) => key === 'gold')).toBe('gold-2');
   });
 
   it('cannot produce the dated tag of a sibling tier', () => {
@@ -125,5 +155,25 @@ describe('cotisation-tag util', () => {
         deriveCotisationTag('bde', 'dated', now)
       );
     });
+  });
+});
+
+describe('cotisationStemsCollide', () => {
+  it.each([
+    ['bde', 'bde', true],
+    ['bde-2026-2027', 'bde', true],
+    ['bde', 'bde-sport-2026-2027', false],
+    ['bde-sport', 'bde', false],
+    ['bde-sport', 'bde-sport', true],
+    ['cercle-avec-alcool', 'cercle-avec', false],
+    ['bde-2026', 'bde', false],
+  ])('%s against %s -> %s', (a, b, expected) => {
+    expect(cotisationStemsCollide(a, b)).toBe(expected);
+    expect(cotisationStemsCollide(b, a)).toBe(expected);
+  });
+
+  it('a stem and a key make the stem of a named tier', () => {
+    expect(cotisationStem('bde', 'sport')).toBe('bde-sport');
+    expect(cotisationStem('bde', null)).toBe('bde');
   });
 });

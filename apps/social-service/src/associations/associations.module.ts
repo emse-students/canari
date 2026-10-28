@@ -32,6 +32,7 @@ import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
+import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
 import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
 import { AssociationsController } from './associations.controller';
@@ -85,6 +86,7 @@ import { PricingModule } from '../pricing/pricing.module';
     ProductsService,
     PartnershipsService,
     CercleDeliveryScheduler,
+    PaidNotGrantedScheduler,
     AssociationCategoriesService,
     PosterService,
     GlobalAdminOrAssociationRoleGuard,

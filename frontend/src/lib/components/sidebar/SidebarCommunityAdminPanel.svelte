@@ -16,7 +16,8 @@
   } from '@lucide/svelte';
   import QrCodeModal from '../shared/QrCodeModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { globalChannels } from '$lib/stores/globalChatSingleton.svelte';
+  import { appendLog, globalChannels } from '$lib/stores/globalChatSingleton.svelte';
+  import { commitCommunityKick, committingDeviceId } from '$lib/utils/graine/commitRemoval';
   import SidePanel from '../shared/SidePanel.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -425,7 +426,11 @@
     }
     memberRemoving = { ...memberRemoving, [userId]: true };
     try {
-      await channelService.kickFromWorkspace(workspaceDbId, userId);
+      await channelService.kickFromWorkspace(workspaceDbId, userId, committingDeviceId());
+      // Whoever removes somebody commits the Remove (channel-encryption section 10): from the
+      // community's key group and from every private salon's this device holds. Not awaited and
+      // never throws - the kick has already succeeded, every outcome is logged.
+      void commitCommunityKick(channelService, workspaceDbId, userId, appendLog);
       communityMembers = communityMembers.filter((mem) => mem.userId !== userId);
     } catch (e) {
       Log.d('communityAdmin.handleRemoveMember failed', e);

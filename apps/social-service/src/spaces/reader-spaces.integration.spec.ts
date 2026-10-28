@@ -33,6 +33,7 @@ import {
   type SpacePair,
 } from './reader-spaces';
 import { smallestRules } from './spaces.service';
+import { FollowRequestsService } from '../follows/follow-requests.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -55,6 +56,11 @@ const MIGRATION_074 = readFileSync(
 // Nominative read grants (WP7): the feed gate and the read predicates read `read_grants`.
 const MIGRATION_078 = readFileSync(
   join(__dirname, '..', 'migrations', '078_read_grants.sql'),
+  'utf8'
+);
+// Follow requests (WP-F1): `user_follows.status`, every row present when it runs recorded accepted.
+const MIGRATION_114 = readFileSync(
+  join(__dirname, '..', 'migrations', '114_user_follow_status.sql'),
   'utf8'
 );
 
@@ -181,7 +187,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
-      CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255));
+      CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
+        "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -221,6 +228,11 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(
       `INSERT INTO user_follows VALUES ('icmSe2', 'icmSe'), ('isminGa', 'icmSe'), ('outsider', 'icmSe')`
     );
+    // 114 runs over the three follows above, which it records accepted (decision 3) - then adminIcm,
+    // who sees icmSe's post, ASKS to follow icmSe and is not answered: the column's default is a
+    // request, and a request is not a follow.
+    await client.query(MIGRATION_114);
+    await client.query(`INSERT INTO user_follows VALUES ('adminIcm', 'icmSe')`);
     for (const p of POSTS) {
       await client.query(
         `INSERT INTO posts (id, "authorId", "associationId", anonymous) VALUES ($1, $2, $3, $4)`,
@@ -410,9 +422,36 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
   });
 
   it("announces a personal post to its author's followers who can see it, and no other", async () => {
-    // Three follow icmSe; isminGa (Gardanne) and outsider (no space) cannot see the post.
+    // Three follow icmSe; isminGa (Gardanne) and outsider (no space) cannot see the post, and
+    // adminIcm, who can, only ASKED (pending): a request is never announced to.
     const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
     expect(rows.map((r) => r.id as string)).toEqual(['icmSe2']);
+  });
+
+  it('a REMOVED follower is announced to no more (WP-F3): the removal is the row every reader reads', async () => {
+    await client.query('BEGIN');
+    try {
+      // The service's own statement, through this file's client: `[rows, rowCount]` as the driver.
+      const viaClient = {
+        query: async (sql: string, params: unknown[]) => {
+          const r = await client.query(sql, params);
+          return r.command === 'SELECT' ? r.rows : [r.rows, r.rowCount];
+        },
+      };
+      const requests = new FollowRequestsService(
+        {} as never,
+        {} as never,
+        viaClient as never,
+        {
+          deleteByPattern: () => Promise.resolve(0),
+        } as never
+      );
+      expect(await requests.removeFollower('icmSe', 'icmSe2')).toEqual({ ok: true });
+      const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
+      expect(rows).toEqual([]);
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   it('filters the agenda by organiser OR accepted co-organiser: rules, membership, admin', async () => {
