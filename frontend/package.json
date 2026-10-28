@@ -1,6 +1,6 @@
 {
   "name": "canari",
-  "version": "1.5.0-alpha.2",
+  "version": "1.5.1-alpha.1",
   "private": true,
   "description": "",
   "license": "SEE LICENSE IN ../LICENSE",
@@ -63,7 +63,7 @@
     "highlight.js": "^11.12.0",
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
-    "mediabunny": "^1.61.4",
+    "mediabunny": "^1.62.1",
     "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
     "svelte-dnd-action": "^0.9.80",
@@ -105,6 +105,6 @@
   },
   "patchedDependencies": {
     "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
-    "mediabunny@1.61.4": "patches/mediabunny@1.61.4.patch"
+    "mediabunny@1.62.1": "patches/mediabunny@1.62.1.patch"
   }
 }

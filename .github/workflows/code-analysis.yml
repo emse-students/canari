@@ -251,9 +251,20 @@ jobs:
         include:
           # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
           # bun's default level; every service skips scripts and is audited at `moderate`.
+          #
+          # ONE SUPPRESSION, 2026-10-28 (the two SvelteKit GHSAs it carried left with kit 3), and it
+          # rests on a reachability argument: GHSA-gcqx-w48m-w2h4 is LOW, `deepmerge` <= 4.3.1
+          # (`mergeObject()` lets a crafted SOURCE object poison the prototype of the result), and NO
+          # fixed version is published. Read from the lockfile: it arrives only through
+          # `@sveltejs/vite-plugin-svelte` and `@rollup/plugin-node-resolve` (under
+          # `@sveltejs/adapter-node`), build tooling; the frontend declares no dependency of its own
+          # on it, and kit 3 with adapter-node 6 still resolves 4.3.1. The inputs it merges there are
+          # the project's own configuration, which no outsider supplies. NOT verified: that no copy
+          # ends up in the shipped bundle. Retires itself - the step `Every ignored advisory is
+          # still reported` fails once the audit stops naming it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: ""
+            audit: --ignore=GHSA-gcqx-w48m-w2h4
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate

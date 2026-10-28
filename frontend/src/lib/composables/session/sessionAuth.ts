@@ -215,7 +215,7 @@ import {
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
-import type { ICallMsg } from '$lib/proto/codec';
+import type { CallEndReason, ICallMsg } from '$lib/proto/codec';
 import {
   closeDeletedAccountHandles,
   wipeDeletedAccountLocalData,
@@ -1917,8 +1917,14 @@ export async function loginImpl(
     ctx.getCallService()?.setChatNotifier({
       onCallStarted: (groupId: string, callId: string) =>
         recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
-      onCallEnded: (groupId: string, callId: string) =>
-        recordCallEnded(getCallSystemMessageContext(), groupId, callId),
+      onCallEnded: (groupId: string, callId: string, outcome?: CallEndReason, starterId?: string) =>
+        recordCallEnded(
+          getCallSystemMessageContext(),
+          groupId,
+          callId,
+          outcome,
+          starterId ?? ctx.getUserId()
+        ),
     });
 
     setupMessageHandler({

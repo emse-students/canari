@@ -2193,6 +2193,10 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
+### One frontend advisory is ignored, and it is not about kit (2026-10-28)
+
+(The two SvelteKit GHSAs it once carried left with the kit 3 upgrade.) `GHSA-gcqx-w48m-w2h4` (2026-10-28), is the other kind: LOW, `deepmerge` <= 4.3.1, no fixed version, reachable only through build tooling (`@sveltejs/vite-plugin-svelte`, `@rollup/plugin-node-resolve`), merging the project's own configuration. That no copy reaches the shipped bundle was not verified; the same retirement step removes it when the audit stops naming it.
+
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 
 Each of the four Rust trees carries its ignores in its own `.cargo/audit.toml`, and **each entry's
