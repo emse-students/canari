@@ -6,7 +6,7 @@ import {
 } from './account-erasure';
 import { InternalController } from './internal.controller';
 import {
-  ERASED_BEFORE_THE_TAGS,
+  ERASURE_TIER_ORDER,
   ERASED_PINS_SQL,
   ERASURE_ASSOCIATION_LOCK_SQL,
   ERASURE_PROPOSAL_STATEMENTS,
@@ -289,16 +289,18 @@ describe('InternalController.deleteUserData', () => {
 describe('the erasure order against the tier paths', () => {
   const at = (label: string) => ERASURE_ROW_STATEMENTS.findIndex((st) => st.label === label);
 
-  // A closing locks its purchase record then writes a tag; a settlement locks its checkout row then
-  // writes a tag. An erasure taking user_tags first would hold the other end of each: a deadlock.
-  it.each([...ERASED_BEFORE_THE_TAGS])('rewrites %s BEFORE it deletes user_tags', (label) => {
-    expect(at(label)).toBeGreaterThanOrEqual(0);
-    expect(at('user_tags')).toBeGreaterThanOrEqual(0);
-    expect(at(label)).toBeLessThan(at('user_tags'));
+  // A settlement locks its checkout row, inserts its purchase record, writes a tag; a closing locks
+  // its record, writes a tag. The erasure must take them in THAT order: records before checkouts
+  // would miss a record still uncommitted and leave it the real id; tags first would deadlock.
+  it('rewrites product_checkouts, then purchase_records, then deletes user_tags - in that order', () => {
+    const positions = ERASURE_TIER_ORDER.map(at);
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect([...positions].sort((x, y) => x - y)).toEqual(positions);
+    expect(ERASURE_TIER_ORDER).toEqual(['product_checkouts', 'purchase_records', 'user_tags']);
   });
 
   it('names every table it orders exactly once', () => {
-    for (const label of ERASED_BEFORE_THE_TAGS) {
+    for (const label of ERASURE_TIER_ORDER) {
       expect(ERASURE_ROW_STATEMENTS.filter((st) => st.label === label)).toHaveLength(1);
     }
   });

@@ -158,7 +158,14 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     error.mockRestore();
   });
 
-  it.each(['buyer-erased', 'tier-gone', 'year-over', 'target-held', 'not-a-rise'] as const)(
+  it.each([
+    'buyer-erased',
+    'tier-gone',
+    'year-over',
+    'target-held',
+    'not-a-rise',
+    'not-comparable',
+  ] as const)(
     'offers only "Mark refunded" when the server would refuse the grant (%s), and says why',
     async (grantRefusal) => {
       const target = await render([{ ...open, grantRefusal, buyerTier: 'Avec alcool' }]);
@@ -173,5 +180,10 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     const target = await render([{ ...open, buyerTier: 'Sans alcool' }]);
     expect(target.textContent).toContain(m.asso_achats_buyer_tier({ tier: 'Sans alcool' }));
     expect(button(target, m.asso_achats_close_granted_button())).toBeDefined();
+  });
+
+  it('names no tier, held or not, for an erased buyer', async () => {
+    const target = await render([{ ...open, grantRefusal: 'buyer-erased' }]);
+    expect(target.textContent).not.toContain(m.asso_achats_buyer_tier_none());
   });
 });

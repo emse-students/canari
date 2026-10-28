@@ -419,6 +419,20 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
 ];
 
 /**
+ * The order `ERASURE_ROW_STATEMENTS` rewrites the buyer's tier rows in, the order every tier path
+ * locks them, so an erasure and a tier write queue instead of deadlocking or leaving a real id
+ * behind. Asserted by `account-erasure.spec.ts`.
+ * - `product_checkouts` FIRST: a settlement locks its checkout row, then INSERTS the purchase record
+ *   and writes the tag. An erasure that rewrote `purchase_records` first would miss that record (not
+ *   committed yet), then wait on the checkout row; the settlement would commit a record carrying the
+ *   real id. Waiting on the checkout row FIRST means the record is committed before it is rewritten.
+ * - `purchase_records` next: a closing locks its record, then writes the tag (it never touches a
+ *   checkout row, so this order has no cycle with it).
+ * - `user_tags` last: whichever tier write ran first, its tag is deleted.
+ */
+export const ERASURE_TIER_ORDER = ['product_checkouts', 'purchase_records', 'user_tags'] as const;
+
+/**
  * The statements that run BEFORE the scrub of other people's posts, in the order they must run inside
  * ONE transaction. Order matters where a row references another (`minesweeper_scores` before
  * `minesweeper_challenges`), and where one statement reads what the next rewrites (an association's
@@ -426,14 +440,6 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * them). NONE OF THEM WRITES A PROPOSAL: those are {@link ERASURE_PROPOSAL_STATEMENTS}, after every
  * post lock (see `lockPostRow`).
  */
-/**
- * The rows a tier path LOCKS before it writes a tag (a closing's purchase record, a settlement's
- * checkout row): `ERASURE_ROW_STATEMENTS` rewrites each of them BEFORE it deletes `user_tags`, the
- * order those paths take, so an erasure and a tier write queue instead of deadlocking. Asserted by
- * `account-erasure.spec.ts`.
- */
-export const ERASED_BEFORE_THE_TAGS = ['purchase_records', 'product_checkouts'] as const;
-
 export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Posts published as an association stay: the association's communication, not the member's.
   {
@@ -453,20 +459,19 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM association_follows WHERE "followerUserId" = $1`,
   },
   { label: 'push_mutes', sql: `DELETE FROM association_push_mutes WHERE "userId" = $1` },
-  // Anonymised, and BEFORE the tags (`ERASED_BEFORE_THE_TAGS`): closing a payment as granted locks
-  // its purchase record and then writes a tag (`ProductsService.closePaidNotGranted`), and a
-  // settlement locks its checkout row and then writes a tag (`settlePaidCheckout`). Taking those rows
-  // first, in the same order, makes each pair queue instead of deadlocking: an erasure that runs
-  // first is seen by the closing (it refuses `granted` for an erased buyer) and by the settlement (the
-  // row names no account any more); one that runs second deletes the tag the other committed.
-  {
-    label: 'purchase_records',
-    sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
-  },
-  // Unique per row, for the partial unique index on open attempts.
+  // Anonymised, in `ERASURE_TIER_ORDER` (checkouts, records, then the tags): the order a settlement
+  // (checkout row, record, tag) and a closing (record, tag) take. An erasure that runs first is seen
+  // by both: the settlement of an erased buyer's checkout records `paid_not_granted` and grants
+  // nothing (`settlePaidCheckout`), a closing refuses `granted`. One that runs second rewrites the
+  // record the other committed and deletes its tag. Unique per row for checkouts, for the partial
+  // unique index on open attempts.
   {
     label: 'product_checkouts',
     sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
+  },
+  {
+    label: 'purchase_records',
+    sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
   },
   { label: 'user_tags', sql: `DELETE FROM user_tags WHERE "userId" = $1` },
   { label: 'user_moderation', sql: `DELETE FROM user_moderation WHERE "userId" = $1` },

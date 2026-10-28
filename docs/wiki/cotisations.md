@@ -299,11 +299,12 @@ the record LOCKED `FOR UPDATE`, and refuses with a typed 409, nothing written:
 | `tier-gone` | `PURCHASE_TIER_GONE` | the product or form names no tier any more, the association has no mode, or the catalogue `grantCotisantWithin` validates against lacks it - so that grant's own 400s never surface |
 | `year-over` | `PURCHASE_YEAR_OVER` | a `dated` association, and the academic year of `paidAt` is over: the tier it bought cannot be granted for another year |
 | `target-held` | `PURCHASE_TARGET_ALREADY_HELD` | the buyer holds the tier paid for: granting would only renew it, and the closing row would take off the report a payment still owed a refund |
-| `not-a-rise` | `PURCHASE_NOT_A_RISE` | ranked like a checkout (`tierRelationOf`, product prices), the tier is `lower` or `unranked` against the one held: granting would move the buyer DOWN, the XOR revoking a dearer tier bought since |
+| `not-a-rise` | `PURCHASE_NOT_A_RISE` | ranked like a checkout (`tierRelationOf`, product prices, against the DEARER tier when two are held), the tier is `lower`: granting would move the buyer DOWN, the XOR revoking a dearer tier bought since |
+| `not-comparable` | `PURCHASE_TIER_NOT_COMPARABLE` | the tier paid for or the one held has no fixed price (a grid, a free amount): `unranked`, which cannot be told from a move down |
 
 `none` and `higher` grant. The SAME function answers the purchases list without the lock, as advice:
-an open marked row carries `grantRefusal` and `buyerTier` (the tier the buyer holds now), shows that
-tier and the reason, and offers "Mark refunded" only when a refusal stands. `refunded` is never
+an open marked row carries `grantRefusal` and `buyerTier` (the tier the buyer holds now, read before
+any refusal so even an early one names it; none for an erased buyer), shows that tier and the reason, and offers "Mark refunded" only when a refusal stands. `refunded` is never
 refused this way, so the report can always be drained, and takes no tier lock (it writes no tag).
 Other refusals: 404 for a record of another association (every read is scoped to the PATH's
 association), 409 `PURCHASE_NOT_CLOSABLE` (not marked), `PURCHASE_ALREADY_CLOSED` (the first outcome
@@ -312,13 +313,20 @@ stands; the unique index is the durable guarantee, and only a violation of
 the list in the panel, so the row shows the state that refused it.
 
 **The export says what is kept.** `Montant` is what was received; `Montant conserve` is 0 for a
-refunded payment, so a sum of it is the income and never counts money that went back.
+refunded payment, so a sum of it is the income and never counts money that went back. An OPEN
+payment not granted still counts as kept until its refund is recorded: its `Statut` says it is to
+settle.
 
-**Erasure and the tier paths queue, they do not deadlock.** The erasure rewrites `purchase_records`
-and `product_checkouts` BEFORE deleting `user_tags` (`ERASED_BEFORE_THE_TAGS`, asserted by
-`account-erasure.spec.ts`), the order a closing (record row, then tag) and a settlement (checkout row,
-then tag) take. An erasure first is seen by the other (`PURCHASE_BUYER_ERASED`; a checkout naming no
-account); one that runs second deletes the tag the other committed.
+**Erasure and the tier paths queue, they do not deadlock nor leave a real id.** The erasure rewrites
+`product_checkouts`, then `purchase_records`, then deletes `user_tags` (`ERASURE_TIER_ORDER`, its
+order pinned by `account-erasure.spec.ts`): the order a settlement (checkout row, then its new record,
+then the tag) and a closing (record, then tag) take. Checkouts FIRST matters: an erasure meeting a
+settlement mid-flight waits on its checkout row, so the record that settlement inserts is committed
+before the erasure rewrites `purchase_records` - records first would miss it and leave the real id
+(the interleaving is tested against PostgreSQL). An erasure first is seen by both: a closing refuses
+`PURCHASE_BUYER_ERASED`, and a settlement of a checkout already rewritten to `[deleted]:<id>` records
+`paid_not_granted`, grants nothing and dispatches no top-up (a refund is owed). One that runs second
+rewrites the record the other committed and deletes its tag.
 
 **The frozen tier, and a buyer holding two.** Two tier products sharing the held key (a catalogue from
 before keys were unique per association) freeze the smallest product id and log a WARN. If that

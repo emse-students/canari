@@ -808,11 +808,19 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
   });
 
   describe('closing a payment paid and not granted (migration 113)', () => {
-    /** The two tiers of the test association: `sans-alcool` (20 EUR) below `avec-alcool` (30 EUR). */
+    /**
+     * The tiers of the test association: `sans-alcool` (20 EUR) below `mid` (25 EUR) below
+     * `avec-alcool` (30 EUR) below `top` (90 EUR), and `libre` with no fixed price.
+     */
     const TIERS = [
       { id: 'prod-sans', associationId: 'asso1', variantKey: 'sans-alcool', amountCents: 2000 },
+      { id: 'prod-mid', associationId: 'asso1', variantKey: 'mid', amountCents: 2500 },
       { id: 'prod-tier', associationId: 'asso1', variantKey: 'avec-alcool', amountCents: 3000 },
+      { id: 'prod-top', associationId: 'asso1', variantKey: 'top', amountCents: 9000 },
+      { id: 'prod-libre', associationId: 'asso1', variantKey: 'libre', amountCents: null },
     ].map((t) => ({ ...t, priceMatrix: null }));
+    /** The catalogue listing every tier above. */
+    const FULL_CATALOGUE = TIERS.map((t) => ({ variantKey: t.variantKey, name: t.variantKey }));
     const tagOf = (key: string) => `cotisant:cercle-${key}`;
 
     /**
@@ -888,7 +896,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         .map(([, params]: [string, unknown[]]) => params);
     const tierProduct = (variantKey = 'avec-alcool') =>
       product({
-        id: variantKey === 'avec-alcool' ? 'prod-tier' : 'prod-sans',
+        id: TIERS.find((t) => t.variantKey === variantKey)!.id,
         type: 'membership',
         variantKey,
       });
@@ -1016,6 +1024,63 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(codeOf(await grantRefused(t))).toBe('PURCHASE_NOT_A_RISE');
       expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
       expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses PURCHASE_TIER_NOT_COMPARABLE, not NOT_A_RISE, for a tier with no fixed price', async () => {
+      const t = closing([marked({ productId: 'prod-libre' })], {
+        held: ['sans-alcool'],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('libre'));
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TIER_NOT_COMPARABLE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+    });
+
+    it('ranks a buyer holding TWO tiers against the DEARER: a tier between them is refused', async () => {
+      const t = closing([marked({ productId: 'prod-mid' })], {
+        held: ['sans-alcool', 'avec-alcool'],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('mid'));
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_NOT_A_RISE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+    });
+
+    it('grants a buyer holding TWO tiers a rise over the dearer, through the XOR grant path', async () => {
+      const t = closing([marked({ productId: 'prod-top' })], {
+        held: ['sans-alcool', 'avec-alcool'],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('top'));
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted');
+      // `grantCotisantWithin` is the manual path, whose sibling XOR revokes BOTH held tiers.
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledWith(
+        t.manager,
+        'asso1',
+        'user1',
+        'admin1',
+        'top',
+        expect.anything()
+      );
+    });
+
+    it('grants a dated tier paid in the CURRENT academic year', async () => {
+      const t = closing([marked({ productId: 'prod-tier', paidAt: new Date() })], {
+        mode: 'dated',
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted');
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledTimes(1);
+    });
+
+    it('still names the tier the buyer holds when the verdict stops early (tier gone)', async () => {
+      const t = closing([marked()], { held: ['sans-alcool'] });
+      t.productRepo.findOne.mockResolvedValue(null);
+      (t.purchaseRecordService as any).listPaidByAssociation = jest.fn(() =>
+        Promise.resolve([marked()])
+      );
+      const [row] = await t.service.listAssociationPurchases('asso1');
+      expect(row).toMatchObject({ grantRefusal: 'tier-gone', buyerTier: 'Sans alcool' });
     });
 
     it('refuses PURCHASE_YEAR_OVER for a dated tier paid in an academic year that is over', async () => {

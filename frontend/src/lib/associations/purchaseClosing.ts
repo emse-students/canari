@@ -18,6 +18,7 @@ export const GRANT_REFUSAL_CODES: Record<ClosingGrantRefusal, string> = {
   'year-over': 'PURCHASE_YEAR_OVER',
   'target-held': 'PURCHASE_TARGET_ALREADY_HELD',
   'not-a-rise': 'PURCHASE_NOT_A_RISE',
+  'not-comparable': 'PURCHASE_TIER_NOT_COMPARABLE',
 };
 
 /** The sentence saying why a payment can only be refunded, shown on its row and on a refusal. */
@@ -33,6 +34,8 @@ export function grantRefusalMessage(refusal: ClosingGrantRefusal): string {
       return m.asso_achats_close_target_held();
     case 'not-a-rise':
       return m.asso_achats_close_not_a_rise();
+    case 'not-comparable':
+      return m.asso_achats_close_not_comparable();
   }
 }
 

@@ -333,11 +333,14 @@
                         : m.asso_achats_closed_granted()}
                     </span>
                   {:else}
-                    <span class="text-text-muted mt-1 block text-xs">
-                      {purchase.buyerTier
-                        ? m.asso_achats_buyer_tier({ tier: purchase.buyerTier })
-                        : m.asso_achats_buyer_tier_none()}
-                    </span>
+                    <!-- An erased buyer is no account: there is no tier to name, held or not. -->
+                    {#if purchase.grantRefusal !== 'buyer-erased'}
+                      <span class="text-text-muted mt-1 block text-xs">
+                        {purchase.buyerTier
+                          ? m.asso_achats_buyer_tier({ tier: purchase.buyerTier })
+                          : m.asso_achats_buyer_tier_none()}
+                      </span>
+                    {/if}
                     {#if purchase.grantRefusal}
                       <span class="text-text-muted mt-1 block text-xs">
                         {grantRefusalMessage(purchase.grantRefusal)}

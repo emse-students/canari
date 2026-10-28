@@ -29,6 +29,7 @@ import {
   PURCHASE_ALREADY_CLOSED,
   PURCHASE_BUYER_ERASED,
   PURCHASE_NOT_A_RISE,
+  PURCHASE_TIER_NOT_COMPARABLE,
   PURCHASE_TARGET_ALREADY_HELD,
   PURCHASE_YEAR_OVER,
   PURCHASE_NOT_CLOSABLE,
@@ -264,7 +265,8 @@ export type ClosingGrantRefusal =
   | 'tier-gone'
   | 'year-over'
   | 'target-held'
-  | 'not-a-rise';
+  | 'not-a-rise'
+  | 'not-comparable';
 
 /** What `closingGrantVerdict` decided for one marked payment. */
 interface ClosingGrantVerdict {
@@ -298,7 +300,13 @@ const CLOSING_GRANT_REFUSALS: Record<ClosingGrantRefusal, { code: string; messag
   },
   'not-a-rise': {
     code: PURCHASE_NOT_A_RISE,
-    message: 'The buyer holds a tier this one is not a rise over: only a refund can be recorded.',
+    message:
+      'The buyer holds a tier worth at least this one: granting it would move them down. Only a refund can be recorded.',
+  },
+  'not-comparable': {
+    code: PURCHASE_TIER_NOT_COMPARABLE,
+    message:
+      'This tier or the one the buyer holds has no fixed price, so they cannot be compared: only a refund can be recorded.',
   },
 };
 
@@ -1946,7 +1954,15 @@ export class ProductsService {
       const paymentIntentId = row.requestId ?? row.requestUuid;
       const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
       let granted = true;
-      if (product) {
+      if (isErasedAccount(row.userId)) {
+        // An erasure rewrote the buyer (`[deleted]:<id>`) while the payment was in flight: there is
+        // nobody to deliver to. The money is marked for a refund, never granted to the placeholder.
+        granted = false;
+        this.logger.error(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: its buyer account was erased before the payment ` +
+            'landed - payment recorded paid_not_granted, nothing granted; a refund is owed'
+        );
+      } else if (product) {
         granted = await this.settlementMayGrant(product, row, manager);
         if (granted) {
           await this.grantPurchaseTag(
@@ -1986,10 +2002,11 @@ export class ProductsService {
         `[SHOP] purchase completed: checkout ${row.id.slice(0, 8)} product=${row.productId.slice(0, 8)} ` +
           `user=${row.userId.slice(0, 8)} amount=${row.amountCents}`
       );
-      return { row, product, paymentIntentId };
+      return { row, product, paymentIntentId, granted };
     });
 
-    if (!outcome?.product) return;
+    // Nothing granted (an erased buyer, a tier not granted) dispatches nothing either.
+    if (!outcome?.product || !outcome.granted) return;
     const { row, product, paymentIntentId } = outcome;
     if (!paymentIntentId) {
       if (product.type === 'balance_topup') {
@@ -2064,6 +2081,14 @@ export class ProductsService {
       this.logger.log(
         `[SHOP] checkout ${row.id.slice(0, 8)}: purchase record completed with request ${requestId}`
       );
+      // An erased buyer's payment was recorded `paid_not_granted` (`settlePaidCheckout`): nothing
+      // is delivered for it, a top-up no more than a tier.
+      if (isErasedAccount(row.userId)) {
+        this.logger.warn(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: buyer erased - nothing dispatched, a refund is owed`
+        );
+        return null;
+      }
       const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
       return product ? { row, product } : null;
     });
@@ -2291,14 +2316,15 @@ export class ProductsService {
     const assocName = nameRows[0]?.name ?? 'achats';
     const purchases = await this.listAssociationPurchases(associationId);
 
+    // Every French cell and header below is written as an escape, so this source stays ASCII.
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Achats');
     sheet.columns = [
       { header: 'Nom', key: 'lastName', width: 20 },
-      { header: 'Prénom', key: 'firstName', width: 20 },
+      { header: 'Pr\u00e9nom', key: 'firstName', width: 20 },
       { header: 'Type', key: 'source', width: 12 },
       { header: 'Produit', key: 'productName', width: 30 },
-      { header: 'Montant', key: 'amount', width: 12, style: { numFmt: '0.00 "€"' } },
+      { header: 'Montant', key: 'amount', width: 12, style: { numFmt: '0.00 "\u20ac"' } },
       { header: 'Paiement', key: 'paymentMethod', width: 12 },
       { header: 'Date', key: 'paidAt', width: 18, style: { numFmt: 'dd/mm/yyyy hh:mm' } },
       { header: 'Statut', key: 'status', width: 30 },
@@ -2314,7 +2340,7 @@ export class ProductsService {
       sheet.addRow({
         // A guest (no account) is named as the responses table names one; the organiser finds the
         // person through the form's own answers ("Nom Prenom").
-        lastName: p.lastName ?? (p.userId ? '' : 'Invité'),
+        lastName: p.lastName ?? (p.userId ? '' : 'Invit\u00e9'),
         firstName: p.firstName ?? '',
         source: p.source === 'form' ? 'Formulaire' : 'Boutique',
         productName: p.productName,
@@ -2322,11 +2348,10 @@ export class ProductsService {
         // The sheet is French throughout, and this column says HOW rather than THROUGH WHOM:
         // 'Stripe' named the processor of the day, and the app's own label for the same fact
         // is `asso_achats_payment_online`.
-        paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'En ligne',
+        paymentMethod: p.paymentMethod === 'cash' ? 'Esp\u00e8ces' : 'En ligne',
         paidAt: new Date(p.paidAt),
         // A tier paid for and not granted is money received that a refund or a grant must settle.
         // Closed or not, the mark stays: the column says how it was settled, if it was.
-        // The French cells are written as escapes, so this source stays ASCII.
         status: !p.notGranted
           ? 'Pay\u00e9'
           : p.closedOutcome === 'refunded'
@@ -2335,7 +2360,8 @@ export class ProductsService {
               ? 'Pay\u00e9, non accord\u00e9 : accord\u00e9 \u00e0 la main'
               : 'Pay\u00e9, non accord\u00e9 : \u00e0 r\u00e9gulariser',
         // What the association keeps: a refunded payment went back, so a sum of this column is the
-        // income, where a sum of `Montant` is what was ever received.
+        // income, where a sum of `Montant` is what was ever received. An OPEN payment not granted
+        // counts as kept until its refund is recorded - its `Statut` says it is still to settle.
         kept: p.closedOutcome === 'refunded' ? 0 : p.amountCents / 100,
       });
     });
@@ -2901,23 +2927,44 @@ export class ProductsService {
    *   `grantCotisantWithin` validates against lacks it), so that grant never has to refuse;
    * - `year-over`: a `dated` association, and the payment's academic year (from `paidAt`) is not the
    *   current one - the tier it bought cannot be granted now;
-   * - `target-held` / `not-a-rise`: ranked like a checkout (`tierRelationOf`, on the product prices)
-   *   against what the buyer holds now: `held` is a renewal the payment did not buy, `lower` or
-   *   `unranked` would move the buyer down. `none` and `higher` grant.
+   * - `target-held` / `not-a-rise` / `not-comparable`: ranked like a checkout (`tierRelationOf`, on
+   *   the product prices) against what the buyer holds now: `held` is a renewal the payment did not
+   *   buy, `lower` would move the buyer down, `unranked` (a grid or a free amount on either side)
+   *   cannot be told from a move down. `none` and `higher` grant.
+   * `buyerTier` is read BEFORE any of these, so every refusal still says what the buyer holds.
    */
   private async closingGrantVerdict(
     manager: EntityManager,
     record: PurchaseRecord
   ): Promise<ClosingGrantVerdict> {
-    const refused = (
-      refusal: ClosingGrantRefusal,
-      detail: string,
-      buyerTier: string | null = null
-    ): ClosingGrantVerdict => ({ refusal, variantKey: null, buyerTier, detail });
     const userId = record.userId;
     if (!userId || isErasedAccount(userId)) {
-      return refused('buyer-erased', 'its buyer account was erased');
+      // No account: no tier is held by anyone, and the list shows none.
+      return {
+        refusal: 'buyer-erased',
+        variantKey: null,
+        buyerTier: null,
+        detail: 'its buyer account was erased',
+      };
     }
+    // What the buyer holds NOW is read first, so every refusal below still shows it.
+    const asso = await manager.findOne(Association, { where: { id: record.associationId } });
+    // Empty when the association no longer sells cotisations (no mode).
+    const catalogue = await this.userTagService.listCotisationTiers(record.associationId, {
+      manager,
+    });
+    const facts = asso ? await this.tierFactsOf(asso, userId, manager) : null;
+    const held = facts?.held ?? null;
+    const buyerTier = held
+      ? (catalogue.find((t) => t.variantKey === held.variantKey)?.name ?? held.variantKey ?? 'base')
+      : null;
+    const refused = (refusal: ClosingGrantRefusal, detail: string): ClosingGrantVerdict => ({
+      refusal,
+      variantKey: null,
+      buyerTier,
+      detail,
+    });
+
     let variantKey: string | null;
     if (record.source === 'product') {
       const product = record.productId
@@ -2939,39 +2986,27 @@ export class ProductsService {
       variantKey = rows[0].cotisationVariantKey;
     }
     const tierLabel = variantKey ?? 'base';
-    const asso = await manager.findOne(Association, { where: { id: record.associationId } });
-    // Empty when the association no longer sells cotisations (no mode).
-    const catalogue = await this.userTagService.listCotisationTiers(record.associationId, {
-      manager,
-    });
     if (!asso?.cotisationMode || !catalogue.some((t) => t.variantKey === variantKey)) {
       return refused('tier-gone', `tier ${tierLabel} is absent from the cotisation catalogue`);
     }
-    const facts = await this.tierFactsOf(asso, userId, manager);
-    const held = facts?.held ?? null;
-    const buyerTier = held
-      ? (catalogue.find((t) => t.variantKey === held.variantKey)?.name ?? held.variantKey ?? 'base')
-      : null;
     if (
       asso.cotisationMode === 'dated' &&
       getAcademicYear(record.paidAt) !== getAcademicYear(new Date())
     ) {
-      return refused('year-over', `paid in ${getAcademicYear(record.paidAt)}`, buyerTier);
+      return refused('year-over', `paid in ${getAcademicYear(record.paidAt)}`);
     }
     const target = facts?.tiers.find((t) => t.variantKey === variantKey) ?? {
       variantKey,
       amountCents: null,
     };
     const relation = facts ? tierRelationOf(target, facts.heldKeys, held) : 'none';
+    const against = `against the tier held (${held?.variantKey ?? 'base'})`;
     if (relation === 'held') {
-      return refused('target-held', `the buyer already holds tier ${tierLabel}`, buyerTier);
+      return refused('target-held', `the buyer already holds tier ${tierLabel}`);
     }
-    if (relation === 'lower' || relation === 'unranked') {
-      return refused(
-        'not-a-rise',
-        `tier ${tierLabel} is ${relation} against the tier held (${held?.variantKey ?? 'base'})`,
-        buyerTier
-      );
+    if (relation === 'lower') return refused('not-a-rise', `tier ${tierLabel} is lower ${against}`);
+    if (relation === 'unranked') {
+      return refused('not-comparable', `tier ${tierLabel} has no fixed price to rank ${against}`);
     }
     return { refusal: null, variantKey, buyerTier, detail: relation };
   }

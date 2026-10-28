@@ -35,6 +35,11 @@ import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { ProductsService } from './products.service';
+import {
+  ERASURE_ROW_STATEMENTS,
+  ERASURE_TIER_ORDER,
+  erasureParams,
+} from '../internal/account-erasure';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -760,6 +765,77 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags(buyer)).toEqual([`cotisant:cercle-it-${variantKey}`]);
     const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
     expect(row).toMatchObject({ grantRefusal: 'not-a-rise', buyerTier: 'Tier c' });
+  });
+
+  /** The erasure's tier statements, in the order `ERASURE_ROW_STATEMENTS` runs them. */
+  const erasureTierStatements = () =>
+    ERASURE_ROW_STATEMENTS.filter((st) =>
+      (ERASURE_TIER_ORDER as readonly string[]).includes(st.label)
+    );
+
+  it("a payment landing AFTER its buyer's erasure is marked paid_not_granted and grants nothing", async () => {
+    const buyer = newBuyer();
+    const attempt = await openAttempt(buyer, TIER_A);
+    // The erasure committed while the payment was in flight: the attempt names no account now.
+    await ds.transaction(async (m) => {
+      for (const st of erasureTierStatements()) await m.query(st.sql, erasureParams(st, buyer));
+    });
+
+    await settle(attempt.id);
+
+    const [record] = await ds.query(
+      `SELECT "userId", status FROM purchase_records WHERE "productId" = $1 AND "userId" = $2`,
+      [TIER_A, `[deleted]:${attempt.id}`]
+    );
+    expect(record).toEqual({ userId: `[deleted]:${attempt.id}`, status: 'paid_not_granted' });
+    expect(await heldTags(`[deleted]:${attempt.id}`)).toEqual([]);
+    expect(await heldTags(buyer)).toEqual([]);
+    expect(refundsLogged()).toBe(1);
+  });
+
+  it('an erasure that meets a settlement mid-flight waits for it, then rewrites the record it wrote', async () => {
+    const buyer = newBuyer();
+    const attempt = await openAttempt(buyer, TIER_A);
+    // The settlement's transaction, held open on the test's connection: it holds the checkout row
+    // and has written its purchase record, not committed yet.
+    await admin.query('BEGIN');
+    await admin.query(`SELECT id FROM product_checkouts WHERE id = $1 FOR UPDATE`, [attempt.id]);
+    await admin.query(
+      `INSERT INTO purchase_records ("userId", source, "productId", "amountCents", "paymentMethod", status, "associationId", "productName")
+       VALUES ($1, 'product', $2, 1500, 'online', 'paid', $3, 'Tier')`,
+      [buyer, TIER_A, ASSO]
+    );
+    const erasure = settled(
+      ds.transaction(async (m) => {
+        for (const st of erasureTierStatements()) await m.query(st.sql, erasureParams(st, buyer));
+      })
+    );
+    const waits = await waitersReach(1, true);
+    await admin.query('COMMIT');
+    const outcome = await erasure;
+
+    expect(waits).toBe(1);
+    expect(outcome.error).toBeNull();
+    // Checkouts first: the erasure waited on the row, so the record was committed before it was
+    // rewritten. Records first would have missed it and left the real id behind.
+    const records = await ds.query(
+      `SELECT "userId" FROM purchase_records WHERE "productId" = $1 AND "userId" IN ($2, '[deleted]')`,
+      [TIER_A, buyer]
+    );
+    expect(records.map((r: { userId: string }) => r.userId)).not.toContain(buyer);
+  });
+
+  it('closing GRANTED over a buyer holding TWO tiers ranks against the dearer and leaves ONE tier', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+    // markedRecord leaves B; A is added beside it: two tiers held at once (both 1500).
+    await grantRawTag(buyer, TAG_A);
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'manager-1', 'granted');
+
+    expect(closed.closedOutcome).toBe('granted');
+    // D (2000) is a rise over the dearer held (1500); the sibling XOR revoked BOTH held tiers.
+    expect(await heldTags(buyer)).toEqual([TAG_D]);
   });
 
   it('the hourly count reads only the marked payments nobody has closed', async () => {

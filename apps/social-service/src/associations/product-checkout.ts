@@ -142,3 +142,10 @@ export const PURCHASE_NOT_A_RISE = 'PURCHASE_NOT_A_RISE';
  * is over (a `dated` association): the tier it bought cannot be granted any more, only refunded.
  */
 export const PURCHASE_YEAR_OVER = 'PURCHASE_YEAR_OVER';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the tier paid for or the tier the buyer
+ * holds has no fixed price (a grid or a free amount): the two cannot be ranked, so the grant cannot
+ * be told from a move down. A refund is the outcome left.
+ */
+export const PURCHASE_TIER_NOT_COMPARABLE = 'PURCHASE_TIER_NOT_COMPARABLE';
