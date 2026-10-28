@@ -36,9 +36,15 @@
     /** The post (a reel is a post) whose link is shared. */
     postId: string;
     onClose: () => void;
+    /**
+     * The link was sent INTO a conversation and its landing published. A surface drawn over the
+     * conversations (the reel viewer) closes on it: the landing no longer navigates, so nothing
+     * else would take it off the composer the link waits in.
+     */
+    onSentInApp?: () => void;
   }
 
-  let { open, postId, onClose }: Props = $props();
+  let { open, postId, onClose, onSentInApp }: Props = $props();
 
   let query = $state('');
   /** DM names fetched after the grid was first drawn - see `missingPeerNameIds`. */
@@ -113,7 +119,10 @@
             <li>
               <button
                 type="button"
-                onclick={() => act(() => sendPostLinkInApp(postId, cand.conversation.id))}
+                onclick={() =>
+                  act(() => {
+                    if (sendPostLinkInApp(postId, cand.conversation.id)) onSentInApp?.();
+                  })}
                 aria-label={m.post_share_send_to({ name: cand.label })}
                 class="flex w-full flex-col items-center gap-1.5 rounded-xl px-1 py-1 text-center transition-colors hover:bg-black/5 dark:hover:bg-white/5"
               >

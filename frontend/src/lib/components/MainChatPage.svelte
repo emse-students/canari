@@ -291,7 +291,9 @@
   // every route, and holds the target until it is displayed. A second copy here selected the
   // target and released it early, which is what let the landing be lost.
 
-  let messageText = $state('');
+  // The open conversation's draft - each conversation keeps its own (`messaging.draftFor`), so a
+  // text left in one never sits in the next one's composer.
+  const messageText = $derived(messaging.draftFor(convs.selectedContact));
 
   /** Message pending forwarding (opens ForwardMessageModal when non-null). */
   let forwardingMessage = $state<ChatMessage | null>(null);
@@ -644,6 +646,7 @@
     const userId = session.userId;
     if (!contact || !userId || !isChannelConversationId(contact)) return;
     void untrack(async () => {
+      const restore = messaging.lateDraftWriter(contact, 'resumed salon text');
       const orphans = await messaging.resumeUnsentSends(msgCtx(), contact);
       if (orphans.length > 0 && convs.selectedContact !== contact) {
         // The member left the salon while the owner check ran: the texts belong to ITS composer,
@@ -653,7 +656,7 @@
         return;
       }
       for (const o of orphans) {
-        messageText = restoreFailedDraft(messageText, o.text);
+        restore(restoreFailedDraft(messaging.draftFor(contact), o.text));
         log(
           `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
         );
@@ -942,7 +945,6 @@
       channels.selectedChannelConversationId = '';
       convs.closeSidePanel();
       convs.sendError = '';
-      messageText = '';
     });
   });
 
@@ -1085,22 +1087,20 @@
   }
 
   /**
-   * Sends the current messageText, then clears the input - and GIVES THE TEXT BACK if the send was
-   * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The restore
-   * only happens in the conversation the text was written in; the error banner stays.
+   * Sends the open conversation's draft, then clears it - and GIVES THE TEXT BACK if the send was
+   * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The text goes
+   * back to the draft of the conversation it was written in, whichever one is open by then; the
+   * error banner stays.
    */
   function handleSendChat() {
-    const text = messageText;
     const contact = convs.selectedContact;
+    const text = messaging.draftFor(contact);
+    const restore = messaging.lateDraftWriter(contact, 'refused send');
     sendText(text, () => {
-      if (convs.selectedContact !== contact) {
-        log(`[SEND] draft not restored: the conversation changed (${text.length} chars dropped)`);
-        return;
-      }
-      messageText = restoreFailedDraft(messageText, text);
-      log(`[SEND] refused: draft restored to the composer (${text.length} chars)`);
+      restore(restoreFailedDraft(messaging.draftFor(contact), text));
+      log(`[SEND] refused: draft restored to its conversation (${text.length} chars)`);
     });
-    messageText = '';
+    messaging.setDraft(contact, '');
   }
 
   /** Forwards selected files to the messaging composable for upload. */
@@ -1164,7 +1164,9 @@
       log(
         `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
       );
-      if (share.text) messageText = restoreFailedDraft(messageText, share.text);
+      if (share.text) {
+        messaging.setDraft(selected, restoreFailedDraft(messaging.draftFor(selected), share.text));
+      }
       if (share.files.length === 0) return;
       // The copies are read HERE, once a destination is on screen, and not when the share arrived -
       // one at a time, each staged before the next is read, under the composer's own ceiling.
@@ -1561,7 +1563,9 @@
           {messageText}
           isChannel={isSelectedChannel ?? false}
           imageMediaId={activeConversation?.imageMediaId ?? null}
-          onMessageChange={(value) => (messageText = value)}
+          onMessageChange={(value) => messaging.setDraft(convs.selectedContact, value)}
+          bindDraftWriter={() =>
+            messaging.lateDraftWriter(convs.selectedContact, 'draft an edit replaced')}
           onSend={handleSendChat}
           onTyping={handleTyping}
           onSendGif={handleSendGif}
@@ -1609,7 +1613,10 @@
           onDiscardSend={(msgId) => messaging.discardSend(msgCtx(), msgId)}
           onTakeBackSend={(msgId) => {
             const text = messaging.takeBackSend(msgCtx(), msgId);
-            if (text !== null) messageText = restoreFailedDraft(messageText, text);
+            if (text !== null) {
+              const contact = convs.selectedContact;
+              messaging.setDraft(contact, restoreFailedDraft(messaging.draftFor(contact), text));
+            }
           }}
           onDelete={isSelectedChannel
             ? (msgId) =>
