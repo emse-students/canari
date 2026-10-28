@@ -77,7 +77,7 @@ No row verdict depends on it; it stays here until it is explained.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | OFF-1 | Cut after the stage's checkpoint, before the POST leaves | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 06d5be3d143b |
-| OFF-2 | Cut after the POST reached the server | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 06d5be3d143b |
+| OFF-2 | Cut after the POST reached the server | W1 W2 - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef): FAIL-PRODUCT. With W2 parked on another conversation, its pane showed the right group with an empty transcript in 2 of 2 runs, and rendered in 3 of 3 when W2 was last on a deleted group (backlog P2, #2608) |
 | OFF-3 | The committer stays offline while the others advance three epochs | W1 W2 W4 - U | `PASS` (assertions) on `1.4.1-alpha.4` (dev.f49f499), recorded as a DEFECT, not a clean pass: the cut committer's add lock was freed by its 30 s TTL, not by a release, so the other member's Add waited on a clock ([backlog](backlog.md#p2---a-cut-holders-add-lock-ends-only-by-its-ttl-and-a-refused-waiter-sleeps-to-it-design-after-the-stable-off-3-2026-10-25)); predates rig 66efaf30890a |
 | OFF-4 | A RECEIVER offline across ten commits and a hundred messages | W1 W2 - U | `pending` - BLOCKED-ON-ACCOUNT: needs a fifth campaign account |
 | OFF-5 | The phone loses both radios in the middle of an Add it is making | +A1 - B | `ERROR` on `1.4.1-alpha.3`, the row threw before it could decide; BLOCKED-ON-RIG: the row holds A1's commit POST, and the Tauri apps send every first-party API call through `tauri-plugin-http`, below the WebView, where CDP `Fetch` cannot hold it (measured on A1 on 1.4.1-alpha.3, 2026-10-25); every row that faults the commit on A1 or the iPhone is blocked the same way. A radio cut timed around the commit would be a race. What would lift it: a fault point inside the app's routed fetch, in a bench build only (proposal, not built) |
@@ -211,14 +211,14 @@ ring window. The first readings were a scratch runner; the repo row replays them
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| CALL-WEB-1 | W2 calls W4, W4 accepts: connected, audio heard both ways, W2 hangs up, both end | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: dirt is chat-delivery `CallsService` ring/presence debug lines no rule scopes |
-| CALL-WEB-2 | W2 mutes and unmutes mid-call: W4 hears under 1 %, then at least 20 % again | W2 W4 - U | `FAIL` - `1.5.0-alpha.2`: muted to 2.1 % of the baseline (bar 1 %), back to 14 % after the unmute (bar 20 %), on a baseline of 4.8 %; a steady tone is what noise suppression learns to remove, so rig versus product is not separated |
+| CALL-WEB-1 | W2 calls W4, W4 accepts: connected, audio heard both ways, W2 hangs up, both end | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the end-of-call and ring-end rules of #2636 |
+| CALL-WEB-2 | W2 mutes and unmutes mid-call: W4 hears under 1 %, then hears W2 again - at least 5 % of its pre-mute level AND a fifth of what the unmuted direction kept | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the control-relative judge of #2636. The first alpha.1 run FAILED the old 20 % bar at 18.7 % while W2, never muted, kept 11.5 %: the whole call faded, the unmute worked |
 | CALL-WEB-2q | CALL-WEB-2 with W4 muted first, the scratch diagnostic of the shared beep | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: with no echo of its own beep, W2 is heard again after the unmute; the repo row has no such variant |
 | CALL-WEB-3 | the callee hangs up a connected call: both end | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
-| CALL-WEB-4 | W4 declines while ringing: both end, never connected | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
-| CALL-WEB-5 | W2 hangs up while W4 rings: W4's ring stops, W2 ends | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
-| CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
-| CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-4 | W4 declines while ringing: both end, never connected | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 |
+| CALL-WEB-5 | W2 hangs up while W4 rings: W4's ring stops, W2 ends | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 |
+| CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 |
+| CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636: W5 is answered busy and ends at once (B16). The first run was an ssh transport ERROR and the second PASS-DIRTY on the hang-up `endRing reason=ended` the first rule had not read |
 | CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
 
 ## LIVE - a live broadcast, watched from the web
@@ -226,15 +226,15 @@ ring window. The first readings were a scratch runner; the repo row replays them
 LIVE-WEB-1 and -3 were read with a scratch runner (2026-10-26). LIVE-WEB-2 and LIVE-STALL-1 are repo
 rows since 2026-10-27: `bun run.mjs --file liveweb.mjs --row <id>` (`liverows.mjs`), judged on each
 viewer's own `[LIVE]` lines IN ORDER - a stall after the viewer's first delivery gap, or stalls with no
-gap at all, fail the row (L-F1). The two `1.5.0-alpha.2` readings below are L-F1's BEFORE baseline:
-that build predates the fix (#2583); the AFTER reading is owed on the pre-release carrying it. What each reading holds against the `lives_mode` flip is on
+gap at all, fail the row (L-F1). The `1.5.0-alpha.2` readings were L-F1's BEFORE baseline (W2 6 and W4 4 stalls in LIVE-WEB-2, 29 and 26 in LIVE-STALL-1):
+that build predates the fix (#2583); the AFTER readings are on `1.5.1-alpha.1`, which carries it, and they replace the baseline in the table. What each reading holds against the `lives_mode` flip is on
 [live](frontend/modules/live.md#the-first-rig-readings-and-what-they-hold-against-the-lives_mode-flip-live-web-2026-10-27).
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | LIVE-WEB-1 | W2 goes live from desktop Chrome; W4 and W5 watch from the feed card; W2 ends | W2 W4 W5 - U | `ERROR` - `1.4.1-alpha.6`: ERROR-PRODUCT, a desktop camera reports no facing and the live asks an exact one (#2574, after the stable) |
-| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end; no viewer stalls after its first delivery gap | A1 W2 W4 - B | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef, A1 8cd51abf): every other fact held; W2 stalled 6 times and W4 4 times in a 6 s watch, neither named a delivery gap (L-F1, before #2583) |
-| LIVE-STALL-1 | L-F1: A1 broadcasts for a minute to W2 and W4; no viewer stalls after its first delivery gap; each target buffer is recorded | A1 W2 W4 - B | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef, A1 8cd51abf): W2 stalled 29 times and W4 26 times in 60 s, no delivery gap named (L-F1, before #2583); server window clean; A1 sealed 8 of 30 chunks as fragment pairs |
+| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end; no viewer stalls after its first delivery gap | A1 W2 W4 - B | `FAIL` - `1.5.1-alpha.1` (dev.87d84bf, A1 8cd51abf), L-F1's AFTER reading: W4 0 stalls, W2 1 stall BEFORE its first delivery gap (6 and 4 before #2583); the FAIL is the judge counting the seek out of that stall, printed in the same tick just after the gap (fixed in #2635, rerun owed); server window clean; W2's only dirt the known read-mark 404 for a deleted salon |
+| LIVE-STALL-1 | L-F1: A1 broadcasts for a minute to W2 and W4; no viewer stalls after its first delivery gap; each target buffer is recorded | A1 W2 W4 - B | `FAIL` - `1.5.1-alpha.1` (dev.87d84bf, A1 8cd51abf), L-F1's AFTER reading: in 60 s W2 1 stall before its first gap and W4 ONE stall after adapting (29 and 26 before #2583). W4's post-gap stall is a real L-F1 fact; W2's FAIL is the seek artefact #2635 fixes, and W4's stall line prints its target unrounded (backlog P3); server window clean |
 | LIVE-WEB-3 | LIVE-WEB-2 with W4's account following the broadcaster: the announcement names one follower | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: `followers=1`, the push found no token on a web account (a device reading is owed) |
 
 ## TOK - a token expiring in the middle of an operation
@@ -243,7 +243,7 @@ that build predates the fix (#2583); the AFTER reading is owed on the pre-releas
 | --- | --- | --- | --- |
 | TOK-1 | The commit POST is answered `401` once | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
 | TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 06d5be3d143b. To be replayed on alpha.5 |
-| TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `pending` - clock-only row: waits 61 min past the 1 h access token with the socket open, run alone and unattended; not yet scheduled |
+| TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `VACUOUS` - `1.5.0-alpha.2` (dev.6c5d9ef): the 61 min idle ran, but W2's pane rendered nothing after the Welcome, the same miss as OFF-2 (backlog P2, #2608). Rerun alone once that fix is on dev |
 
 ## RMC - a removal committed, not only unrouted
 
@@ -262,9 +262,9 @@ does not have yet.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| KICK-COMMIT | W1 removes the peer from a community whose public and private salons it held: both key groups advance by W1's commit, no reload | W1 W2 - U | `pending` - prepared for the removals work |
-| SALON-REVOKE-COMMIT | W1 revokes the peer from a private salon and opens it again: the salon's key group advances by W1's commit, no reload | W1 W2 - U | `pending` - prepared for the removals work |
-| DEVREVOKE-KEYGROUP | W6 revokes a fresh owner device (W3) that loaded a community and its private salon: every key group it held advances by a remaining device's commit | W1 W6, W3 minted - U | `pending` - prepared for the removals work |
+| KICK-COMMIT | W1 removes the peer from a community whose public and private salons it held: both key groups advance by W1's commit, no reload | W1 W2 - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef), the baseline before the removal stack: FAIL-PRODUCT, details in the private notes |
+| SALON-REVOKE-COMMIT | W1 revokes the peer from a private salon and opens it again: the salon's key group advances by W1's commit, no reload | W1 W2 - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef), the baseline before the removal stack: FAIL-PRODUCT, details in the private notes |
+| DEVREVOKE-KEYGROUP | W6 revokes a fresh owner device (W3) that loaded a community and its private salon: every key group it held advances by a remaining device's commit | W1 W6, W3 minted - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef), the baseline before the removal stack: FAIL-PRODUCT, details in the private notes |
 
 ## NET - a flaky network
 

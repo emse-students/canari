@@ -246,6 +246,13 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
+## P3 - The live viewer's stall line prints its target buffer unrounded (LIVE-STALL-1, `1.5.1-alpha.1`, 2026-10-27)
+
+- `livePlayer.ts` writes `stalled at <t> (target ${this.policy.targetMs} ms)` and printed
+  `target 4634.20000000298 ms`. The gap and seek lines round the same value (`Math.round`).
+- One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
+- Owed: round it where it is printed, as the other two lines do.
+
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
 This is a finding, not design. It is open until it is known why the frame arrives late.
