@@ -706,6 +706,189 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(created.grantedTagName).toBe('cotisant:bde');
     });
 
+    it('derives a new tier key from its label when asked, free among the sibling tiers', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      const { manager } = productRepo;
+      const steps: string[] = [];
+      manager.query.mockImplementation((sql: string, params: unknown[]) => {
+        steps.push(
+          sql.includes('FROM associations a')
+            ? 'stems'
+            : sql.includes('FROM user_tags')
+              ? `held ${JSON.stringify(params)}`
+              : `${sql} ${JSON.stringify(params)}`
+        );
+        return Promise.resolve([]);
+      });
+      // The siblings are read on the TRANSACTION's manager, after the lock - never on the pool.
+      manager.find.mockImplementation(() => {
+        steps.push('find');
+        return Promise.resolve([
+          product({ id: 'base', type: 'membership', variantKey: null }),
+          product({ id: 'other', type: 'membership', variantKey: 'avec-alcool' }),
+        ]);
+      });
+      manager.save = jest.fn((_entity: unknown, row: unknown) => {
+        steps.push('save');
+        return Promise.resolve(row);
+      });
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Avec Alcool', type: 'membership', deriveVariantKey: true },
+        false
+      );
+
+      expect(created.variantKey).toBe('avec-alcool-2');
+      expect(created.grantedTagName).toBe('cotisant:bde-avec-alcool-2');
+      expect(created).not.toHaveProperty('deriveVariantKey');
+      expect(steps).toEqual([
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["tier:asso1"]',
+        'find',
+        'stems',
+        'held ["asso1","cotisant:bde-"]',
+        'save',
+      ]);
+      expect(productRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('skips a derived key whose tag a deleted tier still has active holders of', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated' }));
+      const { manager } = productRepo;
+      // "Avec alcool" was deleted; one holder still holds its dated tag, an orphan.
+      manager.query.mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('FROM user_tags') ? [{ tagName: 'cotisant:bde-avec-alcool-2026-2027' }] : []
+        )
+      );
+      manager.find.mockResolvedValue([
+        product({ id: 'base', type: 'membership', variantKey: null }),
+      ]);
+      manager.save = jest.fn((_entity: unknown, row: unknown) => Promise.resolve(row));
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Avec alcool', type: 'membership', deriveVariantKey: true },
+        false
+      );
+
+      expect(created.variantKey).toBe('avec-alcool-2');
+    });
+
+    it('refuses with a typed 409 when every suffix of the derived key is taken', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      const { manager } = productRepo;
+      manager.query.mockResolvedValue([]);
+      manager.find.mockResolvedValue([
+        product({ id: 't1', type: 'membership', variantKey: 'gold' }),
+        ...Array.from({ length: 998 }, (_, i) =>
+          product({ id: `t${i + 2}`, type: 'membership', variantKey: `gold-${i + 2}` })
+        ),
+      ]);
+      manager.save = jest.fn();
+
+      await expect(
+        service.create('asso1', { name: 'Gold', type: 'membership', deriveVariantKey: true }, false)
+      ).rejects.toMatchObject({ response: { code: 'TIER_KEY_EXHAUSTED' } });
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('steps a derived key past another association stem instead of refusing it', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      const { manager } = productRepo;
+      // Another association is slugged `bde-gold`: the stem `bde-gold` would derive its tags.
+      manager.query.mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('FROM associations a') ? [{ slug: 'bde-gold', variantKey: null }] : []
+        )
+      );
+      manager.find.mockResolvedValue([
+        product({ id: 'base', type: 'membership', variantKey: null }),
+      ]);
+      manager.save = jest.fn((_entity: unknown, row: unknown) => Promise.resolve(row));
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Gold', type: 'membership', deriveVariantKey: true },
+        false
+      );
+
+      expect(created.variantKey).toBe('gold-2');
+      expect(created.grantedTagName).toBe('cotisant:bde-gold-2');
+    });
+
+    it('derives a non-year-shaped key from a year-shaped label, so TIER_KEY_YEAR_SHAPED never answers a label', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated' }));
+      const { manager } = productRepo;
+      manager.query.mockResolvedValue([]);
+      manager.find.mockResolvedValue([
+        product({ id: 'base', type: 'membership', variantKey: null }),
+      ]);
+      manager.save = jest.fn((_entity: unknown, row: unknown) => Promise.resolve(row));
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Cotisation 2024-2025', type: 'membership', deriveVariantKey: true },
+        false
+      );
+
+      expect(created.variantKey).toBe('cotisation');
+      expect(created.grantedTagName).toMatch(/^cotisant:bde-cotisation-\d{4}-\d{4}$/);
+    });
+
+    it('refuses a derived tier when the slug leaves no room for a key in the tag', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated', slug: 's'.repeat(80) }));
+
+      await expect(
+        service.create(
+          'asso1',
+          { name: 'Avec alcool', type: 'membership', deriveVariantKey: true },
+          false
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('still honours an explicit variantKey (older clients) and refuses it with deriveVariantKey', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+
+      await expect(
+        service.create(
+          'asso1',
+          { name: 'Avec alcool', type: 'membership', variantKey: 'x', deriveVariantKey: true },
+          false
+        )
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.create('asso1', { name: 'Goodies', type: 'other', deriveVariantKey: true }, false)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('keeps the key and the tag when only the label changes - a rename moves nobody', async () => {
+      const { service, productRepo } = makeService();
+      const tierRow = product({
+        id: 'tier1',
+        type: 'membership',
+        name: 'Avec alcool',
+        variantKey: 'avec-alcool',
+        grantedTagName: 'cotisant:bde-avec-alcool',
+      });
+      productRepo.findOne.mockResolvedValue(tierRow as never);
+
+      const saved = await service.update('asso1', 'tier1', { name: 'Forfait bar' }, false);
+
+      expect(saved.name).toBe('Forfait bar');
+      expect(saved.variantKey).toBe('avec-alcool');
+      expect(saved.grantedTagName).toBe('cotisant:bde-avec-alcool');
+      expect(productRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
     it('rejects creating a membership tier when cotisation is not enabled', async () => {
       const { service, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));

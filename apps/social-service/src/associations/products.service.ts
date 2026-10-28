@@ -41,6 +41,7 @@ import {
   TIER_NOT_RANKABLE,
   TIER_CHECKOUT_OPEN,
   TIER_HAS_HOLDERS,
+  TIER_KEY_EXHAUSTED,
   TIER_KEY_YEAR_SHAPED,
   productOrderRef,
   withCheckoutReturnKey,
@@ -73,12 +74,22 @@ import type { UserTag } from '../users/entities/user-tag.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import {
+  type CotisationMode,
   cotisationStem,
+  cotisationStemsCollide,
   deriveCotisationTag,
   getAcademicYear,
   tierVariantKeys,
+  variantKeyCap,
+  VariantKeySpaceExhaustedError,
+  variantKeyFromLabel,
+  YEAR_SHAPED_VARIANT_KEY,
 } from './cotisation-tag.util';
-import { assertCotisationStemFree, TIER_TAG_NAME_TAKEN } from './cotisation-namespace';
+import {
+  assertCotisationStemFree,
+  stemCollidesElsewhere,
+  TIER_TAG_NAME_TAKEN,
+} from './cotisation-namespace';
 import {
   fixedPriceFor,
   linkedTierKey,
@@ -423,12 +434,6 @@ function deliveryOf(
     ? { delivered: true, detail: 'its tag was granted by hand after the payment' }
     : { delivered: false, detail: 'its tag was held before the payment' };
 }
-
-/**
- * A tier key that is, or ends with, an academic year (`assertVariantKeyFree`): its tag would read
- * as a `dated` tag of another tier.
- */
-const YEAR_SHAPED_VARIANT_KEY = /(^|-)\d{4}-\d{4}$/;
 
 /** The typed 409 of each `ClosingGrantRefusal`. */
 const CLOSING_GRANT_REFUSALS: Record<ClosingGrantRefusal, { code: string; message: string }> = {
@@ -1166,7 +1171,13 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
-    const { webhookUrl, webhookSecret, ...rest } = dto;
+    const { webhookUrl, webhookSecret, deriveVariantKey, ...rest } = dto;
+
+    if (deriveVariantKey && (dto.type !== 'membership' || dto.variantKey !== undefined)) {
+      throw new BadRequestException(
+        'deriveVariantKey applies to a membership tier sent without a variantKey'
+      );
+    }
 
     // Membership tiers derive their granted tag server-side from the association's own
     // slug/mode + this tier's variantKey - the single source of truth (`deriveCotisationTag`),
@@ -1177,20 +1188,30 @@ export class ProductsService {
       if (!asso.cotisationMode) {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
-      await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
-      await assertCotisationStemFree(
-        this.productRepo.manager,
-        associationId,
-        cotisationStem(asso.slug, dto.variantKey ?? null)
-      );
-      const derived = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        dto.variantKey ?? null
-      );
-      grantedTagName = derived.tagName;
-      tagExpiresAt = derived.expiresAt;
+      if (deriveVariantKey) {
+        // The key and its tag are decided under the association's tier lock, at the very end:
+        // here only the refusal that needs no lock - a slug leaving no room for any named tier.
+        if (variantKeyCap(asso.slug) < 1) {
+          throw new BadRequestException(
+            'The association slug is too long to name a cotisation tier within the tag length'
+          );
+        }
+      } else {
+        await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+        await assertCotisationStemFree(
+          this.productRepo.manager,
+          associationId,
+          cotisationStem(asso.slug, dto.variantKey ?? null)
+        );
+        const derived = deriveCotisationTag(
+          asso.slug,
+          asso.cotisationMode,
+          new Date(),
+          dto.variantKey ?? null
+        );
+        grantedTagName = derived.tagName;
+        tagExpiresAt = derived.expiresAt;
+      }
     }
 
     // A grid is validated against the association's own tiers, so it is parsed here rather than
@@ -1202,7 +1223,10 @@ export class ProductsService {
         amountCents: dto.amountCents ?? null,
         amountCentsMember: dto.amountCentsMember ?? null,
         memberPriceTag: dto.memberPriceTag ?? null,
-        variantKey: dto.type === 'membership' ? (dto.variantKey ?? null) : undefined,
+        // A derived key is not known yet and differs from every sibling's by construction, so no
+        // sibling is "itself" - `null` here would hide the base tier as a link target.
+        variantKey:
+          dto.type === 'membership' && !deriveVariantKey ? (dto.variantKey ?? null) : undefined,
       });
     }
 
@@ -1240,7 +1264,99 @@ export class ProductsService {
           `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated}) - it goes on sale by itself once they are`
       );
     }
+    if (deriveVariantKey && asso.cotisationMode) {
+      return this.toSafeProduct(
+        await this.saveTierWithDerivedKey(product, asso.slug, asso.cotisationMode, dto.name)
+      );
+    }
     return this.toSafeProduct(await this.productRepo.save(product));
+  }
+
+  /**
+   * Inserts a new named tier whose key is derived from its label, under the association's tier
+   * lock EXCLUSIVE (`lockAssociationTiers`, the retag's): the sibling keys are read and the row
+   * inserted in ONE transaction, every read on its manager, so two concurrent creates of the same
+   * label get distinct keys (the second waits for the first to commit, then sees its row).
+   * Everything that may call another service ran before.
+   *
+   * The key is free BY CONSTRUCTION, so nothing here refuses it but the exhaustion of its suffixes
+   * (409 `TIER_KEY_EXHAUSTED`): unused among the siblings, never year-shaped, colliding with no other
+   * association's stem (`stemCollidesElsewhere`, the comparison `assertCotisationStemFree` makes on a
+   * typed key), and naming no tag this association still has ACTIVE holders of
+   * (`heldTierStems`) - a recreated "Avec alcool" must not silently adopt the holders a deleted
+   * one left behind. A manager who typed a label must not meet a refusal about a key they never saw.
+   */
+  private async saveTierWithDerivedKey(
+    product: AssociationProduct,
+    slug: string,
+    mode: CotisationMode,
+    name: string
+  ): Promise<AssociationProduct> {
+    return this.productRepo.manager.transaction(async (manager) => {
+      await lockAssociationTiers(manager, product.associationId);
+      const siblings = await manager.find(AssociationProduct, {
+        where: { associationId: product.associationId, type: 'membership' },
+      });
+      const collidesElsewhere = await stemCollidesElsewhere(manager, product.associationId);
+      const heldNames = await this.heldTierTagNames(manager, product.associationId, slug);
+      let key: string;
+      try {
+        key = variantKeyFromLabel(
+          name,
+          siblings.map((p) => p.variantKey ?? null),
+          variantKeyCap(slug),
+          (candidate) =>
+            collidesElsewhere(cotisationStem(slug, candidate)) ||
+            heldNames.some((held) =>
+              cotisationStemsCollide(`cotisant:${cotisationStem(slug, candidate)}`, held)
+            )
+        );
+      } catch (err) {
+        if (!(err instanceof VariantKeySpaceExhaustedError)) throw err;
+        this.logger.warn(
+          `[COTISATION] no free tier key for association=${product.associationId.slice(0, 8)}: "${err.base}" and every suffix are taken`
+        );
+        throw new ConflictException({
+          code: TIER_KEY_EXHAUSTED,
+          message:
+            'Every identifier this label could give a tier is already taken - choose another label',
+        });
+      }
+      const derived = deriveCotisationTag(slug, mode, new Date(), key);
+      product.variantKey = key;
+      product.grantedTagName = derived.tagName;
+      product.tagExpiresAt = derived.expiresAt;
+      this.logger.log(
+        `[COTISATION] derived tier key for association=${product.associationId.slice(0, 8)}: "${key}" (${siblings.length} existing tier(s))`
+      );
+      return manager.save(AssociationProduct, product);
+    });
+  }
+
+  /**
+   * The ACTIVE tag names this association issued under its cotisation root (`cotisant:<slug>` and
+   * `cotisant:<slug>-...`), whatever tier, live or deleted, they belong to. Read inside the derived
+   * create's lock, on its `manager`, so a derived key skips a stem whose holders a deleted tier left
+   * (`orphanTierTags`) instead of re-adopting them. A typed key (older clients) is not checked
+   * against it: that path can still re-adopt (docs/wiki/cotisations.md).
+   */
+  private async heldTierTagNames(
+    manager: EntityManager,
+    associationId: string,
+    slug: string
+  ): Promise<string[]> {
+    const root = `cotisant:${slug}`;
+    const rows: { tagName: string }[] = await manager.query(
+      `SELECT DISTINCT "tagName" FROM user_tags
+        WHERE "issuingAssocId" = $1
+          AND ("expiresAt" IS NULL OR "expiresAt" > now())
+          AND starts_with("tagName", $2)`,
+      [associationId, `${root}-`]
+    );
+    this.logger.debug(
+      `[COTISATION] ${rows.length} held tier tag name(s) under ${root}- for a derived key`
+    );
+    return rows.map((r) => r.tagName);
   }
 
   /**

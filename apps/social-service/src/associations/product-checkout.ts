@@ -78,6 +78,13 @@ export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
 export const TIER_KEY_YEAR_SHAPED = 'TIER_KEY_YEAR_SHAPED';
 
 /**
+ * The `code` of the 409 a tier creation from a label gets when the key derived from it and every
+ * suffix up to `-999` are unavailable (`VariantKeySpaceExhaustedError`): a longer suffix would no
+ * longer fit the tag column.
+ */
+export const TIER_KEY_EXHAUSTED = 'TIER_KEY_EXHAUSTED';
+
+/**
  * The `code` of the 409 a manager gets when deleting a cotisation tier while one of its checkout
  * attempts may still be paid (at most `PRODUCT_REQUEST_LIFETIME_SECONDS` + `CHECKOUT_EXPIRY_MARGIN_MS`
  * after it opened): deleted then, that payment could deliver nothing and a refund would be owed.

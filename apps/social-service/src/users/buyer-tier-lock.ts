@@ -51,7 +51,9 @@ export async function lockBuyerTiers(
 }
 
 /**
- * Takes the association's tier lock EXCLUSIVE for `manager`'s transaction: the tier retag's lock.
+ * Takes the association's tier lock EXCLUSIVE for `manager`'s transaction: the tier retag's lock,
+ * and the creation of a tier whose key is derived from its label (it reads the sibling keys and
+ * inserts one, so two creates of one label must not both read the key as free).
  * It never takes a buyer lock, so it cannot deadlock against a per-buyer path, which takes the
  * association lock first.
  */
