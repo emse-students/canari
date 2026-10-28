@@ -1,0 +1,171 @@
+<script lang="ts">
+  import {
+    DAY_SLOTS,
+    GRAIN_MIN,
+    formatRuns,
+    modeFrom,
+    type PaintMode,
+    type WeekRuns,
+  } from '$lib/bookings/availabilityPaint';
+  import { m } from '$lib/paraglide/messages';
+
+  /**
+   * THE TYPICAL WEEK, TO PAINT (D49): seven columns, a row per 30 minutes (Q-R11). Press and drag
+   * a rectangle: starting on a closed cell OPENS it, starting on an open one CLOSES it - one
+   * gesture, no brush to choose. A finger paints at once and the painter does not scroll the page
+   * under it (`touch-action: none`), as decided; the precise way, and the keyboard's, is the lines
+   * below it. The open hours are drawn as RUNS, so an edge typed off the grain (18:45) is drawn
+   * where it is. Letting go calls `onPaint`; the parent owns the lines and what they mean.
+   */
+  interface Props {
+    week: WeekRuns;
+    /** Monday..Sunday, long, in the reader's language: names a column for a screen reader. */
+    dayNames: string[];
+    /** Monday..Sunday, short, for the header. */
+    shortDayNames: string[];
+    onPaint: (dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) => void;
+  }
+
+  let { week, dayNames, shortDayNames, onPaint }: Props = $props();
+
+  interface Drag {
+    pointerId: number;
+    mode: PaintMode;
+    day0: number;
+    slot0: number;
+    day1: number;
+    slot1: number;
+  }
+  let drag = $state<Drag | null>(null);
+  let gridEl = $state<HTMLElement | null>(null);
+
+  const clamp = (n: number, max: number) => Math.max(0, Math.min(max, n));
+
+  /** The day and grain row under a pointer, from the grid's own box. */
+  function cellAt(e: PointerEvent): { day: number; slot: number } | null {
+    if (!gridEl) return null;
+    const box = gridEl.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return null;
+    return {
+      day: clamp(Math.floor(((e.clientX - box.left) / box.width) * 7), 6),
+      slot: clamp(Math.floor(((e.clientY - box.top) / box.height) * DAY_SLOTS), DAY_SLOTS - 1),
+    };
+  }
+
+  function down(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const hit = cellAt(e);
+    if (!hit) return;
+    drag = {
+      pointerId: e.pointerId,
+      mode: modeFrom(week, hit.day, hit.slot),
+      day0: hit.day,
+      slot0: hit.slot,
+      day1: hit.day,
+      slot1: hit.slot,
+    };
+    gridEl?.setPointerCapture(e.pointerId);
+  }
+
+  function move(e: PointerEvent) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const hit = cellAt(e);
+    if (hit) drag = { ...drag, day1: hit.day, slot1: hit.slot };
+  }
+
+  function up(e: PointerEvent) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const done = drag;
+    drag = null;
+    onPaint(done.day0, done.day1, done.slot0, done.slot1, done.mode);
+  }
+
+  function cancel(e: PointerEvent) {
+    if (drag && e.pointerId === drag.pointerId) drag = null;
+  }
+
+  /** The rectangle being painted, as percentages of the grid. */
+  const preview = $derived(
+    drag
+      ? {
+          left: (Math.min(drag.day0, drag.day1) / 7) * 100,
+          width: ((Math.abs(drag.day1 - drag.day0) + 1) / 7) * 100,
+          top: (Math.min(drag.slot0, drag.slot1) / DAY_SLOTS) * 100,
+          height: ((Math.abs(drag.slot1 - drag.slot0) + 1) / DAY_SLOTS) * 100,
+          mode: drag.mode,
+        }
+      : null
+  );
+
+  /** Every second hour is named on the axis. */
+  const hourMarks = Array.from({ length: 12 }, (_, i) => i * 2);
+  const dayMin = 24 * 60;
+</script>
+
+<div class="border-cn-border bg-cn-surface rounded-2xl border p-2">
+  <div class="grid gap-x-1" style:grid-template-columns="2.5rem repeat(7, minmax(0, 1fr))">
+    <span></span>
+    {#each shortDayNames as name, day (day)}
+      <span class="text-text-muted py-1 text-center text-xs font-bold first-letter:uppercase">
+        {name}
+      </span>
+    {/each}
+  </div>
+  <div class="grid gap-x-1" style:grid-template-columns="2.5rem repeat(7, minmax(0, 1fr))">
+    <div class="relative h-[36rem]" aria-hidden="true">
+      {#each hourMarks as hour (hour)}
+        <span
+          class="text-text-muted absolute right-1 text-xs tabular-nums"
+          class:hidden={hour === 0}
+          style:top="{(hour / 24) * 100}%"
+          style:transform="translateY(-50%)"
+        >
+          {String(hour).padStart(2, '0')}:00
+        </span>
+      {/each}
+    </div>
+    <div
+      bind:this={gridEl}
+      class="relative col-span-7 grid h-[36rem] touch-none grid-cols-7 gap-x-1 select-none"
+      role="group"
+      aria-label={m.bookings_avail_painter_label()}
+      data-painter
+      onpointerdown={down}
+      onpointermove={move}
+      onpointerup={up}
+      onpointercancel={cancel}
+    >
+      {#each week as runs, day (day)}
+        <div
+          class="border-cn-border/60 relative rounded-lg border"
+          style:background-image="linear-gradient(to bottom, var(--cn-border) 1px, transparent 1px)"
+          style:background-size="100% calc(100% / 12)"
+          role="img"
+          aria-label="{dayNames[day]} : {formatRuns(runs) || m.bookings_day_closed()}"
+        >
+          {#each runs as [start, end] (start)}
+            <div
+              class="bg-green-ok/25 border-green-ok/50 absolute inset-x-0 rounded-md border"
+              style:top="{(start / dayMin) * 100}%"
+              style:height="{((end - start) / dayMin) * 100}%"
+            ></div>
+          {/each}
+        </div>
+      {/each}
+      {#if preview}
+        <div
+          class="pointer-events-none absolute rounded-md border-2 {preview.mode === 'open'
+            ? 'bg-cn-yellow/40 border-cn-yellow'
+            : 'bg-red-err/15 border-red-err border-dashed'}"
+          style:left="{preview.left}%"
+          style:width="{preview.width}%"
+          style:top="{preview.top}%"
+          style:height="{preview.height}%"
+        ></div>
+      {/if}
+    </div>
+  </div>
+  <p class="text-text-muted px-1 pt-2 text-xs">
+    {m.bookings_avail_paint_hint({ grain: GRAIN_MIN })}
+  </p>
+</div>
