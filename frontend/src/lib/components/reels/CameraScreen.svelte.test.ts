@@ -296,6 +296,51 @@ describe('CameraScreen', () => {
   });
 });
 
+describe('CameraScreen - deferOpen (the gallery picker, Mi 9T 2026-10-28)', () => {
+  async function renderWith(props: { paused: boolean; deferOpen: boolean }) {
+    const open = vi.fn(() => Promise.resolve(stream(false)));
+    const session = new CameraSession(open);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(mount(CameraScreen, { target, props: Object.assign(props, { session }) }));
+    const settle = async () => {
+      flushSync();
+      await Promise.resolve();
+      await Promise.resolve();
+      flushSync();
+    };
+    await settle();
+    return { target, open, settle };
+  }
+
+  it('a pause lifted while the open is deferred opens nothing; the deferral lifted opens it', async () => {
+    const props = $state({ paused: true, deferOpen: true });
+    const { target, open, settle } = await renderWith(props);
+    expect(open).not.toHaveBeenCalled();
+
+    props.paused = false;
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-camera-phase="stopped"]')).not.toBeNull();
+
+    props.deferOpen = false;
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('a deferral never closes a LIVE camera (a picker that does not hide the page)', async () => {
+    const props = $state({ paused: false, deferOpen: false });
+    const { target, open, settle } = await renderWith(props);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+
+    props.deferOpen = true;
+    await settle();
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('CameraScreen and the theme', () => {
   it("entering and leaving the camera in the iOS app leaves the page's theme where it was", async () => {
     vi.spyOn(console, 'debug').mockImplementation(() => {});
