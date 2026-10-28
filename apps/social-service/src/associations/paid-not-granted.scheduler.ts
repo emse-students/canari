@@ -49,8 +49,9 @@ export class PaidNotGrantedScheduler {
       return count;
     }
     this.logger.error(
-      `${TAG} count=${count}: cotisation tier(s) paid for, NOT granted and not closed - a refund ` +
-        "or a manual grant is owed, then its outcome recorded in the association's purchases"
+      `${TAG} count=${count}: purchase(s) paid for, NOT delivered and not closed (a tier, a deleted ` +
+        'product, a form paid with no seat) - check what each buyer holds now, then refund or grant ' +
+        "by hand and record the outcome in the association's purchases"
     );
     return count;
   }

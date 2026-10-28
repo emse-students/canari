@@ -2,6 +2,7 @@
  * The rules of a boutique checkout attempt, as data and pure functions (migration 101,
  * docs/wiki/frontend/modules/payments.md "A product checkout is a row, one per attempt").
  */
+import { LYDIA_REQUEST_UUID_RE } from '../forms/seat-hold';
 
 /**
  * How long a product's Lydia request stays payable, in whole seconds (Lydia's `expire_time`). Set
@@ -49,10 +50,17 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 
 /**
  * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds a sibling tier and
- * one of the two has no fixed price (a grid, a free amount, or a held tag whose tier product is
- * gone): no rank can be established, and the sibling XOR would replace the held tier.
+ * one of the two has no fixed price (a grid or a free amount): no rank can be established, and the
+ * sibling XOR would replace the held tier.
  */
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+
+/**
+ * The `code` of the 409 a checkout or a cash sale of a membership product gets while its
+ * association has no cotisation mode: no tier tag can be derived, so nothing would be granted for
+ * the money. Refused before any payment is requested or recorded.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 
 /**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
@@ -96,6 +104,30 @@ export function withCheckoutReturnKey(
  * lock, since it calls another service - and the moment the attempt is written under that lock.
  */
 export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+
+/**
+ * Which request a state read of this attempt names, as core-service's `payments/request-state`
+ * takes it: the `request_uuid` the issuing call answered, or - for an attempt whose issuing call
+ * never answered one - its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
+ * The ONE choice, made for the payer's return, the confirm callback and the reconciliation sweep.
+ */
+export function productCheckoutLookup(attempt: {
+  id: string;
+  productId: string;
+  requestUuid: string | null;
+}): { sessionId: string } | { orderRef: string } {
+  return attempt.requestUuid && LYDIA_REQUEST_UUID_RE.test(attempt.requestUuid)
+    ? { sessionId: attempt.requestUuid }
+    : { orderRef: productOrderRef(attempt.productId, attempt.id) };
+}
+
+/**
+ * The `code` of the 409 a checkout gets when its product's price grid came to depend on the buyer's
+ * profile (promo, formation) between the moment the purchase was prepared - before the buyer's tier
+ * lock, where the profile is fetched since it calls another service - and the moment it is priced
+ * under that lock. Nothing is opened; trying again fetches what the grid now needs.
+ */
+export const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';
 
 /**
  * The `code` of the 409 a closing gets when the purchase record is not marked `paid_not_granted`:

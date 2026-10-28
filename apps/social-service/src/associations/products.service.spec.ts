@@ -10,6 +10,7 @@ import { Subject, isObservable, of, throwError } from 'rxjs';
 import { FindOperator, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
 import { ProductsService } from './products.service';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
@@ -203,9 +204,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
       hasActiveTag: jest.fn(),
+      hasActiveTagFromAnyIssuer: jest.fn(),
       getActiveTag: jest.fn(
-        (_userId: string, _tagName: string): Promise<{ expiresAt: Date | null } | null> =>
-          Promise.resolve(null)
+        (
+          _userId: string,
+          _tagName: string,
+          _issuer: string
+        ): Promise<{ expiresAt: Date | null } | null> => Promise.resolve(null)
       ),
       listByUser: jest.fn(() => Promise.resolve([])),
       listHeldCotisationTiers: jest.fn(() => Promise.resolve([])),
@@ -306,6 +311,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
       'user1',
       'cotisant:bde',
+      'asso1',
       expect.anything()
     );
   });
@@ -573,12 +579,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(grant.expiresAt).toBeInstanceOf(Date);
     });
 
-    it('falls back to the stored tag for a membership product without a cotisation mode', async () => {
+    it('grants NOTHING for a membership product without a cotisation mode: a stored tag is never granted as typed', async () => {
       const { service, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
       const legacy = product({
         type: 'membership',
-        grantedTagName: 'cotisant:legacy',
+        grantedTagName: 'cotisant:another-association',
         tagExpiresAt: null,
       });
 
@@ -586,8 +592,34 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         legacy,
         (service as any).productRepo.manager
       );
-      expect(grant.tagName).toBe('cotisant:legacy');
-      expect(grant.expiresAt).toBeNull();
+      expect(grant).toBeNull();
+    });
+
+    it('an update never stores a typed grantedTagName on a membership product, and keeps it on another type', async () => {
+      const { service, productRepo } = makeService();
+      const tier = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:bde',
+        tagExpiresAt: null,
+      });
+      productRepo.findOne.mockResolvedValue(tier);
+
+      await service.update(
+        'asso1',
+        'prod1',
+        { grantedTagName: 'cotisant:another-association', tagExpiresAt: null } as never,
+        false
+      );
+      expect(productRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ grantedTagName: 'cotisant:bde' })
+      );
+
+      const other = product({ type: 'other', grantedTagName: null });
+      productRepo.findOne.mockResolvedValue(other);
+      await service.update('asso1', 'prod1', { grantedTagName: 'vip:bde' } as never, false);
+      expect(productRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ grantedTagName: 'vip:bde' })
+      );
     });
 
     it('returns null for a non-membership product', async () => {
@@ -613,6 +645,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       expect(created.grantedTagName).toBe('cotisant:bde-avec-alcool');
       expect(created.tagExpiresAt).toBeNull();
+    });
+
+    it("refuses a tier whose key makes its tags coincide with another association's", async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      // Another association is slugged `bde-sport`: tier `sport` of `bde` would derive its tags.
+      productRepo.manager.query.mockImplementation((sql: string) =>
+        Promise.resolve(
+          String(sql).includes('association_products')
+            ? [{ slug: 'bde-sport', variantKey: null }]
+            : []
+        )
+      );
+
+      await expect(
+        service.create('asso1', { name: 'Sport', type: 'membership', variantKey: 'sport' }, false)
+      ).rejects.toMatchObject({ response: { code: COTISATION_TAG_COLLISION } });
+      expect(productRepo.save).not.toHaveBeenCalled();
     });
 
     it('ignores any client-supplied grantedTagName for membership products', async () => {
@@ -1476,6 +1526,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
         'user1',
         'cotisant:cercle-sans-alcool',
+        'asso1',
         expect.anything()
       );
     });
@@ -1646,7 +1697,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo, userTagService } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
       productRepo.findOne.mockResolvedValue(product({ requiredTags: ['tag:a', 'tag:b'] }));
-      userTagService.hasActiveTag.mockResolvedValue(false);
+      userTagService.hasActiveTagFromAnyIssuer.mockResolvedValue(false);
 
       await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
         ForbiddenException
@@ -1657,8 +1708,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo, userTagService } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
       productRepo.findOne.mockResolvedValue(product({ requiredTags: ['tag:a', 'tag:b'] }));
-      userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
-        Promise.resolve(tagName === 'tag:b')
+      userTagService.hasActiveTagFromAnyIssuer.mockImplementation(
+        (_userId: string, tagName: string) => Promise.resolve(tagName === 'tag:b')
       );
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
@@ -1672,8 +1723,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         product({ membersOnly: true, requiredTags: ['tag:vip'] })
       );
       // Buyer holds neither the association's base cotisant tag nor any tier - only tag:vip.
-      userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
-        Promise.resolve(tagName === 'tag:vip')
+      userTagService.hasActiveTagFromAnyIssuer.mockImplementation(
+        (_userId: string, tagName: string) => Promise.resolve(tagName === 'tag:vip')
       );
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
@@ -1751,7 +1802,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         .mockResolvedValueOnce([avecAlcool, sansAlcool]) // listAllActive's own products query
         .mockResolvedValueOnce([avecAlcool, sansAlcool]); // cotisantStatusFor's tier query
       assoRepo.find.mockResolvedValue([cercle]);
-      userTagService.listByUser.mockResolvedValue([{ tagName: 'cotisant:cercle-sans-alcool' }]);
+      userTagService.listByUser.mockResolvedValue([
+        { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+      ]);
 
       const result = await service.listAllActive('user1');
 
@@ -2075,10 +2128,40 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           'cotisant:cercle-avec-alcool',
         ]) {
           const { service } = editing(avecAlcool());
-          await expect(
-            service.update('asso1', 'prod-avec', { memberPriceTag }, false)
-          ).rejects.toThrow(BadRequestException);
+          const err = await service.update('asso1', 'prod-avec', { memberPriceTag }, false).then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err).toBeInstanceOf(BadRequestException);
+          expect((err as BadRequestException).getResponse()).toMatchObject({
+            code: 'MEMBER_PRICE_TAG_NOT_A_TIER',
+          });
         }
+      });
+
+      it('refuses the same link on creation, typed, before anything is saved', async () => {
+        const { service, productRepo } = editing(avecAlcool());
+        const err = await service
+          .create(
+            'asso1',
+            {
+              name: 'Soiree',
+              type: 'other',
+              amountCents: 2000,
+              amountCentsMember: 1000,
+              memberPriceTag: 'cotisant:bde',
+            },
+            false
+          )
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'MEMBER_PRICE_TAG_NOT_A_TIER',
+        });
+        expect(productRepo.save).not.toHaveBeenCalled();
       });
 
       it('accepts a link to a sibling tier, in either tag form', async () => {
@@ -2128,7 +2211,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const tiers = [sansAlcool(), avecAlcool()];
       productRepo.find.mockResolvedValue(tiers);
       assoRepo.find.mockResolvedValue([cercle()]);
-      userTagService.listByUser.mockResolvedValue([{ tagName: 'cotisant:cercle-sans-alcool' }]);
+      userTagService.listByUser.mockResolvedValue([
+        { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+      ]);
 
       const mine = await service.listByAssoc('asso1', 'user1');
       expect(mine.find((p) => p.id === 'prod-avec')).toMatchObject({
@@ -2167,13 +2252,19 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
 
     describe('the shop listing says where each tier stands, and what it would charge', () => {
-      async function listed(heldTags: string[], extra: AssociationProduct[] = []) {
+      async function listed(
+        heldTags: string[],
+        extra: AssociationProduct[] = [],
+        issuingAssocId = 'asso1'
+      ) {
         const { service, productRepo, assoRepo, userTagService } = makeService();
         const all = [sansAlcool(), avecAlcool(), ...extra];
         const tiers = all.filter((p) => p.type === 'membership');
         productRepo.find.mockResolvedValueOnce(all).mockResolvedValueOnce(tiers);
         assoRepo.find.mockResolvedValue([cercle()]);
-        userTagService.listByUser.mockResolvedValue(heldTags.map((tagName) => ({ tagName })));
+        userTagService.listByUser.mockResolvedValue(
+          heldTags.map((tagName) => ({ tagName, issuingAssocId }))
+        );
         const result = await service.listAllActive('user1');
         return (id: string) => {
           const p = result.find((r) => r.id === id)!;
@@ -2191,6 +2282,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const of = await listed(['cotisant:cercle-avec-alcool']);
         expect(of('prod-sans')).toEqual({ relation: 'lower', due: null });
         expect(of('prod-avec')).toEqual({ relation: 'held', due: null });
+      });
+
+      it('a tag of the same name issued by ANOTHER association holds no tier here', async () => {
+        const of = await listed(['cotisant:cercle-avec-alcool'], [], 'asso2');
+        expect(of('prod-sans')).toEqual({ relation: 'none', due: 1500 });
+        expect(of('prod-avec')).toEqual({ relation: 'none', due: 3000 });
       });
 
       it('a viewer holding nothing: none, each at its full price', async () => {
@@ -2382,6 +2479,38 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(9000);
+    });
+
+    // The profile is fetched before the lock, from the product read then; a grid that came to need
+    // it by the time the product is re-read under the lock cannot be priced without a call there.
+    it('refuses PURCHASE_PRICING_CHANGED when the grid needs a profile the preparation did not fetch', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne
+        .mockResolvedValueOnce(product({ amountCents: 1000 }))
+        .mockResolvedValue(product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 1 }) }));
+
+      const err = await (service as any).resolvePurchase('asso1', 'prod1', 'user1').then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+        'PURCHASE_PRICING_CHANGED'
+      );
+      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
+    });
+
+    it('CONTROL: a grid that needed the profile from the start is priced from it', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
+      );
+      pricingFacts.profileFor.mockResolvedValue({ promo: 2025, formation: null });
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(7000);
     });
 
     it('prices an unrecognised promo from the generated "everyone else" cell', async () => {
@@ -2890,6 +3019,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.records[0]).toMatchObject({ amountCents: 1500 });
     });
 
+    // Nothing is delivered for a product deleted while its buyer was paying: the money is recorded
+    // with the marker a refund is owed on, never as an ordinary paid purchase.
+    it('a payment for a product deleted meanwhile is recorded paid_not_granted, at ERROR', async () => {
+      const t = setup();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { checkoutId } = await t.checkout();
+      t.productRepo.findOne.mockResolvedValue(null);
+      t.setState('paid');
+
+      await t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1');
+
+      expect(t.records).toHaveLength(1);
+      expect(t.records[0]).toMatchObject({ status: 'paid_not_granted', productId: 'prod1' });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('a refund is owed'));
+      expect(t.userTagService.grantOrRenew).not.toHaveBeenCalled();
+      error.mockRestore();
+    });
+
     describe('two cotisation tiers of one association never both settle', () => {
       const sans = () =>
         product({
@@ -2959,6 +3106,31 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
         expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
         expect(t.checkouts.rows).toEqual([]);
+      });
+
+      // EVERY field of the routing is compared, not only the account and the receiving association:
+      // a prepared routing that differs in delegation alone is refused like any other change.
+      it('refuses PAYMENT_ROUTING_CHANGED when the routing differs in a field other than the account', async () => {
+        const t = cercleBuyer();
+        const prepared = await (t.service as any).preparePurchase('asso1', 'prod-avec', 'user1');
+        const stale = {
+          ...prepared,
+          paymentTarget: { ...prepared.paymentTarget, delegated: true },
+        };
+
+        const err = await (t.service as any)
+          .decidePurchase(stale, 'user1', undefined, t.checkouts.tx)
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'PAYMENT_ROUTING_CHANGED'
+        );
+        // CONTROL: the routing as prepared passes.
+        await expect(
+          (t.service as any).decidePurchase(prepared, 'user1', undefined, t.checkouts.tx)
+        ).resolves.toMatchObject({ amountCents: 3000 });
       });
 
       it("opening a tier cancels the buyer's open attempt of a SIBLING tier first", async () => {

@@ -427,7 +427,9 @@ and still "succeeds", so there is no exception to catch and nothing in any log â
 download buttons shipped dead on mobile without a single report until someone tried one. Everything
 that saves a file goes through `utils/fileDownload.ts`, which keeps the anchor on the web and writes
 through the native save dialog on Tauri (`ACTION_CREATE_DOCUMENT` on Android, the document picker on
-iOS, the OS save panel on desktop). Two rules come with it:
+iOS, the OS save panel on desktop). The dialog is given the name's extension as a filter, because
+Android's documents provider only splits `X.mp3` into name and extension when the intent's MIME type
+matches it - without one, a second save became `X.mp3 (1)` and lost its type. Two rules come with it:
 
 - **A library that saves for you is that anchor wearing another name.** `pdf.save()` builds the
   object URL and clicks the anchor itself, so the PDF exports looked like the one family of
@@ -2651,8 +2653,9 @@ sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
   push service hands the key to `nativeKeyGroupJoinClaim` / `Settle`; with no key it attempts no
   join, and `take_key_group_push_joins` leaves the ledger for a start that can read it. Its staged
   post-join state, `mls.bin.keygroup-join`, is sealed under the DEVICE key like `mls.bin`. The
-  sign-out sweep (`delete_mls_state`) removes both with `mls.bin`: the stage holds epoch secrets,
-  and the ledger's `joined` entries would otherwise be adopted by the next account's start.
+  state reset (`terminer_session_mls` with `sweepState`) removes both with `mls.bin`: the stage
+  holds epoch secrets, and the ledger's `joined` entries would otherwise be adopted by the next
+  account's start.
 
 `nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
 that no native reader opens the mirror, that the join ledger is written sealed with the key handed

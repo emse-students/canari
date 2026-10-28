@@ -1169,8 +1169,9 @@ export class AssociationsController {
   }
 
   /**
-   * Manually grants a cotisation tag to a user (cash payment or admin override).
-   * Requires MANAGE_MEMBERS flag.
+   * Manually grants a cotisation tag to a user (cash payment or admin override): one of THIS
+   * association's tier tags, granted like the roster's manual add (`grantTagForAssociation`); the
+   * derived expiry applies unless one is given. Requires MANAGE_MEMBERS flag.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1184,7 +1185,7 @@ export class AssociationsController {
       userId: dto.userId,
       tagName: dto.tagName,
       grantedBy,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
     });
   }
 

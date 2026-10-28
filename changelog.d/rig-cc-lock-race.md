@@ -1,3 +1,0 @@
-### Fixed - CC-1 is judged at the add lock, and CC-4 settles its refresh before the invariant
-
-Two concurrent bulk Adds meet the add lock, not the commit gate: CC-1 names the loser from the server's `[ADD_LOCK]` lines and records INCONCLUSIVE when nothing contended; CC-4 sends its own retry trigger and waits for the second epoch, so the invariant no longer reads mid-flight ([cross-client-testing](docs/wiki/cross-client-testing.md)).

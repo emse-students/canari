@@ -692,11 +692,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
   settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
   the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
-  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
-  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
-  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
-  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
-  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+  the stage, and the state reset's sweep (`end_native_session`, through `remove_mls_state_held`)
+  holds that lock, so it removes both or neither. The entry names its commit's digest, so a settle
+  forgets its own stage and never a later one of the same group. The warm mark is STICKY for a
+  signed-in session (set by the foreground load, cleared only when the native session ends -
+  `end_native_session`, 2026-10-27), so a process Android keeps alive refuses every background
+  Welcome; its rate is owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -724,7 +725,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
   target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
   against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
-  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  the MLS state (`remove_mls_state_held`, under the teardown's hold) sweeps the memo and its `.tmp` with it - and deletes
   `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
   finish; the owner record
   (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
@@ -799,7 +800,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
   through the usual ladder. The same write loses any background advance, not only this one; it is its
   own work package
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
   iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A key-group frame is stored once (migration 034, 2026-10-22)
@@ -1314,6 +1315,7 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which of up to 1000 sent leaf identities belong to a revoked device - key groups included; admitted members only, about users bound to the group, throttled per user ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -2337,6 +2339,7 @@ are both ON with no backfill). It lives in THIS service because every push is se
 | `reactions` | `social_reaction`, and the DM reaction (`reaction: 'true'`) | `sendPushToUser` |
 | `events` | the six `event_*` keys | `sendPushToUser` |
 | `forms` | `form_opening_soon`, `form_open`, `form_paid_over_capacity` (the organiser alert, [forms](../frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off): filed under the EXISTING id, since a new id is a switch older clients cannot draw), `type: 'form_reminder'` | `sendPushToUser` |
+| `follows` | `social_follow_request`, `social_follow_accepted` (WP-F4). A NEW id on purpose: a follow request is no other category's kind. An older build cannot draw its switch, but the choice is per ACCOUNT and decided here, so a switch flipped on any newer device silences every device. Off, the request still waits in the inbox | `sendPushToUser` |
 
 The id list and the push-to-category map are ONE file, `services/push-category.ts`; the frontend
 mirrors the ids (`frontend/src/lib/notifications/categories.ts`) and `categories.contract.test.ts`

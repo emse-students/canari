@@ -94,6 +94,15 @@ export interface ChatSessionCallbacks {
   selectConversation: (name: string) => void;
   onChannelMemberJoined?: (event: any) => void;
   onChannelMemberKicked?: (event: any) => void;
+  onChannelRemovalReleased?: (event: {
+    workspaceId: string;
+    channelId: string;
+    removedUserId: string;
+    /** The actor who released it - never elected for it. */
+    releasedBy: string;
+    /** The actor's device that released it - re-decided only where the tree holds its leaf. */
+    releasedByDevice: string;
+  }) => void;
   onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
     channelId: string;
@@ -197,9 +206,10 @@ export interface SessionContext {
   resetMls(only?: IMlsService): void;
   /**
    * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
-   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.
+   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client. `why`
+   * names the end in the native log (a sign-out unless given).
    */
-  retireMls(finalWrite: Promise<void>): Promise<void>;
+  retireMls(finalWrite: Promise<void>, why?: 'sign-out' | 'lost session'): Promise<void>;
   /** Settles once every retired client's final checkpoint has landed; a login waits for it. */
   whenMlsRetired(): Promise<void>;
   /** True while a retired client's final checkpoint is still being written. */

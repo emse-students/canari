@@ -453,7 +453,7 @@ function notifySessionExpired(): void {
   // No handler wired is exactly the silent failure this exists to prevent - say so, and redirect
   // anyway rather than leave the user on a shell that can no longer load anything.
   awarn('no session-expired handler registered - redirecting directly');
-  void import('$app/navigation').then(({ goto }) => goto('/login', { replaceState: true }));
+  void import('$app/navigation').then(({ goto }) => goto('/login', { replace: true }));
 }
 
 /**
@@ -979,7 +979,7 @@ export async function leaveSignedOut(): Promise<void> {
       );
     }
   }
-  await goto(loginPath, { replaceState: true });
+  await goto(loginPath, { replace: true });
 }
 
 /**

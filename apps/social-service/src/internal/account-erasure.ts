@@ -56,6 +56,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'association_role_history.user_id': { action: 'delete' },
   'user_follows.followerUserId': { action: 'delete' },
   'user_follows.followedUserId': { action: 'delete' },
+  'user_follow_notices.followerUserId': { action: 'delete' },
+  'user_follow_notices.followedUserId': { action: 'delete' },
   'association_follows.followerUserId': { action: 'delete' },
   'association_push_mutes.userId': { action: 'delete' },
   'user_tags.userId': { action: 'delete' },
@@ -453,6 +455,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'user_follows',
     sql: `DELETE FROM user_follows WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
+  },
+  {
+    label: 'user_follow_notices',
+    sql: `DELETE FROM user_follow_notices WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
   },
   {
     label: 'association_follows',

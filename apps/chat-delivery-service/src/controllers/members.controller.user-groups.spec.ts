@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { MembersController } from './members.controller';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { GroupMember } from '../entities/group-member.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { Group } from '../entities/group.entity';
@@ -93,6 +94,8 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         { provide: DataSource, useValue: {} },
       ],
     })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();

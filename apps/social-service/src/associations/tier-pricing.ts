@@ -1,4 +1,5 @@
 import { deriveCotisationTag } from './cotisation-tag.util';
+import { PRODUCT_ALREADY_PURCHASED, TIER_NOT_A_RISE, TIER_NOT_RANKABLE } from './product-checkout';
 
 /**
  * The money decisions a cotisation tier sale rests on, as pure functions shared by the checkout
@@ -93,6 +94,45 @@ export function tierRelationOf(
   if (heldKeys.includes(target.variantKey)) return 'held';
   return tierRelation(target, held);
 }
+
+/** The typed 409 body a refused tier purchase answers with. */
+export interface TierRefusal {
+  code: string;
+  message: string;
+}
+
+const TIER_REFUSALS: Record<TierRelation, TierRefusal | null> = {
+  none: null,
+  higher: null,
+  held: { code: PRODUCT_ALREADY_PURCHASED, message: 'You already hold this membership' },
+  lower: {
+    code: TIER_NOT_A_RISE,
+    message: 'You already hold a membership tier worth at least this one',
+  },
+  unranked: {
+    code: TIER_NOT_RANKABLE,
+    message: 'Your current membership tier cannot be compared with this one',
+  },
+};
+
+/**
+ * The typed 409 a payment for a cotisation tier is refused with BEFORE any payment request is
+ * opened, or null when it is sold (`none`, `higher`). ONE mapping for every way money is taken for
+ * a tier - the boutique checkout and a paid form that grants one - so the two answer the same codes
+ * the client already words: `held` -> `PRODUCT_ALREADY_PURCHASED`, `lower` -> `TIER_NOT_A_RISE`,
+ * `unranked` -> `TIER_NOT_RANKABLE`.
+ */
+export function tierRefusal(relation: TierRelation): TierRefusal | null {
+  return TIER_REFUSALS[relation];
+}
+
+/**
+ * The `code` of the 400 a product create or update gets when its `memberPriceTag` names no OTHER
+ * cotisation tier of the product's own association (another association's tag, a non-tier tag, the
+ * product's own tier). Refused at save because such a link prices nothing: `fixedPriceFor` would
+ * charge the full price, silently, to every buyer the admin meant to discount.
+ */
+export const MEMBER_PRICE_TAG_NOT_A_TIER = 'MEMBER_PRICE_TAG_NOT_A_TIER';
 
 /**
  * The sibling tier a stored `memberPriceTag` names, as its `variantKey`, or `undefined` when it

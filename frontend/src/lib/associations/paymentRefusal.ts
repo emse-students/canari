@@ -47,8 +47,14 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === TIER_NOT_RANKABLE) {
     return m.shop_tier_not_rankable();
   }
+  if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
+    return m.shop_cotisation_disabled();
+  }
   if (err instanceof SocialApiError && err.code === PAYMENT_ROUTING_CHANGED) {
     return m.shop_payment_routing_changed();
+  }
+  if (err instanceof SocialApiError && err.code === PURCHASE_PRICING_CHANGED) {
+    return m.shop_purchase_pricing_changed();
   }
   if (err instanceof SocialApiError && err.code === CHECKOUT_IN_PROGRESS) {
     return m.shop_checkout_in_progress();
@@ -96,10 +102,23 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
 /**
+ * The body `code` of social-service's 409 when a membership product is bought (or sold for cash)
+ * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
  * The body `code` of social-service's 409 when the association's payment account changed while
  * the checkout was being opened: nothing was opened, and trying again uses the new account.
  */
 export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+
+/**
+ * The body `code` of social-service's 409 when the product's price grid came to depend on the
+ * buyer's profile while the checkout was being opened: nothing was opened, and trying again prices
+ * it from the profile it now needs.
+ */
+export const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';
 
 /**
  * The body `code` of the 409 a boutique checkout gets while the buyer's previous attempt of that

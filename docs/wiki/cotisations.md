@@ -31,6 +31,46 @@ Table `user_tags`, entity `UserTag` (`apps/social-service/src/users/entities/use
 Unique on `(userId, tagName)`. A user "is a cotisant" of an association when they hold an **active**
 (non-expired) tag issued by that association.
 
+### A tag counts only for the association that issued it
+
+One invariant, enforced at four points:
+
+- **A raw grant names one of the grantor's own tiers.** `POST :id/tags` (`grantTagForAssociation`)
+  accepts a name only when it is one of the association's own cotisation tier tags for the current
+  academic year - its catalogue, `listCotisationTiers` - and answers `403 TAG_NOT_ISSUER_TIER`
+  otherwise. Ownership is read from the catalogue, never from the shape of the name: a slug prefix
+  says nothing about who issues a tag. The tier is then granted exactly like the roster's manual
+  add (`grantCotisant`): the buyer's tier lock, the sibling-tier XOR, unranked as a manager's
+  decision; an explicit `expiresAt` replaces the derived expiry.
+- **A grant never crosses issuers.** `grantOrRenew`'s upsert updates an existing `(userId, tagName)`
+  row only when it was issued by the same association (`DO UPDATE ... WHERE "issuingAssocId" IS NOT
+  DISTINCT FROM EXCLUDED."issuingAssocId"`). Otherwise it writes nothing and throws
+  `TagHeldByAnotherIssuerError` (`409 TAG_HELD_BY_ANOTHER_ISSUER`): a settlement records the
+  payment `paid_not_granted`, a paid form's grant answers it as a refusal (also
+  `paid_not_granted`), and the cash sale, the manual add, the legacy claim and the raw grant
+  surface the 409. No grant is ever reported for a row the reads below would not count.
+- **Tier-holding reads count only rows issued by the tier's own association**: `hasActiveTag` and
+  `getActiveTag` take the issuer, so `heldVariantKeys` (the rank of a grant, `holdsAnyCotisation`,
+  `listHeldCotisationTiers`), `heldCotisationTiersByAssociation`, the shop's `tierFactsOf` and
+  listing facts (relation, preferential price, rank), the renewal check and the Cercle status all
+  ask "issued by THIS association". The sibling-tier XOR (`revokeByName`) deletes only the
+  association's own rows, like `revoke`. A product's `requiredTags`, a gate that names tags across
+  associations by design, is the one reader of `hasActiveTagFromAnyIssuer`.
+- **Two associations' tag names never coincide.** A tier's tags are `cotisant:<stem>` or
+  `cotisant:<stem>-<academicYear>`, its stem being `<slug>` or `<slug>-<variantKey>`
+  (`cotisationStem`). Two stems derive a common name exactly when they are equal or one is the
+  other plus `-<academicYear>` (`cotisationStemsCollide`). `assertCotisationStemFree`
+  (`associations/cotisation-namespace.ts`, `409 COTISATION_TAG_COLLISION`) refuses a new stem that
+  collides with another association's slug or tier stem, on every path that creates one: the
+  association's creation, a tier's creation and a tier's retag. **A future path that derives a slug
+  or a tier key calls it with the derived value.** It takes no lock: no lock of the order spans
+  two associations, and a race between two creations is bounded by the two points above (a
+  collision can refuse a grant, never let one association's row count for another's tier). A retag
+  is also refused
+  (`409 TIER_TAG_NAME_TAKEN`) when a holder of the old tag already holds a row of the new name.
+
+`tag-issuer-scope.integration.spec.ts` proves each point against a real PostgreSQL.
+
 ### The canonical cotisation tag (single source of truth)
 
 `deriveCotisationTag(slug, mode)` in `apps/social-service/src/associations/cotisation-tag.util.ts`
@@ -60,8 +100,16 @@ label/price and lets admins add further tiers (WP-COT-6).
 `ProductsService.create` **auto-derives** `grantedTagName`/`tagExpiresAt` server-side for any
 `type: 'membership'` product from the association's `slug`/`cotisationMode` + the product's own
 `variantKey` - a client-supplied `grantedTagName` is always ignored for this type, so the tag string
-never drifts from `deriveCotisationTag`. Creating a membership product requires cotisation to already
-be enabled (`cotisationMode` set), since the tag can't be derived otherwise.
+never drifts from `deriveCotisationTag`. `ProductsService.update` drops `grantedTagName` and
+`tagExpiresAt` for a membership product the same way, and `resolveGrantTag` derives NOTHING for a
+membership product whose association has no `cotisationMode`: a stored tag string is never granted as
+typed, so every tag a membership purchase issues is a derived tier tag. **What is recorded then:**
+with cotisations disabled, the checkout opening and the cash sale of such a product are refused
+`409 COTISATION_DISABLED` before any payment is requested or recorded; a payment that lands anyway
+(an attempt opened before the switch) is recorded `paid_not_granted` with an ERROR line, like any
+paid tier not granted, so the hourly report and the purchases tab see it. Creating a membership product
+requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived
+otherwise.
 
 `ProductsService.provisionCotisationProduct` (called after `PATCH /associations/:id` when
 `cotisationEnabled` is true, e.g. mode edits) resyncs **every** `membership` product's tag - not just
@@ -211,8 +259,10 @@ alcohol tier (full price 30 EUR, 15 EUR for holders of the other tier). A rise t
 set is charged in FULL; setting it is the admin's job, and making that visible is the admin
 screen's. An automatic `target - held` was designed and dropped the same day: it would have
 duplicated or contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE
-function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike,
-and the checkout row freezes it: settlement records the row's amount, never a re-read of the product.
+function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike.
+**The complement price freezes when the checkout opens**: the attempt row stores the amount asked,
+and settlement records the row's amount, never a re-read of the product - an admin who edits the
+preferential price while the buyer is paying changes the next checkout, not this one.
 
 **`memberPriceTag` names a TIER, read at use time.** The column stores a tag string, and a `dated`
 association's tags change every academic year - an exact match on the saved string would have
@@ -240,7 +290,14 @@ purchase records are read, so the code does not depend on how the held tier was 
 | `higher` | target price `>` held price | sold, at `fixedPriceFor`'s amount; the XOR swaps at settlement |
 | `held` | the target is a held tier - ANY of them, the cheaper of two included (`tierRelationOf`) | 409 `PRODUCT_ALREADY_PURCHASED`, paid for or granted |
 | `lower` | target price `<=` held price | 409 `TIER_NOT_A_RISE` - equal counts |
-| `unranked` | a tier is held and either side has no fixed price (grid, free amount, a tag whose product is gone) | 409 `TIER_NOT_RANKABLE` - no rank is guessed |
+| `unranked` | a tier is held and either side has no fixed price (grid, free amount) | 409 `TIER_NOT_RANKABLE` - no rank is guessed |
+
+**A paid form that grants a tier is held to the same rule, before any payment.** `submit` asks
+`UserTagService.rankCotisationTier` (the same `rankTier` decision the ranked grant takes) for every
+answer that owes money, online or in cash, and refuses through `tierRefusal` (`tier-pricing.ts`, the
+ONE relation -> 409 mapping the checkout uses too) - same codes, so the form page words them with the
+shop's sentences. It is a pre-check outside any lock; the grant re-ranks under the buyer's lock when
+the money lands (`grantCotisantIfARise`), and a refusal there is the `paid_not_granted` case below.
 
 **Two attempts, one tier.** Opening a checkout of a tier first settles the buyer's open attempts of
 EVERY sibling tier (`productsToSettleBefore`): cancelled at the provider, or recorded if already
@@ -270,12 +327,23 @@ since a buyer who holds a tier then lands in `paid_not_granted` - reported, and 
 rather than having it replaced. No `status` value was added to `product_checkouts`: a paid rise not
 granted is still a `paid` attempt.
 
-**Paid and not granted is a durable state, `paid_not_granted`.** A verdict that does not grant
-records the payment with status `paid_not_granted` on `purchase_records` (a varchar with no CHECK),
-logs at ERROR, lists it with a "Not granted" mark in the association's purchases and its export (it
-is money received), never counts it as having bought the product, and the hourly
-`PaidNotGrantedScheduler` (:29, `count=0` at log, ERROR while non-zero) counts it until a person
-CLOSES it.
+**Paid and not granted is a durable state, `paid_not_granted`.** A settlement verdict that does not
+grant (above) leaves the held tier alone, so the XOR cannot replace it. The payment is recorded with status `paid_not_granted` on
+`purchase_records` (a varchar with no CHECK - no migration), logged at ERROR, listed with a "Not
+granted" mark in the association's purchases and its export (it is money received), never counted
+as having bought the product, and counted every hour by `PaidNotGrantedScheduler` (:29, `count=0`
+at log, ERROR while non-zero). `receivedStatus` (`purchase-record.entity.ts`) is the one place the
+status is chosen from "delivered or not", for the boutique and the forms alike. Three more payments
+take the marker: a settlement whose product row was DELETED while its buyer paid (nothing can be
+delivered, no tag, no top-up - logged at ERROR, a refund is owed); a paid form whose payment landed
+with no seat (`paid_over_capacity`), so no grant ran; and a form payment whose record is written by a
+call that ran no grant itself (a replay after the record write failed) - that call reads whether the
+submitter holds the form's tier NOW (`formTierDelivered`), the only durable trace of what the earlier
+grant decided. A grant that FAILED (retryable) in the same call is marked too, since nothing is held
+when the record is written; a later replay that grants it does not clear the mark. That read
+OVER-marks by design - a replay racing the run still granting, a retried grant, a tier risen from
+since - so the mark, the purchases hint and the hourly line all say to check what the buyer holds
+before refunding, never that a refund is owed. The mark stays as history; the payment leaves the hourly count only when a person CLOSES it (below), never by a clock.
 
 **Closing a marked payment (user, 2026-10-27).** A refund or a grant by hand is owed; the manager
 records which one happened from the purchases list ("Mark refunded" / "Mark granted", an in-app
@@ -361,7 +429,7 @@ other.
 | `grantCotisant` - the roster picker; tiers and tag derived after the locks | association shared + buyer |
 | A paid form's grant (`grantCotisantIfARise`: ranked like a settlement, refused -> `paid_not_granted`) | association shared + buyer |
 | Legacy claim (`grantCotisantUnlessHeld`: "already holds one" read under the locks) | association shared + buyer |
-| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | association shared + buyer |
+| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`: one of the association's own tier tags, then the manual add's body) | association shared + buyer |
 | Tag revocation (`revoke`: the holder read from the row, then the delete) | association shared + buyer |
 | Closing a `paid_not_granted` payment (`closePaidNotGranted`: the record `FOR UPDATE`, then a `granted` grant) | association shared + buyer |
 | Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
@@ -384,9 +452,13 @@ connection fails alone instead of everything hanging.
 waiting. A checkout opening is split in two: `preparePurchase` fetches the active payment provider,
 the routing it gives and, for a grid priced on promo or formation, the buyer's profile - all before
 the lock; `decidePurchase`, under it, reads only this database. It reloads the association and the
-product by id and recomputes the routing with the provider already fetched; if the account or the
-target association no longer matches, it refuses `409 PAYMENT_ROUTING_CHANGED` - no retry, nothing
-opened, and trying again uses the new account.
+product by id and recomputes the routing with the provider already fetched; if ANY field of it
+changed (`sameRouting`: provider, account, receiving association, readiness, delegation), it refuses
+`409 PAYMENT_ROUTING_CHANGED` - no retry, nothing opened, and trying again uses the new account. The
+profile is the one other input fetched before the lock: if the product re-read under it has a grid
+that prices on promo or formation and the preparation did not fetch the profile (the grid was added
+in between), it refuses `409 PURCHASE_PRICING_CHANGED` rather than price on the "everyone else"
+cell or call out under the lock.
 
 `product-tier-lock.integration.spec.ts` proves it against a real PostgreSQL, asserting every wait
 through `pg_locks` rather than a timer: two concurrent settlements; a settlement and a checkout
@@ -398,7 +470,8 @@ matching case fails. The same file proves the 2026-10-27 half: migrations 112 an
 cleanly; an opening freezes the tier it ranked against; a price lowered between opening and payment
 is still GRANTED; a tier obtained since the opening still marks the payment; a payment is closed once,
 two concurrent closings leave one row and one typed refusal, `granted` grants by hand; and the hourly
-count drops by exactly the closed payment.
+count drops by exactly the closed payment. It also ranks a paid
+form's pre-check against the real tables, and settles a payment for a deleted product.
 
 A tier rolls over in `dated` mode, so the previous year's tag no longer counts as held. The
 provider's own floor (`LYDIA_MIN_AMOUNT_CENTS` in core-service) still answers `AMOUNT_OUT_OF_RANGE`
@@ -408,7 +481,26 @@ before any request is issued.
 with `viewerTierRelation` (the table's relation, `none` for a non-tier or a guest) and
 `viewerDueCents`: what a checkout would charge THIS viewer now - null for a refused tier, the grid's
 cell for a gridded product, null for a free amount. Purchase caps and tag gates are not folded into
-it. The client displays it and never recomputes money; `paymentRefusal.ts` words each refusal code.
+it. `/shop` displays it and never recomputes money - it shows `viewerDueCents` and offers no button
+for a `held`, `lower` or `unranked` tier (see "Where it lives in the UI" below);
+`paymentRefusal.ts` words each refusal code. **Only `/shop` does so today**: the association page
+lists the same products from its own fields and still shows the full price and a buy button for a
+refused tier - it follows later
+([backlog](backlog.md#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands)).
+
+**A `memberPriceTag` that prices nothing is refused at save.** Create and update answer
+`400 MEMBER_PRICE_TAG_NOT_A_TIER` when the tag names no OTHER cotisation tier of the product's own
+association (another association's tag, a non-tier tag, the product's own tier): such a link would
+charge every buyer the full price, silently. Two rows can still carry one, and both are charged in
+full with a `WARN` at every quote: a row written before the rule (an unrelated edit still saves), and
+a sibling whose linked tier product was DELETED - deleting a tier does not clear or refuse the links
+naming it, so the admin re-points or clears them by hand.
+
+**A paid form's grant never revokes a dearer tier.** `grantCotisantIfARise` ranks the target against
+the ONE tier `pickHeldTier` picks, not against `heldKeys`: a user holding two legacy tier tags who
+pays to renew the CHEAPER one gets `lower` (or `unranked`) - refused before any payment by the
+form's pre-check, or, when that changed only after the payment opened, recorded `paid_not_granted` -
+rather than renewing the cheap tag and letting the sibling XOR revoke the dearer one.
 
 **Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
 30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real
@@ -487,17 +579,15 @@ End-user (paying) surfaces:
 
 - **`/shop`** - buy a membership product (Stripe Checkout; returns to `/shop?purchase_success=1`).
   Tiers of one association are sorted base-first (`compareTiers`, stable sort by `variantLevel`).
-  Members-only products are disabled with a hint, and member pricing is shown struck-through next to
-  the reduced price - but only when `qualifiesForMemberPrice` says the viewer is actually eligible
-  (WP-COT-7): the asso-wide `viewerIsCotisant` check when the product has no `memberPriceTag`, or
-  (for a tier-upgrade product) finding the sibling product whose `grantedTagName` equals
-  `memberPriceTag` and comparing `viewerActiveTier` to that sibling's `variantKey` - the same join the
-  admin tab's dropdown already encodes, mirrored client-side since `/products/all` returns every
-  sibling in one array. A product whose `variantKey` matches `viewerActiveTier` gets a "your current
-  tier" badge. Gating/labeling all reads the per-product `viewerIsCotisant`/`viewerActiveTier` flags
-  returned by `/products/all` (computed server-side; no client-side tag *derivation*, only this join).
-  `viewerActiveTier` is the specific tier `variantKey` the viewer currently holds for that
-  association, if any (`null` for a single-tier association or a non-cotisant).
+  Members-only products are disabled with a hint. The price is the server's: a preferential price is
+  shown struck-through next to the full one exactly when `viewerDueCents` is below `amountCents`
+  (`preferentialDueCents` in `lib/pricing/viewerPrice.ts`), and a tier whose `viewerTierRelation` is
+  `held`, `lower` or `unranked` gets no purchase button, only the sentence saying why
+  (`tierNotOffered`) - the checkout would refuse it with a 409. Nothing on the page decides who
+  qualifies for a member price; the tier the viewer holds (`viewerActiveTier`) only names the "for
+  holders of" suffix and the "your current tier" badge. `viewerActiveTier` is the specific tier
+  `variantKey` the viewer currently holds for that association, if any (`null` for a single-tier
+  association or a non-cotisant).
 - **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller
   holds the form's `pricingTagName`.
 
@@ -530,7 +620,9 @@ never inside it, and of two first grants the second renews the first. Proven by 
 
 ### B. Paid form with `grantedTagName`
 
-`forms.service.ts#markPaid` (after Stripe) or `#validateCashPayment` (cash) call `grantOrRenew(...)`.
+`forms.service.ts#markPaid` (after Stripe) or `#validateCashPayment` (cash) grant through
+`grantCotisantIfARise`; `submit` refuses a tier that is not a rise before any payment (see "Rising
+to a higher tier").
 
 ### C. Manual grant from the Cotisations tab (cash / retroactive)
 
@@ -549,7 +641,8 @@ never inside it, and of two first grants the second renews the first. Proven by 
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
   `MANAGE_PRODUCTS`.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
-  (`MANAGE_MEMBERS`); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
+  (`MANAGE_MEMBERS`), the name being one of the association's own tier tags, granted like the
+  manual add ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
   `:id`, not to the tag id alone: `MANAGE_MEMBERS` is granted per association, so an unscoped delete
   let an admin of any association revoke any other association's cotisant (WP-COT-9).
 

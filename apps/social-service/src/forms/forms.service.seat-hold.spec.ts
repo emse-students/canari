@@ -134,6 +134,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     };
     const userTagService = {
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      // The paid form's pre-check before any payment request: nothing held, so a rise.
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
     };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
@@ -145,12 +147,13 @@ describe('FormsService - the seat a pending payment holds', () => {
       if (state.where[0] === '"paymentStatus" = :status') {
         expect(state.where).toEqual([
           '"paymentStatus" = :status',
-          `"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`,
+          '"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)',
         ]);
+        const cutoff = state.params.cutoff as Date;
         const moved = rows.filter(
           (r) =>
             r.paymentStatus === state.params.status &&
-            r.paymentRequestedAt.getTime() <= now.getTime() - HOLD_MS
+            r.paymentRequestedAt.getTime() <= cutoff.getTime()
         );
         moved.forEach((r) => Object.assign(r, state.set));
         return { affected: moved.length };
@@ -198,7 +201,11 @@ describe('FormsService - the seat a pending payment holds', () => {
             Object.assign(state.params, params),
             builder
           ),
-          andWhere: (sql: string) => (state.where.push(sql), builder),
+          andWhere: (sql: string, params: Record<string, unknown> = {}) => (
+            state.where.push(sql),
+            Object.assign(state.params, params),
+            builder
+          ),
           execute: async () => {
             await roundTrip();
             return runUpdate(state);
@@ -552,7 +559,7 @@ describe('FormsService - the seat a pending payment holds', () => {
           row({ id: 'paid', paymentStatus: 'paid', paymentRequestedAt: ago(10 * HOLD_MS) }),
         ],
       });
-      expect(await service.expireStalePendingPayments()).toBe(1);
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(1);
       const first = rows.map((r) => [r.id, r.paymentStatus]);
       expect(first).toEqual([
         ['stale', 'expired'],
@@ -560,7 +567,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['cash', 'pending_cash'],
         ['paid', 'paid'],
       ]);
-      expect(await service.expireStalePendingPayments()).toBe(0);
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(0);
       expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual(first);
     });
   });
@@ -600,8 +607,12 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('1500 cents'));
       expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(rows[0].cotisationGrantedAt).toBeNull();
-      // The payer's trace that they paid stays: the refund happens outside the application.
+      // The payer's trace that they paid stays: the refund happens outside the application. It is
+      // MARKED: the form grants a tier, and no seat means no tier was granted.
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
     });
 
     it('treats a pending row past the hold as released even before the job ran', async () => {
@@ -1179,6 +1190,31 @@ describe('FormsService - the seat a pending payment holds', () => {
       ]);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: 'uuid-1' });
+    });
+
+    // P1 (2026-10-27): the retry above reuses the row, and every request of it used to carry the
+    // SAME order_ref `form:<submissionId>`, which Lydia refuses on the second request/do (error 3,
+    // measured 2026-10-21). Control: with the order_ref back to `form:${id}` this test fails on the
+    // two keys being equal.
+    it('sends a NEW order_ref for the retry of a reused row, naming the same submission', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [],
+      });
+      await retry(service);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'declined';
+      await retry(service);
+      expect(rows).toHaveLength(1);
+      const keys = core.calls
+        .filter((c) => c.route === 'create-checkout-session')
+        .map((c) => c.body.idempotencyKey as string);
+      expect(keys).toHaveLength(2);
+      const perAttempt = new RegExp(`^form:${rows[0].id}:[0-9a-f]{8}$`);
+      for (const key of keys) expect(key).toMatch(perAttempt);
+      expect(keys[0]).not.toBe(keys[1]);
     });
 
     // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
@@ -1833,7 +1869,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         await r.cancelPending({ requestId: '1001' });
         await r.payerReturn();
         r.advance(10 * HOLD_MS);
-        await r.service.expireStalePendingPayments();
+        await r.service.expireStalePendingPayments(new Date(T0.getTime() + 9 * HOLD_MS));
         expect(r.rows[0].paymentStatus).toBe('paid');
         expect(r.transitions).toEqual(['s1:pending->paid']);
         expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);

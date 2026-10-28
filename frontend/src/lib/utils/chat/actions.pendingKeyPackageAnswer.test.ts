@@ -15,7 +15,14 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
   }),
 }));
 
+// The packages below are opaque bytes; the key an approval binds is read through this seam.
+vi.mock('$lib/mls-client/deviceTrust', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/deviceTrust')>()),
+  keyPackageFingerprintOf: vi.fn().mockResolvedValue('fp-peer-dev'),
+}));
+
 import { processPendingInvitations } from './actions';
+import { approveMemberDevice, resetMemberDeviceAnswers } from './memberDeviceAnswers';
 
 /**
  * A BAD MINUTE ON ONE ENDPOINT USED TO RETIRE A PERFECTLY VALID INVITATION.
@@ -38,6 +45,10 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     groupId: 'g1',
     status: 'pending',
   };
+
+  // A device of the member this member approved under its key: an unseen one is asked about.
+  beforeEach(() => approveMemberDevice('peer', 'peer-dev', 'fp-peer-dev'));
+  afterEach(() => resetMemberDeviceAnswers());
 
   function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     return {

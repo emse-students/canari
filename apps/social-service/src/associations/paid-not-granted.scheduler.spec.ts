@@ -24,6 +24,9 @@ describe('PaidNotGrantedScheduler - the tiers paid for and not granted, every ho
     const { scheduler, error } = make(2);
     expect(await scheduler.reportOnce()).toBe(2);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('count=2'));
+    // Any product, not only a tier, and a check before a refund: the mark can over-count.
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT delivered'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('check what each buyer holds now'));
   });
 
   it('counts only the marked payments nobody has closed', async () => {

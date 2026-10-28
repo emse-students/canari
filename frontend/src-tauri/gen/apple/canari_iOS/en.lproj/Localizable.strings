@@ -39,6 +39,10 @@
 "notif.social.coorganise_proposed.body" = "An event to co-organise";
 "notif.social.live_started.title" = "%@ is live";
 "notif.social.live_started.body" = "Tap to watch";
+"notif.social.follow_request.title" = "%@ asks to follow you";
+"notif.social.follow_request.body" = "Tap to answer";
+"notif.social.follow_accepted.title" = "%@ accepted your request";
+"notif.social.follow_accepted.body" = "Your request was accepted";
 "notif.social.live_cut.title" = "Your live was stopped";
 "notif.social.live_cut.body" = "Moderators cut your live. This is a warning.";
 "notif.social.live_suspended.title" = "Lives suspended";
