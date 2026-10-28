@@ -92,7 +92,6 @@ export function withCheckoutReturnKey(
 }
 
 /**
-/**
  * The `code` of the 409 a checkout gets when the association's payment routing (its own account,
  * or an approved parent's) changed between the moment it was resolved - before the buyer's tier
  * lock, since it calls another service - and the moment the attempt is written under that lock.
