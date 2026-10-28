@@ -276,6 +276,68 @@ value changing and the getter running is imperceptible, while on Android WebView
 more aggressive GC - it is wide enough to hit regularly. A race that "cannot happen" on the machine
 it was written on is a race that happens to users.
 
+### A teardown sees the values its effect saw, and a derived read there keeps them (2026-10-27)
+
+Svelte runs every teardown - an `$effect`'s return, an `onMount` return, an `onDestroy` - with the
+values the effect last saw, and that is deliberate (a teardown releases what its run acquired). Two
+different failures follow from it, and only the second is silent.
+
+**1. A `$state` read in a teardown is STALE.** It returns the value from before the current flush.
+Code that ASKS "has the selection moved?" from a teardown is always told "no". `MainChatPage`'s
+receipt effect detected leaving a conversation with `if (convs.selectedContact !== currentContact)`
+in its teardown, so the leave branch never ran. Nothing was flushed or cancelled when the reader
+left inside the 2 s window, and the next conversation's note joined the OLD window: `max(A, B)`,
+delivered by A's callback (for a salon, `claimChannelReadSignal` for A). The leave is now detected
+by the effect's FIRST statement, `readMarks.follow(selected)` (`readMarkDebounce.ts`). The window
+now knows the conversation that opened it, and on a leave it is DELIVERED through that
+conversation's own callback, for a salon as for a DM. A first draft dropped a salon's window on
+leave, on the grounds that its mark is owed durably anyway. But the callback is also what sends
+`markChannelRead`, the silent signal that clears the salon's banner on the account's other devices,
+so dropping it lost that signal. `readMarkDebounce.test.ts` covers the delivery, and
+`readMarkDebounce.leave.svelte.test.ts` pins both the stale read and the call's place in the effect.
+
+**2. A `$derived` read in a teardown is RE-EVALUATED WITH THE STALE VALUES AND KEEPS THAT RUN'S
+DEPENDENCIES** when it depends on something that changed in the flush. Any derived counts, read
+directly or through a prop getter. `untrack` does not help, because it only stops the CALLER from
+subscribing; the derived still rewires itself. It throws nothing. `ChatHeader`'s DM presence effect
+did `return () => unwatchUsers([contactName])`. On leaving a DM, that prop read walked `ChatArea`'s
+`conversation` prop back to `currentConvo` (`useConversations.svelte.ts`), which re-ran with the DM's
+key and kept `conversations.get(dmKey)` as its only map dependency. It ran AFTER the pane had read
+`currentConvo` for the new selection, so nothing read it again. The conversation now open could then
+receive any number of messages: the map, the sidebar and the read marks had them, and the pane stayed
+frozen until the selection changed again. Opening a group as its Welcome landed showed an empty
+transcript; a reload drew it. Parking on a group never reproduced it, because that effect only runs
+for a DM. The proof was a CDP logpoint on `currentConvo` in the dev bundle: it evaluated with the
+DM's key while the selection source held the group's, called from the header's teardown.
+
+The minimal reproduction, on Svelte 5.57.2 (red with or without the `untrack`; green when the
+teardown reads nothing):
+
+```ts
+const map = new SvelteMap([['a', 1], ['b', 1]]);
+let key = $state('a');
+const current = $derived(map.get(key));
+const seen: unknown[] = [];
+$effect.root(() => {
+  $effect(() => { seen.push(current); });          // the reader, declared first
+  $effect(() => {
+    void key;
+    return () => untrack(() => current);           // a teardown that reads the derived
+  });
+});
+flushSync();
+key = 'b'; flushSync();     // the teardown re-runs `current` with key 'a': deps -> map 'a'
+map.set('b', 2); flushSync();
+expect(seen.at(-1)).toBe(2); // fails: 1 - `current` no longer listens to 'b'
+```
+
+**A teardown reads only locals captured in the effect body - never a prop, a `$state` or a
+`$derived`** (`const watched = contactName; watchUsers([watched]); return () =>
+unwatchUsers([watched]);`). A question about the CURRENT state is asked at the start of the next run,
+not in the teardown. `ChatArea.leaveDirect.svelte.test.ts` mounts the real `ChatArea` on the real
+`currentConvo`, leaves a DM, adds a message to the group and asserts it is drawn; it is red with the
+prop read.
+
 ### An uncaught error in the reactive graph is PERMANENT until a reload, so boundaries are placed by blast radius
 
 An error thrown from a template, a `$derived` or an `$effect` cleanup corrupts that subtree's signal
