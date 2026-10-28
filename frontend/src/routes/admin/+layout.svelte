@@ -51,7 +51,7 @@
     mayOpenConsole = mayOpen;
     ready = true;
     if (!mayOpen) {
-      void goto(resolve('/dashboard'), { replaceState: true });
+      void goto(resolve('/dashboard'), { replace: true });
     }
   });
 
@@ -71,7 +71,7 @@
   $effect(() => {
     if (!ready || !mayOpenConsole || allowed) return;
     console.warn('[ADMIN] path not open to this tier, redirecting to the hub:', path);
-    void goto(resolve('/admin'), { replaceState: true });
+    void goto(resolve('/admin'), { replace: true });
   });
 </script>
 

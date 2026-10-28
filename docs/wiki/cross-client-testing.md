@@ -237,6 +237,19 @@ that build predates the fix (#2583); the AFTER reading is owed on the pre-releas
 | LIVE-STALL-1 | L-F1: A1 broadcasts for a minute to W2 and W4; no viewer stalls after its first delivery gap; each target buffer is recorded | A1 W2 W4 - B | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef, A1 8cd51abf): W2 stalled 29 times and W4 26 times in 60 s, no delivery gap named (L-F1, before #2583); server window clean; A1 sealed 8 of 30 chunks as fragment pairs |
 | LIVE-WEB-3 | LIVE-WEB-2 with W4's account following the broadcaster: the announcement names one follower | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: `followers=1`, the push found no token on a web account (a device reading is owed) |
 
+## FOL - a follow request between two accounts (WP-F4)
+
+Every personal account is private (decided 2026-10-25): a follow of a person is a request the person
+answers ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+No runner yet: the row is the spec the runner implements, and nothing is recorded before the
+pre-release carrying WP-F1..F4 is on dev. Every wait is counted in rounds, never a clock. The profile
+button's state is read off its `data-follow-status`, and every list off its own rows
+(`data-follow-person`).
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| FOL-REQ-1 | W2 asks to follow W4: W2's button reads `pending` across a reload. W4 gets one `follow_request` bell row and the inbox banner. W4 accepts from `/notifications/follow-requests`: W2 reads `accepted` and gets one `follow_accepted` row. W4 removes W2 from "Mes abonnes": W2 reads `none` after a reload and is told nothing. W2 asks again: W4's inbox lists it, and NO second `follow_request` row or push reaches W4 (once per pair) | W2 W4 - U | `pending` - owed on the pre-release that carries #2589, #2601, #2605 and WP-F4 |
+
 ## TOK - a token expiring in the middle of an operation
 
 | Id | What it asks | Needs | State |
@@ -244,6 +257,27 @@ that build predates the fix (#2583); the AFTER reading is owed on the pre-releas
 | TOK-1 | The commit POST is answered `401` once | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
 | TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 06d5be3d143b. To be replayed on alpha.5 |
 | TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `pending` - clock-only row: waits 61 min past the 1 h access token with the socket open, run alone and unattended; not yet scheduled |
+
+## RMC - a removal committed, not only unrouted
+
+Runner `archive/removals.mjs`, table and judge `removalrows.mjs`. Each row builds its own community,
+routes its subject onto the row's key groups (asserted on the delivery roster; a subject that never
+reached one makes the row `VACUOUS`), makes one gesture, then reads every group's server epoch once a
+round for `COMMIT_ROUNDS` rounds. The commit log says who moved each one. A kick and a salon revoke
+must be committed by the actor's session as it is, with no reload; a device revoke by any device that
+remains. Run through the preflight: `bun run.mjs --file removals.mjs --row <id>` (phase `REMOVALS`).
+
+**What a `PASS` here does not prove:** that the commit removed the subject's leaf. The commit log
+records a commit's group, base epoch and sender, not its kind or the leaves it removed, so a `PASS`
+means "no longer routed, and the epoch advanced by a commit of the right committer after the
+gesture". Reading the tree itself needs a client that reports its group's members, which the rig
+does not have yet.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| KICK-COMMIT | W1 removes the peer from a community whose public and private salons it held: both key groups advance by W1's commit, no reload | W1 W2 - U | `pending` - prepared for the removals work |
+| SALON-REVOKE-COMMIT | W1 revokes the peer from a private salon and opens it again: the salon's key group advances by W1's commit, no reload | W1 W2 - U | `pending` - prepared for the removals work |
+| DEVREVOKE-KEYGROUP | W6 revokes a fresh owner device (W3) that loaded a community and its private salon: every key group it held advances by a remaining device's commit | W1 W6, W3 minted - U | `pending` - prepared for the removals work |
 
 ## NET - a flaky network
 
