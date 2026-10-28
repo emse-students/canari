@@ -212,19 +212,6 @@ export class SpaceSettingsDto {
   poster?: PosterDto | null;
 }
 
-/** `POST bookings/spaces` - a new space, personal or of an entity the actor manages (D2, D16). */
-export class CreateSpaceDto extends SpaceSettingsDto {
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(120)
-  declare name: string;
-
-  /** The owning association, list or institution; absent = a personal space. */
-  @IsOptional()
-  @IsUUID()
-  associationId?: string;
-}
-
 /** A resource's own fields (D10, D32). */
 export class ResourceDto {
   @IsOptional()
@@ -310,4 +297,31 @@ export class AvailabilityDto {
   @ValidateNested({ each: true })
   @Type(() => AvailabilityExceptionDto)
   exceptions: AvailabilityExceptionDto[];
+}
+
+/**
+ * `POST bookings/spaces` - a new space, personal or of an entity the actor manages (D2, D16).
+ * Declared after {@link AvailabilityDto} because it names it as a property type, whose decorator
+ * metadata is read when this class is defined.
+ */
+export class CreateSpaceDto extends SpaceSettingsDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  declare name: string;
+
+  /** The owning association, list or institution; absent = a personal space. */
+  @IsOptional()
+  @IsUUID()
+  associationId?: string;
+
+  /**
+   * The first hours of the space's ONE default column (D44), written in the creation's own
+   * transaction, so the creation wizard (D52) never leaves a space without them when a second call
+   * fails. Absent = the column starts closed, as a column added later does.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AvailabilityDto)
+  availability?: AvailabilityDto;
 }

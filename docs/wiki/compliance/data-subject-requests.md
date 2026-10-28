@@ -54,7 +54,7 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 | Communities | `channel_members` (`userId`), `channel_messages` (`authorId`; content is ciphertext) |
 | Feed | `posts` (`authorId`; comments and reactions are JSON inside `posts` - search `comments`/`reactions` for the id), `post_notifications` (`recipientId`, `actorId`), `post_republications` |
 | Associations | `association_members`, `association_role_history`, `association_push_mutes`, `user_tags`, `document_reviewer_grants` (`userId`); `association_follows`, `user_follows` (`followerUserId`, `followedUserId`); `association_calendar_events` (`createdBy`) |
-| Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries`, `product_checkouts` (`userId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
+| Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries`, `product_checkouts` (`userId`); `purchase_record_closings` (`closedByUserId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
 | Moderation | `content_reports` (`reporterId`, `reportedUserId`), `user_blocks` (`blockerId`, `blockedId`), `user_moderation` (`userId`) |
 | Legacy | `legacy_cotisations` (`claimedByUserId`, or the match key (last name, first name, promo) for a person with no account) |
 | Games | `minesweeper_scores`, `minesweeper_challenges`, `minesweeper_bans` (`userId`) |

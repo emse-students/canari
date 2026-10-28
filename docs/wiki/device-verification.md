@@ -976,7 +976,7 @@ install is not automatic.
 
 ### The run of 2026-08-28, 01:23 Paris - what it settled and what it did not
 
-**Conditions, which matter because the first attempt was worthless.** Arthur DORADOUX uninstalled and
+**Conditions, which matter because the first attempt was worthless.** A tester uninstalled and
 reinstalled 0.14.8 from TestFlight (`REGISTER_DEVICE ... isNew=true` at 01:14:45, a device id never
 seen before), in a window with no CD deploy running. An earlier attempt the same night was void:
 five CD deploys landed between 00:40 and 00:52 and each restarts every container, so the logs that
@@ -1228,7 +1228,11 @@ the WP-L1 bench's own `live-bench` seal reads "Live indisponible" here, by desig
 1. **Watch from the other phone.** Start a live on phone A; on phone B open the Feed: the LIVE card is
    at the top, naming A. Tap it: `[LIVE] viewer joined <id> at segment N`, then picture and sound
    (after one tap on the sound button), the LIVE badge and the time on air counting. Read
-   glass-to-glass against WP-L1's 5.8-7.3 s p50 (clap in front of A's camera).
+   glass-to-glass against WP-L1's 5.8-7.3 s p50 (clap in front of A's camera), expecting about 3 s
+   more behind a Mi 9T that delivers in pairs. **The [buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)
+   (L-F1)**: watch two minutes with the Mi 9T as A; past the first delivery gap there is NO
+   `stalled at` line and no run of `seek to the live edge (stall)`, and `waiting while seeking` lines
+   are allowed (each is a seek's own wait). Record the `target buffer now N ms` the viewer settled on.
 2. **Kill the network** on B for 20 s (airplane mode): "Reconnexion..." within a few polls, never
    "Live complet". Back online: `seek to the live edge (catch-up)` and the picture at the edge, not
    replaying the gap. Then kill A's network for 20 s: B says "Le live est interrompu, il devrait
@@ -1551,7 +1555,7 @@ readings below were taken before it or after three quiet minutes.
 | Native checkpoint (#1826) | **`PASS`** | 60 `[MLS] checkpoint: manager lock held N ms (export), seal + write M ms off it` lines: **N = 0 ms 51 times, 1 ms 8 times, 2 ms once**; M median 2 ms, p95 5, max 9; state up to 304 KB. **0** `reload REFUSED`, `reload DROPS KEY MATERIAL`, `mls.bin write FAILED` or `ordering lock was poisoned`; no FATAL, no ANR |
 | No stall on a salon open | **`PASS`** | Five real taps on a 56-row salon: one long task per open, **293-412 ms (median 335)**, the longest frame gap 425 ms, nothing over half a second. Same shape as the DM open of the 1.2.6 bench (257-349 ms) |
 | In-app log (#1819): the save | **`PASS`** | Settings > A propos > "Enregistrer le journal" opens the system picker on Telechargements with `canari-log-1.2.7-alpha.1-<date>-<time>.txt`; "Enregistrer" writes it (68 KB, 748 lines) and the app says "Fichier enregistre." |
-| In-app log: the redaction | **`FAIL`** | No name, e-mail, JWT, Bearer, full UUID, password, PIN or OIDC subject in either export. **But message text survives when it is one word or identifier-shaped**: `[SEND] handleSendChat: ... text="ok"`, `text="bisous"`, `text="refuse1-a127"`, while `text="Rendez-vous demain chez Paul a 18h"` became `"[34 chars]"`. `text` is in `PROSE_LAST_WORDS`, yet the quoted-value shape allowlist still keeps a value that looks like an identifier (`appLogRedact.ts`) |
+| In-app log: the redaction | **`FAIL`** | No name, e-mail, JWT, Bearer, full UUID, password, PIN or OIDC subject in either export. **But message text survives when it is one word or identifier-shaped**: `[SEND] handleSendChat: ... text="ok"`, `text="coucou"`, `text="refuse1-a127"`, while `text="Rendez-vous demain chez Paul a 18h"` became `"[34 chars]"`. `text` is in `PROSE_LAST_WORDS`, yet the quoted-value shape allowlist still keeps a value that looks like an identifier (`appLogRedact.ts`) |
 | "Marquer tout comme lu" on a community icon (#1820) | **`PASS`** | A long press opens the menu with nothing selected (`getSelection()` empty). The tap clears the salon's `6` and the rail dot; the badge stays clear after a kill and relaunch. Gamma's tab, reloaded: delta's "Message lu par" head stays on `in-bg-mv6hmrir` (11:53), not on the six newer rows |
 | Drag-reorder of the rail | **`PASS`** | With a second community (`Bench127`, created for this), a long press + drag moves it above `Bench126`; no menu is left open |
 | Salon send before the salon is loaded (#1821) | **`PASS`** | Cold start from the salon's deep link, link throttled to 15 KB/s, sent at composer-usable: **"En attente..." for 1.9 s**, `[SEND] channel send ... HELD`, then `released: its salon is loaded`, "Envoi...", "Message envoye" at 4.6 s; one copy on gamma's side, no banner. Unthrottled, the same send never waits (the salon is loaded in time) |
@@ -2023,7 +2027,7 @@ Dev has no push, so what #1889 changes (a notification suppressed or kept) could
 | 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.2" and "Vous utilisez la derniere version"; the app opened on the feed on the vault path (a PIN-path unlock was not exercised) |
 | 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms (alpha.1 in brackets): attach 329 [552], nav 1092 [1099], **tap>rail 1072** [1134] (worst 1088), tap>salons 1899 [2244], tap>target salons 2276 [2512], **salon>pane 279** [277], salon>msgs 1834 [1833], switch>salons 174 [143], switch salon>pane 201 [202], reopen>msgs 676 [773]; api calls 65, long tasks 699, max gap 439. Same shape as alpha.1, within run-to-run noise |
 | 3. Notification level of a bench salon | **`PASS` (the control), the effect `NOT-OBSERVED`** | Salon "general" of a bench community: Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; "Mentions" highlights, then "Tous" restores it. No push on dev, so a message received over the socket under Mentions/Aucune was not produced |
-| 4. In-app log export | **`PASS`** | `canari-log-1.2.8-alpha.2-20261015-0223.txt` (2.15 MB, 23773 lines): 0 `eyJ`, 0 `Bearer`; of 383 `handleSendChat` lines, the 192 carrying a text all read `text="[N chars]"`, the rest are "completed (message queued)"; no bench message text (`bisous`, `heldA*`, `iosA3*`, `Rendez`) found |
+| 4. In-app log export | **`PASS`** | `canari-log-1.2.8-alpha.2-20261015-0223.txt` (2.15 MB, 23773 lines): 0 `eyJ`, 0 `Bearer`; of 383 `handleSendChat` lines, the 192 carrying a text all read `text="[N chars]"`, the rest are "completed (message queued)"; no bench message text (`coucou`, `heldA*`, `iosA3*`, `Rendez`) found |
 
 ## The iPhone 12 readings of v1.2.8-alpha.1 (2026-10-15)
 
@@ -2210,7 +2214,7 @@ production) replaces the bench pre-release by itself, as on 2026-10-11.
 | #1843 failure lines in the exported log | Mi 9T | **`PASS`** | `TransportFailureError: request got no answer: error sending request for url (https://dev.canari-emse.fr/api/presence?[query]` - the query string is redacted |
 | #1842 orphan WebView on a navigation-mode switch | Mi 9T | **`PASS`, one P3** | Six switches (`cmd overlay enable-exclusive` threebutton/gestural): CDP lists **ONE** page, attached, after each. A salon text refused offline before the first switch ("Non confirme") came back: `[SEND] unanswered salon message 05b01dbd... of a past session restored to the composer` (`31-switch1.png`). **P3**: the composer is not kept across a relaunch, so that restored text (and any typed draft, `sheet-38-39.png`) is LOST at the next relaunch |
 | #1842 kill/relaunch, background x3, notification intent warm and killed | Mi 9T | **`PASS`** | One page each time, the salon opens from the intent. Logcat: no `FATAL`, no ANR, no destroyed-WebView warning. Four `[TAURI] Couldn't find callback id 1269519213` warnings (the SAME id) after the relaunches: a Rust callback of the first page still fires into the new one (P3 noise) |
-| #1839 redaction of the exported log | Mi 9T | **`FAIL`, P2** | The alpha.2 lines are clean: `contact="[17 chars]" text="[9 chars]"`, 0 one-word text, 0 name. **But the export still carries the alpha.1 lines** of the ring, written before the upgrade with the old redaction: 10 lines with `text="bisous"`, `text="ok"`, `text="refuse1-a127"`. Redaction runs at WRITE (`appLog.ts`), never at export, so an upgraded device keeps exporting what the older build let through until the ring rolls over |
+| #1839 redaction of the exported log | Mi 9T | **`FAIL`, P2** | The alpha.2 lines are clean: `contact="[17 chars]" text="[9 chars]"`, 0 one-word text, 0 name. **But the export still carries the alpha.1 lines** of the ring, written before the upgrade with the old redaction: 10 lines with `text="coucou"`, `text="ok"`, `text="refuse1-a127"`. Redaction runs at WRITE (`appLog.ts`), never at export, so an upgraded device keeps exporting what the older build let through until the ring rolls over |
 | #1835 blind salon banner offers no "Lu par" | Mi 9T | **NOT READ** | Dev sends no push, so no salon banner can be produced |
 | #1841 a join is acknowledged after its checkpoint | Mi 9T | **`PASS`** | Fresh state (`pm clear`), sign-in, PIN: each of the 3 `externalJoin succeeded` lines comes right after an `Encrypted state checkpoint persisted` |
 | #1844 the empty store opens with its digest; checkpoints per rejoined group | Mi 9T + iPhone | **`PASS`** | No member was online at the rejoin (`no member online for 3122333c - will ask when one returns`). Unlocking gamma's iPhone woke it: `[HISTORY_RECONCILE] a peer came back online`, then `[HISTORY_DIGEST] Sent for 3122333c - ids mode, 0 id(s)` as the FIRST leg (no state key), and 466 messages back in three bundles. **Checkpoints (native `manager lock held` lines): 9 for the 3 joins (3.0 per group), then 3 for the one exchange (1 + 2 drains)**; 15 in the 11 min after the sign-in, against 247 in 432 s on alpha.1. Lock held 0 ms 13 times of 15 |
@@ -2257,15 +2261,15 @@ and the enrolment of `canari-test-gamma` survived (PIN gate). Evidence:
 
 **How the old lines were produced.** The alpha.2 reading ended on a `pm clear`, so the ring held no
 line from alpha.1 any more (411 lines from 12:18, every value already `[N chars]`). The 10 leaking
-lines of the alpha.2 export (`inapp-log.txt`: `text="bisous"`, `"ok"`, `"refuse1-a127"`, ...) plus one
-`contact="jolan" text="bisous"` line were written VERBATIM into `CanariDBLog` as one chunk, over CDP,
+lines of the alpha.2 export (`inapp-log.txt`: `text="coucou"`, `"ok"`, `"refuse1-a127"`, ...) plus one
+`contact="alice" text="coucou"` line were written VERBATIM into `CanariDBLog` as one chunk, over CDP,
 while alpha.2 still ran (`inject.mjs`, `old-lines.txt`) - the bytes an older build stores, placed by
 hand. alpha.3 was installed over that.
 
 | Reading | Phone | Verdict | What was seen |
 | --- | --- | --- | --- |
-| #1861 the old lines are redacted at export | Mi 9T | **`PASS`** | The 11 lines come out `contact="[17 chars]" text="[6 chars]"` (`[5 chars]` for `jolan`); 0 hit for any known string, 0 `text=`/`contact=` value that is not `[N chars]`, in all three exports. Header `555 lines - 24 values redacted` (22 at read + 2 at write) |
-| #1861 the `[APPLOG] ... redacted at read` line appears once | Mi 9T | **`FAIL` against the expectation, P3** | `[APPLOG] 22 values redacted at read, in 11 lines an older build stored` - the count is exact - but it is logged AGAIN, identical, at the second export and the third, and each header counts the 22 again (`25`, then `38`). By design of #1861 (stored records are not rewritten; `ring-end.txt` still holds `bisous` 3 times), so every export of an upgraded device repeats the line until the ring rolls over |
+| #1861 the old lines are redacted at export | Mi 9T | **`PASS`** | The 11 lines come out `contact="[17 chars]" text="[6 chars]"` (`[5 chars]` for `alice`); 0 hit for any known string, 0 `text=`/`contact=` value that is not `[N chars]`, in all three exports. Header `555 lines - 24 values redacted` (22 at read + 2 at write) |
+| #1861 the `[APPLOG] ... redacted at read` line appears once | Mi 9T | **`FAIL` against the expectation, P3** | `[APPLOG] 22 values redacted at read, in 11 lines an older build stored` - the count is exact - but it is logged AGAIN, identical, at the second export and the third, and each header counts the 22 again (`25`, then `38`). By design of #1861 (stored records are not rewritten; `ring-end.txt` still holds `coucou` 3 times), so every export of an upgraded device repeats the line until the ring rolls over |
 | #1861 the export does not freeze the UI | Mi 9T | **`PASS`, on a small ring** | Tap to the save dialog 482 / 444 / 383 ms; longest frame gap 34 / 28 / 30 ms; no long task; no ANR. The ring was 555-664 lines, not a full ~5000: the yield-by-count path was barely exercised |
 | #1861 fresh lines with a double quote | Mi 9T | **`PASS`** | `quote "zorglub" a3` and `trail\ back" end` sent in the DM: `text="[20 chars]"` and `text="[18 chars]"` (the JSON-quoted lengths), nothing of either text in the export or the raw ring |
 | App opens on the PIN path | Mi 9T, iPhone | **`PASS`** | PIN gate, then `/posts` (`01-unlocked.png`, iPhone `05-unlocked.png`) |

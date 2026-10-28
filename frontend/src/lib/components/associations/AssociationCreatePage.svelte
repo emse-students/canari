@@ -134,7 +134,7 @@
     // D20/D24: the server refuses anyone else, so a reader who cannot create one is sent back
     // rather than shown a form that can only fail.
     if (kind === 'institution' && !isGlobalAdmin()) {
-      void goto(resolve('/institutions'), { replaceState: true });
+      void goto(resolve('/institutions'), { replace: true });
       return;
     }
     if (kind !== 'institution') {
@@ -180,7 +180,7 @@
         await finishInstitution(created);
         return;
       }
-      await goto(resolve(`${kind === 'list' ? '/lists' : '/associations'}/${created.slug}`));
+      await goto(resolve(`${kind === 'list' ? 'lists' : 'associations'}/${created.slug}`));
     } catch (err) {
       Log.d(`create.submit failed (${kind})`, err);
       const refusal = audienceRefusalCode(err);
@@ -210,7 +210,7 @@
         showToast(m.inst_new_reach_error());
       }
     }
-    await goto(resolve(`/associations/${created.slug}/edit/members`));
+    await goto(resolve(`associations/${created.slug}/edit/members`));
   }
 </script>
 

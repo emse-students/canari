@@ -65,8 +65,8 @@ describe('ChatComposer - a drop carrying only a local file address', () => {
 
   it('inserts nothing into the editor and says why', () => {
     dropStrings(editor(), {
-      'text/uri-list': 'file:///home/leon/affiche.pdf',
-      'text/plain': '/home/leon/affiche.pdf',
+      'text/uri-list': 'file:///home/user/affiche.pdf',
+      'text/plain': '/home/user/affiche.pdf',
     });
     expect(editor().textContent).toBe('');
     expect(toasts).toHaveLength(1);

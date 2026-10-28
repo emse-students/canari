@@ -184,7 +184,8 @@ added later without the pipe fails there.
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
 | DELETE | `/api/channels/:channelId` | Delete a salon outright - its row, its `channel_messages` and its distribution group. MANAGE_CHANNEL **or** MANAGE_WORKSPACE, and no confirmation argument - see "Deleting a channel" |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member, irreversibly. MANAGE_WORKSPACE **only**, and the body must carry `{confirmationName}` equal to the community name or it is refused with `WORKSPACE_CONFIRMATION_MISMATCH` - see "Deleting a community" |
-| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
+| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS). Optional `?actorDevice=`: the actor's committing device, echoed as `actorDeviceId` in `channel.member.kicked` |
+| POST | `/api/channels/workspaces/:workspaceId/members/:userId/removal-released`, `/api/channels/:channelId/members/:userId/removal-released` | The actor of a removal RELEASES the key-group Remove it claimed and knows it did not commit; `?actorDevice=` (the releasing device) required, same permission as the removal, `409` while the person is still in the scope, `503` when it cannot be announced, throttled per user (60/min). Publishes `channel.member.removal-released` with `releasedBy` and `releasedByDevice` ([channel-encryption](../protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PATCH | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`). The whole-list PUT is gone since `minClientVersion` 1.2.7. MANAGE_WORKSPACE / MANAGE_ROLES |
@@ -906,7 +907,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's followers (`user_follows`) who can see it |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's ACCEPTED followers (`user_follows`, [WP-F1](#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -982,6 +983,112 @@ still applies first, in chat-delivery.
 old container).** Association post, recipients: follower, muted follower, non-follower member. The
 new build logged `push withheld from 1 muted of 3` and pushed the other two; the pre-mute container
 pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
+
+### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
+
+Every personal account is private (Q1 of the
+[backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
+`POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
+only the followed person's answer makes it `accepted`. An association, a list or an institution
+(`association_follows`) is followed at once and has no status.
+
+**Only an ACCEPTED row is a follow, and every reader says so through ONE fragment**,
+`acceptedFollowSql` in `follows/follow-status.ts`: the Suivis feed
+(`FollowsService.getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`),
+the personal republication's newly-reached rule (whose follower exclusion must match the sweep's,
+or a pending follower is told by neither) and the live push (`liveAudienceSql`). The erasure and
+the block severing delete rows whatever their status. A pending row in each of the three
+PostgreSQL specs fails its assertion when the fragment is replaced by `TRUE` (control, 2026-10-27).
+
+**The two defaults of migration 114 are deliberate.** The column is added with `DEFAULT 'accepted'`,
+which records every existing follow as accepted (decision 3); the default is then set to
+`'pending'`, so a writer that forgets the column fails closed - and the old image, serving the
+seconds of a deploy, writes requests rather than follows.
+
+**114 also adds `acceptedAt`** (when the person said yes; existing follows backfilled from
+`createdAt`, a CHECK keeps every accepted row dated) **and `user_follow_notices`**, the durable
+"already told" of WP-F2: one row per (asker, person, kind), so a request deleted and asked again
+never notifies twice. The account erasure deletes both sides of it.
+
+**The schema on dev and production comes from this migration alone**: `synchronize` runs only
+when `NODE_ENV` is not `production`, and both estates pin `NODE_ENV: production` on
+social-service (`docker-compose.dev.yml`, `docker-compose.prod.yml`), so the entity's `pending`
+default never reaches an existing table there. A LOCAL database built by `synchronize` does get it,
+and its existing follows become requests - local only, and the dev seed writes `accepted`.
+
+**A request is ONE `INSERT ... ON CONFLICT DO NOTHING`** (`FollowsService.recordFollowRequest`),
+never a read then a write: a double tap used to read "no row" twice and 500 on the unique key. A
+conflict leaves an accepted follow accepted; `created` is true for the one call that wrote, so the
+request is notified once. Eight concurrent taps write one row (PostgreSQL spec).
+
+`GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
+too, the meaning a client older than the request screens gives it
+([legacy-compatibility](../legacy-compatibility.md)). Answering, listing and removing followers are
+WP-F3 (below).
+
+**Answering a request (WP-F2), `follows/follow-requests.service.ts`.** The follow routes moved out
+of `PostsController` into `FollowRequestsController` (same URLs), in a module of its own because it
+notifies through `PostsModule` - which already imports `FollowsModule`.
+
+- **Ask**: ONE `INSERT ... SELECT ... ON CONFLICT DO NOTHING` whose SELECT carries both conditions,
+  so neither is a check-then-insert: the target is a PERSON (a `users` row; an association's id or
+  an unknown one is 404 `FOLLOW_TARGET_NOT_FOUND`) and no block stands, either direction (403
+  `FOLLOW_BLOCKED` - core-service's block status already tells either side, so refusing hides
+  nothing). A MUTED account may not ask (403): a request is a push to a person. The route is
+  throttled per CALLER (`FOLLOW_ASKS_PER_MINUTE`, all targets together), and the same SELECT caps
+  the asker: `FOLLOW_PENDING_MAX` (100) unanswered requests at once (409 `FOLLOW_PENDING_LIMIT`)
+  and `FOLLOW_ASKS_PER_DAY` (50) NEW people told per rolling day, counted from the notice rows
+  (429 `FOLLOW_DAILY_LIMIT`; re-asking someone already told costs no push and is not counted). One
+  account cannot push its name to the whole directory (review 2026-10-27). **Both caps are counts,
+  so they hold only serialised**: under READ COMMITTED two statements counting at once see the same
+  total and both insert. Each ask is ONE transaction that first takes a transaction-scoped advisory
+  lock keyed by the asker, then inserts the request AND claims its `request` notice row, so the
+  next ask of the same account counts both - the daily cap reads the claims exactly, never a push
+  still on its way. Asks by different accounts never wait on each other. A request across a block
+  is not counted against the pending cap, as it is not in the asker's sent list either. Proof: the
+  PostgreSQL spec runs 24 asks at once at 99 pending and at 49 told, and exactly one is written.
+- **The block race**: an ask whose statement began before a block committed, and committed after
+  the severing ran, re-reads the block once its insert committed - the block committed BEFORE the
+  severing was called, so the read sees it - and deletes the row it wrote, refusing 403. The
+  notification path re-reads the block too, just before it writes anything, so an acceptance racing
+  a block pushes nothing. Both interleavings are forced with a trigger in the PostgreSQL spec.
+- **Told once per pair, from durable state**: the first `follow_request` (and the first
+  `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies (a
+  request's claim is made in the ask's transaction, above; a claim whose notice is never sent - the
+  ask retracted, a block landing before the push, a notification that throws - is released, so the
+  pair never reads as told when nobody was), so
+  ask -> withdraw -> ask in a loop pushes once. Never a clock. A re-asked request gets its bell
+  row back WITHOUT a push (deleted and rewritten, so one per pair), since the request is real
+  again; a claim whose notification then failed is logged and not retried.
+- **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which dates
+  `acceptedAt` and takes the row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
+  block term is in the statement because the block severing is a best-effort cross-service call.
+  The asker gets `follow_accepted`.
+- **Refuse**: the row is deleted, nobody is told, the asker may ask again. The request's bell row
+  goes with it, as it does on a withdraw; an acceptance keeps its history.
+- **Withdraw / unfollow**: ONE `DELETE ... RETURNING status`, so a withdrawn REQUEST's bell row is
+  dropped on the status the delete itself returned, never a read a racing accept could outdate.
+- **Pushes**: `social_follow_request` / `social_follow_accepted`, mapped by
+  `PostNotificationsService.pushContent` (pinned through the REAL mapping in
+  `follow-requests.integration.spec.ts`), with their native strings in both languages on both
+  platforms. A request carries the `follow-requests` target (`fr.emse.canari://follow-requests`,
+  the inbox), an acceptance the `notifications` one (its bell row opens the accepter's profile).
+  Both file under the `follows` category in chat-delivery, which the settings screen switches
+  (WP-F4).
+- **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
+  pending or accepted, both directions, and the `follow_request` bell rows between them (an
+  acceptance's stays, as history) - pinned in `follow-requests.integration.spec.ts`.
+
+**The caller's own lists (WP-F3).** `GET me/followers` (accepted, the most recently ACCEPTED first,
+each dated by `acceptedAt`), `DELETE me/followers/:userId` (the follow is deleted and NOBODY is
+told; the removed person may ask again, which is a new request that lands in the inbox without a
+second push - the notice is once per pair; a pending request is refused, not removed; the announce
+sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs,
+and the feed cache is dropped as on a block, so the removed person's Suivis does not keep serving
+this account's posts for its 30-second TTL) and `GET me/follow-requests/sent`
+(the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
+lists exist as routes: no rule says who may read another person's followers, so none is open. A
+pair a block stands between is left out of every list, as of every reader.
 
 ### Who may touch a calendar event
 
@@ -1138,6 +1245,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.joined` | **channel creation**, join, invite accept, admin join, member added |
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
+| `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor; carries `releasedBy` and `releasedByDevice` |
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |

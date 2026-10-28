@@ -25,6 +25,8 @@ describe('categoryOfDataPush', () => {
     ['social_repost_personal_requested', 'posts'],
     ['social_coorganise_proposed', 'events'],
     ['social_live_started', 'posts'],
+    ['social_follow_request', 'follows'],
+    ['social_follow_accepted', 'follows'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
     ['form_paid_over_capacity', 'forms'],

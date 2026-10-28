@@ -916,15 +916,24 @@ export class MessagingService {
    * devices) nor the `RevokedDevice` denylist (specific to explicit deletion, outside GC).
    * Shared between manual device deletion and the stale-device GC to avoid duplicated
    * purge logic.
+   *
+   * **A REVOCATION RECORDS THE KEY GROUPS THE DEVICE HELD** (`recordKeyGroupsHeld`, passed by the
+   * device deletion alone): in a key group the device rows deleted here are the only thing binding
+   * the user to the group, and the revoked-leaves question answers a leaf only when it is bound. So
+   * one `dm_revoked_device_groups` row per key group is written IN THE SAME TRANSACTION, from the
+   * rows this deletes - a crash between the two cannot lose the binding. Conversations need none:
+   * their seat stays. The GC and the PIN reset do not revoke, so they record nothing.
    */
   async purgeDeviceFootprint(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    options: { recordKeyGroupsHeld?: boolean } = {}
   ): Promise<{
     groupsCleaned: number;
     keyPackagesDeleted: number;
     oneTimeKeyPackagesDeleted: number;
     queuedMessagesDeleted: number;
+    keyGroupsRecorded: number;
   }> {
     const memberships = await this.deviceGroupRepo.find({
       where: { userId, deviceId },
@@ -933,10 +942,30 @@ export class MessagingService {
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
 
     // The device rows and everything queued for the device - Welcomes included - go in ONE
-    // transaction ({@link endDeviceMemberships}).
-    const ended = await this.deviceGroupRepo.manager.transaction((manager) =>
-      endDeviceMemberships(manager, { userId, deviceId }, 'all')
-    );
+    // transaction ({@link endDeviceMemberships}), after the key groups they bind are recorded.
+    let keyGroupsRecorded = 0;
+    const ended = await this.deviceGroupRepo.manager.transaction(async (manager) => {
+      if (options.recordKeyGroupsHeld) {
+        const recorded: unknown[] = await manager.query(
+          `INSERT INTO dm_revoked_device_groups ("groupId", "userId", "deviceId")
+           SELECT DISTINCT m."groupId", m."userId", m."deviceId"
+             FROM dm_device_group_memberships m
+             JOIN dm_groups g ON g.id = m."groupId"
+            WHERE m."userId" = $1 AND m."deviceId" = $2
+              AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL)
+           ON CONFLICT DO NOTHING
+           RETURNING "groupId"`,
+          [userId, deviceId]
+        );
+        keyGroupsRecorded = recorded.length;
+      }
+      return endDeviceMemberships(manager, { userId, deviceId }, 'all');
+    });
+    if (options.recordKeyGroupsHeld) {
+      this.logger.log(
+        `[PURGE_DEVICE] revoked device=${cutUserId(userId)}:${cutDeviceId(deviceId)} key groups recorded=${keyGroupsRecorded} of ${groupIds.length} group(s) held`
+      );
+    }
 
     const memberKey = `${userId}:${deviceId}`;
     for (const gid of groupIds) {
@@ -954,6 +983,7 @@ export class MessagingService {
       keyPackagesDeleted: kpResult.affected ?? 0,
       oneTimeKeyPackagesDeleted: otkpResult.affected ?? 0,
       queuedMessagesDeleted: ended.queued,
+      keyGroupsRecorded,
     };
   }
 

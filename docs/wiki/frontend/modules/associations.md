@@ -96,8 +96,11 @@ is the arbiter (a unique violation aborts the transaction it happens in, and a c
 would let two concurrent creates both pass). A slug SENT explicitly (an old client) is still
 validated and refused `400` when taken, including when it loses the race at the index.
 
-Three guards: only a unique violation of the SLUG index (matched by constraint name, never any
-`23505`) is retried; a slug equal to a static route word (`new`, `edit`: `RESERVED_SLUGS`, held equal
+Four guards: only a unique violation of the SLUG index (matched by constraint name, never any
+`23505`) is retried; a derived candidate whose cotisation stem would collide with another
+association's (`bde-2026-2027` beside `bde`, `assertCotisationStemFree`, recognised by its typed
+`COTISATION_TAG_COLLISION` code through `isCotisationStemCollision`) walks to the next suffix, while
+an explicit slug keeps the `409`; a slug equal to a static route word (`new`, `edit`: `RESERVED_SLUGS`, held equal
 to the route folders by a spec) is never derived bare and is refused when sent; ligatures NFD cannot
 decompose (`oe`, `ae`, `ss`...) are expanded before folding. `association-slug-derivation.integration.spec.ts`
 proves it against a real PostgreSQL (`SOCIAL_IT_DATABASE_URL`).

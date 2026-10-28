@@ -34,6 +34,7 @@ import {
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import {
   AssociationMember,
@@ -332,8 +333,8 @@ export class AssociationsService {
 
   /**
    * Creates a new association (or list). The slug is DERIVED from the name (suffixed `-2`, `-3`... on
-   * a collision, the unique index deciding); one sent explicitly by an old client is validated and
-   * refused if taken.
+   * a collision, the unique index deciding, and likewise when its cotisation stem would collide with
+   * another association's); one sent explicitly by an old client is validated and refused if taken.
    *
    * IT REACHES ITS CREATOR'S CAMPUS BY DEFAULT (audiences chantier, user 2026-10-07; it replaced
    * D36's "the creator's spaces"): in the SAME transaction as the row, ONE rule `(every formation,
@@ -384,6 +385,14 @@ export class AssociationsService {
         this.logger.log(`[slug] derived ${candidate} from the name`);
         return saved;
       } catch (err) {
+        // A candidate whose cotisation tags would coincide with another association's (`bde-2026-2027`
+        // beside `bde`) is cured by the next suffix exactly as a taken one is.
+        if (isCotisationStemCollision(err)) {
+          this.logger.log(
+            `[slug] ${candidate} collides with a cotisation stem, trying the next suffix`
+          );
+          continue;
+        }
         if (!isSlugUniqueViolation(err)) throw err;
         this.logger.log(`[slug] ${candidate} is taken, trying the next suffix`);
       }
@@ -408,6 +417,8 @@ export class AssociationsService {
       createdBy: userId,
     });
     return this.assoRepo.manager.transaction(async (manager) => {
+      // Its base cotisation tag must never coincide with another association's tag names.
+      await assertCotisationStemFree(manager, null, slug);
       const saved = await manager.save(asso);
       if (dto.type === 'institution') {
         // The type decides the default (D33's one mechanism): an institution addresses nobody until

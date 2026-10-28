@@ -19,6 +19,7 @@ import { Client } from 'pg';
 import { DataSource, Repository } from 'typeorm';
 import { AssociationsService } from './associations.service';
 import { Association } from './entities/association.entity';
+import { AssociationProduct } from './entities/association-product.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { SLUG_UNIQUE_CONSTRAINT } from './association-slug.util';
@@ -52,7 +53,7 @@ maybe('association slug derivation against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Association, AssociationAudience, Space],
+      entities: [Association, AssociationAudience, AssociationProduct, Space],
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
@@ -130,6 +131,14 @@ maybe('association slug derivation against PostgreSQL', () => {
       constraint: 'other_unique',
     });
     expect(await slugsNamed('solo')).toEqual(['solo']);
+  });
+
+  it('a derived slug whose cotisation tags would coincide with another association walks on', async () => {
+    await create('Cotis');
+    const dated = await create('Cotis 2026-2027');
+
+    // `cotis-2026-2027` beside `cotis` would make a lifetime tag of one a dated tag of the other.
+    expect(dated.slug).toBe('cotis-2026-2027-2');
   });
 
   it('an explicit slug is still refused when taken, and a reserved one is refused', async () => {

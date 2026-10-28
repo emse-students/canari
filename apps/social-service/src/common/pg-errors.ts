@@ -18,6 +18,15 @@ export function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
+ * Whether a driver error is Postgres refusing a duplicate on THE unique index `indexName`: the
+ * SQLSTATE and the constraint name the driver reports beside it, so a transaction writing to several
+ * unique indexes tells which one answered without reading a message.
+ */
+export function violatesUniqueIndex(err: unknown, indexName: string): boolean {
+  return isUniqueViolation(err) && (err as { constraint?: string }).constraint === indexName;
+}
+
+/**
  * Whether a driver error is Postgres refusing a row an EXCLUDE constraint forbids - for bookings,
  * a second live booking on the same resource and instant (`bookings_live_no_overlap`, migration
  * 087). Read from the SQLSTATE, like `isUniqueViolation`; the constraint's name is in
