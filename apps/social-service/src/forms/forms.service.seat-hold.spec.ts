@@ -143,12 +143,13 @@ describe('FormsService - the seat a pending payment holds', () => {
       if (state.where[0] === '"paymentStatus" = :status') {
         expect(state.where).toEqual([
           '"paymentStatus" = :status',
-          `"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`,
+          '"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)',
         ]);
+        const cutoff = state.params.cutoff as Date;
         const moved = rows.filter(
           (r) =>
             r.paymentStatus === state.params.status &&
-            r.paymentRequestedAt.getTime() <= now.getTime() - HOLD_MS
+            r.paymentRequestedAt.getTime() <= cutoff.getTime()
         );
         moved.forEach((r) => Object.assign(r, state.set));
         return { affected: moved.length };
@@ -196,7 +197,11 @@ describe('FormsService - the seat a pending payment holds', () => {
             Object.assign(state.params, params),
             builder
           ),
-          andWhere: (sql: string) => (state.where.push(sql), builder),
+          andWhere: (sql: string, params: Record<string, unknown> = {}) => (
+            state.where.push(sql),
+            Object.assign(state.params, params),
+            builder
+          ),
           execute: async () => {
             await roundTrip();
             return runUpdate(state);
@@ -550,7 +555,7 @@ describe('FormsService - the seat a pending payment holds', () => {
           row({ id: 'paid', paymentStatus: 'paid', paymentRequestedAt: ago(10 * HOLD_MS) }),
         ],
       });
-      expect(await service.expireStalePendingPayments()).toBe(1);
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(1);
       const first = rows.map((r) => [r.id, r.paymentStatus]);
       expect(first).toEqual([
         ['stale', 'expired'],
@@ -558,7 +563,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['cash', 'pending_cash'],
         ['paid', 'paid'],
       ]);
-      expect(await service.expireStalePendingPayments()).toBe(0);
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(0);
       expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual(first);
     });
   });
@@ -1856,7 +1861,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         await r.cancelPending({ requestId: '1001' });
         await r.payerReturn();
         r.advance(10 * HOLD_MS);
-        await r.service.expireStalePendingPayments();
+        await r.service.expireStalePendingPayments(new Date(T0.getTime() + 9 * HOLD_MS));
         expect(r.rows[0].paymentStatus).toBe('paid');
         expect(r.transitions).toEqual(['s1:pending->paid']);
         expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
