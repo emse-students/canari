@@ -61,15 +61,12 @@ describe('readVerifiedRequestState', () => {
     });
   });
 
-  it("reads core's own 400 for this request as a refusal too", async () => {
+  it("throws on core's own 400: a 400 that is not Lydia's typed refusal says nothing of the request", async () => {
     failWith(400, { message: 'Invalid payload' });
-    await expect(readVerifiedRequestState({ sessionId: 'u' }, 'v', 1)).resolves.toEqual({
-      verification: 'refused',
-      providerCode: 'core-400',
-    });
+    await expect(readVerifiedRequestState({ sessionId: 'u' }, 'v', 1)).rejects.toThrow('HTTP 400');
   });
 
-  it.each([503, 500, 401, 403])(
+  it.each([503, 500, 401, 403, 408, 429])(
     'throws on HTTP %p: a fault or a refusal of THIS service, not a word about the request',
     async (status) => {
       failWith(status, { code: 'PAYMENT_PROVIDER_REFUSED' });

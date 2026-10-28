@@ -11,6 +11,7 @@ function formatCounts(counts: ReconcileCounts): string {
   return (
     `examined=${counts.examined} settled=${counts.settled} released=${counts.released} ` +
     `unchanged=${counts.unchanged} skipped-unverified=${counts.skippedUnverified} ` +
+    `refused=${counts.refused} ` +
     `unavailable=${counts.unavailable} errors=${counts.errors}`
   );
 }

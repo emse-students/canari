@@ -52,8 +52,10 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   let lydia = { state: 'paid', raw: '1', verification: 'verified' };
   /** Core or Lydia unreachable: the verified read throws, as axios does on a 503. */
   let lydiaDown = false;
-  /** Lydia REFUSES the read (core's typed 400): an answer that will not change. */
-  let lydiaRefuses = false;
+  /** Lydia REFUSES the read with this code (core's typed 400), or null. */
+  let lydiaRefuses: string | null = null;
+  /** Core answers its 503 PAYMENT_SERVICE_NOT_READY to the read (payments switched off). */
+  let coreNotReady = false;
   /** Lydia REFUSES the cancel (core's typed 400). */
   let cancelRefused = false;
   /** An axios-shaped error carrying core's answer. */
@@ -154,8 +156,9 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       if (body.expectedAmountCents !== undefined) {
         verifiedReads += 1;
         if (lydiaDown) throw coreAnswered(503, { message: 'Service Unavailable' });
+        if (coreNotReady) throw coreAnswered(503, { code: 'PAYMENT_SERVICE_NOT_READY' });
         if (lydiaRefuses) {
-          throw coreAnswered(400, { code: 'PAYMENT_PROVIDER_REFUSED', providerCode: '3' });
+          throw coreAnswered(400, { code: 'PAYMENT_PROVIDER_REFUSED', providerCode: lydiaRefuses });
         }
         return { data: { ok: true, ...lydia } };
       }
@@ -178,7 +181,8 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   beforeEach(() => {
     lydia = { state: 'paid', raw: '1', verification: 'verified' };
     lydiaDown = false;
-    lydiaRefuses = false;
+    lydiaRefuses = null;
+    coreNotReady = false;
     cancelRefused = false;
     verifiedReads = 0;
     sweep.takeCounts();
@@ -411,10 +415,10 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       ).toHaveLength(1);
     });
 
-    // A status code is an ANSWER: retried, a refused read was re-read every tick, for ever, and
-    // sorted first it held every newer attempt back once 50 had piled up.
-    it('closes an attempt whose read Lydia REFUSED, once, and never reads it again', async () => {
-      lydiaRefuses = true;
+    // Closed only on a refusal MEASURED final (error 2, "Requete introuvable"): retried, such a
+    // read was re-read every tick, for ever.
+    it('closes an attempt whose read Lydia refused with a code known final, once', async () => {
+      lydiaRefuses = '2';
       const row = await attempt();
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('expired');
@@ -422,19 +426,49 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       expect(verifiedReads).toBe(1);
     });
 
-    it('closes an attempt whose CANCEL Lydia refused, with ONE error, and never cancels it again', async () => {
+    // Any OTHER refusal can be a state of Lydia (error 5, "temporarily blocked"): closing it lost
+    // a PAID request whose callback was lost - nothing reads a closed attempt again.
+    it('leaves open, and settles later, an attempt whose read was refused with a code not known final', async () => {
+      lydiaRefuses = '5';
+      const row = await attempt();
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('open');
+      lydiaRefuses = null;
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('paid');
+    });
+
+    it('leaves open an attempt read while core answers it is not ready (payments switched off)', async () => {
+      coreNotReady = true;
+      const row = await attempt();
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('open');
+      coreNotReady = false;
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('paid');
+    });
+
+    it('leaves open an attempt whose CANCEL Lydia refused with a code not known final, accused once per tick', async () => {
       lydia = { state: 'open', raw: '0', verification: 'verified' };
       cancelRefused = true;
-      const error = Logger.prototype.error as jest.Mock;
+      const error = jest.spyOn(Logger.prototype, 'error');
       error.mockClear();
       const row = await attempt();
       await sweep.sweepProductCheckouts();
-      expect(await statusOf(row.id)).toBe('expired');
+      expect(await statusOf(row.id)).toBe('open');
       expect(
         error.mock.calls.filter(([line]) => String(line).includes('still unproven'))
+      ).toHaveLength(0);
+      expect(
+        error.mock.calls.filter(([line]) =>
+          String(line).includes('left open on an answer that is not final')
+        )
       ).toHaveLength(1);
+      // Lydia then says it expired: the next tick closes it from that verified answer.
+      cancelRefused = false;
+      lydia = { state: 'cancelled-or-expired', raw: '6', verification: 'verified' };
       await sweep.sweepProductCheckouts();
-      expect(verifiedReads).toBe(1);
+      expect(await statusOf(row.id)).toBe('expired');
     });
 
     it('cancels at Lydia, then closes, an attempt Lydia verifiably says is still open past its end', async () => {

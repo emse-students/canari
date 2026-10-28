@@ -13,6 +13,12 @@ jest.mock('./verified-request-state', () => ({ readVerifiedRequestState: jest.fn
 const read = readVerifiedRequestState as jest.MockedFunction<typeof readVerifiedRequestState>;
 
 const UUID = '0123456789abcdef0123456789abcdef';
+
+/** An axios-shaped error carrying core's answer. */
+const coreAnswered = (status: number, data: unknown) =>
+  Object.assign(new Error(`HTTP ${status}`), { response: { status, data } });
+/** Core's typed 400 for a Lydia refusal. */
+const refusal = (providerCode: string) => ({ code: 'PAYMENT_PROVIDER_REFUSED', providerCode });
 const CUTOFF = new Date('2026-10-27T12:00:00Z');
 
 /** A TypeORM query builder that answers `rows` to `getMany` and `count` to `getCount`. */
@@ -203,8 +209,8 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     ['unsigned', { verification: 'unsigned', state: 'paid', raw: '1' }, 'skipped-unverified'],
     // A key that does not open is answered `no-key` by social-service's key route.
     ['no usable key', { verification: 'no-key' }, 'skipped-unverified'],
-    // Lydia's or core's typed refusal of the read: a status code, an answer that will not change.
-    ['refused', { verification: 'refused', providerCode: '3' }, 'skipped-unverified'],
+    // A refusal whose Lydia code is MEASURED final (the allowlist): error 2, "Requete introuvable".
+    ['a refusal known final', { verification: 'refused', providerCode: '2' }, 'refused'],
     [
       'not-found for a uuid Lydia itself issued',
       { verification: 'verified', state: 'not-found', raw: 'error 2' },
@@ -267,17 +273,68 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
   });
 
-  // NOT an answer: left open, read again next tick, said once per tick by the sweep.
+  // The cancel and the read go through ONE classifier: core refusing THIS service (401/403), its
+  // 503 when payments are off, a refusal not known final - none closes an attempt Lydia said OPEN.
   it.each([
-    ['core or Lydia unreachable', () => read.mockRejectedValue(new Error('core 503'))],
+    ['core refusing this service', coreAnswered(401, {})],
+    ['core refusing this service', coreAnswered(403, {})],
+    ['payments switched off', coreAnswered(503, { code: 'PAYMENT_SERVICE_NOT_READY' })],
+    ['a refused cancel not known final', coreAnswered(400, refusal('3'))],
+    ['a rate limit', coreAnswered(429, {})],
+  ])('leaves the attempt open when its cancel meets %s', async (_name, err) => {
+    const { service, productsService } = makeService();
+    read.mockResolvedValue({ verification: 'verified', state: 'open', raw: '0' });
+    productsService.cancelStillOpenCheckout.mockRejectedValueOnce(err);
+    await expect(service.reconcileCheckout(checkout())).resolves.toBe('unavailable');
+    expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
+  });
+
+  // NOT a final answer: left open, read again next tick, said once per tick by the sweep.
+  it.each([
+    [
+      'core or Lydia unreachable',
+      () => read.mockRejectedValue(new Error('ECONNRESET')),
+      'unavailable',
+    ],
+    ['a 5xx', () => read.mockRejectedValue(coreAnswered(500, {})), 'unavailable'],
+    ['a timeout', () => read.mockRejectedValue(coreAnswered(408, {})), 'unavailable'],
+    ['a rate limit', () => read.mockRejectedValue(coreAnswered(429, {})), 'unavailable'],
+    [
+      'core refusing this service',
+      () => read.mockRejectedValue(coreAnswered(401, {})),
+      'unavailable',
+    ],
+    [
+      'core refusing this service',
+      () => read.mockRejectedValue(coreAnswered(403, {})),
+      'unavailable',
+    ],
+    [
+      "core's 503 when payments are off, Lydia unconfigured or the payload refused",
+      () => read.mockRejectedValue(coreAnswered(503, { code: 'PAYMENT_SERVICE_NOT_READY' })),
+      'unavailable',
+    ],
     [
       'a verdict this service does not know',
       () => read.mockResolvedValue({ verification: 'unknown', state: 'paid', raw: '1' }),
+      'unavailable',
     ],
-  ])('leaves the attempt open on %s', async (_name, arrange) => {
+    // A refusal is NOT closed unless its code is measured final: Lydia error 5 is "temporarily
+    // blocked", and a revoked provider token refuses every row with an HTTP 401.
+    [
+      'a refusal not known final (error 5)',
+      () => read.mockResolvedValue({ verification: 'refused', providerCode: '5' }),
+      'refused',
+    ],
+    [
+      'a refusal not known final (HTTP 401 from Lydia)',
+      () => read.mockResolvedValue({ verification: 'refused', providerCode: 'http-401' }),
+      'refused',
+    ],
+  ] as const)('leaves the attempt open on %s', async (_name, arrange, outcome) => {
     const { service, productsService } = makeService();
     arrange();
-    await expect(service.reconcileCheckout(checkout())).resolves.toBe('unavailable');
+    await expect(service.reconcileCheckout(checkout())).resolves.toBe(outcome);
     expect(productsService.applyRequestState).not.toHaveBeenCalled();
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
     expect(logs.warn).not.toHaveBeenCalled();
@@ -293,10 +350,9 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     await expect(failure).rejects.toBeInstanceOf(CheckoutSettlementFailed);
     await expect(failure).rejects.toMatchObject({ lydiaSaidPaid: true, message: 'deadlock' });
     // The write's own error and stack survive the wrapping.
-    await failure.catch((err: CheckoutSettlementFailed) => {
-      expect(err.cause).toBeInstanceOf(Error);
-      expect(err.stack).toContain('Caused by: Error: deadlock');
-    });
+    const thrown = (await failure.catch((err: unknown) => err)) as CheckoutSettlementFailed;
+    expect(thrown.cause).toBeInstanceOf(Error);
+    expect(thrown.stack).toContain('Caused by: Error: deadlock');
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
   });
 
@@ -443,7 +499,7 @@ describe('LydiaReconciliationService sweeps', () => {
     productsService.applyRequestState.mockRejectedValue(new Error('deadlock'));
     await service.sweepProductCheckouts();
     expect(logs.warn).toHaveBeenCalledTimes(1);
-    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('2 read(s) got no answer'));
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('2 call(s) got no answer'));
     expect(logs.error).toHaveBeenCalledTimes(1);
     expect(logs.error).toHaveBeenCalledWith(
       expect.stringContaining(
@@ -453,6 +509,32 @@ describe('LydiaReconciliationService sweeps', () => {
     );
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
     expect(service.takeCounts().products).toMatchObject({ examined: 4, unavailable: 2, errors: 2 });
+  });
+
+  it('ACCUSES, in ONE line per tick, what it left open on an answer that is not final', async () => {
+    const rows = ['g', 'h', 'i'].map((id) => checkout({ id: `checkout-${id}` }));
+    const { service, productsService } = makeService({ checkouts: rows });
+    read
+      .mockRejectedValueOnce(coreAnswered(403, {}))
+      .mockResolvedValueOnce({ verification: 'refused', providerCode: '5' })
+      .mockResolvedValueOnce({ verification: 'verified', state: 'open', raw: '0' });
+    productsService.cancelStillOpenCheckout.mockRejectedValueOnce(coreAnswered(400, refusal('3')));
+    await service.sweepProductCheckouts();
+    expect(logs.error).toHaveBeenCalledTimes(1);
+    expect(logs.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '3 attempt(s) left open on an answer that is not final - ' +
+          'checkout-g (read: core answered HTTP 403 about itself); ' +
+          'checkout-h (read refused, error 5, not known final); ' +
+          'checkout-i (cancel refused, error 3, not known final) - read again next tick'
+      )
+    );
+    expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
+    expect(service.takeCounts().products).toMatchObject({
+      examined: 3,
+      refused: 1,
+      unavailable: 2,
+    });
   });
 
   it('names the failed writes Lydia did NOT say paid too', async () => {

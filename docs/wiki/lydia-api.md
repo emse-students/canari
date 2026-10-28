@@ -239,27 +239,42 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
   At most 50 rows per kind per tick.
 - **An answer is acted on once; no answer is retried.**
   - A form answer is read once: what the read did not settle is expired by the expiry that follows.
-  - A boutique attempt leaves `open` as soon as its read ANSWERED - and a status code is an answer:
-    settled or released from a verified state; a verified `open` past its end is **cancelled at Lydia
-    first** (`ProductsService.cancelStillOpenCheckout`, the cancel the buyer's next attempt makes - a request
-    left payable after Canari closed it is a double charge), then closed; a cancel answering "already
-    processed" is read once more at once, and still `open` then is closed; a mismatch, `unsigned`, no usable
-    key (a key that does not open answers `no-key`), an unknown state, a read REFUSED by Lydia or core
-    (`refused`, core's typed `PAYMENT_PROVIDER_REFUSED` 400 or its own 400: a Business blocked or gone, a uuid
-    not held under that vendor token) and a REFUSED cancel close it `expired` (`ProductsService.expireUnprovenCheckout`,
-    logged at ERROR). Closing loses nothing: Lydia's confirm callback asks even of a closed attempt, and
-    `settlePaidCheckout` records a paid answer over it (asserted by the integration spec).
-  - Only what got NO answer leaves the attempt `open`, read again next tick: no response, a timeout, a
-    5xx (core's key store unconfigured included), core refusing social-service itself (401/403), a verdict
-    social-service does not know (an older core mid-deploy), a cancel that got no answer, and a settlement
-    WRITE that failed after a verified read - above all a verified PAID, whose only automatic path this is
-    and which is never closed. Each tick says so in ONE line per cause, never one per row: a WARN with the
-    count of reads that got no answer, an ERROR with the failed writes that names every attempt and which
-    ones Lydia said PAID.
-  - **What this does not bound.** Oldest first spreads nothing for those transient classes: an outage longer
-    than a tick re-reads them every tick, and 50 of them at once hold the newer attempts back until it ends.
-    A bound on retries needs durable state (a column, so a migration and the user's decision): deliberately
-    not built.
+  - A boutique attempt leaves `open` as soon as its read gave a FINAL answer: settled or released from a
+    verified state; a verified `open` past its end is **cancelled at Lydia first**
+    (`ProductsService.cancelStillOpenCheckout`, the cancel the buyer's next attempt makes - a request left
+    payable after Canari closed it is a double charge), then closed; a cancel answering "already processed"
+    is read once more at once, and still `open` then is closed; a mismatch, `unsigned`, no usable key (a key
+    that does not open answers `no-key`), an unknown state, and a refusal whose Lydia code is MEASURED final
+    close it `expired` (`ProductsService.expireUnprovenCheckout`, logged at ERROR).
+  - **Closing is not free.** Nothing reads a closed attempt again: if its request was in fact PAID and its
+    confirm callback was lost, nothing records the payment (the payer's return asks only of an open
+    attempt). A callback that DOES arrive still records over an expired attempt (`settlePaidCheckout`,
+    at ERROR, asserted by the integration spec) - that is the one path left, not a guarantee.
+  - **A refusal closes only from an ALLOWLIST** (`LYDIA_READ_REFUSALS_FINAL`,
+    `LYDIA_CANCEL_REFUSALS_FINAL`, `apps/social-service/src/common/core-payment-error.ts`), because a refusal
+    can be a state of Lydia (a Business temporarily blocked, a revoked provider token) as much as a word
+    about the request. Read: error `2` only ("Requete introuvable", measured 2026-10-15). Cancel: EMPTY - no
+    cancel refusal is measured final, so after a refused cancel the attempt stays open and the request stays
+    PAYABLE at Lydia until it expires; the next tick reads it again, and a later callback records over the
+    attempt as above. Every other refusal is retried and accused.
+  - **Core answers about ITSELF with a 503, never a 400.** On `request-state` and `cancel-request` the only
+    400 is Lydia's typed `PAYMENT_PROVIDER_REFUSED`; payments switched off, Lydia not configured and a
+    payload core will not read answer `503 PAYMENT_SERVICE_NOT_READY` (`PaymentController.aboutTheRequest`).
+    The read and the cancel go through ONE classifier (`classifyCoreCallFailure`): `refused` (closes only if
+    allowlisted), `core-fault` (401/403, the 503 above, any other 4xx), `no-answer` (no response, 408, 429,
+    other 5xx).
+  - Everything else leaves the attempt `open`, read again next tick: no answer, a core fault, a refusal not
+    known final, a verdict social-service does not know (an older core mid-deploy), a cancel that did not go
+    through, and a settlement WRITE that failed after a verified read - above all a verified PAID, whose only
+    automatic path this is and which is never closed. Each tick says so in ONE line per cause, never one per
+    row: a WARN with the count of calls that got no answer; an ERROR that ACCUSES every attempt left open on
+    a core fault or a refusal not known final, each with its cause; an ERROR with the failed writes that
+    names every attempt and which ones Lydia said PAID.
+  - **What this does not bound.** Oldest first spreads nothing for those classes: while the cause lasts
+    (an outage, a revoked token, a refusal code nobody has measured) they are re-read every tick, and 50 of
+    them at once hold the newer attempts back until it ends - the starvation trade, taken knowingly for
+    every unmeasured refusal code. A bound on retries needs durable state (a column, so a migration and the
+    user's decision): deliberately not built.
 - **What it does with the answer.** Only a `verified` answer is acted on: `paid` through the ONE writer
   of each kind (`FormsService.markPaid`; `ProductsService.applyRequestState` -> `settlePaidCheckout`),
   `declined` and `cancelled-or-expired` through the release the payer's return uses. A `mismatch` is
@@ -295,9 +310,12 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
      c."expiresAt" <= now() - interval '5 minutes' AND EXISTS (SELECT 1 FROM associations a WHERE
      a."lydiaAccountId" = c."vendorToken" AND a."lydiaBusinessKeyCiphertext" IS NOT NULL)`. Every one of
      them is read, oldest first, 50 per tick, and settled, cancelled at Lydia or closed `expired` on its answer.
+  4. On the sandbox: which Lydia refusal codes are PERMANENT, for `request/state` and for `request/cancel`
+     (a Business blocked then unblocked, a revoked then restored token, a uuid under another vendor token).
+     Only a code measured final joins its allowlist; until then such rows are retried every tick.
 - **What it reports.** One line per row it reads, and once an hour
-  `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= unavailable=
-  errors=; boutique: ...; ended boutique attempts left open with no Business key: N`, even when all zero.
+  `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= refused=
+  unavailable= errors=; boutique: ...; ended boutique attempts left open with no Business key: N`, even when all zero.
 
 **Not covered, known:** a form answer the expiry moved to `expired` before any read (a backlog over 50 in
 one tick, logged at ERROR; Lydia unreachable in that tick; no key) - its payment is still recorded by its

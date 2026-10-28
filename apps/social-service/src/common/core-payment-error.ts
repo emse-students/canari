@@ -74,6 +74,57 @@ export function coreRefusedRequest(err: unknown): boolean {
 }
 
 /**
+ * Lydia error codes MEASURED to refuse a `request/state` READ for good - an ALLOWLIST: only a code
+ * listed here lets the reconciliation sweep close an attempt on a refusal; any other refusal is
+ * retried and accused, because the sweep is the only automatic path for a PAID request whose
+ * callback was lost, and an attempt it closes is never read again.
+ * - `2`, "Requete introuvable": Lydia holds no request with that id under that vendor token
+ *   (measured 2026-10-15, docs/wiki/lydia-api.md `request/state`).
+ * Adding a code needs a sandbox measurement that it is FINAL (owed: lydia-api.md section 7).
+ */
+export const LYDIA_READ_REFUSALS_FINAL: ReadonlySet<string> = new Set(['2']);
+
+/**
+ * The same allowlist for a `request/cancel` refusal: EMPTY, because no cancel refusal has been
+ * measured as final (error 2 on a cancel is "already processed", an answer read apart). A refused
+ * cancel is retried and accused until one is.
+ */
+export const LYDIA_CANCEL_REFUSALS_FINAL: ReadonlySet<string> = new Set();
+
+/**
+ * What a failed call to core-service's `request-state` or `cancel-request` was, for the caller that
+ * must decide whether to act on it - ONE classifier for the read and the cancel.
+ * - `refused`: Lydia's typed refusal (a 400 with `PAYMENT_PROVIDER_REFUSED` and its
+ *   `providerCode`) - about THIS request; final only if its code is allowlisted.
+ * - `core-fault`: core answered, but about ITSELF or this service - a 401/403 (the internal
+ *   secret), its 503 `PAYMENT_SERVICE_NOT_READY` (payments switched off, Lydia not configured, a
+ *   payload it would not read), any other 4xx it should not send here. Retried, and accused.
+ * - `no-answer`: no response, a timeout, a 5xx, a 408/429: retried.
+ */
+export type CoreCallFailure =
+  | { kind: 'refused'; providerCode: string }
+  | { kind: 'core-fault'; status: number }
+  | { kind: 'no-answer' };
+
+/** Classifies a failed call to core's request-state / cancel-request (see `CoreCallFailure`). */
+export function classifyCoreCallFailure(err: unknown): CoreCallFailure {
+  const answer = (err as CoreAnswer | null)?.response;
+  const status = typeof answer?.status === 'number' ? answer.status : null;
+  if (status === null || status === 408 || status === 429) return { kind: 'no-answer' };
+  const body =
+    answer?.data && typeof answer.data === 'object'
+      ? (answer.data as { code?: unknown; providerCode?: unknown })
+      : {};
+  if (status === 400 && body.code === PAYMENT_PROVIDER_REFUSED) {
+    const code =
+      typeof body.providerCode === 'string' && body.providerCode ? body.providerCode : '';
+    return { kind: 'refused', providerCode: code };
+  }
+  if (status >= 500 && body.code !== 'PAYMENT_SERVICE_NOT_READY') return { kind: 'no-answer' };
+  return { kind: 'core-fault', status };
+}
+
+/**
  * Turns a failed call to core-service's `payments/create-checkout-session` into the ONE exception
  * every checkout route answers with - the product checkout and the paid form submit used to map the
  * same Lydia refusal two ways (500 "Internal server error" and 400 with Lydia's message).

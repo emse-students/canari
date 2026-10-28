@@ -51,7 +51,9 @@ import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
   amountOutOfRange,
+  classifyCoreCallFailure,
   coreRefusedRequest,
+  LYDIA_CANCEL_REFUSALS_FINAL,
   mapCorePaymentError,
 } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
@@ -1226,9 +1228,11 @@ export class ProductsService {
    * attempt makes, so no payment can land on a request Canari has closed; then closed `cancelled`.
    * - `already-settled`: Lydia processed it between the read and the cancel. The attempt stays
    *   `open` and this answers `open`, so the caller reads it once more (the sweep does, at once).
-   * - A cancel core ANSWERED with a refusal (a 4xx: a Business blocked or gone, a request id it no
-   *   longer holds): an answer that will not change, so the attempt is closed `expired` at ERROR
-   *   (`expireUnprovenCheckout`) - a payment landing on it later is still recorded by its callback.
+   * - A cancel Lydia REFUSED with a code measured FINAL (`LYDIA_CANCEL_REFUSALS_FINAL`, empty until
+   *   a sandbox measurement fills it): closed `expired` at ERROR (`expireUnprovenCheckout`). The
+   *   request may then still be payable at Lydia; a payment on it is recorded only if its confirm
+   *   callback arrives, over the closed attempt, at ERROR. Any other refusal - and core answering
+   *   about itself, 401/403 or its 503 - THROWS like a cancel with no answer: retried, never closed.
    * - No numeric request id (its request/do answer was lost): the cancel cannot name it, closed
    *   `expired` at ERROR the same way.
    * - A cancel that got NO answer (no response, a timeout, a 5xx) THROWS and closes nothing: the
@@ -1242,8 +1246,14 @@ export class ProductsService {
     try {
       outcome = await this.cancelRequestAtLydia(row);
     } catch (err: unknown) {
-      if (!coreRefusedRequest(err)) throw err;
-      return this.expireUnprovenCheckout(row, `${why}; its cancel at Lydia was refused`);
+      const failure = classifyCoreCallFailure(err);
+      if (failure.kind !== 'refused' || !LYDIA_CANCEL_REFUSALS_FINAL.has(failure.providerCode)) {
+        throw err;
+      }
+      return this.expireUnprovenCheckout(
+        row,
+        `${why}; its cancel at Lydia was refused for good (error ${failure.providerCode})`
+      );
     }
     if (outcome === 'already-settled') {
       this.logger.warn(
