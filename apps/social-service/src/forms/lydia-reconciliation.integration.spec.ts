@@ -102,6 +102,12 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     await ds.query(
       readFileSync(join(__dirname, '../migrations/101_product_checkouts.sql'), 'utf8')
     );
+    // The opening's frozen tier (112), on the same connection as its RESET: the migration's
+    // `SET lock_timeout` must not stay on a pool connection.
+    await ds.query(
+      `${readFileSync(join(__dirname, '../migrations/112_product_checkouts_held_tier.sql'), 'utf8')}
+RESET lock_timeout;`
+    );
     // The two columns of `associations` the sweep's key test reads, and nothing else of it.
     await ds.query(
       `CREATE TABLE associations (id uuid PRIMARY KEY, "lydiaAccountId" varchar(255),

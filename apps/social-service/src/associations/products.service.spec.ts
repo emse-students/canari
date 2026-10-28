@@ -20,6 +20,8 @@ import { AssociationsService } from './associations.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
+import { PurchaseRecord } from '../users/entities/purchase-record.entity';
+import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
 
 /**
  * An in-memory `product_checkouts` keeping the two properties the service relies on: a conditional
@@ -856,6 +858,531 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
+  describe('closing a payment paid and not granted (migration 113)', () => {
+    /**
+     * The tiers of the test association: `sans-alcool` (20 EUR) below `mid` (25 EUR) below
+     * `avec-alcool` (30 EUR) below `top` (90 EUR), and `libre` with no fixed price.
+     */
+    const TIERS = [
+      { id: 'prod-sans', associationId: 'asso1', variantKey: 'sans-alcool', amountCents: 2000 },
+      { id: 'prod-mid', associationId: 'asso1', variantKey: 'mid', amountCents: 2500 },
+      { id: 'prod-tier', associationId: 'asso1', variantKey: 'avec-alcool', amountCents: 3000 },
+      { id: 'prod-top', associationId: 'asso1', variantKey: 'top', amountCents: 9000 },
+      { id: 'prod-libre', associationId: 'asso1', variantKey: 'libre', amountCents: null },
+    ].map((t) => ({ ...t, priceMatrix: null }));
+    /** The catalogue listing every tier above. */
+    const tagOf = (key: string) => `cotisant:cercle-${key}`;
+    const FULL_CATALOGUE = TIERS.map((t) => ({
+      variantKey: t.variantKey,
+      name: t.variantKey,
+      tagName: tagOf(t.variantKey),
+    }));
+
+    /**
+     * A service whose purchase record lookups answer `records` in turn (the unlocked read, then the
+     * locked one; the last one repeats) - and ONLY when asked within the record's own association, as
+     * the real `where` does - with the association's catalogue `catalogue`, its mode, the tiers
+     * the buyer holds now (`held`, by key), and the row of each held tag (`heldTag`; by default
+     * granted long before any payment).
+     */
+    function closing(
+      records: (Record<string, unknown> | null)[],
+      opts: {
+        closed?: boolean;
+        catalogue?: { variantKey: string | null; name?: string }[];
+        held?: string[];
+        mode?: 'lifetime' | 'dated' | null;
+        heldTag?: { createdAt: Date; metadata: Record<string, unknown> };
+        stamps?: boolean;
+      } = {}
+    ) {
+      const t = makeService();
+      const base = t.manager.findOne;
+      let read = 0;
+      t.manager.findOne = jest.fn((entity: unknown, o: { where: { associationId?: string } }) => {
+        if (entity !== PurchaseRecord) return base(entity, o);
+        const record = records[Math.min(read++, records.length - 1)];
+        return Promise.resolve(
+          record && record.associationId === o.where.associationId ? record : null
+        );
+      });
+      t.manager.insert = jest.fn(() => Promise.resolve({}));
+      const first = records[0];
+      (t.purchaseRecordService as any).closingsOf = jest.fn(() =>
+        Promise.resolve(new Map(opts.closed && first ? [[first.id, { outcome: 'refunded' }]] : []))
+      );
+      (t.userTagService as any).grantCotisantWithin = jest.fn(() => Promise.resolve({}));
+      (t.userTagService as any).listCotisationTiers = jest.fn(() =>
+        Promise.resolve(
+          opts.catalogue ?? [
+            { variantKey: 'sans-alcool', name: 'Sans alcool', tagName: tagOf('sans-alcool') },
+            { variantKey: 'avec-alcool', name: 'Avec alcool', tagName: tagOf('avec-alcool') },
+          ]
+        )
+      );
+      t.assoRepo.findOne.mockResolvedValue({
+        id: 'asso1',
+        slug: 'cercle',
+        cotisationMode: opts.mode === undefined ? 'lifetime' : opts.mode,
+      });
+      (t.productRepo.find as jest.Mock).mockResolvedValue(TIERS);
+      // The closing context reads the records' products by id: what `productRepo.findOne` answers.
+      const baseFind = t.manager.find;
+      t.manager.find = jest.fn(async (entity: unknown, o: { where: { id?: unknown } }) => {
+        if (entity !== AssociationProduct || !o.where.id) return baseFind(entity, o);
+        const product = await t.productRepo.findOne(o);
+        return product ? [product] : [];
+      });
+      const held = new Set((opts.held ?? []).map(tagOf));
+      t.userTagService.hasActiveTag.mockImplementation((_user: string, tag: string) =>
+        Promise.resolve(held.has(tag))
+      );
+      const heldTag = {
+        id: 'tag-1',
+        ...(opts.heldTag ?? { createdAt: new Date(0), metadata: {} }),
+      };
+      (t.userTagService as any).stampDelivery = jest.fn(() => Promise.resolve(opts.stamps ?? true));
+      (t.userTagService as any).activeTagsOf = jest.fn((userIds: string[], tagNames: string[]) =>
+        Promise.resolve(
+          tagNames
+            .filter((tagName) => held.has(tagName))
+            .map((tagName) => ({ ...heldTag, userId: userIds[0], tagName }))
+        )
+      );
+      return t;
+    }
+    const marked = (over: Record<string, unknown> = {}) => ({
+      id: 'rec-1',
+      associationId: 'asso1',
+      userId: 'user1',
+      status: 'paid_not_granted',
+      source: 'product',
+      productId: 'prod-gone',
+      formId: null,
+      stripePaymentIntentId: '1001',
+      paidAt: new Date(),
+      ...over,
+    });
+    const codeOf = (e: unknown) =>
+      ((e as ConflictException).getResponse() as { code: string }).code;
+    const tierLocks = (t: ReturnType<typeof closing>) =>
+      t.manager.query.mock.calls
+        .filter(([sql]: [string]) =>
+          String(sql).includes('pg_advisory_xact_lock(hashtextextended($1, 0))')
+        )
+        .map(([, params]: [string, unknown[]]) => params);
+    const tierProduct = (variantKey = 'avec-alcool') =>
+      product({
+        id: TIERS.find((t) => t.variantKey === variantKey)!.id,
+        type: 'membership',
+        variantKey,
+      });
+    /** Closes as `granted` and answers the refusal, or undefined when it was granted. */
+    const grantRefused = (t: ReturnType<typeof closing>, expectDelivered = false) =>
+      t.service
+        .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', expectDelivered)
+        .then(() => undefined)
+        .catch((e: unknown) => e);
+
+    it("answers 404 for a record that is not this association's, and writes nothing", async () => {
+      const t = closing([null]);
+      await expect(
+        t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'refunded', false)
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it.each(['refunded', 'granted'] as const)(
+      "answers 404 for association B's purchase named through association A (%s), and writes nothing",
+      async (outcome) => {
+        // The record exists - in asso1. Asked through asso2, every read is scoped to asso2.
+        const t = closing([marked({ productId: 'prod-tier' })]);
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        await expect(
+          t.service.closePaidNotGranted('asso2', 'rec-1', 'admin1', outcome, false)
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(t.manager.insert).not.toHaveBeenCalled();
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses PURCHASE_NOT_CLOSABLE for a payment that is not marked', async () => {
+      const t = closing([marked({ status: 'paid' })]);
+      const err = await t.service
+        .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'refunded', false)
+        .catch((e: unknown) => e);
+      expect(codeOf(err)).toBe('PURCHASE_NOT_CLOSABLE');
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses PURCHASE_ALREADY_CLOSED for a payment whose outcome is recorded', async () => {
+      const t = closing([marked()], { closed: true });
+      const err = await t.service
+        .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'refunded', false)
+        .catch((e: unknown) => e);
+      expect(codeOf(err)).toBe('PURCHASE_ALREADY_CLOSED');
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('answers PURCHASE_ALREADY_CLOSED for a violation of ITS unique index only', async () => {
+      const t = closing([marked()]);
+      const violation = (constraint: string) =>
+        Object.assign(new Error('duplicate key'), { code: '23505', constraint });
+      t.manager.insert.mockRejectedValueOnce(violation('purchase_record_closings_one_per_record'));
+      const ours = await t.service
+        .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'refunded', false)
+        .catch((e: unknown) => e);
+      expect(codeOf(ours)).toBe('PURCHASE_ALREADY_CLOSED');
+
+      t.manager.insert.mockRejectedValueOnce(violation('some_other_index'));
+      const other = await t.service
+        .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'refunded', false)
+        .catch((e: unknown) => e);
+      expect(other).not.toBeInstanceOf(ConflictException);
+    });
+
+    it('refuses PURCHASE_TIER_GONE for GRANTED when the tier product was deleted, granting nothing', async () => {
+      const t = closing([marked()]);
+      t.productRepo.findOne.mockResolvedValue(null);
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TIER_GONE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the association no longer sells cotisations', []],
+      ['the tier is not in the catalogue', [{ variantKey: 'sans-alcool' }]],
+    ])(
+      'refuses PURCHASE_TIER_GONE, typed and not a 400, when %s',
+      async (_case, catalogue: { variantKey: string | null }[]) => {
+        const t = closing([marked({ productId: 'prod-tier' })], { catalogue });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        const err = await grantRefused(t);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(codeOf(err)).toBe('PURCHASE_TIER_GONE');
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['[deleted]', '[deleted]:0a1b2c3d'])(
+      'refuses GRANTED for an ERASED buyer (%s), and still records REFUNDED for them',
+      async (erasedId) => {
+        const t = closing([marked({ userId: erasedId })]);
+        expect(codeOf(await grantRefused(t))).toBe('PURCHASE_BUYER_ERASED');
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+
+        const row = await t.service.closePaidNotGranted(
+          'asso1',
+          'rec-1',
+          'admin1',
+          'refunded',
+          false
+        );
+        // The mocked closing read answers no closing, so the row reads as open: refunded-only.
+        expect(row).toMatchObject({ grantRefusal: 'buyer-erased' });
+        expect(t.manager.insert).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('refuses GRANTED when the erasure committed between the first read and the LOCKED one', async () => {
+      const t = closing([marked({ productId: 'prod-tier' }), marked({ userId: '[deleted]' })]);
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_BUYER_ERASED');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses PURCHASE_TARGET_ALREADY_HELD when the buyer held the tier paid for BEFORE paying: a refund is owed', async () => {
+      const t = closing([marked({ productId: 'prod-tier' })], { held: ['avec-alcool'] });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    const later = () => new Date(Date.now() + 60_000);
+    it.each([
+      ['granted by hand after the payment (a roster grant)', { createdAt: later(), metadata: {} }],
+      [
+        "granted by this payment's own intent",
+        { createdAt: new Date(0), metadata: { paymentIntentId: '1001' } },
+      ],
+    ])(
+      'records GRANTED, grants nothing and stamps the tag when it is the delivery: %s',
+      async (_case, heldTag) => {
+        const t = closing([marked({ productId: 'prod-tier' })], { held: ['avec-alcool'], heldTag });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        expect(await grantRefused(t, true)).toBeUndefined();
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+        expect((t.userTagService as any).stampDelivery).toHaveBeenCalledWith(
+          'tag-1',
+          'rec-1',
+          t.manager
+        );
+        expect(t.manager.insert).toHaveBeenCalledWith(
+          PurchaseRecordClosing,
+          expect.objectContaining({ purchaseRecordId: 'rec-1', outcome: 'granted' })
+        );
+      }
+    );
+
+    it.each([
+      ['another payment granted it', { paymentIntentId: '2002', productId: 'prod-tier' }],
+      ['it already closed another payment', { purchaseRecordId: 'rec-other' }],
+      ['a form answer granted it, and this is a boutique payment', { submissionId: 'sub-1' }],
+      ['a legacy claim granted it', { legacy: { batch: 'b' } }],
+    ])(
+      'refuses PURCHASE_TARGET_ALREADY_HELD when the tag points elsewhere, however recent: %s',
+      async (_case, metadata) => {
+        const t = closing([marked({ productId: 'prod-tier' })], {
+          held: ['avec-alcool'],
+          heldTag: { createdAt: later(), metadata },
+        });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+        expect((t.userTagService as any).stampDelivery).not.toHaveBeenCalled();
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses when the stamp finds the tag already the delivery of another payment', async () => {
+      const t = closing([marked({ productId: 'prod-tier' })], {
+        held: ['avec-alcool'],
+        heldTag: { createdAt: later(), metadata: {} },
+        stamps: false,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      expect(codeOf(await grantRefused(t, true))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses PURCHASE_NOT_A_RISE when the buyer holds a dearer tier: granting would move them down', async () => {
+      const t = closing([marked({ productId: 'prod-sans' })], { held: ['avec-alcool'] });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('sans-alcool'));
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_NOT_A_RISE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses PURCHASE_TIER_NOT_COMPARABLE, not NOT_A_RISE, for a tier with no fixed price', async () => {
+      const t = closing([marked({ productId: 'prod-libre' })], {
+        held: ['sans-alcool'],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('libre'));
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TIER_NOT_COMPARABLE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+    });
+
+    it('ranks a buyer holding TWO tiers against the DEARER: a tier between them is refused', async () => {
+      const t = closing([marked({ productId: 'prod-mid' })], {
+        held: ['sans-alcool', 'avec-alcool'],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('mid'));
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_NOT_A_RISE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+    });
+
+    it('grants a buyer holding TWO tiers a rise over the dearer, through the XOR grant path', async () => {
+      const t = closing([marked({ productId: 'prod-top' })], {
+        held: ['sans-alcool', 'avec-alcool'],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('top'));
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', false);
+      // `grantCotisantWithin` is the manual path, whose sibling XOR revokes BOTH held tiers.
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledWith(
+        t.manager,
+        'asso1',
+        'user1',
+        'admin1',
+        'top',
+        expect.anything()
+      );
+    });
+
+    it('grants a dated tier paid in the CURRENT academic year', async () => {
+      const t = closing([marked({ productId: 'prod-tier', paidAt: new Date() })], {
+        mode: 'dated',
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', false);
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledTimes(1);
+    });
+
+    it('still names the tier the buyer holds when the verdict stops early (tier gone)', async () => {
+      const t = closing([marked()], { held: ['sans-alcool'] });
+      t.productRepo.findOne.mockResolvedValue(null);
+      (t.purchaseRecordService as any).listPaidByAssociation = jest.fn(() =>
+        Promise.resolve([marked()])
+      );
+      const [row] = await t.service.listAssociationPurchases('asso1');
+      expect(row).toMatchObject({ grantRefusal: 'tier-gone', buyerTier: 'Sans alcool' });
+    });
+
+    it('refuses PURCHASE_YEAR_OVER for a dated tier paid in an academic year that is over', async () => {
+      const lastYear = new Date();
+      lastYear.setFullYear(lastYear.getFullYear() - 1);
+      const t = closing([marked({ productId: 'prod-tier', paidAt: lastYear })], { mode: 'dated' });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_YEAR_OVER');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+    });
+
+    it('records REFUNDED without the tier lock, grants nothing, and writes an audit line', async () => {
+      const t = closing([marked()]);
+      const log = jest.spyOn((t.service as any).logger, 'log').mockImplementation(() => undefined);
+      const row = await t.service.closePaidNotGranted(
+        'asso1',
+        'rec-1',
+        'admin1',
+        'refunded',
+        false
+      );
+      expect(t.manager.insert).toHaveBeenCalledWith(expect.anything(), {
+        purchaseRecordId: 'rec-1',
+        outcome: 'refunded',
+        closedByUserId: 'admin1',
+      });
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+      expect(row).toMatchObject({ id: 'rec-1', notGranted: true });
+      expect(tierLocks(t)).toEqual([]);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('[AUDIT]'));
+    });
+
+    it("records GRANTED under the buyer's tier lock, granting the product's tier by hand", async () => {
+      const t = closing([marked({ productId: 'prod-tier' })]);
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', false);
+      expect(tierLocks(t)).toEqual([['tier:asso1:user1']]);
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledWith(
+        t.manager,
+        'asso1',
+        'user1',
+        'admin1',
+        'avec-alcool',
+        expect.objectContaining({ purchaseRecordId: 'rec-1', manualGrant: true })
+      );
+      expect(t.manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ outcome: 'granted' })
+      );
+    });
+
+    it('records GRANTED for a RISE over the tier held', async () => {
+      const t = closing([marked({ productId: 'prod-tier' })], { held: ['sans-alcool'] });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', false);
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledTimes(1);
+    });
+
+    it("records GRANTED for a paid FORM by granting the form's tier", async () => {
+      const t = closing([marked({ source: 'form', productId: null, formId: 'form-1' })]);
+      const query = t.manager.query;
+      t.manager.query = jest.fn((sql: string, params?: unknown[]) =>
+        String(sql).includes('FROM forms')
+          ? Promise.resolve([
+              { id: 'form-1', grantsCotisation: true, cotisationVariantKey: 'avec-alcool' },
+            ])
+          : query(sql, params)
+      );
+      await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', false);
+      expect((t.userTagService as any).grantCotisantWithin).toHaveBeenCalledWith(
+        t.manager,
+        'asso1',
+        'user1',
+        'admin1',
+        'avec-alcool',
+        expect.anything()
+      );
+    });
+
+    it("lists an open marked payment with the buyer's CURRENT tier and why it cannot be granted", async () => {
+      const t = closing([marked({ productId: 'prod-tier' })], { held: ['avec-alcool'] });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      (t.purchaseRecordService as any).listPaidByAssociation = jest.fn(() =>
+        Promise.resolve([marked({ productId: 'prod-tier' })])
+      );
+      const [row] = await t.service.listAssociationPurchases('asso1');
+      expect(row).toMatchObject({ grantRefusal: 'target-held', buyerTier: 'Avec alcool' });
+    });
+    it.each([
+      ['the tag names a NULL intent', { paymentIntentId: null }, '1001'],
+      ['the record names no intent', { paymentIntentId: '1001' }, null],
+      ['neither names an intent (null never matches null)', { paymentIntentId: null }, null],
+    ])(
+      'never falls back to time for a paid grant: refused when %s',
+      async (_case, metadata, recordIntent) => {
+        const t = closing(
+          [marked({ productId: 'prod-tier', stripePaymentIntentId: recordIntent })],
+          {
+            held: ['avec-alcool'],
+            heldTag: { createdAt: new Date(Date.now() + 60_000), metadata },
+          }
+        );
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['confirmed as delivered, and it no longer is', true, [] as string[]],
+      ['confirmed as a grant, and it is now delivered', false, ['avec-alcool']],
+    ])(
+      'refuses PURCHASE_CLOSING_CHANGED when %s, writing nothing',
+      async (_case, expectDelivered, held) => {
+        const t = closing([marked({ productId: 'prod-tier' })], {
+          held,
+          heldTag: { createdAt: new Date(Date.now() + 60_000), metadata: {} },
+        });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        const err = await t.service
+          .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', expectDelivered)
+          .catch((e: unknown) => e);
+        expect(codeOf(err)).toBe('PURCHASE_CLOSING_CHANGED');
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+        expect((t.userTagService as any).stampDelivery).not.toHaveBeenCalled();
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it('reads the closing context ONCE for all the open rows of the list', async () => {
+      const t = closing([marked({ productId: 'prod-tier' })]);
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      (t.purchaseRecordService as any).listPaidByAssociation = jest.fn(() =>
+        Promise.resolve(
+          ['rec-1', 'rec-2', 'rec-3'].map((id) => marked({ id, productId: 'prod-tier' }))
+        )
+      );
+      const rows = await t.service.listAssociationPurchases('asso1');
+      expect(rows).toHaveLength(3);
+      expect((t.userTagService as any).listCotisationTiers).toHaveBeenCalledTimes(1);
+      expect((t.userTagService as any).activeTagsOf).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the tier an opening freezes', () => {
+    it('is the smallest product id when two tier products share the held key, said at WARN', () => {
+      const { service } = makeService();
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const facts = {
+        slug: 'cercle',
+        tiers: [
+          { id: 'prod-b', variantKey: 'avec' },
+          { id: 'prod-a', variantKey: 'avec' },
+          { id: 'prod-c', variantKey: 'sans' },
+        ],
+        heldKeys: ['avec'],
+        held: { variantKey: 'avec', product: null },
+      };
+      expect((service as any).heldTierProductIdOf(facts)).toBe('prod-a');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('share key avec'));
+    });
+  });
+
   describe('a cash grant may not be recorded against a Cercle top-up', () => {
     it('refuses the grant, before touching the buyer or the books', async () => {
       const { service, productRepo, purchaseRecordService } = makeService();
@@ -1536,6 +2063,26 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(
         await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
       ).toBe('TIER_NOT_A_RISE');
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
+    });
+
+    it('refuses a buyer holding TWO tiers at once with TIER_NOT_RANKABLE, before any request', async () => {
+      // Ranked against one of the two and frozen on it, the settlement would read the other as
+      // `held-changed` and refuse every time: the money would be taken for nothing.
+      const top = product({
+        id: 'prod-top',
+        type: 'membership',
+        variantKey: 'top',
+        amountCents: 9000,
+      });
+      const { service, httpService } = buyer(
+        top,
+        [sansAlcool(), avecAlcool(), top],
+        ['cotisant:cercle-sans-alcool', 'cotisant:cercle-avec-alcool']
+      );
+      expect(
+        await conflictCode((service as any).resolvePurchase('asso1', 'prod-top', 'user1'))
+      ).toBe('TIER_NOT_RANKABLE');
       expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
     });
 
@@ -2767,6 +3314,33 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect(t.userTagService.revokeSiblingTierTags).not.toHaveBeenCalled();
         expect(error.mock.calls.some(([m]) => String(m).includes('a refund is owed'))).toBe(true);
         error.mockRestore();
+      });
+
+      it('the opening freezes the tier it ranked against on the attempt row, and nothing when none is held', async () => {
+        const t = cercleBuyer();
+        await t.open('prod-sans');
+        t.held.add('cotisant:cercle-sans-alcool');
+        await t.open('prod-avec');
+        expect(t.checkouts.rows.map((r) => [r.productId, r.heldTierProductId])).toEqual([
+          ['prod-sans', null],
+          ['prod-avec', 'prod-sans'],
+        ]);
+      });
+
+      it('a rise whose price an admin lowered after the opening is GRANTED on what the opening decided', async () => {
+        const t = cercleBuyer();
+        t.held.add('cotisant:cercle-sans-alcool');
+        const { checkoutId } = await t.open('prod-avec');
+        // Ranked on today's prices, 1000 under the held 1500 would be `lower`; it is never re-read.
+        const lowered = () => ({ ...avec(), amountCents: 1000 });
+        t.productRepo.findOne.mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve([sans(), lowered()].find((p) => p.id === where.id) ?? null)
+        );
+        t.productRepo.find.mockResolvedValue([sans(), lowered()]);
+        t.setState('paid');
+        await t.service.confirmCheckout('asso1', 'prod-avec', checkoutId, 'user1');
+        expect(t.records[0]).toMatchObject({ productId: 'prod-avec', status: 'paid' });
+        expect(t.userTagService.revokeSiblingTierTags).toHaveBeenCalled();
       });
 
       it('a rise paid as planned is granted, with the XOR', async () => {

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { lockBuyerTiers } from './buyer-tier-lock';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, Repository, In } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
@@ -424,89 +424,142 @@ export class UserTagService {
     rule: GrantRule,
     expiresAtOverride?: Date
   ): Promise<RankedGrantOutcome | null> {
-    return this.repo.manager.transaction(async (manager) => {
-      await lockBuyerTiers(manager, assocId, userId);
-      const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
-        `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
-        [assocId]
-      );
-      const asso = rows[0];
-      if (!asso) throw new NotFoundException('Association not found');
-      const tiers = asso.cotisationMode ? await this.listCotisationTiers(assocId, { manager }) : [];
-      let variantKey: string | null;
-      if ('tagName' in tier) {
-        const named = tiers.find((t) => t.tagName === tier.tagName);
-        if (!named) {
-          this.logger.warn(
-            `[UserTag] raw grant of "${tier.tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
-              'not one of its cotisation tier tags'
-          );
-          throw new ForbiddenException({
-            code: TAG_NOT_ISSUER_TIER,
-            message: "The tag is not one of the granting association's cotisation tiers",
-          });
-        }
-        variantKey = named.variantKey;
-      } else {
-        variantKey = tier.variantKey;
-      }
-      if (!asso.cotisationMode) {
-        throw new BadRequestException('Cotisation is not enabled for this association');
-      }
+    return this.repo.manager.transaction((manager) =>
+      this.grantCotisantIn(
+        manager,
+        assocId,
+        userId,
+        grantedBy,
+        tier,
+        metadata,
+        rule,
+        expiresAtOverride
+      )
+    );
+  }
 
-      // Validate the tier against the association's own catalogue. An arbitrary variantKey would
-      // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
-      if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
-        throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
-      }
-      // The same trap in reverse: an association that dropped its base tier in favour of named ones
-      // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
-      if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
-        throw new BadRequestException('This association has no base tier - a tier must be chosen');
-      }
+  /**
+   * `grantCotisant` - the manager's grant, NOT ranked - inside the CALLER's transaction: the closing
+   * of a payment paid for and not granted (`ProductsService.closePaidNotGranted`) grants the tier and
+   * writes its closing row in one commit, after its own ranked verdict. Takes the buyer's tier lock on
+   * `manager` itself; a caller that already holds it on the same transaction simply holds it twice
+   * (advisory locks stack within one session, and both are released by the one commit or rollback).
+   */
+  async grantCotisantWithin(
+    manager: EntityManager,
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>
+  ): Promise<UserTag> {
+    const outcome = await this.grantCotisantIn(
+      manager,
+      assocId,
+      userId,
+      grantedBy,
+      { variantKey },
+      metadata,
+      'manual'
+    );
+    if (!outcome || !('granted' in outcome)) {
+      throw new Error('grantCotisantWithin: a manual grant is never skipped nor refused');
+    }
+    return outcome.granted;
+  }
 
-      const derived = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), variantKey);
-      const tagName = derived.tagName;
-      const expiresAt = expiresAtOverride ?? derived.expiresAt;
+  /** The body of `grantCotisantLocked`, on the transaction `manager` belongs to. */
+  private async grantCotisantIn(
+    manager: EntityManager,
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    tier: { variantKey: string | null } | { tagName: string },
+    metadata: Record<string, unknown>,
+    rule: GrantRule,
+    expiresAtOverride?: Date
+  ): Promise<RankedGrantOutcome | null> {
+    await lockBuyerTiers(manager, assocId, userId);
+    const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
+      `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    const asso = rows[0];
+    if (!asso) throw new NotFoundException('Association not found');
+    const tiers = asso.cotisationMode ? await this.listCotisationTiers(assocId, { manager }) : [];
+    let variantKey: string | null;
+    if ('tagName' in tier) {
+      const named = tiers.find((t) => t.tagName === tier.tagName);
+      if (!named) {
+        this.logger.warn(
+          `[UserTag] raw grant of "${tier.tagName}" refused for assoc=${assocId.slice(0, 8)}: ` +
+            'not one of its cotisation tier tags'
+        );
+        throw new ForbiddenException({
+          code: TAG_NOT_ISSUER_TIER,
+          message: "The tag is not one of the granting association's cotisation tiers",
+        });
+      }
+      variantKey = named.variantKey;
+    } else {
+      variantKey = tier.variantKey;
+    }
+    if (!asso.cotisationMode) {
+      throw new BadRequestException('Cotisation is not enabled for this association');
+    }
+
+    // Validate the tier against the association's own catalogue. An arbitrary variantKey would
+    // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
+    if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
+      throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
+    }
+    // The same trap in reverse: an association that dropped its base tier in favour of named ones
+    // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
+    if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
+      throw new BadRequestException('This association has no base tier - a tier must be chosen');
+    }
+
+    const derived = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), variantKey);
+    const tagName = derived.tagName;
+    const expiresAt = expiresAtOverride ?? derived.expiresAt;
+    this.logger.debug(
+      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
+    );
+    if (
+      rule === 'unless-holding-any' &&
+      (await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0
+    ) {
       this.logger.debug(
-        `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
+        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
       );
-      if (
-        rule === 'unless-holding-any' &&
-        (await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0
-      ) {
-        this.logger.debug(
-          `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+      return null;
+    }
+    if (rule === 'only-a-rise') {
+      const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
+      if (relation === 'lower' || relation === 'unranked') {
+        this.logger.error(
+          `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
+            `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
         );
-        return null;
+        return { refused: relation };
       }
-      if (rule === 'only-a-rise') {
-        const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
-        if (relation === 'lower' || relation === 'unranked') {
-          this.logger.error(
-            `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
-              `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
-          );
-          return { refused: relation };
-        }
+    }
+    let tag: UserTag;
+    try {
+      tag = await this.grantOrRenew(
+        { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
+        manager
+      );
+    } catch (e) {
+      // A paid grant answers the refusal, so its caller records paid but not granted; the
+      // manager's paths let the typed 409 through.
+      if (rule === 'only-a-rise' && e instanceof TagHeldByAnotherIssuerError) {
+        return { refused: TAG_HELD_BY_ANOTHER_ISSUER };
       }
-      let tag: UserTag;
-      try {
-        tag = await this.grantOrRenew(
-          { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
-          manager
-        );
-      } catch (e) {
-        // A paid grant answers the refusal, so its caller records paid but not granted; the
-        // manager's paths let the typed 409 through.
-        if (rule === 'only-a-rise' && e instanceof TagHeldByAnotherIssuerError) {
-          return { refused: TAG_HELD_BY_ANOTHER_ISSUER };
-        }
-        throw e;
-      }
-      await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
-      return { granted: tag };
-    });
+      throw e;
+    }
+    await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
+    return { granted: tag };
   }
 
   /**
@@ -762,6 +815,57 @@ export class UserTagService {
   ): Promise<UserTag | null> {
     const tag = await this.repo.findOne({ where: { userId, tagName, issuingAssocId } });
     return isActive(tag) ? tag : null;
+  }
+
+  /**
+   * The ACTIVE rows, issued by `issuingAssocId`, of any of `tagNames` held by any of `userIds` - in
+   * ONE query, for a reader deciding over many buyers at once (the closing of a payment paid for and
+   * not granted, and the purchases list's advice on it). Reads through `manager`, after its locks.
+   */
+  async activeTagsOf(
+    userIds: string[],
+    tagNames: string[],
+    issuingAssocId: string,
+    manager: EntityManager
+  ): Promise<UserTag[]> {
+    if (userIds.length === 0 || tagNames.length === 0) return [];
+    const rows = await manager.getRepository(UserTag).find({
+      where: { userId: In(userIds), tagName: In(tagNames), issuingAssocId },
+    });
+    return rows.filter(isActive);
+  }
+
+  /**
+   * Stamps tag `tagId` as the DELIVERY of purchase record `purchaseRecordId` (metadata key
+   * `purchaseRecordId`), when a payment paid for and not granted is closed because the tier it bought
+   * is already held as its delivery. Touches nothing else - no expiry, no grantor - so it is not a
+   * renewal. Writes only a tag no record has stamped yet: false when one already has (one delivery
+   * closes at most one payment), and the caller refuses.
+   */
+  async stampDelivery(
+    tagId: string,
+    purchaseRecordId: string,
+    manager: EntityManager
+  ): Promise<boolean> {
+    const rows: unknown[] = await manager.query(
+      `UPDATE user_tags SET metadata = metadata || jsonb_build_object('purchaseRecordId', $2::text)
+        WHERE id = $1 AND metadata -> 'purchaseRecordId' IS NULL
+        RETURNING id`,
+      [tagId, purchaseRecordId]
+    );
+    // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+    const written = Array.isArray(rows[0]) ? (rows[0] as unknown[]).length : rows.length;
+    if (written === 0) {
+      this.logger.warn(
+        `[UserTag] tag ${tagId.slice(0, 8)} NOT stamped for purchase=${purchaseRecordId.slice(0, 8)}: ` +
+          'it is already the delivery of another payment'
+      );
+      return false;
+    }
+    this.logger.log(
+      `[UserTag] tag ${tagId.slice(0, 8)} stamped as the delivery of purchase=${purchaseRecordId.slice(0, 8)}`
+    );
+    return true;
   }
 
   /**
