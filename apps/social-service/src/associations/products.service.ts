@@ -20,6 +20,7 @@ import {
   CHECKOUT_EXPIRY_MARGIN_MS,
   CHECKOUT_IN_PROGRESS,
   CHECKOUT_ISSUE_WINDOW_MS,
+  COTISATION_DISABLED,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
@@ -34,7 +35,11 @@ import { toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
-import { UserTagService } from '../users/user-tag.service';
+import {
+  issuedTagKey,
+  TagHeldByAnotherIssuerError,
+  UserTagService,
+} from '../users/user-tag.service';
 import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
@@ -43,7 +48,8 @@ import {
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { cotisationStem, deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { assertCotisationStemFree, TIER_TAG_NAME_TAKEN } from './cotisation-namespace';
 import {
   fixedPriceFor,
   linkedTierKey,
@@ -749,7 +755,8 @@ export class ProductsService {
       }),
       this.userTagService.listByUser(userId),
     ]);
-    const activeTagNames = new Set(activeTags.map((t) => t.tagName));
+    // A tier tag counts only for the association that issued it.
+    const activeTagKeys = new Set(activeTags.map((t) => issuedTagKey(t.issuingAssocId, t.tagName)));
     const tiersByAssoc = new Map<string, AssociationProduct[]>();
     for (const p of tierProducts) {
       const list = tiersByAssoc.get(p.associationId) ?? [];
@@ -758,7 +765,7 @@ export class ProductsService {
     }
     for (const asso of assos) {
       const facts = await this.tierFactsFrom(asso, tiersByAssoc.get(asso.id) ?? [], (tag) =>
-        activeTagNames.has(tag)
+        activeTagKeys.has(issuedTagKey(asso.id, tag))
       );
       if (!facts) continue;
       byAssoc.set(asso.id, {
@@ -842,6 +849,11 @@ export class ProductsService {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
       await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+      await assertCotisationStemFree(
+        this.productRepo.manager,
+        associationId,
+        cotisationStem(asso.slug, dto.variantKey ?? null)
+      );
       const derived = deriveCotisationTag(
         asso.slug,
         asso.cotisationMode,
@@ -967,7 +979,24 @@ export class ProductsService {
     // `priceMatrix` is resolved above and deliberately kept out of the blanket assign: the DTO
     // holds the RAW document a client sent, and copying it over the parsed one would store a grid
     // nothing validated.
-    const { priceMatrix: _rawMatrix, ...assignable } = dto;
+    // A membership product's granted tag and expiry are DERIVED (`deriveCotisationTag`), never
+    // typed: they are dropped from the assign here exactly as `create` ignores them, so no edit can
+    // store a tag name the association's own tiers do not derive.
+    const {
+      priceMatrix: _rawMatrix,
+      grantedTagName: typedTag,
+      tagExpiresAt: typedExpiry,
+      ...derivable
+    } = dto;
+    const assignable =
+      product.type === 'membership'
+        ? derivable
+        : { ...derivable, grantedTagName: typedTag, tagExpiresAt: typedExpiry };
+    if (product.type === 'membership' && (typedTag !== undefined || typedExpiry !== undefined)) {
+      this.logger.debug(
+        `[SHOP] update of membership product=${productId.slice(0, 8)}: typed grantedTagName/tagExpiresAt ignored (derived)`
+      );
+    }
     const applyEdits = async (target: AssociationProduct, manager: EntityManager) => {
       if (dto.isActive !== undefined) target.activationWithheld = false;
       if (dto.priceMatrix !== undefined) target.priceMatrix = product.priceMatrix;
@@ -1042,6 +1071,7 @@ export class ProductsService {
           `[COTISATION] re-pointed ${linkedIds.length} preferential price link(s) to tier ${current.id.slice(0, 8)}`
         );
       }
+      await this.assertRetagNameFree(associationId, retagging, manager);
       const result: { affected?: number | null } = await manager
         .createQueryBuilder()
         .update('user_tags')
@@ -1055,6 +1085,35 @@ export class ProductsService {
         `[COTISATION] retagged tier ${current.id.slice(0, 8)}: "${retagging.oldTagName}" -> "${retagging.newTagName}" (${result.affected ?? 0} cotisant tag(s) migrated)`
       );
       return this.toSafeProduct(saved);
+    });
+  }
+
+  /**
+   * Refuses (409 `TIER_TAG_NAME_TAKEN`) a retag when a holder of the tier's old tag already holds a
+   * row of the NEW name, whoever issued it: the rename would otherwise meet the `(userId, tagName)`
+   * unique index, or turn a row another association issued into a duplicate holder. Read under the
+   * retag's exclusive association lock, through its `manager`.
+   */
+  private async assertRetagNameFree(
+    associationId: string,
+    retagging: { oldTagName: string; newTagName: string },
+    manager: EntityManager
+  ): Promise<void> {
+    const taken: { userId: string }[] = await manager.query(
+      `SELECT o."userId" FROM user_tags o
+         JOIN user_tags n ON n."userId" = o."userId" AND n."tagName" = $3
+        WHERE o."issuingAssocId" = $1 AND o."tagName" = $2
+        LIMIT 1`,
+      [associationId, retagging.oldTagName, retagging.newTagName]
+    );
+    if (taken.length === 0) return;
+    this.logger.warn(
+      `[COTISATION] retag "${retagging.oldTagName}" -> "${retagging.newTagName}" refused: ` +
+        `a holder already has a row of the new name`
+    );
+    throw new ConflictException({
+      code: TIER_TAG_NAME_TAKEN,
+      message: 'A holder of this tier already holds a tag of the new name',
     });
   }
 
@@ -1084,6 +1143,11 @@ export class ProductsService {
       throw new BadRequestException('Cotisation must be enabled to change a tier');
     }
     await this.assertVariantKeyFree(product.associationId, newVariantKey, product.id, manager);
+    await assertCotisationStemFree(
+      manager,
+      product.associationId,
+      cotisationStem(asso.slug, newVariantKey)
+    );
 
     const now = new Date();
     const oldTag = deriveCotisationTag(asso.slug, asso.cotisationMode, now, product.variantKey);
@@ -1922,14 +1986,26 @@ export class ProductsService {
       if (product) {
         granted = await this.settlementMayGrant(product, row, manager);
         if (granted) {
-          await this.grantPurchaseTag(
-            manager,
-            product,
-            row.userId,
-            'system',
-            paymentIntentId,
-            false
-          );
+          try {
+            granted = await this.grantPurchaseTag(
+              manager,
+              product,
+              row.userId,
+              'system',
+              paymentIntentId,
+              false
+            );
+          } catch (e) {
+            // The buyer holds the tier's tag NAME under another issuer: nothing was written (the
+            // upsert does not cross issuers, and raises no SQL error), so the payment is recorded
+            // paid but not granted, like a refused rank.
+            if (!(e instanceof TagHeldByAnotherIssuerError)) throw e;
+            this.logger.error(
+              `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier product=${product.id.slice(0, 8)} NOT granted - ` +
+                `user=${row.userId.slice(0, 8)} holds its tag name under another issuer; a refund or a fix is owed`
+            );
+            granted = false;
+          }
         }
       } else {
         this.logger.error(
@@ -2186,6 +2262,7 @@ export class ProductsService {
       });
     }
 
+    this.assertMembershipGrantable(asso, product);
     const facts = await this.tierFactsOf(asso, userId, manager);
     const isCotisant = (facts?.heldKeys.length ?? 0) > 0;
     if (product.type === 'membership') {
@@ -2409,7 +2486,7 @@ export class ProductsService {
         new Date(),
         variantKey
       );
-      const tag = await this.userTagService.getActiveTag(userId, tagName);
+      const tag = await this.userTagService.getActiveTag(userId, tagName, asso.id);
       if (tag) {
         return {
           isCotisant: true,
@@ -2438,7 +2515,8 @@ export class ProductsService {
 
   /**
    * `tierFactsFrom` for one user in one association, reading the association's tiers (on sale or
-   * not - holding a withdrawn tier's tag still makes you a cotisant) and the user's tags.
+   * not - holding a withdrawn tier's tag still makes you a cotisant) and the user's tags ISSUED BY
+   * that association: a tag of the same name issued elsewhere holds no tier here.
    */
   private async tierFactsOf(
     asso: Association,
@@ -2451,7 +2529,7 @@ export class ProductsService {
       select: TIER_RANK_COLUMNS,
     });
     return this.tierFactsFrom(asso, tiers, (tag) =>
-      this.userTagService.hasActiveTag(userId, tag, manager)
+      this.userTagService.hasActiveTag(userId, tag, asso.id, manager)
     );
   }
 
@@ -2530,7 +2608,9 @@ export class ProductsService {
     manager: EntityManager
   ): Promise<boolean> {
     for (const tagName of tagNames) {
-      if (await this.userTagService.hasActiveTag(userId, tagName, manager)) return true;
+      if (await this.userTagService.hasActiveTagFromAnyIssuer(userId, tagName, manager)) {
+        return true;
+      }
     }
     return false;
   }
@@ -2606,7 +2686,12 @@ export class ProductsService {
       // so the check stays correct across a yearly rollover.
       const grant = await this.resolveGrantTag(product, manager);
       if (grant) {
-        const hasTag = await this.userTagService.hasActiveTag(userId, grant.tagName, manager);
+        const hasTag = await this.userTagService.hasActiveTag(
+          userId,
+          grant.tagName,
+          product.associationId,
+          manager
+        );
         if (!hasTag) return;
       }
     }
@@ -2818,13 +2903,35 @@ export class ProductsService {
   }
 
   /**
+   * Refuses (409 `COTISATION_DISABLED`) a membership product whose association has no cotisation
+   * mode, BEFORE any money is requested or recorded: `resolveGrantTag` derives no tag without one,
+   * so the purchase would grant nothing. The checkout opening and the cash sale call it, under the
+   * buyer's tier lock, on the association they re-read there.
+   */
+  private assertMembershipGrantable(
+    asso: Pick<Association, 'id' | 'cotisationMode'>,
+    product: Pick<AssociationProduct, 'id' | 'type'>
+  ): void {
+    if (product.type !== 'membership' || asso.cotisationMode) return;
+    this.logger.warn(
+      `[SHOP] refused (${COTISATION_DISABLED}): membership product=${product.id.slice(0, 8)} of ` +
+        `assoc=${asso.id.slice(0, 8)}, whose cotisations are disabled`
+    );
+    throw new ConflictException({
+      code: COTISATION_DISABLED,
+      message: "This association's cotisations are disabled: the product cannot be sold.",
+    });
+  }
+
+  /**
    * Resolves the tag name and expiry to grant for a product purchase.
    * Returns null for non-membership products or membership products with no tag configured.
    * For an association with an active cotisation mode, the tag is derived fresh from the current
    * academic year and the product's `variantKey` (see `deriveCotisationTag`), so a purchase always
    * grants the current period's tier-specific tag even when the stored product tag has not been
-   * re-provisioned since the last yearly rollover. Falls back to the product's stored tag for
-   * membership products without a cotisation mode (arbitrary/legacy tags).
+   * re-provisioned since the last yearly rollover. An association WITHOUT a cotisation mode grants
+   * nothing: its stored tag string is never granted as typed, since only a derived tier tag may be
+   * issued (a membership product requires a mode to be created).
    */
   private async resolveGrantTag(
     product: AssociationProduct,
@@ -2835,7 +2942,10 @@ export class ProductsService {
     if (asso?.cotisationMode) {
       return deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), product.variantKey);
     }
-    return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
+    this.logger.warn(
+      `[SHOP] membership product=${product.id.slice(0, 8)} of an association with no cotisation mode - no tag granted`
+    );
+    return null;
   }
 
   /**
@@ -2852,9 +2962,18 @@ export class ProductsService {
     grantedBy: string,
     paymentIntentId: string | null,
     manualGrant: boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     const grant = await this.resolveGrantTag(product, manager);
-    if (!grant) return;
+    if (!grant) {
+      if (product.type !== 'membership') return true;
+      // A membership product that resolves to no tag grants nothing for the money taken: the
+      // caller records the payment `paid_not_granted`, the durable marker the reports read.
+      this.logger.error(
+        `[SHOP] membership product=${product.id.slice(0, 8)} resolves to no tag - payment by ` +
+          `user=${userId.slice(0, 8)} recorded paid but NOT granted; a refund or a grant is owed`
+      );
+      return false;
+    }
     await this.userTagService.grantOrRenew(
       {
         userId,
@@ -2877,6 +2996,7 @@ export class ProductsService {
       product.variantKey,
       manager
     );
+    return true;
   }
 
   /**
@@ -2900,7 +3020,13 @@ export class ProductsService {
       // Re-read after the locks: a retag committed while this sale waited renamed the tier's tag.
       const current =
         (await manager.findOne(AssociationProduct, { where: { id: product.id } })) ?? product;
-      await this.grantPurchaseTag(
+      // Read after the locks too: cotisations disabled meanwhile refuse the sale, nothing recorded.
+      if (current.type === 'membership') {
+        const asso = await manager.findOne(Association, { where: { id: product.associationId } });
+        if (!asso) throw new NotFoundException('Association not found');
+        this.assertMembershipGrantable(asso, current);
+      }
+      const granted = await this.grantPurchaseTag(
         manager,
         current,
         userId,
@@ -2915,7 +3041,7 @@ export class ProductsService {
           productId: product.id,
           amountCents,
           paymentMethod,
-          status: 'paid',
+          status: granted ? 'paid' : 'paid_not_granted',
           stripePaymentIntentId,
           associationId: product.associationId,
           productName: product.name,
