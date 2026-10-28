@@ -56,6 +56,13 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
 /**
+ * The `code` of the 409 a checkout or a cash sale of a membership product gets while its
+ * association has no cotisation mode: no tier tag can be derived, so nothing would be granted for
+ * the money. Refused before any payment is requested or recorded.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */

@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
@@ -10,12 +11,21 @@ import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
  * transaction as the row. A creator with no campus is refused with a typed error and nothing is
  * kept. An institution keeps no default rule.
  */
-function makeService(campus: string | null, governed: string[] = []) {
+function makeService(
+  campus: string | null,
+  governed: string[] = [],
+  /** Other associations' slugs and tier keys, read by the cotisation-stem guard. */
+  stems: { slug: string; variantKey: string | null }[] = []
+) {
   const manager = {
     save: jest.fn((row: object) => Promise.resolve({ ...row, id: 'new-asso' })),
     query: jest.fn((sql: string) =>
       Promise.resolve(
-        sql === BDE_GOVERNED_CAMPUSES_SQL ? governed.map((c) => ({ campus: c })) : [{ campus }]
+        sql.includes('association_products')
+          ? stems
+          : sql === BDE_GOVERNED_CAMPUSES_SQL
+            ? governed.map((c) => ({ campus: c }))
+            : [{ campus }]
       )
     ),
     insert: jest.fn(() => Promise.resolve()),
@@ -90,8 +100,26 @@ describe('AssociationsService.create - the default reach (campus, every formatio
     const saved = await service.create(institutionDto, 'admin-with-campus', true);
 
     expect(saved).toMatchObject({ id: 'new-asso' });
-    expect(manager.query).not.toHaveBeenCalled();
+    expect(manager.query).not.toHaveBeenCalledWith(READER_PROFILE_SQL, expect.anything());
     expect(manager.insert).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a slug whose cotisation tags would coincide with another association's, writing nothing", async () => {
+    const { service, manager } = makeService(
+      'saint-etienne',
+      [],
+      [{ slug: 'cercle', variantKey: 'club' }]
+    );
+
+    const err = await service
+      .create({ name: 'Club', slug: 'cercle-club' } as never, 'creator-1', true)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: COTISATION_TAG_COLLISION,
+    });
+    expect(manager.save).not.toHaveBeenCalled();
   });
 });
 

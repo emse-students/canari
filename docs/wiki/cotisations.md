@@ -31,6 +31,46 @@ Table `user_tags`, entity `UserTag` (`apps/social-service/src/users/entities/use
 Unique on `(userId, tagName)`. A user "is a cotisant" of an association when they hold an **active**
 (non-expired) tag issued by that association.
 
+### A tag counts only for the association that issued it
+
+One invariant, enforced at four points:
+
+- **A raw grant names one of the grantor's own tiers.** `POST :id/tags` (`grantTagForAssociation`)
+  accepts a name only when it is one of the association's own cotisation tier tags for the current
+  academic year - its catalogue, `listCotisationTiers` - and answers `403 TAG_NOT_ISSUER_TIER`
+  otherwise. Ownership is read from the catalogue, never from the shape of the name: a slug prefix
+  says nothing about who issues a tag. The tier is then granted exactly like the roster's manual
+  add (`grantCotisant`): the buyer's tier lock, the sibling-tier XOR, unranked as a manager's
+  decision; an explicit `expiresAt` replaces the derived expiry.
+- **A grant never crosses issuers.** `grantOrRenew`'s upsert updates an existing `(userId, tagName)`
+  row only when it was issued by the same association (`DO UPDATE ... WHERE "issuingAssocId" IS NOT
+  DISTINCT FROM EXCLUDED."issuingAssocId"`). Otherwise it writes nothing and throws
+  `TagHeldByAnotherIssuerError` (`409 TAG_HELD_BY_ANOTHER_ISSUER`): a settlement records the
+  payment `paid_not_granted`, a paid form's grant answers it as a refusal (also
+  `paid_not_granted`), and the cash sale, the manual add, the legacy claim and the raw grant
+  surface the 409. No grant is ever reported for a row the reads below would not count.
+- **Tier-holding reads count only rows issued by the tier's own association**: `hasActiveTag` and
+  `getActiveTag` take the issuer, so `heldVariantKeys` (the rank of a grant, `holdsAnyCotisation`,
+  `listHeldCotisationTiers`), `heldCotisationTiersByAssociation`, the shop's `tierFactsOf` and
+  listing facts (relation, preferential price, rank), the renewal check and the Cercle status all
+  ask "issued by THIS association". The sibling-tier XOR (`revokeByName`) deletes only the
+  association's own rows, like `revoke`. A product's `requiredTags`, a gate that names tags across
+  associations by design, is the one reader of `hasActiveTagFromAnyIssuer`.
+- **Two associations' tag names never coincide.** A tier's tags are `cotisant:<stem>` or
+  `cotisant:<stem>-<academicYear>`, its stem being `<slug>` or `<slug>-<variantKey>`
+  (`cotisationStem`). Two stems derive a common name exactly when they are equal or one is the
+  other plus `-<academicYear>` (`cotisationStemsCollide`). `assertCotisationStemFree`
+  (`associations/cotisation-namespace.ts`, `409 COTISATION_TAG_COLLISION`) refuses a new stem that
+  collides with another association's slug or tier stem, on every path that creates one: the
+  association's creation, a tier's creation and a tier's retag. **A future path that derives a slug
+  or a tier key calls it with the derived value.** It takes no lock: no lock of the order spans
+  two associations, and a race between two creations is bounded by the two points above (a
+  collision can refuse a grant, never let one association's row count for another's tier). A retag
+  is also refused
+  (`409 TIER_TAG_NAME_TAKEN`) when a holder of the old tag already holds a row of the new name.
+
+`tag-issuer-scope.integration.spec.ts` proves each point against a real PostgreSQL.
+
 ### The canonical cotisation tag (single source of truth)
 
 `deriveCotisationTag(slug, mode)` in `apps/social-service/src/associations/cotisation-tag.util.ts`
@@ -60,8 +100,16 @@ label/price and lets admins add further tiers (WP-COT-6).
 `ProductsService.create` **auto-derives** `grantedTagName`/`tagExpiresAt` server-side for any
 `type: 'membership'` product from the association's `slug`/`cotisationMode` + the product's own
 `variantKey` - a client-supplied `grantedTagName` is always ignored for this type, so the tag string
-never drifts from `deriveCotisationTag`. Creating a membership product requires cotisation to already
-be enabled (`cotisationMode` set), since the tag can't be derived otherwise.
+never drifts from `deriveCotisationTag`. `ProductsService.update` drops `grantedTagName` and
+`tagExpiresAt` for a membership product the same way, and `resolveGrantTag` derives NOTHING for a
+membership product whose association has no `cotisationMode`: a stored tag string is never granted as
+typed, so every tag a membership purchase issues is a derived tier tag. **What is recorded then:**
+with cotisations disabled, the checkout opening and the cash sale of such a product are refused
+`409 COTISATION_DISABLED` before any payment is requested or recorded; a payment that lands anyway
+(an attempt opened before the switch) is recorded `paid_not_granted` with an ERROR line, like any
+paid tier not granted, so the hourly report and the purchases tab see it. Creating a membership product
+requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived
+otherwise.
 
 `ProductsService.provisionCotisationProduct` (called after `PATCH /associations/:id` when
 `cotisationEnabled` is true, e.g. mode edits) resyncs **every** `membership` product's tag - not just
@@ -278,7 +326,7 @@ other.
 | `grantCotisant` - the roster picker; tiers and tag derived after the locks | association shared + buyer |
 | A paid form's grant (`grantCotisantIfARise`: ranked like a settlement, refused -> `paid_not_granted`) | association shared + buyer |
 | Legacy claim (`grantCotisantUnlessHeld`: "already holds one" read under the locks) | association shared + buyer |
-| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`) | association shared + buyer |
+| Raw tag grant (`POST :id/tags`, `grantTagForAssociation`: one of the association's own tier tags, then the manual add's body) | association shared + buyer |
 | Tag revocation (`revoke`: the holder read from the row, then the delete) | association shared + buyer |
 | Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
 
@@ -474,7 +522,8 @@ never inside it, and of two first grants the second renews the first. Proven by 
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
   `MANAGE_PRODUCTS`.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
-  (`MANAGE_MEMBERS`); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
+  (`MANAGE_MEMBERS`), the name being one of the association's own tier tags, granted like the
+  manual add ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
   `:id`, not to the tag id alone: `MANAGE_MEMBERS` is granted per association, so an unscoped delete
   let an admin of any association revoke any other association's cotisant (WP-COT-9).
 
