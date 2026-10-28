@@ -111,6 +111,12 @@ pub struct DeviceEvent {
     /// `false` for an event recorded before the field existed: such an event is never announced.
     #[serde(default)]
     pub member_already_present: bool,
+    /// Whether the commit that added this device was made by a device that is itself an unvouched
+    /// entry in this group, as the app records it (`historyWithheld.ts`): what an unvouched device
+    /// adds is unvouched too. Set by the app, never by this observer, which keeps no such record;
+    /// `false` when absent, and not written when false, so the wire is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub added_by_unvouched: bool,
 }
 
 impl DeviceEvent {
@@ -142,6 +148,9 @@ impl DeviceEvent {
     /// device was never in this group ([`DeviceEvent::first_in_group`]) - whatever its pin says.
     /// The twin of `entersAsUnvouchedDevice` in `deviceTrust.ts`, held to the same table.
     pub fn enters_as_unvouched_device(&self) -> bool {
+        if self.added_by_unvouched && self.added_by.is_some() {
+            return true;
+        }
         self.first_in_group
             && self.member_already_present
             && self
@@ -863,6 +872,7 @@ impl DeviceTrust {
                     added_by: None,
                     // A joined tree has no "before": nothing here was added by a commit we merged.
                     first_in_group: false,
+                    added_by_unvouched: false,
                     member_already_present: false,
                 });
                 wrote = true;
@@ -969,6 +979,7 @@ impl DeviceTrust {
                 trust,
                 added_by: added_by.map(str::to_string),
                 first_in_group,
+                added_by_unvouched: false,
                 member_already_present,
             });
             wrote = true;
@@ -1113,6 +1124,7 @@ mod tests {
             trust: LeafTrust::FirstSight,
             added_by: None,
             first_in_group: false,
+            added_by_unvouched: false,
             member_already_present: false,
         };
         let mut t = DeviceTrust::default();
@@ -1234,6 +1246,7 @@ mod tests {
             trust: LeafTrust::KeyChanged,
             added_by: Some("v:e".into()),
             first_in_group: true,
+            added_by_unvouched: false,
             member_already_present: true,
         };
         assert_eq!(

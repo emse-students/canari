@@ -15,6 +15,7 @@ import {
   canonicalIdentity,
   canonicalUserId,
   deviceIdOfLeaf,
+  sameDeviceIdentity,
   userIdOfLeaf,
 } from '$lib/mls-client/leafIdentity';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -22,8 +23,10 @@ import {
   bindHistoryWithheld,
   historyWithheldEntries,
   isWithheldDevice,
+  committerIsWithheld,
   noteDeviceAddedByAMember,
   withholdHistoryFrom,
+  type LeafStillIn,
   type WithheldDevice,
 } from './historyWithheld';
 
@@ -345,9 +348,16 @@ function contactLineId(groupId: string, key: string): string {
  * alone and is logged. Owner alerts are claimed in the native ledger (phones) once recorded.
  */
 export async function deliverDeviceEvents(
-  events: DeviceEvent[],
+  delivered: DeviceEvent[],
   ctx: DeviceNoticeContext
 ): Promise<void> {
+  // WHAT AN UNVOUCHED DEVICE ADDS IS UNVOUCHED TOO (`historyWithheld.ts`): marked before anything
+  // decides on the event, so the line, the report and the withholding all follow.
+  const events = delivered.map((event) =>
+    committerIsWithheld(event.groupId, event.identity, event.addedBy)
+      ? { ...event, addedByUnvouched: true }
+      : event
+  );
   if (!boundAccount) {
     console.error(`[DEVICE_NOTICE] no account bound - ${events.length} device event(s) dropped`);
     return;
@@ -370,6 +380,21 @@ export async function deliverDeviceEvents(
   // A member's Add of a device vouches for it: history withheld from it is answered again.
   for (const event of events) {
     noteDeviceAddedByAMember(event.groupId, event.identity, event.addedBy);
+    // A DEVICE THAT CHANGED ITS OWN KEY BY ITS OWN COMMIT (an id still in the tree, under a key nothing
+    // proves) is answered no history either; its notice is the key-change one, not a line here.
+    if (
+      event.trust === 'key-changed' &&
+      event.addedBy !== null &&
+      sameDeviceIdentity(event.addedBy, event.identity) &&
+      !ctx.isDistributionGroup(event.groupId)
+    ) {
+      await withholdHistoryFrom(
+        event.groupId,
+        event.identity,
+        event.keyFingerprint,
+        leafStillIn(ctx)
+      );
+    }
   }
   await noteUninvitedEntries(events, ctx);
   // The events a previous delivery could not decide come first, oldest first.
@@ -457,6 +482,22 @@ export async function deliverDeviceEvents(
   }
 }
 
+/** Reads, from the conversation's own tree, whether a device still holds a leaf there. */
+function leafStillIn(ctx: DeviceNoticeContext): LeafStillIn {
+  return async (groupId, identity) => {
+    try {
+      return (await ctx.memberIdentities(groupId)).some((leaf) =>
+        sameDeviceIdentity(leaf, identity)
+      );
+    } catch (e) {
+      console.warn(
+        `[HISTORY_WITHHELD] tree of ${groupId.slice(0, 8)}... unreadable, its record is kept: ${String(e)}`
+      );
+      return 'unreadable';
+    }
+  };
+}
+
 /** The message id of an uninvited-entry line: one per conversation, device and key. */
 function uninvitedLineId(groupId: string, key: string): string {
   return `uninvited-entry:${groupId}:${key}`;
@@ -507,7 +548,12 @@ async function noteUninvitedEntries(
       reportUninvitedEntry(event, decided.kind);
       // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE until a member vouches for it.
       if (decided.kind === 'unvouched-device') {
-        withholdHistoryFrom(event.groupId, event.identity, event.keyFingerprint);
+        await withholdHistoryFrom(
+          event.groupId,
+          event.identity,
+          event.keyFingerprint,
+          leafStillIn(ctx)
+        );
       }
       if (decided.kind === 'new-person' || decided.kind === 'unvouched-device') {
         await writeUninvitedLine(event, decided.kind, decided.convo, ctx);

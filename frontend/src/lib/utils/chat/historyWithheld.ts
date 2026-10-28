@@ -12,17 +12,29 @@ import { memberDeviceAnswer } from './memberDeviceAnswers';
  * A device of a member that let itself into a conversation no member added it to is written in the
  * conversation as such (`deviceNotices.svelte.ts`, `unvouched-device`). Being in the tree, it reads
  * what is said from then on; what this device holds from BEFORE is a separate gift, and this device
- * does not give it - every history answer addressed to it is withheld (`sendBundleChunks` in
- * `groupActions.ts`) until a member vouches for it:
+ * does not give it (`sendBundleChunks` and `sendFullHistoryBundle` in `groupActions.ts`):
  *
- * - a member's commit adds that very device (`addedBy` another device) - the member's Add, the door
- *   a further device was owed in the first place ({@link noteDeviceAddedByAMember});
- * - or this member approved that device under the same key it entered with (`approveMemberDevice`),
- *   read at the moment an answer would leave ({@link historyWithheldFrom}).
+ * - no history answer is addressed to it;
+ * - and no history answer in that conversation is BROADCAST while any device there is withheld,
+ *   since a broadcast is read by every leaf, the withheld one included.
  *
- * Persisted with the device notices of the account (`deviceNotices.svelte.ts`), so a restart does not
- * lift it, and bounded: past {@link MAX_HISTORY_WITHHELD} the oldest record goes, said at a level
- * that accuses.
+ * WHAT IS WITHHELD SPREADS TO WHAT IT ADDS: a device added by a commit of a withheld device is
+ * withheld too, and that commit lifts nothing ({@link committerIsWithheld}) - otherwise one Add by
+ * the unverified device would hand its whole past to a second one.
+ *
+ * Lifted when a member vouches for it:
+ *
+ * - a commit by a device that is NOT withheld in that conversation adds that very device - a member's
+ *   Add, the door a further device was owed in the first place ({@link noteDeviceAddedByAMember});
+ * - or this member approved that device under the same key it entered with (`approveMemberDevice`,
+ *   account-wide and for the session), read at the moment an answer would leave
+ *   ({@link historyWithheldFrom}).
+ *
+ * PER MEMBER: each device withholds on its own verdict, and another member who did not decide the
+ * entry the same way may still answer. Persisted with the device notices of the account
+ * (`deviceNotices.svelte.ts`), so a restart does not lift it. Past {@link MAX_HISTORY_WITHHELD}
+ * records, the ones whose device has LEFT its conversation's tree go first; a record whose device is
+ * still there is never dropped - past the bound, the list grows rather than answer anyone it named.
  */
 export interface WithheldDevice {
   groupId: string;
@@ -32,8 +44,11 @@ export interface WithheldDevice {
   fingerprint: string;
 }
 
-/** How many withheld devices an account remembers. */
+/** Past this many records, the ones whose device left its tree are dropped. */
 export const MAX_HISTORY_WITHHELD = 256;
+
+/** Whether `identity` still holds a leaf in `groupId`'s tree, or `'unreadable'`. */
+export type LeafStillIn = (groupId: string, identity: string) => Promise<boolean | 'unreadable'>;
 
 let withheld: WithheldDevice[] = [];
 let persist: (() => void) | null = null;
@@ -42,27 +57,54 @@ function matches(entry: WithheldDevice, groupId: string, identity: string): bool
   return entry.groupId === groupId && sameDeviceIdentity(entry.identity, identity);
 }
 
+/**
+ * Drops, oldest first, the records past {@link MAX_HISTORY_WITHHELD} whose device is no longer in its
+ * tree. A record whose device is still there, or whose tree cannot be read, is kept: fail closed.
+ */
+async function trimToBound(leafStillIn: LeafStillIn): Promise<void> {
+  let excess = withheld.length - MAX_HISTORY_WITHHELD;
+  if (excess <= 0) return;
+  const gone = new Set<WithheldDevice>();
+  for (const entry of withheld) {
+    if (excess === 0) break;
+    if ((await leafStillIn(entry.groupId, entry.identity)) === false) {
+      gone.add(entry);
+      excess--;
+    }
+  }
+  withheld = withheld.filter((e) => !gone.has(e));
+  if (excess > 0) {
+    console.error(
+      `[HISTORY_WITHHELD] ${withheld.length} devices withheld, past the bound of ${MAX_HISTORY_WITHHELD} - every one still in its conversation (or unreadable), so none is dropped`
+    );
+  } else {
+    console.log(
+      `[HISTORY_WITHHELD] ${gone.size} record(s) of devices no longer in their conversation dropped at the bound`
+    );
+  }
+}
+
 /** Records `identity` as owed no history in `groupId`. Idempotent. */
-export function withholdHistoryFrom(groupId: string, identity: string, fingerprint: string): void {
+export async function withholdHistoryFrom(
+  groupId: string,
+  identity: string,
+  fingerprint: string,
+  leafStillIn: LeafStillIn
+): Promise<void> {
   const canonical = canonicalIdentity(identity);
   if (canonical === null) {
     console.error(`[HISTORY_WITHHELD] ${identity} names no device - nothing recorded`);
     return;
   }
   if (withheld.some((e) => matches(e, groupId, canonical) && e.fingerprint === fingerprint)) return;
-  const next = [
+  withheld = [
     ...withheld.filter((e) => !matches(e, groupId, canonical)),
     { groupId, identity: canonical, fingerprint },
   ];
-  if (next.length > MAX_HISTORY_WITHHELD) {
-    console.error(
-      `[HISTORY_WITHHELD] more than ${MAX_HISTORY_WITHHELD} devices withheld - the oldest record goes, its device is answered again`
-    );
-  }
-  withheld = next.slice(-MAX_HISTORY_WITHHELD);
   console.warn(
     `[HISTORY_WITHHELD] no history is answered to ${canonical} in ${groupId.slice(0, 8)}... until a member vouches for it`
   );
+  await trimToBound(leafStillIn);
   persist?.();
 }
 
@@ -75,8 +117,22 @@ function lift(groupId: string, identity: string, why: string): void {
 }
 
 /**
- * A member's commit added `identity` to `groupId` (`addedBy` a device other than itself): that Add is
- * the vouching, and history is answered to it again.
+ * Whether the commit that added a device was made by a device withheld in that conversation (and
+ * not by the added device itself): what such a commit adds is withheld too.
+ */
+export function committerIsWithheld(
+  groupId: string,
+  identity: string,
+  addedBy: string | null
+): boolean {
+  if (addedBy === null || sameDeviceIdentity(addedBy, identity)) return false;
+  return historyWithheldFrom(groupId, addedBy);
+}
+
+/**
+ * A commit added `identity` to `groupId` (`addedBy` a device other than itself). By a device that is
+ * not withheld there, that Add is the vouching and history is answered to it again; by a withheld
+ * one it lifts nothing ({@link committerIsWithheld}).
  */
 export function noteDeviceAddedByAMember(
   groupId: string,
@@ -84,6 +140,13 @@ export function noteDeviceAddedByAMember(
   addedBy: string | null
 ): void {
   if (addedBy === null || sameDeviceIdentity(addedBy, identity)) return;
+  if (!withheld.some((e) => matches(e, groupId, identity))) return;
+  if (committerIsWithheld(groupId, identity, addedBy)) {
+    console.warn(
+      `[HISTORY_WITHHELD] ${identity} in ${groupId.slice(0, 8)}... re-added by ${addedBy}, itself withheld there - still withheld`
+    );
+    return;
+  }
   lift(groupId, identity, `a member's commit added it (${addedBy})`);
 }
 
@@ -107,6 +170,16 @@ export function historyWithheldFrom(groupId: string, to: string): boolean {
   return true;
 }
 
+/**
+ * Whether any device is withheld in `groupId` - then no history answer there may be broadcast,
+ * since every leaf reads a broadcast.
+ */
+export function anyHistoryWithheldIn(groupId: string): boolean {
+  return withheld
+    .filter((e) => e.groupId === groupId)
+    .some((e) => historyWithheldFrom(groupId, e.identity));
+}
+
 /** The records, for the account's persisted notices. */
 export function historyWithheldEntries(): WithheldDevice[] {
   return [...withheld];
@@ -114,13 +187,14 @@ export function historyWithheldEntries(): WithheldDevice[] {
 
 /**
  * Binds the records to an account: `entries` restored from its notices (or `[]` on unbinding), and
- * `onChange` what persists them again.
+ * `onChange` what persists them again. Nothing restored is dropped: the bound is applied when a
+ * record is added, against the trees.
  */
 export function bindHistoryWithheld(
   entries: readonly WithheldDevice[],
   onChange: (() => void) | null
 ): void {
-  withheld = entries.slice(-MAX_HISTORY_WITHHELD);
+  withheld = [...entries];
   persist = onChange;
 }
 

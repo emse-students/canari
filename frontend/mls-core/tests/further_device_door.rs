@@ -74,3 +74,41 @@ fn a_user_with_no_leaf_is_not_a_further_device_and_is_never_said_as_one() {
         (false, false)
     );
 }
+
+#[test]
+fn a_device_that_left_is_told_to_ask_and_its_own_return_would_not_be_said() {
+    // bob:dev2 was in the group and alice saw it removed. Coming back, the door reads only the tree
+    // (its user is there, it is not) and asks a member; alice, who recorded the departure, would not
+    // have said its own return. The door is the stricter of the two: never (false, true).
+    let (mut alice, _bob) = conversation("g-left");
+    let mut dev2 = device("bob", "dev2");
+    let kp = dev2.generate_key_package().expect("kp");
+    let (_c, welcome, _a, _s) = alice.add_members_bulk("g-left", &[&kp]).expect("add dev2");
+    alice.merge_pending_commit_for("g-left").expect("merge");
+    let rt = alice.export_ratchet_tree_for("g-left").expect("tree");
+    dev2.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
+        .expect("dev2 joins");
+    alice
+        .remove_members_for_devices("g-left", &["bob:dev2"])
+        .expect("remove dev2");
+    alice
+        .merge_pending_commit_for("g-left")
+        .expect("merge removal");
+    alice.take_device_events();
+    let mut dev2_again = device("bob", "dev2");
+    assert_eq!(
+        door_and_verdict(&mut alice, &mut dev2_again, "g-left"),
+        (true, false)
+    );
+}
+
+#[test]
+fn a_further_device_spelling_its_user_in_another_case_is_still_a_further_device() {
+    // The user half of an identity compares ignoring ASCII case, on both sides.
+    let (mut alice, _bob) = conversation("g-case");
+    let mut phone = device("BOB", "dev2");
+    assert_eq!(
+        door_and_verdict(&mut alice, &mut phone, "g-case"),
+        (true, true)
+    );
+}

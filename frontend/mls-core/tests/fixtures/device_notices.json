@@ -258,5 +258,44 @@
     "audience": "contact-line",
     "key": "bob:web-3|77",
     "unvouched": false
+  },
+  {
+    "name": "a device added by a device that is itself an unvouched entry here is unvouched too",
+    "event": {
+      "groupId": "g",
+      "epoch": 9,
+      "identity": "bob:web-5",
+      "keyFingerprint": "55",
+      "trust": "first-sight",
+      "addedBy": "bob:web-4",
+      "memberAlreadyPresent": true,
+      "firstInGroup": true,
+      "addedByUnvouched": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:web-5|55",
+    "unvouched": true
+  },
+  {
+    "name": "the same Add by a device that is not an unvouched entry is a member's Add",
+    "event": {
+      "groupId": "g",
+      "epoch": 9,
+      "identity": "bob:web-5",
+      "keyFingerprint": "55",
+      "trust": "first-sight",
+      "addedBy": "bob:web-4",
+      "memberAlreadyPresent": true,
+      "firstInGroup": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:web-5|55",
+    "unvouched": false
   }
 ]

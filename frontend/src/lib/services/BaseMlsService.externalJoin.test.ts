@@ -315,7 +315,7 @@ describe('BaseMlsService.externalJoin', () => {
     expect(ctx.mergePendingCommit).toHaveBeenCalledTimes(1);
   });
 
-  // ── Whose door it is, read off the tree the commit would be built on ────────
+  // --- Whose door it is, read off the tree the commit would be built on ---
   //
   // A further device of a member is admitted by a member's Add, never by its own join. The fact is
   // read from the ratchet tree of the SAME GroupInfo the commit would be built on - not from server

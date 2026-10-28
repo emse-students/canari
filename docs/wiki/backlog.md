@@ -1146,6 +1146,9 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   its door is the observer's predicate without the departure half. The departure record's cap
   (`MAX_RECORDED_DEPARTURES`, 8192 per device, oldest evicted) and an observer that joined after a
   device left only widen what reads as `firstInGroup`, so they matter for those older clients alone;
+- the native background engine keeps no record of withheld devices, so it never marks a device added
+  by one (`added_by_unvouched` is set by the app alone); history is answered only by the app, so
+  this costs a notice, not a message;
 - **the same class, not gated**: the member-initiated paths that add a user's devices with no tree
   to check them against (details in the private operations notes) close with the real fix;
 - the Android background welcome now stages nothing (only a device already in the tree passes its

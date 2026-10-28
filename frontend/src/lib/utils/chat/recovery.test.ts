@@ -285,7 +285,7 @@ describe('requestReAdd', () => {
   it('the wait ENDS on the facts: owed on one pass, its own external join on the next', async () => {
     // A wait with no exit is a strand. The exit is the row itself: once the lock is released with no
     // Welcome queued, the next watchdog pass reads `unhonoured-seat` and a device a commit ADMITTED
-    // serves itself (a seat no commit admitted is decided by `decideOwnDoor` - pinned further down).
+    // serves itself (a seat no commit admitted is decided on the tree its join is built on - pinned further down).
     let clock = Date.now();
     const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
     try {

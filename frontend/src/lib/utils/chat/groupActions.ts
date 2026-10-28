@@ -32,7 +32,7 @@ import {
   FollowerTabCommitError,
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
-import { historyWithheldFrom } from './historyWithheld';
+import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
@@ -961,6 +961,13 @@ export async function sendFullHistoryBundle(
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
   }
+  // Not even the state-only frame (its floor and watermarks) goes to a withheld device.
+  if (historyWithheldFrom(groupId, to)) {
+    log(
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history pushed to it until a member vouches for it`
+    );
+    return;
+  }
 
   let messages: StoredMessage[];
   try {
@@ -979,6 +986,12 @@ export async function sendFullHistoryBundle(
   // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
   // frame this was before step A, and it carries no message.
   const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+    if (!addressed && anyHistoryWithheldIn(groupId)) {
+      log(
+        `[HISTORY_BUNDLE] Not broadcasting the state-only frame in ${groupId.slice(0, 8)}... - a device there is withheld (${why})`
+      );
+      return;
+    }
     const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
       await mlsService.sendMessage(
@@ -1087,7 +1100,7 @@ async function sendBundleChunks(
   // nothing from before is given to a device that let itself in until a member vouches for it.
   if (historyWithheldFrom(groupId, to)) {
     log(
-      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}… unvouched - no history answered to it until a member vouches for it`
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history answered to it until a member vouches for it`
     );
     return { kind: 'refused' };
   }
@@ -1118,6 +1131,14 @@ async function sendBundleChunks(
     }
     read = true;
     addressed = chosen.mode === 'addressed';
+    // A BROADCAST IS READ BY EVERY LEAF, a withheld device's included (`historyWithheld.ts`): while
+    // one is withheld here, an answer that cannot be addressed is not sent at all.
+    if (!addressed && anyHistoryWithheldIn(groupId)) {
+      log(
+        `[HISTORY_BUNDLE] Not broadcasting history in ${groupId.slice(0, 8)}... - a device there is withheld, and a broadcast would reach it`
+      );
+      return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+    }
     if (addressed && !answer?.requestId && !answer?.join) {
       log(
         `[HISTORY_BUNDLE] Not answering ${to} in ${groupId.slice(0, 8)}… - its ask carries no request id (an older client), and an addressed answer to no ask is refused`

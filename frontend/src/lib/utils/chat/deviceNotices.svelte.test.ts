@@ -643,6 +643,53 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     warn.mockRestore();
   });
 
+  it('what it adds is unvouched too: written, reported, withheld - and re-adding itself through it lifts nothing', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry()], ctx);
+    reporter.mockClear();
+
+    // The sibling Add: an ordinary commit, signed by the withheld device, adding a second one.
+    await deliverDeviceEvents(
+      [selfEntry({ identity: 'bob:second', addedBy: 'bob:new-tablet', keyFingerprint: 'cafe' })],
+      ctx
+    );
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:second' })
+    );
+    expect(historyWithheldFrom('group-1', 'bob:second')).toBe(true);
+
+    // ...which then re-adds the first: still withheld.
+    await deliverDeviceEvents(
+      [selfEntry({ addedBy: 'bob:second', firstInGroup: false, trust: 'pinned' })],
+      ctx
+    );
+    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(true);
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('withholds history from a device that changed its own key by its own commit', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents(
+      [
+        selfEntry({
+          trust: 'key-changed',
+          firstInGroup: false,
+          identity: 'bob:phone-1',
+          addedBy: 'bob:phone-1',
+        }),
+      ],
+      ctx
+    );
+    expect(historyWithheldFrom('group-1', 'bob:phone-1')).toBe(true);
+    warn.mockRestore();
+    vi.restoreAllMocks();
+  });
+
   it('says it in a 1:1 too - the peer of a DM is a member like any other', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { ctx } = makeCtx();

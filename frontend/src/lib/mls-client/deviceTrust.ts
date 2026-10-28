@@ -79,6 +79,12 @@ export interface DeviceEvent {
    * the pin. Absent on an event recorded before the field existed, which reads as `false`.
    */
   firstInGroup?: boolean;
+  /**
+   * Whether the commit that added this device was made by a device that is itself an unvouched entry
+   * in this group, as this app records it (`historyWithheld.ts`): what an unvouched device adds is
+   * unvouched too. Set by the app before deciding (`deliverDeviceEvents`), never by the MLS layer.
+   */
+  addedByUnvouched?: boolean;
 }
 
 /**
@@ -136,10 +142,14 @@ export function entersUninvited(event: DeviceEvent): boolean {
  * the entry is reported and written in the conversation (`deviceNotices.svelte.ts`), and its key is
  * never "seen" by the admission rule: seen is a leaf in that group's tree or a member's approval,
  * never a pin. A device coming back to a group it was in is not this case; in a community or salon
- * key group every device enters this way and the caller does not ask.
+ * key group every device enters this way and the caller does not ask. AND A DEVICE ADDED BY SUCH A
+ * DEVICE (`addedByUnvouched`) is one too: its Add is no member's.
  */
 export function entersAsUnvouchedDevice(event: DeviceEvent): boolean {
-  if (event.addedBy === null || event.memberAlreadyPresent !== true) return false;
+  if (event.addedBy === null) return false;
+  // Added by a device that is itself an unvouched entry here: no member vouched for this one either.
+  if (event.addedByUnvouched === true) return true;
+  if (event.memberAlreadyPresent !== true) return false;
   if (event.firstInGroup !== true) return false;
   const admitted = canonicalIdentity(event.identity);
   return admitted !== null && canonicalIdentity(event.addedBy) === admitted;

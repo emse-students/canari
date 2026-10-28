@@ -1399,10 +1399,14 @@ it - its id banned, its logins ended, its seats withdrawn - after which every me
 removes its leaf from each conversation (`removeStrayLeaves`, revoked devices).
 
 **History is withheld from an unverified device.** A device written as `unvouched-device` in a
-conversation is answered no history there (`historyWithheld.ts`, checked in `sendBundleChunks` for
-every answer path) until a member vouches for it: a member's commit adding that device, or this
-member's approval of it under the key it entered with. The record persists with the account's device
-notices and is bounded.
+conversation, or one that changed its own key by its own commit, is sent no history there
+(`historyWithheld.ts`): no answer is addressed to it, a full push sends it not even its state-only
+frame, and while any device of the conversation is withheld no answer there is broadcast, since every
+leaf reads a broadcast. What such a device adds is unvouched too. It is lifted when a device that is
+not withheld there adds it, or when this member approves it under the key it entered with. The
+decision is PER MEMBER: each device withholds on its own verdict, and the record persists with that
+account's device notices; an approval is account-wide and lasts the session. Past its bound, only
+records whose device has left its conversation are dropped; one still there is kept, failing closed.
 
 **What it costs.** Every new device id is unseen by everyone, and a device id lives in the install:
 a new phone, a new browser, a reinstall or factory wipe, a device that lost its state - each enrols
@@ -1411,7 +1415,9 @@ holds another device of its user, such a device waits for one tap before it ente
 from another device of theirs that is online, which covers all their conversations at once;
 otherwise, a contact's in each conversation they share - where it used to join by itself on its
 unhonoured seats (the P1 of 2026-09-03). Where the tree holds no other device of its user, it still
-joins by itself. The owner's other devices no longer serve it from a push, so the local notification
+joins by itself. A leaf of the user's own OLD device that stopped running counts as another device:
+a user whose only other leaf is that dead device waits for a contact's tap, and with no contact
+online, waits, for as long as that leaf stays in the tree. The owner's other devices no longer serve it from a push, so the local notification
 "a device was added to your account" follows the foreground Add. The rate is owed from production:
 device ids first seen per week, and how many belong to an account that already had one. **This
 reverses part of the 2026-10-22 decision "no mandatory approval of a new device"
