@@ -225,6 +225,11 @@ unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint
 - **One gesture, no brush**: pressing a closed cell opens the rectangle, pressing an open one closes
   it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); the keyboard and
   screen readers use the typed lines, and each day column is named with its hours.
+- **A line the editor refuses** (a start equal to its end) is not drawn as a run and is never
+  normalised by a paint or a template: it stays in the typed lines, flagged, until fixed. The
+  painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
+  its height is clamped (30 to 40 rem). **The keyboard's route is the typed lines below**, said in
+  the hint under the painter.
 - **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
   Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
   Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
@@ -237,7 +242,7 @@ unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint
 off-grain edges kept, to 24:00, the same rows back when nothing changes, mode from the pressed cell,
 templates, dated lines kept) and `AvailabilityEditor.painter.svelte.test.ts` (templates, a drag over
 days, a close splitting a run, a night as two stored halves, one cell, dated lines kept) on the real
-editor. **Not yet seen** on a phone: the finger painting and the 36 rem painter's height are the
+editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
 readings owed.
 
 ## Decisions taken by Master on 2026-10-27 (user delegated)

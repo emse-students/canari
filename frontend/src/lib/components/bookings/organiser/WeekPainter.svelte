@@ -100,6 +100,13 @@
   /** Every second hour is named on the axis. */
   const hourMarks = Array.from({ length: 12 }, (_, i) => i * 2);
   const dayMin = 24 * 60;
+  /** The painter's height: tall enough for a finger on a 30 min row, short enough for a screen. */
+  const HEIGHT = 'h-[clamp(30rem,80svh,40rem)]';
+  /** An hour line (strong) and a half-hour line (faint): the gesture's grain is the half hour. */
+  const GRID_LINES = [
+    'linear-gradient(to bottom, var(--cn-border) 1px, transparent 1px)',
+    'linear-gradient(to bottom, color-mix(in srgb, var(--cn-border) 35%, transparent) 1px, transparent 1px)',
+  ].join(', ');
 </script>
 
 <div class="border-cn-border bg-cn-surface rounded-2xl border p-2">
@@ -112,7 +119,7 @@
     {/each}
   </div>
   <div class="grid gap-x-1" style:grid-template-columns="2.5rem repeat(7, minmax(0, 1fr))">
-    <div class="relative h-[36rem]" aria-hidden="true">
+    <div class="relative {HEIGHT}" aria-hidden="true">
       {#each hourMarks as hour (hour)}
         <span
           class="text-text-muted absolute right-1 text-xs tabular-nums"
@@ -126,7 +133,7 @@
     </div>
     <div
       bind:this={gridEl}
-      class="relative col-span-7 grid h-[36rem] touch-none grid-cols-7 gap-x-1 select-none"
+      class="relative col-span-7 grid {HEIGHT} touch-none grid-cols-7 gap-x-1 select-none"
       role="group"
       aria-label={m.bookings_avail_painter_label()}
       data-painter
@@ -138,8 +145,8 @@
       {#each week as runs, day (day)}
         <div
           class="border-cn-border/60 relative rounded-lg border"
-          style:background-image="linear-gradient(to bottom, var(--cn-border) 1px, transparent 1px)"
-          style:background-size="100% calc(100% / 12)"
+          style:background-image={GRID_LINES}
+          style:background-size="100% calc(100% / 24), 100% calc(100% / 48)"
           role="img"
           aria-label="{dayNames[day]} : {formatRuns(runs) || m.bookings_day_closed()}"
         >

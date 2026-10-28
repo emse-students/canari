@@ -74,6 +74,21 @@ describe('the week as runs (WP-R4, D49)', () => {
   });
 });
 
+describe('a line the editor refuses (start equal to end)', () => {
+  const broken = weekly(2, '09:00', '09:00');
+
+  it('is not drawn as a run, and a paint elsewhere keeps it as it is', () => {
+    expect(weekRunsOf([broken])[1]).toEqual([]);
+    const next = paintRows([broken], 0, 0, 16, 17, 'open');
+    expect(next).toContainEqual(broken);
+    expect(stored(next.filter((r) => r !== broken))).toEqual(['1 08:00-09:00']);
+  });
+
+  it('survives a template too, for the organiser to fix or remove', () => {
+    expect(applyTemplate([broken], 'weekdays')).toContainEqual(broken);
+  });
+});
+
 describe('painting a rectangle', () => {
   const base = [weekly(1, '08:00', '12:00')];
 

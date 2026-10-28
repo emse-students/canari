@@ -16,6 +16,7 @@
  */
 import {
   fromStoredLines,
+  lineProblem,
   minutesOf,
   toStoredLines,
   type EditorLine,
@@ -73,17 +74,25 @@ export function timeOfMinutes(min: number): string {
   return `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
 }
 
-/** The weekly lines of the editor as the week's open runs. */
+/**
+ * The weekly lines of the editor as the week's open runs. A line the editor refuses to save
+ * (`lineProblem`: a start equal to its end, an unreadable time) is NOT a run: the painter draws only
+ * what the save would send, and `rowsOfWeek` keeps such a line where it is for the organiser to fix.
+ */
 export function weekRunsOf(rows: readonly EditorLine[]): WeekRuns {
   const week: Run[][] = Array.from({ length: 7 }, () => []);
-  for (const line of toStoredLines(rows.filter((r) => r.kind === 'weekly'))) {
+  const valid = rows.filter((r) => r.kind === 'weekly' && lineProblem(r) === null);
+  for (const line of toStoredLines(valid)) {
     if (line.weekday === null) continue;
     week[line.weekday - 1].push([minutesOf(line.startTime), minutesOf(line.endTime)]);
   }
   return week.map(merge);
 }
 
-/** The week's runs as editor lines (an evening and its morning joined), then `rows`' dated ones. */
+/**
+ * The week's runs as editor lines (an evening and its morning joined), then what `rows` holds that
+ * is not a run: its dated lines, and any weekly line that has a problem (kept, never normalised).
+ */
 export function rowsOfWeek(week: WeekRuns, rows: readonly EditorLine[]): EditorLine[] {
   // Monday LAST: `fromStoredLines` folds a morning into an evening it has already seen, and
   // Monday's morning is the tail of Sunday's night.
@@ -95,7 +104,8 @@ export function rowsOfWeek(week: WeekRuns, rows: readonly EditorLine[]): EditorL
       endTime: timeOfMinutes(end),
     }))
   );
-  return [...fromStoredLines(stored), ...rows.filter((r) => r.kind === 'dated')];
+  const kept = rows.filter((r) => r.kind === 'dated' || lineProblem(r) !== null);
+  return [...fromStoredLines(stored), ...kept];
 }
 
 /** Whether the part of `day` that starts at grain row `slot` is open (its first minute is covered). */
