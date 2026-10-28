@@ -430,9 +430,9 @@ real device. Three lessons generalise to every future one:
   SvelteKit boots from an inline module, so a selector-based assertion finds nothing and silently
   asserts nothing.
 
-**Leon pushes to Canari's `main` too**, and the same reasoning applies to every commit of his:
-`git fetch` at the START of a session and again before any measurement, then `git pull` his work in.
-His work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
+**Another contributor pushes to Canari's `main` too**, and the same reasoning applies to every commit of theirs:
+`git fetch` at the START of a session and again before any measurement, then `git pull` their work in.
+That work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
 taken against a tree that is behind `main` is a verdict about something nobody is running, and that
 is how a cell becomes wrong without anyone touching it.
 
