@@ -2318,7 +2318,7 @@ Sign-out now resets the announcement store, whose reset had no caller: the next 
 
 ### Fixed - an exported log no longer carries messages an older build stored in clear
 
-The in-app log was redacted only when a line was written, so lines stored before #1839 (`text="bisous"`) left the device as they were; every stored line now passes the same, now idempotent, redaction again when it is read for export (in batches that yield to the main thread), and the `[SEND]` lines JSON-quote the text so a typed `"` no longer lets the rest of a message through ([mobile](docs/wiki/frontend/mobile.md#redacted-at-write-and-at-read)).
+The in-app log was redacted only when a line was written, so lines stored before #1839 (`text="coucou"`) left the device as they were; every stored line now passes the same, now idempotent, redaction again when it is read for export (in batches that yield to the main thread), and the `[SEND]` lines JSON-quote the text so a typed `"` no longer lets the rest of a message through ([mobile](docs/wiki/frontend/mobile.md#redacted-at-write-and-at-read)).
 
 ### Fixed - comments no longer claim `attachConsole()` sends the JS console to logcat
 
@@ -4918,8 +4918,8 @@ Those apps keep links in their own browser, so the page now shows an "Ouvrir" ba
 
 ### Fixed - a PDF export breaks its lines where the browser did, not where jsPDF would
 
-The vector text layer re-wrapped every run in jsPDF's own metrics, which printed "Lounes
-BRIAND--R / AVIDAT" mid-word and set a name on one line where the preview used two. Each wrapped
+The vector text layer re-wrapped every run in jsPDF's own metrics, which printed "Lilian
+VERNAY--M / AZOYER" mid-word and set a name on one line where the preview used two. Each wrapped
 run is now measured line by line in the DOM and drawn at its own baseline, on all three exports
 (carte, agenda, trombinoscope) ([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-pdf-breaks-its-lines-where-the-browser-did)).
 
@@ -5686,7 +5686,7 @@ dans `initializeConnection.ts` consigne la reponse la ou la question se pose
 
 ### Security - un plan de migration decrivait comment atteindre une machine qu'on ne possede pas
 
-Leon a demande pourquoi un login etait ecrit en dur dans le plan de migration. Il y avait plus que
+Un contributeur a demande pourquoi un login etait ecrit en dur dans le plan de migration. Il y avait plus que
 ca : le compte utilise sur l'hote partage de la DSI, un second compte a cote, lequel des deux
 detenait `docker`, les fichiers de cles d'un poste et le second facteur qui en avait ete retire -
 une carte d'acces vers la machine d'un tiers, dans un depot PUBLIC. Le scan de secrets ne pouvait

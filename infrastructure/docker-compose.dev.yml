@@ -423,7 +423,7 @@ services:
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       # CUT, NOT INHERITED. The previous version of this file defaulted this to
       # `https://gallery.mitv.fr`, which is the PRODUCTION MiGallery - a dev environment calling a
       # real service in another repository's estate. Empty means no MiGallery in dev.
@@ -478,7 +478,7 @@ services:
       USER_SERVICE_URL: http://core-service:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
       # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
