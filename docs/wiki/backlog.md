@@ -1964,7 +1964,18 @@ Reuse the bench phones with screen recording to make demo videos and screenshots
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
 waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
 built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
-Mi 9T and iPhone 12 readings.
+iPhone 12 readings, and on the Mi 9T what is listed as owed below.
+**Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,
+and cold behind the PIN: drained on mount, offered once unlocked) and a photo from the gallery land
+in the picked conversation with the conversation OPEN and the share staged, never sent (#2609); the
+text-only inbox folder is deleted at once and a removed staged file leaves `shared_inbox/` empty
+(#2620); a staged text stays with its conversation across a switch (#2614); a refused stream shows
+the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
+and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
+post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
+chooser carries the post's link. **Still owed on the Mi 9T:** S6 from a reel (dev holds none),
+S3 of a picture, a PDF and a video out of a conversation (needs a media message in a conversation
+the rig does not use), several photos in one share, and a kill-and-relaunch with a share waiting.
 **S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
 Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
@@ -2015,6 +2026,13 @@ list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent
 the most recent conversation, so the one the member just left is at the top everywhere except
 there. Deciding: whether the forward and the share-in picker split their order, or both go to
 `'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - A toast draws over the dev-only "Environnement de test" banner (Mi 9T, 2026-10-28)
+
+On a dev build the `share_items_lost` toast lands on top of the test-environment banner at the top
+of the screen and the two texts overlap. Production carries no such banner, so only dev and tester
+builds show it; any toast placed at the top meets it the same way. Deciding: whether toasts sit
+below the banner or the banner yields while a toast shows.
 
 ## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
 
