@@ -2013,6 +2013,13 @@ The post menu and the `/posts/<id>` page pass a constant id and a boolean `open`
 same sheet works there. Fix where the id is read: the row captures `postId` before it closes, and a
 viewer test drives a row of the REAL sheet rather than `PostShareSheetStub`, whose one button
 closes and never reads the id afterwards. #2609's "the viewer closes after an in-app send" is unread until then.
+**Fix in review: #2644** (the id read before the close, and a sheet test mounted as the viewer mounts it).
+
+## P3 - A share already drained into the picker does not survive a kill (Mi 9T, 2026-10-28)
+
+Accepted as designed (2026-10-28): [sharing](frontend/sharing.md) promises a waiting share survives
+a kill only while the page has not taken it. Read on 1.5.1: a text share left open in "Envoyer
+a..." (`pending_share.json drained`), the app force-stopped and relaunched - nothing offered again.
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
