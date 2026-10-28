@@ -113,7 +113,7 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     await settle();
 
     expect(state.confirmed).toHaveLength(1);
-    expect(state.close).toHaveBeenCalledWith('asso-1', 'rec-1', 'refunded');
+    expect(state.close).toHaveBeenCalledWith('asso-1', 'rec-1', 'refunded', false);
     expect(target.textContent).toContain(m.asso_achats_closed_refunded());
     expect(target.textContent).toContain(m.asso_achats_not_granted());
     expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();
@@ -135,6 +135,16 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     }
   );
 
+  it('sends what the list showed with a GRANTED closing, so the server can refuse a change', async () => {
+    state.close.mockResolvedValue({ ...open, closedOutcome: 'granted', closedAt: open.paidAt });
+    const target = await render([{ ...open, delivered: true }]);
+
+    button(target, m.asso_achats_close_granted_button())!.click();
+    await settle();
+
+    expect(state.close).toHaveBeenCalledWith('asso-1', 'rec-1', 'granted', true);
+  });
+
   it('records nothing when the confirmation is declined', async () => {
     state.confirm = false;
     const target = await render([open]);
@@ -154,7 +164,7 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     button(target, m.asso_achats_close_granted_button())!.click();
     await settle();
 
-    expect(state.close).toHaveBeenCalledWith('asso-1', 'rec-1', 'granted');
+    expect(state.close).toHaveBeenCalledWith('asso-1', 'rec-1', 'granted', false);
     expect(target.textContent).toContain(m.asso_achats_close_already());
     expect(target.textContent).toContain(m.asso_achats_closed_refunded());
     expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();

@@ -163,6 +163,13 @@ export const PURCHASE_BUYER_ERASED = 'PURCHASE_BUYER_ERASED';
 export const PURCHASE_TARGET_ALREADY_HELD = 'PURCHASE_TARGET_ALREADY_HELD';
 
 /**
+ * The `code` of the 409 a closing as `granted` gets when what the list showed is no longer what the
+ * closing would do: the list said the tier is already delivered ("nothing is granted") and it no
+ * longer is, or the reverse. Nothing was written; the list is re-read, then the manager decides again.
+ */
+export const PURCHASE_CLOSING_CHANGED = 'PURCHASE_CLOSING_CHANGED';
+
+/**
  * The `code` of the 409 a closing as `granted` gets when the buyer holds a tier the one paid for is
  * not a rise over (worth as much or more, or not comparable): granting would move them down. A
  * refund is the outcome left.

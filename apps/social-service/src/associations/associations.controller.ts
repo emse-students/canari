@@ -1372,7 +1372,13 @@ export class AssociationsController {
     @Headers('x-user-id') closedBy: string,
     @Body() dto: ClosePaidNotGrantedDto
   ) {
-    return this.productsService.closePaidNotGranted(id, purchaseId, closedBy, dto.outcome);
+    return this.productsService.closePaidNotGranted(
+      id,
+      purchaseId,
+      closedBy,
+      dto.outcome,
+      dto.expectDelivered ?? null
+    );
   }
 
   /** Lists buyers for a boutique product. Requires MANAGE_PRODUCTS flag. */

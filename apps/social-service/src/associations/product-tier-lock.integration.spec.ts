@@ -827,44 +827,100 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(row.metadata).toEqual({ purchaseRecordId: first });
   });
 
+  /** The form a record was paid on. */
+  const formOf = async (record: string): Promise<string> =>
+    (await ds.query(`SELECT "formId" FROM purchase_records WHERE id = $1`, [record]))[0].formId;
+
+  /** A REAL answer to `formId` by `userId` (null: a guest's). Answers its id. */
+  async function answerTo(formId: string, userId: string | null): Promise<string> {
+    const id = `00000000-0000-4000-8000-${String(++buyerSeq).padStart(12, '0')}`;
+    await ds.query(`INSERT INTO submissions (id, "formId", "userId") VALUES ($1, $2, $3)`, [
+      id,
+      formId,
+      userId,
+    ]);
+    return id;
+  }
+
+  /** The form run's own grant of tier D, dated before any record: time alone says "renewal". */
+  const formGrant = (userId: string, submissionId: string) =>
+    ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy", metadata, "createdAt")
+       VALUES ($1, $2, $3, 'form', $4, '2000-01-01')`,
+      [userId, TAG_D, ASSO, JSON.stringify({ submissionId })]
+    );
+
   it("a form answer's own grant, written BEFORE its record (the replay race), closes the record as granted", async () => {
     const buyer = newBuyer();
     const record = await markedFormRecord(buyer, 'd');
-    const [{ formId }] = await ds.query(`SELECT "formId" FROM purchase_records WHERE id = $1`, [
-      record,
-    ]);
-    const ownAnswer = `00000000-0000-4000-8000-${String(++buyerSeq).padStart(12, '0')}`;
-    await ds.query(`INSERT INTO submissions (id, "formId", "userId") VALUES ($1, $2, $3)`, [
-      ownAnswer,
-      formId,
-      buyer,
-    ]);
-    // The run's grant, dated before the record: time alone would call it a renewal.
-    await ds.query(
-      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy", metadata, "createdAt")
-       VALUES ($1, $2, $3, 'form', $4, '2000-01-01')`,
-      [buyer, TAG_D, ASSO, JSON.stringify({ submissionId: ownAnswer })]
-    );
+    await formGrant(buyer, await answerTo(await formOf(record), buyer));
     const [listed] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
     expect(listed).toMatchObject({ grantRefusal: null, delivered: true });
 
-    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted');
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted', true);
 
     expect(closed.closedOutcome).toBe('granted');
   });
 
-  it("another form's answer is not this payment's delivery, however recent its grant", async () => {
+  it.each([
+    ['an answer to ANOTHER form, by the same buyer', 'other-form'],
+    ["ANOTHER buyer's answer to the same form", 'other-buyer'],
+    ['a FIRST answer to the same form, when the buyer paid it twice', 'second-answer'],
+  ] as const)("is not this payment's delivery: %s", async (_case, variant) => {
     const buyer = newBuyer();
     const record = await markedFormRecord(buyer, 'd');
-    await ds.query(
-      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy", metadata)
-       VALUES ($1, $2, $3, 'form', $4)`,
-      [buyer, TAG_D, ASSO, JSON.stringify({ submissionId: '00000000-0000-4000-8000-00000000ffff' })]
-    );
+    const formId = await formOf(record);
+    let answer: string;
+    if (variant === 'other-form') {
+      answer = await answerTo(await formOf(await markedFormRecord(newBuyer(), 'd')), buyer);
+    } else if (variant === 'other-buyer') {
+      answer = await answerTo(formId, newBuyer());
+    } else {
+      // The buyer answered this form twice: the first answer was granted and recorded paid, the
+      // second is the marked one. The record names no answer, so the tag cannot be told its.
+      answer = await answerTo(formId, buyer);
+      await answerTo(formId, buyer);
+      await ds.getRepository(PurchaseRecord).save(
+        ds.getRepository(PurchaseRecord).create({
+          userId: buyer,
+          source: 'form',
+          formId,
+          productId: null,
+          amountCents: 1500,
+          paymentMethod: 'online',
+          status: 'paid',
+          stripePaymentIntentId: null,
+          associationId: ASSO,
+          productName: 'Adhesion',
+        })
+      );
+    }
+    await formGrant(buyer, answer);
 
     const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
 
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
+    const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
+    expect(row).toMatchObject({ grantRefusal: 'target-held', delivered: false });
+  });
+
+  it('a tag revoked between the list and the click: the "nothing is granted" closing grants nothing', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, TIER_D);
+    await tags.grantCotisant(ASSO, buyer, 'manager', 'd');
+    const [listed] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
+    expect(listed.delivered).toBe(true);
+    await ds.query(`DELETE FROM user_tags WHERE "userId" = $1`, [buyer]);
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', true));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_CLOSING_CHANGED');
+    expect(await heldTags(buyer)).toEqual([]);
+    const rows = await ds.query(
+      `SELECT 1 FROM purchase_record_closings WHERE "purchaseRecordId" = $1`,
+      [record]
+    );
+    expect(rows).toHaveLength(0);
   });
 
   it('GRANTED is refused PURCHASE_TARGET_ALREADY_HELD when the tier was held BEFORE the payment: it stays reported', async () => {

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { lockBuyerTiers } from './buyer-tier-lock';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, Repository, In } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
@@ -806,18 +806,33 @@ export class UserTagService {
    * Returns the user's active (non-expired) tag row with the given name issued by
    * `issuingAssocId`, or null if absent or expired. Like `hasActiveTag` but also surfaces
    * `expiresAt` - used where a caller needs the expiry itself, not just a yes/no (e.g. the Cercle
-   * inbound cotisant-status check, and the closing of a payment whose tier was delivered since).
-   * Pass `manager` to read inside a transaction, after its locks.
+   * inbound cotisant-status check).
    */
   async getActiveTag(
     userId: string,
     tagName: string,
-    issuingAssocId: string,
-    manager?: EntityManager
+    issuingAssocId: string
   ): Promise<UserTag | null> {
-    const repo = manager ? manager.getRepository(UserTag) : this.repo;
-    const tag = await repo.findOne({ where: { userId, tagName, issuingAssocId } });
+    const tag = await this.repo.findOne({ where: { userId, tagName, issuingAssocId } });
     return isActive(tag) ? tag : null;
+  }
+
+  /**
+   * The ACTIVE rows, issued by `issuingAssocId`, of any of `tagNames` held by any of `userIds` - in
+   * ONE query, for a reader deciding over many buyers at once (the closing of a payment paid for and
+   * not granted, and the purchases list's advice on it). Reads through `manager`, after its locks.
+   */
+  async activeTagsOf(
+    userIds: string[],
+    tagNames: string[],
+    issuingAssocId: string,
+    manager: EntityManager
+  ): Promise<UserTag[]> {
+    if (userIds.length === 0 || tagNames.length === 0) return [];
+    const rows = await manager.getRepository(UserTag).find({
+      where: { userId: In(userIds), tagName: In(tagNames), issuingAssocId },
+    });
+    return rows.filter(isActive);
   }
 
   /**

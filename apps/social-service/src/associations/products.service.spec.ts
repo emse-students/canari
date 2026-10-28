@@ -871,8 +871,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       { id: 'prod-libre', associationId: 'asso1', variantKey: 'libre', amountCents: null },
     ].map((t) => ({ ...t, priceMatrix: null }));
     /** The catalogue listing every tier above. */
-    const FULL_CATALOGUE = TIERS.map((t) => ({ variantKey: t.variantKey, name: t.variantKey }));
     const tagOf = (key: string) => `cotisant:cercle-${key}`;
+    const FULL_CATALOGUE = TIERS.map((t) => ({
+      variantKey: t.variantKey,
+      name: t.variantKey,
+      tagName: tagOf(t.variantKey),
+    }));
 
     /**
      * A service whose purchase record lookups answer `records` in turn (the unlocked read, then the
@@ -922,6 +926,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         cotisationMode: opts.mode === undefined ? 'lifetime' : opts.mode,
       });
       (t.productRepo.find as jest.Mock).mockResolvedValue(TIERS);
+      // The closing context reads the records' products by id: what `productRepo.findOne` answers.
+      const baseFind = t.manager.find;
+      t.manager.find = jest.fn(async (entity: unknown, o: { where: { id?: unknown } }) => {
+        if (entity !== AssociationProduct || !o.where.id) return baseFind(entity, o);
+        const product = await t.productRepo.findOne(o);
+        return product ? [product] : [];
+      });
       const held = new Set((opts.held ?? []).map(tagOf));
       t.userTagService.hasActiveTag.mockImplementation((_user: string, tag: string) =>
         Promise.resolve(held.has(tag))
@@ -931,8 +942,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         ...(opts.heldTag ?? { createdAt: new Date(0), metadata: {} }),
       };
       (t.userTagService as any).stampDelivery = jest.fn(() => Promise.resolve(opts.stamps ?? true));
-      (t.userTagService.getActiveTag as jest.Mock).mockImplementation(
-        (_user: string, tag: string) => Promise.resolve(held.has(tag) ? heldTag : null)
+      (t.userTagService as any).activeTagsOf = jest.fn((userIds: string[], tagNames: string[]) =>
+        Promise.resolve(
+          tagNames
+            .filter((tagName) => held.has(tagName))
+            .map((tagName) => ({ ...heldTag, userId: userIds[0], tagName }))
+        )
       );
       return t;
     }
@@ -1256,7 +1271,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const query = t.manager.query;
       t.manager.query = jest.fn((sql: string, params?: unknown[]) =>
         String(sql).includes('FROM forms')
-          ? Promise.resolve([{ grantsCotisation: true, cotisationVariantKey: 'avec-alcool' }])
+          ? Promise.resolve([
+              { id: 'form-1', grantsCotisation: true, cotisationVariantKey: 'avec-alcool' },
+            ])
           : query(sql, params)
       );
       await t.service.closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted');
@@ -1278,6 +1295,60 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       const [row] = await t.service.listAssociationPurchases('asso1');
       expect(row).toMatchObject({ grantRefusal: 'target-held', buyerTier: 'Avec alcool' });
+    });
+    it.each([
+      ['the tag names a NULL intent', { paymentIntentId: null }, '1001'],
+      ['the record names no intent', { paymentIntentId: '1001' }, null],
+      ['neither names an intent (null never matches null)', { paymentIntentId: null }, null],
+    ])(
+      'never falls back to time for a paid grant: refused when %s',
+      async (_case, metadata, recordIntent) => {
+        const t = closing(
+          [marked({ productId: 'prod-tier', stripePaymentIntentId: recordIntent })],
+          {
+            held: ['avec-alcool'],
+            heldTag: { createdAt: new Date(Date.now() + 60_000), metadata },
+          }
+        );
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['confirmed as delivered, and it no longer is', true, [] as string[]],
+      ['confirmed as a grant, and it is now delivered', false, ['avec-alcool']],
+    ])(
+      'refuses PURCHASE_CLOSING_CHANGED when %s, writing nothing',
+      async (_case, expectDelivered, held) => {
+        const t = closing([marked({ productId: 'prod-tier' })], {
+          held,
+          heldTag: { createdAt: new Date(Date.now() + 60_000), metadata: {} },
+        });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        const err = await t.service
+          .closePaidNotGranted('asso1', 'rec-1', 'admin1', 'granted', expectDelivered)
+          .catch((e: unknown) => e);
+        expect(codeOf(err)).toBe('PURCHASE_CLOSING_CHANGED');
+        expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+        expect((t.userTagService as any).stampDelivery).not.toHaveBeenCalled();
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it('reads the closing context ONCE for all the open rows of the list', async () => {
+      const t = closing([marked({ productId: 'prod-tier' })]);
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      (t.purchaseRecordService as any).listPaidByAssociation = jest.fn(() =>
+        Promise.resolve(
+          ['rec-1', 'rec-2', 'rec-3'].map((id) => marked({ id, productId: 'prod-tier' }))
+        )
+      );
+      const rows = await t.service.listAssociationPurchases('asso1');
+      expect(rows).toHaveLength(3);
+      expect((t.userTagService as any).listCotisationTiers).toHaveBeenCalledTimes(1);
+      expect((t.userTagService as any).activeTagsOf).toHaveBeenCalledTimes(1);
     });
   });
 

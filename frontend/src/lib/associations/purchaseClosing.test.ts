@@ -6,6 +6,7 @@ import { closingRefusalMessage } from './purchaseClosing';
 describe('closingRefusalMessage - a refused closing is worded from its typed code', () => {
   it.each([
     ['PURCHASE_ALREADY_CLOSED', () => m.asso_achats_close_already()],
+    ['PURCHASE_CLOSING_CHANGED', () => m.asso_achats_close_changed()],
     ['PURCHASE_NOT_CLOSABLE', () => m.asso_achats_close_not_closable()],
     ['PURCHASE_TIER_GONE', () => m.asso_achats_close_tier_gone()],
     ['PURCHASE_BUYER_ERASED', () => m.asso_achats_close_buyer_erased()],

@@ -1,6 +1,8 @@
 import { ExecutionContext, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsController } from './associations.controller';
 import { AssociationsService } from './associations.service';
@@ -9,6 +11,7 @@ import {
   GlobalAdminOrAssociationRoleGuard,
   PERM_FLAG_KEY,
 } from './guards/global-admin-or-association-role.guard';
+import { ClosePaidNotGrantedDto } from './dto/association.dto';
 import { ProductsService } from './products.service';
 
 /**
@@ -95,13 +98,26 @@ describe('AssociationsController.closePaidNotGranted - one association closes on
     );
 
     await expect(
-      controller.closePaidNotGranted(A, PURCHASE_OF_B, 'manager', { outcome: 'granted' })
+      controller.closePaidNotGranted(A, PURCHASE_OF_B, 'manager', {
+        outcome: 'granted',
+        expectDelivered: false,
+      })
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(products.closePaidNotGranted).toHaveBeenCalledWith(
       A,
       PURCHASE_OF_B,
       'manager',
-      'granted'
+      'granted',
+      false
     );
+  });
+
+  it.each([
+    [{ outcome: 'granted' }, false],
+    [{ outcome: 'granted', expectDelivered: true }, true],
+    [{ outcome: 'refunded' }, true],
+  ])('a GRANTED closing must say what the list showed: %j valid=%s', async (body, valid) => {
+    const errors = await validate(plainToInstance(ClosePaidNotGrantedDto, body));
+    expect(errors.length === 0).toBe(valid);
   });
 });

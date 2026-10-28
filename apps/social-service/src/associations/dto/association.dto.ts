@@ -696,6 +696,15 @@ export class GrantProductPurchaseDto {
 export class ClosePaidNotGrantedDto {
   @IsIn(PURCHASE_CLOSING_OUTCOMES)
   outcome: PurchaseClosingOutcome;
+
+  /**
+   * For `granted`, what the purchases list showed: true when it said the tier is already delivered
+   * (`PurchaseListRow.delivered`, "nothing is granted"). The closing refuses
+   * `409 PURCHASE_CLOSING_CHANGED` when that is no longer so, rather than grant under that promise.
+   */
+  @ValidateIf((o: ClosePaidNotGrantedDto) => o.outcome === 'granted')
+  @IsBoolean()
+  expectDelivered?: boolean;
 }
 
 /** DTO for manually granting a cotisation tag to a user. */

@@ -8,6 +8,12 @@ export const PURCHASE_NOT_CLOSABLE = 'PURCHASE_NOT_CLOSABLE';
 export const PURCHASE_ALREADY_CLOSED = 'PURCHASE_ALREADY_CLOSED';
 
 /**
+ * The body `code` of the 409 a "granted" closing gets when the row is no longer what the list showed
+ * (already delivered, or not any more): nothing was written, the list is re-read.
+ */
+export const PURCHASE_CLOSING_CHANGED = 'PURCHASE_CLOSING_CHANGED';
+
+/**
  * The body `code` of each 409 a "granted" closing gets, by the reason the server refused it
  * (`ClosingGrantRefusal`, the same reason the purchases list carries): nothing was written, and the
  * payment can still be recorded as refunded.
@@ -48,6 +54,7 @@ export function closingRefusalMessage(err: unknown): string {
   const code = err instanceof SocialApiError ? err.code : null;
   if (code === PURCHASE_ALREADY_CLOSED) return m.asso_achats_close_already();
   if (code === PURCHASE_NOT_CLOSABLE) return m.asso_achats_close_not_closable();
+  if (code === PURCHASE_CLOSING_CHANGED) return m.asso_achats_close_changed();
   const refusal = (Object.keys(GRANT_REFUSAL_CODES) as ClosingGrantRefusal[]).find(
     (r) => GRANT_REFUSAL_CODES[r] === code
   );

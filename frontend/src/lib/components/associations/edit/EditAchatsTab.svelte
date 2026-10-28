@@ -127,7 +127,12 @@
     closingId = purchase.id;
     purchasesError = '';
     try {
-      const row = await closePaidNotGranted(asso.id, purchase.id, outcome);
+      const row = await closePaidNotGranted(
+        asso.id,
+        purchase.id,
+        outcome,
+        purchase.delivered === true
+      );
       purchases = purchases.map((p) => (p.id === row.id ? row : p));
       Log.i('ASSO', `purchase ${purchase.id.slice(0, 8)} closed as ${outcome}`);
     } catch (e) {

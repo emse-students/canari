@@ -1940,6 +1940,7 @@
   "asso_achats_closed_refunded": "Remboursé",
   "asso_achats_closed_granted": "Accordé à la main",
   "asso_achats_closed_hint": "Issue enregistrée le {date}.",
+  "asso_achats_close_changed": "Ce paiement a changé depuis l'affichage de la liste : elle a été rechargée, vérifiez-le avant de l'enregistrer.",
   "asso_achats_close_already": "L'issue de ce paiement a déjà été enregistrée.",
   "asso_achats_close_not_closable": "Ce paiement n'attend pas de régularisation.",
   "asso_achats_close_tier_gone": "La cotisation de ce paiement n'existe plus : enregistrez plutôt un remboursement.",

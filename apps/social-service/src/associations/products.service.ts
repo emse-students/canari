@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isUUID } from 'class-validator';
 import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
@@ -32,6 +33,7 @@ import {
   PURCHASE_NOT_A_RISE,
   PURCHASE_TIER_NOT_COMPARABLE,
   PURCHASE_TARGET_ALREADY_HELD,
+  PURCHASE_CLOSING_CHANGED,
   PURCHASE_YEAR_OVER,
   PURCHASE_NOT_CLOSABLE,
   PURCHASE_TIER_GONE,
@@ -48,11 +50,13 @@ import {
   issuedTagKey,
   TagHeldByAnotherIssuerError,
   UserTagService,
+  type CotisationTierInfo,
 } from '../users/user-tag.service';
 import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
   PurchaseRecord,
+  RECEIVED_PURCHASE_STATUSES,
   receivedStatus,
   type PurchasePaymentMethod,
 } from '../users/entities/purchase-record.entity';
@@ -312,17 +316,40 @@ interface ClosingGrantVerdict {
   detail: string;
 }
 
+/** What `closingGrantVerdict` reads, loaded once for many records (`closingContextOf`). */
+interface ClosingContext {
+  asso: Association | null;
+  /** The association's tiers with their current tags; empty without a cotisation mode. */
+  catalogue: CotisationTierInfo[];
+  /** Its membership products, the ranking columns only. */
+  tiers: AssociationProduct[];
+  /** The records' boutique products, by id (this association's only). */
+  products: Map<string, AssociationProduct>;
+  /** The records' forms, by id (this association's only). */
+  forms: Map<string, { grantsCotisation: boolean; cotisationVariantKey: string | null }>;
+  /** Each buyer's ACTIVE tier tags of this association. */
+  tagsByBuyer: Map<string, UserTag[]>;
+  /**
+   * Whether `submissionId` is an answer to the form `record` paid for, by its buyer, who has exactly
+   * ONE paid record for that form - so that answer can only be this record's (`deliveryOf`).
+   */
+  ownFormAnswer: (record: PurchaseRecord, submissionId: unknown) => boolean;
+}
+
 /**
  * Whether the held tag `tag` - of the tier payment `record` bought - is the DELIVERY of that payment,
  * and why. Read from the tag's own provenance first, then from time:
  * - `metadata.purchaseRecordId` set: the tag already closed (or was granted by) a payment - one
  *   delivery closes at most one payment, so it is not this one's;
  * - `metadata.submissionId` set: a form answer's grant - this payment's only when the record is that
- *   form's and the answer is this buyer's (`ownSubmission`: a replay that raced the run still
- *   granting), whatever the times say;
+ *   form's, the answer is this buyer's, AND this buyer has exactly ONE paid record for that form
+ *   (`ownSubmission`, `ClosingContext.ownFormAnswer`: a record names no answer, so with two the
+ *   answer cannot be told to be this one's) - a replay that raced the run still granting - whatever
+ *   the times say;
  * - `metadata.legacy` set: a legacy claim's grant, not a payment's;
- * - `metadata.paymentIntentId` set: a paid grant - this payment's only when it names this record's
- *   payment, else a second payment delivered it and this one is owed a refund;
+ * - `metadata.paymentIntentId` present: a paid grant - this payment's only when it names this
+ *   record's payment (both non-null), else a second payment delivered it and this one is owed a
+ *   refund; it never falls back to time;
  * - no provenance (a manager's roster grant, which the hourly report asks for): a delivery when first
  *   granted AFTER the payment was recorded (`createdAt` > `paidAt`, both written by the database).
  *   A tag that predates the payment is a renewal the payment did not buy. A revoke followed by a
@@ -345,10 +372,11 @@ function deliveryOf(
   if (meta.legacy != null) {
     return { delivered: false, detail: 'its tag was granted by a legacy claim' };
   }
-  if (meta.paymentIntentId != null) {
-    return meta.paymentIntentId === record.stripePaymentIntentId
+  if ('paymentIntentId' in meta) {
+    // A paid grant never falls back to time: a null on either side matches nothing.
+    return meta.paymentIntentId != null && meta.paymentIntentId === record.stripePaymentIntentId
       ? { delivered: true, detail: 'its tag was granted by this payment' }
-      : { delivered: false, detail: 'its tag was granted by another payment' };
+      : { delivered: false, detail: 'its tag was granted by another payment, or names none' };
   }
   return tag.createdAt.getTime() > record.paidAt.getTime()
     ? { delivered: true, detail: 'its tag was granted by hand after the payment' }
@@ -2696,9 +2724,12 @@ export class ProductsService {
     // An OPEN marked payment says whether it can still be granted, and over what: the decision the
     // closing takes under the lock, read here without one (the list is advice; the closing decides).
     const verdicts = new Map<string, ClosingGrantVerdict>();
-    for (const r of records) {
-      if (r.status !== 'paid_not_granted' || closings.has(r.id)) continue;
-      verdicts.set(r.id, await this.closingGrantVerdict(manager, r));
+    const open = records.filter((r) => r.status === 'paid_not_granted' && !closings.has(r.id));
+    // ONE context per association listed, whatever the number of open rows.
+    for (const associationId of new Set(open.map((r) => r.associationId))) {
+      const own = open.filter((r) => r.associationId === associationId);
+      const ctx = await this.closingContextOf(manager, associationId, own);
+      for (const r of own) verdicts.set(r.id, await this.closingGrantVerdict(r, ctx));
     }
 
     return records.map((r) => ({
@@ -3135,7 +3166,8 @@ export class ProductsService {
     associationId: string,
     purchaseId: string,
     closedBy: string,
-    outcome: PurchaseClosingOutcome
+    outcome: PurchaseClosingOutcome,
+    expectDelivered: boolean | null = null
   ): Promise<PurchaseListRow> {
     this.logger.debug(
       `[SHOP] closing purchase=${purchaseId.slice(0, 8)} association=${associationId.slice(0, 8)} as ${outcome}`
@@ -3172,8 +3204,13 @@ export class ProductsService {
         }
         if (grants) {
           // Read on the LOCKED row: an erasure committed while this waited has rewritten its buyer.
-          const verdict = await this.closingGrantVerdict(manager, record);
+          const ctx = await this.closingContextOf(manager, associationId, [record]);
+          const verdict = await this.closingGrantVerdict(record, ctx);
           if (verdict.refusal) throw this.closingGrantRefused(record.id, verdict);
+          // What the manager confirmed must still be what happens: "nothing is granted" never grants.
+          if (expectDelivered !== null && expectDelivered !== Boolean(verdict.deliveredTagId)) {
+            throw this.closingChanged(record.id, expectDelivered);
+          }
           if (verdict.deliveredTagId) {
             // Already delivered: nothing granted, nothing renewed. The tag is stamped with this
             // record, so the same delivery cannot close a second payment.
@@ -3240,8 +3277,8 @@ export class ProductsService {
    * `buyerTier` is read BEFORE any of these, so every refusal still says what the buyer holds.
    */
   private async closingGrantVerdict(
-    manager: EntityManager,
-    record: PurchaseRecord
+    record: PurchaseRecord,
+    ctx: ClosingContext
   ): Promise<ClosingGrantVerdict> {
     const userId = record.userId;
     if (!userId || isErasedAccount(userId)) {
@@ -3255,12 +3292,11 @@ export class ProductsService {
       };
     }
     // What the buyer holds NOW is read first, so every refusal below still shows it.
-    const asso = await manager.findOne(Association, { where: { id: record.associationId } });
-    // Empty when the association no longer sells cotisations (no mode).
-    const catalogue = await this.userTagService.listCotisationTiers(record.associationId, {
-      manager,
-    });
-    const facts = asso ? await this.tierFactsOf(asso, userId, manager) : null;
+    const { asso, catalogue } = ctx;
+    const buyerTags = ctx.tagsByBuyer.get(userId) ?? [];
+    const facts = asso
+      ? await this.tierFactsFrom(asso, ctx.tiers, (tag) => buyerTags.some((t) => t.tagName === tag))
+      : null;
     const held = facts?.held ?? null;
     const buyerTier = held
       ? (catalogue.find((t) => t.variantKey === held.variantKey)?.name ?? held.variantKey ?? 'base')
@@ -3275,23 +3311,13 @@ export class ProductsService {
 
     let variantKey: string | null;
     if (record.source === 'product') {
-      const product = record.productId
-        ? await manager.findOne(AssociationProduct, {
-            where: { id: record.productId, associationId: record.associationId },
-          })
-        : null;
+      const product = record.productId ? ctx.products.get(record.productId) : undefined;
       if (product?.type !== 'membership') return refused('tier-gone', 'its product names no tier');
       variantKey = product.variantKey;
     } else {
-      const rows: { grantsCotisation: boolean; cotisationVariantKey: string | null }[] =
-        record.formId
-          ? await manager.query(
-              `SELECT "grantsCotisation", "cotisationVariantKey" FROM forms WHERE id = $1 AND "associationId" = $2`,
-              [record.formId, record.associationId]
-            )
-          : [];
-      if (!rows[0]?.grantsCotisation) return refused('tier-gone', 'its form grants no tier');
-      variantKey = rows[0].cotisationVariantKey;
+      const form = record.formId ? ctx.forms.get(record.formId) : undefined;
+      if (!form?.grantsCotisation) return refused('tier-gone', 'its form grants no tier');
+      variantKey = form.cotisationVariantKey;
     }
     const tierLabel = variantKey ?? 'base';
     if (!asso?.cotisationMode || !catalogue.some((t) => t.variantKey === variantKey)) {
@@ -3312,12 +3338,13 @@ export class ProductsService {
     if (relation === 'held') {
       // Held BECAUSE this payment's tier was delivered since (`deliveryOf`): recorded `granted`.
       const tagName = catalogue.find((t) => t.variantKey === variantKey)?.tagName;
-      const tag = tagName
-        ? await this.userTagService.getActiveTag(userId, tagName, record.associationId, manager)
-        : null;
+      const tag = buyerTags.find((t) => t.tagName === tagName);
       if (!tag) return refused('target-held', `tier ${tierLabel} is held under no readable tag`);
-      const ownSubmission = await this.isOwnFormAnswer(manager, record, tag.metadata?.submissionId);
-      const delivery = deliveryOf(tag, record, ownSubmission);
+      const delivery = deliveryOf(
+        tag,
+        record,
+        ctx.ownFormAnswer(record, tag.metadata?.submissionId)
+      );
       if (delivery.delivered) {
         return {
           refusal: null,
@@ -3337,22 +3364,98 @@ export class ProductsService {
   }
 
   /**
-   * Whether `submissionId` (a held tag's provenance) is an answer of the form `record` paid for, by
-   * the same buyer: then that tag is this payment's own delivery (`deliveryOf`). False for a boutique
-   * record, and for no id.
+   * Everything `closingGrantVerdict` reads, for `records` of association `associationId`, in a fixed
+   * number of queries whatever their count: the association, its catalogue and tier products, the
+   * records' products and forms, the buyers' ACTIVE tier tags, and - for form records - the buyers'
+   * answers to those forms and how many paid records each buyer has per form. The closing loads it
+   * for its one locked row, under the locks; the purchases list once for all its open rows.
    */
-  private async isOwnFormAnswer(
+  private async closingContextOf(
     manager: EntityManager,
-    record: PurchaseRecord,
-    submissionId: unknown
-  ): Promise<boolean> {
-    if (record.source !== 'form' || !record.formId || typeof submissionId !== 'string')
-      return false;
-    const rows: unknown[] = await manager.query(
-      `SELECT 1 FROM submissions WHERE id::text = $1 AND "formId" = $2 AND "userId" = $3`,
-      [submissionId, record.formId, record.userId]
+    associationId: string,
+    records: PurchaseRecord[]
+  ): Promise<ClosingContext> {
+    const unique = <T>(xs: (T | null | undefined)[]) => [
+      ...new Set(xs.filter((x): x is T => x != null)),
+    ];
+    const buyers = unique(records.map((r) => r.userId)).filter((u) => !isErasedAccount(u));
+    const productIds = unique(records.map((r) => (r.source === 'product' ? r.productId : null)));
+    const formRecords = records.filter((r) => r.source === 'form' && r.formId && r.userId);
+    const formIds = unique(formRecords.map((r) => r.formId));
+    const formBuyers = unique(formRecords.map((r) => r.userId));
+
+    const asso = await manager.findOne(Association, { where: { id: associationId } });
+    // Empty when the association no longer sells cotisations (no mode).
+    const catalogue = await this.userTagService.listCotisationTiers(associationId, { manager });
+    const tiers = asso?.cotisationMode
+      ? await manager.find(AssociationProduct, {
+          where: { associationId, type: 'membership' },
+          select: TIER_RANK_COLUMNS,
+        })
+      : [];
+    const products = productIds.length
+      ? await manager.find(AssociationProduct, { where: { id: In(productIds), associationId } })
+      : [];
+    const forms: { id: string; grantsCotisation: boolean; cotisationVariantKey: string | null }[] =
+      formIds.length
+        ? await manager.query(
+            `SELECT id, "grantsCotisation", "cotisationVariantKey" FROM forms
+              WHERE id = ANY($1) AND "associationId" = $2`,
+            [formIds, associationId]
+          )
+        : [];
+    const tags = await this.userTagService.activeTagsOf(
+      buyers,
+      catalogue.map((t) => t.tagName),
+      associationId,
+      manager
     );
-    return rows.length > 0;
+    // The form answers the buyers' tags name, by id: whose form and whose buyer each one is, is
+    // decided below (`ownFormAnswer`), never by this read.
+    const namedAnswers = unique(tags.map((t) => t.metadata?.submissionId)).filter(
+      (id): id is string => typeof id === 'string' && isUUID(id)
+    );
+    const answers: { id: string; formId: string; userId: string | null }[] =
+      formIds.length && namedAnswers.length
+        ? await manager.query(
+            `SELECT id::text AS id, "formId"::text AS "formId", "userId" FROM submissions
+              WHERE id = ANY($1)`,
+            [namedAnswers]
+          )
+        : [];
+    const paidCounts: { formId: string; userId: string; n: number }[] = formIds.length
+      ? await manager.query(
+          `SELECT "formId"::text AS "formId", "userId", count(*)::int AS n FROM purchase_records
+            WHERE source = 'form' AND "formId" = ANY($1) AND "userId" = ANY($2)
+              AND status = ANY($3)
+            GROUP BY 1, 2`,
+          [formIds, formBuyers, RECEIVED_PURCHASE_STATUSES]
+        )
+      : [];
+
+    const pair = (formId: string, userId: string) => `${formId}|${userId}`;
+    const answersById = new Map(answers.map((a) => [a.id, a]));
+    const paidCount = new Map(paidCounts.map((c) => [pair(c.formId, c.userId), c.n]));
+    const tagsByBuyer = new Map<string, UserTag[]>();
+    for (const t of tags) tagsByBuyer.set(t.userId, [...(tagsByBuyer.get(t.userId) ?? []), t]);
+    return {
+      asso,
+      catalogue,
+      tiers,
+      products: new Map(products.map((p) => [p.id, p])),
+      forms: new Map(forms.map((f) => [f.id, f])),
+      tagsByBuyer,
+      ownFormAnswer: (record, submissionId) => {
+        if (record.source !== 'form' || !record.formId || !record.userId) return false;
+        if (typeof submissionId !== 'string') return false;
+        const answer = answersById.get(submissionId);
+        if (!answer) return false;
+        const sameForm = answer.formId === record.formId;
+        const sameBuyer = answer.userId === record.userId;
+        const onlyPaidRecord = paidCount.get(pair(record.formId, record.userId)) === 1;
+        return sameForm && sameBuyer && onlyPaidRecord;
+      },
+    };
   }
 
   /**
@@ -3393,6 +3496,18 @@ export class ProductsService {
         'only a refund can be recorded'
     );
     return new ConflictException(refusal);
+  }
+
+  /** The typed 409 of a `granted` closing whose delivered state is no longer the one confirmed. */
+  private closingChanged(purchaseId: string, expectDelivered: boolean): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_CLOSING_CHANGED}): purchase=${purchaseId.slice(0, 8)} was ` +
+        `confirmed as ${expectDelivered ? 'already delivered' : 'to grant'}, and no longer is - nothing written`
+    );
+    return new ConflictException({
+      code: PURCHASE_CLOSING_CHANGED,
+      message: 'This payment changed since the list was read: read it again before closing it.',
+    });
   }
 
   /** The typed 409 of a closing asked of a record that is not marked `paid_not_granted`, logged. */

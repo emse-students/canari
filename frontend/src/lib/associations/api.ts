@@ -2000,16 +2000,20 @@ export async function grantProductPurchase(
 /**
  * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
  * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
- * call is refused `PURCHASE_ALREADY_CLOSED`. Requires MANAGE_PRODUCTS.
+ * call is refused `PURCHASE_ALREADY_CLOSED`. A `granted` closing carries what the list showed
+ * (`expectDelivered`, the row's `delivered`), and the server refuses `PURCHASE_CLOSING_CHANGED` when
+ * that is no longer so - "nothing is granted" never grants. Requires MANAGE_PRODUCTS.
  */
 export async function closePaidNotGranted(
   associationId: string,
   purchaseId: string,
-  outcome: PurchaseClosingOutcome
+  outcome: PurchaseClosingOutcome,
+  expectDelivered: boolean
 ): Promise<AssociationPurchase> {
+  const body = outcome === 'granted' ? { outcome, expectDelivered } : { outcome };
   return request<AssociationPurchase>(
     `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
-    { method: 'POST', body: JSON.stringify({ outcome }) }
+    { method: 'POST', body: JSON.stringify(body) }
   );
 }
 
