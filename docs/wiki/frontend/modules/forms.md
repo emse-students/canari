@@ -461,7 +461,7 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 - **A throttle of 30 answers per minute per visitor** (`ClientIpThrottlerGuard`). Building it found
   that no per-IP throttle here had ever been one: the container nginx overwrote `X-Real-IP` with the
-  Docker gateway, so prod logged `172.25.0.1` for every visitor and the existing "20/min per IP" on
+  Docker gateway, so prod logged the bridge gateway's address for every visitor and the existing "20/min per IP" on
   `/api/public/` was 20/min for everybody. The container now takes the client from the host proxy
   (`set_real_ip_from` the private ranges, `real_ip_header X-Real-IP`) and the guard keys on that
   header. A room of guests behind ONE NAT (a school network at an event) shares an address, which is
