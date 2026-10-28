@@ -3,39 +3,44 @@
   import {
     bookingUnitLimit,
     dragRange,
+    formatBookingRange,
+    formatDay,
+    formatDayHead,
     formatTimeRange,
     windowRefusal,
-    type GridRow,
+    type DayColumn,
+    type WeekLayout,
   } from '$lib/bookings/grid';
   import { localTime } from '$lib/bookings/zonedTime';
-  import { columnsHidden } from '$lib/bookings/columns';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * THE GRID OF ONE DATE (D14): the resources as columns, the units as rows, as the organiser's
-   * paper sheet. Every cell is a button with its whole reading as its name; what tapping it does is
-   * the page's (`onPick`). A free unit the booking window refuses ON THIS DEVICE'S CLOCK is drawn
-   * and named as such, but still opens: the device may be wrong, and the server's answer is the one
-   * that counts. A row after the date's midnight (a night window) is marked as the next day.
+   * THE WEEK OF ONE COLUMN (D46, D48): the days as columns, as the agenda's week, each unit placed
+   * on a shared hour axis; on a phone the same component draws ONE day. A day with nothing offered
+   * folds to a narrow strip (Q-R10). Every unit is a button with its whole reading as its name;
+   * what tapping it does is the page's (`onPick`). A free unit the booking window refuses ON THIS
+   * DEVICE'S CLOCK is drawn and named as such, but still opens: the device may be wrong, and the
+   * server's answer is the one that counts.
    *
-   * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same resource's
-   * column, and the range follows the pointer, held by `dragRange` to free touching units and to
-   * what one booking may cover. A mouse or a pen drags straight away; a finger must HOLD first
-   * (a quick drag is the page scrolling, and is left alone), and the page does not scroll while a
-   * range is being drawn. Letting go calls `onPick` with the first unit and how many were taken; a
-   * plain tap still calls it with one unit.
+   * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same DAY, and the
+   * range follows the pointer, held by `dragRange` to free touching units and to what one booking
+   * may cover. A mouse or a pen drags straight away; a finger must HOLD first (a quick drag is the
+   * page scrolling, and is left alone), and the page does not scroll while a range is being drawn.
+   * Letting go calls `onPick` with the first unit and how many were taken; a plain tap still calls
+   * it with one unit.
    */
   interface Props {
     space: BookerSpace;
-    resources: BookerResource[];
-    rows: GridRow[];
+    /** The column drawn: a space with several columns shows one at a time. */
+    resource: BookerResource;
+    layout: WeekLayout;
+    /** `day` draws one column without its axis header and never folds it (the phone). */
+    mode: 'week' | 'day';
     nowMs: number;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
-  let { space, resources, rows, nowMs, onPick }: Props = $props();
-  /** One column is the space itself (D44): no column name is drawn. */
-  const hideColumns = $derived(columnsHidden(space.name, resources));
+  let { space, resource, layout, mode, nowMs, onPick }: Props = $props();
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
   const HOLD_MS = 250;
@@ -48,20 +53,20 @@
   const unitLimit = $derived(bookingUnitLimit(space));
 
   interface Selection {
-    column: number;
+    day: number;
     anchor: number;
     current: number;
   }
   interface Press {
     pointerId: number;
-    column: number;
-    row: number;
+    day: number;
+    idx: number;
     x: number;
     y: number;
     touch: boolean;
   }
 
-  /** The range being drawn, if any: where it was pressed and the row the pointer is over now. */
+  /** The range being drawn, if any: where it was pressed and the unit the pointer is over now. */
   let selection = $state<Selection | null>(null);
   let tbodyEl = $state<HTMLElement | null>(null);
   // Imperative gesture state, read only in the pointer handlers.
@@ -74,10 +79,10 @@
   const selected = $derived.by(() => {
     const current = selection;
     if (!current) return null;
-    const cells = rows.map((row) => row.cells[current.column]);
+    const cells = layout.days[current.day]?.cells ?? [];
     const { first, count } = dragRange(cells, current.anchor, current.current, unitLimit);
     if (count === 0) return null;
-    return { column: current.column, first, last: first + count - 1, count, cells };
+    return { day: current.day, first, last: first + count - 1, count, cells };
   });
 
   /** What the chip over the grid reads while a range is drawn: its hours, on the space's clock. */
@@ -88,9 +93,9 @@
     return first && last ? formatTimeRange(first.startMs, last.endMs, space.timeZone) : '';
   });
 
-  function cellAt(node: EventTarget | null): { row: number; column: number } | null {
+  function cellAt(node: EventTarget | null): { day: number; idx: number } | null {
     const cell = (node as Element | null)?.closest<HTMLElement>('[data-cell]');
-    return cell ? { row: Number(cell.dataset.row), column: Number(cell.dataset.col) } : null;
+    return cell ? { day: Number(cell.dataset.day), idx: Number(cell.dataset.idx) } : null;
   }
 
   function clearPress() {
@@ -100,14 +105,14 @@
   }
 
   function beginSelection(from: Press) {
-    selection = { column: from.column, anchor: from.row, current: from.row };
+    selection = { day: from.day, anchor: from.idx, current: from.idx };
     tbodyEl?.setPointerCapture(from.pointerId);
   }
 
   function handlePointerDown(e: PointerEvent) {
     if (e.button !== 0 || unitLimit < 2) return;
     const hit = cellAt(e.target);
-    const unit = hit ? rows[hit.row]?.cells[hit.column] : null;
+    const unit = hit ? layout.days[hit.day]?.cells[hit.idx] : null;
     if (!hit || !unit || unit.state !== 'free') return;
     clearPress();
     swallowClick = false;
@@ -136,14 +141,13 @@
     }
     // The pointer is captured, so the unit under it is found by position, not by event target.
     const hit = cellAt(document.elementFromPoint(e.clientX, e.clientY));
-    if (hit && selection && hit.column === selection.column) {
-      selection = { ...selection, current: hit.row };
+    if (hit && selection && hit.day === selection.day) {
+      selection = { ...selection, current: hit.idx };
     }
   }
 
   function handlePointerUp(e: PointerEvent) {
     if (!press || e.pointerId !== press.pointerId) return;
-    const column = press.column;
     const range = selected;
     clearPress();
     // No range was drawn: a plain tap, and the click that follows opens the sheet.
@@ -152,7 +156,7 @@
     swallowClick = true;
     setTimeout(() => (swallowClick = false), 0);
     const first = range?.cells[range.first];
-    if (range && first) onPick(resources[column], first, range.count);
+    if (range && first) onPick(resource, first, range.count);
   }
 
   function handlePointerCancel(e: PointerEvent) {
@@ -199,9 +203,26 @@
     return reading(a).text === reading(b).text;
   }
 
-  /** The row sits on the hour: only those carry a full time label, the half hours a faint one. */
-  function onTheHour(row: GridRow): boolean {
-    return localTime(row.startMs, space.timeZone).slice(3, 5) === '00';
+  /** The shared axis: its whole hours, as the labels down the left. */
+  const hours = $derived.by(() => {
+    const out: number[] = [];
+    for (let min = layout.startMin; min < layout.endMin; min += 60) out.push(min);
+    return out;
+  });
+  const bodyRem = $derived(((layout.endMin - layout.startMin) / 60) * layout.remPerHour);
+  const remOf = (min: number) => (min * layout.remPerHour) / 60;
+  const hourLabel = (min: number) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:00`;
+  const folded = (day: DayColumn) => mode === 'week' && day.state === 'closed';
+  /** Open days share the width, a folded one is a strip; an open day never gets narrower than a label. */
+  const columns = $derived(
+    `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(5.5rem, 1fr)')).join(' ')}`
+  );
+
+  /** A slot is booked whole, so its start is what names it; a step's start is the row's. */
+  function unitText(unit: SlotUnit, text: string): string {
+    return space.slotMode === 'slots'
+      ? `${localTime(unit.startMs, space.timeZone)} - ${text}`
+      : text;
   }
 
   function cellClass(unit: SlotUnit, closed: boolean): string {
@@ -216,8 +237,7 @@
   }
 </script>
 
-<!-- Wider than a phone when a space has many resources: the TABLE scrolls inside its own box,
-     never the page, and the time column stays in view. -->
+<!-- The week scrolls inside its own box, never the page, and the hour axis stays in view (sticky). -->
 <div
   class="border-cn-border bg-cn-surface relative overflow-x-auto rounded-2xl border"
   data-swipe-nav-ignore
@@ -230,93 +250,105 @@
       {selectedReading}
     </p>
   {/if}
-  <table class="w-full border-separate border-spacing-x-1 border-spacing-y-px text-sm">
-    <caption class="sr-only">{m.bookings_grid_caption({ space: space.name })}</caption>
-    <thead>
-      <tr>
-        <th scope="col" class="bg-cn-surface sticky left-0 z-10 w-20 p-2 text-left">
-          <span class="sr-only">{m.bookings_grid_time_header()}</span>
-        </th>
-        {#each resources as resource (resource.id)}
-          <!-- The hidden column is the space itself (D44): the caption already names it once. -->
-          <th
-            scope="col"
-            class="text-text-main min-w-28 p-2 text-left text-xs font-bold break-words"
+  <div role="group" aria-label={m.bookings_grid_caption({ space: space.name })}>
+    {#if mode === 'week'}
+      <div class="grid gap-x-1 pe-1" style:grid-template-columns={columns}>
+        <span class="bg-cn-surface sticky left-0 z-10"></span>
+        {#each layout.days as day (day.date)}
+          {@const head = formatDayHead(day.date)}
+          <div
+            class="text-text-muted py-2 text-center text-xs leading-tight font-bold"
+            aria-label={folded(day)
+              ? `${formatDay(day.date)} : ${m.bookings_day_closed()}`
+              : formatDay(day.date)}
           >
-            {#if !hideColumns}{resource.name}{/if}
-          </th>
+            <span class="block first-letter:uppercase">{head.weekday}</span>
+            <span class="text-text-main text-sm">{head.num}</span>
+          </div>
         {/each}
-      </tr>
-    </thead>
-    <tbody
+      </div>
+    {/if}
+    <div
+      class="grid gap-x-1 pe-1 select-none [-webkit-touch-callout:none]"
+      style:grid-template-columns={columns}
       bind:this={tbodyEl}
       use:holdScroll
-      class="select-none [-webkit-touch-callout:none]"
       onpointerdown={handlePointerDown}
       onpointermove={handlePointerMove}
       onpointerup={handlePointerUp}
       onpointercancel={handlePointerCancel}
       oncontextmenu={(e) => press?.touch && e.preventDefault()}
+      role="presentation"
     >
-      {#each rows as row, rowIndex (row.key)}
-        <tr>
-          <th
-            scope="row"
-            class="bg-cn-surface sticky left-0 z-10 px-2 py-0 text-left text-xs whitespace-nowrap tabular-nums {onTheHour(
-              row
-            )
-              ? 'text-text-muted font-semibold'
-              : 'text-text-muted/50 font-normal'}"
+      <div class="bg-cn-surface sticky left-0 z-10" style:height="{bodyRem}rem" aria-hidden="true">
+        {#each hours as min (min)}
+          <span
+            class="text-text-muted absolute right-1 -translate-y-1/2 text-xs tabular-nums"
+            style:top="{remOf(min - layout.startMin)}rem"
+            class:hidden={min === layout.startMin}
           >
-            {row.label}
-            {#if row.nextDay}
-              <span class="block font-normal">{m.bookings_time_next_day()}</span>
-            {/if}
-          </th>
-          {#each row.cells as unit, column (column)}
-            {@const resource = resources[column]}
-            <td class="p-0">
-              {#if unit}
-                {@const cell = reading(unit)}
-                {@const joinedAbove = sameRun(rows[rowIndex - 1]?.cells[column], unit)}
-                {@const joinedBelow = sameRun(unit, rows[rowIndex + 1]?.cells[column])}
-                {@const inRange =
-                  selected !== null &&
-                  selected.column === column &&
-                  rowIndex >= selected.first &&
-                  rowIndex <= selected.last}
-                <button
-                  type="button"
-                  data-cell
-                  data-row={rowIndex}
-                  data-col={column}
-                  onclick={() => {
-                    if (swallowClick) {
-                      swallowClick = false;
-                      return;
-                    }
-                    onPick(resource, unit);
-                  }}
-                  aria-label={m.bookings_cell_label({
-                    resource: resource.name,
-                    time: row.nextDay ? `${row.label} ${m.bookings_time_next_day()}` : row.label,
-                    state: cell.text,
-                  })}
-                  class="block min-h-8 w-full truncate border px-2 py-1 text-left text-xs font-semibold transition-colors {joinedAbove
-                    ? 'rounded-t-none border-t-black/5'
-                    : 'rounded-t-lg'} {joinedBelow ? 'rounded-b-none' : 'rounded-b-lg'} {inRange
-                    ? 'bg-cn-yellow/40 text-text-main border-cn-yellow'
-                    : cellClass(unit, cell.closed)}"
-                >
-                  {joinedAbove ? '' : cell.text}
-                </button>
-              {/if}
-            </td>
+            {hourLabel(min)}
+          </span>
+        {/each}
+      </div>
+      {#each layout.days as day, dayIndex (day.date)}
+        <div
+          class="relative"
+          style:height="{bodyRem}rem"
+          style:background-image={folded(day)
+            ? 'none'
+            : 'linear-gradient(to bottom, var(--cn-border) 1px, transparent 1px)'}
+          style:background-size="100% {remOf(60)}rem"
+          role="group"
+          aria-label={formatDay(day.date)}
+        >
+          {#if folded(day)}
+            <div class="bg-cn-border/20 absolute inset-0 rounded-lg" aria-hidden="true"></div>
+          {/if}
+          {#each day.placed as placed, idx (`${placed.unit.startMs}-${placed.unit.endMs}`)}
+            {@const unit = placed.unit}
+            {@const cell = reading(unit)}
+            {@const joinedAbove = sameRun(day.cells[idx - 1], unit)}
+            {@const joinedBelow = sameRun(unit, day.cells[idx + 1])}
+            {@const inRange =
+              selected !== null &&
+              selected.day === dayIndex &&
+              idx >= selected.first &&
+              idx <= selected.last}
+            <button
+              type="button"
+              data-cell
+              data-day={dayIndex}
+              data-idx={idx}
+              onclick={() => {
+                if (swallowClick) {
+                  swallowClick = false;
+                  return;
+                }
+                onPick(resource, unit);
+              }}
+              aria-label={m.bookings_cell_label({
+                resource: resource.name,
+                time: formatBookingRange(unit.startMs, unit.endMs, space.timeZone),
+                state: cell.text,
+              })}
+              style:top="{remOf(placed.topMin - layout.startMin)}rem"
+              style:height="{remOf(placed.heightMin)}rem"
+              style:left="{(placed.lane / placed.lanes) * 100}%"
+              style:width="{100 / placed.lanes}%"
+              class="absolute block overflow-hidden border px-1.5 py-0.5 text-left text-xs leading-tight font-semibold transition-colors {joinedAbove
+                ? 'rounded-t-none border-t-black/5'
+                : 'rounded-t-lg'} {joinedBelow ? 'rounded-b-none' : 'rounded-b-lg'} {inRange
+                ? 'bg-cn-yellow/40 text-text-main border-cn-yellow'
+                : cellClass(unit, cell.closed)}"
+            >
+              {joinedAbove ? '' : unitText(unit, cell.text)}
+            </button>
           {/each}
-        </tr>
+        </div>
       {/each}
-    </tbody>
-  </table>
+    </div>
+  </div>
 </div>
 
 {#if unitLimit > 1}
