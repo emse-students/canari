@@ -1,6 +1,6 @@
 import type { StoredMessage } from '$lib/db';
 import type { Conversation } from '$lib/types';
-import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { advanceLastMessageAt, compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
@@ -89,7 +89,7 @@ export function mergeFcmMessagesIntoConversations(
         conversations.set(convoId, {
           ...convo,
           messages: next.sort(compareMessageOrder),
-          lastMessageAt: Math.max(convo.lastMessageAt ?? 0, incoming.timestamp.getTime()),
+          lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [incoming]),
         });
         merged++;
       }
@@ -105,7 +105,7 @@ export function mergeFcmMessagesIntoConversations(
     conversations.set(convoId, {
       ...convo,
       messages,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, chatMsg.timestamp.getTime()),
+      lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [chatMsg]),
       unreadCount: shouldMarkUnread ? (convo.unreadCount ?? 0) + 1 : (convo.unreadCount ?? 0),
     });
     merged++;

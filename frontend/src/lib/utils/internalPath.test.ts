@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('$app/paths', () => ({ base: '/canari' }));
+vi.mock('$app/paths', () => ({ resolve: (pathname: string) => `/canari/${pathname}` }));
 
 import {
   appPathFromPathname,

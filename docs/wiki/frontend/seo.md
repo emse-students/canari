@@ -99,7 +99,7 @@ such rule, and four real pages were being handed to an enricher as an id: `/form
 `src/lib/seo/staticRoutes.ts` carries that precedence rule. Its set of static paths is **derived**
 from the route tree with `import.meta.glob` at build time, not listed, so a new static route joins
 it by existing and the rule cannot rot. It is a separate module because `serverSeo.ts` reaches
-`internalApi.ts` and therefore `$env/dynamic/private`, which no test can import - the same reason
+`internalApi.ts` and therefore `$app/env/private`, which no test can import - the same reason
 `sitemap.ts` stands alone. `staticRoutes.test.ts` pins the four collisions, which nothing else
 states now that the set is derived.
 
@@ -375,7 +375,7 @@ social-service. Four things still need a human, after a deploy, and none of them
    path is the one that crosses three services — head injector, social-service, media-service — so
    it is the one a missing `INTERNAL_SECRET` silently reduces back to a logo.
 2. **Install the Android build and confirm it still boots.** The adapter split means the mobile
-   build now goes down a different branch of `svelte.config.js` than the web one.
+   build now goes down a different branch of `kit.config.js` than the web one.
 3. **Run an association page and the agenda through Google's Rich Results Test.** The JSON-LD is
    verified by our tests, never by Google's own parser.
 4. **Submit `/sitemap.xml` in Search Console**, then read the coverage report a few days later.

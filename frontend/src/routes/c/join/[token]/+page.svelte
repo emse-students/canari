@@ -44,8 +44,8 @@
     // Not authenticated yet: send to login, returning here afterwards (token is in the path).
     if (!currentUserId()) {
       keepInviteFragment(token, inviteFragment);
-      await goto(resolve(`/login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`), {
-        replaceState: true,
+      await goto(resolve(`login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`), {
+        replace: true,
       });
       return;
     }
@@ -72,7 +72,7 @@
         await openInvitedChannel(firstChannelId);
         return;
       }
-      await goto(resolve('/communities'), { replaceState: true });
+      await goto(resolve('/communities'), { replace: true });
     } catch (e) {
       // A link outliving its community is refused with a code rather than a sentence, so the
       // reason survives any rewording on the server side.
