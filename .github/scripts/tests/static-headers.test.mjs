@@ -213,12 +213,14 @@ for (const block of locations) {
   }
 }
 
-// A PUBLIC FORM PAGE SENDS NO REFERER, AS A HEADER (2026-10-22, paid public forms WP-P2). The guest
-// receipt page carries its receipt in the query, and a <meta> in a page that boots on the client
-// applies only after its first chunk requests have left with the full URL. So both blocks that send
-// a page - the SSR answer and the degraded shell - send the policy, and the map that decides it,
-// run here on sample URIs, gives `no-referrer` to every `/f/` page and nothing to any other.
-const REFERRER_VARIABLE = 'public_form_referrer_policy';
+// A PAGE WHOSE URL CARRIES A CAPABILITY SENDS NO REFERER, AS A HEADER (2026-10-22 for the public
+// forms, paid public forms WP-P2; 2026-10-28 for the two join pages and the OIDC callback). The guest
+// receipt page carries its receipt in the query, a join page its invite in the path, the callback a
+// one-time code in the query, and a <meta> in a page that boots on the client applies only after its
+// first chunk requests have left with the full URL. So both blocks that send a page - the SSR answer
+// and the degraded shell - send the policy, and the map that decides it, run here on sample URIs,
+// gives `no-referrer` to those pages and nothing to any other (each near-miss is a case).
+const REFERRER_VARIABLE = 'capability_referrer_policy';
 for (const name of ['@ssr', '@app_shell']) {
   const block = locations.find((l) => l.name === name);
   if (!block?.body.includes(`add_header Referrer-Policy $${REFERRER_VARIABLE} always;`)) {
@@ -242,6 +244,15 @@ if (!referrerMap) {
   for (const [uri, expected] of [
     ['/f/abc-123/receipt?receipt=SECRET', 'no-referrer'],
     ['/f/abc-123', 'no-referrer'],
+    ['/c/join/INVITE-SECRET', 'no-referrer'],
+    ['/g/join/INVITE-SECRET', 'no-referrer'],
+    ['/auth/callback?code=SECRET&state=s', 'no-referrer'],
+    ['/auth/callback', 'no-referrer'],
+    ['/c/joinx/abc', ''],
+    ['/c/123', ''],
+    ['/x/c/join/abc', ''],
+    ['/auth/callbacks', ''],
+    ['/auth/login', ''],
     ['/forms/abc-123', ''],
     ['/', ''],
     ['/feed?f=1', ''],

@@ -52,6 +52,15 @@
   });
 </script>
 
+<!--
+  The URL carries a one-time code, so the page sends no Referer. The policy is a response HEADER of
+  this page (`$capability_referrer_policy`, Dockerfile.frontend); this <meta> restates it where no
+  nginx answers - the Tauri app, a dev server - and for a client-side navigation here.
+-->
+<svelte:head>
+  <meta name="referrer" content="no-referrer" />
+</svelte:head>
+
 <div class="flex min-h-dvh items-center justify-center px-4">
   <div
     class="border-cn-border w-full max-w-sm rounded-3xl border p-10 text-center shadow-lg"

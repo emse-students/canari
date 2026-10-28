@@ -17,9 +17,18 @@
  *   its own path and drops its query too: it names which GIF the reader loaded.
  * - a guest receipt page (`/f/<id>/receipt?receipt=`) drops its query: the receipt is a paying
  *   guest's only proof of the answer (paid public forms WP-P2).
+ * - a URL carrying a capability (2026-10-28): the link previews and the link check drop their
+ *   query, the OIDC callback its query, an invite route keeps its path with the token replaced -
+ *   and a join path quoted percent-encoded in a query too. The `token` key spelled twice,
+ *   percent-encoded, in another case or as an array drops the whole query (a map rewrites ONE
+ *   occurrence). The route map and the token map are chained, so both apply to one line.
+ * - the referer field goes through its own map: one naming any of those keeps its origin only.
+ *
+ * Every rule has a case that must be redacted and a near-miss that must stay readable.
  *
  * STATIC (CI has no Docker daemon); the behaviour was run against nginx:stable-alpine on 2026-10-06
- * with five request lines, one log line each, the token redacted and `xtoken=` left alone.
+ * with five request lines, one log line each, the token redacted and `xtoken=` left alone; and again
+ * on 2026-10-28 with the built image, the capability routes and referers below: no secret in the log.
  *
  * Usage: bun .github/scripts/tests/access-log-redaction.test.mjs [repo-root]
  */
@@ -31,10 +40,16 @@ const nginx = readFileSync(join(ROOT, 'infrastructure', 'local', 'Dockerfile.fro
 const failures = [];
 const fail = (msg) => failures.push(msg);
 
-// One directive per line, Dockerfile continuation and comments dropped.
+// One directive per line, Dockerfile continuation and comments dropped. The config is written by
+// `printf`, so a literal percent sign is spelled `%%` in the Dockerfile and read back as one here.
 const lines = nginx
   .split('\n')
-  .map((l) => l.replace(/\\n\\$/, '').trim())
+  .map((l) =>
+    l
+      .replace(/\\n\\$/, '')
+      .replace(/%%/g, '%')
+      .trim()
+  )
   .filter((l) => !l.startsWith('#'));
 
 const logFormats = lines.filter((l) => /^log_format\s/.test(l));
@@ -67,24 +82,52 @@ if (/\$http_(cookie|authorization)|\$cookie_/.test(format)) {
 }
 if (formatName === 'main') fail('the format is named `main`, a duplicate of the base image');
 
-const map = lines.join('\n').match(/map \$request_uri \$logged_request_uri \{([\s\S]*?)\n\}/)?.[1];
-if (!map) fail('the `map $request_uri $logged_request_uri` redaction is missing');
-else {
-  const rules = [...map.matchAll(/"(~\^[^"]*)"\s+"([^"]*)";/g)].map((m) => ({
-    re: new RegExp(m[1].slice(1).replace(/\(\?<(\w+)>/g, '(?<$1>')),
-    value: m[2],
+/**
+ * A `map <source> <target>` block, compiled to a function: its regex rules run in ITS order (first
+ * match wins, as in nginx; nginx's PCRE and JS agree on these), `~*` is case-insensitive, a value
+ * naming captures is expanded from them, and a default naming the source variable is the input
+ * unchanged. Returns null when the block is missing or has no regex rule.
+ */
+const compileMap = (source, target) => {
+  const body = lines
+    .join('\n')
+    .match(new RegExp(`map \\$${source} \\$${target} \\{([\\s\\S]*?)\\n\\}`))?.[1];
+  if (!body) return null;
+  const rules = [...body.matchAll(/"(~\*?)\^([^"]*)"\s+"([^"]*)";/g)].map((m) => ({
+    re: new RegExp(`^${m[2]}`, m[1] === '~*' ? 'i' : ''),
+    value: m[3],
   }));
-  if (rules.length === 0) fail('the map has no regex rule');
-  else {
-    // The map's own rules, run here in ITS order (first match wins, as in nginx; nginx's PCRE and
-    // JS agree on these). A value naming captures is expanded from them.
-    const apply = (uri) => {
-      for (const { re, value } of rules) {
-        const m = uri.match(re);
-        if (m) return value.replace(/\$\{(\w+)\}/g, (_, g) => m.groups?.[g] ?? '');
-      }
-      return uri;
-    };
+  // An exact key wins over every regex in nginx, whatever its position.
+  const exact = new Map(
+    [...body.matchAll(/^\s*"([^~"][^"]*|)"\s+"([^"]*)";/gm)].map((m) => [m[1], m[2]])
+  );
+  if (rules.length === 0) return null;
+  if (!new RegExp(`default \\$${source};`).test(body)) return null;
+  return (input) => {
+    if (exact.has(input)) return exact.get(input);
+    for (const { re, value } of rules) {
+      const m = input.match(re);
+      if (m) return value.replace(/\$\{(\w+)\}/g, (_, g) => m.groups?.[g] ?? '');
+    }
+    return input;
+  };
+};
+
+// The format prints the referer only through its redacting map.
+if (/\$http_referer/.test(format)) fail('the log format prints $http_referer raw');
+if (!/\$logged_http_referer/.test(format))
+  fail('the log format does not print $logged_http_referer');
+
+// Two maps, chained: the route rules, then the token rules on their output.
+const routeMap = compileMap('request_uri', 'route_redacted_request_uri');
+const tokenMap = compileMap('route_redacted_request_uri', 'logged_request_uri');
+const refererMap = compileMap('http_referer', 'logged_http_referer');
+if (!routeMap) fail('the `map $request_uri $route_redacted_request_uri` redaction is missing');
+if (!tokenMap) fail('the `map $route_redacted_request_uri $logged_request_uri` is missing');
+if (!refererMap) fail('the `map $http_referer $logged_http_referer` redaction is missing');
+if (routeMap && tokenMap && refererMap) {
+  {
+    const apply = (uri) => tokenMap(routeMap(uri));
     const cases = [
       [
         '/api/ws?userId=u1&token=eyJSECRET.abc&deviceId=d1',
@@ -103,14 +146,88 @@ else {
         '/api/mls/gifs/media?query-redacted',
       ],
       // A paying guest's receipt, its only proof of the answer (2026-10-22): the query goes.
-      ['/f/abc-123/receipt?receipt=Q2FuYXJpU0VDUkVUcmVjZWlwdA', '/f/abc-123/receipt?query-redacted'],
+      [
+        '/f/abc-123/receipt?receipt=Q2FuYXJpU0VDUkVUcmVjZWlwdA',
+        '/f/abc-123/receipt?query-redacted',
+      ],
       ['/f/abc-123/receipt?x=1&receipt=SECRET', '/f/abc-123/receipt?query-redacted'],
       ['/f/abc-123/receipt', '/f/abc-123/receipt'],
       ['/f/abc-123?receipt=keep', '/f/abc-123?receipt=keep'],
+      // The token key, however it is spelled (2026-10-28): twice, percent-encoded, another case,
+      // an array. Each loses its whole query; `xtoken` and a value that merely says token stay.
+      ['/api/ws?token=A&x=1&token=B', '/api/ws?query-redacted'],
+      ['/api/ws?%74oken=SECRET&a=b', '/api/ws?query-redacted'],
+      ['/api/ws?a=b&%74%6F%6B%65%6E=SECRET', '/api/ws?query-redacted'],
+      ['/api/ws?TOKEN=SECRET', '/api/ws?TOKEN=redacted'],
+      ['/api/ws?token[]=SECRET', '/api/ws?query-redacted'],
+      ['/api/ws?token%5B%5D=SECRET', '/api/ws?query-redacted'],
+      ['/x?xtoken=a&ytoken=b', '/x?xtoken=a&ytoken=b'],
+      ['/x?%78token=keep', '/x?%78token=keep'],
+      ['/x?q=token%3Dkeep', '/x?q=token%3Dkeep'],
+      ['/x?tokens=keep', '/x?tokens=keep'],
+      // The link previews and the link check: which URL a reader opened (2026-10-28).
+      [
+        '/api/mls/link-preview?url=https%3A%2F%2Fa.example%2Fp',
+        '/api/mls/link-preview?query-redacted',
+      ],
+      [
+        '/api/mls/link-preview/image?url=https%3A%2F%2Fa.example%2Fi.png&t=tkt',
+        '/api/mls/link-preview/image?query-redacted',
+      ],
+      ['/api/mls/link-safety?url=https%3A%2F%2Fa.example', '/api/mls/link-safety?query-redacted'],
+      ['/api/mls/link-previews?url=keep', '/api/mls/link-previews?url=keep'],
+      ['/api/mls/link-preview', '/api/mls/link-preview'],
+      // The OIDC callback's one-time code (2026-10-28).
+      ['/auth/callback?code=SECRET&state=S', '/auth/callback?query-redacted'],
+      ['/auth/callbacks?code=keep', '/auth/callbacks?code=keep'],
+      ['/auth/login?code=keep', '/auth/login?code=keep'],
+      // An invite token in a path, and quoted in a login returnTo (2026-10-28).
+      ['/c/join/INVITE-SECRET', '/c/join/redacted'],
+      ['/g/join/INVITE-SECRET', '/g/join/redacted'],
+      ['/c/join/INVITE-SECRET?token=JWT', '/c/join/redacted?token=redacted'],
+      ['/login?returnTo=%2Fc%2Fjoin%2FINVITE-SECRET', '/login?returnTo=%2Fc%2Fjoin%2Fredacted'],
+      ['/login?returnTo=%2fg%2fjoin%2fINVITE-SECRET', '/login?returnTo=%2fg%2fjoin%2fredacted'],
+      ['/api/channels/invites/INVITE-SECRET', '/api/channels/invites/redacted'],
+      ['/api/channels/invites/INVITE-SECRET/accept', '/api/channels/invites/redacted/accept'],
+      ['/api/mls/group-invites/INVITE-SECRET', '/api/mls/group-invites/redacted'],
+      ['/api/mls/group-invites/INVITE-SECRET/accept', '/api/mls/group-invites/redacted/accept'],
+      ['/c/joinx/keep', '/c/joinx/keep'],
+      ['/c/join/', '/c/join/'],
+      ['/abc/join/keep', '/abc/join/keep'],
+      ['/login?returnTo=%2Fchat', '/login?returnTo=%2Fchat'],
+      ['/api/channels/invites', '/api/channels/invites'],
+      ['/api/channels/abc/invites', '/api/channels/abc/invites'],
+      ['/api/mls/group-invitesx/keep', '/api/mls/group-invitesx/keep'],
     ];
     for (const [input, expected] of cases) {
       if (apply(input) !== expected) fail(`${input} logs as ${apply(input)}, expected ${expected}`);
     }
+  }
+  // The referer of a capability page keeps its origin only (2026-10-28); every other is unchanged.
+  const referers = [
+    ['https://canari.emse.fr/c/join/INVITE-SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/g/join/INVITE-SECRET', 'https://canari.emse.fr/redacted'],
+    [
+      'https://canari.emse.fr/login?returnTo=%2Fc%2Fjoin%2FSECRET',
+      'https://canari.emse.fr/redacted',
+    ],
+    ['https://canari.emse.fr/f/abc/receipt?receipt=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/auth/callback?code=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/x?a=1&%74oken=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/api/ws?token=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/chat', 'https://canari.emse.fr/chat'],
+    ['https://canari.emse.fr/c/joinx/keep', 'https://canari.emse.fr/c/joinx/keep'],
+    ['https://canari.emse.fr/f/abc/receipt', 'https://canari.emse.fr/f/abc/receipt'],
+    ['https://canari.emse.fr/f/abc?receipt=keep', 'https://canari.emse.fr/f/abc?receipt=keep'],
+    ['https://canari.emse.fr/x?xtoken=keep', 'https://canari.emse.fr/x?xtoken=keep'],
+    ['https://www.google.com/', 'https://www.google.com/'],
+    ['-', '-'],
+    // No Referer at all: the stock "-", not the "" a map's empty value would write.
+    ['', '-'],
+  ];
+  for (const [input, expected] of referers) {
+    const got = refererMap(input);
+    if (got !== expected) fail(`referer ${input} logs as ${got}, expected ${expected}`);
   }
 }
 
@@ -132,5 +249,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  'access-log-redaction: the access log cannot record a token, a GIF search, nor a guest receipt'
+  'access-log-redaction: the access log cannot record a token, a GIF search, a guest receipt, ' +
+    'a link a reader opened, an OIDC code nor an invite, in the request line or the referer'
 );

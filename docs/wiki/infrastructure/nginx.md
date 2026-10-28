@@ -340,9 +340,60 @@ The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redac
 and of the GIF relay (`/api/mls/gifs/media?query-redacted`, 2026-10-18, its own rule first): a
 search, or which GIF a reader loaded, beside their address is what those routes keep from KLIPY.
 
-**Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
-(`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the
-host's, to be checked by the user ([estate-migration](estate-migration.md)).
+### URLs that carry a capability (2026-10-28)
+
+Referrer policy and access-log redaction were tightened for the pages and routes whose URL carries a
+capability. The table is what the container's own config does:
+
+| URL | Request line in the log | `Referrer-Policy` on the page |
+| --- | --- | --- |
+| `/f/<id>/receipt?receipt=` | `/f/<id>/receipt?query-redacted` | `no-referrer` (every `/f/` page) |
+| `/c/join/<token>`, `/g/join/<token>` | `/c/join/redacted`, `/g/join/redacted` | `no-referrer` |
+| `/auth/callback?code=&state=` | `/auth/callback?query-redacted` | `no-referrer` |
+| `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
+| `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
+| a join path quoted percent-encoded in any query (`/login?returnTo=%2Fc%2Fjoin%2F<token>`) | the token replaced by `redacted` | - |
+| a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
+
+How it is built, in `Dockerfile.frontend`:
+
+- **Two chained maps for the request line.** `$route_redacted_request_uri` holds the route rules;
+  `$logged_request_uri` runs the token rules on ITS output. A map applies one rule, so one map could
+  not redact both an invite path and a `token=` on the same line. The token map redacts the whole
+  query whenever the key appears twice or in any spelling other than one literal `token=`: a regex
+  rewrites one occurrence, and the services decode the key before reading it. A query with ONE
+  literal `token=` keeps everything except the value, so the `/api/ws` line keeps `userId` and
+  `deviceId`.
+- **The referer field goes through `$logged_http_referer`.** A referer that names a join token, a
+  receipt or callback query, or any `token` key is logged as `<origin>/redacted`. Every other referer
+  is unchanged, and a request without one still logs `"-"`: nginx writes `"-"` for an absent header
+  but writes `""` for a map's empty value (measured), so the map gives `""` the stock `"-"`.
+- **The referrer policy is the existing `$capability_referrer_policy` map** (until 2026-10-28 called
+  `$public_form_referrer_policy`), sent by `@ssr` and `@app_shell`. It is keyed on `$request_uri`, so
+  the degraded shell gets it too. Measured on the built image against a stub SSR and against no SSR:
+  all four page shapes answer `no-referrer` through both blocks, and `/chat`, `/c/joinx/...` and
+  `/auth/callbacks` answer none.
+- **The pages also carry `<meta name="referrer" content="no-referrer">`** (the two join pages, the
+  callback and the receipt page). The Tauri app has no nginx, a dev server sends no header, and a
+  client-side navigation onto one of these pages gets no response header, so the `<meta>` covers all
+  three. Two limits. A `<meta>` removed on leaving the page does not restore the previous policy, so
+  the rest of that document session sends no Referer, which is harmless. And in Tauri every API call
+  is cross-origin to the public host, so the default policy already sent only an origin there.
+- `%` is spelled `%%` in the Dockerfile because the config is written by `printf`; the gate reads it
+  back as one.
+
+Gates: `.github/scripts/tests/access-log-redaction.test.mjs` runs all three maps, in order, against a
+case that must be redacted and a near-miss that must stay readable for every rule. Removing any single
+rule fails it. `static-headers.test.mjs` does the same for the policy map, and
+`frontend/src/routes/capabilityReferrer.test.ts` pins the `<meta>` in the four pages. The built image
+passes `nginx -t`. Run with real requests, its access log held none of the secrets sent.
+
+**What this config does NOT govern.** It controls the container's OWN access log and the response
+headers it sends, and nothing else:
+
+- The host-level nginx on the Portail-etu host (`sites-available/canari*.conf`), the Cloudflare edge
+  log and any log the school keeps see the same URL. Their formats belong to the host, and the user
+  has to check them ([estate-migration](estate-migration.md)).
 
 ## The origin compresses the assets a cold start is made of (2026-10-09)
 

@@ -553,7 +553,7 @@ sent the answer.
     the `$logged_request_uri` map in `Dockerfile.frontend`, asserted by
     `access-log-redaction.test.mjs` and run against a real nginx);
   - every `/f/` page is answered with the HEADER `Referrer-Policy: no-referrer` (the
-    `$public_form_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
+    `$capability_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
     `static-headers.test.mjs` and run against a real nginx), so the page's own requests - its
     chunks, the confirm call, the retry link - do not carry the URL into that log's referer field.
     It has to be a header: the page boots on the client, so its first chunk requests leave before
