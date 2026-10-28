@@ -821,6 +821,39 @@ export class UserTagService {
   }
 
   /**
+   * Stamps tag `tagId` as the DELIVERY of purchase record `purchaseRecordId` (metadata key
+   * `purchaseRecordId`), when a payment paid for and not granted is closed because the tier it bought
+   * is already held as its delivery. Touches nothing else - no expiry, no grantor - so it is not a
+   * renewal. Writes only a tag no record has stamped yet: false when one already has (one delivery
+   * closes at most one payment), and the caller refuses.
+   */
+  async stampDelivery(
+    tagId: string,
+    purchaseRecordId: string,
+    manager: EntityManager
+  ): Promise<boolean> {
+    const rows: unknown[] = await manager.query(
+      `UPDATE user_tags SET metadata = metadata || jsonb_build_object('purchaseRecordId', $2::text)
+        WHERE id = $1 AND metadata -> 'purchaseRecordId' IS NULL
+        RETURNING id`,
+      [tagId, purchaseRecordId]
+    );
+    // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+    const written = Array.isArray(rows[0]) ? (rows[0] as unknown[]).length : rows.length;
+    if (written === 0) {
+      this.logger.warn(
+        `[UserTag] tag ${tagId.slice(0, 8)} NOT stamped for purchase=${purchaseRecordId.slice(0, 8)}: ` +
+          'it is already the delivery of another payment'
+      );
+      return false;
+    }
+    this.logger.log(
+      `[UserTag] tag ${tagId.slice(0, 8)} stamped as the delivery of purchase=${purchaseRecordId.slice(0, 8)}`
+    );
+    return true;
+  }
+
+  /**
    * Revokes (deletes) a tag by its primary key, scoped to the association that issued it.
    * Throws 404 when no such tag belongs to that association.
    *

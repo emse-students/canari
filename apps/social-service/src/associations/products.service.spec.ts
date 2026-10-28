@@ -889,6 +889,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         held?: string[];
         mode?: 'lifetime' | 'dated' | null;
         heldTag?: { createdAt: Date; metadata: Record<string, unknown> };
+        stamps?: boolean;
       } = {}
     ) {
       const t = makeService();
@@ -925,7 +926,11 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       t.userTagService.hasActiveTag.mockImplementation((_user: string, tag: string) =>
         Promise.resolve(held.has(tag))
       );
-      const heldTag = opts.heldTag ?? { createdAt: new Date(0), metadata: {} };
+      const heldTag = {
+        id: 'tag-1',
+        ...(opts.heldTag ?? { createdAt: new Date(0), metadata: {} }),
+      };
+      (t.userTagService as any).stampDelivery = jest.fn(() => Promise.resolve(opts.stamps ?? true));
       (t.userTagService.getActiveTag as jest.Mock).mockImplementation(
         (_user: string, tag: string) => Promise.resolve(held.has(tag) ? heldTag : null)
       );
@@ -1075,28 +1080,61 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.manager.insert).not.toHaveBeenCalled();
     });
 
+    const later = () => new Date(Date.now() + 60_000);
     it.each([
+      ['granted by hand after the payment (a roster grant)', { createdAt: later(), metadata: {} }],
       [
-        'granted after the payment (a roster grant)',
-        { createdAt: new Date(Date.now() + 60_000), metadata: {} },
-      ],
-      [
-        'granted by this very payment (a retried grant)',
-        { createdAt: new Date(0), metadata: { purchaseRecordId: 'rec-1' } },
+        "granted by this payment's own intent",
+        { createdAt: new Date(0), metadata: { paymentIntentId: '1001' } },
       ],
     ])(
-      'records GRANTED with no tag written when the tier held was delivered since: %s',
+      'records GRANTED, grants nothing and stamps the tag when it is the delivery: %s',
       async (_case, heldTag) => {
         const t = closing([marked({ productId: 'prod-tier' })], { held: ['avec-alcool'], heldTag });
         t.productRepo.findOne.mockResolvedValue(tierProduct());
         expect(await grantRefused(t)).toBeUndefined();
         expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+        expect((t.userTagService as any).stampDelivery).toHaveBeenCalledWith(
+          'tag-1',
+          'rec-1',
+          t.manager
+        );
         expect(t.manager.insert).toHaveBeenCalledWith(
           PurchaseRecordClosing,
           expect.objectContaining({ purchaseRecordId: 'rec-1', outcome: 'granted' })
         );
       }
     );
+
+    it.each([
+      ['another payment granted it', { paymentIntentId: '2002', productId: 'prod-tier' }],
+      ['it already closed another payment', { purchaseRecordId: 'rec-other' }],
+      ['a form answer granted it, and this is a boutique payment', { submissionId: 'sub-1' }],
+      ['a legacy claim granted it', { legacy: { batch: 'b' } }],
+    ])(
+      'refuses PURCHASE_TARGET_ALREADY_HELD when the tag points elsewhere, however recent: %s',
+      async (_case, metadata) => {
+        const t = closing([marked({ productId: 'prod-tier' })], {
+          held: ['avec-alcool'],
+          heldTag: { createdAt: later(), metadata },
+        });
+        t.productRepo.findOne.mockResolvedValue(tierProduct());
+        expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+        expect((t.userTagService as any).stampDelivery).not.toHaveBeenCalled();
+        expect(t.manager.insert).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses when the stamp finds the tag already the delivery of another payment', async () => {
+      const t = closing([marked({ productId: 'prod-tier' })], {
+        held: ['avec-alcool'],
+        heldTag: { createdAt: later(), metadata: {} },
+        stamps: false,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct());
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TARGET_ALREADY_HELD');
+      expect(t.manager.insert).not.toHaveBeenCalled();
+    });
 
     it('refuses PURCHASE_NOT_A_RISE when the buyer holds a dearer tier: granting would move them down', async () => {
       const t = closing([marked({ productId: 'prod-sans' })], { held: ['avec-alcool'] });

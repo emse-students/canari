@@ -1860,6 +1860,11 @@ export interface AssociationPurchase {
   grantRefusal?: ClosingGrantRefusal | null;
   /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
   buyerTier?: string | null;
+  /**
+   * For an OPEN payment not granted, true when the tier it bought is already held as ITS delivery:
+   * closing it as granted only records that, and grants or replaces nothing.
+   */
+  delivered?: boolean;
 }
 
 /** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */

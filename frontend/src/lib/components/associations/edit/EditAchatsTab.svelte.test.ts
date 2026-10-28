@@ -119,6 +119,22 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
     expect(button(target, m.asso_achats_close_granted_button())).toBeUndefined();
   });
 
+  it.each([
+    [false, m.asso_achats_close_granted_confirm({ buyer: 'Alice Martin', item: 'Avec alcool' })],
+    [true, m.asso_achats_close_delivered_confirm({ buyer: 'Alice Martin', item: 'Avec alcool' })],
+  ])(
+    'asks a GRANTED confirmation that says what it does (delivered: %s)',
+    async (delivered, message) => {
+      state.confirm = false;
+      const target = await render([{ ...open, delivered }]);
+
+      button(target, m.asso_achats_close_granted_button())!.click();
+      await settle();
+
+      expect(state.confirmed).toEqual([message]);
+    }
+  );
+
   it('records nothing when the confirmation is declined', async () => {
     state.confirm = false;
     const target = await render([open]);

@@ -100,7 +100,9 @@
   /**
    * Records how a payment paid for and not granted was settled, after an in-app confirmation. The
    * server answers the updated row, which replaces this one: the mark stays, the outcome shows.
-   * `granted` grants the tier by hand on the server, replacing whatever tier the buyer holds now.
+   * `granted` grants the tier by hand on the server, replacing whatever tier the buyer holds now -
+   * unless the row is `delivered` (the tier is already held as this payment's delivery), when it only
+   * records that, and its confirmation says so.
    *
    * A 409 is an ANSWER about the row as the server knows it (closed meanwhile, its buyer erased, its
    * tier gone): the list is re-read so it shows that state, then the refusal is worded. Anything
@@ -111,7 +113,9 @@
     const confirmed = await showConfirm(
       outcome === 'refunded'
         ? m.asso_achats_close_refunded_confirm({ buyer, amount: amountLabel(purchase) })
-        : m.asso_achats_close_granted_confirm({ buyer, item: purchase.productName }),
+        : purchase.delivered
+          ? m.asso_achats_close_delivered_confirm({ buyer, item: purchase.productName })
+          : m.asso_achats_close_granted_confirm({ buyer, item: purchase.productName }),
       {
         confirmLabel:
           outcome === 'refunded'

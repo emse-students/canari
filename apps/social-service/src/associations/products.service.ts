@@ -279,6 +279,11 @@ export interface PurchaseListRow {
    * the manager sees what a grant would replace; null when none is held, and for every other row.
    */
   buyerTier: string | null;
+  /**
+   * For an OPEN marked payment, true when the tier it bought is already held as ITS delivery
+   * (`deliveryOf`): closing it as `granted` records that, and grants or replaces nothing.
+   */
+  delivered: boolean;
 }
 
 /** Why a payment paid for and not granted cannot be closed as `granted` (`closingGrantVerdict`). */
@@ -299,31 +304,55 @@ interface ClosingGrantVerdict {
   /** The tier the buyer holds now, by name (`PurchaseListRow.buyerTier`). */
   buyerTier: string | null;
   /**
-   * True when the buyer already holds the tier paid for because it was DELIVERED since the payment
-   * (`deliveredSince`): the closing records `granted` and writes no tag.
+   * The held tag that IS the delivery of this payment (`deliveryOf`), null otherwise: the closing
+   * records `granted`, writes no grant, and stamps that tag with the record so it closes no other.
    */
-  delivered: boolean;
+  deliveredTagId: string | null;
   /** What the decision rests on, for its log line. */
   detail: string;
 }
 
 /**
- * Why the held tag `tag` counts as the delivery of payment `record`, or null when it does not:
- * - it was written by this very record's grant (`metadata.purchaseRecordId`, a retried paid grant);
- * - or it was first granted AFTER the payment was recorded (`createdAt` > `paidAt`, both written by
- *   the database), e.g. by a manager's roster grant, which the hourly report tells them to do.
- * A tag that predates the payment is a renewal the payment did not buy - owed a refund - and so is
- * one only renewed since: a renewal leaves no time on the row, so it cannot be told from that case.
+ * Whether the held tag `tag` - of the tier payment `record` bought - is the DELIVERY of that payment,
+ * and why. Read from the tag's own provenance first, then from time:
+ * - `metadata.purchaseRecordId` set: the tag already closed (or was granted by) a payment - one
+ *   delivery closes at most one payment, so it is not this one's;
+ * - `metadata.submissionId` set: a form answer's grant - this payment's only when the record is that
+ *   form's and the answer is this buyer's (`ownSubmission`: a replay that raced the run still
+ *   granting), whatever the times say;
+ * - `metadata.legacy` set: a legacy claim's grant, not a payment's;
+ * - `metadata.paymentIntentId` set: a paid grant - this payment's only when it names this record's
+ *   payment, else a second payment delivered it and this one is owed a refund;
+ * - no provenance (a manager's roster grant, which the hourly report asks for): a delivery when first
+ *   granted AFTER the payment was recorded (`createdAt` > `paidAt`, both written by the database).
+ *   A tag that predates the payment is a renewal the payment did not buy. A revoke followed by a
+ *   fresh grant counts as a delivery: the closing is manager-attested (docs/wiki/cotisations.md).
  */
-function deliveredSince(
+function deliveryOf(
   tag: Pick<UserTag, 'createdAt' | 'metadata'>,
-  record: Pick<PurchaseRecord, 'id' | 'paidAt'>
-): string | null {
-  if (tag.metadata?.purchaseRecordId === record.id) return 'its tag was granted by this payment';
-  if (tag.createdAt.getTime() > record.paidAt.getTime()) {
-    return 'its tag was granted after the payment';
+  record: Pick<PurchaseRecord, 'paidAt' | 'stripePaymentIntentId'>,
+  ownSubmission: boolean
+): { delivered: boolean; detail: string } {
+  const meta = tag.metadata ?? {};
+  if (meta.purchaseRecordId != null) {
+    return { delivered: false, detail: 'its tag is already the delivery of another payment' };
   }
-  return null;
+  if (meta.submissionId != null) {
+    return ownSubmission
+      ? { delivered: true, detail: 'its tag was granted by this form answer' }
+      : { delivered: false, detail: 'its tag was granted by another form answer' };
+  }
+  if (meta.legacy != null) {
+    return { delivered: false, detail: 'its tag was granted by a legacy claim' };
+  }
+  if (meta.paymentIntentId != null) {
+    return meta.paymentIntentId === record.stripePaymentIntentId
+      ? { delivered: true, detail: 'its tag was granted by this payment' }
+      : { delivered: false, detail: 'its tag was granted by another payment' };
+  }
+  return tag.createdAt.getTime() > record.paidAt.getTime()
+    ? { delivered: true, detail: 'its tag was granted by hand after the payment' }
+    : { delivered: false, detail: 'its tag was held before the payment' };
 }
 
 /** The typed 409 of each `ClosingGrantRefusal`. */
@@ -342,7 +371,8 @@ const CLOSING_GRANT_REFUSALS: Record<ClosingGrantRefusal, { code: string; messag
   },
   'target-held': {
     code: PURCHASE_TARGET_ALREADY_HELD,
-    message: 'The buyer held this tier before paying: the payment is owed a refund.',
+    message:
+      'The buyer holds this tier, and it was not delivered for this payment: the payment is owed a refund.',
   },
   'not-a-rise': {
     code: PURCHASE_NOT_A_RISE,
@@ -2688,6 +2718,7 @@ export class ProductsService {
       closedAt: closings.get(r.id)?.createdAt.toISOString() ?? null,
       grantRefusal: verdicts.get(r.id)?.refusal ?? null,
       buyerTier: verdicts.get(r.id)?.buyerTier ?? null,
+      delivered: Boolean(verdicts.get(r.id)?.deliveredTagId),
     }));
   }
 
@@ -3092,8 +3123,9 @@ export class ProductsService {
    * tier lock, so an erasure or a grant committed while this waited is seen. `granted` is a manual
    * grant, but a protected one: it only ever grants a first tier or a RISE - never a renewal of the
    * tier held (that payment is owed a refund, and closing it as granted would take it off the report)
-   * nor a move down. A tier held because it was DELIVERED since the payment (`deliveredSince`) is
-   * recorded `granted` with no tag written, so the books do not book a refund that never happened. Nothing is written by a refusal, and `refunded` stays open in each case, so the
+   * nor a move down. A tier held because it IS this payment's delivery (`deliveryOf`) is recorded
+   * `granted` with nothing granted - its tag is only stamped with the record, so one delivery closes
+   * one payment - and the books do not book a refund that never happened. Nothing is written by a refusal, and `refunded` stays open in each case, so the
    * report can always be drained.
    *
    * Only `granted` takes the buyer's tier lock: `refunded` writes no tag, and two closings of one
@@ -3142,12 +3174,24 @@ export class ProductsService {
           // Read on the LOCKED row: an erasure committed while this waited has rewritten its buyer.
           const verdict = await this.closingGrantVerdict(manager, record);
           if (verdict.refusal) throw this.closingGrantRefused(record.id, verdict);
-          if (verdict.delivered) {
-            // Already delivered: recorded as granted, with no second tag write and no validity
-            // extension.
+          if (verdict.deliveredTagId) {
+            // Already delivered: nothing granted, nothing renewed. The tag is stamped with this
+            // record, so the same delivery cannot close a second payment.
+            const stamped = await this.userTagService.stampDelivery(
+              verdict.deliveredTagId,
+              record.id,
+              manager
+            );
+            if (!stamped) {
+              throw this.closingGrantRefused(record.id, {
+                ...verdict,
+                refusal: 'target-held',
+                detail: 'its tag became the delivery of another payment',
+              });
+            }
             this.logger.log(
               `[SHOP] purchase=${record.id.slice(0, 8)}: tier ${verdict.variantKey ?? 'base'} already ` +
-                `delivered (${verdict.detail}) - recorded granted, no tag written`
+                `delivered (${verdict.detail}) - recorded granted, nothing granted`
             );
           } else {
             await this.grantClosedTier(manager, record, verdict.variantKey, closedBy);
@@ -3190,8 +3234,8 @@ export class ProductsService {
    *   current one - the tier it bought cannot be granted now;
    * - `target-held` / `not-a-rise` / `not-comparable`: ranked like a checkout (`tierRelationOf`, on
    *   the product prices) against what the buyer holds now: `held` is a renewal the payment did not
-   *   buy - unless that tag was delivered since the payment (`deliveredSince`), which closes as
-   *   `granted` with `delivered` set and no write - `lower` would move the buyer down, `unranked` (a grid or a free amount on either side)
+   *   buy - unless that tag is this payment's delivery (`deliveryOf`), which closes as `granted`
+   *   with `deliveredTagId` set - `lower` would move the buyer down, `unranked` (a grid or a free amount on either side)
    *   cannot be told from a move down. `none` and `higher` grant.
    * `buyerTier` is read BEFORE any of these, so every refusal still says what the buyer holds.
    */
@@ -3206,7 +3250,7 @@ export class ProductsService {
         refusal: 'buyer-erased',
         variantKey: null,
         buyerTier: null,
-        delivered: false,
+        deliveredTagId: null,
         detail: 'its buyer account was erased',
       };
     }
@@ -3225,7 +3269,7 @@ export class ProductsService {
       refusal,
       variantKey: null,
       buyerTier,
-      delivered: false,
+      deliveredTagId: null,
       detail,
     });
 
@@ -3266,26 +3310,49 @@ export class ProductsService {
     const relation = facts ? tierRelationOf(target, facts.heldKeys, held) : 'none';
     const against = `against the tier held (${held?.variantKey ?? 'base'})`;
     if (relation === 'held') {
-      // Held BECAUSE it was delivered since: a manager's roster grant, or a grant of this very
-      // record (a retried paid grant). The closing then records `granted` and writes nothing.
+      // Held BECAUSE this payment's tier was delivered since (`deliveryOf`): recorded `granted`.
       const tagName = catalogue.find((t) => t.variantKey === variantKey)?.tagName;
       const tag = tagName
         ? await this.userTagService.getActiveTag(userId, tagName, record.associationId, manager)
         : null;
-      const since = tag ? deliveredSince(tag, record) : null;
-      if (since) {
-        return { refusal: null, variantKey, buyerTier, delivered: true, detail: since };
+      if (!tag) return refused('target-held', `tier ${tierLabel} is held under no readable tag`);
+      const ownSubmission = await this.isOwnFormAnswer(manager, record, tag.metadata?.submissionId);
+      const delivery = deliveryOf(tag, record, ownSubmission);
+      if (delivery.delivered) {
+        return {
+          refusal: null,
+          variantKey,
+          buyerTier,
+          deliveredTagId: tag.id,
+          detail: delivery.detail,
+        };
       }
-      return refused(
-        'target-held',
-        `the buyer already holds tier ${tierLabel}, from before the payment`
-      );
+      return refused('target-held', `the buyer holds tier ${tierLabel}: ${delivery.detail}`);
     }
     if (relation === 'lower') return refused('not-a-rise', `tier ${tierLabel} is lower ${against}`);
     if (relation === 'unranked') {
       return refused('not-comparable', `tier ${tierLabel} has no fixed price to rank ${against}`);
     }
-    return { refusal: null, variantKey, buyerTier, delivered: false, detail: relation };
+    return { refusal: null, variantKey, buyerTier, deliveredTagId: null, detail: relation };
+  }
+
+  /**
+   * Whether `submissionId` (a held tag's provenance) is an answer of the form `record` paid for, by
+   * the same buyer: then that tag is this payment's own delivery (`deliveryOf`). False for a boutique
+   * record, and for no id.
+   */
+  private async isOwnFormAnswer(
+    manager: EntityManager,
+    record: PurchaseRecord,
+    submissionId: unknown
+  ): Promise<boolean> {
+    if (record.source !== 'form' || !record.formId || typeof submissionId !== 'string')
+      return false;
+    const rows: unknown[] = await manager.query(
+      `SELECT 1 FROM submissions WHERE id::text = $1 AND "formId" = $2 AND "userId" = $3`,
+      [submissionId, record.formId, record.userId]
+    );
+    return rows.length > 0;
   }
 
   /**

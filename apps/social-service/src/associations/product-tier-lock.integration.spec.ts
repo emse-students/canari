@@ -156,6 +156,10 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
     );
+    // The columns a closing reads of a form answer a held tag names (`isOwnFormAnswer`).
+    await admin.query(
+      `CREATE TABLE submissions (id uuid PRIMARY KEY, "formId" uuid NOT NULL, "userId" varchar(255))`
+    );
     // The columns a closing reads of a paid form (`grantClosedTier`).
     await admin.query(
       `CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "grantsCotisation" boolean NOT NULL,
@@ -745,7 +749,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     }
   );
 
-  it('a tier DELIVERED since the payment (a roster grant) closes as GRANTED, with no second tag write', async () => {
+  it('a tier DELIVERED since the payment (a roster grant) closes as GRANTED, the tag only stamped', async () => {
     const buyer = newBuyer();
     const record = await markedRecord(buyer, TIER_D);
     // The manager delivered the tier paid for by hand, as the hourly report asks.
@@ -762,10 +766,105 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted');
 
     expect(closed.closedOutcome).toBe('granted');
-    // The very row the roster wrote: no renewal, no validity extension, no metadata merged.
-    expect(await tagRow()).toEqual(before);
+    // The very row the roster wrote: no renewal, no validity extension - only the ONE stamp key.
     expect(before[0].metadata).not.toHaveProperty('purchaseRecordId');
+    expect(await tagRow()).toEqual([
+      { ...before[0], metadata: { ...before[0].metadata, purchaseRecordId: record } },
+    ]);
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(unclosed - 1);
+  });
+
+  it("a tier delivered by the buyer's SECOND payment does not close the first one as granted", async () => {
+    const buyer = newBuyer();
+    const first = await markedRecord(buyer, TIER_D);
+    // The buyer pays tier D again (a rise over B): this payment is granted, and ITS tag is recent.
+    const { checkoutId } = await service.createCheckoutSession(ASSO, TIER_D, buyer);
+    // Its own Lydia request (the stubbed provider answers every opening with the same one).
+    await ds.query(`UPDATE product_checkouts SET "requestId" = 'second-payment' WHERE id = $1`, [
+      checkoutId,
+    ]);
+    await settle(checkoutId);
+    expect(await heldTags(buyer)).toEqual([TAG_D]);
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, first, 'm', 'granted'));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
+    const rows = await ds.query(
+      `SELECT 1 FROM purchase_record_closings WHERE "purchaseRecordId" = $1`,
+      [first]
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('one delivery closes ONE payment: a second payment of the same tier stays reported', async () => {
+    const buyer = newBuyer();
+    const first = await markedFormRecord(buyer, 'd');
+    const second = await markedFormRecord(buyer, 'd');
+    await tags.grantCotisant(ASSO, buyer, 'manager', 'd');
+
+    const closed = await service.closePaidNotGranted(ASSO, first, 'm', 'granted');
+    const refused = await settled(service.closePaidNotGranted(ASSO, second, 'm', 'granted'));
+
+    expect(closed.closedOutcome).toBe('granted');
+    expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
+    const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === second);
+    expect(row).toMatchObject({ grantRefusal: 'target-held', delivered: false });
+  });
+
+  it('a tag is stamped as the delivery of ONE record: a second stamp writes nothing', async () => {
+    const buyer = newBuyer();
+    await grantRawTag(buyer, TAG_D);
+    const [{ id }] = await ds.query(`SELECT id FROM user_tags WHERE "userId" = $1`, [buyer]);
+    const first = '00000000-0000-4000-8000-0000000000e1';
+
+    const stamps = await ds.transaction(async (m) => [
+      await tags.stampDelivery(id, first, m),
+      await tags.stampDelivery(id, '00000000-0000-4000-8000-0000000000e2', m),
+    ]);
+
+    expect(stamps).toEqual([true, false]);
+    const [row] = await ds.query(`SELECT metadata FROM user_tags WHERE id = $1`, [id]);
+    expect(row.metadata).toEqual({ purchaseRecordId: first });
+  });
+
+  it("a form answer's own grant, written BEFORE its record (the replay race), closes the record as granted", async () => {
+    const buyer = newBuyer();
+    const record = await markedFormRecord(buyer, 'd');
+    const [{ formId }] = await ds.query(`SELECT "formId" FROM purchase_records WHERE id = $1`, [
+      record,
+    ]);
+    const ownAnswer = `00000000-0000-4000-8000-${String(++buyerSeq).padStart(12, '0')}`;
+    await ds.query(`INSERT INTO submissions (id, "formId", "userId") VALUES ($1, $2, $3)`, [
+      ownAnswer,
+      formId,
+      buyer,
+    ]);
+    // The run's grant, dated before the record: time alone would call it a renewal.
+    await ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy", metadata, "createdAt")
+       VALUES ($1, $2, $3, 'form', $4, '2000-01-01')`,
+      [buyer, TAG_D, ASSO, JSON.stringify({ submissionId: ownAnswer })]
+    );
+    const [listed] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
+    expect(listed).toMatchObject({ grantRefusal: null, delivered: true });
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted');
+
+    expect(closed.closedOutcome).toBe('granted');
+  });
+
+  it("another form's answer is not this payment's delivery, however recent its grant", async () => {
+    const buyer = newBuyer();
+    const record = await markedFormRecord(buyer, 'd');
+    await ds.query(
+      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy", metadata)
+       VALUES ($1, $2, $3, 'form', $4)`,
+      [buyer, TAG_D, ASSO, JSON.stringify({ submissionId: '00000000-0000-4000-8000-00000000ffff' })]
+    );
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted'));
+
+    expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
   });
 
   it('GRANTED is refused PURCHASE_TARGET_ALREADY_HELD when the tier was held BEFORE the payment: it stays reported', async () => {
