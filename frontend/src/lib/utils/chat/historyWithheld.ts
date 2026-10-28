@@ -40,7 +40,9 @@ import { memberDeviceAnswer } from './memberDeviceAnswers';
  * upstream is sealed ({@link sealHistoryIn}). Past {@link MAX_WITHHELD_PER_GROUP} withheld
  * devices still in ONE conversation, that conversation is SEALED: no history is answered there to
  * anyone, for good, said once at ERROR - fail closed, at a size no honest conversation reaches. The
- * seal gates answers only, never who an Add is marked against.
+ * seal gates answers only, never who an Add is marked against. Past as many DEPARTED withheld devices
+ * in one conversation still held, it is sealed the same way and those records are dropped: a churn of
+ * entries and removals cannot grow the list, and the seal keeps it closed.
  */
 export interface WithheldDevice {
   groupId: string;
@@ -53,7 +55,10 @@ export interface WithheldDevice {
 /** Past this many records, the ones of conversations this device no longer holds are dropped. */
 export const MAX_HISTORY_WITHHELD = 256;
 
-/** Past this many withheld devices in one conversation, it is sealed: no history answered there. */
+/**
+ * Past this many withheld devices in one conversation - still in its tree, or departed from it - it
+ * is sealed: no history answered there.
+ */
 export const MAX_WITHHELD_PER_GROUP = 32;
 
 /**
@@ -134,25 +139,48 @@ export async function withholdHistoryFrom(
   console.warn(
     `[HISTORY_WITHHELD] no history is answered to ${canonical} in ${groupId.slice(0, 8)}... until a member vouches for it`
   );
-  if (!sealed.has(groupId) && (await presentIn(groupId, leafStillIn)) > MAX_WITHHELD_PER_GROUP) {
+  const { present, departed } = await countIn(groupId, leafStillIn);
+  if (!sealed.has(groupId) && present > MAX_WITHHELD_PER_GROUP) {
     sealed = new Set([...sealed, groupId]);
     console.error(
       `[HISTORY_WITHHELD] more than ${MAX_WITHHELD_PER_GROUP} devices withheld in ${groupId.slice(0, 8)}... - the conversation is sealed, no history is answered there to anyone`
+    );
+  }
+  if (departed.size > MAX_WITHHELD_PER_GROUP) {
+    // A CHURN IN ONE CONVERSATION STILL HELD: its departed records are never trimmed (one could come
+    // back), so they are bounded here - the conversation is sealed, then they are dropped.
+    if (!sealed.has(groupId)) {
+      sealed = new Set([...sealed, groupId]);
+      console.error(
+        `[HISTORY_WITHHELD] more than ${MAX_WITHHELD_PER_GROUP} withheld devices left ${groupId.slice(0, 8)}... - the conversation is sealed, no history is answered there to anyone`
+      );
+    }
+    withheld = withheld.filter((e) => !departed.has(e));
+    console.warn(
+      `[HISTORY_WITHHELD] ${departed.size} departed record(s) of sealed ${groupId.slice(0, 8)}... dropped`
     );
   }
   await trimToBound(leafStillIn);
   persist?.();
 }
 
-/** How many withheld devices of `groupId` still hold a leaf there (an unreadable tree counts all). */
-async function presentIn(groupId: string, leafStillIn: LeafStillIn): Promise<number> {
+/**
+ * How many withheld devices of `groupId` still hold a leaf there (an unreadable tree counts all), and
+ * the records whose device has left it.
+ */
+async function countIn(
+  groupId: string,
+  leafStillIn: LeafStillIn
+): Promise<{ present: number; departed: Set<WithheldDevice> }> {
   let present = 0;
+  const departed = new Set<WithheldDevice>();
   for (const entry of withheld) {
     if (entry.groupId !== groupId) continue;
     const there = await leafStillIn(groupId, entry.identity);
     if (there === true || there === 'unreadable') present++;
+    else if (there === false) departed.add(entry);
   }
-  return present;
+  return { present, departed };
 }
 
 function lift(groupId: string, identity: string, why: string): void {
@@ -194,7 +222,7 @@ export function sealHistoryIn(groupId: string, why: string): void {
 /**
  * Whether a device event inherits the withholding of its committer ({@link committerIsWithheld}). A
  * device added back under its pinned key emits no event at all, so it never reaches here; the trim
- * keeps the record of a departed device for as long as a withheld one remains in its conversation.
+ * keeps the record of a departed device for as long as its conversation is held.
  */
 export function inheritsWithholding(event: {
   groupId: string;

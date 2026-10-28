@@ -257,13 +257,17 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
   );
   setRefusedDeviceListener((identity) => void noteRefusedOwnDevices([identity], refusedCtx()));
   if (onPhone) void preclaimOldOwnDevices(mls, session.getUserId(), session.getMyDeviceId());
+  // The account whose state this consumer drains, fixed now: an account switch re-registers, and the
+  // events of a delivery it overtakes are still this account's.
+  const account = session.getUserId();
   mls.setDeviceEventConsumer((events) =>
     deliverDeviceEvents(events, {
-      ownUserId: session.getUserId(),
+      ownUserId: account,
       ownDeviceId: session.getMyDeviceId(),
       isDistributionGroup: (groupId) => mls.isDistributionGroup(groupId),
       conversations: session.conversations,
       localGroups: () => mls.getLocalGroups(),
+      heldGroupsKnown: () => mls.heldGroupsKnown(),
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),

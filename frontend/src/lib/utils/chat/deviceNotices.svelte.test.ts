@@ -18,7 +18,13 @@ import {
   type DeviceNoticeContext,
   type KeyAge,
 } from './deviceNotices.svelte';
-import { historyWithheldFrom } from './historyWithheld';
+import {
+  MAX_HISTORY_WITHHELD,
+  bindHistoryWithheld,
+  historySealedGroups,
+  historyWithheldEntries,
+  historyWithheldFrom,
+} from './historyWithheld';
 
 /**
  * User decision 2026-10-22: the owner is alerted (in the app, durably until seen) when a device
@@ -96,6 +102,7 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     isDistributionGroup: (g) => g === 'community-key',
     conversations,
     localGroups: () => Object.keys(TREES),
+    heldGroupsKnown: () => true,
     storedConversation: async (g) => STORED_ROWS[g] ?? null,
     memberIdentities: vi.fn(async (g: string) => {
       const tree = TREES[g];
@@ -740,13 +747,87 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     error.mockRestore();
   });
 
-  it('says it decided nothing with no account bound, so an answer refuses', async () => {
+  it('says it decided nothing with no account bound, and seals in that account what it took', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     forgetDeviceNotices();
     const { ctx } = makeCtx();
     expect(await deliverDeviceEvents([selfEntry()], ctx)).toBe(false);
+    // The account's next session answers no history there.
+    loadDeviceNotices('alice');
+    expect(historyWithheldFrom('group-1', 'carol:phone-c')).toBe(true);
     error.mockRestore();
   });
+
+  it('seals what is left of a delivery an account switch overtook, in the account it belongs to', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let switched = false;
+    const { ctx } = makeCtx({
+      // The switch lands while the first event is being decided (its tree read).
+      memberIdentities: vi.fn(async (g: string) => {
+        if (!switched) {
+          switched = true;
+          forgetDeviceNotices();
+          loadDeviceNotices('mallory');
+        }
+        return TREES[g] ?? [];
+      }),
+    });
+    const decided = await deliverDeviceEvents(
+      [selfEntry(), selfEntry({ groupId: 'group-no-bob', epoch: 9 })],
+      ctx
+    );
+    expect(decided).toBe(false);
+    // Nothing leaked into the account now bound.
+    expect(historyWithheldFrom('group-no-bob', 'carol:phone-c')).toBe(false);
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    expect(historyWithheldFrom('group-1', 'carol:phone-c')).toBe(true);
+    expect(historyWithheldFrom('group-no-bob', 'carol:phone-c')).toBe(true);
+    error.mockRestore();
+  });
+
+  it('seals no key group on a dropped-events marker - it answers no history anyway', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents(
+      [
+        event({
+          groupId: 'community-key',
+          identity: '',
+          keyFingerprint: '',
+          addedBy: null,
+          eventsDropped: true,
+        }),
+      ],
+      ctx
+    );
+    expect(historySealedGroups()).toEqual([]);
+    debug.mockRestore();
+  });
+
+  it.each([
+    [false, MAX_HISTORY_WITHHELD + 1],
+    [true, MAX_HISTORY_WITHHELD],
+  ])(
+    'past the bound, a group absent from the held list is dropped only when the list is known (%s)',
+    async (known, kept) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      bindHistoryWithheld(
+        Array.from({ length: MAX_HISTORY_WITHHELD }, (_, i) => ({
+          groupId: 'group-gone',
+          identity: `x:d${i}`,
+          fingerprint: 'f',
+        })),
+        null
+      );
+      const { ctx } = makeCtx({ localGroups: () => ['group-1'], heldGroupsKnown: () => known });
+      await deliverDeviceEvents([selfEntry()], ctx);
+      expect(historyWithheldEntries()).toHaveLength(kept);
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  );
 
   it('withholds history from a device that changed its own key by its own commit', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

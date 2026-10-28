@@ -75,6 +75,26 @@ describe('historyWithheld', () => {
     error.mockRestore();
   });
 
+  it('seals a held conversation past the departed bound and drops its departed records', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // A churn: every withheld device of g1 has left it, and one more keeps coming.
+    const allLeft = async () => false;
+    for (let i = 0; i <= MAX_WITHHELD_PER_GROUP; i++) {
+      await withholdHistoryFrom('g1', `bob:web-${i}`, 'fp', allLeft);
+    }
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(true);
+    expect(historyWithheldEntries()).toHaveLength(0);
+    // The bound holds on, and the conversation stays closed.
+    for (let i = 0; i <= 3 * MAX_WITHHELD_PER_GROUP; i++) {
+      await withholdHistoryFrom('g1', `bob:more-${i}`, 'fp', allLeft);
+    }
+    expect(historyWithheldEntries().length).toBeLessThanOrEqual(MAX_WITHHELD_PER_GROUP);
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(true);
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
   it('past the bound keeps every record of a conversation still held, its device present or not', async () => {
     // A departed device can come back by its own commit under its pinned key, which no event says.
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});

@@ -1348,6 +1348,13 @@ export interface IMlsService {
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
   getLocalGroups(): string[];
+
+  /**
+   * Whether {@link getLocalGroups} is known to describe the loaded state: an unfilled cache (a
+   * listing that failed or was skipped, a client not created yet) says nothing about what is held,
+   * so nothing may be decided from a group's absence while this is false.
+   */
+  heldGroupsKnown(): boolean;
   /**
    * Whether this device is still a member of the group.
    *

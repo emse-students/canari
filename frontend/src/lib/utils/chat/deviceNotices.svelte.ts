@@ -76,6 +76,7 @@ export type KeyAge = { kind: 'dated'; at: number } | { kind: 'undated' } | { kin
 
 /** What delivering the notices needs from the session, handed in so nothing here pins one. */
 export interface DeviceNoticeContext {
+  /** The account whose MLS state handed the events over - fixed when the consumer was registered. */
   ownUserId: string;
   ownDeviceId: string;
   /** Whether the group is a community or salon key group (`IMlsService.isDistributionGroup`). */
@@ -100,6 +101,11 @@ export interface DeviceNoticeContext {
    * where a contact line is owed, whether or not its conversation row is loaded yet.
    */
   localGroups: () => string[];
+  /**
+   * Whether {@link localGroups} describes the loaded state (`IMlsService.heldGroupsKnown`): a group's
+   * absence from an unfilled list proves nothing, so no record is dropped on it.
+   */
+  heldGroupsKnown: () => boolean;
   /**
    * The group's conversation row in the DURABLE store (`IStorage.getConversation`), `null` when
    * there is none. It decides whether a held group with no row loaded yet is a conversation the
@@ -358,23 +364,24 @@ function contactLineId(groupId: string, key: string): string {
  * Turns device events into the notices above, one event at a time - a failure costs that event
  * alone and is logged. Owner alerts are claimed in the native ledger (phones) once recorded.
  *
- * @returns whether who is withheld was decided for every event (`settleDeviceEvents`): `false` with
- * no account bound, or when the account changed during the delivery - a history answer then refuses.
+ * @returns whether who is withheld was decided for every event (`settleDeviceEvents`): `false` when
+ * the account the events belong to is not the one bound - a history answer then refuses, and their
+ * conversations are sealed in that account's record ({@link sealInAccount}).
  */
 export async function deliverDeviceEvents(
   handed: DeviceEvent[],
   ctx: DeviceNoticeContext
 ): Promise<boolean> {
-  if (!boundAccount) {
-    console.error(`[DEVICE_NOTICE] no account bound - ${handed.length} device event(s) dropped`);
+  if (boundAccount !== ctx.ownUserId) {
+    sealInAccount(ctx.ownUserId, handed, 'its device events reached no bound account');
     return false;
   }
   // A GROUP WHOSE EVENTS THE QUEUE DROPPED (`eventsDropped`) has an incomplete record: an entry may
   // be there without what it then added. No history is answered in it - fail closed.
   const delivered: DeviceEvent[] = [];
   for (const event of handed) {
-    if (event.eventsDropped === true) sealHistoryIn(event.groupId, 'device events were dropped');
-    else delivered.push(event);
+    if (event.eventsDropped !== true) delivered.push(event);
+    else sealUnlessKeyGroup(event.groupId, 'device events were dropped', ctx);
   }
   // An empty hand-over with nothing parked is every drain's: nothing to do, nothing to say.
   if (
@@ -397,12 +404,15 @@ export async function deliverDeviceEvents(
   // left it. And it is decided here whether or not the conversation row is loaded - the line waits
   // for the row (`noteUninvitedEntries`), the withholding does not.
   const events: DeviceEvent[] = [];
-  const account = boundAccount;
-  for (const raw of inCommitOrder(delivered)) {
-    // AN ACCOUNT SWITCH MID-DELIVERY ends it: these events are the other account's.
-    if (boundAccount !== account) {
-      console.error(
-        `[DEVICE_NOTICE] the account changed during a delivery - ${delivered.length - events.length} device event(s) not decided`
+  const ordered = inCommitOrder(delivered);
+  for (const raw of ordered) {
+    // AN ACCOUNT SWITCH MID-DELIVERY ends it: these events are the other account's, already taken
+    // from its state - what is left of them seals their conversations in that account's record.
+    if (boundAccount !== ctx.ownUserId) {
+      sealInAccount(
+        ctx.ownUserId,
+        ordered.slice(events.length),
+        'the account changed before its device events were decided'
       );
       return false;
     }
@@ -429,7 +439,16 @@ export async function deliverDeviceEvents(
         `[HISTORY_WITHHELD] withholding not decided for one device event in ${event.groupId.slice(0, 8)}...:`,
         e
       );
-      sealHistoryIn(event.groupId, 'a device event could not be decided');
+      sealUnlessKeyGroup(event.groupId, 'a device event could not be decided', ctx);
+    }
+    // A switch DURING this event: what it wrote went to the account now bound, so it is sealed too.
+    if (boundAccount !== ctx.ownUserId) {
+      sealInAccount(
+        ctx.ownUserId,
+        ordered.slice(events.length - 1),
+        'the account changed while its device events were decided'
+      );
+      return false;
     }
   }
   await noteUninvitedEntries(events, ctx);
@@ -546,6 +565,45 @@ function withheldOnSight(event: DeviceEvent, ctx: DeviceNoticeContext): boolean 
 }
 
 /**
+ * Seals `groupId` (`sealHistoryIn`) unless it is a community or salon key group, which answers no
+ * history to anyone and whose record would only grow.
+ */
+function sealUnlessKeyGroup(groupId: string, why: string, ctx: DeviceNoticeContext): void {
+  if (ctx.isDistributionGroup(groupId)) {
+    console.debug(`[HISTORY_WITHHELD] key group ${groupId.slice(0, 8)}... not sealed (${why})`);
+    return;
+  }
+  sealHistoryIn(groupId, why);
+}
+
+/**
+ * Seals, in `userId`'s record, every conversation `events` name - events taken from that account's
+ * state that were not decided, and that no later take will hand over again. Bound or not, the
+ * account's next answer there refuses: written through the bound record, or into its stored copy.
+ */
+function sealInAccount(userId: string, events: DeviceEvent[], why: string): void {
+  const groups = [...new Set(events.map((e) => e.groupId))];
+  console.error(
+    `[DEVICE_NOTICE] ${events.length} device event(s) of another account not decided (${why}) - ${groups.length} conversation(s) sealed in its record`
+  );
+  if (groups.length === 0) return;
+  if (boundAccount === userId) {
+    for (const groupId of groups) sealHistoryIn(groupId, why);
+    return;
+  }
+  const stored = readStored(userId);
+  const historySealed = [...new Set([...stored.historySealed, ...groups])];
+  try {
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices(userId),
+      JSON.stringify({ ...stored, historySealed })
+    );
+  } catch (e) {
+    console.error(`[HISTORY_WITHHELD] seals of an unbound account not persisted: ${String(e)}`);
+  }
+}
+
+/**
  * Reads, from the conversation's own tree, whether a device still holds a leaf there - one read per
  * conversation per delivery (`trees`), whatever the number of records checked.
  */
@@ -554,8 +612,10 @@ function leafStillIn(
   trees: Record<string, Promise<string[]>>
 ): LeafStillIn {
   return async (groupId, identity) => {
-    // A conversation this device no longer holds: its records name nobody it could answer.
-    if (!ctx.localGroups().includes(groupId)) return 'group-not-held';
+    // A conversation this device no longer holds: its records name nobody it could answer. Only a
+    // listing known to describe the state says so - an unfilled one proves nothing, and the tree is
+    // read as for any conversation.
+    if (!ctx.localGroups().includes(groupId) && ctx.heldGroupsKnown()) return 'group-not-held';
     if (!Object.hasOwn(trees, groupId)) trees[groupId] = ctx.memberIdentities(groupId);
     try {
       return (await trees[groupId]).some((leaf) => sameDeviceIdentity(leaf, identity));

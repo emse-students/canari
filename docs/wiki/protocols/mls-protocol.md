@@ -1411,9 +1411,10 @@ entered with. The decision is PER MEMBER: each device withholds on its own verdi
 persists with that account's device notices. An approval is account-wide and lasts the session. A
 history answer reads the record only after every device event already merged has been decided, and
 answers nothing when they could not be (no consumer, a failed take, a failed delivery). Past its
-overall bound only records of conversations this device no longer holds are dropped - a device that
-left a conversation still held keeps its record, since it could come back; past a per-conversation
-bound, or when the native queue of device events dropped some of a conversation's events past its own
+overall bound only records of conversations this device no longer holds are dropped, and only when
+the list of held conversations is known to describe the state - a device that left a conversation
+still held keeps its record, since it could come back; past a per-conversation bound of withheld
+devices present, or of withheld devices departed (whose records are then dropped), or when the native queue of device events dropped some of a conversation's events past its own
 bound (it keeps the oldest and marks each such conversation), or when one event could not be decided,
 that conversation is sealed and answers no history to anyone - all fail closed.
 

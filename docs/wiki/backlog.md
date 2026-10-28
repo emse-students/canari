@@ -1157,6 +1157,13 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
 - the Android background welcome now stages nothing (only a device already in the tree passes its
   rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
   native callers if the real fix is not built;
+- **a seal is for good, and an honest user can reach one**: a conversation is sealed (no history
+  answered there by this member) when the native queue of device events overflowed for it. The
+  queue holds 512 events and is emptied only by the app, so a phone whose background engine merges
+  for a long time while the app stays closed, in busy communities, can pass it. No path unseals.
+  Owed: the seals counted (each is an ERROR line naming its cause; a report of their rate per week);
+  and, as a design option NOT built, a lift once every leaf added at or after the overflow's epoch
+  has left the tree or been vouched for;
 - the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
   after which this ask remains only as a shim for users without one.
 
