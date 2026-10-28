@@ -10,7 +10,11 @@ import { ProductCheckout } from '../associations/entities/product-checkout.entit
 import { ProductsService } from '../associations/products.service';
 import { AssociationsService } from '../associations/associations.service';
 import { CHECKOUT_EXPIRY_MARGIN_MS, productCheckoutLookup } from '../associations/product-checkout';
-import { classifyCoreCallFailure, LYDIA_READ_REFUSALS_FINAL } from '../common/core-payment-error';
+import {
+  classifyCoreCallFailure,
+  LYDIA_REFUSALS_FINAL,
+  type LydiaRefusalsFinal,
+} from '../common/core-payment-error';
 
 /**
  * Most rows one sweep reads at Lydia, per kind. A bound on one tick's work (one `request/state` read
@@ -111,6 +115,11 @@ interface CheckoutVerdict {
   why?: string;
 }
 
+/** One boutique tick's retries: calls with no answer, attempts accused (id -> cause), warned open. */
+function newTick() {
+  return { noAnswer: 0, accused: new Map<string, string>(), warnedOpen: new Set<string>() };
+}
+
 /**
  * THE RECONCILIATION LYDIA'S DOCUMENTATION ASKS FOR: every request whose callback never came is
  * read at Lydia (`request/state`) once it has ENDED, and settled from that answer - so a payment
@@ -141,8 +150,9 @@ interface CheckoutVerdict {
  *   open past its end (`cancelStillOpenCheckout`; a cancel answering "already processed" is read
  *   once more at once - still open then, it is closed); closed `expired` at ERROR when the answer
  *   cannot be acted on: a mismatch, unsigned, no usable key (a key that does not open answers
- *   `no-key`), an unknown state, and a refusal whose Lydia code is MEASURED final - an ALLOWLIST,
- *   `LYDIA_READ_REFUSALS_FINAL` / `LYDIA_CANCEL_REFUSALS_FINAL` - via `expireUnprovenCheckout`.
+ *   `no-key`), an unknown state, and a refusal whose Lydia code is MEASURED final on an issued
+ *   request - an ALLOWLIST, `LYDIA_REFUSALS_FINAL`, EMPTY for the read and the cancel until such a
+ *   measurement exists - via `expireUnprovenCheckout`.
  * - CLOSING IS NOT FREE. Nothing reads a closed attempt again: if its request was in fact PAID and
  *   its confirm callback was lost, the payment is recorded by nothing (the payer's return asks only
  *   of an open attempt). That is why closing needs a final answer, and why every refusal NOT on the
@@ -153,10 +163,14 @@ interface CheckoutVerdict {
  *   (a 401/403, its 503 when payments are off or Lydia is not configured), a refusal whose code is
  *   not known final, a cancel that did not go through, and a settlement WRITE that failed after a
  *   verified read - above all a verified PAID, which is never closed. ONE line per tick per cause
- *   (`sweepProductCheckouts`): a WARN for no answer, an ERROR that ACCUSES the others with their
- *   cause, an ERROR for the failed writes. Oldest first bounds nothing for these: while the cause
- *   lasts they are re-read each tick, and 50 of them hold the newer rows back. A bound on retries
- *   needs durable state (a column, so a migration, the user's decision) - deliberately not built.
+ *   (`sweepProductCheckouts`): a WARN for no answer, an ERROR for the failed writes, and an ERROR
+ *   that ACCUSES the attempts left open on an answer that is not final, with their cause - said
+ *   when that list CHANGES, not every tick, its size carried by the hourly `refused=` bucket.
+ * - While such a cause lasts its attempts are re-read each tick. When more than `RECONCILE_BATCH`
+ *   are due, the ones accused on the previous tick go LAST, so newer rows are reached (in process
+ *   memory: fairness and reporting, never idempotence - a restart forgets it and costs one line). A
+ *   bound on retries needs durable state (a column, so a migration, the user's decision) -
+ *   deliberately not built.
  *
  * NOTHING UNVERIFIED IS ACTED ON. The read asks core to verify Lydia's signature with the Business
  * key over the row's OWN amount (`readVerifiedRequestState`). A mismatch is logged at ERROR and
@@ -169,7 +183,16 @@ export class LydiaReconciliationService {
   private readonly logger = new Logger(LydiaReconciliationService.name);
   private counts = { forms: zero(), products: zero() };
   /** The boutique retries of the running tick, for its aggregated lines (`sweepProductCheckouts`). */
-  private tick = { noAnswer: 0, accused: [] as string[] };
+  private tick = newTick();
+  /**
+   * What the previous tick left open on an answer that is not final, id -> cause, and which
+   * attempts it warned still OPEN at Lydia: what the next tick's lines are compared against, and
+   * which attempts go last when the batch is full. In memory - reporting and fairness only.
+   */
+  private standing = new Map<string, string>();
+  private warnedOpen = new Set<string>();
+  /** The Lydia refusal codes a read closes an attempt on (`LYDIA_REFUSALS_FINAL`); tests replace it. */
+  refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
   constructor(
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
@@ -235,19 +258,35 @@ export class LydiaReconciliationService {
    */
   async sweepProductCheckouts(): Promise<void> {
     if (!isLydiaReconcileEnabled()) return;
+    const previous = { standing: this.standing, warnedOpen: this.warnedOpen };
+    // Enough rows that a full batch of attempts NOT accused last tick is reached, if there is one.
     const due = await this.dueCheckouts()
       .andWhere(this.businessKeyExists(true))
       .orderBy('c.expiresAt', 'ASC')
-      .limit(RECONCILE_BATCH + 1)
+      .limit(RECONCILE_BATCH + previous.standing.size + 1)
       .getMany();
+    let order = due;
     if (due.length > RECONCILE_BATCH) {
+      // A full batch: what the previous tick left open on an answer that is not final goes LAST,
+      // so a standing cause does not hold the newer rows back (class docblock).
+      order = [
+        ...due.filter((row) => !previous.standing.has(row.id)),
+        ...due.filter((row) => previous.standing.has(row.id)),
+      ];
       this.logger.warn(
-        `[RECONCILE] more than ${RECONCILE_BATCH} boutique attempts are due - the newest wait for the next tick`
+        `[RECONCILE] more than ${RECONCILE_BATCH} boutique attempts are due - the newest, after ` +
+          `those still unanswered last tick, wait for the next tick`
       );
     }
-    this.tick = { noAnswer: 0, accused: [] };
+    this.tick = newTick();
+    // Not read this tick: what was said of them still stands, so it is not said again.
+    for (const row of order.slice(RECONCILE_BATCH)) {
+      const cause = previous.standing.get(row.id);
+      if (cause !== undefined) this.tick.accused.set(row.id, cause);
+      if (previous.warnedOpen.has(row.id)) this.tick.warnedOpen.add(row.id);
+    }
     const failed: CheckoutSettlementFailed[] = [];
-    for (const row of due.slice(0, RECONCILE_BATCH)) {
+    for (const row of order.slice(0, RECONCILE_BATCH)) {
       await this.count(
         'products',
         () => this.reconcileCheckout(row),
@@ -259,17 +298,29 @@ export class LydiaReconciliationService {
         }
       );
     }
-    const { noAnswer, accused } = this.tick;
+    const { noAnswer, accused, warnedOpen } = this.tick;
+    this.standing = accused;
+    this.warnedOpen = warnedOpen;
     if (noAnswer > 0) {
       this.logger.warn(
         `[RECONCILE] boutique: ${noAnswer} call(s) got no answer this tick (core or Lydia ` +
           `unreachable, a 5xx, a timeout, an unknown verdict) - left open, read again next tick`
       );
     }
-    if (accused.length > 0) {
+    const changed =
+      accused.size !== previous.standing.size ||
+      [...accused].some(([id, cause]) => previous.standing.get(id) !== cause);
+    if (changed && accused.size > 0) {
+      const named = [...accused].map(([id, cause]) => `${id} (${cause})`);
       this.logger.error(
-        `[RECONCILE] boutique: ${accused.length} attempt(s) left open on an answer that is not final ` +
-          `- ${accused.join('; ')} - read again next tick`
+        `[RECONCILE] boutique: ${accused.size} attempt(s) left open on an answer that is not final ` +
+          `- ${named.join('; ')} - read again next tick; said again when this list changes ` +
+          `(${previous.standing.size} before)`
+      );
+    } else if (changed) {
+      this.logger.log(
+        `[RECONCILE] boutique: no attempt is left open on an answer that is not final any more ` +
+          `(${previous.standing.size} before)`
       );
     }
     if (failed.length > 0) {
@@ -291,6 +342,11 @@ export class LydiaReconciliationService {
   /** How many ended boutique attempts stay `open` because their Business holds no key (a gauge). */
   async openWithoutKey(): Promise<number> {
     return this.dueCheckouts().andWhere(this.businessKeyExists(false)).getCount();
+  }
+
+  /** How many boutique attempts the last tick left open on an answer that is not final (a gauge). */
+  standingAccused(): number {
+    return this.standing.size;
   }
 
   /** The counts since the last call, which resets them: one summary line's worth. */
@@ -436,10 +492,11 @@ export class LydiaReconciliationService {
       return { outcome: 'unavailable', next: 'keep' };
     }
     if (read.verification === 'refused') {
-      if (!LYDIA_READ_REFUSALS_FINAL.has(read.providerCode)) {
+      if (!this.refusalsFinal.read.has(read.providerCode)) {
         // A refusal can be a state of Lydia: retried and accused, never closed (class docblock).
-        this.tick.accused.push(
-          `${row.id} (read refused, error ${read.providerCode || 'without a code'}, not known final)`
+        this.tick.accused.set(
+          row.id,
+          `read refused, error ${read.providerCode || 'without a code'}, not known final`
         );
         return { outcome: 'refused', next: 'keep' };
       }
@@ -482,11 +539,12 @@ export class LydiaReconciliationService {
       return { outcome: 'unchanged', next: 'keep' };
     }
     if (state === 'open') {
-      // WARN, not ERROR: a cancel that keeps failing would repeat it each tick; the tick's
-      // aggregated ERROR accuses that case.
-      this.logger.warn(
-        `[RECONCILE] ${what}: still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it`
-      );
+      // Said once while it lasts: a cancel that keeps failing reaches this every tick, and the
+      // tick's aggregated ERROR accuses that case.
+      const line = `[RECONCILE] ${what}: still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it`;
+      if (this.warnedOpen.has(row.id)) this.logger.debug(line);
+      else this.logger.warn(line);
+      this.tick.warnedOpen.add(row.id);
       return { outcome: 'unchanged', next: 'cancel', why: 'still open at Lydia past its end' };
     }
     this.logger.warn(
@@ -508,12 +566,14 @@ export class LydiaReconciliationService {
     if (failure.kind === 'no-answer') {
       this.tick.noAnswer += 1;
     } else if (failure.kind === 'core-fault') {
-      this.tick.accused.push(
-        `${checkoutId} (${call}: core answered HTTP ${failure.status} about itself)`
+      this.tick.accused.set(
+        checkoutId,
+        `${call}: core answered HTTP ${failure.status} about itself`
       );
     } else {
-      this.tick.accused.push(
-        `${checkoutId} (${call} refused, error ${failure.providerCode || 'without a code'}, not known final)`
+      this.tick.accused.set(
+        checkoutId,
+        `${call} refused, error ${failure.providerCode || 'without a code'}, not known final`
       );
     }
   }

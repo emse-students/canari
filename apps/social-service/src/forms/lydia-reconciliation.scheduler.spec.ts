@@ -19,6 +19,7 @@ describe('LydiaReconciliationScheduler and its switch', () => {
       sweepProductCheckouts: jest.fn(async () => undefined),
       takeCounts: jest.fn(() => ({ forms: {}, products: {} })),
       openWithoutKey: jest.fn(async () => 0),
+      standingAccused: jest.fn(() => 2),
     };
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     return {
@@ -46,5 +47,9 @@ describe('LydiaReconciliationScheduler and its switch', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('sweep ON'));
     await scheduler.reportHourly();
     expect(log).toHaveBeenLastCalledWith(expect.stringContaining('[RECONCILE] last hour'));
+    // The boutique's refused= bucket carries what stands open on an answer that is not final.
+    expect(log).toHaveBeenLastCalledWith(
+      expect.stringContaining('(left open on an answer not final: 2)')
+    );
   });
 });

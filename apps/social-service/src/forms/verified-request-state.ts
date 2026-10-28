@@ -27,7 +27,7 @@ const VERIFIED_READ_TIMEOUT_MS = 90_000;
  * - `refused`: Lydia REFUSED the read - core's typed `PAYMENT_PROVIDER_REFUSED` 400, `providerCode`
  *   Lydia's code (`http-4xx` for a refusing HTTP status). A word about THIS request, but whether it
  *   is FINAL depends on the code: the caller acts only on an allowlisted one
- *   (`LYDIA_READ_REFUSALS_FINAL`).
+ *   (`LYDIA_REFUSALS_FINAL`, empty until a code is measured final).
  */
 export type VerifiedRequestRead =
   | { verification: 'no-key' }

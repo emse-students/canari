@@ -7,11 +7,12 @@ import {
 } from './lydia-reconciliation.service';
 
 /** One summary's counts, in the order the line prints them. */
-function formatCounts(counts: ReconcileCounts): string {
+function formatCounts(counts: ReconcileCounts, standing?: number): string {
+  const left = standing === undefined ? '' : ` (left open on an answer not final: ${standing})`;
   return (
     `examined=${counts.examined} settled=${counts.settled} released=${counts.released} ` +
     `unchanged=${counts.unchanged} skipped-unverified=${counts.skippedUnverified} ` +
-    `refused=${counts.refused} ` +
+    `refused=${counts.refused}${left} ` +
     `unavailable=${counts.unavailable} errors=${counts.errors}`
   );
 }
@@ -90,7 +91,7 @@ export class LydiaReconciliationScheduler implements OnModuleInit {
       );
     }
     this.logger.log(
-      `[RECONCILE] last hour - forms: ${formatCounts(forms)}; boutique: ${formatCounts(products)}; ` +
+      `[RECONCILE] last hour - forms: ${formatCounts(forms)}; boutique: ${formatCounts(products, this.reconciliation.standingAccused())}; ` +
         `ended boutique attempts left open with no Business key: ${withoutKey}`
     );
   }

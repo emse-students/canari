@@ -53,7 +53,8 @@ import {
   amountOutOfRange,
   classifyCoreCallFailure,
   coreRefusedRequest,
-  LYDIA_CANCEL_REFUSALS_FINAL,
+  LYDIA_REFUSALS_FINAL,
+  type LydiaRefusalsFinal,
   mapCorePaymentError,
 } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
@@ -167,6 +168,8 @@ export interface FailedDelivery {
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); tests replace it. */
+  refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
   constructor(
     @InjectRepository(AssociationProduct)
@@ -1228,7 +1231,7 @@ export class ProductsService {
    * attempt makes, so no payment can land on a request Canari has closed; then closed `cancelled`.
    * - `already-settled`: Lydia processed it between the read and the cancel. The attempt stays
    *   `open` and this answers `open`, so the caller reads it once more (the sweep does, at once).
-   * - A cancel Lydia REFUSED with a code measured FINAL (`LYDIA_CANCEL_REFUSALS_FINAL`, empty until
+   * - A cancel Lydia REFUSED with a code measured FINAL (`refusalsFinal.cancel`, empty until
    *   a sandbox measurement fills it): closed `expired` at ERROR (`expireUnprovenCheckout`). The
    *   request may then still be payable at Lydia; a payment on it is recorded only if its confirm
    *   callback arrives, over the closed attempt, at ERROR. Any other refusal - and core answering
@@ -1247,7 +1250,7 @@ export class ProductsService {
       outcome = await this.cancelRequestAtLydia(row);
     } catch (err: unknown) {
       const failure = classifyCoreCallFailure(err);
-      if (failure.kind !== 'refused' || !LYDIA_CANCEL_REFUSALS_FINAL.has(failure.providerCode)) {
+      if (failure.kind !== 'refused' || !this.refusalsFinal.cancel.has(failure.providerCode)) {
         throw err;
       }
       return this.expireUnprovenCheckout(

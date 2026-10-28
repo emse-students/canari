@@ -30,6 +30,7 @@ import { ProductCheckout } from '../associations/entities/product-checkout.entit
 import { AssociationProduct } from '../associations/entities/association-product.entity';
 import { ProductsService } from '../associations/products.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
+import { LYDIA_REFUSALS_FINAL } from '../common/core-payment-error';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -128,6 +129,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     // The boutique's return reads through Nest's HttpService: the same answer, unverified.
     products = Object.assign(Object.create(ProductsService.prototype) as object, {
       logger: new Logger('ProductsService'),
+      refusalsFinal: LYDIA_REFUSALS_FINAL,
       checkoutRepo: ds.getRepository(ProductCheckout),
       purchaseRecordService,
       httpService: {
@@ -415,15 +417,32 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       ).toHaveLength(1);
     });
 
-    // Closed only on a refusal MEASURED final (error 2, "Requete introuvable"): retried, such a
-    // read was re-read every tick, for ever.
+    // Closed only on a refusal on the allowlist - EMPTY for real until a code is measured final on
+    // an issued request, so a test-only code goes through the same mechanism.
     it('closes an attempt whose read Lydia refused with a code known final, once', async () => {
+      lydiaRefuses = 'test-only-final';
+      sweep.refusalsFinal = { read: new Set(['test-only-final']), cancel: new Set() };
+      try {
+        const row = await attempt();
+        await sweep.sweepProductCheckouts();
+        expect(await statusOf(row.id)).toBe('expired');
+        await sweep.sweepProductCheckouts();
+        expect(verifiedReads).toBe(1);
+      } finally {
+        sweep.refusalsFinal = LYDIA_REFUSALS_FINAL;
+      }
+    });
+
+    // Error 2 was measured on a uuid Lydia never issued; on an issued one it is unmeasured, and a
+    // PAID request whose callback was lost, closed on it, would be recorded by nothing.
+    it('leaves open, and settles later, an attempt whose read Lydia refused with error 2', async () => {
       lydiaRefuses = '2';
       const row = await attempt();
       await sweep.sweepProductCheckouts();
-      expect(await statusOf(row.id)).toBe('expired');
+      expect(await statusOf(row.id)).toBe('open');
+      lydiaRefuses = null;
       await sweep.sweepProductCheckouts();
-      expect(verifiedReads).toBe(1);
+      expect(await statusOf(row.id)).toBe('paid');
     });
 
     // Any OTHER refusal can be a state of Lydia (error 5, "temporarily blocked"): closing it lost
@@ -446,6 +465,20 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       coreNotReady = false;
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('paid');
+    });
+
+    // The cancel's allowlist is EMPTY for real; a code put on it through the same mechanism closes.
+    it('closes an attempt whose CANCEL Lydia refused with a code on the allowlist', async () => {
+      lydia = { state: 'open', raw: '0', verification: 'verified' };
+      cancelRefused = true;
+      products.refusalsFinal = { read: new Set(), cancel: new Set(['3']) };
+      try {
+        const row = await attempt();
+        await sweep.sweepProductCheckouts();
+        expect(await statusOf(row.id)).toBe('expired');
+      } finally {
+        products.refusalsFinal = LYDIA_REFUSALS_FINAL;
+      }
     });
 
     it('leaves open an attempt whose CANCEL Lydia refused with a code not known final, accused once per tick', async () => {

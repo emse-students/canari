@@ -66,6 +66,9 @@ interface CoreAnswer {
  * Whether a failed call to core-service was ANSWERED with a 4xx - a refusal about this request, so
  * nothing was issued - rather than lost (no response, a timeout, a 5xx), after which a request may
  * exist at the provider all the same. A status code is an answer; a transport failure is not.
+ * Serves `create-checkout-session` only, where ANY 4xx means nothing was issued; reading or
+ * cancelling an issued request needs to tell Lydia's refusal from core's own state, so those go
+ * through `classifyCoreCallFailure` instead.
  */
 export function coreRefusedRequest(err: unknown): boolean {
   if (err instanceof HttpException) return false;
@@ -73,23 +76,28 @@ export function coreRefusedRequest(err: unknown): boolean {
   return typeof status === 'number' && status >= 400 && status < 500;
 }
 
-/**
- * Lydia error codes MEASURED to refuse a `request/state` READ for good - an ALLOWLIST: only a code
- * listed here lets the reconciliation sweep close an attempt on a refusal; any other refusal is
- * retried and accused, because the sweep is the only automatic path for a PAID request whose
- * callback was lost, and an attempt it closes is never read again.
- * - `2`, "Requete introuvable": Lydia holds no request with that id under that vendor token
- *   (measured 2026-10-15, docs/wiki/lydia-api.md `request/state`).
- * Adding a code needs a sandbox measurement that it is FINAL (owed: lydia-api.md section 7).
- */
-export const LYDIA_READ_REFUSALS_FINAL: ReadonlySet<string> = new Set(['2']);
+/** Lydia error codes measured FINAL for one call: a refusal closes an attempt only from here. */
+export interface LydiaRefusalsFinal {
+  /** For a `request/state` read. */
+  readonly read: ReadonlySet<string>;
+  /** For a `request/cancel`. */
+  readonly cancel: ReadonlySet<string>;
+}
 
 /**
- * The same allowlist for a `request/cancel` refusal: EMPTY, because no cancel refusal has been
- * measured as final (error 2 on a cancel is "already processed", an answer read apart). A refused
- * cancel is retried and accused until one is.
+ * The ALLOWLIST of Lydia refusal codes that let the reconciliation sweep CLOSE an attempt: any other
+ * refusal is retried and accused, because the sweep is the only automatic path for a PAID request
+ * whose callback was lost, and an attempt it closes is never read again. BOTH ARE EMPTY:
+ * - read: error `2` ("Requete introuvable") was measured on a uuid Lydia NEVER issued (2026-10-15);
+ *   the sweep reads uuids Lydia DID issue, and what error 2 means for one issued then purged,
+ *   archived or moved between environments is unmeasured - a PAID request answered that way would
+ *   be closed for good.
+ * - cancel: no cancel refusal is measured (error 2 on a cancel is "already processed", read apart).
+ * A code joins only after a dev-sandbox measurement on an ISSUED request shows it final (owed:
+ * docs/wiki/lydia-api.md section 7). The services hold this as `refusalsFinal`, which the tests
+ * replace with a test-only code to exercise the mechanism.
  */
-export const LYDIA_CANCEL_REFUSALS_FINAL: ReadonlySet<string> = new Set();
+export const LYDIA_REFUSALS_FINAL: LydiaRefusalsFinal = { read: new Set(), cancel: new Set() };
 
 /**
  * What a failed call to core-service's `request-state` or `cancel-request` was, for the caller that
