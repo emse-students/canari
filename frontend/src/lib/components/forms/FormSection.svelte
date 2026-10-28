@@ -20,6 +20,8 @@
     icon: Component;
     /** Small pill on the right of the header, e.g. a question count. */
     badge?: string;
+    /** One line under the title: the section's current answer, so a closed section still reads. */
+    summary?: string;
     /** When true, the header toggles the body open and shut. */
     collapsible?: boolean;
     /** Initial state of a collapsible section; ignored otherwise. */
@@ -34,6 +36,7 @@
     title,
     icon: SectionIcon,
     badge,
+    summary,
     collapsible = false,
     startOpen = true,
     dense = false,
@@ -59,7 +62,12 @@
     <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
       <SectionIcon size={20} />
     </div>
-    <h2 class="text-text-main min-w-0 text-lg font-bold break-words">{title}</h2>
+    <div class="min-w-0">
+      <h2 class="text-text-main text-lg font-bold break-words">{title}</h2>
+      {#if summary}
+        <p class="text-text-muted text-xs font-normal break-words">{summary}</p>
+      {/if}
+    </div>
     {#if badge}
       <span
         class="text-text-muted bg-cn-border/40 ml-auto rounded-full px-2.5 py-1 text-xs font-semibold"

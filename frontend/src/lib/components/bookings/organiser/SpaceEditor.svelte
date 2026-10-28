@@ -36,6 +36,7 @@
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import { columnsHidden } from '$lib/bookings/columns';
+  import { sectionSummaries } from '$lib/bookings/spaceSummaries';
   import { guardUnsavedChanges } from '$lib/navigation/unsavedChanges';
   import StrandedBookings from './StrandedBookings.svelte';
   import {
@@ -56,9 +57,12 @@
   import { Log } from '$lib/utils/Log';
 
   /**
-   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections: General; Resources and
-   * availability; Who and how; Booking rules (collapsed, a badge counting what is set); Data
-   * (collapsed). The space's settings save together through the bar at the bottom; each resource
+   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections, worded as the questions an
+   * organiser asks (WP-R6, D51, Q-R13): L'essentiel; Quand peut-on reserver ?; Qui peut reserver,
+   * et que demande-t-on ? (who, names, discoverability, the people ceiling, the questions and the
+   * after-booking information); Regles de reservation (collapsed, a badge counting what is set);
+   * Donnees (collapsed, a badge with the retention). Each title carries the section's current
+   * answer on a line below it. The space's settings save together through the bar at the bottom; each resource
    * and its availability save on their own, because each is its own call and the server may refuse
    * one (D29) while the others stand. Loading and navigation are the page's
    * (`routes/bookings/spaces/[spaceId]/edit`); this component only edits what it is handed.
@@ -105,6 +109,14 @@
   );
   const problems = $derived(draftProblems(draft));
   const rulesActive = $derived(activeRuleCount(draft));
+  /** The one line under each title: what the fields hold now (D51). */
+  const summaries = $derived(sectionSummaries(draft, space.resources.length));
+  /** The data section's badge: how long answers and files are kept. */
+  const retentionBadge = $derived(
+    /^\d+$/.test(draft.retentionDays.trim())
+      ? m.bookings_retention_badge({ days: draft.retentionDays.trim() })
+      : undefined
+  );
   const zones = $derived(timeZoneChoices(draft.timeZone));
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
@@ -231,7 +243,7 @@
   }
 </script>
 
-<FormSection title={m.bookings_section_general()} icon={Info}>
+<FormSection title={m.bookings_section_general()} summary={summaries.essentials} icon={Info}>
   <Input
     id="space-name"
     label={m.bookings_field_name()}
@@ -265,20 +277,11 @@
       onValueChange={(v) => (draft.timeZone = v)}
     />
   </div>
-  <div>
-    <Textarea
-      id="space-private"
-      label={m.bookings_field_private_info()}
-      bind:value={draft.privateInfo}
-      rows={2}
-      maxlength={4000}
-    />
-    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
-  </div>
 </FormSection>
 
 <FormSection
   title={m.bookings_section_resources()}
+  summary={summaries.when}
   icon={CalendarRange}
   badge={hidden ? undefined : String(space.resources.length)}
 >
@@ -402,7 +405,7 @@
   {/if}
 </FormSection>
 
-<FormSection title={m.bookings_section_who()} icon={Users}>
+<FormSection title={m.bookings_section_who()} summary={summaries.who} icon={Users}>
   <!-- The forms' audience switch (FormAdvancedSettings): off is everybody (null), on starts an
          empty set of criteria for the editor to fill. -->
   <div class="space-y-3">
@@ -444,6 +447,26 @@
       onSelect={(k) => (draft.discoverability = k)}
     />
   </div>
+  <div>
+    <Input
+      id="space-max-people"
+      label={m.bookings_field_max_people()}
+      inputmode="numeric"
+      bind:value={draft.maxPeople}
+      error={problemOf('maxPeople')}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_max_people_hint()}</p>
+  </div>
+  <div>
+    <Textarea
+      id="space-private"
+      label={m.bookings_field_private_info()}
+      bind:value={draft.privateInfo}
+      rows={2}
+      maxlength={4000}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
+  </div>
 </FormSection>
 
 <FormQuestionsSection
@@ -456,6 +479,7 @@
 
 <FormSection
   title={m.bookings_section_rules()}
+  summary={summaries.rules}
   icon={ListChecks}
   collapsible
   startOpen={false}
@@ -501,13 +525,6 @@
       error={problemOf('maxActiveBookings')}
     />
     <Input
-      id="space-max-people"
-      label={m.bookings_field_max_people()}
-      inputmode="numeric"
-      bind:value={draft.maxPeople}
-      error={problemOf('maxPeople')}
-    />
-    <Input
       id="space-quota"
       label={m.bookings_field_quota()}
       inputmode="numeric"
@@ -540,7 +557,14 @@
   </div>
 </FormSection>
 
-<FormSection title={m.bookings_section_data()} icon={Database} collapsible startOpen={false}>
+<FormSection
+  title={m.bookings_section_data()}
+  summary={summaries.data}
+  badge={retentionBadge}
+  icon={Database}
+  collapsible
+  startOpen={false}
+>
   <Input
     id="space-retention"
     label={m.bookings_field_retention()}

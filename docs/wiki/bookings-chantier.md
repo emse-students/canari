@@ -245,6 +245,34 @@ days, a close splitting a run, a night as two stored halves, one cell, dated lin
 editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
 readings owed.
 
+## WP-R6 as built - the settings in plain words (D51, Q-R13, 2026-10-27)
+
+Front only: no setting is added or removed, the draft and the PATCH are unchanged.
+
+- **Titles, as Q-R13 drew them**: L'essentiel / Quand peut-on reserver ? / Qui peut reserver, et que
+  demande-t-on ? / Regles de reservation / Donnees (accents in the messages). D35's five sections and
+  their order stay.
+- **Each title carries the section's CURRENT answer on a line below it** (`FormSection` gained an
+  optional `summary`, used by no other screen yet; `lib/bookings/spaceSummaries.ts`, pure over the
+  draft, so it follows an unsaved change). "When" reads the mode (steps of N min, M at most, or fixed
+  slots) and the column count from two; "who" reads audience, names, discoverability and the number
+  of questions; the other three keep a fixed hint.
+- **Two fields moved to "who"** (Q-R13): the people ceiling (from the collapsed rules) and the
+  after-booking information (from "General"). The collapsed rules' badge stopped counting the ceiling
+  (`activeRuleCount`), since it is always in view now. The data section gained a badge with the
+  retention (`7 j`), the rules badge is unchanged.
+- **Not done**: the questions stay their own card (`FormQuestionsSection`, shared with forms) right
+  after "who" instead of being merged into it, so the title "...et que demande-t-on ?" sits over the
+  audience block and the card follows it; the numbered tiles of the mockup are not drawn; the radio
+  "choice" cards of the mockup are the existing segmented controls and toggle. The wording of
+  options other than titles is untouched.
+
+**Proof.** `spaceSummaries.test.ts` (each line, an unsaved change, fixed slots and columns, a
+half-typed step), `SpaceEditor.sections.svelte.test.ts` (the mounted editor: titles, a line under
+each, the two fields in "who" and absent elsewhere, the line following a click, the two last
+sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling no longer counted).
+`paraglideMessages.test.ts` for the strings. **Not yet seen** at 390 and 1280 or at 200 % text.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
