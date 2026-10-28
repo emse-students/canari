@@ -174,6 +174,8 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       ds.getRepository(MlsGroupInfo),
       ds.getRepository(QueuedMessage),
       ds.getRepository(RevokedDevice),
+      // The revoked-device bindings are read by the revoked-leaves question alone, not on this path.
+      null as unknown as never,
       redis as unknown as Redis,
       ds
     );

@@ -77,9 +77,7 @@ pub(crate) fn checkpoint_live_manager(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         let ahead = manager.has_unsaved_ratchet_advance();
         (manager.save_state().map_err(|e| e.to_string())?, ahead)
     };
@@ -181,14 +179,15 @@ pub(crate) fn mark_foreground_inactive() {
     foreground_active_until().store(0, Ordering::SeqCst);
 }
 
-/// Whether THIS PROCESS holds a foreground manager loaded from `mls.bin` - set once by
-/// [`foreground_load_mls_bin`], never cleared while the process lives.
+/// Whether THIS PROCESS holds a foreground manager loaded from `mls.bin` - set by
+/// [`foreground_load_mls_bin`] before the read, cleared only by [`end_native_session`] (a sign-out,
+/// an account switch, a sweep, or a failed install) together with the manager it describes.
 fn live_manager_flag() -> &'static AtomicBool {
     static LOADED: AtomicBool = AtomicBool::new(false);
     &LOADED
 }
 
-/// True once a foreground manager was loaded in this process.
+/// True while a foreground manager is loaded in this process (or being loaded).
 ///
 /// **A WRITE THAT ONLY ADDS MUST NOT LAND UNDER A WARM MANAGER**, and the deadline cannot say so:
 /// a backgrounded app keeps its manager in memory with the guard expired. If that manager holds a
@@ -232,6 +231,120 @@ pub(crate) fn foreground_load_mls_bin(path: &std::path::Path) -> Result<Option<V
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("read mls.bin: {e}")),
     }
+}
+
+/// Ends the foreground MLS session of this process: the manager, its cached at-rest key and the
+/// warm-process mark go, and with `sweep_dir` the state files of [`remove_mls_state_held`] go too -
+/// ALL IN ONE HOLD, taken in the documented order: [`foreground_checkpoint_lock`], then the manager
+/// mutex (the device-key mutex is taken and released inside it), then [`mls_bin_write_lock`].
+///
+/// **WHY ONE HOLD.** A sign-out on a phone is an in-app navigation, not a process restart, so whatever
+/// this process holds for account A is still there when account B signs in. Emptying the slot and
+/// removing the files in two steps leaves a window in which a command finds A's manager over no file,
+/// or a background engine that loaded before the sweep finds a file and no foreground. Under one hold a
+/// command waiting on the manager mutex finds `None` and answers [`crate::state::MLS_MANAGER_ABSENT`],
+/// and a background engine that loaded before fails its compare-and-swap re-read (no file): nothing can
+/// put the state back.
+///
+/// **EVERY LOCK IS TAKEN EVEN WHEN POISONED.** A teardown that refused on a poisoned mutex would leave
+/// the previous account's manager installed for the rest of the process, which is the defect this
+/// exists to close; the poison is named at ERROR. The checkpoint lock already behaves this way.
+///
+/// It may wait for an in-flight checkpoint (the checkpoint lock spans a whole serialise); the wait is
+/// logged with its duration. Nothing under the hold calls into the JVM or the WebView: the manager is
+/// DROPPED after every lock is released, and the sweep is plain file removal.
+///
+/// [`remove_mls_state_held`]: crate::commands::storage::remove_mls_state_held
+pub(crate) fn end_native_session(
+    manager_state: &Mutex<Option<mls_core::MlsManager>>,
+    device_key_state: &Mutex<Option<[u8; 32]>>,
+    sweep_dir: Option<&std::path::Path>,
+    why: &str,
+) -> Result<SessionEnded, String> {
+    // DEBUG: what was ended is known only under the hold, and the closing line reports it.
+    log::debug!(
+        "[MLS] ending the native MLS session ({why}, state files {})",
+        if sweep_dir.is_some() { "swept" } else { "kept" }
+    );
+    let waited = std::time::Instant::now();
+    let _ordered = foreground_checkpoint_lock();
+    let mut slot = manager_state.lock().unwrap_or_else(|poisoned| {
+        log::error!(
+            "[MLS] teardown: the manager mutex was POISONED - taken anyway, the session must end"
+        );
+        poisoned.into_inner()
+    });
+    let waited_ms = waited.elapsed().as_millis();
+    if waited_ms > 0 {
+        log::debug!("[MLS] teardown waited {waited_ms} ms for the checkpoint and manager locks");
+    }
+    let manager = slot.take();
+    let had_key = device_key_state
+        .lock()
+        .unwrap_or_else(|poisoned| {
+            log::error!(
+                "[MLS] teardown: the device-key mutex was POISONED - taken anyway, the key must go"
+            );
+            poisoned.into_inner()
+        })
+        .take()
+        .is_some();
+    let swept = {
+        let _file = mls_bin_write_lock().lock().unwrap_or_else(|poisoned| {
+            log::error!(
+                "[MLS] teardown: the mls.bin write lock was POISONED - taken anyway, it guards file order and the files are removed by unlink"
+            );
+            poisoned.into_inner()
+        });
+        // Under the write lock, where a background writer reads it: no foreground manager is loaded
+        // any more, so the warm-process refusal must not outlive the manager it described.
+        live_manager_flag().store(false, Ordering::SeqCst);
+        sweep_dir.map(crate::commands::storage::remove_mls_state_held)
+    };
+    drop(slot);
+    drop(_ordered);
+    let ended = SessionEnded {
+        had_manager: manager.is_some(),
+        had_key,
+    };
+    // Dropped OFF every lock: freeing a large state costs time, and nothing waiting needs to.
+    drop(manager);
+    // INFO only when something was ended. One exit runs several teardowns in a row (a revoked device:
+    // the reset, the failed re-enrolment, the sign-out), and only the first finds a session; the
+    // others are expected no-ops, at DEBUG.
+    let level = if ended.had_manager || ended.had_key {
+        log::Level::Info
+    } else {
+        log::Level::Debug
+    };
+    log::log!(
+        level,
+        "[MLS] native MLS session ended ({why}): manager {}, at-rest key {}",
+        if ended.had_manager {
+            "dropped"
+        } else {
+            "already absent"
+        },
+        if ended.had_key {
+            "cleared"
+        } else {
+            "already absent"
+        }
+    );
+    match swept {
+        Some(Err(e)) => {
+            log::error!("[MLS] teardown ({why}): the state files were NOT all removed: {e}");
+            Err(e)
+        }
+        _ => Ok(ended),
+    }
+}
+
+/// What [`end_native_session`] found and ended - read by its tests and its log line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionEnded {
+    pub had_manager: bool,
+    pub had_key: bool,
 }
 
 /// Number of foreground operations currently holding state a background write would clobber.
@@ -344,9 +457,9 @@ pub(crate) fn background_write_mls_bin_if_unchanged_and_cold(
 
 /// [`background_write_mls_bin_if_unchanged_and_cold`], then `then` UNDER THE SAME HOLD of
 /// [`mls_bin_write_lock`], only once `data` is written - the background Welcome's stage and its
-/// ledger entry (`mobile/background.rs`). A sign-out's sweep takes that lock too
-/// (`commands/storage.rs`, `remove_mls_state_in`), so it removes both or neither: never a ledger
-/// naming a stage beside no state. `then` must not take the lock.
+/// ledger entry (`mobile/background.rs`). A state reset's sweep takes that lock too
+/// ([`end_native_session`], through `remove_mls_state_held`), so it removes both or neither: never
+/// a ledger naming a stage beside no state. `then` must not take the lock.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn background_write_mls_bin_if_unchanged_and_cold_then<R>(
     path: &std::path::Path,
@@ -446,6 +559,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{joined_pair, serialise};
     use super::*;
+    use mls_core::MlsManager;
 
     /// The defect this file was changed for: the deadline has lapsed (the app is backgrounded and
     /// the heartbeat stopped) while the checkpoint it was supposed to cover is still running.
@@ -776,6 +890,133 @@ mod tests {
                 .unwrap()
                 .has_unsaved_ratchet_advance(),
             "and a write that lands clears it - the flag is not latched"
+        );
+    }
+
+    /// A fresh directory standing for `app_data_dir`.
+    fn teardown_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("canari-teardown-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// THE GAP THIS CLOSES: account A's manager and at-rest key stayed in the slot after a sign-out,
+    /// into account B's session. After the teardown the slot is empty, the key is gone, the process
+    /// is no longer marked warm, and a command reading the slot gets the typed refusal.
+    #[test]
+    fn the_teardown_empties_the_slot_and_the_key_and_keeps_the_state_files() {
+        let _s = serialise();
+        let dir = teardown_dir("keep");
+        std::fs::write(dir.join("mls.bin"), b"account A").unwrap();
+        mark_foreground_manager_loading();
+        let manager = Mutex::new(Some(
+            MlsManager::load_or_create("teardown-a", "d1", None).unwrap(),
+        ));
+        let key = Mutex::new(Some(CKPT_KEY));
+
+        let ended = end_native_session(&manager, &key, None, "test sign-out").unwrap();
+
+        assert_eq!(
+            ended,
+            SessionEnded {
+                had_manager: true,
+                had_key: true
+            }
+        );
+        assert!(
+            manager.lock().unwrap().is_none(),
+            "the manager outlived its account"
+        );
+        assert!(
+            key.lock().unwrap().is_none(),
+            "the at-rest key outlived its account"
+        );
+        assert!(
+            !live_manager_in_process(),
+            "the warm-process mark outlived the manager it described"
+        );
+        let refused = crate::state::live_manager(&manager.lock().unwrap())
+            .err()
+            .unwrap();
+        assert!(
+            refused.starts_with(crate::state::MLS_MANAGER_ABSENT),
+            "{refused}"
+        );
+        assert!(
+            dir.join("mls.bin").exists(),
+            "a sign-out keeps the local state for the account's next sign-in"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A reset sweeps the state IN THE SAME HOLD as it empties the slot.
+    #[test]
+    fn the_teardown_with_a_sweep_removes_the_state_and_what_was_built_from_it() {
+        let _s = serialise();
+        let dir = teardown_dir("sweep");
+        for name in [
+            "mls.bin",
+            "mls.owner",
+            "background_stages.json",
+            "unrelated.json",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let manager = Mutex::new(Some(
+            MlsManager::load_or_create("teardown-sweep", "d1", None).unwrap(),
+        ));
+        let key = Mutex::new(Some(CKPT_KEY));
+
+        end_native_session(&manager, &key, Some(&dir), "test reset").unwrap();
+
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        for gone in ["mls.bin", "mls.owner", "background_stages.json"] {
+            assert!(!dir.join(gone).exists(), "{gone} outlived the reset");
+        }
+        assert!(
+            dir.join("unrelated.json").exists(),
+            "only what belongs to mls.bin"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A teardown must END the session even when a previous holder panicked: refusing on poison
+    /// would leave the previous account's manager installed for the rest of the process.
+    #[test]
+    fn the_teardown_ends_a_session_whose_mutexes_are_poisoned() {
+        let _s = serialise();
+        let manager = std::sync::Arc::new(Mutex::new(Some(
+            MlsManager::load_or_create("teardown-poison", "d1", None).unwrap(),
+        )));
+        let key = std::sync::Arc::new(Mutex::new(Some(CKPT_KEY)));
+        let (m, k) = (manager.clone(), key.clone());
+        let _ = std::thread::spawn(move || {
+            let _a = m.lock().unwrap();
+            let _b = k.lock().unwrap();
+            panic!("a holder died");
+        })
+        .join();
+        assert!(manager.is_poisoned() && key.is_poisoned(), "precondition");
+
+        end_native_session(&manager, &key, None, "test poisoned").unwrap();
+
+        assert!(manager.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+        assert!(key.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+    }
+
+    /// A checkpoint asked of an empty slot is refused with the typed code, never a silent success.
+    #[test]
+    fn a_checkpoint_of_an_empty_slot_is_refused_with_the_typed_code() {
+        let manager: Mutex<Option<MlsManager>> = Mutex::new(None);
+        let refused = checkpoint_live_manager(&manager, &CKPT_KEY, |_| Ok(()))
+            .err()
+            .unwrap();
+        assert!(
+            refused.starts_with(crate::state::MLS_MANAGER_ABSENT),
+            "{refused}"
         );
     }
 }

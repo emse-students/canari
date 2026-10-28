@@ -96,6 +96,7 @@ REST: those rows need a count, then a migration.
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
+| `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
 
@@ -312,6 +313,33 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
+
+### No date yet - the presence ids in a URL
+
+**Two halves, two conditions** ([chat-gateway](services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).
+Since 2026-10-28 the presence read is `POST /api/presence` with the ids in the body; until then it was
+`GET /api/presence?users=<id>,...`, which wrote every watched id into every proxy's access log.
+
+**Server half - site:** `get_presence` and `LegacyGetTally` in `apps/chat-gateway/src/presence.rs`,
+the `get(...)` on the `/api/presence` route in `main.rs`, and the `/api/presence?query-redacted` rule
+of the access-log map (`Dockerfile.frontend`, `access-log-redaction.test.mjs`). **What it humours:**
+every install built before the POST client, which keeps calling the GET until it updates - a store
+build is not reached by a deploy. **Removal condition:** a CLIENT FLOOR AND A MEASUREMENT -
+`minClientVersion` at or above the first stable carrying the POST client, on both estates with both
+stores serving it, AND the gateway's `[presence] legacy GET /api/presence served ...` line absent from
+production for a week (the tally writes nothing for a window nobody called in, so silence is the
+zero). Then delete `get_presence`, `PresenceQuery`, the tally and its `AppState` field, the map rule
+and its test cases; a GET is then answered 405 by axum.
+
+**Client half - site:** `fetchPresence`'s `legacyGet` arm and `legacyRouteAnnounced` in
+`frontend/src/lib/stores/presenceStore.ts`, `serverPresencePost()` in `appVersionCheck.svelte.ts`,
+the `presencePost` field in `appVersion.ts` and in core-service's `version.service.ts`. **What it
+humours:** an estate whose gateway predates the POST - production for the days between a stable's
+store release and its deploy, and any estate rolled back below it. The client reads the capability
+before asking, so it never learns the route by a 405. **Removal condition:** a SERVER VERSION, not a
+client floor - every estate's gateway serves the POST (dev and production both deployed past this
+change, no rollback below it planned). Then the client always POSTs and the capability field goes from
+both sides; a client that no longer reads it is unaffected by a server that still sends it.
 
 ### No date yet - `registerMember` after an accepted Add, for a server older than 2026-10-25
 
@@ -564,6 +592,21 @@ this entry deliberately has no date: a date would be a guess about a platform no
 **Cost of keeping it:** one header read and one cookie read per refresh. The hazard is not cost, it
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
+
+### No date yet - the two paid-form tier codes of #2667, on an embedded build that predates them
+
+**Site:** `providerRefusalMessage` in `frontend/src/lib/associations/paymentRefusal.ts`, read by the
+paid form page (`frontend/src/routes/forms/[id]/+page.svelte`); the codes come from `formTierRefusal`
+(`apps/social-service/src/associations/tier-pricing.ts`).
+**What an older build shows:** the APK and the IPA EMBED the frontend, so a build older than the
+release carrying #2667 does not know `FORM_TIER_NOT_SOLD` (a form granting a tier whose product was
+deleted) or `FORM_TIER_ALREADY_HELD` (a submitter already holding the form's tier): `providerRefusalMessage`
+answers null and the form page shows the server's English `message` instead of the fr/en sentence.
+The refusal itself holds on every build - no money is taken; only the wording differs. Before #2667
+those builds got the shop's codes (`TIER_NOT_RANKABLE`, `PRODUCT_ALREADY_PURCHASED`) and their sentences.
+**Removal condition:** none, nothing on the server humours old builds; the line is right everywhere
+once `minClientVersion` covers the release carrying #2667 (both stores serving it). Do not map the
+codes back to the old ones to cover the gap: those sentences were the wrong ones.
 
 ### Removed 2026-10-22 - the pre-MLS send path; the `content` column and its read arm wait for a migration
 

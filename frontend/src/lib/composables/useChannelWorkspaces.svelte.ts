@@ -1815,6 +1815,7 @@ export function useChannelWorkspaces() {
           id: channelId,
           lifecycle: 'active',
           identity: { contactName: channelId, displayName: normalizedChannelName },
+          lastMessageAt: Date.now(), // creation moment, see groupCreation
         })
       );
       await ctx.saveConversation(channelId);

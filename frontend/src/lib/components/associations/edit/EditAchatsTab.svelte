@@ -4,9 +4,12 @@
     listAssociationProductsForManage,
     listAssociationPurchases,
     grantProductPurchase,
+    closePaidNotGranted,
+    SocialApiError,
     type Association,
     type AssociationProduct,
     type AssociationPurchase,
+    type PurchaseClosingOutcome,
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -16,7 +19,11 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { closingRefusalMessage, grantRefusalMessage } from '$lib/associations/purchaseClosing';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
+  import { formatAmount } from '$lib/forms/fillAnswers';
 
   interface Props {
     asso: Association;
@@ -33,6 +40,8 @@
   let grantProductId = $state('');
   let grantAmountEuros = $state<number | ''>('');
   let grantingProduct = $state(false);
+  /** The purchase whose outcome is being recorded, so its two buttons cannot be clicked twice. */
+  let closingId = $state<string | null>(null);
 
   /**
    * Products a cash sale may be recorded against. A `balance_topup` is excluded on purpose: it
@@ -84,6 +93,68 @@
     return method;
   }
 
+  /** The amount of a purchase as the table shows it. */
+  function amountLabel(purchase: AssociationPurchase): string {
+    return formatAmount(purchase.amountCents);
+  }
+
+  /**
+   * Records how a payment paid for and not granted was settled, after an in-app confirmation. The
+   * server answers the updated row, which replaces this one: the mark stays, the outcome shows.
+   * `granted` grants the tier by hand on the server, replacing whatever tier the buyer holds now -
+   * unless the row is `delivered` (the tier is already held as this payment's delivery), when it only
+   * records that, and its confirmation says so.
+   *
+   * A 409 is an ANSWER about the row as the server knows it (closed meanwhile, its buyer erased, its
+   * tier gone): the list is re-read so it shows that state, then the refusal is worded. Anything
+   * else is a failure, logged as one.
+   */
+  async function handleClose(purchase: AssociationPurchase, outcome: PurchaseClosingOutcome) {
+    const buyer = purchaseBuyerName(purchase);
+    const confirmed = await showConfirm(
+      outcome === 'refunded'
+        ? m.asso_achats_close_refunded_confirm({ buyer, amount: amountLabel(purchase) })
+        : purchase.delivered
+          ? m.asso_achats_close_delivered_confirm({ buyer, item: purchase.productName })
+          : m.asso_achats_close_granted_confirm({ buyer, item: purchase.productName }),
+      {
+        confirmLabel:
+          outcome === 'refunded'
+            ? m.asso_achats_close_refunded_button()
+            : m.asso_achats_close_granted_button(),
+      }
+    );
+    if (!confirmed) return;
+    closingId = purchase.id;
+    purchasesError = '';
+    try {
+      const row = await closePaidNotGranted(
+        asso.id,
+        purchase.id,
+        outcome,
+        purchase.delivered === true
+      );
+      purchases = purchases.map((p) => (p.id === row.id ? row : p));
+      Log.i('ASSO', `purchase ${purchase.id.slice(0, 8)} closed as ${outcome}`);
+    } catch (e) {
+      if (refusalStatus(e) === 409) {
+        Log.i(
+          'ASSO',
+          `closing purchase ${purchase.id.slice(0, 8)} as ${outcome} refused (${refusalCode(e)}) - re-reading the list`
+        );
+        await loadPurchases();
+      } else {
+        console.error(
+          `[ASSO] closing purchase ${purchase.id.slice(0, 8)} as ${outcome} failed:`,
+          e
+        );
+      }
+      purchasesError = closingRefusalMessage(e);
+    } finally {
+      closingId = null;
+    }
+  }
+
   async function handleGrantProduct() {
     if (!grantUserId.trim() || !grantProductId) return;
     if (grantNeedsAmount && grantAmountEuros === '') {
@@ -104,10 +175,12 @@
       grantAmountEuros = '';
       await loadPurchases();
     } catch (e) {
-      // An amount outside the product's bounds is typed with them: say the range, not "load error".
-      const amountRefusal = providerRefusalMessage(e);
-      Log.i('ASSO', `cash grant refused: ${amountRefusal ? 'amount out of range' : String(e)}`);
-      purchasesError = amountRefusal ?? m.common_load_error();
+      // A typed refusal (an amount out of the product's bounds, cotisations disabled, a tier not
+      // a rise...) is worded from its code; the log names that code, never a guessed cause.
+      const refusal = providerRefusalMessage(e);
+      const code = e instanceof SocialApiError ? e.code : null;
+      Log.i('ASSO', `cash grant refused: ${refusal ? `code=${code}` : String(e)}`);
+      purchasesError = refusal ?? m.common_load_error();
     } finally {
       grantingProduct = false;
     }
@@ -248,7 +321,68 @@
                 {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>
               <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
-              <td class="text-text-main px-4 py-3">{purchase.productName}</td>
+              <td class="text-text-main px-4 py-3">
+                {purchase.productName}
+                {#if purchase.notGranted}
+                  <span
+                    class="bg-red-err/15 text-red-err ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                    title={m.asso_achats_not_granted_hint()}
+                  >
+                    {m.asso_achats_not_granted()}
+                  </span>
+                  {#if purchase.closedOutcome}
+                    <span
+                      class="bg-cn-bg text-text-muted ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                      title={purchase.closedAt
+                        ? m.asso_achats_closed_hint({
+                            date: new Date(purchase.closedAt).toLocaleString(
+                              getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                            ),
+                          })
+                        : undefined}
+                    >
+                      {purchase.closedOutcome === 'refunded'
+                        ? m.asso_achats_closed_refunded()
+                        : m.asso_achats_closed_granted()}
+                    </span>
+                  {:else}
+                    <!-- An erased buyer is no account: there is no tier to name, held or not. -->
+                    {#if purchase.grantRefusal !== 'buyer-erased'}
+                      <span class="text-text-muted mt-1 block text-xs">
+                        {purchase.buyerTier
+                          ? m.asso_achats_buyer_tier({ tier: purchase.buyerTier })
+                          : m.asso_achats_buyer_tier_none()}
+                      </span>
+                    {/if}
+                    {#if purchase.grantRefusal}
+                      <span class="text-text-muted mt-1 block text-xs">
+                        {grantRefusalMessage(purchase.grantRefusal)}
+                      </span>
+                    {/if}
+                    <span class="mt-1 flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        disabled={closingId === purchase.id}
+                        onclick={() => handleClose(purchase, 'refunded')}
+                        class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {m.asso_achats_close_refunded_button()}
+                      </button>
+                      <!-- The server refuses such a grant: only a refund can close it. -->
+                      {#if !purchase.grantRefusal}
+                        <button
+                          type="button"
+                          disabled={closingId === purchase.id}
+                          onclick={() => handleClose(purchase, 'granted')}
+                          class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                        >
+                          {m.asso_achats_close_granted_button()}
+                        </button>
+                      {/if}
+                    </span>
+                  {/if}
+                {/if}
+              </td>
               <td class="px-4 py-3">
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
@@ -264,7 +398,7 @@
               <td class="text-text-muted px-4 py-3">{paymentMethodLabel(purchase.paymentMethod)}</td
               >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
-                {(purchase.amountCents / 100).toFixed(2)} €
+                {amountLabel(purchase)}
               </td>
             </tr>
           {/each}

@@ -227,7 +227,7 @@ streaming from Garage, **neither of which is production's path**.
 - **Segment: 2 s, keyframe every 2 s.** 1 s saves about a second but doubles the requests (an
   ingest at the server's one-per-second floor, a `GET` per second per viewer) and stalled twice as
   often; 4 s is worse on every column.
-- **For WP-L5's player**: hold about one segment of buffer (the bench's 1 s-behind-the-end target
+- **For WP-L5's player** (_superseded 2026-10-27 by [the buffer policy](#the-buffer-policy-l-f1-2026-10-27): a measured target, 3 s at least_): hold about one segment of buffer (the bench's 1 s-behind-the-end target
   starved at 4 s segments and drifted to 3 s behind at 2 s), and **seek to the live edge after any
   gap** (seen after both background tests: 22 s behind, then caught up by a seek). Join on the init
   plus the newest segment - it worked on every join, on both engines, because every segment starts
@@ -328,7 +328,7 @@ because the manifest is per-viewer by design (the segment names are the capabili
   lets load shape itself without a deploy.
 - **Connections, the ceiling that remains.** A seated viewer holds up to four connections, three once
   its segments come from the edge (app, WebSocket and its upstream leg). The shared host's proxy has
-  about 1 500 across ALL its sites and raising it is the school IT department's decision. **So even
+  one connection budget for ALL its sites and raising it is the school IT department's decision. **So even
   with the edge, "no cap" is an audience of several hundred, not unbounded**, until the manifest too
   stops reaching the host. That figure goes to the user as it is.
 
@@ -374,7 +374,7 @@ production.
    against its ~19 Mb/s, with dev's traffic running.
 5. **Manifest QPS and its cost**: requests a second at N, social-service CPU, Postgres pool wait and
    Redis scripts a second, before and after the gate/tail split.
-6. **Host connections held** at N viewers (`ss` on the host: the 1 500 budget, read, never raised by us).
+6. **Host connections held** at N viewers (`ss` on the host: the host-wide budget, read, never raised by us).
 7. **Latency to the live edge** with the edge in the path: does the cache add to the 5-10 s?
 8. **The admission spike**: the real size of a follower fan-out at the moment of a push.
 9. **A 1033 during a live**: what a viewer sees, and for how long the cache covers it.
@@ -409,7 +409,7 @@ user-visible string.
 | --- | --- |
 | `types.ts` | The wire shapes, read from `apps/social-service/src/lives/` (dates are ISO strings), every refusal `code`, and `LiveRefusalKind` - what a screen does with a refusal. |
 | `api.ts` | One function per route over `apiFetch` (`startLive`, `fetchLive`, `fetchLiveManifest`, `putLiveSegment`, `endLive`, `leaveLiveSeat`, `removeLiveViewer`, `listOpenLives`, `fetchLiveLimits`), the token-free segment fetch (`fetchLiveSegment`, no custom header so no CORS preflight), and `LiveSegmentUploader`, the broadcaster's one sender: in index order, the same index retried on a transport failure, a `retry-segment` code or a `429`, stopped by any other verdict (a `410` once the server ended the live). It is the ONE index counter: the caller reads `nextIndex` BEFORE sealing (the seal binds the index), then calls `enqueue(index, sealed)`, which throws a `RangeError` unless `index === nextIndex` - a segment sealed for another index would be stored and never open for any viewer, silently. |
-| `constants.ts` | The v1 capture and playback numbers from the WP-L1 bench (measured 2026-10-19, written up in draft PR #2109): 720p, 2.0 Mb/s asked, 2 s segments and keyframes, about one segment of player buffer, a 1 s manifest poll (a choice: the bench polled at 500 ms), 3.1 Mb/s per viewer for planning. Every number the SERVER enforces comes from `GET /api/lives/limits`, never from here. |
+| `constants.ts` | The v1 capture and playback numbers from the WP-L1 bench (measured 2026-10-19, written up in draft PR #2109): 720p, 2.0 Mb/s asked, 2 s segments and keyframes, the player's smallest buffer target (one segment plus one poll) and its cadence window, a 1 s manifest poll (a choice: the bench polled at 500 ms), 3.1 Mb/s per viewer for planning. Every number the SERVER enforces comes from `GET /api/lives/limits`, never from here. |
 | `liveCrypto.ts` | The segment seal: `sealLiveSegment`, `openLiveSegment`, `LiveSegmentOpenError` - [the format, v1](#the-segment-seal-format-v1). |
 
 **Every refusal is a `LiveRefusalError`** (an `ApiRefusalError`, so `refusalCode` reads it), typed at
@@ -512,7 +512,8 @@ the two values together.
 
 | File | What it holds |
 | --- | --- |
-| `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer) injected, so it is tested with fake MSE objects and a manual clock |
+| `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer, the monotonic clock) injected, so it is tested with fake MSE objects and a manual clock |
+| `lib/live/liveBufferPolicy.ts` | [The buffer policy](#the-buffer-policy-l-f1-2026-10-27): `classifyLiveWait` (what a `waiting` means) and `LiveBufferPolicy` (the target from the measured delivery cadence). Pure, no timer |
 | `lib/live/liveViewerState.ts` | The states, and `liveFailureOutcome`: the ONE decision from a failure to a screen |
 | `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop), on the same box-header reader as the [broadcaster's](#the-broadcaster-as-built) `Fmp4Splitter`, and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
 | `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
@@ -535,10 +536,11 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    `MediaSource`; `disableRemotePlayback` set as it requires) - and `isTypeSupported` of
    `LIVE_RECORDER_MIME`, so an engine that cannot play never takes a seat.
 2. `GET /api/lives/:id`: the key and the seat.
-3. The join on the NEWEST segment alone. Every segment is SELF-CONTAINED - the recorder's init
-   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so its
-   own init is appended, then its fragment, then a seek to `end - LIVE_PLAYER_TARGET_BUFFER_MS`.
-   A first segment with no init is "Live indisponible" (`playback`).
+3. The join on the NEWEST `LIVE_PLAYER_JOIN_SEGMENTS` (two) segments. Every segment is SELF-CONTAINED - the recorder's init
+   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so
+   their init is appended, then their fragments, then a seek to `end - target`, the
+   [buffer policy's](#the-buffer-policy-l-f1-2026-10-27) target (3 s at the join). Only the newest one is required;
+   a first segment with no init is "Live indisponible" (`playback`).
 4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **A segment's init
    is appended only when its bytes DIFFER from the last one appended** (a camera re-acquired
    mid-live, e.g. a rotation); an identical one is skipped. MSE allows a new initialization segment
@@ -547,12 +549,61 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    is not called because the recorder's type is the fixed `LIVE_RECORDER_MIME`. `mode = 'segments'`
    keeps each fragment at its own timestamps, so a re-acquire (timestamps moved FORWARD by the time
    away) opens a second buffered range: the `waiting` at the end of the first seeks across at once,
-   and a drift past `LIVE_PLAYER_MAX_BEHIND_MS` does the same - one seek, never a loop.
+   and a drift past the target plus `LIVE_PLAYER_DRIFT_SLACK_MS` does the same - one seek, never a loop.
    **The jump to the live edge**: more than `LIVE_PLAYER_CATCHUP_SEGMENTS` behind the manifest's
    `nextIndex` asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
-   takes only its newest segment; a `waiting` since the last segment seeks at the next one. Each
+   takes only its newest segment; a STARVED `waiting` since the last segment (never the wait of a
+   seek) re-anchors at the next one, at the policy's target. Each
    poll that brings media calls `play()` if something paused the video. What was played more than
    `LIVE_PLAYER_KEEP_BEHIND_MS` ago is removed.
+
+### The buffer policy (L-F1, 2026-10-27)
+
+**The cause of L-F1, read from the rig's own consoles** (LIVE-WEB-2 and -3, 2026-10-26, Mi 9T app
+broadcasting to two Chrome viewers; the dev containers were redeployed since, so the server's side
+of that run is gone). Two defects, each enough to freeze a viewer:
+
+1. **The target was smaller than the producer's cadence.** The Mi 9T's recorder handed over its
+   init alone at +2.1 s, nothing at the next 2 s tick, three fragments at the one after, then its
+   fragments sealed 4-15 ms apart at EVERY other tick: `seal index 3` and `4` at 20.320/20.328, `5` and `6` at 24.326/24.341 - a pair every
+   4.0 s, on every chunk of both readings (against 14 % of chunks in WP-L1). The viewer sat a fixed
+   `LIVE_PLAYER_TARGET_BUFFER_MS` = 2 s behind, so between pairs it ran dry for ~2 s.
+2. **The player read its own seek as a stall.** Every `seek to the live edge (...) at E` was followed
+   IN THE SAME MILLISECOND by `stalled at E - 2.00` (`at 9.99` / `stalled at 7.99`, `at 12.01` /
+   `stalled at 10.01`): the engine fires `waiting` while it completes a seek. The stall latched, the
+   next delivery seeked again (`(stall)`), whose own `waiting` latched again - **a seek at every
+   delivery for the whole live**, 3 to 5 seeks in 8 s per viewer.
+
+**The policy** (`liveBufferPolicy.ts`, applied by `livePlayer.ts`):
+
+- **A `waiting` is classified once** (`classifyLiveWait`, typed `LiveWait`): `seeking` when
+  `video.seeking` holds (logged, nothing else); `time-gap` when media lies past a hole ahead (a
+  re-acquired camera, crossed at once); `starved` otherwise, which latches the re-anchor.
+- **The target is MEASURED, not a constant**: the longest wall-clock gap between two deliveries over
+  the last `LIVE_PLAYER_CADENCE_WINDOW` (30), never under `LIVE_PLAYER_MIN_TARGET_BUFFER_MS` = one
+  segment plus one poll (3 s, where the WP-L1 Mi 9T viewer played 21 min with 0 stalls). Pairs every
+  4 s measure ~4-5 s. The clock is the injected monotonic `now()`: it is READ to measure a gap, never
+  waited on, and no decision is deferred by it.
+- **A longer gap than any seen costs at most one stall**: the delivery that ends it records it first,
+  then the re-anchor uses the grown target. Drift seeks past target + `LIVE_PLAYER_DRIFT_SLACK_MS`.
+- **An outage is never a cadence** (`interrupt`, typed `LiveCadenceBreak`): a catch-up jump, a
+  retried step, a broadcaster the manifest says is quiet. So a 20 s loss of network never leaves a
+  viewer 20 s behind.
+- **The join takes the newest two segments**, so the first frame starts with the 3 s floor ahead.
+
+**The price**: a regular producer (iPhone) is watched ~1 s further behind than with the 2 s target;
+an Android producer delivering in pairs ~3 s further. A paired producer cannot be played smoothly
+with less buffer than its period.
+
+**Not changed, and unverified**: the PRODUCER. Why the Mi 9T's recorder (2 s timeslice, 2 s
+keyframes) emits on every other tick only is not known; a shorter timeslice might hand each fragment
+over as it completes, but that is a hypothesis no device has read, and installed broadcasters keep
+their cadence anyway - which is why the viewer must follow whatever cadence it receives.
+
+**Verified by tests** (`liveBufferPolicy.test.ts`; `livePlayer.test.ts`'s "the buffer policy"
+block, whose four cases fail against the old player). **Owed on hardware**: L-F1's reading again on
+the pre-release that carries it - the Mi 9T broadcasting, a phone AND a browser watching, 0
+`stalled` lines past the first delivery gap and no `seek ... (stall)` loop.
 
 **Failure -> screen** (`liveFailureOutcome`, one table, tested):
 
@@ -868,7 +919,7 @@ as a member, two browsers watched ([board](../../cross-client-testing.md)).
 
 | # | Finding | Severity | Owed |
 | --- | --- | --- | --- |
-| L-F1 | **The viewer freezes about every 4 s.** The Android recorder hands over TWO 2 s fragments at once every ~4 s (paired seals 40 ms apart, on every chunk of the reading, against 14 % of chunks in WP-L1). The viewer plays at `end - LIVE_PLAYER_TARGET_BUFFER_MS`, so it runs dry before the next pair: `[LIVE] viewer ... stalled at N` then `seek to the live edge (stall)`, 4 seeks in 14 s on one viewer, 7 to 11 stall or seek lines per viewer in the next run | **P2, blocks the flip** (a visible freeze) | A reading with a PHONE as the viewer, to see whether a phone shows the same freeze; then the fix belongs where the cause is (the target buffer against the recorder's real cadence) |
+| L-F1 | **The viewer freezes about every 4 s.** The Android recorder hands over TWO 2 s fragments at once every ~4 s (paired seals 40 ms apart, on every chunk of the reading, against 14 % of chunks in WP-L1). The viewer plays at `end - LIVE_PLAYER_TARGET_BUFFER_MS`, so it runs dry before the next pair: `[LIVE] viewer ... stalled at N` then `seek to the live edge (stall)`, 4 seeks in 14 s on one viewer, 7 to 11 stall or seek lines per viewer in the next run | **P2, blocks the flip** (a visible freeze); **CAUSE PROVEN AND FIXED 2026-10-27** - the 2 s target against the 4 s pair cadence, AND the player reading its own seek's `waiting` as a stall, which re-seeked at every delivery ([the buffer policy](#the-buffer-policy-l-f1-2026-10-27)) | The same reading on the pre-release that carries the fix, with a PHONE and a browser as viewers |
 | L-F2 | Segments of ~45 kB per 2 s (~180 kb/s) against WP-L1's 600-800 kB at 2 Mb/s | observation | A reading with a lit, moving scene before it is called anything: the bench phone's front lens saw a dark, static scene |
 | L-F3 | The viewer's manifest poll after the End meets `404` (the row is deleted at the end, [above](#the-viewer-as-built-2026-10-19)), and the BROWSER logs `Failed to load resource ... 404` at error level | designed | The browser's own line cannot be demoted by the app. The rig's LIVE-WEB narration must match it EXACTLY (that live's manifest, after End only, on a viewer) |
 | L-F4 | On a phone's first live, the OS camera and microphone prompts send the app to the background in preview (`[LIVE-BROADCAST] app hidden in preview`); the preview recovers once granted | observation | Nothing |

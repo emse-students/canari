@@ -5,7 +5,7 @@
  * service answering "no such post"), and so that distinction is made where it is known - at the
  * throw - rather than recovered later from a message.
  *
- * Kept in a module of its own because `internalApi.ts` reads `$env/dynamic/private` and so cannot
+ * Kept in a module of its own because `internalApi.ts` reads `$app/env/private` and so cannot
  * be imported where only the type is wanted.
  */
 export class UpstreamUnavailableError extends Error {

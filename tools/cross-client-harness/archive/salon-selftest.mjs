@@ -7,7 +7,7 @@
  *
  *   bun archive/salon-selftest.mjs
  */
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, kickRaceNarration, kickRaceRefusals, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceClosingOwn, kickRaceCycleOwn, kickRaceNarration, kickRaceRefusals, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -107,6 +107,15 @@ ok('RM-5: a 409 kick fails - one race cannot outlast three retries', failing(kic
 ok('RM-5: a 409 kick not named fails twice', failing(kickRaceCycleOwn(1, { ...kicked, kick: 409, member: true, allowed: true, seated: true })) === 2);
 ok('RM-5: not held fails', failing(kickRaceCycleOwn(1, { ...kicked, held: false })) === 1);
 ok('RM-5: the cycle is named in every assertion', kickRaceCycleOwn(3, kicked).every((a) => a.what.startsWith('cycle 3')));
+const closed = { grantFirstCycles: 2, subjectRows: [{ deviceId: 'd1', status: 'active' }], readable: true, leaves: 3, activeDevices: 3 };
+ok('RM-5 closing: seated, read, one leaf per active device passes', allOk(kickRaceClosingOwn(closed)));
+ok('RM-5 closing: no cycle had the grant first fails', failing(kickRaceClosingOwn({ ...closed, grantFirstCycles: 0 })) === 1);
+ok('RM-5 closing: a stale leaf beside the new one fails', failing(kickRaceClosingOwn({ ...closed, leaves: 4 })) === 1);
+ok('RM-5 closing: no leaf count read fails', failing(kickRaceClosingOwn({ ...closed, leaves: null })) === 1);
+ok('RM-5 closing: a duplicated device row fails', failing(kickRaceClosingOwn({ ...closed, subjectRows: [{ deviceId: 'd1', status: 'active' }, { deviceId: 'd1', status: 'active' }] })) === 1);
+ok('RM-5 closing: a pending seat fails', failing(kickRaceClosingOwn({ ...closed, subjectRows: [{ deviceId: 'd1', status: 'pending' }] })) === 1);
+ok('RM-5 closing: unread fails', failing(kickRaceClosingOwn({ ...closed, readable: false })) === 1);
+ok('RM-5 closing: a thrown gesture fails', failing(kickRaceClosingOwn({ ...closed, error: 'x' })) === 1);
 
 // ── RM-6 ────────────────────────────────────────────────────────────────────────────────────────
 const bound = { managerPermissions: ['channel.manage'], status: 403, named: true, dist: { isPrivate: false, groupId: null, linkedGroupId: null } };

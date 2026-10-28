@@ -34,6 +34,7 @@ import {
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import { assertCotisationStemFree } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import {
   AssociationMember,
@@ -361,6 +362,8 @@ export class AssociationsService {
       createdBy: userId,
     });
     return this.assoRepo.manager.transaction(async (manager) => {
+      // Its base cotisation tag must never coincide with another association's tag names.
+      await assertCotisationStemFree(manager, null, dto.slug);
       const saved = await manager.save(asso);
       if (dto.type === 'institution') {
         // The type decides the default (D33's one mechanism): an institution addresses nobody until
