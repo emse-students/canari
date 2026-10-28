@@ -11,10 +11,14 @@
  * What this cannot see: the real router, the real root layout and the WebView's history. It pins
  * the order the route relies on, and the phone reading is what proves the router still has it.
  */
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { clearFeedCache } from '$lib/posts/feedCache';
 import { drainHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
+import { adoptTransitionAnimations } from '../../test/adoptTransitionAnimations';
+
+// The composer is a Modal unmounted while its transition runs.
+afterAll(adoptTransitionAnimations());
 
 const page = vi.hoisted(() => ({
   params: {},
