@@ -304,13 +304,12 @@
       queueMicrotask(() => searchInput?.focus());
     }
 
-    const u = new URL(page.url);
+    const u = new URL(page.url.href);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
     void goto(resolve(internalPath(feedPath(u))), {
-      replaceState: true,
-      noScroll: true,
-      keepFocus: true,
+      replace: true,
+      reset: false,
     });
   });
 
@@ -591,13 +590,13 @@
 
   /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
   function showFeed(feed: PostFeed) {
-    const u = new URL(page.url);
+    const u = new URL(page.url.href);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
     // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
     u.searchParams.delete('kind');
-    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
+    void goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
   }
 
   async function refreshPosts() {

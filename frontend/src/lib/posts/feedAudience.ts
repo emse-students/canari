@@ -84,7 +84,7 @@ export async function redirectIfNotFeedAudience(): Promise<boolean> {
   else void revalidateFeedAudience();
 
   if (verdict !== false) return false;
-  await goto(resolve('/chat'), { replaceState: true }).catch(() => {});
+  await goto(resolve('/chat'), { replace: true }).catch(() => {});
   return true;
 }
 

@@ -9,7 +9,7 @@
   <p class="text-text-muted">{page.error?.message ?? m.error_unexpected_message()}</p>
   <button
     class="bg-cn-yellow text-cn-ink mt-2 rounded-xl px-4 py-2 text-sm font-semibold"
-    onclick={() => goto('/login', { replaceState: true })}
+    onclick={() => goto('/login', { replace: true })}
   >
     {m.error_back_home()}
   </button>
