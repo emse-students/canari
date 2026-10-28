@@ -320,7 +320,22 @@ before any request is issued.
 with `viewerTierRelation` (the table's relation, `none` for a non-tier or a guest) and
 `viewerDueCents`: what a checkout would charge THIS viewer now - null for a refused tier, the grid's
 cell for a gridded product, null for a free amount. Purchase caps and tag gates are not folded into
-it. The client displays it and never recomputes money; `paymentRefusal.ts` words each refusal code.
+it. The client displays it and never recomputes money - `/shop` shows `viewerDueCents` and offers no
+button for a `held`, `lower` or `unranked` tier (see "Where it lives in the UI" below);
+`paymentRefusal.ts` words each refusal code.
+
+**A `memberPriceTag` that prices nothing is refused at save.** Create and update answer
+`400 MEMBER_PRICE_TAG_NOT_A_TIER` when the tag names no OTHER cotisation tier of the product's own
+association (another association's tag, a non-tier tag, the product's own tier): such a link would
+charge every buyer the full price, silently. Two rows can still carry one, and both are charged in
+full with a `WARN` at every quote: a row written before the rule (an unrelated edit still saves), and
+a sibling whose linked tier product was DELETED - deleting a tier does not clear or refuse the links
+naming it, so the admin re-points or clears them by hand.
+
+**A paid form's grant never revokes a dearer tier.** `grantCotisantIfARise` ranks the target against
+the ONE tier `pickHeldTier` picks, not against `heldKeys`: a user holding two legacy tier tags who
+pays to renew the CHEAPER one gets `lower` (or `unranked`), so the payment is recorded paid and not
+granted rather than renewing the cheap tag and letting the sibling XOR revoke the dearer one.
 
 **Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
 30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real
@@ -399,17 +414,15 @@ End-user (paying) surfaces:
 
 - **`/shop`** - buy a membership product (Stripe Checkout; returns to `/shop?purchase_success=1`).
   Tiers of one association are sorted base-first (`compareTiers`, stable sort by `variantLevel`).
-  Members-only products are disabled with a hint, and member pricing is shown struck-through next to
-  the reduced price - but only when `qualifiesForMemberPrice` says the viewer is actually eligible
-  (WP-COT-7): the asso-wide `viewerIsCotisant` check when the product has no `memberPriceTag`, or
-  (for a tier-upgrade product) finding the sibling product whose `grantedTagName` equals
-  `memberPriceTag` and comparing `viewerActiveTier` to that sibling's `variantKey` - the same join the
-  admin tab's dropdown already encodes, mirrored client-side since `/products/all` returns every
-  sibling in one array. A product whose `variantKey` matches `viewerActiveTier` gets a "your current
-  tier" badge. Gating/labeling all reads the per-product `viewerIsCotisant`/`viewerActiveTier` flags
-  returned by `/products/all` (computed server-side; no client-side tag *derivation*, only this join).
-  `viewerActiveTier` is the specific tier `variantKey` the viewer currently holds for that
-  association, if any (`null` for a single-tier association or a non-cotisant).
+  Members-only products are disabled with a hint. The price is the server's: a preferential price is
+  shown struck-through next to the full one exactly when `viewerDueCents` is below `amountCents`
+  (`preferentialDueCents` in `lib/pricing/viewerPrice.ts`), and a tier whose `viewerTierRelation` is
+  `held`, `lower` or `unranked` gets no purchase button, only the sentence saying why
+  (`tierNotOffered`) - the checkout would refuse it with a 409. Nothing on the page decides who
+  qualifies for a member price; the tier the viewer holds (`viewerActiveTier`) only names the "for
+  holders of" suffix and the "your current tier" badge. `viewerActiveTier` is the specific tier
+  `variantKey` the viewer currently holds for that association, if any (`null` for a single-tier
+  association or a non-cotisant).
 - **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller
   holds the form's `pricingTagName`.
 

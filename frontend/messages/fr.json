@@ -3239,6 +3239,7 @@
   "shop_payment_amount_range": "Montant refusé : il doit être compris entre {min} et {max}.",
   "shop_payment_amount_min": "Montant refusé : il doit être d'au moins {min}.",
   "shop_already_purchased": "Vous avez déjà acheté ce produit.",
+  "shop_tier_held_hint": "Vous détenez déjà cette cotisation.",
   "shop_tier_not_a_rise": "Vous avez déjà une cotisation au moins équivalente à celle-ci.",
   "shop_tier_not_rankable": "Votre cotisation actuelle ne peut pas être échangée contre celle-ci en ligne. Contactez l'association.",
   "shop_payment_routing_changed": "Le compte de paiement de l'association vient de changer. Rien n'a été débité : réessayez.",

@@ -428,6 +428,42 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         tagName: 'cotisant:cercle-sans-alcool',
       });
     });
+
+    // Two legacy tags held at once: renewing the cheaper one would run the XOR and revoke the dearer.
+    it('refuses to renew the cheaper of two held tiers, and revokes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      repo.findOne.mockResolvedValue({ expiresAt: null });
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'lower' });
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('renews the dearer of two held tiers, and swaps the cheaper one out', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      repo.findOne.mockResolvedValue({ expiresAt: null });
+
+      const outcome = await service.grantCotisantIfARise(
+        'asso1',
+        'user1',
+        'system',
+        'avec-alcool',
+        {}
+      );
+
+      expect(outcome).toHaveProperty('granted');
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-sans-alcool',
+      });
+      expect(repo.delete).not.toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-avec-alcool',
+      });
+    });
   });
 
   // WP-COT-9: MANAGE_MEMBERS is per-association, so the tag id alone must not be enough to reach
