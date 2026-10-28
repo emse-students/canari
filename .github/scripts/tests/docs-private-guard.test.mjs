@@ -4,9 +4,11 @@
  * WORKSTATION PATH OR A NAMED PIECE OF SOMEBODY ELSE'S INFRASTRUCTURE (decided 2026-10-17, widened
  * 2026-10-28: what helps an attacker lives in the private notes, outside the repo).
  *
- * It reads every tracked `*.md`, every `.env.example`, every `*.sh`, and the COMMENTS of every
- * tracked `*.ts` / `*.mjs` (code strings are left alone: a test may legitimately feed a private
- * address to an SSRF guard). It fails on a private-range address (10/8, 172.16/12, 192.168/16), a
+ * It reads every tracked `*.md`, every `.env.example`, every `*.sh`, every `*.yml` / `*.yaml`
+ * (workflow inputs and their comments are public text too), and the COMMENTS of every tracked
+ * `*.ts` / `*.mjs`. ACCEPTED LIMIT: code strings in `*.ts` / `*.mjs`, and other languages (`*.py`,
+ * `*.rs`, ...), are not read - a test may legitimately feed a private address to an SSRF guard, so
+ * a workstation path or an address in a code string is caught by review, not here. It fails on a private-range address (10/8, 172.16/12, 192.168/16), a
  * school-range public address (193.49.x.x), an `ssh <alias>` naming one of the project's boxes or a
  * `*-target` alias, a path on one workstation's disk, or a numbered hypervisor guest.
  *
@@ -18,7 +20,9 @@
  * exactly what this guard keeps out of the repository, so they cannot be committed as its denylist.
  * They are read, one per line (`#` comments allowed), from the file named by
  * `DOCS_PRIVATE_DENYLIST_FILE`, which lives outside the repository. Without it that half of the scan
- * is SKIPPED and says so on stderr; nothing else is skipped.
+ * is SKIPPED and says so on stderr; nothing else is skipped. THE DENYLIST HALF IS LOCAL-ONLY AND NOT
+ * ENFORCED IN CI, by the owner's decision (2026-10-28): CI holds no copy of the list, so it runs the
+ * pattern half alone, and the names half runs on a workstation that has the file.
  *
  * `PENDING_CLEANUP` lists the files another documentation pass has not cleaned yet. It is a
  * work list and NOT a licence: a file leaves it in the pull request that cleans it, and a new file
@@ -58,6 +62,11 @@ const COUNTER_CASES = [
   ['ssh backup-target whoami', 'ssh <alias> whoami'],
   ['saved under F:/Programmation/x', 'saved under <home>/Programmation'],
   ['in C:\\Users\\me', 'in C:/Windows'],
+  // A workflow input's description, as YAML writes it.
+  [
+    "description: 'e.g. http://192.168.1.32:8081'",
+    "description: 'e.g. http://<workstation-lan-ip>:8081'",
+  ],
   ['a Proxmox CT 101 guest', 'a Proxmox VM guest'],
 ];
 
@@ -131,7 +140,7 @@ const tracked = (...globs) =>
     .split('\n')
     .filter(Boolean);
 const markdown = tracked('*.md');
-const plain = tracked('*.env.example', '*.sh');
+const plain = tracked('*.env.example', '*.sh', '*.yml', '*.yaml');
 const sources = tracked('*.ts', '*.mjs').filter((f) => f !== SELF);
 
 const denylist = loadDenylist();
@@ -158,5 +167,5 @@ for (const file of sources) scan(file, commentsOf(readFileSync(join(ROOT, file),
 
 if (failed > 0) process.exit(1);
 console.log(
-  `docs-private-guard: ${markdown.length} markdown, ${plain.length} env/shell, ${sources.length} ts/mjs (comments) tracked files, ${PENDING_CLEANUP.size} pending cleanup, denylist ${denylist === null ? 'skipped' : `${denylist.length} entries`}`
+  `docs-private-guard: ${markdown.length} markdown, ${plain.length} env/shell/yaml, ${sources.length} ts/mjs (comments) tracked files, ${PENDING_CLEANUP.size} pending cleanup, denylist ${denylist === null ? 'skipped' : `${denylist.length} entries`}`
 );
