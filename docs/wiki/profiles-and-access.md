@@ -770,6 +770,7 @@ box no longer defines anything.
 | Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader - **NOT BUILT: no promo or contributor filter exists in code yet**, so nothing narrows either branch |
 | Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38, migration 073) |
 | Join an association | its admins add the member; following opens nothing |
+| Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); until WP-F5 an accepted follow fills Suivis and opens nothing a shared space did not already open |
 | Moderation | global (D23) |
 
 ### Decided last (user, 2026-10-04)
