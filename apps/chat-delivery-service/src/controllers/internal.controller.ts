@@ -296,7 +296,7 @@ export class InternalController {
 
   /**
    * Which of `userIds` share at least one live conversation (DM or group) with `viewerId` - half of
-   * the presence audience the gateway enforces on `GET /api/presence` (WP-PRESENCE, decided by the
+   * the presence audience the gateway enforces on `POST /api/presence` (WP-PRESENCE, decided by the
    * user 2026-10-18). The other half, the communities, is social-service's
    * `POST /internal/presence/shared-communities`; each service answers about the tables it owns.
    *

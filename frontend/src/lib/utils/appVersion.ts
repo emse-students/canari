@@ -75,6 +75,8 @@ export type ServerVersionInfo = {
   livesMode: LivesMode;
   /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
   oidcPkce: boolean;
+  /** Whether this estate's gateway takes presence ids in a POST body - see {@link AppVersionCheckResult}. */
+  presencePost: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -96,6 +98,13 @@ export type AppVersionCheckResult = {
    * `false` until a server has said so, and for every server older than the field.
    */
   oidcPkce: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: its chat-gateway answers `POST /api/presence` with
+   * the ids in the body. `presenceStore.ts` sends the POST only when this is true, because an older
+   * gateway answers it 405 and a store build reaches phones before production deploys. `false` for
+   * every server older than the field.
+   */
+  presencePost: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -139,6 +148,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     calls?: unknown;
     lives?: unknown;
     oidcPkce?: unknown;
+    presencePost?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -150,6 +160,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     callsMode: normalizeCallsMode(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
     oidcPkce: obj.oidcPkce === true,
+    presencePost: obj.presencePost === true,
   };
 }
 
@@ -166,6 +177,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   calls: { mode: CallsMode };
   lives: { mode: LivesMode };
   oidcPkce: boolean;
+  presencePost: boolean;
 } {
   return {
     version: info.version,
@@ -174,6 +186,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     calls: { mode: info.callsMode },
     lives: { mode: info.livesMode },
     oidcPkce: info.oidcPkce,
+    presencePost: info.presencePost,
   };
 }
 /**
@@ -339,6 +352,7 @@ export function buildAppVersionCheckResult(
     callsMode: serverInfo?.callsMode ?? 'off',
     livesMode: serverInfo?.livesMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
+    presencePost: serverInfo?.presencePost ?? false,
   };
 }
 

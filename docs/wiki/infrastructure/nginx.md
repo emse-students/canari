@@ -22,7 +22,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | Public route | Upstream | Auth | Notes |
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token from `canari_ws_token` cookie |
-| `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis) |
+| `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis): `POST` with the ids in the body, `client_max_body_size 128k`; the legacy `GET ?users=` for installed clients ([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
 | `/api/admin/presence` | `chat-gateway:3000` | yes | Admin view of connected devices |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
@@ -339,10 +339,15 @@ beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-reda
 The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redacted`, 2026-10-16)
 and of the GIF relay (`/api/mls/gifs/media?query-redacted`, 2026-10-18, its own rule first): a
 search, or which GIF a reader loaded, beside their address is what those routes keep from KLIPY.
+And of the legacy presence read (`/api/presence?query-redacted`, 2026-10-28): its query named every
+user a member watches. Current clients send those ids in a POST body, which no access log records
+([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).
 
 **Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
 (`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the
-host's, to be checked by the user ([estate-migration](estate-migration.md)).
+host's, to be checked by the user ([estate-migration](estate-migration.md)). That is why the presence
+ids moved into a body rather than only out of this log: a client still on the legacy GET writes its
+long query line to those logs until it updates.
 
 ## The origin compresses the assets a cold start is made of (2026-10-09)
 

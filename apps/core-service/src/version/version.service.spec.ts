@@ -46,6 +46,12 @@ describe('VersionService', () => {
     expect(out.oidcPkce).toBe(true);
   });
 
+  it('says its gateway takes presence ids in a POST body, so a client sends them there only when it does', async () => {
+    const out = await service.getVersion();
+
+    expect(out.presencePost).toBe(true);
+  });
+
   it('reports no build when the environment was not given one', async () => {
     delete process.env.DEPLOY_BUILD;
 

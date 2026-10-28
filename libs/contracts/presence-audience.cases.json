@@ -2,7 +2,7 @@
   "$comment": [
     "THE PRESENCE-AUDIENCE QUESTION, WRITTEN ONCE AND ASSERTED IN THE THREE PLACES THAT ASK OR ANSWER IT.",
     "",
-    "`GET /api/presence` (chat-gateway, Rust) asks chat-delivery and social-service the same",
+    "`POST /api/presence` (chat-gateway, Rust) asks chat-delivery and social-service the same",
     "question - `{ viewerId, userIds }` - and both validate it with one byte-identical TypeScript",
     "module, `src/utils/presence-audience.ts`. The gateway refuses more than `maxUserIds` distinct",
     "ids before asking, and each service refuses the same bound again: three constants, one number.",
