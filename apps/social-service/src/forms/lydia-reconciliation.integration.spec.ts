@@ -17,7 +17,7 @@ import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import { Client } from 'pg';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
@@ -52,6 +52,13 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   let lydia = { state: 'paid', raw: '1', verification: 'verified' };
   /** Core or Lydia unreachable: the verified read throws, as axios does on a 503. */
   let lydiaDown = false;
+  /** Lydia REFUSES the read (core's typed 400): an answer that will not change. */
+  let lydiaRefuses = false;
+  /** Lydia REFUSES the cancel (core's typed 400). */
+  let cancelRefused = false;
+  /** An axios-shaped error carrying core's answer. */
+  const coreAnswered = (status: number, data: unknown) =>
+    Object.assign(new Error(`HTTP ${status}`), { response: { status, data } });
   let verifiedReads = 0;
   /** The tick's ONE hold cutoff, from the database clock, as the scheduler reads it. */
   const cutoffNow = () => forms.pendingHoldCutoff();
@@ -122,10 +129,16 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       checkoutRepo: ds.getRepository(ProductCheckout),
       purchaseRecordService,
       httpService: {
-        post: (url: string) =>
-          url.endsWith('payments/cancel-request')
-            ? of({ data: { ok: true, outcome: 'cancelled' } })
-            : of({ data: { ok: true, state: lydia.state, raw: lydia.raw } }),
+        post: (url: string) => {
+          if (!url.endsWith('payments/cancel-request')) {
+            return of({ data: { ok: true, state: lydia.state, raw: lydia.raw } });
+          }
+          return cancelRefused
+            ? throwError(() =>
+                coreAnswered(400, { code: 'PAYMENT_PROVIDER_REFUSED', providerCode: '3' })
+              )
+            : of({ data: { ok: true, outcome: 'cancelled' } });
+        },
       },
     }) as unknown as ProductsService;
     sweep = new LydiaReconciliationService(
@@ -140,7 +153,10 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       if (!url.endsWith('payments/request-state')) throw new Error(`unexpected call to ${url}`);
       if (body.expectedAmountCents !== undefined) {
         verifiedReads += 1;
-        if (lydiaDown) throw new Error('core answered 503');
+        if (lydiaDown) throw coreAnswered(503, { message: 'Service Unavailable' });
+        if (lydiaRefuses) {
+          throw coreAnswered(400, { code: 'PAYMENT_PROVIDER_REFUSED', providerCode: '3' });
+        }
         return { data: { ok: true, ...lydia } };
       }
       return { data: { ok: true, state: lydia.state, raw: lydia.raw } };
@@ -162,6 +178,8 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   beforeEach(() => {
     lydia = { state: 'paid', raw: '1', verification: 'verified' };
     lydiaDown = false;
+    lydiaRefuses = false;
+    cancelRefused = false;
     verifiedReads = 0;
     sweep.takeCounts();
   });
@@ -391,6 +409,32 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       expect(
         await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [row.userId])
       ).toHaveLength(1);
+    });
+
+    // A status code is an ANSWER: retried, a refused read was re-read every tick, for ever, and
+    // sorted first it held every newer attempt back once 50 had piled up.
+    it('closes an attempt whose read Lydia REFUSED, once, and never reads it again', async () => {
+      lydiaRefuses = true;
+      const row = await attempt();
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('expired');
+      await sweep.sweepProductCheckouts();
+      expect(verifiedReads).toBe(1);
+    });
+
+    it('closes an attempt whose CANCEL Lydia refused, with ONE error, and never cancels it again', async () => {
+      lydia = { state: 'open', raw: '0', verification: 'verified' };
+      cancelRefused = true;
+      const error = Logger.prototype.error as jest.Mock;
+      error.mockClear();
+      const row = await attempt();
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('expired');
+      expect(
+        error.mock.calls.filter(([line]) => String(line).includes('still unproven'))
+      ).toHaveLength(1);
+      await sweep.sweepProductCheckouts();
+      expect(verifiedReads).toBe(1);
     });
 
     it('cancels at Lydia, then closes, an attempt Lydia verifiably says is still open past its end', async () => {

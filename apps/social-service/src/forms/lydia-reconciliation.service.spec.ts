@@ -201,7 +201,10 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
   it.each([
     ['a mismatch', { verification: 'mismatch', state: 'paid', raw: '1' }, 'skipped-unverified'],
     ['unsigned', { verification: 'unsigned', state: 'paid', raw: '1' }, 'skipped-unverified'],
+    // A key that does not open is answered `no-key` by social-service's key route.
     ['no usable key', { verification: 'no-key' }, 'skipped-unverified'],
+    // Lydia's or core's typed refusal of the read: a status code, an answer that will not change.
+    ['refused', { verification: 'refused', providerCode: '3' }, 'skipped-unverified'],
     [
       'not-found for a uuid Lydia itself issued',
       { verification: 'verified', state: 'not-found', raw: 'error 2' },
@@ -228,6 +231,32 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     await expect(service.reconcileCheckout(row)).resolves.toBe('unchanged');
     expect(productsService.cancelStillOpenCheckout).toHaveBeenCalledWith(row, expect.any(String));
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
+  });
+
+  it('reads once more when the cancel says already processed, and settles from that read', async () => {
+    const { service, productsService } = makeService();
+    read
+      .mockResolvedValueOnce({ verification: 'verified', state: 'open', raw: '0' })
+      .mockResolvedValueOnce({ verification: 'verified', state: 'paid', raw: '1' });
+    productsService.cancelStillOpenCheckout.mockResolvedValueOnce('open');
+    const row = checkout();
+    await expect(service.reconcileCheckout(row)).resolves.toBe('settled');
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(productsService.applyRequestState).toHaveBeenCalledWith(row, 'paid', '1');
+    expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
+  });
+
+  it('closes, rather than cancels again every tick, an attempt Lydia says is open after its cancel said processed', async () => {
+    const { service, productsService } = makeService();
+    read.mockResolvedValue({ verification: 'verified', state: 'open', raw: '0' });
+    productsService.cancelStillOpenCheckout.mockResolvedValueOnce('open');
+    const row = checkout();
+    await expect(service.reconcileCheckout(row)).resolves.toBe('unchanged');
+    expect(productsService.cancelStillOpenCheckout).toHaveBeenCalledTimes(1);
+    expect(productsService.expireUnprovenCheckout).toHaveBeenCalledWith(
+      row,
+      expect.stringContaining('its cancel says already processed')
+    );
   });
 
   it('leaves the attempt open when the cancel at Lydia fails: the request may still be payable', async () => {
@@ -263,6 +292,11 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
     const failure = service.reconcileCheckout(checkout());
     await expect(failure).rejects.toBeInstanceOf(CheckoutSettlementFailed);
     await expect(failure).rejects.toMatchObject({ lydiaSaidPaid: true, message: 'deadlock' });
+    // The write's own error and stack survive the wrapping.
+    await failure.catch((err: CheckoutSettlementFailed) => {
+      expect(err.cause).toBeInstanceOf(Error);
+      expect(err.stack).toContain('Caused by: Error: deadlock');
+    });
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
   });
 
@@ -413,11 +447,28 @@ describe('LydiaReconciliationService sweeps', () => {
     expect(logs.error).toHaveBeenCalledTimes(1);
     expect(logs.error).toHaveBeenCalledWith(
       expect.stringContaining(
-        '2 settlement write(s) FAILED this tick after a verified read (first: deadlock) - Lydia answered PAID for 2, NOT recorded yet: checkout-c, checkout-d'
-      )
+        '2 settlement write(s) FAILED this tick after a verified read (first: deadlock) - Lydia answered PAID for 2, NOT recorded yet: checkout-c, checkout-d - left open'
+      ),
+      expect.stringContaining('Caused by')
     );
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
     expect(service.takeCounts().products).toMatchObject({ examined: 4, unavailable: 2, errors: 2 });
+  });
+
+  it('names the failed writes Lydia did NOT say paid too', async () => {
+    const rows = ['e', 'f'].map((id) => checkout({ id: `checkout-${id}` }));
+    const { service, productsService } = makeService({ checkouts: rows });
+    read
+      .mockResolvedValueOnce({ verification: 'verified', state: 'paid', raw: '1' })
+      .mockResolvedValueOnce({ verification: 'verified', state: 'declined', raw: '5' });
+    productsService.applyRequestState.mockRejectedValue(new Error('deadlock'));
+    await service.sweepProductCheckouts();
+    expect(logs.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'NOT recorded yet: checkout-e - other failed writes: checkout-f - left open'
+      ),
+      expect.any(String)
+    );
   });
 
   it('counts the boutique sweep apart from the forms', async () => {

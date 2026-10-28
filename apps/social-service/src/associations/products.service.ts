@@ -1224,20 +1224,31 @@ export class ProductsService {
    * An attempt whose request Lydia VERIFIABLY reports still `open` past the expire_time Canari sent
    * it (the reconciliation sweep): cancelled AT LYDIA first, through the cancel the buyer's next
    * attempt makes, so no payment can land on a request Canari has closed; then closed `cancelled`.
-   * `already-settled` means Lydia processed it between the read and the cancel: the attempt stays
-   * `open`, and the next verified read settles it. An attempt with no numeric request id (its
-   * request/do answer was lost) cannot be named to the cancel: it is closed `expired` at ERROR
-   * (`expireUnprovenCheckout`) - a payment landing on it later is still recorded by its confirm
-   * callback. A failed cancel THROWS and closes nothing. Answers the status the row now has.
+   * - `already-settled`: Lydia processed it between the read and the cancel. The attempt stays
+   *   `open` and this answers `open`, so the caller reads it once more (the sweep does, at once).
+   * - A cancel core ANSWERED with a refusal (a 4xx: a Business blocked or gone, a request id it no
+   *   longer holds): an answer that will not change, so the attempt is closed `expired` at ERROR
+   *   (`expireUnprovenCheckout`) - a payment landing on it later is still recorded by its callback.
+   * - No numeric request id (its request/do answer was lost): the cancel cannot name it, closed
+   *   `expired` at ERROR the same way.
+   * - A cancel that got NO answer (no response, a timeout, a 5xx) THROWS and closes nothing: the
+   *   request may still be payable. Answers the status the row now has.
    */
   async cancelStillOpenCheckout(row: ProductCheckout, why: string): Promise<ProductCheckoutStatus> {
     if (!row.requestId) {
       return this.expireUnprovenCheckout(row, `${why}; no request id to cancel it at Lydia with`);
     }
-    if ((await this.cancelRequestAtLydia(row)) === 'already-settled') {
+    let outcome: 'cancelled' | 'already-settled';
+    try {
+      outcome = await this.cancelRequestAtLydia(row);
+    } catch (err: unknown) {
+      if (!coreRefusedRequest(err)) throw err;
+      return this.expireUnprovenCheckout(row, `${why}; its cancel at Lydia was refused`);
+    }
+    if (outcome === 'already-settled') {
       this.logger.warn(
         `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} was processed at Lydia ` +
-          `before its cancel (${why}) - left open for the next read`
+          `before its cancel (${why}) - left open for one more read`
       );
       return row.status;
     }

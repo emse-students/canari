@@ -46,6 +46,39 @@ describe('readVerifiedRequestState', () => {
     });
   });
 
+  const failWith = (status: number, data: unknown = {}) =>
+    jest
+      .spyOn(axios, 'post')
+      .mockRejectedValue(
+        Object.assign(new Error(`HTTP ${status}`), { response: { status, data } })
+      );
+
+  it("reads core's typed provider refusal as an ANSWER, with Lydia's code", async () => {
+    failWith(400, { code: 'PAYMENT_PROVIDER_REFUSED', providerCode: '3', message: 'blocked' });
+    await expect(readVerifiedRequestState({ sessionId: 'u' }, 'v', 1)).resolves.toEqual({
+      verification: 'refused',
+      providerCode: '3',
+    });
+  });
+
+  it("reads core's own 400 for this request as a refusal too", async () => {
+    failWith(400, { message: 'Invalid payload' });
+    await expect(readVerifiedRequestState({ sessionId: 'u' }, 'v', 1)).resolves.toEqual({
+      verification: 'refused',
+      providerCode: 'core-400',
+    });
+  });
+
+  it.each([503, 500, 401, 403])(
+    'throws on HTTP %p: a fault or a refusal of THIS service, not a word about the request',
+    async (status) => {
+      failWith(status, { code: 'PAYMENT_PROVIDER_REFUSED' });
+      await expect(readVerifiedRequestState({ sessionId: 'u' }, 'v', 1)).rejects.toThrow(
+        `HTTP ${status}`
+      );
+    }
+  );
+
   it('throws when core cannot be reached: not a verdict', async () => {
     jest.spyOn(axios, 'post').mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(readVerifiedRequestState({ sessionId: 'u' }, 'v', 1)).rejects.toThrow(

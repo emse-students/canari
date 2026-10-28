@@ -83,10 +83,14 @@ const COUNT_KEY: Record<ReconcileOutcome, keyof ReconcileCounts> = {
 export class CheckoutSettlementFailed extends Error {
   constructor(
     readonly lydiaSaidPaid: boolean,
-    cause: unknown
+    readonly checkoutId: string,
+    /** The write's own error, kept whole: its stack is appended below. */
+    readonly cause: unknown
   ) {
     super(cause instanceof Error ? cause.message : String(cause));
     this.name = 'CheckoutSettlementFailed';
+    if (cause instanceof Error && cause.stack)
+      this.stack = `${this.stack}\nCaused by: ${cause.stack}`;
   }
 }
 
@@ -126,17 +130,24 @@ interface CheckoutVerdict {
  * still says it waits (`pending`, `open`).
  * - A form answer is read once: whatever the read did, the expiry that runs right after the sweep,
  *   on the SAME cutoff, moves what is left `pending` to `expired`.
- * - A boutique attempt leaves `open` as soon as its read gave an ANSWER: settled or released from a
- *   verified state; cancelled AT LYDIA then closed when Lydia verifiably says it is still open past
- *   its end (`cancelStillOpenCheckout`); closed `expired` when the answer cannot be acted on (a
- *   mismatch, unsigned, no usable key, an unknown state - `expireUnprovenCheckout`, the close the
- *   buyer's next attempt makes). Closing loses nothing: Lydia's confirm callback asks even of a
- *   closed attempt and records a paid answer over it.
- * - What is NOT an answer leaves the attempt `open`, read again next tick, oldest first so nothing
- *   is starved: core or Lydia unreachable, a verdict this service does not know (an older core), a
- *   cancel that could not be sent, and a settlement WRITE that failed after a verified read - above
- *   all a verified PAID, whose only automatic path this is. Each tick says so in ONE aggregated line
- *   (`sweepProductCheckouts`), never one per row.
+ * - A boutique attempt leaves `open` as soon as its read gave an ANSWER - and a status code IS one:
+ *   settled or released from a verified state; cancelled AT LYDIA then closed when Lydia verifiably
+ *   says it is still open past its end (`cancelStillOpenCheckout`; a REFUSED cancel closes it too,
+ *   and a cancel answering "already processed" is read once more at once - still open then, it is
+ *   closed); closed `expired` at ERROR when the answer cannot be acted on: a mismatch, unsigned, no
+ *   usable key (a key that does not open answers `no-key`), an unknown state, and a read Lydia or
+ *   core REFUSED (`refused`: a Business blocked or gone, a uuid not held under that vendor token) -
+ *   `expireUnprovenCheckout`, the close the buyer's next attempt makes. Closing loses nothing:
+ *   Lydia's confirm callback asks even of a closed attempt and records a paid answer over it.
+ * - Only what got NO answer leaves the attempt `open`, read again next tick: no response, a
+ *   timeout, a 5xx (core's key store unconfigured included), core refusing this SERVICE (401/403),
+ *   a verdict this service does not know (an older core mid-deploy), a cancel that got no answer,
+ *   and a settlement WRITE that failed after a verified read - above all a verified PAID, whose only
+ *   automatic path this is and which is never closed. Each tick says so in ONE aggregated line per
+ *   cause (`sweepProductCheckouts`), never one per row. Oldest first, which bounds nothing for these
+ *   transient classes: an outage longer than a tick re-reads them each tick, and 50 of them at once
+ *   would hold the newer rows back until it ends. A bound on retries would need durable state (a
+ *   column, so a migration, the user's decision) - deliberately not built.
  *
  * NOTHING UNVERIFIED IS ACTED ON. The read asks core to verify Lydia's signature with the Business
  * key over the row's OWN amount (`readVerifiedRequestState`). A mismatch is logged at ERROR and
@@ -205,9 +216,9 @@ export class LydiaReconciliationService {
    * Reads at Lydia every boutique attempt still `open` whose request has ended and whose Business
    * holds a key to verify with, OLDEST first, at most `RECONCILE_BATCH`. An attempt its read
    * answered leaves `open` (`reconcileCheckout`); one read without an answer, or whose settlement
-   * write failed, stays for the next tick - oldest first, so the rows behind it are reached as soon
-   * as it is. What stayed is said in ONE line per tick per cause: a WARN for the reads that got no
-   * answer, an ERROR for the writes that failed, naming the attempts Lydia said PAID. An attempt of
+   * write failed, stays for the next tick (see the class docblock for what that does and does not
+   * bound). What stayed is said in ONE line per tick per cause: a WARN for the reads that got no
+   * answer, an ERROR for the writes that failed, naming every one and which Lydia said PAID. An attempt of
    * a Business with no key is not read at all (`openWithoutKey` counts them for the summary), and
    * stays for its buyer's next attempt or its confirm callback.
    */
@@ -225,17 +236,14 @@ export class LydiaReconciliationService {
     }
     let unanswered = 0;
     const failed: CheckoutSettlementFailed[] = [];
-    const paidUnrecorded: string[] = [];
     for (const row of due.slice(0, RECONCILE_BATCH)) {
       const outcome = await this.count(
         'products',
         () => this.reconcileCheckout(row),
         `checkout ${row.id}`,
         (err) => {
-          const failure = err instanceof CheckoutSettlementFailed ? err : null;
-          if (!failure) return false;
-          failed.push(failure);
-          if (failure.lydiaSaidPaid) paidUnrecorded.push(row.id);
+          if (!(err instanceof CheckoutSettlementFailed)) return false;
+          failed.push(err);
           return true;
         }
       );
@@ -248,13 +256,17 @@ export class LydiaReconciliationService {
       );
     }
     if (failed.length > 0) {
+      const paid = failed.filter((f) => f.lydiaSaidPaid).map((f) => f.checkoutId);
+      const others = failed.filter((f) => !f.lydiaSaidPaid).map((f) => f.checkoutId);
       this.logger.error(
         `[RECONCILE] boutique: ${failed.length} settlement write(s) FAILED this tick after a verified ` +
           `read (first: ${failed[0].message})` +
-          (paidUnrecorded.length > 0
-            ? ` - Lydia answered PAID for ${paidUnrecorded.length}, NOT recorded yet: ${paidUnrecorded.join(', ')}`
+          (paid.length > 0
+            ? ` - Lydia answered PAID for ${paid.length}, NOT recorded yet: ${paid.join(', ')}`
             : '') +
-          ` - left open, settled again next tick`
+          (others.length > 0 ? ` - other failed writes: ${others.join(', ')}` : '') +
+          ` - left open, settled again next tick`,
+        failed[0].stack
       );
     }
   }
@@ -346,21 +358,41 @@ export class LydiaReconciliationService {
   async reconcileCheckout(row: ProductCheckout): Promise<ReconcileOutcome> {
     const lookup = productCheckoutLookup(row);
     const what = `checkout ${row.id} (${'sessionId' in lookup ? `request ${lookup.sessionId}` : 'no request id, read by order_ref'})`;
-    const verdict = await this.readCheckout(row, lookup, what);
-    const why = `its reconciliation read: ${verdict.why ?? verdict.outcome}`;
-    if (verdict.then === 'expire') {
-      await this.settleOrThrow(false, () => this.productsService.expireUnprovenCheckout(row, why));
-    } else if (verdict.then === 'cancel') {
+    let verdict = await this.readCheckout(row, lookup, what);
+    if (verdict.then === 'cancel') {
+      let status: string;
       try {
-        await this.productsService.cancelStillOpenCheckout(row, why);
+        status = await this.productsService.cancelStillOpenCheckout(row, this.why(verdict));
       } catch (err: unknown) {
-        // The cancel never reached Lydia, or its answer was not one: the request may still be
-        // payable, so the attempt is NOT closed - the next tick reads it again.
-        this.logger.debug(`[RECONCILE] ${what}: cancel at Lydia failed (${errorText(err)})`);
+        // The cancel got NO answer (or its close did not write): the request may still be
+        // payable, so the attempt is NOT closed - the next tick reads it again, and a request the
+        // cancel did reach then reads cancelled. (A REFUSED cancel was closed by the call.)
+        this.logger.debug(`[RECONCILE] ${what}: cancel at Lydia got no answer (${errorText(err)})`);
         return 'unavailable';
       }
+      if (status !== 'open') return verdict.outcome;
+      // "Already processed" at Lydia: read once more NOW. Still open after that is no state Lydia
+      // can be in - an answer all the same, closed rather than cancelled again every tick.
+      verdict = await this.readCheckout(row, lookup, what);
+      if (verdict.then === 'cancel') {
+        verdict = {
+          outcome: 'unchanged',
+          then: 'expire',
+          why: 'Lydia says open, yet its cancel says already processed',
+        };
+      }
+    }
+    if (verdict.then === 'expire') {
+      await this.settleOrThrow(false, row.id, () =>
+        this.productsService.expireUnprovenCheckout(row, this.why(verdict))
+      );
     }
     return verdict.outcome;
+  }
+
+  /** The reason a verdict's close is logged with. */
+  private why(verdict: CheckoutVerdict): string {
+    return `its reconciliation read: ${verdict.why ?? verdict.outcome}`;
   }
 
   /** The one read of an attempt and what it settled; `reconcileCheckout` does the `then`. */
@@ -385,9 +417,18 @@ export class LydiaReconciliationService {
       this.logger.debug(`[RECONCILE] ${what}: core gave no verdict this service knows`);
       return { outcome: 'unavailable', then: 'keep' };
     }
+    if (read.verification === 'refused') {
+      // An answer that will not change: logged by `verified`, then closed like a mismatch.
+      this.verified(what, read, row.amountCents);
+      return {
+        outcome: 'skipped-unverified',
+        then: 'expire',
+        why: `refused (${read.providerCode})`,
+      };
+    }
     // The one unsigned answer acted on: no request carries the order_ref (see the class docblock).
     if (read.verification === 'unsigned' && read.state === 'not-found' && 'orderRef' in lookup) {
-      await this.settleOrThrow(false, () =>
+      await this.settleOrThrow(false, row.id, () =>
         this.productsService.applyRequestState(row, 'not-found', read.raw)
       );
       return { outcome: 'released', then: 'keep' };
@@ -398,9 +439,11 @@ export class LydiaReconciliationService {
     }
     const { state } = verified;
     if (state === 'paid' || state === 'declined' || state === 'cancelled-or-expired') {
-      const status = await this.settleOrThrow(state === 'paid', () =>
+      const status = await this.settleOrThrow(state === 'paid', row.id, () =>
         this.productsService.applyRequestState(row, state, verified.raw)
       );
+      // A `paid` another settler wrote first also reads as `settled` here (the row cannot tell who
+      // wrote it): the hourly count may count one payment twice, the purchase record never.
       const intended =
         state === 'paid' ? status === 'paid' : status !== 'paid' && status !== 'open';
       if (intended) {
@@ -426,11 +469,15 @@ export class LydiaReconciliationService {
   }
 
   /** Runs a settlement write; a failure becomes `CheckoutSettlementFailed`, the row left open. */
-  private async settleOrThrow<T>(lydiaSaidPaid: boolean, write: () => Promise<T>): Promise<T> {
+  private async settleOrThrow<T>(
+    lydiaSaidPaid: boolean,
+    checkoutId: string,
+    write: () => Promise<T>
+  ): Promise<T> {
     try {
       return await write();
     } catch (err: unknown) {
-      throw new CheckoutSettlementFailed(lydiaSaidPaid, err);
+      throw new CheckoutSettlementFailed(lydiaSaidPaid, checkoutId, err);
     }
   }
 
@@ -461,7 +508,12 @@ export class LydiaReconciliationService {
     expectedAmountCents: number
   ): { state: RequestState | 'not-found'; raw: string } | null {
     if (read.verification === 'verified') return { state: read.state, raw: read.raw };
-    if (read.verification === 'no-key') {
+    if (read.verification === 'refused') {
+      this.logger.error(
+        `[RECONCILE] ${what}: the read was REFUSED (${read.providerCode}) - a Business blocked or ` +
+          `gone, or a request not held under that vendor token; nothing settled`
+      );
+    } else if (read.verification === 'no-key') {
       this.logger.warn(
         `[RECONCILE] ${what}: core holds no usable Business key to verify Lydia's answer with - nothing settled`
       );
