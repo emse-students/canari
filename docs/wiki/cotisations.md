@@ -344,7 +344,10 @@ before any request is issued.
 with `viewerTierRelation` (the table's relation, `none` for a non-tier or a guest) and
 `viewerDueCents`: what a checkout would charge THIS viewer now - null for a refused tier, the grid's
 cell for a gridded product, null for a free amount. Purchase caps and tag gates are not folded into
-it. The client displays it and never recomputes money; `paymentRefusal.ts` words each refusal code.
+it. `/shop` displays it and never recomputes money; `paymentRefusal.ts` words each refusal code.
+**Only `/shop` does so today**: the association page lists the same products from its own fields
+and still shows the full price and a buy button for a refused tier - it follows later
+([backlog](backlog.md#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands)).
 
 **Prod facts, 2026-10-26.** The Cercle has two tiers, `sans-alcool` 15.00 EUR and `avec-alcool`
 30.00 EUR, no grid, `variantLevel` null, and the preferential pair on the alcohol tier only. No real
