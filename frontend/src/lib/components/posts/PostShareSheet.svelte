@@ -82,10 +82,15 @@
     onClose();
   }
 
-  /** Each row closes the sheet, then acts. */
-  function act(action: () => void) {
+  /**
+   * Each row closes the sheet, then acts - on the id read BEFORE the close. A host that unmounts
+   * the sheet by clearing what it passed as `postId` (the reel viewer's `shareFor = null`) would
+   * otherwise hand the action a null id, and every row would do nothing.
+   */
+  function act(action: (id: string) => void) {
+    const id = postId;
     close();
-    action();
+    action(id);
   }
 
   /** The round action of the bottom row: one shape for every entry. */
@@ -120,8 +125,8 @@
               <button
                 type="button"
                 onclick={() =>
-                  act(() => {
-                    if (sendPostLinkInApp(postId, cand.conversation.id)) onSentInApp?.();
+                  act((id) => {
+                    if (sendPostLinkInApp(id, cand.conversation.id)) onSentInApp?.();
                   })}
                 aria-label={m.post_share_send_to({ name: cand.label })}
                 class="flex w-full flex-col items-center gap-1.5 rounded-xl px-1 py-1 text-center transition-colors hover:bg-black/5 dark:hover:bg-white/5"
@@ -168,12 +173,12 @@
       role="group"
       aria-label={m.post_share_label()}
     >
-      <button type="button" class={ACTION} onclick={() => act(() => copyPostLink(postId))}>
+      <button type="button" class={ACTION} onclick={() => act(copyPostLink)}>
         <span class={ACTION_DISC}><Link size={20} strokeWidth={2.25} /></span>
         {m.post_copy_link_label()}
       </button>
       {#if nativeShare}
-        <button type="button" class={ACTION} onclick={() => act(() => sharePostLinkOut(postId))}>
+        <button type="button" class={ACTION} onclick={() => act(sharePostLinkOut)}>
           <span class={ACTION_DISC}><Share2 size={20} strokeWidth={2.25} /></span>
           {m.post_share_system_label()}
         </button>
