@@ -146,7 +146,7 @@ export class FormReminderScheduler {
   /**
    * Every 5 minutes - reads at Lydia the online answers whose request has ended (the Lydia
    * reconciliation, `LydiaReconciliationService.sweepFormPayments`), THEN marks those left
-   * `pending` past the hold as `expired`.
+   * `pending` past the hold as `expired` - both by ONE hold cutoff read at the start of the tick.
    *
    * THE ORDER IS THE POINT: the hold ends when the request does, so a row becomes due for the read
    * in the very tick that would expire it - and once `expired` it is never read again. Read first, a
@@ -165,16 +165,29 @@ export class FormReminderScheduler {
     }
     this.expiringPendingPayments = true;
     try {
-      // Its own `try`: a sweep that could not even select its rows must not stop the expiry.
+      // ONE cutoff for the read and the expiry: with a clock each, a row whose hold ended between
+      // the two would be expired without the read.
+      let cutoff: Date | null = null;
       try {
-        await this.reconciliation.sweepFormPayments();
+        cutoff = await this.formsService.pendingHoldCutoff();
       } catch (e) {
-        this.logger.error('[RECONCILE] form sweep failed before reading any row', e);
+        this.logger.warn(
+          '[PENDING] Error reading the hold cutoff - no read, no expiry this tick',
+          e
+        );
       }
-      try {
-        await this.formsService.expireStalePendingPayments();
-      } catch (e) {
-        this.logger.warn('[PENDING] Error expiring stale online payments', e);
+      if (cutoff) {
+        // Its own `try`: a sweep that could not even select its rows must not stop the expiry.
+        try {
+          await this.reconciliation.sweepFormPayments(cutoff);
+        } catch (e) {
+          this.logger.error('[RECONCILE] form sweep failed before reading any row', e);
+        }
+        try {
+          await this.formsService.expireStalePendingPayments(cutoff);
+        } catch (e) {
+          this.logger.warn('[PENDING] Error expiring stale online payments', e);
+        }
       }
       // Its own `try`: a failed expiry must not keep a visitor key the rows no longer need, and a
       // failed forget must not hide an expiry that worked. AFTER the expiry, so the rows it just

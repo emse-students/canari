@@ -1180,25 +1180,12 @@ export class ProductsService {
     }
     let unproven: string;
     try {
-      const vendorToken = open.vendorToken;
-      if (open.requestId) {
-        const { data } = await firstValueFrom(
-          this.httpService.post<{ outcome?: string }>(
-            coreUrl('payments/cancel-request'),
-            { requestId: open.requestId, connectAccountId: vendorToken },
-            internalCoreRequestConfig()
-          )
+      if (open.requestId && (await this.cancelRequestAtLydia(open)) === 'cancelled') {
+        this.logger.log(
+          `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
         );
-        if (data?.outcome === 'cancelled') {
-          this.logger.log(
-            `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
-          );
-          await this.closeCheckout(open, 'cancelled');
-          return;
-        }
-        if (data?.outcome !== 'already-settled') {
-          throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
-        }
+        await this.closeCheckout(open, 'cancelled');
+        return;
       }
       const status = await this.readAndApplyRequestState(open);
       if (status !== 'open') return;
@@ -1211,6 +1198,53 @@ export class ProductsService {
       return;
     }
     throw this.previousCheckoutOpen(open.id, unproven);
+  }
+
+  /**
+   * Asks core to cancel the attempt's request at Lydia (`payments/cancel-request`, by its numeric
+   * request id, which the caller has checked is stored). `cancelled`, or `already-settled` when Lydia
+   * had processed it already - paid, cancelled or expired, which only `request/state` tells apart.
+   * Any other answer, or a failed call, THROWS: the request may still be payable.
+   */
+  private async cancelRequestAtLydia(
+    row: ProductCheckout
+  ): Promise<'cancelled' | 'already-settled'> {
+    const { data } = await firstValueFrom(
+      this.httpService.post<{ outcome?: string }>(
+        coreUrl('payments/cancel-request'),
+        { requestId: row.requestId, connectAccountId: row.vendorToken },
+        internalCoreRequestConfig()
+      )
+    );
+    if (data?.outcome === 'cancelled' || data?.outcome === 'already-settled') return data.outcome;
+    throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
+  }
+
+  /**
+   * An attempt whose request Lydia VERIFIABLY reports still `open` past the expire_time Canari sent
+   * it (the reconciliation sweep): cancelled AT LYDIA first, through the cancel the buyer's next
+   * attempt makes, so no payment can land on a request Canari has closed; then closed `cancelled`.
+   * `already-settled` means Lydia processed it between the read and the cancel: the attempt stays
+   * `open`, and the next verified read settles it. An attempt with no numeric request id (its
+   * request/do answer was lost) cannot be named to the cancel: it is closed `expired` at ERROR
+   * (`expireUnprovenCheckout`) - a payment landing on it later is still recorded by its confirm
+   * callback. A failed cancel THROWS and closes nothing. Answers the status the row now has.
+   */
+  async cancelStillOpenCheckout(row: ProductCheckout, why: string): Promise<ProductCheckoutStatus> {
+    if (!row.requestId) {
+      return this.expireUnprovenCheckout(row, `${why}; no request id to cancel it at Lydia with`);
+    }
+    if ((await this.cancelRequestAtLydia(row)) === 'already-settled') {
+      this.logger.warn(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} was processed at Lydia ` +
+          `before its cancel (${why}) - left open for the next read`
+      );
+      return row.status;
+    }
+    this.logger.log(
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} cancelled at Lydia (${why})`
+    );
+    return this.closeCheckout(row, 'cancelled');
   }
 
   /**
@@ -1349,7 +1383,7 @@ export class ProductsService {
    * Nothing is lost by it: a payment taken before the request expired is still recorded by its
    * confirm callback, which asks even of a closed attempt (`handlePurchaseCompleted` ->
    * `settlePaidCheckout`). Shared by the buyer's next attempt (`settlePreviousOpenAttempt`) and the
-   * reconciliation sweep, which closes every attempt its one final read did not settle.
+   * reconciliation sweep, which closes an attempt whose read ANSWERED something it cannot act on.
    * Conditional on `open` (`closeCheckout`): a `paid` written meanwhile stays, and is answered.
    */
   async expireUnprovenCheckout(

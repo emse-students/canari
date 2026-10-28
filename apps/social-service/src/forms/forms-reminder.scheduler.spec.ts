@@ -8,6 +8,8 @@ import { FormReminderScheduler } from './forms-reminder.scheduler';
  * others from running.
  */
 describe('FormReminderScheduler.expireStalePendingPayments', () => {
+  const CUTOFF = new Date('2026-10-27T12:00:00Z');
+
   function withForms(
     forms: Record<string, jest.Mock>,
     sweepFormPayments: jest.Mock = jest.fn(async () => undefined)
@@ -16,7 +18,7 @@ describe('FormReminderScheduler.expireStalePendingPayments', () => {
       {} as never,
       {} as never,
       {} as never,
-      forms as never,
+      { pendingHoldCutoff: jest.fn(async () => CUTOFF), ...forms } as never,
       { sweepFormPayments } as never
     );
   }
@@ -32,6 +34,46 @@ describe('FormReminderScheduler.expireStalePendingPayments', () => {
     ).expireStalePendingPayments();
     // Control: with the sweep after the expiry, a row due for its read is already `expired`.
     expect(calls).toEqual(['reconcile', 'expire', 'forget']);
+  });
+
+  // With a clock each, a row whose hold ended between the read's SELECT and the expiry's UPDATE was
+  // expired without the read: both must be handed the SAME instant, read once.
+  it('hands the read and the expiry ONE cutoff, read once per tick', async () => {
+    const cutoff = jest.fn(async () => CUTOFF);
+    const expire = jest.fn(async () => 0);
+    const sweep = jest.fn(async () => undefined);
+    await withForms(
+      {
+        pendingHoldCutoff: cutoff,
+        expireStalePendingPayments: expire,
+        forgetSettledGuestVisitors: jest.fn(async () => 0),
+      },
+      sweep
+    ).expireStalePendingPayments();
+    expect(cutoff).toHaveBeenCalledTimes(1);
+    expect(sweep).toHaveBeenCalledWith(CUTOFF);
+    expect(expire).toHaveBeenCalledWith(CUTOFF);
+  });
+
+  it('neither reads nor expires when the cutoff cannot be read, and still forgets', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const expire = jest.fn(async () => 0);
+    const sweep = jest.fn(async () => undefined);
+    const forget = jest.fn(async () => 0);
+    await withForms(
+      {
+        pendingHoldCutoff: jest.fn(async () => {
+          throw new Error('db down');
+        }),
+        expireStalePendingPayments: expire,
+        forgetSettledGuestVisitors: forget,
+      },
+      sweep
+    ).expireStalePendingPayments();
+    expect(sweep).not.toHaveBeenCalled();
+    expect(expire).not.toHaveBeenCalled();
+    expect(forget).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('still expires when the reconciliation sweep fails, and logs the failure at ERROR', async () => {

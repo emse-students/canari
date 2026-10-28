@@ -50,7 +50,11 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   let sweep: LydiaReconciliationService;
   /** What Lydia's `request/state` answers, to the sweep (verified) and to the returns (unverified). */
   let lydia = { state: 'paid', raw: '1', verification: 'verified' };
+  /** Core or Lydia unreachable: the verified read throws, as axios does on a 503. */
+  let lydiaDown = false;
   let verifiedReads = 0;
+  /** The tick's ONE hold cutoff, from the database clock, as the scheduler reads it. */
+  const cutoffNow = () => forms.pendingHoldCutoff();
 
   const savedSwitch = process.env.LYDIA_RECONCILE_ENABLED;
 
@@ -117,7 +121,12 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       logger: new Logger('ProductsService'),
       checkoutRepo: ds.getRepository(ProductCheckout),
       purchaseRecordService,
-      httpService: { post: () => of({ data: { ok: true, state: lydia.state, raw: lydia.raw } }) },
+      httpService: {
+        post: (url: string) =>
+          url.endsWith('payments/cancel-request')
+            ? of({ data: { ok: true, outcome: 'cancelled' } })
+            : of({ data: { ok: true, state: lydia.state, raw: lydia.raw } }),
+      },
     }) as unknown as ProductsService;
     sweep = new LydiaReconciliationService(
       ds.getRepository(Submission),
@@ -131,6 +140,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       if (!url.endsWith('payments/request-state')) throw new Error(`unexpected call to ${url}`);
       if (body.expectedAmountCents !== undefined) {
         verifiedReads += 1;
+        if (lydiaDown) throw new Error('core answered 503');
         return { data: { ok: true, ...lydia } };
       }
       return { data: { ok: true, state: lydia.state, raw: lydia.raw } };
@@ -151,6 +161,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
 
   beforeEach(() => {
     lydia = { state: 'paid', raw: '1', verification: 'verified' };
+    lydiaDown = false;
     verifiedReads = 0;
     sweep.takeCounts();
   });
@@ -202,7 +213,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       stripe,
     ]);
 
-    await sweep.sweepFormPayments();
+    await sweep.sweepFormPayments(await cutoffNow());
     const status = async (id: string) =>
       (await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]))[0]
         .paymentStatus;
@@ -212,7 +223,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     expect(await status(stripe)).toBe('pending');
 
     // Idempotent from the row: the settled one left `pending`, so the next tick selects nothing.
-    await sweep.sweepFormPayments();
+    await sweep.sweepFormPayments(await cutoffNow());
     expect(verifiedReads).toBe(1);
     expect(sweep.takeCounts().forms).toMatchObject({ examined: 1, settled: 1, errors: 0 });
   });
@@ -240,8 +251,9 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     lydia = { state: 'paid', raw: '1', verification: 'mismatch' };
     const formId = await paidForm();
     const id = await pendingAnswer(formId, 20, 31);
-    await sweep.sweepFormPayments();
-    await forms.expireStalePendingPayments();
+    const cutoff = await cutoffNow();
+    await sweep.sweepFormPayments(cutoff);
+    await forms.expireStalePendingPayments(cutoff);
     const [after] = await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]);
     expect(after.paymentStatus).toBe('expired');
     expect(
@@ -249,15 +261,41 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     ).toHaveLength(0);
     // ASKED ONCE: the expiry took the row the read could not settle out of the selection.
     expect(verifiedReads).toBe(1);
-    await sweep.sweepFormPayments();
+    await sweep.sweepFormPayments(await cutoffNow());
     expect(verifiedReads).toBe(1);
+  });
+
+  // With a clock each, the expiry's later now() took in a row the read's earlier SELECT had not:
+  // expired UNREAD. One cutoff for both, and that row is read in the next tick instead.
+  it('never expires an answer the read of the same tick did not select', async () => {
+    const formId = await paidForm();
+    const cutoff = await cutoffNow();
+    const id = await pendingAnswer(formId, 40, 0);
+    // Its hold ends just AFTER the tick's cutoff - what a clock read later would already include.
+    await ds.query(
+      `UPDATE submissions SET "paymentRequestedAt" = $2::timestamptz + interval '1 millisecond' WHERE id = $1`,
+      [id, cutoff]
+    );
+    await sweep.sweepFormPayments(cutoff);
+    await forms.expireStalePendingPayments(new Date(cutoff));
+    const status = async () =>
+      (await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]))[0]
+        .paymentStatus;
+    expect(verifiedReads).toBe(0);
+    expect(await status()).toBe('pending');
+
+    const next = new Date(cutoff.getTime() + 5 * 60_000);
+    await sweep.sweepFormPayments(next);
+    await forms.expireStalePendingPayments(next);
+    expect(verifiedReads).toBe(1);
+    expect(await status()).toBe('paid');
   });
 
   it('releases an answer whose request Lydia says was declined, as the return does', async () => {
     lydia = { state: 'declined', raw: '5', verification: 'verified' };
     const formId = await paidForm();
     const id = await pendingAnswer(formId, 30, 31);
-    await sweep.sweepFormPayments();
+    await sweep.sweepFormPayments(await cutoffNow());
     const [after] = await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]);
     expect(after.paymentStatus).toBe('cancelled');
   });
@@ -268,7 +306,8 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       ds.getRepository(ProductCheckout).save(
         ds.getRepository(ProductCheckout).create({
           productId: PRODUCT,
-          userId: `buyer-${++buyers}`.padEnd(64, '0'),
+          // `x`, not a digit: `buyer-1` padded with zeros IS `buyer-10` padded with zeros.
+          userId: `buyer-${++buyers}`.padEnd(64, 'x'),
           associationId: ASSO,
           paymentAssociationId: ASSO,
           vendorToken: VENDOR_WITH_KEY,
@@ -324,6 +363,43 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       const closed = await attempt();
       await sweep.reconcileCheckout(closed);
       expect(await statusOf(closed.id)).toBe('expired');
+    });
+
+    it('leaves an attempt open while core or Lydia gives no answer, and settles it at the next tick', async () => {
+      const row = await attempt();
+      lydiaDown = true;
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('open');
+      lydiaDown = false;
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('paid');
+      expect(verifiedReads).toBe(2);
+    });
+
+    // Control: the sweep that closed its attempt in a catch expired this one - Lydia said PAID and
+    // no purchase was recorded, by anything, ever.
+    it('never closes a verified PAID attempt whose settlement write failed: the next tick records it', async () => {
+      const row = await attempt();
+      const apply = jest
+        .spyOn(products, 'applyRequestState')
+        .mockRejectedValueOnce(new Error('deadlock detected'));
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('open');
+      apply.mockRestore();
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('paid');
+      expect(
+        await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [row.userId])
+      ).toHaveLength(1);
+    });
+
+    it('cancels at Lydia, then closes, an attempt Lydia verifiably says is still open past its end', async () => {
+      lydia = { state: 'open', raw: '0', verification: 'verified' };
+      const row = await attempt();
+      await sweep.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('cancelled');
+      await sweep.sweepProductCheckouts();
+      expect(verifiedReads).toBe(1);
     });
 
     it('closes an attempt its one read could not verify, never reads it again, and its callback still records the payment', async () => {

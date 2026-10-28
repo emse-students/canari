@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { Submission } from './entities/submission.entity';
 import { Form } from './entities/form.entity';
 import { FormsService } from './forms.service';
-import { PENDING_HOLD_CUTOFF_SQL, type RequestState } from './seat-hold';
+import type { RequestState } from './seat-hold';
 import { readVerifiedRequestState, type VerifiedRequestRead } from './verified-request-state';
 import { ProductCheckout } from '../associations/entities/product-checkout.entity';
 import { ProductsService } from '../associations/products.service';
@@ -13,10 +13,8 @@ import { CHECKOUT_EXPIRY_MARGIN_MS, productCheckoutLookup } from '../association
 
 /**
  * Most rows one sweep reads at Lydia, per kind. A bound on one tick's work (one `request/state` read
- * each, up to 90 s apiece), far above what a 5-minute tick meets: every row is READ ONCE, in the
- * first tick past its request's end, and leaves the selection in that same tick whatever the read
- * said - a form answer is expired by the expiry that follows the sweep, a boutique attempt is closed
- * by the sweep itself (`reconcileCheckout`). This platform issues a few requests a day.
+ * each, up to 90 s apiece), far above what a 5-minute tick meets: this platform issues a few
+ * requests a day, and a row leaves the selection as soon as its read gave an answer (class docblock).
  */
 export const RECONCILE_BATCH = 50;
 
@@ -77,6 +75,33 @@ const COUNT_KEY: Record<ReconcileOutcome, keyof ReconcileCounts> = {
 };
 
 /**
+ * A boutique attempt whose settlement WRITE failed after its read (a deadlock, the database, a tag
+ * grant): the attempt stays `open` and is read again next tick - a database problem, never a
+ * verdict about the attempt. `lydiaSaidPaid` says whether the read it followed was a verified PAID,
+ * so the tick's one line can say money is waiting to be recorded.
+ */
+export class CheckoutSettlementFailed extends Error {
+  constructor(
+    readonly lydiaSaidPaid: boolean,
+    cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'CheckoutSettlementFailed';
+  }
+}
+
+/**
+ * What one boutique read decided, before anything is closed: `keep` leaves the row as the read
+ * left it (settled, already settled, or to be read again next tick), `expire` closes it as unproven,
+ * `cancel` cancels its request at Lydia and then closes it.
+ */
+interface CheckoutVerdict {
+  outcome: ReconcileOutcome;
+  then: 'keep' | 'expire' | 'cancel';
+  why?: string;
+}
+
+/**
  * THE RECONCILIATION LYDIA'S DOCUMENTATION ASKS FOR: every request whose callback never came is
  * read at Lydia (`request/state`) once it has ENDED, and settled from that answer - so a payment
  * whose confirm callback was lost, and whose payer never came back to the return page, is still
@@ -87,10 +112,9 @@ const COUNT_KEY: Record<ReconcileOutcome, keyof ReconcileCounts> = {
  * `expire_time` (`PAYMENT_REQUEST_LIFETIME_SECONDS` for a form, `PRODUCT_REQUEST_LIFETIME_SECONDS`
  * for a product) and Lydia expires it on a sweep a little after (measured up to +79 s): past
  * the request's end plus that margin, the request can no longer change, so ONE read answers for
- * good - paid, declined, or cancelled/expired. For a form that instant is `PENDING_HOLD_CUTOFF_SQL`
- * (the hold = lifetime + `PAYMENT_REQUEST_EXPIRY_MARGIN_SECONDS`); for a product it is `expiresAt` +
- * `CHECKOUT_EXPIRY_MARGIN_MS`. Before it, a read may answer `open`, which decides nothing and is
- * what the payer's return already polls.
+ * good - paid, declined, or cancelled/expired. For a form that instant is the hold cutoff
+ * (`FormsService.pendingHoldCutoff`, read ONCE per tick and shared with the expiry); for a product
+ * it is `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`.
  *
  * ONE WRITER OF `paid`, AND IT IS NOT HERE. A paid form answer goes through `FormsService.markPaid`
  * (form lock, row lock, re-checked to still name the uuid read); a paid attempt through
@@ -98,23 +122,27 @@ const COUNT_KEY: Record<ReconcileOutcome, keyof ReconcileCounts> = {
  * goes through the very function the payer's return uses. So the sweep races the callback and the
  * return on the same locks, and two settlers of one payment record it once.
  *
- * ASKED ONCE, AND IDEMPOTENT FROM THE ROW. A row is examined only while its own status still says
- * it waits (`pending`, `open`), and ONE read moves it out of that status whatever the answer: a
- * settlement does, and what the read could not settle leaves too - a form answer is expired by the
- * expiry that runs right after the sweep, a boutique attempt is closed `expired` by the sweep
- * (`ProductsService.expireUnprovenCheckout`, the close the buyer's next attempt makes). So a row
- * that cannot be settled costs one read and one ERROR or WARN line, never one per tick, and cannot
- * starve the rows behind it. The time condition only says WHEN a read is final, never whether it
- * was done; a second run finds nothing left to do.
+ * AN ANSWER IS ACTED ON ONCE; NO ANSWER IS RETRIED. A row is examined only while its own status
+ * still says it waits (`pending`, `open`).
+ * - A form answer is read once: whatever the read did, the expiry that runs right after the sweep,
+ *   on the SAME cutoff, moves what is left `pending` to `expired`.
+ * - A boutique attempt leaves `open` as soon as its read gave an ANSWER: settled or released from a
+ *   verified state; cancelled AT LYDIA then closed when Lydia verifiably says it is still open past
+ *   its end (`cancelStillOpenCheckout`); closed `expired` when the answer cannot be acted on (a
+ *   mismatch, unsigned, no usable key, an unknown state - `expireUnprovenCheckout`, the close the
+ *   buyer's next attempt makes). Closing loses nothing: Lydia's confirm callback asks even of a
+ *   closed attempt and records a paid answer over it.
+ * - What is NOT an answer leaves the attempt `open`, read again next tick, oldest first so nothing
+ *   is starved: core or Lydia unreachable, a verdict this service does not know (an older core), a
+ *   cancel that could not be sent, and a settlement WRITE that failed after a verified read - above
+ *   all a verified PAID, whose only automatic path this is. Each tick says so in ONE aggregated line
+ *   (`sweepProductCheckouts`), never one per row.
  *
  * NOTHING UNVERIFIED IS ACTED ON. The read asks core to verify Lydia's signature with the Business
  * key over the row's OWN amount (`readVerifiedRequestState`). A mismatch is logged at ERROR and
- * settles nothing; no key, no signature or an unreadable request settle nothing either. Closing such
- * an attempt records nothing and loses nothing: a payment taken before the request expired is
- * still recorded by its confirm callback, which asks even of a closed attempt. The one unsigned
- * answer acted on is a boutique attempt read by its order_ref that Lydia answers NOT FOUND (core's
- * verdict `unsigned`: an error answer carries no signature): no request exists, no money moved - it
- * is closed `cancelled`, exactly as the return closes it.
+ * settles nothing. The one unsigned answer acted on is a boutique attempt read by its order_ref that
+ * Lydia answers NOT FOUND (core's verdict `unsigned`: an error answer carries no signature): no
+ * request exists, no money moved - it is closed `cancelled`, exactly as the return closes it.
  */
 @Injectable()
 export class LydiaReconciliationService {
@@ -131,21 +159,22 @@ export class LydiaReconciliationService {
   ) {}
 
   /**
-   * Reads at Lydia every online form answer still `pending` whose request has ended, newest first,
-   * at most `RECONCILE_BATCH` and for at most `FORM_SWEEP_BUDGET_MS`, and settles each from a
-   * verified answer. Runs in the expiry tick, BEFORE the expiry (`FormReminderScheduler`), so a row
-   * is read while it is still `pending` - and the expiry then moves every row the read left
-   * `pending` to `expired`, which nothing here reads again: one read per row. Each row has its own
-   * `try`.
+   * Reads at Lydia every online form answer still `pending` whose request ended by `cutoff` (the
+   * tick's ONE hold cutoff, which the expiry after it uses too), newest first, at most
+   * `RECONCILE_BATCH` and for at most `FORM_SWEEP_BUDGET_MS`, and settles each from a verified
+   * answer. Runs in the expiry tick, BEFORE the expiry (`FormReminderScheduler`): every row selected
+   * here is either settled or expired in the same tick, and no row the expiry moves was left out of
+   * this selection by a later clock. Each row has its own `try`.
    */
-  async sweepFormPayments(): Promise<void> {
+  async sweepFormPayments(cutoff: Date): Promise<void> {
     // Switched off: no row selected, no call made (the scheduler said so once, at startup).
     if (!isLydiaReconcileEnabled()) return;
     const due = await this.submissionRepo
       .createQueryBuilder('s')
       .where(`s."paymentStatus" = 'pending'`)
       .andWhere(`s."stripeSessionId" ~* '^[0-9a-f]{32}$'`)
-      .andWhere(`s."paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
+      // An instant, as the expiry compares it (`FormsService.expireStalePendingPayments`).
+      .andWhere(`s."paymentRequestedAt" <= CAST(:cutoff AS timestamptz)`, { cutoff })
       .orderBy('s.paymentRequestedAt', 'DESC')
       .limit(RECONCILE_BATCH + 1)
       .getMany();
@@ -174,25 +203,59 @@ export class LydiaReconciliationService {
 
   /**
    * Reads at Lydia every boutique attempt still `open` whose request has ended and whose Business
-   * holds a key to verify with, newest first, at most `RECONCILE_BATCH`; each one read is settled or
-   * closed (`reconcileCheckout`), so the next tick reads the next ones. An attempt of a Business
-   * with no key cannot be verified: it is not read at all (`openWithoutKey` counts them for the
-   * summary), and stays for its buyer's next attempt or its confirm callback.
+   * holds a key to verify with, OLDEST first, at most `RECONCILE_BATCH`. An attempt its read
+   * answered leaves `open` (`reconcileCheckout`); one read without an answer, or whose settlement
+   * write failed, stays for the next tick - oldest first, so the rows behind it are reached as soon
+   * as it is. What stayed is said in ONE line per tick per cause: a WARN for the reads that got no
+   * answer, an ERROR for the writes that failed, naming the attempts Lydia said PAID. An attempt of
+   * a Business with no key is not read at all (`openWithoutKey` counts them for the summary), and
+   * stays for its buyer's next attempt or its confirm callback.
    */
   async sweepProductCheckouts(): Promise<void> {
     if (!isLydiaReconcileEnabled()) return;
     const due = await this.dueCheckouts()
       .andWhere(this.businessKeyExists(true))
-      .orderBy('c.expiresAt', 'DESC')
+      .orderBy('c.expiresAt', 'ASC')
       .limit(RECONCILE_BATCH + 1)
       .getMany();
     if (due.length > RECONCILE_BATCH) {
       this.logger.warn(
-        `[RECONCILE] more than ${RECONCILE_BATCH} boutique attempts are due - the oldest wait for the next tick`
+        `[RECONCILE] more than ${RECONCILE_BATCH} boutique attempts are due - the newest wait for the next tick`
       );
     }
+    let unanswered = 0;
+    const failed: CheckoutSettlementFailed[] = [];
+    const paidUnrecorded: string[] = [];
     for (const row of due.slice(0, RECONCILE_BATCH)) {
-      await this.count('products', () => this.reconcileCheckout(row), `checkout ${row.id}`);
+      const outcome = await this.count(
+        'products',
+        () => this.reconcileCheckout(row),
+        `checkout ${row.id}`,
+        (err) => {
+          const failure = err instanceof CheckoutSettlementFailed ? err : null;
+          if (!failure) return false;
+          failed.push(failure);
+          if (failure.lydiaSaidPaid) paidUnrecorded.push(row.id);
+          return true;
+        }
+      );
+      if (outcome === 'unavailable') unanswered += 1;
+    }
+    if (unanswered > 0) {
+      this.logger.warn(
+        `[RECONCILE] boutique: ${unanswered} read(s) got no answer this tick (core or Lydia ` +
+          `unreachable, an unknown verdict, or a cancel not sent) - left open, read again next tick`
+      );
+    }
+    if (failed.length > 0) {
+      this.logger.error(
+        `[RECONCILE] boutique: ${failed.length} settlement write(s) FAILED this tick after a verified ` +
+          `read (first: ${failed[0].message})` +
+          (paidUnrecorded.length > 0
+            ? ` - Lydia answered PAID for ${paidUnrecorded.length}, NOT recorded yet: ${paidUnrecorded.join(', ')}`
+            : '') +
+          ` - left open, settled again next tick`
+      );
     }
   }
 
@@ -210,7 +273,8 @@ export class LydiaReconciliationService {
 
   /**
    * Settles ONE form answer from a verified read of its request. Exposed for the tests that race it
-   * against the payer's return on a real database.
+   * against the payer's return on a real database. What it does not settle stays `pending` for the
+   * expiry that follows it in the tick.
    */
   async reconcileSubmission(row: Submission): Promise<ReconcileOutcome> {
     const sessionId = row.stripeSessionId as string;
@@ -232,9 +296,18 @@ export class LydiaReconciliationService {
       this.logger.error(`[RECONCILE] ${what}: pending online with no amount - not read`);
       return 'skipped-unverified';
     }
-    const read = await this.read(what, { sessionId }, payee, row.totalPaid);
-    if (typeof read === 'string') return read;
-    const { state } = read;
+    let read: VerifiedRequestRead;
+    try {
+      read = await readVerifiedRequestState({ sessionId }, payee, row.totalPaid);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `[RECONCILE] ${what}: request/state unavailable (${errorText(err)}) - left for the expiry`
+      );
+      return 'unavailable';
+    }
+    const verified = this.verified(what, read, row.totalPaid);
+    if (!verified) return 'skipped-unverified';
+    const { state } = verified;
     if (state === 'paid') {
       const { ok } = await this.formsService.markPaid(row.id, sessionId, true);
       this.logger.log(
@@ -253,68 +326,112 @@ export class LydiaReconciliationService {
       );
       return released ? 'released' : 'unchanged';
     }
-    return this.notSettled(what, state, read.raw);
+    if (state === 'open') {
+      this.logger.error(
+        `[RECONCILE] ${what}: still OPEN at Lydia past the expire_time Canari sent it - left for the expiry`
+      );
+    } else {
+      this.logger.warn(
+        `[RECONCILE] ${what}: in a state nothing here settles (${state}, code ${verified.raw}) - left for the expiry`
+      );
+    }
+    return 'unchanged';
   }
 
   /**
-   * Settles ONE boutique attempt from a verified read of its request, and CLOSES it `expired` when
-   * that one read settled nothing - an unverified or unexpected answer, an unavailable read, a
-   * failure - so it is never read again (see the class docblock). The outcome counted is the read's;
-   * the close is logged at ERROR by `expireUnprovenCheckout`. Exposed like the above.
+   * Reconciles ONE boutique attempt (see the class docblock for which answers close it and which
+   * leave it for the next tick). Throws `CheckoutSettlementFailed` when a write after a verified
+   * read failed: the attempt is then NOT closed. Exposed like the above.
    */
   async reconcileCheckout(row: ProductCheckout): Promise<ReconcileOutcome> {
     const lookup = productCheckoutLookup(row);
     const what = `checkout ${row.id} (${'sessionId' in lookup ? `request ${lookup.sessionId}` : 'no request id, read by order_ref'})`;
-    let outcome: ReconcileOutcome;
-    try {
-      outcome = await this.readCheckout(row, lookup, what);
-    } catch (err: unknown) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await this.productsService.expireUnprovenCheckout(row, `reconciliation failed: ${reason}`);
-      throw err;
+    const verdict = await this.readCheckout(row, lookup, what);
+    const why = `its reconciliation read: ${verdict.why ?? verdict.outcome}`;
+    if (verdict.then === 'expire') {
+      await this.settleOrThrow(false, () => this.productsService.expireUnprovenCheckout(row, why));
+    } else if (verdict.then === 'cancel') {
+      try {
+        await this.productsService.cancelStillOpenCheckout(row, why);
+      } catch (err: unknown) {
+        // The cancel never reached Lydia, or its answer was not one: the request may still be
+        // payable, so the attempt is NOT closed - the next tick reads it again.
+        this.logger.debug(`[RECONCILE] ${what}: cancel at Lydia failed (${errorText(err)})`);
+        return 'unavailable';
+      }
     }
-    if (outcome !== 'settled' && outcome !== 'released') {
-      await this.productsService.expireUnprovenCheckout(
-        row,
-        `its one reconciliation read: ${outcome}`
-      );
-    }
-    return outcome;
+    return verdict.outcome;
   }
 
-  /** The one read of an attempt and what it settled; `reconcileCheckout` closes what it did not. */
+  /** The one read of an attempt and what it settled; `reconcileCheckout` does the `then`. */
   private async readCheckout(
     row: ProductCheckout,
     lookup: ReturnType<typeof productCheckoutLookup>,
     what: string
-  ): Promise<ReconcileOutcome> {
+  ): Promise<CheckoutVerdict> {
     if (!(row.amountCents > 0)) {
       this.logger.error(`[RECONCILE] ${what}: open with no amount - not read`);
-      return 'skipped-unverified';
+      return { outcome: 'skipped-unverified', then: 'expire', why: 'no amount to verify' };
     }
     let read: VerifiedRequestRead;
     try {
       read = await readVerifiedRequestState(lookup, row.vendorToken, row.amountCents);
     } catch (err: unknown) {
-      return this.unavailable(what, err);
+      // No answer: counted in the tick's one WARN, read again next tick.
+      this.logger.debug(`[RECONCILE] ${what}: request/state unavailable (${errorText(err)})`);
+      return { outcome: 'unavailable', then: 'keep' };
+    }
+    if (read.verification === 'unknown') {
+      this.logger.debug(`[RECONCILE] ${what}: core gave no verdict this service knows`);
+      return { outcome: 'unavailable', then: 'keep' };
     }
     // The one unsigned answer acted on: no request carries the order_ref (see the class docblock).
     if (read.verification === 'unsigned' && read.state === 'not-found' && 'orderRef' in lookup) {
-      await this.productsService.applyRequestState(row, 'not-found', read.raw);
-      return 'released';
+      await this.settleOrThrow(false, () =>
+        this.productsService.applyRequestState(row, 'not-found', read.raw)
+      );
+      return { outcome: 'released', then: 'keep' };
     }
     const verified = this.verified(what, read, row.amountCents);
-    if (typeof verified === 'string') return verified;
+    if (!verified) {
+      return { outcome: 'skipped-unverified', then: 'expire', why: read.verification };
+    }
     const { state } = verified;
     if (state === 'paid' || state === 'declined' || state === 'cancelled-or-expired') {
-      const status = await this.productsService.applyRequestState(row, state, verified.raw);
-      this.logger.log(
-        `[RECONCILE] ${what}: ${state} at Lydia (verified, ${row.amountCents} cents) - attempt now ${status}`
+      const status = await this.settleOrThrow(state === 'paid', () =>
+        this.productsService.applyRequestState(row, state, verified.raw)
       );
-      if (status === 'paid') return state === 'paid' ? 'settled' : 'unchanged';
-      return status === 'open' ? 'unchanged' : 'released';
+      const intended =
+        state === 'paid' ? status === 'paid' : status !== 'paid' && status !== 'open';
+      if (intended) {
+        this.logger.log(
+          `[RECONCILE] ${what}: ${state} at Lydia (verified, ${row.amountCents} cents) - attempt now ${status}`
+        );
+        return { outcome: state === 'paid' ? 'settled' : 'released', then: 'keep' };
+      }
+      // Another settler wrote first (the callback or the return): nothing for this sweep to do.
+      this.logger.debug(`[RECONCILE] ${what}: ${state} at Lydia, attempt already ${status}`);
+      return { outcome: 'unchanged', then: 'keep' };
     }
-    return this.notSettled(what, state, verified.raw);
+    if (state === 'open') {
+      this.logger.error(
+        `[RECONCILE] ${what}: still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it`
+      );
+      return { outcome: 'unchanged', then: 'cancel', why: 'still open at Lydia past its end' };
+    }
+    this.logger.warn(
+      `[RECONCILE] ${what}: in a state nothing here settles (${state}, code ${verified.raw}) - closing it`
+    );
+    return { outcome: 'unchanged', then: 'expire', why: `state ${state}` };
+  }
+
+  /** Runs a settlement write; a failure becomes `CheckoutSettlementFailed`, the row left open. */
+  private async settleOrThrow<T>(lydiaSaidPaid: boolean, write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (err: unknown) {
+      throw new CheckoutSettlementFailed(lydiaSaidPaid, err);
+    }
   }
 
   /** The rows of `product_checkouts` still open whose request has ended (see the class docblock). */
@@ -337,42 +454,16 @@ export class LydiaReconciliationService {
       WHERE a."lydiaAccountId" = c."vendorToken" AND a."lydiaBusinessKeyCiphertext" IS NOT NULL)`;
   }
 
-  /** A verified read, or the outcome of a read that failed or cannot be trusted (logged). */
-  private async read(
-    what: string,
-    lookup: { sessionId: string } | { orderRef: string },
-    connectAccountId: string,
-    expectedAmountCents: number
-  ): Promise<{ state: RequestState | 'not-found'; raw: string } | ReconcileOutcome> {
-    let read: VerifiedRequestRead;
-    try {
-      read = await readVerifiedRequestState(lookup, connectAccountId, expectedAmountCents);
-    } catch (err: unknown) {
-      return this.unavailable(what, err);
-    }
-    return this.verified(what, read, expectedAmountCents);
-  }
-
-  /** Lydia, or core, could not be asked: nothing is known, nothing is written. */
-  private unavailable(what: string, err: unknown): ReconcileOutcome {
-    this.logger.warn(
-      `[RECONCILE] ${what}: request/state unavailable (${
-        err instanceof Error ? err.message : String(err)
-      }) - left as is`
-    );
-    return 'unavailable';
-  }
-
-  /** The read's state when its signature verified, else the logged reason it is not acted on. */
+  /** The read's state when its signature verified, else null and the logged reason it is not. */
   private verified(
     what: string,
     read: VerifiedRequestRead,
     expectedAmountCents: number
-  ): { state: RequestState | 'not-found'; raw: string } | ReconcileOutcome {
+  ): { state: RequestState | 'not-found'; raw: string } | null {
     if (read.verification === 'verified') return { state: read.state, raw: read.raw };
     if (read.verification === 'no-key') {
-      this.logger.log(
-        `[RECONCILE] ${what}: no Business key stored to verify Lydia's answer with - not read, left as is`
+      this.logger.warn(
+        `[RECONCILE] ${what}: core holds no usable Business key to verify Lydia's answer with - nothing settled`
       );
     } else if (read.verification === 'mismatch') {
       this.logger.error(
@@ -386,42 +477,37 @@ export class LydiaReconciliationService {
           `not verified - nothing settled`
       );
     }
-    return 'skipped-unverified';
+    return null;
   }
 
-  /** A verified state that settles nothing: `open` past the request's end is an anomaly. */
-  private notSettled(
-    what: string,
-    state: RequestState | 'not-found',
-    raw: string
-  ): ReconcileOutcome {
-    if (state === 'open') {
-      this.logger.error(
-        `[RECONCILE] ${what}: still OPEN at Lydia past the expire_time Canari sent it - left as is`
-      );
-    } else {
-      this.logger.warn(
-        `[RECONCILE] ${what}: in a state nothing here settles (${state}, code ${raw}) - left as is`
-      );
-    }
-    return 'unchanged';
-  }
-
-  /** Runs one row's reconciliation in its own `try`, and counts what it did. */
+  /**
+   * Runs one row's reconciliation in its own `try`, counts what it did, and answers the outcome
+   * (undefined on a failure). A failure `aggregate` claims is left to the caller's one line per
+   * tick; any other is logged here, per row.
+   */
   private async count(
     kind: 'forms' | 'products',
     run: () => Promise<ReconcileOutcome>,
-    what: string
-  ): Promise<void> {
+    what: string,
+    aggregate: (err: unknown) => boolean = () => false
+  ): Promise<ReconcileOutcome | undefined> {
     const counts = this.counts[kind];
     counts.examined += 1;
     try {
-      counts[COUNT_KEY[await run()]] += 1;
+      const outcome = await run();
+      counts[COUNT_KEY[outcome]] += 1;
+      return outcome;
     } catch (err: unknown) {
       counts.errors += 1;
-      this.logger.error(
-        `[RECONCILE] ${what}: reconciliation FAILED: ${err instanceof Error ? err.message : String(err)}`
-      );
+      if (!aggregate(err)) {
+        this.logger.error(`[RECONCILE] ${what}: reconciliation FAILED: ${errorText(err)}`);
+      }
+      return undefined;
     }
   }
+}
+
+/** An error's message, for a log line. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

@@ -2415,6 +2415,18 @@ export class FormsService {
   }
 
   /**
+   * The instant a `pending` online answer's hold has ended by, read ONCE from the database clock
+   * (`PENDING_HOLD_CUTOFF_SQL`, the clock every hold count reads) - so the reconciliation and the
+   * expiry of one tick select by the SAME instant.
+   */
+  async pendingHoldCutoff(): Promise<Date> {
+    const [{ cutoff }] = await this.submissionRepo.query(
+      `SELECT ${PENDING_HOLD_CUTOFF_SQL} AS cutoff`
+    );
+    return new Date(cutoff);
+  }
+
+  /**
    * Moves every online `pending` submission past the hold to `expired` (PP3).
    *
    * THE SEAT IS ALREADY FREE BEFORE THIS RUNS: every count reads the hold from the row itself
@@ -2422,14 +2434,20 @@ export class FormsService {
    * list and the export. It never deletes: the row is the trace a late payment is matched against
    * (`markPaid`). Idempotent from the row - the `WHERE` names the only state it moves out of, so a
    * second run, or two overlapping ones, find nothing left to move.
+   *
+   * `cutoff` is the tick's ONE hold cutoff (`pendingHoldCutoff`), the same instant the Lydia
+   * reconciliation selected its rows by just before: a row whose hold ends between the two is then
+   * neither read nor expired this tick, but both next tick - never expired unread.
    */
-  async expireStalePendingPayments(): Promise<number> {
+  async expireStalePendingPayments(cutoff: Date): Promise<number> {
     const result = await this.submissionRepo
       .createQueryBuilder()
       .update()
       .set({ paymentStatus: 'expired' })
       .where('"paymentStatus" = :status', { status: 'pending' })
-      .andWhere(`"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
+      // An INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp` with no
+      // zone, and an uncast parameter would be read as one, dropping the offset the driver sends.
+      .andWhere('"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)', { cutoff })
       .execute();
     const count = result.affected ?? 0;
     if (count > 0) {

@@ -228,30 +228,37 @@ a retry). A payment whose `confirm` was lost and whose payer closed the tab was 
 sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the missing reader:
 
 - **What it reads, and when.** A form answer still `pending` whose request has ENDED (`paymentRequestedAt`
-  past `PENDING_HOLD_CUTOFF_SQL`, the hold = the request's `expire_time` + Lydia's measured expiry margin),
-  and a boutique attempt still `open` past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`. The threshold is the
-  request's own lifetime, not a chosen clock: past it the request cannot change, so ONE read is final. The
-  form half runs in the 5-minute expiry tick, **before** the expiry, because the hold ends when the request
-  does: a row is due in the very tick that would expire it, and once `expired` nothing reads it again. It
-  stops starting reads after 60 s (`FORM_SWEEP_BUDGET_MS`), so the expiry waits at most that plus one read;
-  what it did not reach is expired unread, at ERROR. The boutique half runs on its own 5-minute cron. At
-  most 50 rows per kind per tick, newest first.
-- **Asked once.** Every row read leaves the selection in that same tick, whatever the answer: a form answer
-  the read did not settle is expired by the expiry that follows, a boutique attempt the read did not settle
-  is closed `expired` by the sweep itself (`ProductsService.expireUnprovenCheckout`, the close the buyer's
-  next attempt already made past `expiresAt`, logged at ERROR). So an unverifiable or unreadable row costs
-  one read and one line, never one every 5 minutes, and a stuck row cannot starve the ones behind it.
-  Closing loses nothing: Lydia's confirm callback asks even of a closed attempt, and `settlePaidCheckout`
-  records a paid answer over it (asserted by the integration spec).
+  past the hold cutoff, the hold = the request's `expire_time` + Lydia's measured expiry margin), and a
+  boutique attempt still `open` past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`. The threshold is the
+  request's own lifetime, not a chosen clock: past it the request cannot change, so ONE answer is final.
+  The form half runs in the 5-minute expiry tick, **before** the expiry, and both select by ONE cutoff read
+  from the database clock at the start of the tick (`FormsService.pendingHoldCutoff`): with a clock each, a
+  row whose hold ended between the read's SELECT and the expiry's UPDATE was expired unread. It stops
+  starting reads after 60 s (`FORM_SWEEP_BUDGET_MS`), so the expiry waits at most that plus one read; what it
+  did not reach is expired unread, at ERROR. The boutique half runs on its own 5-minute cron, OLDEST first.
+  At most 50 rows per kind per tick.
+- **An answer is acted on once; no answer is retried.**
+  - A form answer is read once: what the read did not settle is expired by the expiry that follows.
+  - A boutique attempt leaves `open` as soon as its read ANSWERED: settled or released from a verified state;
+    a verified `open` past its end is **cancelled at Lydia first** (`ProductsService.cancelStillOpenCheckout`,
+    the cancel the buyer's next attempt makes - a request left payable after Canari closed it is a double
+    charge), then closed; a mismatch, `unsigned`, no usable key or an unknown state close it `expired`
+    (`ProductsService.expireUnprovenCheckout`, logged at ERROR). Closing loses nothing: Lydia's confirm
+    callback asks even of a closed attempt, and `settlePaidCheckout` records a paid answer over it (asserted
+    by the integration spec).
+  - What is NOT an answer leaves the attempt `open`, read again next tick: core or Lydia unreachable, a
+    verdict social-service does not know (an older core), a cancel that could not be sent, and a settlement
+    WRITE that failed after a verified read - above all a verified PAID, whose only automatic path this is.
+    Each tick says so in ONE line per cause, never one per row: a WARN with the count of reads that got no
+    answer, an ERROR with the count of failed writes that names the attempts Lydia said PAID.
 - **What it does with the answer.** Only a `verified` answer is acted on: `paid` through the ONE writer
   of each kind (`FormsService.markPaid`; `ProductsService.applyRequestState` -> `settlePaidCheckout`),
   `declined` and `cancelled-or-expired` through the release the payer's return uses. A `mismatch` is
-  logged at ERROR and settles nothing; `unsigned`, an unknown verdict, an unreachable core or Lydia settle
-  nothing either (and the row is then expired or closed, above). A Business with no stored key is not read
-  at all: a form answer is then expired as before, a boutique attempt stays `open` (counted in the hourly
-  line) for its buyer's next attempt or its callback. The one unsigned answer acted on is a boutique attempt
-  read by its order_ref that Lydia does not hold (error 2, core's verdict `unsigned` - an unknown verdict is
-  not one): no request exists, no money moved, it is closed `cancelled` as the return closes it.
+  logged at ERROR and settles nothing. A Business with no stored key is not read at all: a form answer is
+  then expired as before, a boutique attempt stays `open` (counted in the hourly line) for its buyer's next
+  attempt or its callback. The one unsigned answer acted on is a boutique attempt read by its order_ref that
+  Lydia does not hold (error 2, core's verdict `unsigned` - an unknown verdict is not one): no request
+  exists, no money moved, it is closed `cancelled` as the return closes it.
 - **Why it cannot double-record.** Every write goes through a settle path that locks the row and moves it
   out of the status the sweep selects on; the sweep races the callback and the return on the same locks.
   Measured on a real PostgreSQL (`lydia-reconciliation.integration.spec.ts`): the sweep and seven returns
@@ -278,7 +285,7 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
      `SELECT count(*), min("expiresAt") FROM product_checkouts c WHERE c.status = 'open' AND
      c."expiresAt" <= now() - interval '5 minutes' AND EXISTS (SELECT 1 FROM associations a WHERE
      a."lydiaAccountId" = c."vendorToken" AND a."lydiaBusinessKeyCiphertext" IS NOT NULL)`. Every one of
-     them is read once and settled or closed `expired`, 50 per tick.
+     them is read, oldest first, 50 per tick, and settled, cancelled at Lydia or closed `expired` on its answer.
 - **What it reports.** One line per row it reads, and once an hour
   `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= unavailable=
   errors=; boutique: ...; ended boutique attempts left open with no Business key: N`, even when all zero.
