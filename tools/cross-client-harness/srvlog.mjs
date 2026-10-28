@@ -1274,14 +1274,15 @@ const ROW_RULES = [
   // THE RING'S END AND THE PRESENCE CLEARED (`calls.service.ts` `endRing`, `reportCallPresence`;
   // first read on `1.5.1-alpha.1`, 2026-10-27). The `reason` is pinned per row to what its scenario
   // sends - an answered call `answered` then `ended`, a declined one `ended`, a cancelled or
-  // unanswered one `cancelled`, the busy row its answered call and W5's ended at once - so a ring
+  // unanswered one `cancelled`, the busy row its answered call (`answered`, then `ended` at the hang-up,
+  // absent from the first reading's window, present in the second) and W5's busy one `cancelled` - so a ring
   // ended for another reason is read by the rule of a row it is not, and stays dirt. `notified=R/N`
   // is forgiven only when R equals N, as the ring's `rang=R/N` is.
   ...[
     { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2'] },
     { name: 'call ring ended: declined', reasons: 'ended', rows: ['CALL-WEB-4'] },
     { name: 'call ring ended: cancelled or unanswered', reasons: 'cancelled', rows: ['CALL-WEB-5', 'CALL-WEB-6'] },
-    { name: 'call ring ended: one answered, one busy', reasons: 'answered|cancelled', rows: ['CALL-WEB-7'] },
+    { name: 'call ring ended: one answered and hung up, one busy', reasons: 'answered|cancelled|ended', rows: ['CALL-WEB-7'] },
   ].map(({ name, reasons, rows }) => ({
     name,
     tag: /\[CallsService\] \[(ring\] (endRing|ring-end) |calls\] cleared presence )/,

@@ -39,7 +39,7 @@ const CALLEE = 'third';
 /** The rows `archive/callweb.mjs` plays. `restart` lists the seats closed during the row and reopened. */
 export const CALL_WEB_ROWS = {
   'CALL-WEB-1': { scenario: 'basic', devices: ['W2', 'W4'], callee: CALLEE, what: 'W2 calls W4, W4 accepts: connected, audio both ways (bytes and heard energy), W2 hangs up, both ends end, both DMs record a call that lasted' },
-  'CALL-WEB-2': { scenario: 'mute', devices: ['W2', 'W4'], callee: CALLEE, what: "W2 mutes and unmutes mid-call: muted, W2's track is disabled and W4 hears under 1 % of what it heard; unmuted, at least 20 % again" },
+  'CALL-WEB-2': { scenario: 'mute', devices: ['W2', 'W4'], callee: CALLEE, what: "W2 mutes and unmutes mid-call: muted, W2's track is disabled and W4 hears under 1 % of what it heard; unmuted, W4 hears W2 again - at least 5 % of its pre-mute level AND a fifth of what the unmuted direction (W2 hearing W4) kept over the same windows" },
   'CALL-WEB-3': { scenario: 'callee-hangup', devices: ['W2', 'W4'], callee: CALLEE, what: 'the callee hangs up a connected call: both ends end' },
   'CALL-WEB-4': { scenario: 'decline', devices: ['W2', 'W4'], callee: CALLEE, what: 'W4 declines while ringing: both ends end, the call never connects, and neither DM records it as a call that lasted' },
   'CALL-WEB-5': { scenario: 'cancel', devices: ['W2', 'W4'], callee: CALLEE, what: "W2 hangs up while W4 rings: W4's ring stops, W2 ends, and neither DM records it as a call that lasted" },
@@ -90,6 +90,41 @@ const unanswered = (m) => [recordsAre(m.records, (f) => f === 'other'), `the una
 /** Audio flowing both ways in a window: connected on both seats, packets and bytes in and out. */
 export const bothWays = (flow) => Object.values(flow).every((s) => s.state === 'connected' && s.recv > 0 && s.bytes > 0 && s.sent > 0);
 
+/** The unmuted W4 must keep at least this share of what the CONTROL direction kept over the same windows. */
+export const UNMUTE_SHARE_OF_CONTROL = 0.2;
+/** ... and never less than this share of its own pre-mute level: five times the muted ceiling (1 %). */
+export const UNMUTE_FLOOR = 0.05;
+
+/**
+ * WHETHER W4 HEARS W2 AGAIN AFTER THE UNMUTE, judged against the direction nobody muted.
+ *
+ * WHAT IT MEASURES (2026-10-27). The unmute used to be judged against W4's own pre-mute level alone
+ * (at least 20 %). On `1.5.1-alpha.1` CALL-WEB-2 failed it at 18.7 % - while W2, whose direction was
+ * never muted, heard only 11.5 % of ITS pre-mute level in the same window: the whole call had faded
+ * (gain control, echo canceller), and the judge read that fade as a broken unmute. So the recovery is
+ * now a RATIO OF RATIOS: W4's after/before must reach a fifth of W2's after/before (the control,
+ * same windows), and W4 must also clear an absolute floor of 5 % of its own baseline, so a call
+ * where both directions collapse cannot pass by dividing small by small. Three failures, named:
+ *
+ * - the control direction went silent - the call itself died, and there is nothing to judge against;
+ * - W4 below the floor - the muted direction never came back, whatever the control did;
+ * - W4 below its share of the control - a recovery too small for what the call kept.
+ *
+ * @param {{before: object, after: object}} m the mute row's measurement
+ * @returns {[boolean, string][]}
+ */
+export function unmuteRecovered(m) {
+  const ratio = (seat) => (m.before?.[seat]?.heard > 0 ? (m.after?.[seat]?.heard ?? 0) / m.before[seat].heard : 0);
+  const w4 = ratio('W4');
+  const control = ratio('W2');
+  const pct = (x) => `${(100 * x).toFixed(1)} %`;
+  if (!(control > 0)) return [[false, 'the control direction (W2 hearing W4) went silent after the unmute - the call died, nothing to judge the unmute against']];
+  return [
+    [w4 >= UNMUTE_FLOOR, `W4 did not hear W2 again after the unmute (${pct(w4)} of its pre-mute level, floor ${pct(UNMUTE_FLOOR)})`],
+    [w4 >= UNMUTE_SHARE_OF_CONTROL * control, `W4 heard W2 again too little for what the call kept (${pct(w4)} of its pre-mute level, the control kept ${pct(control)})`],
+  ];
+}
+
 /**
  * One row's verdict from what it measured: `{ ok, failures }`. Each judge names its own failures, so a
  * FAIL says which fact did not hold; `null` rounds mean the fact never happened within its bound.
@@ -111,7 +146,7 @@ export const CALL_JUDGES = {
     [m.senderAtMute?.enabled === false, "W2's audio track was not disabled by the mute"],
     [m.muted.W4.heard < 0.01 * m.before.W4.heard, 'W4 still heard W2 while muted'],
     [m.senderAtUnmute?.enabled === true, "W2's audio track was not enabled again by the unmute"],
-    [m.after.W4.heard > 0.2 * m.before.W4.heard, 'W4 did not hear W2 again after the unmute'],
+    ...unmuteRecovered(m),
     [m.down.W2 !== null && m.down.W4 !== null, 'the hang-up did not end both seats'],
   ],
   'callee-hangup': (m) => [

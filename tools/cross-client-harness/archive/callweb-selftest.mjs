@@ -59,7 +59,19 @@ broken('basic', { rang: null }, 'no ring fails, one failure');
 broken('basic', { flow: flow(0, 1) }, 'a seat that heard no energy fails');
 broken('basic', { down: { W2: 3, W4: null } }, 'one end left up fails');
 broken('mute', { muted: flow(1, 0.5) }, 'W4 still hearing W2 while muted fails');
-broken('mute', { after: flow(1, 0.1) }, 'W4 hearing under 20 % after the unmute fails');
+broken('mute', { after: flow(1, 0.1) }, '(c) W4 back at 10 % while the control kept everything: too small for what the call kept, fails');
+broken('mute', { after: flow(0.5, 0.08) }, '(c) W4 back at 8 % while the control kept 50 %: under a fifth of it, fails');
+broken('mute', { after: flow(0, 0) }, '(b) both directions dead after the unmute: the control is silent, fails');
+broken('mute', { after: flow(0.02, 0.01) }, 'both faded to almost nothing: W4 under the 5 % floor, fails - small over small never passes');
+{
+  const r = callOwn('mute', { ...CLEAN.mute, after: flow(1, 0.001) });
+  ok('mute: (a) the muted direction never recovering while the control holds steady fails, on the floor AND the share', r.verdict === 'FAIL' && r.failures.length === 2);
+}
+{
+  // THE 1.5.1-alpha.1 READING (2026-10-27): both directions faded together after the unmute.
+  const m = { ...CLEAN.mute, before: flow(1.612, 1.085), muted: flow(0.802, 0.0103), after: flow(0.186, 0.203) };
+  ok('mute: W4 back at 18.7 % while the unmuted control kept 11.5 % passes - the call faded, the unmute worked', callOwn('mute', m).verdict === 'PASS');
+}
 broken('mute', { senderAtMute: { enabled: true } }, 'a track left enabled by the mute fails');
 broken('decline', { neverConnected: false }, 'a declined call that connected fails');
 broken('cancel', { ringStopped: null }, 'a ring that never stopped fails');
@@ -221,7 +233,7 @@ const CLEARED = `${NEST('DEBUG')}[calls] cleared presence for user=${U64} device
 ok('an answered call ends its ring answered, then ended (CALL-WEB-1, 2)', ['CALL-WEB-1', 'CALL-WEB-2'].every((r) => expectedIn(END_RING('answered'), r) && expectedIn(END_RING('ended'), r)));
 ok('a declined call ends its ring ended (CALL-WEB-4)', expectedIn(END_RING('ended'), 'CALL-WEB-4'));
 ok('a cancelled or unanswered call ends its ring cancelled (CALL-WEB-5, 6)', ['CALL-WEB-5', 'CALL-WEB-6'].every((r) => expectedIn(END_RING('cancelled'), r)));
-ok('the busy row ends one ring answered and one cancelled (CALL-WEB-7)', expectedIn(END_RING('answered'), 'CALL-WEB-7') && expectedIn(END_RING('cancelled'), 'CALL-WEB-7'));
+ok('the busy row ends one ring answered then ended, and one cancelled (CALL-WEB-7)', ['answered', 'ended', 'cancelled'].every((r) => expectedIn(END_RING(r), 'CALL-WEB-7')));
 ok('COUNTER: a decline whose ring ended answered stays dirt', !expectedIn(END_RING('answered'), 'CALL-WEB-4'));
 ok('COUNTER: a cancel whose ring ended answered stays dirt', !expectedIn(END_RING('answered'), 'CALL-WEB-5'));
 ok('COUNTER: an answered call whose ring ended cancelled stays dirt', !expectedIn(END_RING('cancelled'), 'CALL-WEB-1'));
