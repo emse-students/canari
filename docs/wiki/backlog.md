@@ -1973,6 +1973,26 @@ is its first compile and the iPhone readings listed under Owed on
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
 
+## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
+
+- **A text restored while an edit is open is LOST.** A refused send answered (or a share landing)
+  on the conversation being edited goes through `restoreFailedDraft` into the composer, which holds
+  the edited message's text; `cancel`, `confirm` and `reset` then put back the draft saved at
+  `begin` (`editSession.svelte.ts`), and the restored text is gone - or, on `confirm`, saved as part
+  of the edited message.
+- **The salon ledger detour stays, for durability.** A salon text resumed after the member left the
+  salon goes back to the ledger (`recordUnsentSalonText`), not straight into that salon's draft
+  through the gated writer: the ledger is persisted, the drafts are memory only, so a page closed
+  before the next visit would lose it. Simplifying it waits for drafts that outlive the page.
+- **A mention dropdown can outlive a conversation switch.** `useMentionAutocomplete` closes only on
+  input: type `@ali` in A, switch to B before the debounced search answers or with the list open,
+  and the list (A's members) stays over B's composer until the next keystroke.
+- **Drafts are never removed when a conversation is left or deleted**: the entry stays in
+  `draftByConversation` until sign-out. Memory only and per page life, so small - but a conversation
+  re-joined later shows the old text.
+
+[chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
+
 ## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
 
 A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
@@ -1993,6 +2013,9 @@ discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and categ
    the launch import line says `locked with the device` - NOT `ERROR: the share could not be moved
    or handed over` (a refused protection or create must classify as locked, by its code) - the
    share is still in the App Group, and no `dropped`, `unreadable` or deletion line.
+   Seeing instead a refusal named `NSCocoaErrorDomain 513` WITHOUT an underlying POSIX error is the
+   outcome this reading exists to find, not a regression: Foundation then gave no code to classify
+   by. Record it here as measured, and the classification is redesigned from that fact.
 4. Unlock straight into Canari: the share is offered on the first activation.
 5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
    and the locked push launch mounts the page: after the unlock it is offered with no new launch
@@ -2048,6 +2071,10 @@ Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlis
 build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG` (the compose
 default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
 request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
+**Also allowlisted on 2026-10-27 for the same image, same condition (a release that ships them):** dnspython 2.8.0 (`CVE-2026-114605`, fixed in 2.9.0), msgpack 1.2.1 (`CVE-2026-114613`, 1.2.3) and oauthlib 3.3.1 (`CVE-2026-49272`, 4.0.0). Each entry is scoped by purl and retires through the same check, so the bump pull request deletes all four together.
+
+**Frontend build tooling, 2026-10-28:** `GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1, prototype poisoning in `mergeObject()`, no fixed version published) is ignored in the frontend's dependency audit with its reachability argument in `code-analysis.yml`. Delete the ignore when a fixed `deepmerge` reaches the tree; the audit's retirement step fails until it is.
 
 ## Owed a VERIFICATION, and nothing else
 

@@ -37,6 +37,11 @@ message, a picture or a post opens the system sheet.
    Names are reduced to their last segment and a conservative character set
    (`share/SharedFileName.kt`). `onCreate` skips a relaunch (`savedInstanceState`,
    `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) so a share is never offered twice.
+   **A share that kept no file keeps no folder**: a text share, or one whose every stream was
+   refused, deletes its `shared_inbox/<id>/` before the manifest is written. No manifest entry names
+   that folder, so nothing else would delete it while the process lives - text shares left one
+   empty folder each until 2026-10-27 (Mi 9T); `sweepOrphansOnce` removes those at the next process
+   start. Guard: `androidShareInbox.test.ts`.
    **At rest**: the manifest (files dir) and the copies (`cache/shared_inbox/`) live in the app's
    credential-encrypted storage - unreadable until the first unlock after boot, then readable by the
    app's uid alone - and neither is backed up (the cache never is; the data domain is excluded).
