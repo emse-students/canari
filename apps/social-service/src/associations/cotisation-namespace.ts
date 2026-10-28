@@ -55,6 +55,17 @@ export async function stemCollidesElsewhere(
 }
 
 /**
+ * Whether an error is the refusal `assertCotisationStemFree` throws, read from its typed `code` -
+ * so a caller that can cure the collision (a DERIVED slug walking to its next suffix) tells it apart
+ * from every other 409 without reading a message.
+ */
+export function isCotisationStemCollision(err: unknown): boolean {
+  if (!(err instanceof ConflictException)) return false;
+  const body = err.getResponse();
+  return typeof body === 'object' && (body as { code?: unknown }).code === COTISATION_TAG_COLLISION;
+}
+
+/**
  * Refuses (409 `COTISATION_TAG_COLLISION`) a cotisation stem (`cotisationStem`) that could derive
  * the same tag name as a stem of ANOTHER association: its slug (the base tier, whether or not it
  * has cotisations enabled yet, since it may enable them later) or `<slug>-<variantKey>` for each of

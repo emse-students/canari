@@ -156,6 +156,22 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
 
+### No date yet - an explicit slug sent on association creation, by a client older than the derived slug
+
+**Site:** the `explicitSlug` branch of `AssociationsService.create`
+(`apps/social-service/src/associations/associations.service.ts`) and the optional
+`CreateAssociationDto.slug`.
+**What it humours:** since the slug became derived by the server (2026-10-26,
+[associations](frontend/modules/associations.md#the-slug-is-a-technical-id-derived-by-the-server-never-shown-typed-or-edited-user-2026-10-26)),
+the app sends none. An APK or IPA older than that release EMBEDS the old form, which still sends the
+slug its creator typed; the branch validates it (pattern, reserved route words) and refuses it `400`
+when taken, as before, so those builds keep creating.
+**The cost while it stands:** any API caller - not only an old build - may still choose its slug.
+That squatting is NOT new (every client could before), and it ends with the branch.
+**Removal condition:** `minClientVersion` covers the release carrying the derived slug on BOTH stores,
+so no supported client still sends one. Then make the DTO refuse `slug` (or drop it) and delete the
+branch and its tests; the derived path is then the only one.
+
 ### No date yet - a member client older than the admission rule still adds a new person automatically
 
 **Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
