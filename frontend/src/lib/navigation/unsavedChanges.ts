@@ -35,7 +35,9 @@ export function guardUnsavedChanges(
       if (!leave) return;
       released = true;
       const path = `${appPathFromPathname(target.pathname)}${target.search}${target.hash}`;
-      void gotoAppPath(path);
+      gotoAppPath(path).catch((err: unknown) =>
+        console.error('[NAV] unsaved changes: the confirmed navigation failed:', err)
+      );
     });
   });
   return {

@@ -256,7 +256,9 @@
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
         goto(resolve('/posts'));
       } else {
-        void gotoAppPath(returnTo);
+        gotoAppPath(returnTo).catch((err: unknown) =>
+          console.error('[forms] the form is saved, but leaving the builder failed:', err)
+        );
       }
     } catch (e: any) {
       error = e.message;

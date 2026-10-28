@@ -43,12 +43,12 @@ describe('the default test environment', () => {
     const files = testFiles(SRC);
     // Reading the tree it thinks it is: the suite has hundreds of test files, and some declare.
     expect(files.length).toBeGreaterThan(500);
-    const declaring = files.filter((file) =>
-      readFileSync(join(SRC, file), 'utf8').startsWith(PRAGMA)
-    );
+    // Each file read ONCE: two passes over a thousand files outran the budget under a loaded suite.
+    const sources = new Map(files.map((file) => [file, readFileSync(join(SRC, file), 'utf8')]));
+    const declaring = files.filter((file) => sources.get(file)!.startsWith(PRAGMA));
     expect(declaring.length).toBeGreaterThan(100);
     const misplaced = files.filter((file) => {
-      const lines = readFileSync(join(SRC, file), 'utf8').split('\n');
+      const lines = sources.get(file)!.split('\n');
       return lines.some((line, index) =>
         index === 0 ? ANY_TOKEN.test(line) && line.trimEnd() !== PRAGMA : ANY_TOKEN.test(line)
       );

@@ -49,9 +49,21 @@ const ROUTES: StubRoute[] = Object.keys(import.meta.glob('/src/routes/**/+page.s
   })
   .sort((a, b) => a.dynamic - b.dynamic);
 
-/** Matches a path against `src/routes`, as `match` does in the app (params are not extracted). */
+/** The page a node-environment test stands on, which has no `window`. */
+const NODE_TEST_PAGE = 'https://canari.test/';
+
+/**
+ * Matches a path against `src/routes`, as `match` does in the app (params are not extracted).
+ *
+ * Like Kit's (`client.js`, `set_match_implementation` -> `get_navigation_intent`), a string is
+ * resolved against the CURRENT page, and a URL on another origin matches nothing - so a test of a
+ * target that leaves the origin sees the `null` the app would.
+ */
 export async function match(url: string | URL): Promise<{ id: string; params: object } | null> {
-  const { pathname } = new URL(url, 'https://canari.test');
+  const page = typeof window !== 'undefined' ? window.location.href : NODE_TEST_PAGE;
+  const resolved = new URL(url, page);
+  if (resolved.origin !== new URL(page).origin) return null;
+  const { pathname } = resolved;
   const route = ROUTES.find((r) => r.pattern.test(pathname));
   return route ? { id: route.id, params: {} } : null;
 }

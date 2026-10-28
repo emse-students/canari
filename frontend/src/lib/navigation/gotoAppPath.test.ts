@@ -4,8 +4,8 @@
  *
  * Kit 3's `goto` REJECTS a path no route matches, where Kit 2 navigated natively. `gotoAppPath`
  * asks the route table first: a page of this build goes through the router, anything else is loaded
- * as a document so the server answers it (a newer build's page, or the 404 page) - and is logged at
- * error by its shape. The route table here is the app's own (`src/test/mocks/app-paths.ts` reads
+ * as a document (the server on the web, the embedded build on a phone) - and is logged at error by
+ * its shape. A target is validated against the page's origin before a full-page load. The route table here is the app's own (`src/test/mocks/app-paths.ts` reads
  * `src/routes`), so these are the answers the app gives.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -39,7 +39,9 @@ describe('gotoAppPath', () => {
     const { assign, replace } = stubDocumentLoads();
     await gotoAppPath('/a-page-removed-since/1234-5678?x=1');
     expect(goto).not.toHaveBeenCalled();
-    expect(assign).toHaveBeenCalledWith('/a-page-removed-since/1234-5678?x=1');
+    expect(assign).toHaveBeenCalledWith(
+      new URL('/a-page-removed-since/1234-5678?x=1', window.location.href).href
+    );
     expect(replace).not.toHaveBeenCalled();
     // Logged at ERROR, by its shape: the first segment only, never the id after it.
     expect(error).toHaveBeenCalledTimes(1);
@@ -52,7 +54,33 @@ describe('gotoAppPath', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const { assign, replace } = stubDocumentLoads();
     await gotoAppPath('/nowhere', { replace: true });
-    expect(replace).toHaveBeenCalledWith('/nowhere');
+    expect(replace).toHaveBeenCalledWith(new URL('/nowhere', window.location.href).href);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('loads nothing for a target that resolves to another origin', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { assign, replace } = stubDocumentLoads();
+    const TAB = String.fromCharCode(9);
+    const LF = String.fromCharCode(10);
+    const CR = String.fromCharCode(13);
+    const BS = String.fromCharCode(92);
+    for (const target of [
+      `/${TAB}/x.example/p`,
+      `/${LF}/x.example`,
+      `/${CR}/x.example`,
+      `/${TAB}${BS}x.example`,
+    ]) {
+      await gotoAppPath(target);
+      await gotoAppPath(target, { replace: true });
+    }
+    expect(assign).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(goto).not.toHaveBeenCalled();
+    // Logged by length only: no part of the value reaches the log.
+    for (const [line] of error.mock.calls) {
+      expect(String(line)).toContain('another origin');
+      expect(String(line)).not.toContain('x.example');
+    }
   });
 });

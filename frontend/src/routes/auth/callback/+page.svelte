@@ -40,13 +40,21 @@
       console.debug('[callback] handleOidcCallback resolved, user:', user?.id);
 
       status = m.auth_callback_success();
+    } catch (e: unknown) {
+      console.error('[callback] error:', e);
+      error = e instanceof OidcSignInError ? e.message : m.auth_callback_exchange_failed();
+      return;
+    }
+
+    // OUTSIDE the exchange's `try`: the reader IS signed in by now, so a navigation that fails is
+    // a navigation failure, logged as one - never reported to them as a failed exchange.
+    try {
       const returnTo = await getOidcReturnTo();
       console.debug('[callback] goto ->', returnTo);
       await gotoAppPath(returnTo, { replace: true });
       console.debug('[callback] goto resolved');
     } catch (e: unknown) {
-      console.error('[callback] error:', e);
-      error = e instanceof OidcSignInError ? e.message : m.auth_callback_exchange_failed();
+      console.error('[callback] signed in, but the navigation to the return target failed:', e);
     }
   });
 </script>

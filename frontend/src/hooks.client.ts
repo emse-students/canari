@@ -71,7 +71,17 @@ export const handleError: HandleClientError = (caught) => {
   console.error('[App] Client error:', caught.error);
 };
 
-/** Optional init hook - called once before the app starts. No setup needed here. */
+/**
+ * Optional init hook - called once before the app starts. No setup needed here.
+ *
+ * IT STAYS SYNCHRONOUS, AND A COLD-START DEEP LINK RESTS ON THAT. Kit's `_start` sets `app`, awaits
+ * this hook, and only THEN builds the route table that `match` and `goto` read (`client.js`,
+ * `app = _app` -> `await hooks.init()` -> `routes = parse_routes()`); a `match` before it throws. The
+ * launch URL below reaches `gotoAppPath` only after a Tauri IPC reply, which arrives as a task, while
+ * everything from this module's evaluation to the route table is microtasks - as long as this hook
+ * does no I/O. An `async` init that awaited anything real would open that window and lose the link
+ * to a rejection. `coldStartOrder.test.ts` holds this hook to its synchronous signature.
+ */
 export function init(): void {}
 
 // ════════════════════════════════════════════════════════════════════════════

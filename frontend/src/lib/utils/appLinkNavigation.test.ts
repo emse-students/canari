@@ -17,12 +17,17 @@ describe('openClaimedAppLink', () => {
     await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/c/join/tok#AAAAF2Nhbg-_x', {}));
   });
 
-  it('loads a Canari page this build does not have as a document, for the server to answer', async () => {
+  it('loads a Canari page this build does not have as a document', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
-    // A link to a page added after this app was built (a newer web build may serve it).
+    // A link to a page added after this app was built. In the phone apps the document load restarts
+    // the same embedded build, which ends on its own 404 page; on the web the server answers.
     expect(openClaimedAppLink('https://canari.emse.fr/posts/abc/a-newer-tab')).toBe(true);
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/posts/abc/a-newer-tab'));
+    await vi.waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        new URL('/posts/abc/a-newer-tab', window.location.href).href
+      )
+    );
     expect(goto).not.toHaveBeenCalled();
     assign.mockRestore();
   });

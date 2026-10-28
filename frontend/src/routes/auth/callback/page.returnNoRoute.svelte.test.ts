@@ -6,7 +6,8 @@
  * The callback's `returnTo` is the page the reader asked for before signing in - of unknown origin,
  * and possibly a page this build does not have (a link to a newer build's page). Kit 3's `goto`
  * rejects such a path, and the rejection landed in the callback's catch, which tells the reader
- * the code exchange failed after it had succeeded. It now goes through `gotoAppPath`.
+ * the code exchange failed after it had succeeded. It now goes through `gotoAppPath`, OUTSIDE the
+ * exchange's `try`, so no navigation failure is ever reported as an exchange failure.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -56,8 +57,25 @@ describe('the OIDC callback, going back where the reader was', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {});
     await signInReturningTo('/a-newer-builds-page');
-    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith('/a-newer-builds-page'));
+    await vi.waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        new URL('/a-newer-builds-page', window.location.href).href
+      )
+    );
     expect(nav.goto).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(m.auth_callback_exchange_failed());
+  });
+
+  it('never says the exchange failed when the navigation itself rejects', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    nav.goto.mockRejectedValueOnce(new Error('a navigation that failed'));
+    await signInReturningTo('/calendar');
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('navigation to the return target failed'),
+        expect.any(Error)
+      )
+    );
     expect(document.body.textContent).not.toContain(m.auth_callback_exchange_failed());
   });
 });

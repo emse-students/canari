@@ -5,7 +5,8 @@
  *
  * Kit 3's `goto` rejects a path no route matches. The Back button handed `redirect` to `goto`, so a
  * dead one made Back do nothing; it now goes through `gotoAppPath`, which loads such a path as a
- * document for the server to answer, and routes a live one as before.
+ * document (the server on the web, the embedded build on a phone), and routes a live one as before.
+ * A navigation that rejects is logged, never dropped as an unhandled rejection.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -99,7 +100,24 @@ describe("a form's Back, led by its ?redirect=", () => {
     const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     await openWithRedirect('/a-page-this-build-lost');
     clickBack();
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/a-page-this-build-lost'));
+    await vi.waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        new URL('/a-page-this-build-lost', window.location.href).href
+      )
+    );
     expect(nav.goto).not.toHaveBeenCalled();
+  });
+
+  it('logs a navigation that rejects instead of leaving it unhandled', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    nav.goto.mockRejectedValueOnce(new Error('a navigation that failed'));
+    await openWithRedirect('/associations/bde');
+    clickBack();
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('leaving the form'),
+        expect.any(Error)
+      )
+    );
   });
 });

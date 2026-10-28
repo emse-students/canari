@@ -5,7 +5,8 @@
  * `returnTo` is of unknown origin (a link, a bookmark). Kit 3's `goto` rejects a path no route
  * matches, and the builder called it without awaiting: the form was created, the builder stayed on
  * screen with its save button live again, and a second press created a second form. The return
- * now goes through `gotoAppPath`, which loads such a path as a document for the server to answer.
+ * now goes through `gotoAppPath`, which loads such a path as a document (the server on the web, the
+ * embedded build on a phone).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -41,6 +42,13 @@ vi.mock('$lib/pricing/criteriaOptions', async (orig) => ({
 }));
 
 import Page from './+page.svelte';
+
+/**
+ * Mounting the whole builder is the cost of these tests: about 5 s for the first under a loaded
+ * suite (the component graph is transformed on that first mount), well under 1 s after. The budget
+ * says so rather than the 5 s default, which the first test met and missed.
+ */
+const MOUNT_BUDGET_MS = 30_000;
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -80,20 +88,32 @@ async function saveReturningTo(returnTo: string) {
 }
 
 describe('the form builder, once the form is saved', () => {
-  it('routes back to a page this build has', async () => {
-    await saveReturningTo('/associations/bde/edit/forms');
-    expect(api.createForm).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() =>
-      expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
-    );
-  });
+  it(
+    'routes back to a page this build has',
+    async () => {
+      await saveReturningTo('/associations/bde/edit/forms');
+      expect(api.createForm).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() =>
+        expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
+      );
+    },
+    MOUNT_BUDGET_MS
+  );
 
-  it('loads a page this build lacks as a document rather than staying put', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
-    await saveReturningTo('/a-page-this-build-lost');
-    expect(api.createForm).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/a-page-this-build-lost'));
-    expect(nav.goto).not.toHaveBeenCalled();
-  });
+  it(
+    'loads a page this build lacks as a document rather than staying put',
+    async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+      await saveReturningTo('/a-page-this-build-lost');
+      expect(api.createForm).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() =>
+        expect(assign).toHaveBeenCalledWith(
+          new URL('/a-page-this-build-lost', window.location.href).href
+        )
+      );
+      expect(nav.goto).not.toHaveBeenCalled();
+    },
+    MOUNT_BUDGET_MS
+  );
 });
