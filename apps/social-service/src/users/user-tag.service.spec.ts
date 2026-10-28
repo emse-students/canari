@@ -612,11 +612,10 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         tagName: 'cotisant:cercle-sans-alcool',
         issuingAssocId: 'asso1',
       });
-      expect(repo.delete).not.toHaveBeenCalledWith({
-        userId: 'user1',
-        tagName: 'cotisant:cercle-avec-alcool',
-        issuingAssocId: 'asso1',
-      });
+      // Partial on purpose: a delete of the renewed tier is a failure whatever else it names.
+      expect(repo.delete).not.toHaveBeenCalledWith(
+        expect.objectContaining({ tagName: 'cotisant:cercle-avec-alcool' })
+      );
     });
 
     // The paid form's pre-check, before any payment request: the same rank, no lock, no write.

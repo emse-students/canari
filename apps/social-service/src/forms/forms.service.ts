@@ -63,7 +63,7 @@ import {
 } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
-import { tierRefusal } from '../associations/tier-pricing';
+import { formTierRefusal, type FormTierRank } from '../associations/tier-pricing';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -805,32 +805,53 @@ export class FormsService {
 
   /**
    * Refuses, BEFORE any payment request is opened, a paid answer to a form that grants a cotisation
-   * tier which is not a rise over the tier the submitter holds - the boutique checkout's rule
-   * (`tierRefusal`, the one mapping), with its typed 409 codes. Without it the money was taken and
-   * the grant refused afterwards, leaving a refund owed (`paid_not_granted`). A pre-check: the grant
-   * re-ranks under the buyer's tier lock when the payment lands (`grantCotisantIfARise`).
+   * tier the submitter could not be granted - the boutique checkout's rule, with a form's own
+   * wording (`formTierRefusal`): a tier the association no longer sells (`FORM_TIER_NOT_SOLD`, for
+   * everybody: the grant would throw on it), the tier already held (`FORM_TIER_ALREADY_HELD`), or
+   * one that is not a rise over the tier held (`TIER_NOT_A_RISE`, `TIER_NOT_RANKABLE`). Without it
+   * the money was taken and the grant refused afterwards, leaving a refund owed
+   * (`paid_not_granted`). A pre-check: the grant re-ranks under the buyer's tier lock when the
+   * payment lands (`grantCotisantIfARise`).
    */
   private async assertGrantedTierIsARise(
     form: Pick<Form, 'id' | 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
     userId: string | undefined
   ): Promise<void> {
     if (!form.grantsCotisation || !form.associationId || !userId) return;
-    const relation = await this.userTagService.rankCotisationTier(
-      form.associationId,
-      userId,
-      form.cotisationVariantKey
-    );
-    const refusal = tierRefusal(relation);
+    const rank = await this.formTierRank(form.associationId, userId, form.cotisationVariantKey);
+    const refusal = formTierRefusal(rank);
     this.logger.debug(
       `[Forms] granted tier rank: form=${form.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
-        `tier=${form.cotisationVariantKey ?? 'base'} relation=${relation}`
+        `tier=${form.cotisationVariantKey ?? 'base'} rank=${rank}`
     );
     if (!refusal) return;
     this.logger.log(
       `[Forms] submit refused (${refusal.code}): form=${form.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
-        `tier=${form.cotisationVariantKey ?? 'base'} is not a rise (relation=${relation})`
+        `tier=${form.cotisationVariantKey ?? 'base'} cannot be granted (rank=${rank})`
     );
     throw new ConflictException(refusal);
+  }
+
+  /**
+   * Where the tier a paid form grants stands for `userId`: `not-sold` when the association has
+   * cotisation tiers and none carries `variantKey` (the grant validates against that same catalogue
+   * and would refuse it), else the ranked grant's own decision (`rankCotisationTier`). An
+   * association with no cotisation at all answers `none`, as before.
+   */
+  private async formTierRank(
+    associationId: string,
+    userId: string,
+    variantKey: string | null
+  ): Promise<FormTierRank> {
+    const tiers = await this.userTagService.listCotisationTiers(associationId);
+    if (tiers.length > 0 && !tiers.some((t) => t.variantKey === variantKey)) {
+      this.logger.warn(
+        `[Forms] the form's tier ${variantKey ?? 'base'} is not among the ${tiers.length} tier(s) ` +
+          `of assoc=${associationId.slice(0, 8)} - no paid answer is taken until the form is fixed`
+      );
+      return 'not-sold';
+    }
+    return this.userTagService.rankCotisationTier(associationId, userId, variantKey);
   }
 
   /**
@@ -859,7 +880,8 @@ export class FormsService {
       return 'granted';
     }
     try {
-      // Ranked like a boutique settlement: a paid form never swaps out a dearer tier by the XOR.
+      // Ranked under the buyer's tier lock, so a paid form never swaps out a dearer tier by the XOR;
+      // unlike a settlement, it renews the tier when that very tier is held (`grantCotisantIfARise`).
       const outcome = await this.userTagService.grantCotisantIfARise(
         form.associationId,
         userId,

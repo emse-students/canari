@@ -1790,6 +1790,17 @@ export interface AssociationProduct {
    */
   viewerDueCents?: number | null;
   /**
+   * A membership product whose association's cotisations are disabled: the checkout refuses it
+   * (`COTISATION_DISABLED`). Set by the shop and per-association listings.
+   */
+  cotisationDisabled?: boolean;
+  /**
+   * The `variantKey` of the tier `memberPriceTag` names, as the server reads the tag - what a
+   * preferential price is worded "for holders of". Absent when there is no tag, when it names no
+   * tier, or when the server did not read the viewer's tiers. Never re-derived from the tag here.
+   */
+  memberPriceTierKey?: string | null;
+  /**
    * The pricing grid: the criteria this product discriminates on, and one price per combination.
    * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
    *
@@ -1871,8 +1882,10 @@ export interface AssociationPurchase {
   firstName: string | null;
   lastName: string | null;
   /**
-   * A cotisation tier paid for and NOT granted: it was no longer a rise over the tier the buyer held
-   * when the payment landed. A refund or a manual grant is owed.
+   * Money received for something NOT delivered: a boutique tier the settlement did not grant (no
+   * longer a rise over the tier held), a product deleted or a buyer erased before the payment
+   * landed, or a paid form that grants a tier and did not grant it. A refund or a manual grant is
+   * owed.
    */
   notGranted?: boolean;
   /**
