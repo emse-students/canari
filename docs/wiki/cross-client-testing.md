@@ -214,12 +214,12 @@ ring window. The first readings were a scratch runner; the repo row replays them
 | CALL-WEB-1 | W2 calls W4, W4 accepts: connected, audio heard both ways, W2 hangs up, both end | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the end-of-call and ring-end rules of #2636 |
 | CALL-WEB-2 | W2 mutes and unmutes mid-call: W4 hears under 1 %, then hears W2 again - at least 5 % of its pre-mute level AND a fifth of what the unmuted direction kept | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the control-relative judge of #2636. The first alpha.1 run FAILED the old 20 % bar at 18.7 % while W2, never muted, kept 11.5 %: the whole call faded, the unmute worked |
 | CALL-WEB-2q | CALL-WEB-2 with W4 muted first, the scratch diagnostic of the shared beep | W2 W4 - U | `PASS-DIRTY` - `1.4.1-alpha.6`: with no echo of its own beep, W2 is heard again after the unmute; the repo row has no such variant |
-| CALL-WEB-3 | the callee hangs up a connected call: both end | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-3 | the callee hangs up a connected call: both end | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 (its ends and ring-end read the same night) |
 | CALL-WEB-4 | W4 declines while ringing: both end, never connected | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 |
 | CALL-WEB-5 | W2 hangs up while W4 rings: W4's ring stops, W2 ends | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 |
 | CALL-WEB-6 | every device of the callee closed: W2 rings until the server's 60 s window closes | W2, W4 W8 closed - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636 |
 | CALL-WEB-7 | W5 calls W4 while W4 is in a call: W4 not rung over it, the call keeps flowing | W2 W4 W5 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636: W5 is answered busy and ends at once (B16). The first run was an ssh transport ERROR and the second PASS-DIRTY on the hang-up `endRing reason=ended` the first rule had not read |
-| CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: chat-delivery ring/presence debug lines |
+| CALL-WEB-8 | W4's page reloads mid-call: W2's call ends | W2 W4 - U | `PASS` - `1.5.1-alpha.1` (dev.87d84bf), on the rules of #2636: W2 ends on the peer leaving the room, the ring ends `answered` only. The run before was PASS-DIRTY on one single-post read in social-service that no seat of the row made and that did not recur |
 
 ## LIVE - a live broadcast, watched from the web
 
