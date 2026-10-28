@@ -297,20 +297,30 @@
     const search = params.get('search') === '1';
     if (!compose && !search) return;
 
-    if (compose) showCreateModal = true;
-    if (search) {
-      searchOpen = true;
-      // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
-      queueMicrotask(() => searchInput?.focus());
-    }
-
     const u = new URL(page.url.href);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
-    void goto(resolve(internalPath(feedPath(u))), {
-      replace: true,
-      reset: false,
-    });
+    // THE STRIP FIRST, THE COMMAND ONCE IT HAS LANDED. The strip is a navigation, and the root
+    // layout closes every open overlay before one (`drainHistoryOverlayStack`). SvelteKit 3's
+    // `goto` reaches that hook only after awaiting the route's intent, so a modal opened in this
+    // same tick had already registered and was closed as it opened (Mi 9T, 2026-10-28): the
+    // command acts after the navigation instead, when nothing is left to drain it.
+    void goto(resolve(internalPath(feedPath(u))), { replace: true, reset: false }).then(
+      () => {
+        if (page.url.pathname !== u.pathname) {
+          Log.i('POSTS', 'feed command dropped: the strip was overtaken by another navigation');
+          return;
+        }
+        if (compose) showCreateModal = true;
+        if (search) {
+          searchOpen = true;
+          // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
+          queueMicrotask(() => searchInput?.focus());
+        }
+      },
+      (e: unknown) =>
+        console.error(`[POSTS] feed command not performed: its strip failed: ${String(e)}`)
+    );
   });
 
   /**
