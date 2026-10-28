@@ -237,6 +237,19 @@ that build predates the fix (#2583); the AFTER reading is owed on the pre-releas
 | LIVE-STALL-1 | L-F1: A1 broadcasts for a minute to W2 and W4; no viewer stalls after its first delivery gap; each target buffer is recorded | A1 W2 W4 - B | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef, A1 8cd51abf): W2 stalled 29 times and W4 26 times in 60 s, no delivery gap named (L-F1, before #2583); server window clean; A1 sealed 8 of 30 chunks as fragment pairs |
 | LIVE-WEB-3 | LIVE-WEB-2 with W4's account following the broadcaster: the announcement names one follower | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: `followers=1`, the push found no token on a web account (a device reading is owed) |
 
+## FOL - a follow request between two accounts (WP-F4)
+
+Every personal account is private (decided 2026-10-25): a follow of a person is a request the person
+answers ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+No runner yet: the row is the spec the runner implements, and nothing is recorded before the
+pre-release carrying WP-F1..F4 is on dev. Every wait is counted in rounds, never a clock. The profile
+button's state is read off its `data-follow-status`, and every list off its own rows
+(`data-follow-person`).
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| FOL-REQ-1 | W2 asks to follow W4: W2's button reads `pending` across a reload. W4 gets one `follow_request` bell row and the inbox banner. W4 accepts from `/notifications/follow-requests`: W2 reads `accepted` and gets one `follow_accepted` row. W4 removes W2 from "Mes abonnes": W2 reads `none` after a reload and is told nothing. W2 asks again: W4's inbox lists it, and NO second `follow_request` row or push reaches W4 (once per pair) | W2 W4 - U | `pending` - owed on the pre-release that carries #2589, #2601, #2605 and WP-F4 |
+
 ## TOK - a token expiring in the middle of an operation
 
 | Id | What it asks | Needs | State |

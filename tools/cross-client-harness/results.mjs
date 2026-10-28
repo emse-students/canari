@@ -45,7 +45,7 @@ const SOURCE_STAMP = readSourceStamp()?.sha ?? null;
  * the build's own millisecond timestamp into it, and it changes with every build. That is the
  * evidence, in the sense of rule 17 - a property of the code that is actually serving.
  *
- * THE COMMIT IS NAMED BY THE BUNDLE ITSELF: `svelte.config.js` writes `<builtAtMs>-<sha>` into
+ * THE COMMIT IS NAMED BY THE BUNDLE ITSELF: `kit.config.js` writes `<builtAtMs>-<sha>` into
  * `version.json`, and `parseBuildStamp` reads it back - no clock, no history, no inference. The
  * timestamp stays beside the commit because it separates two builds of the SAME commit.
  *

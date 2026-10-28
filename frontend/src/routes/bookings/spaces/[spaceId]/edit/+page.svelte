@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -101,9 +102,9 @@
   /** Back to the entity's bookings tab once the space is gone, or to Reservations for a personal one. */
   async function leave() {
     if (owner?.type === 'list') {
-      await goto(resolve(editSectionHref(owner.slug, 'reservations', '/lists')));
+      await goto(resolve(internalPath(editSectionHref(owner.slug, 'reservations', '/lists'))));
     } else if (owner) {
-      await goto(resolve(editSectionHref(owner.slug, 'reservations')));
+      await goto(resolve(internalPath(editSectionHref(owner.slug, 'reservations'))));
     } else {
       await goto(resolve(BOOKINGS_HREF));
     }

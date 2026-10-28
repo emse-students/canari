@@ -214,6 +214,9 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
     // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.
     case "social_live_started": composed = actorTitled("live_started")
+    // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
+    case "social_follow_request": composed = actorTitled("follow_request")
+    case "social_follow_accepted": composed = actorTitled("follow_accepted")
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn":

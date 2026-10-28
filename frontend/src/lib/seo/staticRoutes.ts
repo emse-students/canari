@@ -2,7 +2,7 @@
  * Which paths SvelteKit resolves to a STATIC route, derived from the route tree at build time.
  *
  * It is its own module for the reason `sitemap.ts` is: `serverSeo.ts` reaches the services through
- * `internalApi.ts`, which reads `$env/dynamic/private` and therefore cannot be imported outside a
+ * `internalApi.ts`, which reads `$app/env/private` and therefore cannot be imported outside a
  * server process. This fact needs none of that - it is a statement about the route tree alone.
  */
 
