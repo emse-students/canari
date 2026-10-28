@@ -336,6 +336,11 @@ function readErrorCode(body: string): string | null {
   }
 }
 
+/** The `?actorDevice=` of a removal request, or nothing when no committing device is named. */
+function actorDeviceQuery(actorDeviceId?: string): string {
+  return actorDeviceId ? `?actorDevice=${encodeURIComponent(actorDeviceId)}` : '';
+}
+
 export class ChannelService {
   private baseUrl: string;
 
@@ -657,13 +662,39 @@ export class ChannelService {
     return res.json();
   }
 
-  async kickFromWorkspace(workspaceId: string, targetUserId: string) {
+  /**
+   * @param actorDeviceId this device, when it will commit the key-group Remove itself
+   *   (`committingDeviceId`); the receivers then leave it to this device instead of electing one.
+   */
+  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorDeviceId?: string) {
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(targetUserId)}`,
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(targetUserId)}${actorDeviceQuery(actorDeviceId)}`,
       { method: 'DELETE' }
     );
     await this.handleError(res);
     return res.json();
+  }
+
+  /**
+   * Releases the key-group Remove of `userId` this device claimed in `scope` and knows it did not
+   * commit (`commitRemoval.ts`): the scope's remaining members elect a committer on the event the
+   * server publishes. Throws on any answer but a 2xx - the caller logs it.
+   */
+  async releaseRemoval(
+    scope: DistributionScope,
+    userId: string,
+    releasingDeviceId: string
+  ): Promise<void> {
+    const path =
+      scope.kind === 'workspace'
+        ? `workspaces/${encodeURIComponent(scope.workspaceId)}/members/${encodeURIComponent(userId)}/removal-released`
+        : `${this.normalizeChannelId(scope.channelId)}/members/${encodeURIComponent(userId)}/removal-released`;
+    // The releasing device: receivers re-decide only where they deferred to THAT device's leaf.
+    const query = `?actorDevice=${encodeURIComponent(releasingDeviceId)}`;
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${path}${query}`, {
+      method: 'POST',
+    });
+    await this.handleError(res);
   }
 
   async renameChannel(channelId: string, newName: string) {
@@ -720,13 +751,15 @@ export class ChannelService {
   }
 
   /** Takes one member off a private salon; answers the salon's access as the removal left it. */
+  /** @param actorDeviceId as {@link kickFromWorkspace}'s. */
   async removeMemberFromChannel(
     channelId: string,
-    userId: string
+    userId: string,
+    actorDeviceId?: string
   ): Promise<ChannelAccessState & { success: boolean }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/members/${encodeURIComponent(userId)}`,
+      `${this.baseUrl}/api/channels/${cid}/members/${encodeURIComponent(userId)}${actorDeviceQuery(actorDeviceId)}`,
       {
         method: 'DELETE',
       }

@@ -310,7 +310,7 @@
 
   onMount(() => {
     if (!isGlobalAdmin()) {
-      void goto(resolve('/admin'), { replaceState: true });
+      void goto(resolve('/admin'), { replace: true });
       return;
     }
     void loadConfig();

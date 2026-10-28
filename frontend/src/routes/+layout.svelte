@@ -126,7 +126,10 @@
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
-  beforeNavigate(({ from, to }) => {
+  beforeNavigate(({ from, to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';
@@ -177,7 +180,7 @@
       endSession: async (userId) => {
         await clearAuthLocally();
         await globalSession.releaseDeletedAccount(userId);
-        await goto(resolve('/login'), { replaceState: true });
+        await goto(resolve('/login'), { replace: true });
       },
     });
 
@@ -513,6 +516,7 @@
    * loses is the slide - `afterNavigate` still plays the entrance the app had before.
    */
   onNavigate((navigation) => {
+    if (navigation.shallow && navigation.type === 'goto') return;
     const slide = swipeNavSlide;
     swipeNavSlide = null;
     if (!slide) return;
@@ -602,7 +606,10 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(() => {
+  afterNavigate(({ shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;
@@ -745,25 +752,10 @@
           bind:this={pageScrollWrap}
           class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
-          <!-- console.error enters the in-app log (appLog.ts); the route id names the page there,
-               where no URL bar does, and carries no member's id. -->
-          <svelte:boundary
-            onerror={(e) => console.error(`[Layout] page crash on ${page.route.id ?? '?'}:`, e)}
-          >
-            {@render children?.()}
-            {#snippet failed(_error, reset)}
-              <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-                <p class="text-text-muted text-sm">{m.layout_error_boundary_message()}</p>
-                <button
-                  type="button"
-                  onclick={reset}
-                  class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
-                >
-                  {m.common_retry_button()}
-                </button>
-              </div>
-            {/snippet}
-          </svelte:boundary>
+          <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
+               armed with `+error.svelte` and reported through `handleClientError` - one held here
+               could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
+          {@render children?.()}
         </div>
       </main>
 

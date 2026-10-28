@@ -45,6 +45,7 @@ import {
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 import { recordCreated } from '../campaign.mjs';
+import { dismissMintedNoticesOn } from '../devicenotice.mjs';
 import { srvLines } from '../estate.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
@@ -533,7 +534,18 @@ try {
     verdict,
     { ...out.detail, own: out.own ?? [], failures, invariant: invariantDetail(out.invariant ?? null), serverWindowSince: since },
     observers,
-    () => closeSeats(seats)
+    async () => {
+      // THE NOTICES THIS ROW'S MINTS LEFT, dismissed after the verdict and only for the ids it minted:
+      // on W1 every one, on a minted seat still signed in its siblings (`devicenotice.mjs`).
+      const ids = Object.values(mintedIds);
+      await dismissMintedNoticesOn([
+        { seat: 'W1', cx: seats.seat.W1?.cx, minted: ids },
+        ...Object.entries(mintedIds)
+          .filter(([d]) => !(act.revoked ?? []).includes(d))
+          .map(([d, id]) => ({ seat: d, cx: seats.seat[d]?.cx, minted: ids.filter((x) => x !== id) })),
+      ]);
+      closeSeats(seats);
+    }
   );
 } catch (e) {
   console.error(`[${rowId}] ${e?.stack ?? e}`);

@@ -1827,17 +1827,113 @@ the server no longer lists - and the pass is now serialised per scope
 arriving while a pass still waits share it, so the actor's pass and a load's cannot both commit the
 same Remove. One writer: the actor's own device, on its leader tab. A shared pass logs through every
 caller that shares it. **The lane is bounded by its transports, not by a timer**: each pass awaits a
-local tree read, the roster and base reads (`apiFetch`'s response-head deadline, a typed
-`RequestDeadlineError`), at most one commit (the MLS lock-hold budget) and a local persist, so every
+local tree read, the roster, base and revoked-leaves reads (each under a response-head deadline, a
+typed `RequestDeadlineError`), at most one commit (the MLS lock-hold budget) and a local persist, so every
 pass settles, and a failed one is swallowed by the lane's tail rather than holding the scope - a
 hung actor pass cannot stall a community's opening. A removal the gate refuses re-reads the tree:
 "already gone" when another device removed them first, "still hold a leaf" only when they do.
 
+**A community kick, the same way** (`commitCommunityKick`, from the community admin panel): the
+kick cuts and strips the person from the community AND from every private salon in one server call,
+so the actor commits in the community's key group and then in each private salon's group of that
+community it holds, one at a time. A `channel.member.kicked` broadcast about somebody else stays
+`ignore` on every receiver (`memberRemoval.ts`): the commit is the actor's, never the fan-out's.
+
+**A departure nobody acting can commit is committed by ONE ELECTED device**
+(`frontend/src/lib/utils/graine/departureCommitter.ts`). A member's own LEAVE has no committer: MLS
+does not let a member commit its own removal, and the leaver's devices are unrouted first. A kick or
+a revoke whose actor holds no leaf in a scope is the same case. So every receiver of the removal
+broadcast about somebody else - and a salon leave now broadcasts `channel.member.removed` with the
+leaver as its own actor, to the salon's audience and the leaver - reads the scope's tree and its
+roster with per-device presence and elects a device: the first, in window order, of a window of
+four leaves (the departed user's excluded) whose user is on the roster and whose device the roster
+reports online. A receiver whose tree holds no leaf of the departed user decides nothing
+(`not-in-tree`). **The window MOVES**: the tree's leaves in canonical `userId:deviceId` order,
+rotated by a hash of (departed user, epoch) and cut to four (`electionWindow`). A fixed prefix would
+starve for good on four leaves that never commit - a stale device, a revoked leaf not yet removed, an
+older client - so the window is a function of the tree, the departure and the epoch, and the next
+DEPARTURE lands elsewhere; an epoch change is not a trigger, nothing re-runs an election when the
+epoch moves. The tree and its epoch are read TOGETHER, under the MLS lock (a read whose epoch moved
+decides nothing), so receivers that have merged the same commits compute the same window; a receiver
+a commit behind computes another, and the epoch gate keeps one Remove if two are elected. Only a
+receiver whose own leaf is in the window reads the roster at all - a departure costs at most four
+roster reads, not one per member - and each of them logs `nobody elected` with the window size and
+epoch when none of the four is online, so a starved window is visible from inside it. The elected
+device runs the scope's roster pass (the same serialised pass, so a load's pass on that device
+cannot double it) unless its tab is not the leader or its group sits in an epoch gap, which it says;
+every other receiver commits nothing and logs whom it left it to. **The actor is checked BY
+DEVICE**: a kick or a revoke names the actor's device when that device will commit
+(`committingDeviceId`: a Graine runtime and the leader tab), the server echoes it as
+`actorDeviceId`, and the receivers leave a scope's Remove to it exactly when that device is a leaf
+of the scope's tree - a user-level check handed it to an actor whose OTHER device held the leaf.
+
+**A claim the actor did not honour is RELEASED, on a proof, and only then decided again.** Only the
+actor's device can know its commit did not land, and only once its pass has ended: a receiver that
+decided against the claim on its own - on a reconnect, a timer, the next event - would race a commit
+still in flight at the same epoch, two writers that heal only because the epoch gate keeps one. So
+the pass reports the users holding a leaf of the tree it LEFT (`reconcileDistributionGroupRosterReported`,
+read inside the lane), or nothing at all when one of its commits has an unknown outcome
+(`CommitOutcomeUnknownError`: it may yet land) or was ACCEPTED by the server and failed to merge here
+(`AcceptedCommitNotMergedError`: it landed, and the tree this device still holds is the one before
+it). When the departed user is still named there - nothing staged, a definite refusal, a roster it
+could not read - the actor posts
+`POST /api/channels/workspaces/:workspaceId/members/:userId/removal-released` or
+`POST /api/channels/:channelId/members/:userId/removal-released` with `?actorDevice=` its own device
+(`commitRemoval.ts`). An actor whose device holds no key group for the scope (a state dropped, a
+salon registered and not held) stages nothing, which is a proof too, and releases at once. The
+server requires the device, checks the same permission as the removal and that the person is no
+longer in the scope, throttles per user, and publishes `channel.member.removal-released` with
+`releasedBy` and `releasedByDevice` to the scope's remaining members. Every receiver of THAT event,
+and only of it, decides that ONE scope without the claim (`commitReleasedDepartureIfElected`) - one
+scope per release, because the actor commits its scopes one after another and a salon's commit may
+still be in flight when the community's is released. **Only a receiver that DEFERRED to the
+releasing device re-decides** (`not-deferred` otherwise, at debug level): each receiver remembers, in
+memory, which device it left a (key group, departed user) Remove to on the removal event, and a
+release must name exactly that device; the entry is consumed by it and emptied at sign-out. The
+server binds a release only to a leaf of its CALLER, not to the removal it releases - any user
+allowed to remove members could name one of their own devices - so the receiver's own deferral is
+the fact that decides, and a release naming any other device changes nothing: every receiver that
+did not defer already elected on the removal event, and a second election there would race the
+first. (The alternative, the server recording each removal's actor and refusing anybody else's
+release, needs a durable record per removal; the receiver already holds the one fact the decision
+needs.) A receiver that reloaded in between forgot its deferral, and its load's own roster pass is
+the backstop. **And no leaf of the releasing actor is elected**: its device
+is online and holds a leaf, and a window starting on it would hand the Remove back to the one
+device that just declined it.
+**What is covered, said honestly**: an actor whose pass ended without removing them is covered at
+once, by every remaining member online at the release; an actor whose app closed before its pass
+ended, whose release was not announced (it says so), or whose commit outcome stayed unknown releases
+nothing, and the Remove waits for a holder's next roster pass - **at worst the next app load**. A
+member offline at the release is covered the same way. So are two cases nothing re-decides: a
+receiver whose tree read saw its epoch move (`unreadable`) does not read it again, and an actor
+commit whose outcome was unknown and is LATER refused releases nothing. **The other residuals, each
+left to that same backstop**: an actor that lost tab leadership between the kick and its commit
+(`not-leader`) releases nothing; a salon the actor's tree holds but this session never registered
+has no scope to commit or release from; receivers at different epochs may compute different windows
+(the epoch gate keeps one commit); the actor's OWN other devices are outside the release's audience,
+so they never re-decide it. The deferral is held per TAB: if leadership moves to another tab between the removal and the release, the new leader says `not-deferred`, and if the others had left the Remove to this device nobody commits it until a load. A deferral is consumed before the tree is read, so a release decided `unreadable` loses it. A new removal of the same person in the same group ends any earlier deferral, so a release of the earlier one cannot start a second election. A release refused by the per-user throttle (60 per minute, across all
+communities) is logged `NOT announced` and falls to the backstop too. An actor holding no key group
+for the scope releases to every member: the ones that did not defer say `not-deferred` at debug
+level only. **Rollout**: the deferral, the release and the route's `400` without a device ship in
+one build; no pre-release may carry part of them. No clock anywhere: two receivers reading
+presence a moment apart may still elect two devices - the epoch gate keeps one commit and the other
+pass reads the tree again - or none, and then the Remove waits for a holder's next roster pass.
+**Presence says online, not able to commit**: an elected device that does not hold the group, or an
+older client predating this election, commits nothing, and only the backstop - a holder's next
+roster pass - covers it.
+
+**A removal and a grant of the same salon are ordered by the server's `accessRevision`**, which both
+broadcasts now carry: a removal older than a grant already seen for the same person (a leave and a
+quick re-invitation, handled out of order) is ignored by the event pipeline (`SalonGrantLedger`,
+`memberRemoval.ts`) rather than purging a salon its user is back in. A removal whose announcement
+fails after the write is logged and answered as done - the removal happened, and a 500 would invite
+a retry answered "not a member".
+
 What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
-above, unchanged): an actor that holds no key group for the scope (an admin revoking a private salon
-they are not in), a follower tab, a session with no Graine runtime - and **an access-list rewrite**
-(`updateChannelAccess`: a salon's list edited wholesale, or a public salon made private with a
-shorter list), which runs no actor pass at all.
+above, unchanged): an actor or an elected device on a follower tab, a session with no Graine
+runtime, a roster read without per-device presence, no remaining device online - and **an
+access-list rewrite** (`updateChannelAccess`: a salon's list edited wholesale, or a public salon made
+private with a shorter list), which runs no actor pass and broadcasts no removal at all.
 
 ### Two primitives were missing, and one was inert
 

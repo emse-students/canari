@@ -126,6 +126,51 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'You already hold a membership tier worth at least this one',
+          'TIER_NOT_A_RISE',
+          409
+        )
+      )
+    ).toBe(m.shop_tier_not_a_rise());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'Your current membership tier cannot be compared with this one',
+          'TIER_NOT_RANKABLE',
+          409
+        )
+      )
+    ).toBe(m.shop_tier_not_rankable());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          "This association's cotisations are disabled: the product cannot be sold.",
+          'COTISATION_DISABLED',
+          409
+        )
+      )
+    ).toBe(m.shop_cotisation_disabled());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'The payment account of this association changed while the purchase was opened.',
+          'PAYMENT_ROUTING_CHANGED',
+          409
+        )
+      )
+    ).toBe(m.shop_payment_routing_changed());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'The pricing of this product changed while the purchase was opened.',
+          'PURCHASE_PRICING_CHANGED',
+          409
+        )
+      )
+    ).toBe(m.shop_purchase_pricing_changed());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'A checkout of this product is already being opened.',
           'CHECKOUT_IN_PROGRESS',
           409
