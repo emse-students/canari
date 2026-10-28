@@ -433,10 +433,14 @@ fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
 /// destination (`app_group_share`). NEVER for a file the notification extension reads while the
 /// phone is locked (the caches above keep `CompleteUntilFirstUserAuthentication`). A no-op off iOS:
 /// Android's app storage is credential-encrypted already (`docs/wiki/frontend/sharing.md`).
+///
+/// THE REFUSAL KEEPS ITS CODE: a POSIX code Foundation reports (top level, or under
+/// `NSUnderlyingErrorKey`) comes back as `io::Error::from_raw_os_error`, so a locked device's
+/// `EPERM` classifies as locked (`handoff::is_locked_read`) and is never read from a message.
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
-pub(crate) fn protect_until_unlocked(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn protect_until_unlocked(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(target_os = "ios")]
-    return ios_file_protection(path, IosProtection::Set);
+    return ios_file_protection(path, IosProtection::Set).map(drop);
     #[cfg(not(target_os = "ios"))]
     {
         let _ = path;
@@ -467,9 +471,10 @@ enum IosProtection {
 
 /// `-[NSFileManager setAttributes:@{NSFileProtectionKey: NSFileProtectionComplete} ofItemAtPath:]`
 /// or `attributesOfItemAtPath:[NSFileProtectionKey]`, through the Objective-C runtime for the reason
-/// [`ios_exclude_from_backup`] gives. `Set` answers `Ok("")`, `Get` the class name.
+/// [`ios_exclude_from_backup`] gives. `Set` answers `Ok("")`, `Get` the class name. A refusal
+/// carries the `NSError`'s POSIX code when it has one ([`ios_error_to_io`]).
 #[cfg(target_os = "ios")]
-fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> Result<String, String> {
+fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> std::io::Result<String> {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject, Bool};
 
@@ -479,23 +484,25 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> Result<Stri
         static NSFileProtectionComplete: *const AnyObject;
     }
 
-    let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
-        .map_err(|e| format!("path has a NUL byte: {e}"))?;
+    let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())?;
+    let missing = |class: &str| std::io::Error::other(format!("{class} is not loaded"));
     objc2::rc::autoreleasepool(|_| {
-        let str_class = AnyClass::get(c"NSString").ok_or("NSString is not loaded")?;
-        let fm_class = AnyClass::get(c"NSFileManager").ok_or("NSFileManager is not loaded")?;
-        let dict_class = AnyClass::get(c"NSDictionary").ok_or("NSDictionary is not loaded")?;
+        let str_class = AnyClass::get(c"NSString").ok_or_else(|| missing("NSString"))?;
+        let fm_class = AnyClass::get(c"NSFileManager").ok_or_else(|| missing("NSFileManager"))?;
+        let dict_class = AnyClass::get(c"NSDictionary").ok_or_else(|| missing("NSDictionary"))?;
         // SAFETY: plain Foundation messages with the argument and return types their headers
-        // declare; every object returned is autoreleased into the pool around this block, and the
-        // keys are Foundation constants that live as long as the process.
+        // declare; every object returned (the NSError out-parameter included) is autoreleased into
+        // the pool around this block and read inside it, and the keys are Foundation constants
+        // that live as long as the process.
         unsafe {
             let ns_path: *mut AnyObject =
                 msg_send![str_class, stringWithUTF8String: c_path.as_ptr()];
             if ns_path.is_null() {
-                return Err("path is not UTF-8".to_string());
+                return Err(std::io::Error::other("path is not UTF-8"));
             }
             let manager: *mut AnyObject = msg_send![fm_class, defaultManager];
-            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
+            let mut error: *mut AnyObject = std::ptr::null_mut();
+            let error_out: *mut *mut AnyObject = &mut error;
             match op {
                 IosProtection::Set => {
                     let attributes: *mut AnyObject = msg_send![
@@ -507,19 +514,19 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> Result<Stri
                         manager,
                         setAttributes: attributes,
                         ofItemAtPath: ns_path,
-                        error: no_error
+                        error: error_out
                     ];
                     if ok.as_bool() {
                         Ok(String::new())
                     } else {
-                        Err("setAttributes refused".to_string())
+                        Err(ios_error_to_io(error, "setAttributes"))
                     }
                 }
                 IosProtection::Get => {
                     let attributes: *mut AnyObject =
-                        msg_send![manager, attributesOfItemAtPath: ns_path, error: no_error];
+                        msg_send![manager, attributesOfItemAtPath: ns_path, error: error_out];
                     if attributes.is_null() {
-                        return Err("attributesOfItemAtPath refused".to_string());
+                        return Err(ios_error_to_io(error, "attributesOfItemAtPath"));
                     }
                     let class: *mut AnyObject =
                         msg_send![attributes, objectForKey: NSFileProtectionKey];
@@ -528,7 +535,7 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> Result<Stri
                     }
                     let utf8: *const std::os::raw::c_char = msg_send![class, UTF8String];
                     if utf8.is_null() {
-                        return Err("the class name is not UTF-8".to_string());
+                        return Err(std::io::Error::other("the class name is not UTF-8"));
                     }
                     Ok(std::ffi::CStr::from_ptr(utf8)
                         .to_string_lossy()
@@ -537,6 +544,67 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> Result<Stri
             }
         }
     })
+}
+
+/// An `NSError` from a Foundation file call, as an `io::Error` that KEEPS ITS CODE: the POSIX code
+/// when the error is in `NSPOSIXErrorDomain`, or carries one under `NSUnderlyingErrorKey` (how
+/// Foundation wraps a refused `open` or `chmod`) - `from_raw_os_error`, so `EPERM` classifies by
+/// code. Anything else is `Other`, naming its domain and code (never its localized text).
+///
+/// # Safety
+/// `error` is null or a live `NSError`, read inside the autorelease pool that holds it.
+#[cfg(target_os = "ios")]
+unsafe fn ios_error_to_io(error: *mut objc2::runtime::AnyObject, call: &str) -> std::io::Error {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyObject, Bool};
+
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {
+        static NSPOSIXErrorDomain: *const AnyObject;
+        static NSUnderlyingErrorKey: *const AnyObject;
+    }
+
+    /// `(is POSIX, code, domain)` of one `NSError`.
+    unsafe fn parts(error: *mut AnyObject) -> (bool, isize, String) {
+        let domain: *mut AnyObject = msg_send![error, domain];
+        let code: isize = msg_send![error, code];
+        if domain.is_null() {
+            return (false, code, "no domain".to_string());
+        }
+        let posix: Bool = msg_send![domain, isEqualToString: NSPOSIXErrorDomain];
+        let utf8: *const std::os::raw::c_char = msg_send![domain, UTF8String];
+        let name = if utf8.is_null() {
+            "unnamed domain".to_string()
+        } else {
+            std::ffi::CStr::from_ptr(utf8)
+                .to_string_lossy()
+                .into_owned()
+        };
+        (posix.as_bool(), code, name)
+    }
+
+    if error.is_null() {
+        return std::io::Error::other(format!("{call} refused, with no NSError"));
+    }
+    let (posix, code, domain) = parts(error);
+    if posix {
+        if let Ok(raw) = i32::try_from(code) {
+            return std::io::Error::from_raw_os_error(raw);
+        }
+    }
+    let user_info: *mut AnyObject = msg_send![error, userInfo];
+    if !user_info.is_null() {
+        let underlying: *mut AnyObject = msg_send![user_info, objectForKey: NSUnderlyingErrorKey];
+        if !underlying.is_null() {
+            let (posix, raw, _) = parts(underlying);
+            if posix {
+                if let Ok(raw) = i32::try_from(raw) {
+                    return std::io::Error::from_raw_os_error(raw);
+                }
+            }
+        }
+    }
+    std::io::Error::other(format!("{call} refused: {domain} {code}"))
 }
 
 /// Removes `channel_keys.json`, the epoch-key mirror an older build wrote in the clear. Nothing has

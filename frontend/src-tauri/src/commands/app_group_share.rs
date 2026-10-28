@@ -134,6 +134,10 @@ type Reader<'a> = &'a dyn Fn(&Path) -> std::io::Result<String>;
 /// for a locked device in the tests.
 type Prober<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
 
+/// What gives a file Data Protection's `Complete`: `native_cache::protect_until_unlocked` in the
+/// app (a refusal keeps its POSIX code), a stand-in for a locked device in the tests.
+type Protector<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
+
 /// Claims `{dir}/{name}` through `handoff::claim_and_read`, the one claim of every handoff. A LOCKED
 /// manifest (`Claimed::Protected`) is left in place by it, and every caller here answers that
 /// outcome without deleting anything.
@@ -188,24 +192,30 @@ fn offers_nothing(manifest: &Map<String, Value>) -> bool {
 /// class (it is the file's, not the path's). Fails closed: a manifest that cannot be protected is
 /// not written (`docs/wiki/frontend/sharing.md`, "At rest").
 fn write_pending(dir: &Path, manifest: &Map<String, Value>) -> std::io::Result<()> {
-    let staging = create_protected_staging(dir)?;
+    let staging = create_protected_staging(dir, &crate::native_cache::protect_until_unlocked)?;
     let target = dir.join(PENDING_SHARE_FILE);
-    std::fs::write(&staging, Value::Object(manifest.clone()).to_string())?;
-    std::fs::rename(&staging, &target)?;
+    // The staging file goes on EVERY exit: a failed write or rename leaves nothing behind.
+    let written = std::fs::write(&staging, Value::Object(manifest.clone()).to_string())
+        .and_then(|()| std::fs::rename(&staging, &target));
+    if let Err(e) = written {
+        remove_staging(&staging);
+        return Err(e);
+    }
     crate::native_cache::exclude_from_backup(&target);
     Ok(())
 }
 
-/// Creates the EMPTY staging file of a manifest write and gives it `Complete`, before any byte is
-/// written (`write_pending`, `probe_protected_write`). Fails closed: a file that cannot be
-/// protected is deleted and the write refused.
-fn create_protected_staging(dir: &Path) -> std::io::Result<PathBuf> {
+/// Creates the EMPTY staging file of a manifest write and gives it `Complete` (`protect`), before
+/// any byte is written (`write_pending`, `probe_protected_write`). Fails closed: a file that cannot
+/// be protected is deleted and the write refused. Says nothing itself: the error keeps its code
+/// (`EPERM` on a locked device, from the create or the protection alike), and each caller says it
+/// at the level its cause deserves - a locked probe is not an error.
+fn create_protected_staging(dir: &Path, protect: Protector) -> std::io::Result<PathBuf> {
     let staging = dir.join(format!("{PENDING_SHARE_FILE}.tmp"));
     std::fs::write(&staging, b"")?;
-    if let Err(e) = crate::native_cache::protect_until_unlocked(&staging) {
-        log::error!("[SHARE] the share manifest could not be protected - not written: {e}");
+    if let Err(e) = protect(&staging) {
         remove_staging(&staging);
-        return Err(std::io::Error::other(e));
+        return Err(e);
     }
     Ok(staging)
 }
@@ -220,11 +230,17 @@ fn remove_staging(staging: &Path) {
 }
 
 /// Whether a protected manifest can be WRITTEN into `dir` now: the staging file is created,
-/// protected and opened again for writing - the step a locked device refuses (`EPERM`) - and then
-/// deleted. Nothing is written into it.
+/// protected and opened again for writing, then deleted; nothing is written into it. A locked device
+/// may refuse ANY of the three steps, and each refusal keeps its code (`EPERM`), so
+/// `app_side_locked` classifies all of them as locked.
 fn probe_protected_write(dir: &Path) -> std::io::Result<()> {
+    probe_protected_write_with(dir, &crate::native_cache::protect_until_unlocked)
+}
+
+/// [`probe_protected_write`] with the protection as a parameter, so a test can refuse it.
+fn probe_protected_write_with(dir: &Path, protect: Protector) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let staging = create_protected_staging(dir)?;
+    let staging = create_protected_staging(dir, protect)?;
     let reopened = std::fs::OpenOptions::new()
         .write(true)
         .open(&staging)
@@ -439,7 +455,15 @@ fn hand_over(
         log::error!("[SHARE] share {id} not handed over: {e}");
         delete_share_dir(inbox, id, "a share not handed over");
         if let Some(r) = &replaced {
-            write_pending(data_dir, r)?;
+            // The same refusal (a lock landing after the claim) usually refuses this too: then the
+            // share it had claimed is lost with it, and the line names both.
+            if let Err(restore) = write_pending(data_dir, r) {
+                log::error!(
+                    "[SHARE] share {id} not handed over, and the waiting share {} it had claimed could not be put back ({restore}) - both are lost",
+                    id_of(r).unwrap_or("with no usable id")
+                );
+                return Err(restore);
+            }
         }
         return Err(e);
     }
@@ -1557,6 +1581,40 @@ mod tests {
         let (group, data, _cache) = scratch("probe");
         probe_protected_write(&data).unwrap();
         assert_eq!(std::fs::read_dir(&data).unwrap().count(), 0);
+        cleanup(&group);
+    }
+
+    #[test]
+    fn a_protection_refused_by_a_locked_device_classifies_as_locked_at_the_probe() {
+        let (group, data, _cache) = scratch("protect-locked");
+        // What `protect_until_unlocked` answers on a locked iPhone: the NSError's POSIX EPERM.
+        let locked_protect = |_: &Path| Err(std::io::Error::from_raw_os_error(1));
+        let error = probe_protected_write_with(&data, &locked_protect).expect_err("refused");
+        assert!(is_locked_read(&error), "classified by its code");
+        assert_eq!(
+            std::fs::read_dir(&data).unwrap().count(),
+            0,
+            "no staging file left"
+        );
+        let probe = |dir: &Path| probe_protected_write_with(dir, &locked_protect);
+        assert!(app_side_locked(&data, &read_handoff, &probe).unwrap());
+        // Any other refusal is no lock: an error, which the import says.
+        let broken_protect = |_: &Path| Err(std::io::Error::other("setAttributes refused: x 1"));
+        let probe = |dir: &Path| probe_protected_write_with(dir, &broken_protect);
+        assert!(app_side_locked(&data, &read_handoff, &probe).is_err());
+        assert_eq!(std::fs::read_dir(&data).unwrap().count(), 0);
+        cleanup(&group);
+    }
+
+    #[test]
+    fn a_failed_manifest_write_leaves_no_staging_file() {
+        let (group, data, _cache) = scratch("write-fails");
+        // A directory where the manifest goes: the rename onto it fails after the staging write.
+        std::fs::create_dir_all(data.join(PENDING_SHARE_FILE).join("inside")).unwrap();
+        let manifest =
+            parse_manifest(r#"{"id":"a-1","epoch":0,"text":"x","files":[],"refused":0}"#).unwrap();
+        assert!(write_pending(&data, &manifest).is_err());
+        assert!(!data.join(format!("{PENDING_SHARE_FILE}.tmp")).exists());
         cleanup(&group);
     }
 

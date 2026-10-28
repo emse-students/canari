@@ -1990,8 +1990,9 @@ discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and categ
 2. Share a text and a photo, unlocked: `moved copy protection = ...` names the expected class
    (`NSFileProtectionCompleteUnlessOpen` for a copy), and no protection or `setAttributes` error.
 3. Share again with Canari killed, so it waits in the App Group undrained; lock, wait, send a push:
-   the launch import and sweep answer locked (`locked with the device`), the share is still in the
-   App Group, and no `dropped`, `unreadable` or deletion line.
+   the launch import line says `locked with the device` - NOT `ERROR: the share could not be moved
+   or handed over` (a refused protection or create must classify as locked, by its code) - the
+   share is still in the App Group, and no `dropped`, `unreadable` or deletion line.
 4. Unlock straight into Canari: the share is offered on the first activation.
 5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
    and the locked push launch mounts the page: after the unlock it is offered with no new launch

@@ -358,7 +358,12 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    the ordinary newest-wins rule, both shares readable then. Only a lock in the instant between
    that check and the hand-over's claim still meets a locked waiting share: that answers its own
    code, `IMPORT_DROPPED_OVER_LOCKED`, NSLogged at ERROR (at launch the only logger), never the
-   "imported once unlocked" of `IMPORT_PROTECTED`.
+   "imported once unlocked" of `IMPORT_PROTECTED`. The probe's refusal keeps its code at every
+   step - the create, the protection (`native_cache::protect_until_unlocked` reads the `NSError`'s
+   POSIX code, top level or under `NSUnderlyingErrorKey`) and the reopen - so a locked device is
+   classified, never reported as a failed hand-over. A lock landing AFTER the hand-over has claimed
+   the waiting share and before it writes the new manifest refuses both writes: both shares are
+   lost, in a window of a few file calls, and one ERROR line names both.
    **A share arriving over a LOCKED waiting one is the one that goes - keep-old, against the usual
    newest-wins, deliberately.** It is reached in that instant on the app side, and in the extension
    when the phone locks during a capture (a long iCloud video) while an older share waits. Why: the
