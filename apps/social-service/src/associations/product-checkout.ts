@@ -63,6 +63,21 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 
 /**
+ * The `code` of the 409 a manager gets when deleting a cotisation tier that people still hold,
+ * active: the body carries `holderCount` beside it. Deleting it would leave their tag naming no
+ * tier, so the manager moves them first (a manual grant of another tier swaps it out, a retag
+ * renames it, a revoke removes it). The guard is `ProductsService.delete`.
+ */
+export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
+
+/**
+ * The `code` of the 409 a manager gets when deleting a cotisation tier while one of its checkout
+ * attempts may still be paid (at most `PRODUCT_REQUEST_LIFETIME_SECONDS` + `CHECKOUT_EXPIRY_MARGIN_MS`
+ * after it opened): deleted then, that payment could deliver nothing and a refund would be owed.
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */
@@ -188,3 +203,11 @@ export const PURCHASE_YEAR_OVER = 'PURCHASE_YEAR_OVER';
  * be told from a move down. A refund is the outcome left.
  */
 export const PURCHASE_TIER_NOT_COMPARABLE = 'PURCHASE_TIER_NOT_COMPARABLE';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer holds the tag of a tier that was
+ * DELETED (an orphan, docs/wiki/cotisations.md "A tier deleted while people still hold it"): it has
+ * no price, so no rank. Unlike `PURCHASE_TIER_NOT_COMPARABLE` a repair exists - a manager grants the
+ * tier from the roster (the sibling swap removes the orphan), then closes the payment as `granted`.
+ */
+export const PURCHASE_HELD_TIER_DELETED = 'PURCHASE_HELD_TIER_DELETED';

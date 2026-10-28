@@ -419,11 +419,37 @@ export class SocialApiError extends ApiRefusalError {
      * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
      * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
      */
-    readonly amountBounds: AmountBounds | null = null
+    readonly amountBounds: AmountBounds | null = null,
+    /**
+     * How many people still hold the cotisation tier a `TIER_HAS_HOLDERS` refusal would not delete
+     * ({@link holderCountOf}), so the screen words the number itself.
+     */
+    readonly holderCount: number | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier people still
+ * hold: its `holderCount` rides beside it. They are moved to another tier (or revoked) first.
+ */
+export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier while one of its
+ * payments may still land (at most about 35 minutes after it was opened).
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
+export function holderCountOf(body: unknown): number | null {
+  if (!body || typeof body !== 'object') return null;
+  const { holderCount } = body as Record<string, unknown>;
+  return typeof holderCount === 'number' && Number.isInteger(holderCount) && holderCount > 0
+    ? holderCount
+    : null;
 }
 
 /** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
@@ -459,6 +485,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let message = raw || res.statusText;
   let code: string | null = null;
   let amountBounds: AmountBounds | null = null;
+  let holderCount: number | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -480,10 +507,12 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     }
     // An amount refusal carries its allowed range beside the code, as numbers.
     amountBounds = amountBoundsOf(parsed);
+    // A tier delete refused for its holders carries how many, as a number.
+    holderCount = holderCountOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status, amountBounds);
+  return new SocialApiError(message, code, res.status, amountBounds, holderCount);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -1874,7 +1903,8 @@ export type ClosingGrantRefusal =
   | 'year-over'
   | 'target-held'
   | 'not-a-rise'
-  | 'not-comparable';
+  | 'not-comparable'
+  | 'held-tier-deleted';
 
 /** The two outcomes that close a payment paid for and not granted. */
 export type PurchaseClosingOutcome = 'refunded' | 'granted';
