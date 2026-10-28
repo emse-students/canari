@@ -115,6 +115,7 @@ interface Internals {
   processIncomingMessage(groupId: string, bytes: Uint8Array): Promise<Uint8Array | null>;
   mergePendingCommit(groupId: string): Promise<void>;
   syncGroupCachesFromNative(): Promise<number>;
+  freshEpoch(groupId: string): Promise<number>;
   createGroup(groupId: string): Promise<void>;
   forgetGroup(groupId: string): void;
   deviceId: string;
@@ -275,6 +276,21 @@ describe('TauriMlsService - a sync never overwrites what landed while it ran', (
     await sync;
     expect(svc.getLocalGroups()).toEqual(['kg-1']);
     expect(svc.getEpoch('kg-2')).toBe(0);
+  });
+
+  it('a held group read during the first listing is still listed - the read adds it', async () => {
+    const native = nativeManager({ 'kg-1': 56 });
+    const svc = makeService();
+    native.hold('lister_groupes'); // answers ['kg-1']
+    const sync = svc.syncGroupCachesFromNative();
+    await native.parkedOn('lister_groupes');
+
+    // Touched after the listing started, so the listing leaves it to this read.
+    expect(await svc.freshEpoch('kg-1')).toBe(56);
+
+    await native.release('lister_groupes');
+    await sync;
+    expect(svc.getLocalGroups()).toEqual(['kg-1']);
   });
 
   it('a group gone from the native manager leaves both caches', async () => {

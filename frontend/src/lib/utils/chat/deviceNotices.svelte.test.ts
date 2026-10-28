@@ -24,6 +24,7 @@ import {
   historySealedGroups,
   historyWithheldEntries,
   historyWithheldFrom,
+  sealHistoryIn,
 } from './historyWithheld';
 
 /**
@@ -784,6 +785,34 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     expect(historyWithheldFrom('group-1', 'carol:phone-c')).toBe(true);
     expect(historyWithheldFrom('group-no-bob', 'carol:phone-c')).toBe(true);
     error.mockRestore();
+  });
+
+  it('seals no key group in an account its events reached unbound', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    forgetDeviceNotices();
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry({ groupId: 'community-key' })], ctx);
+    loadDeviceNotices('alice');
+    expect(historySealedGroups()).toEqual([]);
+    error.mockRestore();
+  });
+
+  it('merges the seals another tab wrote into the stored copy instead of erasing them', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Another tab sealed a conversation of alice's after this tab read her stored copy.
+    const key = ACCOUNT_KEY.deviceNotices('alice');
+    const stored = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
+    localStorage.setItem(key, JSON.stringify({ ...stored, historySealed: ['group-elsewhere'] }));
+    // This tab writes its own seal.
+    sealHistoryIn('group-1', 'device events were dropped');
+
+    const written = JSON.parse(localStorage.getItem(key) ?? '{}') as { historySealed?: string[] };
+    expect(new Set(written.historySealed)).toEqual(new Set(['group-1', 'group-elsewhere']));
+    // And this tab answers by it from now on.
+    expect(historyWithheldFrom('group-elsewhere', 'carol:p')).toBe(true);
+    error.mockRestore();
+    warn.mockRestore();
   });
 
   it('seals no key group on a dropped-events marker - it answers no history anyway', async () => {

@@ -209,6 +209,9 @@ export class TauriMlsService extends BaseMlsService {
     this._cacheStamp.set(groupId, stamp);
     if (epoch !== null) {
       this._epochByGroupId.set(groupId, epoch);
+      // An epoch the manager answered proves it holds the group: a listing this read overtook skips
+      // it (touched since), so the read adds it itself (see `syncGroupCachesFromNative`).
+      this._knownGroups.add(groupId);
       logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch });
       return;
     }
@@ -1549,6 +1552,8 @@ export class TauriMlsService extends BaseMlsService {
       if (this.cacheWriteAllowed(groupId, stamp)) {
         this._cacheStamp.set(groupId, stamp);
         this._epochByGroupId.set(groupId, epoch);
+        // Held, as the manager just said - see `readEpochIntoCache`.
+        this._knownGroups.add(groupId);
       }
       return epoch;
     } catch (e) {

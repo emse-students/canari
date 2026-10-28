@@ -1283,7 +1283,13 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   for a long time while the app stays closed, in busy communities, can pass it. No path unseals.
   Owed: the seals counted (each is an ERROR line naming its cause; a report of their rate per week);
   and, as a design option NOT built, a lift once every leaf added at or after the overflow's epoch
-  has left the tree or been vouched for;
+  has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
+  device events taken from an account's state while it is being unbound seal their conversations in
+  that account's record, for good, by the same rule - the option above would lift those as well;
+- **the departed bound costs detection**: past it, a conversation is sealed and the records of its
+  departed withheld devices dropped, so one of them that later comes back by itself is no longer
+  known as withheld there - what it then adds gets no line. History stays closed (the seal); only
+  the notice is lost;
 - the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
   after which this ask remains only as a shim for users without one.
 

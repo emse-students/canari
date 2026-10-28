@@ -1672,6 +1672,14 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
+  /**
+   * See {@link BaseMlsService.heldGroupsKnown}: the WASM module is read live, so the list is known
+   * exactly when a client exists - before one, `getLocalGroups()` answers `[]`, which says nothing.
+   */
+  override heldGroupsKnown(): boolean {
+    return this.client !== null && this.client !== undefined;
+  }
+
   /** WASM client wrapper - returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
   getLocalGroups(): string[] {
     if (!this.client) return [];

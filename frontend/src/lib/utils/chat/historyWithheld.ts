@@ -220,6 +220,17 @@ export function sealHistoryIn(groupId: string, why: string): void {
 }
 
 /**
+ * Adds seals written elsewhere (another tab, an account's stored copy) to this session's set, with no
+ * write of its own - the caller is writing already.
+ */
+export function adoptHistorySeals(groupIds: readonly string[]): void {
+  const added = groupIds.filter((g) => !sealed.has(g));
+  if (added.length === 0) return;
+  sealed = new Set([...sealed, ...added]);
+  console.warn(`[HISTORY_WITHHELD] ${added.length} seal(s) written elsewhere adopted`);
+}
+
+/**
  * Whether a device event inherits the withholding of its committer ({@link committerIsWithheld}). A
  * device added back under its pinned key emits no event at all, so it never reaches here; the trim
  * keeps the record of a departed device for as long as its conversation is held.
