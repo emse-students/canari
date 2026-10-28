@@ -30,7 +30,7 @@
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
-  import { commitSalonRevoke } from '$lib/utils/graine/commitRemoval';
+  import { commitSalonRevoke, committingDeviceId } from '$lib/utils/graine/commitRemoval';
   import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ChannelSidebarItem {
@@ -429,7 +429,11 @@
     const channelId = selectedChannelId;
     const base = accessRevision;
     try {
-      const answer = await channelService.removeMemberFromChannel(channelId, userId);
+      const answer = await channelService.removeMemberFromChannel(
+        channelId,
+        userId,
+        committingDeviceId()
+      );
       // The per-member route needs no base (it removes exactly one name), but its answer moves the
       // revision, which this panel must follow to keep its next write valid.
       await afterAccessWrite(channelId, base, answer);
