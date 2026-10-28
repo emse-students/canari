@@ -962,7 +962,7 @@ export async function sendFullHistoryBundle(
     return;
   }
   // Not even the state-only frame (its floor and watermarks) goes to a withheld device.
-  if (historyWithheldFrom(groupId, to)) {
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
     log(
       `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history pushed to it until a member vouches for it`
     );
@@ -1051,6 +1051,28 @@ export async function sendFullHistoryBundle(
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
 }
 
+/**
+ * Whether `to` is withheld in `groupId`, read only AFTER every device event already merged has been
+ * decided (`settleDeviceEvents`): an answer scheduled in the drain that carried an unvouched entry
+ * must not read the record before that entry wrote it. A settle that fails is logged and the record
+ * read as it stands.
+ */
+async function historyWithheldAfterSettling(
+  groupId: string,
+  to: string,
+  mlsService: IMlsService,
+  log: (msg: string) => void
+): Promise<boolean> {
+  try {
+    await mlsService.settleDeviceEvents('history answer');
+  } catch (e) {
+    log(
+      `[HISTORY_BUNDLE] device events not settled before answering in ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+    );
+  }
+  return historyWithheldFrom(groupId, to);
+}
+
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
 type HistorySendDeps = { mlsService: IMlsService; log: (msg: string) => void };
 
@@ -1101,7 +1123,7 @@ async function sendBundleChunks(
 ): Promise<BundleOutcome> {
   // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
   // nothing from before is given to a device that let itself in until a member vouches for it.
-  if (historyWithheldFrom(groupId, to)) {
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
     log(
       `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history answered to it until a member vouches for it`
     );

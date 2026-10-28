@@ -51,12 +51,42 @@ describe('historyWithheld', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it("a device back under its pinned key does not inherit its committer's withholding", async () => {
-    await withholdHistoryFrom('g1', 'bob:web-9', 'fp', stillThere);
-    const add = { groupId: 'g1', identity: 'alice:phone-a', addedBy: 'bob:web-9' };
-    expect(inheritsWithholding({ ...add, trust: 'pinned', firstInGroup: false })).toBe(false);
-    expect(inheritsWithholding({ ...add, trust: 'first-sight', firstInGroup: true })).toBe(true);
-    expect(inheritsWithholding({ ...add, trust: 'pinned', firstInGroup: true })).toBe(true);
+  it('the seal gates answers, never who an Add is marked against', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i <= MAX_WITHHELD_PER_GROUP; i++) {
+      await withholdHistoryFrom('g1', `bob:web-${i}`, 'fp', stillThere);
+    }
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(true);
+    const add = { groupId: 'g1', identity: 'carol:tab', addedBy: 'alice:phone-a' };
+    expect(inheritsWithholding(add)).toBe(false);
+    expect(inheritsWithholding({ ...add, addedBy: 'bob:web-0' })).toBe(true);
+    error.mockRestore();
+  });
+
+  it('seals only on withheld devices still in the conversation', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const gone = async (_g: string, identity: string) => identity !== 'bob:web-0';
+    for (let i = 0; i <= MAX_WITHHELD_PER_GROUP; i++) {
+      await withholdHistoryFrom('g1', `bob:web-${i}`, 'fp', gone);
+    }
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('past the bound keeps a departed record while a withheld device remains in its conversation', async () => {
+    // The remaining one could add the departed device back under its pinned key, which no event says.
+    const leafStillIn = async (groupId: string, identity: string) =>
+      !(groupId === 'g0' && identity === 'bob:left') && groupId !== 'g1';
+    await withholdHistoryFrom('g0', 'bob:left', 'fp', leafStillIn);
+    await withholdHistoryFrom('g0', 'bob:stays', 'fp', leafStillIn);
+    await withholdHistoryFrom('g1', 'bob:gone', 'fp', leafStillIn);
+    for (let i = 2; i < MAX_HISTORY_WITHHELD; i++) {
+      await withholdHistoryFrom(`g${i}`, 'bob:web-9', 'fp', leafStillIn);
+    }
+    await withholdHistoryFrom('g-new', 'bob:web-9', 'fp', leafStillIn);
+    expect(historyWithheldFrom('g0', 'bob:left')).toBe(true);
+    expect(historyWithheldFrom('g1', 'bob:gone')).toBe(false);
   });
 
   it('seals a conversation past its bound: no history answered there to anyone, and it survives a restore', async () => {

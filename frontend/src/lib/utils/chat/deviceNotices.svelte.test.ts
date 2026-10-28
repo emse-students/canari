@@ -718,29 +718,6 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     warn.mockRestore();
   });
 
-  it("a real member's device removed and re-added by a withheld device is not painted unvouched", async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry()], ctx);
-    reporter.mockClear();
-    await deliverDeviceEvents(
-      [
-        selfEntry({
-          identity: 'bob:phone-1',
-          addedBy: 'bob:new-tablet',
-          trust: 'pinned',
-          firstInGroup: false,
-        }),
-      ],
-      ctx
-    );
-    expect(reporter).not.toHaveBeenCalled();
-    expect(historyWithheldFrom('group-1', 'bob:phone-1')).toBe(false);
-    error.mockRestore();
-    warn.mockRestore();
-  });
-
   it('withholds history from a device that changed its own key by its own commit', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});

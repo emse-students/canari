@@ -1403,15 +1403,13 @@ conversation, or one that changed its own key by its own commit, is sent no hist
 (`historyWithheld.ts`): no answer is addressed to it, a full push sends it not even its state-only
 frame, and while any device of the conversation is withheld no answer there is broadcast, since every
 leaf reads a broadcast (a withheld device that has left the tree no longer counts). What such a
-device adds is unvouched too - except a device back in that conversation under the very key pinned
-for it, which held its history already. The decision is taken one event at a time in commit order,
+device adds is unvouched too. The decision is taken one event at a time in commit order,
 so an entry and the Add it makes, merged in one drain, are both caught, and whether or not the
 conversation row is loaded yet (the line waits for the row, the withholding does not). It is lifted
 when a device that is not withheld there adds it, or when this member approves it under the key it
-entered with. The decision is PER MEMBER: each device withholds on its own verdict; the record is
-held in memory for the session and persisted with that account's device notices, and a failed write
-is said at ERROR but not re-derived at the next start. An approval is account-wide and lasts the
-session. Past its overall bound only records whose device has left its conversation are dropped; past
+entered with. The decision is PER MEMBER: each device withholds on its own verdict, and the record
+persists with that account's device notices. An approval is account-wide and lasts the session. A
+history answer reads the record only after every device event already merged has been decided. Past its overall bound only records whose device has left its conversation are dropped; past
 a per-conversation bound, that conversation is sealed and answers no history to anyone - both fail
 closed.
 

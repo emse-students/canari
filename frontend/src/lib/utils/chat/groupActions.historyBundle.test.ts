@@ -280,6 +280,21 @@ describe('history is withheld from an unverified device', () => {
     vi.restoreAllMocks();
   });
 
+  it('an answer scheduled in the drain that carried the entry reads the record only after it is written', async () => {
+    // The drain's own hand-over is not awaited: the answer settles the device events itself first.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { mlsService, log, done } = serveTo(REQUESTER);
+    vi.mocked(mlsService.settleDeviceEvents).mockImplementation(async () => {
+      await withholdHistoryFrom(GROUP, REQUESTER, 'fp-1', stillThere);
+    });
+    await done;
+
+    expect(mlsService.settleDeviceEvents).toHaveBeenCalled();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no history answered to it'));
+    vi.restoreAllMocks();
+  });
+
   it('broadcasts nothing where a device is withheld - every leaf reads a broadcast', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});

@@ -7331,6 +7331,11 @@ export abstract class BaseMlsService implements IMlsService {
    * A consumer that throws loses the events it was handed - logged at error, since that is a notice
    * the user will never see; the consumer isolates each event itself so one cannot cost the others.
    */
+  /** {@link IMlsService.settleDeviceEvents}: one more hand-over, chained after any pending one. */
+  settleDeviceEvents(why: string): Promise<void> {
+    return this.handOverDeviceEvents(why);
+  }
+
   protected handOverDeviceEvents(why: string): Promise<void> {
     const run = this.deviceEventHandOver.then(async () => {
       const consumer = this.deviceEventConsumer;

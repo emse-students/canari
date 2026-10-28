@@ -386,19 +386,35 @@ export async function deliverDeviceEvents(
   // left it. And it is decided here whether or not the conversation row is loaded - the line waits
   // for the row (`noteUninvitedEntries`), the withholding does not.
   const events: DeviceEvent[] = [];
+  const account = boundAccount;
   for (const raw of inCommitOrder(delivered)) {
+    // AN ACCOUNT SWITCH MID-DELIVERY ends it: these events are the other account's.
+    if (boundAccount !== account) {
+      console.error(
+        `[DEVICE_NOTICE] the account changed during a delivery - ${delivered.length - events.length} device event(s) not decided`
+      );
+      return;
+    }
     // WHAT AN UNVOUCHED DEVICE ADDS IS UNVOUCHED TOO: marked before anything decides on the event,
     // so the line, the report and the withholding all follow.
     const event = inheritsWithholding(raw) ? { ...raw, addedByUnvouched: true } : raw;
     events.push(event);
-    // A member's Add of a device vouches for it: history withheld from it is answered again.
-    noteDeviceAddedByAMember(event.groupId, event.identity, event.addedBy);
-    if (withheldOnSight(event, ctx)) {
-      await withholdHistoryFrom(
-        event.groupId,
-        event.identity,
-        event.keyFingerprint,
-        leafStillIn(ctx, trees)
+    // One event that throws costs itself alone, never the rest of the batch.
+    try {
+      // A member's Add of a device vouches for it: history withheld from it is answered again.
+      noteDeviceAddedByAMember(event.groupId, event.identity, event.addedBy);
+      if (withheldOnSight(event, ctx)) {
+        await withholdHistoryFrom(
+          event.groupId,
+          event.identity,
+          event.keyFingerprint,
+          leafStillIn(ctx, trees)
+        );
+      }
+    } catch (e) {
+      console.error(
+        `[HISTORY_WITHHELD] withholding not decided for one device event in ${event.groupId.slice(0, 8)}...:`,
+        e
       );
     }
   }

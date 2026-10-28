@@ -31,16 +31,15 @@ import { memberDeviceAnswer } from './memberDeviceAnswers';
  *   ({@link historyWithheldFrom}).
  *
  * PER MEMBER: each device withholds on its own verdict, and another member who did not decide the
- * entry the same way may still answer. Held in memory for the session whatever happens to storage,
- * and persisted with the device notices of the account (`deviceNotices.svelte.ts`), so a restart does
- * not lift it - unless that write failed, which `writeStored` says at ERROR: the state is not
- * re-derived from the trees at start-up.
+ * entry the same way may still answer. Held in memory for the session, and persisted with the device
+ * notices of the account (`deviceNotices.svelte.ts`), so a restart does not lift it.
  *
  * BOUNDED WITHOUT EVER RE-OPENING: past {@link MAX_HISTORY_WITHHELD} records in all, the ones whose
- * device has LEFT its conversation's tree go first, and a record whose device is still there is never
- * dropped. Past {@link MAX_WITHHELD_PER_GROUP} in ONE conversation, that conversation is SEALED: no
- * history is answered there to anyone, for good, said once at ERROR - fail closed, at a size no honest
- * conversation reaches.
+ * device has LEFT its conversation's tree go first, and only where no withheld device remains; a
+ * record whose device is still there is never dropped. Past {@link MAX_WITHHELD_PER_GROUP} withheld
+ * devices still in ONE conversation, that conversation is SEALED: no history is answered there to
+ * anyone, for good, said once at ERROR - fail closed, at a size no honest conversation reaches. The
+ * seal gates answers only, never who an Add is marked against.
  */
 export interface WithheldDevice {
   groupId: string;
@@ -68,20 +67,39 @@ function matches(entry: WithheldDevice, groupId: string, identity: string): bool
   return entry.groupId === groupId && sameDeviceIdentity(entry.identity, identity);
 }
 
+/** Whether a withheld device of `groupId` still holds a leaf there - or its tree is unreadable. */
+async function groupHoldsAWithheldDevice(
+  groupId: string,
+  leafStillIn: LeafStillIn
+): Promise<boolean> {
+  for (const entry of withheld) {
+    if (entry.groupId === groupId && (await leafStillIn(groupId, entry.identity)) !== false) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Drops, oldest first, the records past {@link MAX_HISTORY_WITHHELD} whose device is no longer in its
- * tree. A record whose device is still there, or whose tree cannot be read, is kept: fail closed.
+ * tree - and only in a conversation where NO withheld device remains, since one that does could add
+ * the departed device back under its pinned key, which no event announces. A record whose device is
+ * still there, or whose tree cannot be read, is kept: fail closed.
  */
 async function trimToBound(leafStillIn: LeafStillIn): Promise<void> {
   let excess = withheld.length - MAX_HISTORY_WITHHELD;
   if (excess <= 0) return;
   const gone = new Set<WithheldDevice>();
+  const guarded = new Map<string, boolean>();
   for (const entry of withheld) {
     if (excess === 0) break;
-    if ((await leafStillIn(entry.groupId, entry.identity)) === false) {
-      gone.add(entry);
-      excess--;
+    if ((await leafStillIn(entry.groupId, entry.identity)) !== false) continue;
+    if (!guarded.has(entry.groupId)) {
+      guarded.set(entry.groupId, await groupHoldsAWithheldDevice(entry.groupId, leafStillIn));
     }
+    if (guarded.get(entry.groupId)) continue;
+    gone.add(entry);
+    excess--;
   }
   withheld = withheld.filter((e) => !gone.has(e));
   if (excess > 0) {
@@ -115,10 +133,7 @@ export async function withholdHistoryFrom(
   console.warn(
     `[HISTORY_WITHHELD] no history is answered to ${canonical} in ${groupId.slice(0, 8)}... until a member vouches for it`
   );
-  if (
-    !sealed.has(groupId) &&
-    withheld.filter((e) => e.groupId === groupId).length > MAX_WITHHELD_PER_GROUP
-  ) {
+  if (!sealed.has(groupId) && (await presentIn(groupId, leafStillIn)) > MAX_WITHHELD_PER_GROUP) {
     sealed = new Set([...sealed, groupId]);
     console.error(
       `[HISTORY_WITHHELD] more than ${MAX_WITHHELD_PER_GROUP} devices withheld in ${groupId.slice(0, 8)}... - the conversation is sealed, no history is answered there to anyone`
@@ -126,6 +141,17 @@ export async function withholdHistoryFrom(
   }
   await trimToBound(leafStillIn);
   persist?.();
+}
+
+/** How many withheld devices of `groupId` still hold a leaf there (an unreadable tree counts all). */
+async function presentIn(groupId: string, leafStillIn: LeafStillIn): Promise<number> {
+  let present = 0;
+  for (const entry of withheld) {
+    if (entry.groupId === groupId && (await leafStillIn(groupId, entry.identity)) !== false) {
+      present++;
+    }
+  }
+  return present;
 }
 
 function lift(groupId: string, identity: string, why: string): void {
@@ -146,23 +172,21 @@ export function committerIsWithheld(
   addedBy: string | null
 ): boolean {
   if (addedBy === null || sameDeviceIdentity(addedBy, identity)) return false;
-  return historyWithheldFrom(groupId, addedBy);
+  // THE RECORD, NEVER THE SEAL: a sealed conversation answers nobody, but that says nothing about
+  // who made an Add - reading the seal here would mark every later Add there as unvouched.
+  return recordWithholds(groupId, addedBy);
 }
 
 /**
- * Whether a device event inherits the withholding of its committer ({@link committerIsWithheld}),
- * EXCEPT a device back in this group under the very key pinned for it (`pinned`, not `firstInGroup`):
- * that is the same device returning, which held this history already - so a withheld device cannot
- * paint a real member's device unvouched by removing and re-adding it.
+ * Whether a device event inherits the withholding of its committer ({@link committerIsWithheld}). A
+ * device added back under its pinned key emits no event at all, so it never reaches here; the trim
+ * keeps the record of a departed device for as long as a withheld one remains in its conversation.
  */
 export function inheritsWithholding(event: {
   groupId: string;
   identity: string;
   addedBy: string | null;
-  trust: string;
-  firstInGroup?: boolean;
 }): boolean {
-  if (event.trust === 'pinned' && event.firstInGroup !== true) return false;
   return committerIsWithheld(event.groupId, event.identity, event.addedBy);
 }
 
@@ -193,7 +217,11 @@ export function noteDeviceAddedByAMember(
  * after the record.
  */
 export function historyWithheldFrom(groupId: string, to: string): boolean {
-  if (sealed.has(groupId)) return true;
+  return sealed.has(groupId) || recordWithholds(groupId, to);
+}
+
+/** Whether a record withholds `to` in `groupId`, lifted on this member's matching approval. */
+function recordWithholds(groupId: string, to: string): boolean {
   const entry = withheld.find((e) => matches(e, groupId, to));
   if (!entry) return false;
   const answer = memberDeviceAnswer(
@@ -233,7 +261,7 @@ export async function anyHistoryWithheldIn(
   return records.some(
     (e) =>
       leaves.some((leaf) => sameDeviceIdentity(leaf, e.identity)) &&
-      historyWithheldFrom(groupId, e.identity)
+      recordWithholds(groupId, e.identity)
   );
 }
 

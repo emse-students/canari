@@ -818,6 +818,13 @@ export interface IMlsService {
    */
   setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
   /**
+   * Hands every device event already merged to the consumer and resolves once it has decided them,
+   * after any hand-over still running. A history answer awaits it before reading who is withheld
+   * (`historyWithheld.ts`): the drain's own hand-over is not awaited by anything, so an answer
+   * scheduled in the same drain as an entry would otherwise read the record before it exists.
+   */
+  settleDeviceEvents(why: string): Promise<void>;
+  /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
    * TRUST for "a key this device has seen", for any verifier of a device-key signature, since a key
