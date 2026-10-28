@@ -134,7 +134,9 @@ describe('FormsService - the seat a pending payment holds', () => {
     };
     const userTagService = {
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
-      // The paid form's pre-check before any payment request: nothing held, so a rise.
+      // The paid form's pre-check before any payment request: no catalogue to check the tier
+      // against, and nothing held, so a rise.
+      listCotisationTiers: jest.fn(() => Promise.resolve([])),
       rankCotisationTier: jest.fn(() => Promise.resolve('none')),
     };
 

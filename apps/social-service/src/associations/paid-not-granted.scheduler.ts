@@ -10,8 +10,9 @@ const ORPHAN_TAG = '[ORPHAN_TIER_TAGS]';
  * THE TIERS PAID FOR AND NOT GRANTED, AND THE TAGS OF DELETED TIERS, REPORTED
  * (docs/wiki/cotisations.md "Rising to a higher tier", "A tier deleted while people still hold it").
  *
- * A settlement or a paid form whose cotisation tier is no longer a rise over the one the buyer holds
- * records the payment `paid_not_granted` and grants nothing: money was taken, and a refund or a
+ * A payment taken for something not delivered is recorded `paid_not_granted` (`PurchaseStatus`): a
+ * boutique tier the settlement did not grant, a product deleted or a buyer erased before the payment
+ * landed, a paid form that grants a tier and did not grant it. Money was taken, and a refund or a
  * manual grant is owed. The ERROR line written at that moment is read once, if at all; this reads
  * the durable marker every hour and prints ONE line - `log` with `count=0`, `error` while any row
  * carries it. The association's purchases list and export show which rows.
@@ -69,8 +70,9 @@ export class PaidNotGrantedScheduler {
       return count;
     }
     this.logger.error(
-      `${TAG} count=${count}: purchase(s) paid for, NOT delivered and not closed (a tier, a deleted ` +
-        'product, a form paid with no seat) - check what each buyer holds now, then refund or grant ' +
+      `${TAG} count=${count}: purchase(s) paid for, NOT delivered and not closed (a tier not ` +
+        'granted, a deleted product, an erased buyer, a form granting a tier that it did not grant) - ' +
+        'check what each buyer holds now, then refund or grant ' +
         "by hand and record the outcome in the association's purchases"
     );
     return count;

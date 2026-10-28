@@ -1,5 +1,6 @@
 import {
   fixedPriceFor,
+  formTierRefusal,
   linkedTierKey,
   orphanTierTags,
   pickHeldTier,
@@ -156,7 +157,7 @@ describe("fixedPriceFor - the preferential price is the admin's, never computed"
   });
 });
 
-describe('tierRefusal - one mapping from a relation to the typed 409, for the shop and the forms', () => {
+describe('tierRefusal - one mapping from a relation to the typed 409 of the shop', () => {
   it('sells none and higher', () => {
     expect(tierRefusal('none')).toBeNull();
     expect(tierRefusal('higher')).toBeNull();
@@ -166,6 +167,20 @@ describe('tierRefusal - one mapping from a relation to the typed 409, for the sh
     expect(tierRefusal('held')?.code).toBe('PRODUCT_ALREADY_PURCHASED');
     expect(tierRefusal('lower')?.code).toBe('TIER_NOT_A_RISE');
     expect(tierRefusal('unranked')?.code).toBe('TIER_NOT_RANKABLE');
+  });
+});
+
+describe('formTierRefusal - the shop mapping, with the two codes a form words its own way', () => {
+  it('takes none and higher', () => {
+    expect(formTierRefusal('none')).toBeNull();
+    expect(formTierRefusal('higher')).toBeNull();
+  });
+
+  it('refuses a tier no longer sold and the tier held with form codes, the rest as the shop', () => {
+    expect(formTierRefusal('not-sold')?.code).toBe('FORM_TIER_NOT_SOLD');
+    expect(formTierRefusal('held')?.code).toBe('FORM_TIER_ALREADY_HELD');
+    expect(formTierRefusal('lower')).toEqual(tierRefusal('lower'));
+    expect(formTierRefusal('unranked')).toEqual(tierRefusal('unranked'));
   });
 });
 

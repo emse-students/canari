@@ -194,6 +194,31 @@ describe('providerRefusalMessage', () => {
     ).toBe(m.shop_checkout_in_progress());
   });
 
+  // A paid form's own refusals: never a product "already bought", never a membership the
+  // submitter does not hold.
+  it('words the two form tier refusals apart from the shop ones', () => {
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'You already hold the membership this form grants',
+          'FORM_TIER_ALREADY_HELD',
+          409
+        )
+      )
+    ).toBe(m.form_tier_already_held());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'This form grants a membership tier the association no longer sells',
+          'FORM_TIER_NOT_SOLD',
+          409
+        )
+      )
+    ).toBe(m.form_tier_not_sold());
+    expect(m.form_tier_already_held()).not.toBe(m.shop_already_purchased());
+    expect(m.form_tier_not_sold()).not.toBe(m.shop_tier_not_rankable());
+  });
+
   it('is null for any other failure, so each surface keeps its own generic line', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();

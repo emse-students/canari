@@ -22,8 +22,10 @@
     gridPriceIsProvisional,
     gridPriceLabel,
     gridRefuses,
-    preferentialDueCents,
+    linkedTierName,
+    preferentialPriceLabel,
     tierNotOffered,
+    tierNotOfferedText,
   } from '$lib/pricing/viewerPrice';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -223,36 +225,6 @@
         ? m.shop_type_topup()
         : m.shop_type_other();
   }
-
-  /**
-   * The preferential price label for this viewer, or null when they pay the full price. The amount
-   * is the server's `viewerDueCents` (`preferentialDueCents`) - what the checkout charges - and is
-   * never recomputed here from the member-price columns.
-   */
-  function preferentialLabel(p: AssociationProduct): string | null {
-    const due = preferentialDueCents(p);
-    return due === null ? null : `${(due / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
-  }
-
-  /**
-   * The name of the tier the viewer holds, which a tier-linked (`memberPriceTag`) preferential price
-   * is worded "for holders of"; null for the association-wide cotisant price. Wording only: whether
-   * the price applies is the server's decision, already in `viewerDueCents`.
-   */
-  function heldTierName(p: AssociationProduct, siblings: AssociationProduct[]): string | null {
-    if (!p.memberPriceTag) return null;
-    return (
-      siblings.find((s) => s.type === 'membership' && s.variantKey === p.viewerActiveTier)?.name ??
-      null
-    );
-  }
-
-  /** The sentence for a tier the shop does not offer this viewer (`tierNotOffered`). */
-  const TIER_NOT_OFFERED_TEXT = {
-    held: () => m.shop_tier_held_hint(),
-    lower: () => m.shop_tier_not_a_rise(),
-    unranked: () => m.shop_tier_not_rankable(),
-  } as const;
 </script>
 
 <PageContainer width="grid">
@@ -337,8 +309,8 @@
                 <!-- Products grid -->
                 <div class={CARD_GRID}>
                   {#each assocProducts as product (product.id)}
-                    {@const preferential = preferentialLabel(product)}
-                    {@const linkedTier = heldTierName(product, assocProducts)}
+                    {@const preferential = preferentialPriceLabel(product)}
+                    {@const linkedTier = linkedTierName(product, assocProducts)}
                     {@const notOffered = tierNotOffered(product)}
                     <CardTile
                       iconUrl={product.iconUrl}
@@ -436,7 +408,7 @@
 
                         {#if notOffered}
                           <p class="text-text-muted text-xs" data-tier-not-offered={notOffered}>
-                            {TIER_NOT_OFFERED_TEXT[notOffered]()}
+                            {tierNotOfferedText(notOffered)}
                           </p>
                         {:else}
                           <ProductPurchaseButton

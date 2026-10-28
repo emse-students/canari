@@ -50,6 +50,12 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
     return m.shop_cotisation_disabled();
   }
+  if (err instanceof SocialApiError && err.code === FORM_TIER_ALREADY_HELD) {
+    return m.form_tier_already_held();
+  }
+  if (err instanceof SocialApiError && err.code === FORM_TIER_NOT_SOLD) {
+    return m.form_tier_not_sold();
+  }
   if (err instanceof SocialApiError && err.code === PAYMENT_ROUTING_CHANGED) {
     return m.shop_payment_routing_changed();
   }
@@ -106,6 +112,19 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
  * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
  */
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
+ * The body `code` of social-service's 409 when a paid answer's form grants the cotisation tier the
+ * submitter already holds (`tier-pricing.ts`): a form words it apart from a product already bought.
+ */
+export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
+
+/**
+ * The body `code` of social-service's 409 when a paid answer's form grants a cotisation tier its
+ * association no longer sells: refused to everybody, a holder of no membership included, so the
+ * sentence speaks of the form, not of the submitter's membership.
+ */
+export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
 
 /**
  * The body `code` of social-service's 409 when the association's payment account changed while

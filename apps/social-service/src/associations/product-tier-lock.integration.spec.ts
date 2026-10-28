@@ -34,6 +34,7 @@ import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing
 import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
+import { buyerTierLockKey } from '../users/buyer-tier-lock';
 import { ProductsService } from './products.service';
 import {
   ERASURE_ROW_STATEMENTS,
@@ -291,7 +292,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   async function underHeldLock<T>(userId: string, tag: string, work: () => Promise<T>) {
     await admin.query('BEGIN');
     await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      `tier:${ASSO}:${userId}`,
+      buyerTierLockKey(ASSO, userId),
     ]);
     await admin.query(
       `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
@@ -301,7 +302,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       (value) => ({ value, error: null as unknown }),
       (e: unknown) => ({ value: null as T | null, error: e })
     );
-    expect(await waitersReach(1, `tier:${ASSO}:${userId}`)).toBe(1);
+    expect(await waitersReach(1, buyerTierLockKey(ASSO, userId))).toBe(1);
     await admin.query('COMMIT');
     return pending;
   }
@@ -348,14 +349,14 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
     await admin.query('BEGIN');
     await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      `tier:${ASSO}:${buyer}`,
+      buyerTierLockKey(ASSO, buyer),
     ]);
     // The manager's grant of tier B waits for the lock ...
     const manual = settled(tags.grantCotisant(ASSO, buyer, 'manager', 'b'));
-    expect(await waitersReach(1, `tier:${ASSO}:${buyer}`)).toBe(1);
+    expect(await waitersReach(1, buyerTierLockKey(ASSO, buyer))).toBe(1);
     // ... and so does the payment of tier A.
     const paid = settled(settle(a.id));
-    expect(await waitersReach(2, `tier:${ASSO}:${buyer}`)).toBe(2);
+    expect(await waitersReach(2, buyerTierLockKey(ASSO, buyer))).toBe(2);
     await admin.query('COMMIT');
     const [m, p] = await Promise.all([manual, paid]);
 
@@ -421,13 +422,13 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
     await admin.query('BEGIN');
     await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      `tier:${ASSO}:${buyer}`,
+      buyerTierLockKey(ASSO, buyer),
     ]);
     // Both pass the sibling settle and the preparation before the lock - nothing is open yet.
     const first = settled(service.createCheckoutSession(ASSO, TIER_A, buyer));
-    expect(await waitersReach(1, `tier:${ASSO}:${buyer}`)).toBe(1);
+    expect(await waitersReach(1, buyerTierLockKey(ASSO, buyer))).toBe(1);
     const second = settled(service.createCheckoutSession(ASSO, TIER_B, buyer));
-    expect(await waitersReach(2, `tier:${ASSO}:${buyer}`)).toBe(2);
+    expect(await waitersReach(2, buyerTierLockKey(ASSO, buyer))).toBe(2);
     await admin.query('COMMIT');
     const outcomes = await Promise.all([first, second]);
 

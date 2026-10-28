@@ -5,6 +5,7 @@
     listAssociationPurchases,
     grantProductPurchase,
     closePaidNotGranted,
+    SocialApiError,
     type Association,
     type AssociationProduct,
     type AssociationPurchase,
@@ -174,10 +175,12 @@
       grantAmountEuros = '';
       await loadPurchases();
     } catch (e) {
-      // An amount outside the product's bounds is typed with them: say the range, not "load error".
-      const amountRefusal = providerRefusalMessage(e);
-      Log.i('ASSO', `cash grant refused: ${amountRefusal ? 'amount out of range' : String(e)}`);
-      purchasesError = amountRefusal ?? m.common_load_error();
+      // A typed refusal (an amount out of the product's bounds, cotisations disabled, a tier not
+      // a rise...) is worded from its code; the log names that code, never a guessed cause.
+      const refusal = providerRefusalMessage(e);
+      const code = e instanceof SocialApiError ? e.code : null;
+      Log.i('ASSO', `cash grant refused: ${refusal ? `code=${code}` : String(e)}`);
+      purchasesError = refusal ?? m.common_load_error();
     } finally {
       grantingProduct = false;
     }

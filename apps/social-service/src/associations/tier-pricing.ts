@@ -117,13 +117,51 @@ const TIER_REFUSALS: Record<TierRelation, TierRefusal | null> = {
 
 /**
  * The typed 409 a payment for a cotisation tier is refused with BEFORE any payment request is
- * opened, or null when it is sold (`none`, `higher`). ONE mapping for every way money is taken for
- * a tier - the boutique checkout and a paid form that grants one - so the two answer the same codes
- * the client already words: `held` -> `PRODUCT_ALREADY_PURCHASED`, `lower` -> `TIER_NOT_A_RISE`,
- * `unranked` -> `TIER_NOT_RANKABLE`.
+ * opened, or null when it is sold (`none`, `higher`). The boutique checkout's mapping, and the base
+ * of a paid form's (`formTierRefusal`): `held` -> `PRODUCT_ALREADY_PURCHASED`, `lower` ->
+ * `TIER_NOT_A_RISE`, `unranked` -> `TIER_NOT_RANKABLE`.
  */
 export function tierRefusal(relation: TierRelation): TierRefusal | null {
   return TIER_REFUSALS[relation];
+}
+
+/**
+ * The `code` of the 409 a paid answer gets when its form grants a cotisation tier the association
+ * no longer sells (the form's `cotisationVariantKey` names no tier product): the grant could never
+ * succeed, for ANY submitter, so no money is taken. Not `TIER_NOT_RANKABLE`, whose sentence speaks
+ * of the submitter's current membership - meaningless to someone who holds none.
+ */
+export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
+
+/**
+ * The `code` of the 409 a paid answer gets when the submitter already holds the very tier its form
+ * grants. The checkout's `PRODUCT_ALREADY_PURCHASED` would be worded "you already bought this
+ * product", which is not what a form is.
+ */
+export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
+
+/** Where a paid form's tier stands for one submitter: a `TierRelation`, or the tier is not sold. */
+export type FormTierRank = TierRelation | 'not-sold';
+
+/**
+ * The typed 409 a paid answer to a form that grants a cotisation tier is refused with, or null when
+ * it is taken: the checkout's rule (`tierRefusal`) with the two codes a form words its own way -
+ * `not-sold` -> `FORM_TIER_NOT_SOLD`, `held` -> `FORM_TIER_ALREADY_HELD`.
+ */
+export function formTierRefusal(rank: FormTierRank): TierRefusal | null {
+  if (rank === 'not-sold') {
+    return {
+      code: FORM_TIER_NOT_SOLD,
+      message: 'This form grants a membership tier the association no longer sells',
+    };
+  }
+  if (rank === 'held') {
+    return {
+      code: FORM_TIER_ALREADY_HELD,
+      message: 'You already hold the membership this form grants',
+    };
+  }
+  return tierRefusal(rank);
 }
 
 /**
