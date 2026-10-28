@@ -18,6 +18,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -581,6 +582,7 @@ describe('InternalController - the community distribution group', () => {
         GroupInvite,
         GroupMembershipInterval,
         SeatEviction,
+        RevokedDeviceGroup,
       ]);
       expect(purged).not.toContain(UserDismissedGroup);
       // In one unit of work with the tombstone: two statements outside a transaction leave a window
