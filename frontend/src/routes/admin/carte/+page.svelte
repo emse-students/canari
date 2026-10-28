@@ -141,7 +141,7 @@
       const created = await createPosterProject({ name });
       projects = [created, ...projects];
       newProjectName = '';
-      void goto(resolve(`/admin/carte/${created.id}`));
+      void goto(resolve(`admin/carte/${created.id}`));
     } catch (e) {
       Log.d('admin.carte.handleCreateProject failed', e);
       error = m.common_generic_error_label();
@@ -181,7 +181,7 @@
   onMount(async () => {
     await ensureAssociationSuperAdmin();
     if (!isGlobalAdmin() && !isAssociationSuperAdmin()) {
-      void goto(resolve('/admin'), { replaceState: true });
+      void goto(resolve('/admin'), { replace: true });
       return;
     }
     ready = true;
@@ -350,7 +350,7 @@
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
                   <a
-                    href={resolve(`/admin/carte/${project.id}`)}
+                    href={resolve(`admin/carte/${project.id}`)}
                     class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-semibold"
                   >
                     <Pencil size={14} />

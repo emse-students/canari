@@ -342,7 +342,7 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
-        # BUILD_WEB selects adapter-node over adapter-static (svelte.config.js). The web deploy
+        # BUILD_WEB selects adapter-node over adapter-static (kit.config.js). The web deploy
         # needs a server so each page's <head> can be written before it is sent; the Tauri
         # release workflows build without it and keep the static SPA output.
         env:

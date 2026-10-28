@@ -1,7 +1,7 @@
 /**
  * The identity a frontend build gives itself, read back.
  *
- * `frontend/svelte.config.js` names every build `<builtAtMs>-<sha>` (`kit.version.name`), and
+ * `frontend/kit.config.js` names every build `<builtAtMs>-<sha>` (`kit.version.name`), and
  * SvelteKit writes that string verbatim into `/_app/version.json`. The commit is therefore READ off
  * the bundle that is running, never inferred from a clock and a git history - an inference that
  * moved whenever a commit landed carrying an earlier date than the build before it. The timestamp

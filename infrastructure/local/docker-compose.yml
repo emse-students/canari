@@ -427,10 +427,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node's ONE public origin. Locally that is the port nginx publishes, because the
-      # browser's address bar is what `ORIGIN` has to agree with - a mismatch makes adapter-node
-      # refuse form posts as cross-origin.
-      ORIGIN: http://localhost:${CANARI_LOCAL_API_PORT:-8081}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
