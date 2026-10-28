@@ -24,10 +24,12 @@ const refusal = (providerCode: string) => ({ code: 'PAYMENT_PROVIDER_REFUSED', p
  * the real allowlists are EMPTY until a code is measured final on an issued request.
  */
 const TEST_FINAL = 'test-only-final';
-const withTestFinal = (service: LydiaReconciliationService) => {
-  service.refusalsFinal = { read: new Set([TEST_FINAL]), cancel: new Set() };
-  return service;
-};
+class WithTestFinal extends LydiaReconciliationService {
+  protected override readonly refusalsFinal = {
+    read: new Set([TEST_FINAL]),
+    cancel: new Set<string>(),
+  };
+}
 const CUTOFF = new Date('2026-10-27T12:00:00Z');
 
 /** A TypeORM query builder that answers `rows` to `getMany` and `count` to `getCount`. */
@@ -40,7 +42,12 @@ function builder(rows: unknown[], count = 0) {
 }
 
 function makeService(
-  opts: { submissions?: unknown[]; checkouts?: unknown[]; payee?: string | null } = {}
+  opts: {
+    submissions?: unknown[];
+    checkouts?: unknown[];
+    payee?: string | null;
+    testFinal?: boolean;
+  } = {}
 ) {
   const formsService = {
     markPaid: jest.fn(async () => ({ ok: true })),
@@ -61,7 +68,8 @@ function makeService(
   const submissionRepo = { createQueryBuilder: jest.fn(() => builder(opts.submissions ?? [])) };
   const formRepo = { findOne: jest.fn(async () => ({ id: 'form-1', associationId: 'asso-1' })) };
   const checkoutRepo = { createQueryBuilder: jest.fn(() => builder(opts.checkouts ?? [], 3)) };
-  const service = new LydiaReconciliationService(
+  const Service = opts.testFinal ? WithTestFinal : LydiaReconciliationService;
+  const service = new Service(
     submissionRepo as never,
     formRepo as never,
     checkoutRepo as never,
@@ -69,7 +77,7 @@ function makeService(
     productsService as never,
     associationsService as never
   );
-  return { service, formsService, productsService, associationsService };
+  return { service, formsService, productsService, associationsService, checkoutRepo };
 }
 
 const submission = (overrides: Partial<Submission> = {}) =>
@@ -228,10 +236,10 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
   ] as const)(
     'closes the attempt expired after ONE read answering %s',
     async (_name, answer, outcome) => {
-      const { service, productsService } = makeService();
+      const { service, productsService } = makeService({ testFinal: true });
       read.mockResolvedValue(answer as never);
       const row = checkout();
-      await expect(withTestFinal(service).reconcileCheckout(row)).resolves.toBe(outcome);
+      await expect(service.reconcileCheckout(row)).resolves.toBe(outcome);
       expect(productsService.applyRequestState).not.toHaveBeenCalled();
       expect(productsService.expireUnprovenCheckout).toHaveBeenCalledTimes(1);
       expect(productsService.expireUnprovenCheckout).toHaveBeenCalledWith(row, expect.any(String));
@@ -348,9 +356,9 @@ describe('LydiaReconciliationService.reconcileCheckout', () => {
       'refused',
     ],
   ] as const)('leaves the attempt open on %s', async (_name, arrange, outcome) => {
-    const { service, productsService } = makeService();
+    const { service, productsService } = makeService({ testFinal: true });
     arrange();
-    await expect(withTestFinal(service).reconcileCheckout(checkout())).resolves.toBe(outcome);
+    await expect(service.reconcileCheckout(checkout())).resolves.toBe(outcome);
     expect(productsService.applyRequestState).not.toHaveBeenCalled();
     expect(productsService.expireUnprovenCheckout).not.toHaveBeenCalled();
     expect(logs.warn).not.toHaveBeenCalled();
@@ -579,6 +587,31 @@ describe('LydiaReconciliationService sweeps', () => {
     expect(service.standingAccused()).toBe(0);
   });
 
+  it('caps the attempts one accusation names, and counts the rest', async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => checkout({ id: `checkout-${i}` }));
+    const { service } = makeService({ checkouts: rows });
+    read.mockResolvedValue({ verification: 'refused', providerCode: '5' });
+    await service.sweepProductCheckouts();
+    expect(logs.error).toHaveBeenCalledTimes(1);
+    const line = String(logs.error.mock.calls[0][0]);
+    expect(line).toContain('25 attempt(s) left open');
+    expect(line).toContain('checkout-19 (');
+    expect(line).not.toContain('checkout-20 (');
+    expect(line).toContain(' and 5 more');
+  });
+
+  it('warns an attempt still OPEN at Lydia once in a tick that reads it twice', async () => {
+    const { service, productsService } = makeService();
+    read.mockResolvedValue({ verification: 'verified', state: 'open', raw: '0' });
+    // "Already processed": the sweep reads it once more at once, still open.
+    productsService.cancelStillOpenCheckout.mockResolvedValueOnce('open');
+    await service.reconcileCheckout(checkout());
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(
+      logs.warn.mock.calls.filter(([line]) => String(line).includes('still OPEN'))
+    ).toHaveLength(1);
+  });
+
   it('warns an attempt still OPEN at Lydia once while its cancel keeps being refused', async () => {
     const { service, productsService } = makeService({ checkouts: [checkout()] });
     read.mockResolvedValue({ verification: 'verified', state: 'open', raw: '0' });
@@ -597,7 +630,11 @@ describe('LydiaReconciliationService sweeps', () => {
     const rows = Array.from({ length: RECONCILE_BATCH + 1 }, (_, i) =>
       checkout({ id: `checkout-${i}`, requestUuid: uuid(i) })
     );
-    const { service } = makeService({ checkouts: rows });
+    const { service, checkoutRepo } = makeService({ checkouts: rows });
+    const limitAsked = () => {
+      const { results } = checkoutRepo.createQueryBuilder.mock;
+      return (results[results.length - 1].value as { limit: jest.Mock }).limit.mock.calls[0][0];
+    };
     // The ten oldest are refused with a code not known final; the rest get no answer.
     const accused = new Set(rows.slice(0, 10).map((row) => row.requestUuid));
     read.mockImplementation(async (lookup) =>
@@ -606,6 +643,7 @@ describe('LydiaReconciliationService sweeps', () => {
         : { verification: 'unknown', state: 'paid', raw: '1' }
     );
     await service.sweepProductCheckouts();
+    expect(limitAsked()).toBe(RECONCILE_BATCH + 1);
     // Oldest first: the newest waited.
     const firstTick = read.mock.calls.map(
       ([lookup]) => (lookup as { sessionId: string }).sessionId
@@ -613,6 +651,12 @@ describe('LydiaReconciliationService sweeps', () => {
     expect(firstTick).not.toContain(uuid(RECONCILE_BATCH));
     read.mockClear();
     await service.sweepProductCheckouts();
+    // Enough rows that a full batch NOT accused last tick is reached: 50 + the 10 accused + 1.
+    expect(limitAsked()).toBe(RECONCILE_BATCH + 10 + 1);
+    // The backlog is said when it starts, not on every tick it lasts.
+    expect(logs.warn.mock.calls.filter(([line]) => String(line).includes('are due'))).toHaveLength(
+      1
+    );
     const secondTick = read.mock.calls.map(
       ([lookup]) => (lookup as { sessionId: string }).sessionId
     );

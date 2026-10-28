@@ -259,7 +259,7 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
     for good. Cancel: no refusal is measured final, so after a refused cancel the attempt stays open and the
     request stays PAYABLE at Lydia until it expires; the next tick reads it again, and a later callback
     records over the attempt as above. Every refusal is therefore retried and accused. The mechanism and its
-    tests stay (a test-only code is injected through `refusalsFinal`).
+    tests stay (a test subclass overrides the services' readonly `refusalsFinal`).
   - **Core answers about ITSELF with a 503, never a 400.** On `request-state` and `cancel-request` the only
     400 is Lydia's typed `PAYMENT_PROVIDER_REFUSED`; payments switched off, Lydia not configured and a
     payload core will not read answer `503 PAYMENT_SERVICE_NOT_READY` (`PaymentController.aboutTheRequest`).
@@ -272,9 +272,11 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
     automatic path this is and which is never closed. Each tick says so in ONE line per cause, never one per
     row: a WARN with the count of calls that got no answer; an ERROR with the failed writes that names every
     attempt and which ones Lydia said PAID; and an ERROR that ACCUSES every attempt left open on a core fault
-    or a refusal not known final, each with its cause - written when that list (ids or causes) CHANGES, not
-    every tick, with a log-level line once it empties; its size stands in the hourly `refused=` bucket. The
-    per-row "still OPEN at Lydia" WARN is likewise said once while it lasts.
+    or a refusal not known final, each with its cause (the first 20 named, the rest counted) - written when
+    that list (ids or causes) CHANGES, not every tick, with a log-level line once it empties; its size is
+    its own field of the hourly line, since core faults count as `unavailable` there. The per-row "still
+    OPEN at Lydia" WARN is likewise said once while it lasts (once per tick too, across the re-read after
+    "already processed"), and the "more than 50 due" WARN when the backlog starts, a log line when it ends.
   - **Fairness, and what this does not bound.** While such a cause lasts (an outage, a revoked token, a
     refusal code nobody has measured) its attempts are re-read every tick. When more than 50 are due, the
     ones accused on the previous tick go LAST, so newer attempts are reached; this lives in process memory,
@@ -323,8 +325,8 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
      every tick.
 - **What it reports.** One line per row it reads, and once an hour
   `[RECONCILE] last hour - forms: examined= settled= released= unchanged= skipped-unverified= refused=
-  unavailable= errors=; boutique: ... refused=N (left open on an answer not final: M) ...; ended boutique
-  attempts left open with no Business key: N`, even when all zero.
+  unavailable= errors=; boutique: ...; boutique attempts left open on an answer not final: M; ended
+  boutique attempts left open with no Business key: N`, even when all zero.
 
 **Not covered, known:** a form answer the expiry moved to `expired` before any read (a backlog over 50 in
 one tick, logged at ERROR; Lydia unreachable in that tick; no key) - its payment is still recorded by its

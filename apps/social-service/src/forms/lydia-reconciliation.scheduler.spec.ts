@@ -47,9 +47,9 @@ describe('LydiaReconciliationScheduler and its switch', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('sweep ON'));
     await scheduler.reportHourly();
     expect(log).toHaveBeenLastCalledWith(expect.stringContaining('[RECONCILE] last hour'));
-    // The boutique's refused= bucket carries what stands open on an answer that is not final.
+    // Its own field: refused reads AND core faults, which the counts file as unavailable.
     expect(log).toHaveBeenLastCalledWith(
-      expect.stringContaining('(left open on an answer not final: 2)')
+      expect.stringContaining('boutique attempts left open on an answer not final: 2;')
     );
   });
 });

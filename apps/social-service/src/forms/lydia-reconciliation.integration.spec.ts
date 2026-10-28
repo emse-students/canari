@@ -30,7 +30,7 @@ import { ProductCheckout } from '../associations/entities/product-checkout.entit
 import { AssociationProduct } from '../associations/entities/association-product.entity';
 import { ProductsService } from '../associations/products.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
-import { LYDIA_REFUSALS_FINAL } from '../common/core-payment-error';
+import { LYDIA_REFUSALS_FINAL, type LydiaRefusalsFinal } from '../common/core-payment-error';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -49,6 +49,11 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
   let forms: FormsService;
   let products: ProductsService;
   let sweep: LydiaReconciliationService;
+  /** A sweep whose allowlist (or whose products service) a test replaces, its own instance. */
+  let sweepWith: (
+    refusals: LydiaRefusalsFinal,
+    withProducts?: ProductsService
+  ) => LydiaReconciliationService;
   /** What Lydia's `request/state` answers, to the sweep (verified) and to the returns (unverified). */
   let lydia = { state: 'paid', raw: '1', verification: 'verified' };
   /** Core or Lydia unreachable: the verified read throws, as axios does on a 503. */
@@ -145,6 +150,19 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
         },
       },
     }) as unknown as ProductsService;
+    sweepWith = (refusals, withProducts = products) => {
+      class WithRefusals extends LydiaReconciliationService {
+        protected override readonly refusalsFinal = refusals;
+      }
+      return new WithRefusals(
+        ds.getRepository(Submission),
+        ds.getRepository(Form),
+        ds.getRepository(ProductCheckout),
+        forms,
+        withProducts,
+        associationsService
+      );
+    };
     sweep = new LydiaReconciliationService(
       ds.getRepository(Submission),
       ds.getRepository(Form),
@@ -421,16 +439,12 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     // an issued request, so a test-only code goes through the same mechanism.
     it('closes an attempt whose read Lydia refused with a code known final, once', async () => {
       lydiaRefuses = 'test-only-final';
-      sweep.refusalsFinal = { read: new Set(['test-only-final']), cancel: new Set() };
-      try {
-        const row = await attempt();
-        await sweep.sweepProductCheckouts();
-        expect(await statusOf(row.id)).toBe('expired');
-        await sweep.sweepProductCheckouts();
-        expect(verifiedReads).toBe(1);
-      } finally {
-        sweep.refusalsFinal = LYDIA_REFUSALS_FINAL;
-      }
+      const withFinal = sweepWith({ read: new Set(['test-only-final']), cancel: new Set() });
+      const row = await attempt();
+      await withFinal.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('expired');
+      await withFinal.sweepProductCheckouts();
+      expect(verifiedReads).toBe(1);
     });
 
     // Error 2 was measured on a uuid Lydia never issued; on an issued one it is unmeasured, and a
@@ -471,14 +485,16 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     it('closes an attempt whose CANCEL Lydia refused with a code on the allowlist', async () => {
       lydia = { state: 'open', raw: '0', verification: 'verified' };
       cancelRefused = true;
-      products.refusalsFinal = { read: new Set(), cancel: new Set(['3']) };
-      try {
-        const row = await attempt();
-        await sweep.sweepProductCheckouts();
-        expect(await statusOf(row.id)).toBe('expired');
-      } finally {
-        products.refusalsFinal = LYDIA_REFUSALS_FINAL;
-      }
+      const cancelFinal: LydiaRefusalsFinal = { read: new Set(), cancel: new Set(['3']) };
+      const withFinal = sweepWith(
+        cancelFinal,
+        Object.assign(Object.create(ProductsService.prototype) as object, products, {
+          refusalsFinal: cancelFinal,
+        }) as ProductsService
+      );
+      const row = await attempt();
+      await withFinal.sweepProductCheckouts();
+      expect(await statusOf(row.id)).toBe('expired');
     });
 
     it('leaves open an attempt whose CANCEL Lydia refused with a code not known final, accused once per tick', async () => {

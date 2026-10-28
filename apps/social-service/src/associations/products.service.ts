@@ -168,8 +168,8 @@ export interface FailedDelivery {
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
-  /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); tests replace it. */
-  refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
+  /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); a test overrides it. */
+  protected readonly refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
   constructor(
     @InjectRepository(AssociationProduct)

@@ -115,6 +115,9 @@ interface CheckoutVerdict {
   why?: string;
 }
 
+/** The accused attempts one ERROR names; the rest are counted. */
+const ACCUSED_NAMED_MAX = 20;
+
 /** One boutique tick's retries: calls with no answer, attempts accused (id -> cause), warned open. */
 function newTick() {
   return { noAnswer: 0, accused: new Map<string, string>(), warnedOpen: new Set<string>() };
@@ -191,8 +194,10 @@ export class LydiaReconciliationService {
    */
   private standing = new Map<string, string>();
   private warnedOpen = new Set<string>();
-  /** The Lydia refusal codes a read closes an attempt on (`LYDIA_REFUSALS_FINAL`); tests replace it. */
-  refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
+  /** Whether the previous tick found more boutique attempts due than one batch reads. */
+  private backlogged = false;
+  /** The Lydia refusal codes a read closes an attempt on (`LYDIA_REFUSALS_FINAL`); a test subclass overrides it. */
+  protected readonly refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
   constructor(
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
@@ -266,17 +271,27 @@ export class LydiaReconciliationService {
       .limit(RECONCILE_BATCH + previous.standing.size + 1)
       .getMany();
     let order = due;
-    if (due.length > RECONCILE_BATCH) {
+    const backlogged = due.length > RECONCILE_BATCH;
+    if (backlogged !== this.backlogged) {
+      // Said when the backlog starts and when it ends, never each tick while it lasts.
+      if (backlogged) {
+        this.logger.warn(
+          `[RECONCILE] more than ${RECONCILE_BATCH} boutique attempts are due (those left open on an ` +
+            `answer that is not final included) - the newest, after those, wait for a later tick; ` +
+            `said again when the backlog ends`
+        );
+      } else {
+        this.logger.log(`[RECONCILE] boutique backlog over: every due attempt fits one tick again`);
+      }
+      this.backlogged = backlogged;
+    }
+    if (backlogged) {
       // A full batch: what the previous tick left open on an answer that is not final goes LAST,
       // so a standing cause does not hold the newer rows back (class docblock).
       order = [
         ...due.filter((row) => !previous.standing.has(row.id)),
         ...due.filter((row) => previous.standing.has(row.id)),
       ];
-      this.logger.warn(
-        `[RECONCILE] more than ${RECONCILE_BATCH} boutique attempts are due - the newest, after ` +
-          `those still unanswered last tick, wait for the next tick`
-      );
     }
     this.tick = newTick();
     // Not read this tick: what was said of them still stands, so it is not said again.
@@ -311,10 +326,14 @@ export class LydiaReconciliationService {
       accused.size !== previous.standing.size ||
       [...accused].some(([id, cause]) => previous.standing.get(id) !== cause);
     if (changed && accused.size > 0) {
-      const named = [...accused].map(([id, cause]) => `${id} (${cause})`);
+      const named = [...accused]
+        .slice(0, ACCUSED_NAMED_MAX)
+        .map(([id, cause]) => `${id} (${cause})`);
+      const more =
+        accused.size > ACCUSED_NAMED_MAX ? ` and ${accused.size - ACCUSED_NAMED_MAX} more` : '';
       this.logger.error(
         `[RECONCILE] boutique: ${accused.size} attempt(s) left open on an answer that is not final ` +
-          `- ${named.join('; ')} - read again next tick; said again when this list changes ` +
+          `- ${named.join('; ')}${more} - read again next tick; said again when this list changes ` +
           `(${previous.standing.size} before)`
       );
     } else if (changed) {
@@ -344,7 +363,10 @@ export class LydiaReconciliationService {
     return this.dueCheckouts().andWhere(this.businessKeyExists(false)).getCount();
   }
 
-  /** How many boutique attempts the last tick left open on an answer that is not final (a gauge). */
+  /**
+   * How many boutique attempts the last tick left open on an answer that is not final (a gauge):
+   * refused reads AND core faults (401/403, its 503), which the counts file as `unavailable`.
+   */
   standingAccused(): number {
     return this.standing.size;
   }
@@ -542,7 +564,8 @@ export class LydiaReconciliationService {
       // Said once while it lasts: a cancel that keeps failing reaches this every tick, and the
       // tick's aggregated ERROR accuses that case.
       const line = `[RECONCILE] ${what}: still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it`;
-      if (this.warnedOpen.has(row.id)) this.logger.debug(line);
+      // Last tick's warning, or this tick's first read before an "already processed" re-read.
+      if (this.warnedOpen.has(row.id) || this.tick.warnedOpen.has(row.id)) this.logger.debug(line);
       else this.logger.warn(line);
       this.tick.warnedOpen.add(row.id);
       return { outcome: 'unchanged', next: 'cancel', why: 'still open at Lydia past its end' };
