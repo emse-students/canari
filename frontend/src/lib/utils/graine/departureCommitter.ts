@@ -83,7 +83,8 @@ import { isGraineReady, rawChannelId, requireGraineRuntime } from './runtime';
 
 /**
  * THE DEVICE THIS RECEIVER DEFERRED TO, per key group and departed user: written when a removal is
- * left to the actor's device (`actor-commits`), consumed by the release that names THAT device. A
+ * left to the actor's device (`actor-commits`), consumed by the release that names THAT device, and
+ * ended by any later removal of the same person in the same group. A
  * release is bound to a leaf of its caller, not to the removal it releases - any user allowed to
  * remove members could name one of their own devices - so the receiver's own deferral is the fact
  * that decides, and a release naming any other device changes nothing (`not-deferred`). In memory:
@@ -322,7 +323,15 @@ async function decideForScope(
       );
       return 'not-deferred';
     }
+    // Consumed BEFORE the tree is read: an `unreadable` decision below loses it, and the backstop
+    // (a holder's next roster pass) covers that Remove.
     deferredTo.delete(key);
+  } else {
+    // A NEW REMOVAL OF THE SAME PERSON IN THE SAME GROUP ENDS ANY EARLIER DEFERRAL: it is decided
+    // afresh below (and deferred again only if its own actor holds a leaf), so a release meant for
+    // the earlier removal can never match it and start a second election. This also bounds the map
+    // for actors that commit and never release.
+    deferredTo.delete(deferralKey(groupId, event.departedUserId));
   }
   try {
     // THE TREE AND ITS EPOCH, READ TOGETHER: the window is a function of both, and a commit merged

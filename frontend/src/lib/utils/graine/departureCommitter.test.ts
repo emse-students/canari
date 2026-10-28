@@ -378,6 +378,39 @@ describe('a departure left to the actor is decided again ONLY on its release', (
     );
   });
 
+  it("a forged release naming the actor's REAL device under another user changes nothing", async () => {
+    // Mallory may remove members and knows Carol's device id: the pair is not the one deferred to.
+    await expect(
+      commitReleasedDepartureIfElected(
+        channels,
+        { ...releasedByCarol, releasedByUserId: 'mallory', releasedByDeviceId: 'dev-c' },
+        log
+      )
+    ).resolves.toBe('not-deferred');
+    expect(channels.listMembers).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+    // Carol's entry is neither consumed nor blocked: her real release is still decided.
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'elected-here'
+    );
+  });
+
+  it('a later removal of the same person ends the earlier deferral - its release cannot start a second election', async () => {
+    // Carol's first removal was deferred to her device. Bob comes back and is removed again, by an
+    // actor whose device holds no leaf now: this receiver ELECTS on that removal itself.
+    runtime.leaves = ['alice:dev-a', 'bob:dev-b'];
+    await expect(commitDepartureIfElected(channels, kickedByCarol, log)).resolves.toEqual([
+      'elected-here',
+    ]);
+    reconcile.mockClear();
+    runtime.leaves = ['alice:dev-a', 'carol:dev-c', 'bob:dev-b'];
+    // The release of the FIRST removal, arriving now, must not match a stale deferral.
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'not-deferred'
+    );
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
   it('a release is consumed once, and forgotten at sign-out', async () => {
     await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
       'elected-here'
