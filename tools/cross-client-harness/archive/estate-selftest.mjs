@@ -275,7 +275,7 @@ ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
   ok('upper case is the same host to a browser and is judged as such', !allowed('https://CANARI-EMSE.FR/chat') && allowed('https://DEV.canari-emse.fr/chat'));
   ok('an unknown host, another port, plain http of dev are refused', !allowed('https://example.org/') && !allowed('https://dev.canari-emse.fr:8443/') && !allowed('http://dev.canari-emse.fr/'));
   ok('the Tauri engine pages pass', allowed('http://tauri.localhost/chat') && allowed('tauri://localhost/chat'));
-  ok('inert browser pages pass, exactly', allowed('about:blank') && allowed('chrome://newtab/') && allowed('chrome-native://newtab/') && allowed('chrome-error://chromewebdata/') && !allowed('chrome://settings/') && !allowed('about:blank#x'));
+  ok('inert browser pages pass, exactly', allowed('about:blank') && allowed('chrome://newtab/') && allowed('chrome-native://newtab/') && allowed('chrome-error://chromewebdata/') && allowed('') && !allowed(' ') && !allowed('chrome://settings/') && !allowed('about:blank#x'));
   ok('the identity providers pass over https only', allowed('https://miconnect.emse.fr/if/flow/x') && allowed('https://auth.canari-emse.fr/x') && allowed('https://cas.emse.fr/cas/login') && !allowed('http://miconnect.emse.fr/'));
   ok('a production refusal says so', /PRODUCTION/.test(pageVerdict('https://canari-emse.fr./x', DEV).why));
   ok('a non-URL is refused', !allowed('not a url'));

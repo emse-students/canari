@@ -27,7 +27,11 @@ import { flushMacrotask } from '../../../test/flush';
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
+vi.mock('$app/navigation', async (orig) => ({
+  ...(await orig<typeof import('$app/navigation')>()),
+  afterNavigate: () => {},
+  goto: vi.fn(),
+}));
 vi.mock('$lib/utils/appVersion', () => ({
   isIosTauriRuntime: () => false,
   isAndroidTauriRuntime: () => false,

@@ -7,7 +7,8 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
-import { version } from '$app/environment';
+import type { HandleClientError } from '@sveltejs/kit/hooks';
+import { version } from '$app/env';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -27,6 +28,7 @@ import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 import { shopReturnPath } from '$lib/shop/checkoutReturn';
+import { handleClientError } from '$lib/navigation/handleClientError';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -52,10 +54,12 @@ installAppLogFlushTriggers();
 installBootBenchDevTools();
 markBoot('app-first-line');
 
-/** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
-export function handleError({ error }: { error: unknown }): void {
-  console.error('[App] Client error:', error);
-}
+/**
+ * Called on every client-side error SvelteKit catches, a page that throws while it renders included
+ * (Kit 3's own boundary around every route node routes it here). `handleClientError` is the one
+ * owner of that report; it lives apart so it can be tested without this file's side effects.
+ */
+export const handleError: HandleClientError = handleClientError;
 
 /** Optional init hook - called once before the app starts. No setup needed here. */
 export function init(): void {}

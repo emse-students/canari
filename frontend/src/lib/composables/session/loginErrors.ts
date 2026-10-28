@@ -137,13 +137,25 @@ export class LoginFailure extends LocalizedError {
  * catch releases what the login took (its MLS client, its gateway socket) and does nothing else: no
  * error under the PIN, no `onSessionExpired` (a second sign-out), no forgotten vault slot - the
  * sign-out IS the outcome. `stage` names the await it was found after, for the log.
+ *
+ * `by` says what stopped it: a sign-out, or the loss of the session's MLS session
+ * (`endLostSessionImpl`), whose own reaction - the PIN gate - is the outcome then. The release is the
+ * same; only the log line differs, read from this field, never from the message.
  */
 export class LoginStoppedBySignOutError extends Error {
-  constructor(readonly stage: string) {
-    super(`login stopped after ${stage} - the account signed out meanwhile`);
+  constructor(
+    readonly stage: string,
+    readonly by: LoginStop = 'sign-out'
+  ) {
+    super(
+      `login stopped after ${stage} - ${by === 'sign-out' ? 'the account signed out' : 'its MLS session was lost'} meanwhile`
+    );
     this.name = 'LoginStoppedBySignOutError';
   }
 }
+
+/** What stops a login in flight: a sign-out, or a lost MLS session (`endLostSessionImpl`). */
+export type LoginStop = 'sign-out' | 'lost session';
 
 /**
  * Reads the failure code off an unknown thrown value, defaulting to `'other'`.

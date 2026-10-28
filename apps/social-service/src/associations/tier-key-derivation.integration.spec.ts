@@ -15,8 +15,11 @@ import { Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { AssociationProduct } from './entities/association-product.entity';
+import { Association } from './entities/association.entity';
+import { AssociationAudience } from '../spaces/association-audience.entity';
+import { Space } from '../spaces/space.entity';
 import { ProductsService } from './products.service';
-import { associationTierLockKey } from './association-tier-lock';
+import { associationTierLockKey } from '../users/buyer-tier-lock';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -36,7 +39,8 @@ maybe('a tier key derived from its label, two creates at once, against PostgreSQ
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [AssociationProduct],
+      // `associations` too: the derivation reads every other association's stems.
+      entities: [AssociationProduct, Association, AssociationAudience, Space],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });

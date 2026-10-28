@@ -81,14 +81,34 @@ export function variantKeyCap(slug: string): number {
 }
 
 /**
+ * A tier key that is, or ends with, an academic year: its tag would read as a `dated` tag of
+ * another tier (`cotisant:<slug>-<key>` against `cotisant:<slug>-YYYY-YYYY`). Refused on a typed
+ * key (`ProductsService.assertVariantKeyFree`, 400 `TIER_KEY_YEAR_SHAPED`) and never produced by
+ * `variantKeyFromLabel` - the one pattern both read.
+ */
+export const YEAR_SHAPED_VARIANT_KEY = /(^|-)\d{4}-\d{4}$/;
+
+/** A trailing run of academic years (`-2024-2025`, `-2023-2024-2025`) on a hyphenated key. */
+const YEAR_TAIL = /(?:^|-)\d{4}(?:-\d{4})+$/;
+
+/** `key` without a trailing academic-year run nor the hyphens around what is left. */
+function withoutYearTail(key: string): string {
+  return key.replace(YEAR_TAIL, '').replace(/^-+|-+$/g, '');
+}
+
+/**
  * Derives a new tier's `variantKey` from the label a person typed: lowercase, ASCII-folded
- * (accents dropped, ligatures spelled out), every run of other characters one hyphen, a year-shaped
- * tail removed, at most `cap` characters, and unique among `taken` (the association's existing
- * keys) by a `-2`, `-3`... suffix.
+ * (accents dropped, ligatures spelled out), every run of other characters one hyphen, a trailing
+ * academic year removed, at most `cap` characters, and unique among `taken` (the association's
+ * existing keys) and against `isTakenElsewhere` (another association's stems) by a `-2`, `-3`...
+ * suffix.
  *
- * The year tail goes because a dated tag already ENDS in the academic year: a key of
- * `cotisation-2026-2027` would make a tier's tag read like the dated tag of a `cotisation` tier, so
- * "Cotisation 2026-2027" derives `cotisation` (then `cotisation-2` when that one is taken).
+ * The result NEVER matches `YEAR_SHAPED_VARIANT_KEY`, which the server refuses with a 400: a
+ * manager who typed "Cotisation 2024-2025" never typed a key, so the label must not earn a refusal
+ * about one. The year tail is removed (a dated tag already ENDS in the academic year, so
+ * "Cotisation 2026-2027" derives `cotisation`, then `cotisation-2` when that one is taken), removed
+ * AGAIN after the length cap since a cut can expose one, and a suffix that would form one is
+ * skipped. A single year ("Promo 2024") is kept: `promo-2024` is not year-shaped.
  *
  * The key is a TECHNICAL id (it names the tier's tag and is what Le Cercle reads as `tier`), so a
  * person never types it; it is derived once, at creation, and never follows a later label edit -
@@ -97,23 +117,21 @@ export function variantKeyCap(slug: string): number {
 export function variantKeyFromLabel(
   label: string,
   taken: Iterable<string | null>,
-  cap: number = VARIANT_KEY_MAX
+  cap: number = VARIANT_KEY_MAX,
+  isTakenElsewhere: (key: string) => boolean = () => false
 ): string {
   if (cap < 1) throw new RangeError(`variantKeyFromLabel: no room for a key (cap ${cap})`);
   let lowered = label.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
   for (const [ligature, letters] of LIGATURES) lowered = lowered.split(ligature).join(letters);
-  const folded = lowered
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/(?:^|-)\d{4}(?:-\d{4})*$/, '')
-    .replace(/-+$/, '')
-    .slice(0, cap)
-    .replace(/-+$/, '');
+  const hyphenated = withoutYearTail(lowered.replace(/[^a-z0-9]+/g, '-'));
+  const folded = withoutYearTail(hyphenated.slice(0, cap));
   const base = folded || VARIANT_KEY_EMPTY_LABEL.slice(0, cap);
   const used = new Set(taken);
-  if (!used.has(base)) return base;
+  const unusable = (key: string): boolean =>
+    used.has(key) || YEAR_SHAPED_VARIANT_KEY.test(key) || isTakenElsewhere(key);
+  if (!unusable(base)) return base;
   let n = 2;
-  while (used.has(`${base}-${n}`)) n += 1;
+  while (unusable(`${base}-${n}`)) n += 1;
   return `${base}-${n}`;
 }
 
@@ -132,4 +150,28 @@ export function tierVariantKeys(products: Array<{ variantKey: string | null }>):
   if (products.length === 0) return [null];
   const keys = [...new Set(products.map((p) => p.variantKey))];
   return keys.sort((a, b) => (a === null ? 1 : 0) - (b === null ? 1 : 0));
+}
+
+/**
+ * The part of an association's cotisation tag that does not depend on the year:
+ * `<slug>` for the base tier, `<slug>-<variant>` for a named one. Every tag the tier grants is
+ * `cotisant:<stem>` (lifetime) or `cotisant:<stem>-<academicYear>` (dated).
+ */
+export function cotisationStem(slug: string, variant?: string | null): string {
+  return variant ? `${slug}-${variant}` : slug;
+}
+
+const ACADEMIC_YEAR_SUFFIX = /^\d{4}-\d{4}$/;
+
+/**
+ * Whether two cotisation stems can derive the same tag name in some mode and year: when they are
+ * equal, or when one is the other followed by `-<academicYear>` (a lifetime tag of the longer
+ * then equals a dated tag of the shorter). Any other pair derives disjoint names, since a dated
+ * tag adds exactly one academic-year suffix. Two DIFFERENT associations' stems must never collide,
+ * or one association's grants would write the other's tag names.
+ */
+export function cotisationStemsCollide(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length < b.length ? [a, b] : [b, a];
+  return long.startsWith(`${short}-`) && ACADEMIC_YEAR_SUFFIX.test(long.slice(short.length + 1));
 }
