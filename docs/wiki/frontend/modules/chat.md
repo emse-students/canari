@@ -2363,6 +2363,30 @@ This is independent of [the notice-identity fix](#a-visible-system-notice-needs-
 which gives a notice ONE id across the three paths that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
 arrived. A correctly deduped notice could still be a "Utilisateur" bubble, and was.
 
+#### A system notice is not conversation activity (user, 2026-10-27)
+
+"X added a device" moved its conversation to the top of the list. The sidebar key is
+`conversationRecency` (`utils/chat/conversations.ts`, also read by the share targets, the mini panel
+and the persisted `updatedAt`) and it read the newest row of `messages`, notices included. It now
+skips every row for which `isSystemRow` (`messageOrder.ts`) is true - `isSystem` OR the `system`
+sender, the same fact in its two forms - and every writer of the `lastMessageAt` seed goes through
+`advanceLastMessageAt`, which ignores notices too (`addMessageToChat`, `batchAddMessages`, the FCM
+cache merge, the channel join notice). A conversation holding notices only keeps its seed, then
+`startedAt` (the server's creation instant), then 0: never the arrival time of a notice.
+
+**A CALL RECORD IS ACTIVITY (decided 2026-10-27)**: a system row carrying a `callEvent` envelope (missed,
+ended, declined) still moves the conversation, as on Messenger and WhatsApp; `isNoticeRow` is the
+predicate every consumer uses (notice = system row that is not a call record). Tab-sync events omit
+`lastMessageAt` when there is no seed (`tabSeed`) instead of writing 0. A conversation created on
+this device is seeded with its creation moment (`lastMessageAt`, group / DM / channel creation and
+the channel join), NOT `startedAt`, which stays the server's write-once fact that the sweep
+backfills. The boot stub seeded from an old `meta.updatedAt` (written while notices counted) is
+transient: the first load of messages replaces it, no migration.
+
+**The preview line is unchanged** and still shows the newest row, notice included: it is a text, not
+a position, and hiding it would show a stale sentence. Read receipts and unread counts already
+ignored notices. Not changed: native notification previews (they raise only for inbound messages).
+
 ### What ended the wait, and why there is no wait left
 
 Kept because the shape recurs, not because the code is still there. The exchange used to be gated by

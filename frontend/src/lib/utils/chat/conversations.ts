@@ -26,7 +26,7 @@ import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
-import { messageTime } from './messageOrder';
+import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 
@@ -95,8 +95,9 @@ export function toConversationMeta(
         ? canonicalDirectName(userId, convo.directPeerId ?? convo.contactName)
         : convo.name,
     lifecycle: convo.lifecycle,
-    // The last-message timestamp, so the sidebar sort order survives DB reloads. Never the local
-    // clock: a conversation with no message has recency 0, identical on every device.
+    // The ordering key, so the sidebar sort order survives DB reloads: the newest real message,
+    // else the seed (a conversation created on this device is seeded with its creation moment,
+    // the one local-clock value here), else `startedAt`, else 0.
     updatedAt: conversationRecency(convo),
     readWatermarks: convo.readWatermarks,
     historyFloor: convo.historyFloor,
@@ -1171,6 +1172,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 /**
  * THE ONE SIDEBAR ORDERING KEY: the sent time of the conversation's newest message, in ms.
  *
+ * A SYSTEM NOTICE IS NOT ACTIVITY, A CALL RECORD IS ({@link isNoticeRow}).
+ * User, 2026-10-27: "X a ajoute un appareil" moved the conversation up the list. Only real messages count, and a conversation holding notices alone keeps the
+ * position of its seed, which no notice ever advances ({@link advanceLastMessageAt}), then of its
+ * creation (`startedAt`), then 0 - never the arrival time of a notice.
+ *
  * Read from the message list whenever there is one, and only otherwise from the persisted seed
  * (`lastMessageAt`, which loads before the messages do). It used to be the seed alone, kept up to
  * date by two of the ~ten writers that replace `messages` - history replay, channel history, stored
@@ -1179,24 +1185,24 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
  * Two devices holding the same messages therefore ordered them differently. `messages` is kept
  * sorted by `compareMessageOrder` (sent time first), so its last element IS the newest.
  *
- * @param convo the conversation row, only its `messages` and `lastMessageAt` are read
+ * @param convo the conversation row, only its `messages`, `lastMessageAt` and `startedAt` are read
  * @returns the key, 0 for a conversation with no message and no seed
  */
 export function conversationRecency(
-  convo: Pick<Conversation, 'messages' | 'lastMessageAt'>
+  convo: Pick<Conversation, 'messages' | 'lastMessageAt'> & { startedAt?: number }
 ): number {
-  const newest = convo.messages.at(-1);
-  if (newest) {
-    const at = messageTime(newest);
+  for (let i = convo.messages.length - 1; i >= 0; i--) {
+    if (isNoticeRow(convo.messages[i])) continue;
+    const at = messageTime(convo.messages[i]);
     if (Number.isFinite(at)) return at;
   }
-  return convo.lastMessageAt ?? 0;
+  return convo.lastMessageAt ?? convo.startedAt ?? 0;
 }
 
 /** Newest first; equal keys fall back to the id so every device breaks a tie the same way. */
 export function compareConversationRecency(
-  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>,
-  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>
+  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'> & { startedAt?: number },
+  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'> & { startedAt?: number }
 ): number {
   return conversationRecency(b) - conversationRecency(a) || a.id.localeCompare(b.id);
 }
