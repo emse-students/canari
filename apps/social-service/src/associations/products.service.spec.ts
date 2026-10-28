@@ -678,7 +678,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
         await expect(
           service.create('asso1', { name: 'Year', type: 'membership', variantKey }, false)
-        ).rejects.toThrow('cannot be named like an academic year');
+        ).rejects.toMatchObject({ response: { code: 'TIER_KEY_YEAR_SHAPED' } });
         expect(productRepo.save).not.toHaveBeenCalled();
       }
       // CONTROL: a key holding digits that is not a year range is accepted.
@@ -2485,6 +2485,51 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           { id: expect.anything() },
           { memberPriceTag: 'cotisant:cercle-soft' }
         );
+      });
+
+      /** A retag of `current` among the Cercle's two tiers, its writes answered. */
+      function retagging(current: AssociationProduct) {
+        const made = makeService();
+        made.assoRepo.findOne.mockResolvedValue(cercle());
+        made.productRepo.findOne.mockResolvedValue(current);
+        made.productRepo.find.mockResolvedValue([current, avecAlcool()]);
+        made.manager.save = jest.fn((_e: unknown, x: unknown) => Promise.resolve(x));
+        made.manager.update = jest.fn(() => Promise.resolve({ affected: 1 }));
+        made.manager.createQueryBuilder = jest.fn(() => {
+          const qb: any = {};
+          for (const m of ['update', 'set', 'where']) qb[m] = jest.fn(() => qb);
+          qb.execute = jest.fn(() => Promise.resolve({ affected: 0 }));
+          return qb;
+        });
+        return made;
+      }
+
+      // `cotisant:cercle-2026-2027` is the base tier's dated tag: the retag is refused, typed, and
+      // nothing is written.
+      it('refuses a retag TO a key shaped like an academic year, typed TIER_KEY_YEAR_SHAPED', async () => {
+        for (const variantKey of ['2026-2027', 'soft-2026-2027']) {
+          const { service, manager } = retagging(sansAlcool());
+          const err = await service.update('asso1', 'prod-sans', { variantKey }, false).then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err).toBeInstanceOf(BadRequestException);
+          expect((err as BadRequestException).getResponse()).toMatchObject({
+            code: 'TIER_KEY_YEAR_SHAPED',
+          });
+          expect(manager.save).not.toHaveBeenCalled();
+        }
+      });
+
+      // A tier keyed like a year before the rule is not stuck with it: renaming it away is the fix.
+      it('accepts a retag FROM a year-shaped key to a plain key, and to the base tier', async () => {
+        for (const variantKey of ['soft', null]) {
+          const { service, manager } = retagging(sansAlcool({ variantKey: '2024-2025' }));
+          await expect(
+            service.update('asso1', 'prod-sans', { variantKey }, false)
+          ).resolves.toMatchObject({ variantKey });
+          expect(manager.save).toHaveBeenCalled();
+        }
       });
     });
 
