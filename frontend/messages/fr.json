@@ -4092,7 +4092,7 @@
   "bookings_avail_tpl_empty_sub": "Je peins moi-même",
   "bookings_avail_week_title": "La semaine type",
   "bookings_avail_painter_label": "La semaine type, à peindre : glissez pour ouvrir, ou partez d'une case ouverte pour fermer. Le clavier et les lecteurs d'écran utilisent les horaires en clair en dessous.",
-  "bookings_avail_paint_hint": "Glisser pour ouvrir, partir d'une zone verte pour fermer. Un trait fait {grain} min. Au clavier, ou pour une heure exacte : les horaires en clair, juste en dessous.",
+  "bookings_avail_paint_hint": "Glissez pour ouvrir, partez d'une zone verte pour fermer. Un trait fait {grain} min. Au clavier, ou pour une heure exacte, utilisez les horaires en clair, juste en dessous.",
   "bookings_avail_clear_title": "En clair",
   "bookings_avail_clear_hint": "Ce que verront les réservants, à la minute près. Vous pouvez aussi saisir les horaires ici.",
   "bookings_avail_dates_title": "Les dates ponctuelles",
