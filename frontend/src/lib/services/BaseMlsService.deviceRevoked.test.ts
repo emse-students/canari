@@ -10,6 +10,7 @@ import {
   REFUSED_ROTATION_RELOADS_KEY,
 } from '$lib/mls-client/refusedRotationReloads';
 import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
+import { setMlsSessionVacatedHandler } from '$lib/mls-client/mlsSessionVacancy';
 import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 import { DeviceRevokedByOwnerError, DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
@@ -178,6 +179,36 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
 
     await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
     expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A ROTATION THAT FAILS IN A LIVE SESSION ENDS THE SESSION. Its load failing emptied the native slot
+   * (the install guard) after the client's id had moved: the old identity is no longer installed and
+   * the new one never was, so carrying on leaves a signed-in screen whose every MLS command is refused.
+   * The vacancy is reported - the shell ends the session into the sign-in screen - and the id on disk
+   * is still the old one, which is what that sign-in reopens.
+   */
+  it('reports the session vacant when the re-enrolment load fails, the stored id untouched', async () => {
+    const vacated = vi.fn();
+    setMlsSessionVacatedHandler(vacated);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const ctx = makeCtx({
+        generateKeyPackageImpl: vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked')),
+        loadStateWithKey: vi
+          .fn()
+          .mockRejectedValue(new Error('MLS_MANAGER_ABSENT: install failed')),
+      });
+
+      await expect(generateKeyPackage(ctx)).rejects.toThrow('install failed');
+
+      expect(vacated).toHaveBeenCalledWith('identity rotation failed');
+      expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+      expect(localStorage.getItem('mls_device_id_u')).toBeNull();
+    } finally {
+      setMlsSessionVacatedHandler(null);
+      error.mockRestore();
+    }
   });
 
   /**

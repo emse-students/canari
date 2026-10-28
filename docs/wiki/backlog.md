@@ -1902,6 +1902,11 @@ one process are the race; removing the second removes it.
   a sign-out sets the manager to `None` and keeps `mls.bin`; a state reset (`terminer_session_mls`
   with `sweepState`) does so in the same hold as the file sweep, so an engine that waited on it finds
   `None`, then finds no file, and does nothing. A sign-in installs `Some` again through `initialiser_mls`.
+- **OPEN: the native slot has no session generation.** A command issued by a destroyed client A that
+  lands after B's `initialiser_mls` acts on B's manager: the slot says only `Some` or `None`, never
+  WHOSE. Only the TypeScript side fences it today (the holder retires A's client before B's login
+  opens anything). The fence belongs in this work package's second pull request: a generation the
+  install stamps and every command carries, refused typed on a mismatch.
 - **Lock order, one for every path:** Kotlin `MlsStateLock` (background only, outermost) ->
   `foreground_checkpoint_lock` -> the manager mutex -> `mls_bin_write_lock` (innermost). The foreground
   never takes `MlsStateLock`, and a background engine that borrows takes the checkpoint lock before the

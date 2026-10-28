@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import { reportMlsSessionVacated } from '$lib/mls-client/mlsSessionVacancy';
 import type {
   IMlsService,
   GroupMeta,
@@ -3290,7 +3291,17 @@ export abstract class BaseMlsService implements IMlsService {
         } catch (refused) {
           // The caller of this round logs and carries on (`syncConnectionAfterWsOpen`), so ending
           // the document is HERE or nowhere: the client in memory is the fresh, unrecorded one.
-          if (refused instanceof MlsStateWriteRefusedError) this.endDocumentAfterRefusedRotation();
+          if (refused instanceof MlsStateWriteRefusedError) {
+            this.endDocumentAfterRefusedRotation();
+          } else {
+            // ANY OTHER FAILURE ENDS THE SESSION TOO. The rotation moved this client's device id
+            // before its load; a failed load also emptied the native slot (the install guard), so
+            // the old identity is no longer installed and the new one never was. Restoring the old
+            // one in place would re-open a state behind the session's back; a sign-in reopens it as
+            // the disk holds it, and the id on disk is still the old one (it is recorded only after
+            // the rotation's checkpoint).
+            reportMlsSessionVacated('identity rotation failed');
+          }
           throw refused;
         }
         console.warn(

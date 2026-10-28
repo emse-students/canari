@@ -2434,6 +2434,23 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   during a teardown gets that code once it is released; it never acts on the previous manager and never
   waits for a new one. A resume reload into an empty slot is refused the same way: it refreshes a live
   manager and never installs one.
+- **An empty slot under a signed-in session ENDS THE SESSION into the sign-in screen.** Two paths
+  meet it: a resume whose reload answers `MLS_MANAGER_ABSENT` (`MlsSessionVacantError`, which stops
+  the resume sequence), and a failed `rotateDeviceIdentity` during a live session, whose failed
+  re-enrolment load ran the install guard. Both call `reportMlsSessionVacated`
+  (`lib/mls-client/mlsSessionVacancy.ts`), whose handler the shell wires to the session-expired path.
+  NOT a re-initialisation: an empty slot means a teardown ran, and re-installing from there would
+  choose an identity and a key on the user's behalf - the stored device id is still the old one after
+  a failed rotation - where a sign-in reopens the disk state through every gate it has.
+- **A sign-out with no live session still retires the holder's client.** The PIN gate's recovery
+  opens the state with the old PIN before its PIN change; when the change fails, the gate's exit finds
+  no session and no login in flight, and the opened manager and key are ended through the same
+  retirement.
+- **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
+  device's exit) logs at DEBUG.
+- **Open: the slot has no session generation** - a command of a destroyed client landing after the
+  next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
 
 The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
 which the holder drops with its account, and the WASM module itself holds no manager or key.

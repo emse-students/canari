@@ -14,8 +14,10 @@ import {
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   isMlsManagerAbsent,
+  MlsSessionVacantError,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { reportMlsSessionVacated } from '$lib/mls-client/mlsSessionVacancy';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
@@ -1060,12 +1062,13 @@ export class TauriMlsService extends BaseMlsService {
       }
     } catch (e) {
       if (isMlsManagerAbsent(e)) {
-        // NOTHING IS LIVE TO REFRESH: the native session was ended (a sign-out, a failed install)
-        // and a resume reload never installs one. Said as what it is, not as a failed reload.
-        console.warn(
-          '[MLS][Tauri] Resume reload refused - no native MLS session is installed; nothing to refresh.'
-        );
-        return;
+        // NO NATIVE SESSION UNDER A RESUMING ONE: a teardown ran (a sign-out, a failed install or
+        // rotation) and a resume reload never installs a manager. Carrying on would leave a session
+        // on screen whose every MLS command fails, so it is reported - the shell ends it into the
+        // sign-in screen (`mlsSessionVacancy.ts` says why that and not a re-init) - and the resume
+        // sequence is told to stop.
+        reportMlsSessionVacated('resume found no native session');
+        throw new MlsSessionVacantError(e);
       }
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
       // advance, so this must be loud even though it does not abort the resume.

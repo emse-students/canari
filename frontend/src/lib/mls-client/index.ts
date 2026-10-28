@@ -20,6 +20,7 @@ export {
   noPinOpensState,
   isKeystoreKeyUnavailable,
   isMlsManagerAbsent,
+  MlsSessionVacantError,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   GroupDrainAbandonedError,

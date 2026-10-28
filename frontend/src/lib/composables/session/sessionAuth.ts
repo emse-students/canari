@@ -3315,6 +3315,13 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
       return;
     }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    // BUT A CLIENT MAY STILL HOLD A STATE THAT WAS OPENED. The PIN gate's recovery opens the state
+    // with the old PIN (`openLocalStateWithKey`) before its PIN change; when that change fails the
+    // gate stays up with no session and no login in flight - and the opened manager and its key
+    // installed. Retired like any account's client: destroyed now (nothing is being written), and
+    // the native session ended in the chain the next sign-in waits on. With no client it ends only
+    // the native session, which is then already empty.
+    void ctx.retireMls(Promise.resolve());
     return;
   }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);

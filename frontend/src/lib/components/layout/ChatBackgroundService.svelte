@@ -28,6 +28,7 @@
   } from '$lib/utils/deviceKeyVault';
   import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
   import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
+  import { setMlsSessionVacatedHandler } from '$lib/mls-client/mlsSessionVacancy';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -80,7 +81,7 @@
     WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import type { BulkIngestPhase } from '$lib/mls-client';
+  import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -1351,6 +1352,9 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
+    // A signed-in session with no native MLS session under it ends the same way: into the sign-in
+    // screen, which reopens the state as the disk holds it (`mlsSessionVacancy.ts`).
+    setMlsSessionVacatedHandler(() => void handleSessionExpired());
     // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
     setSignOutHandler(handleSignedOut);
 
@@ -1358,6 +1362,7 @@
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setMlsSessionVacatedHandler(null);
       setSignOutHandler(null);
       setGraineRepairListener(null);
     };
@@ -1743,7 +1748,15 @@
             steps.push(`${name} ${Math.round(now - stepStart)}`);
             stepStart = now;
           };
-          await globalSession.ensureMls().reloadStateFromDisk();
+          try {
+            await globalSession.ensureMls().reloadStateFromDisk();
+          } catch (e) {
+            if (!(e instanceof MlsSessionVacantError)) throw e;
+            // The vacancy was reported and the session is ending into the sign-in screen: no later
+            // step of this resume may run on it.
+            appendLog('[RESUME] Stopped - no native MLS session under this session; it is ending.');
+            return;
+          }
           stepDone('reload');
           // The push-join ledger is the warm process's too (channel-encryption section 26): taken
           // right after the reload, so a group joined while away is registered before the drain.

@@ -407,6 +407,19 @@ export function isMlsManagerAbsent(error: unknown): boolean {
 }
 
 /**
+ * Thrown by {@link IMlsService.reloadStateFromDisk} when a resume finds no native MLS session under a
+ * signed-in session. The vacancy is already reported (`reportMlsSessionVacated`, which ends the
+ * session into the sign-in screen); the type tells the resume sequence to stop rather than run its
+ * later steps on a session that is ending.
+ */
+export class MlsSessionVacantError extends Error {
+  constructor(cause: unknown) {
+    super('no native MLS session is installed under the signed-in session', { cause });
+    this.name = 'MlsSessionVacantError';
+  }
+}
+
+/**
  * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
  * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
  * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose
@@ -710,7 +723,8 @@ export interface IMlsService {
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance
    * `mls.bin`; without reloading on resume the warm in-memory state is stale and its next save
    * would clobber that advance (lost-update -> SecretReuse). No-op where there is no background
-   * engine (web/desktop).
+   * engine (web/desktop). Rejects with {@link MlsSessionVacantError} - and only with it - when no
+   * native session is installed any more; every other failure is logged and resolved.
    */
   reloadStateFromDisk(): Promise<void>;
   /**

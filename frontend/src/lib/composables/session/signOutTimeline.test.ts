@@ -138,6 +138,31 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       setSignOutHandler(null);
     }
   });
+
+  it("ends the PIN gate's probe: a state opened before a failed PIN change is not left installed", async () => {
+    const s = liveSession();
+    setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
+    try {
+      await clearAuth();
+      await s.ctx.whenMlsRetired();
+      s.endNative.mockClear();
+
+      // The gate's recovery opens the state with the old PIN, then its PIN change fails: a client
+      // holds an opened state, and there is no session and no login in flight.
+      const probe = s.ctx.ensureMls() as unknown as (typeof s.clients)[number];
+      expect(probe).not.toBe(s.clients[0]);
+
+      // The gate's exit.
+      await clearAuth();
+      await s.ctx.whenMlsRetired();
+      expect(probe.destroy).toHaveBeenCalledTimes(1);
+      expect(s.endNative).toHaveBeenCalledWith('sign-out');
+      // The next sign-in builds its own client, not the probe's.
+      expect(s.ctx.ensureMls()).not.toBe(probe);
+    } finally {
+      setSignOutHandler(null);
+    }
+  });
 });
 
 /**

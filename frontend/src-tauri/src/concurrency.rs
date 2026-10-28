@@ -261,7 +261,8 @@ pub(crate) fn end_native_session(
     sweep_dir: Option<&std::path::Path>,
     why: &str,
 ) -> Result<SessionEnded, String> {
-    log::info!(
+    // DEBUG: what was ended is known only under the hold, and the closing line reports it.
+    log::debug!(
         "[MLS] ending the native MLS session ({why}, state files {})",
         if sweep_dir.is_some() { "swept" } else { "kept" }
     );
@@ -308,7 +309,16 @@ pub(crate) fn end_native_session(
     };
     // Dropped OFF every lock: freeing a large state costs time, and nothing waiting needs to.
     drop(manager);
-    log::info!(
+    // INFO only when something was ended. One exit runs several teardowns in a row (a revoked device:
+    // the reset, the failed re-enrolment, the sign-out), and only the first finds a session; the
+    // others are expected no-ops, at DEBUG.
+    let level = if ended.had_manager || ended.had_key {
+        log::Level::Info
+    } else {
+        log::Level::Debug
+    };
+    log::log!(
+        level,
         "[MLS] native MLS session ended ({why}): manager {}, at-rest key {}",
         if ended.had_manager {
             "dropped"

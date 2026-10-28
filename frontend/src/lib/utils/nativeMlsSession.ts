@@ -28,7 +28,8 @@ export async function endNativeMlsSession(
   opts: { sweepState: boolean }
 ): Promise<void> {
   if (!isTauriRuntime()) return;
-  console.log(
+  // DEBUG: the native closing line says what was ended, at INFO only when something was.
+  console.debug(
     `[MLS] ending the native MLS session (${reason}, state files ${opts.sweepState ? 'swept' : 'kept'})`
   );
   const { invoke } = await import('@tauri-apps/api/core');

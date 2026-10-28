@@ -9,7 +9,12 @@ vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
 
-import { SavedStateOfAnotherAccountError, SavedStateUnopenedError } from '$lib/mls-client';
+import {
+  MlsSessionVacantError,
+  SavedStateOfAnotherAccountError,
+  SavedStateUnopenedError,
+} from '$lib/mls-client';
+import { setMlsSessionVacatedHandler } from '$lib/mls-client/mlsSessionVacancy';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -179,5 +184,57 @@ describe('TauriMlsService init - a refused initialiser_mls ends the native sessi
     // Ended BEFORE the gate reads whose state it is: nothing of the failed install is left to read it.
     const order = invoke.mock.calls.map((c) => c[0]);
     expect(order.indexOf('terminer_session_mls')).toBeLessThan(order.indexOf('mls_state_owner'));
+  });
+});
+
+/**
+ * A RESUME INTO AN EMPTY SLOT IS NOT A WARNING. With no native session under a signed-in one, every
+ * later MLS command is refused while the screen looks alive - so the vacancy is reported (the shell
+ * ends the session into the sign-in screen) and the resume sequence is told to stop, typed.
+ */
+describe('TauriMlsService resume - no native session under a signed-in one', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => setMlsSessionVacatedHandler(null));
+
+  it('reports the vacancy and rejects with MlsSessionVacantError', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'recharger_mls_au_resume'
+        ? Promise.reject(
+            new Error('MLS_MANAGER_ABSENT: no MLS session is installed in this process')
+          )
+        : Promise.resolve(undefined)
+    );
+    const vacated = vi.fn();
+    setMlsSessionVacatedHandler(vacated);
+    const svc = new TauriMlsService() as unknown as {
+      _deviceKeyB64: string;
+      reloadStateFromDisk(): Promise<void>;
+    };
+    svc._deviceKeyB64 = KEY;
+
+    await expect(svc.reloadStateFromDisk()).rejects.toBeInstanceOf(MlsSessionVacantError);
+    expect(vacated).toHaveBeenCalledWith('resume found no native session');
+  });
+
+  it('any other reload failure is logged and the resume carries on, as before', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'recharger_mls_au_resume'
+        ? Promise.reject(new Error('reload mls.bin: aead::Error'))
+        : Promise.resolve(undefined)
+    );
+    const vacated = vi.fn();
+    setMlsSessionVacatedHandler(vacated);
+    const svc = new TauriMlsService() as unknown as {
+      _deviceKeyB64: string;
+      reloadStateFromDisk(): Promise<void>;
+    };
+    svc._deviceKeyB64 = KEY;
+
+    await expect(svc.reloadStateFromDisk()).resolves.toBeUndefined();
+    expect(vacated).not.toHaveBeenCalled();
   });
 });
