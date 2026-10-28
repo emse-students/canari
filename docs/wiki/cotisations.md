@@ -160,10 +160,20 @@ sibling XOR and the base tier (`variantKey: null`) are untouched.
   key is refused for, rather than letting the label earn a refusal about a key the manager never
   saw: it never matches `YEAR_SHAPED_VARIANT_KEY` (the one pattern `assertVariantKeyFree`'s
   `TIER_KEY_YEAR_SHAPED` also reads - the year tail is removed again after the length cap, and a
-  suffix forming a year is skipped), and a candidate whose stem collides with another association's
-  (`stemCollidesElsewhere`, `assertCotisationStemFree`'s comparison) steps on to the next suffix.
-  Chosen over a dedicated refusal message because it stays a pure, deterministic function of the
-  label and the existing stems.
+  suffix of at most three digits cannot form a year), and a candidate whose stem collides with
+  another association's (`stemCollidesElsewhere`, `assertCotisationStemFree`'s comparison) steps on
+  to the next suffix. Chosen over a dedicated refusal message because it stays a pure,
+  deterministic function of the label and the existing stems. The one refusal left is the
+  exhaustion of `-2` ... `-999` (409 `TIER_KEY_EXHAUSTED`), since a longer suffix would overflow the
+  tag column.
+- **A derived key never re-adopts a deleted tier's holders.** A tier deleted before the delete guard
+  can have left ACTIVE holders of its tag (the hourly orphan count). Recreating the same label would
+  give the same key, and every such holder would silently become a holder of the NEW tier (its
+  member pricing, its `cotisant-status`). So a candidate whose stem this association still has an
+  active `user_tags` row of (`heldTierTagNames`, read in the same locked transaction) is skipped
+  like a taken key: "Avec alcool" recreated over an orphan derives `avec-alcool-2`. **A TYPED key
+  (older clients) is not checked against it and can still re-adopt those holders** - that path is
+  unchanged.
 
 - **Older clients keep working**: an explicit `variantKey` is still honoured on create and update.
   Sending both is refused (400), and so is `deriveVariantKey` on a non-membership product.

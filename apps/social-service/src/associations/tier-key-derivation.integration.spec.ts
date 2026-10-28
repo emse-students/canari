@@ -18,6 +18,7 @@ import { AssociationProduct } from './entities/association-product.entity';
 import { Association } from './entities/association.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
+import { UserTag } from '../users/entities/user-tag.entity';
 import { ProductsService } from './products.service';
 import { associationTierLockKey } from '../users/buyer-tier-lock';
 
@@ -25,6 +26,8 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const ASSO = '00000000-0000-4000-8000-0000000000a2';
+/** An association whose deleted "Avec alcool" tier left an active holder behind. */
+const ASSO_ORPHAN = '00000000-0000-4000-8000-0000000000a3';
 
 maybe('a tier key derived from its label, two creates at once, against PostgreSQL', () => {
   const schema = `tier_key_it_${Math.random().toString(36).slice(2, 10)}`;
@@ -40,7 +43,7 @@ maybe('a tier key derived from its label, two creates at once, against PostgreSQ
       type: 'postgres',
       url: URL,
       // `associations` too: the derivation reads every other association's stems.
-      entities: [AssociationProduct, Association, AssociationAudience, Space],
+      entities: [AssociationProduct, Association, AssociationAudience, Space, UserTag],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });
@@ -58,9 +61,9 @@ maybe('a tier key derived from its label, two creates at once, against PostgreSQ
   });
 
   /** A new tier row as `create` hands it to the locked insert: no key, no tag yet. */
-  const draft = (name: string) =>
+  const draft = (name: string, associationId: string) =>
     ds.getRepository(AssociationProduct).create({
-      associationId: ASSO,
+      associationId,
       name,
       type: 'membership',
       currency: 'eur',
@@ -68,7 +71,7 @@ maybe('a tier key derived from its label, two creates at once, against PostgreSQ
       isActive: false,
     });
 
-  const saveDerived = (name: string) =>
+  const saveDerived = (name: string, associationId: string = ASSO) =>
     (
       service as unknown as {
         saveTierWithDerivedKey(
@@ -78,7 +81,7 @@ maybe('a tier key derived from its label, two creates at once, against PostgreSQ
           name: string
         ): Promise<AssociationProduct>;
       }
-    ).saveTierWithDerivedKey(draft(name), 'cercle', 'lifetime', name);
+    ).saveTierWithDerivedKey(draft(name, associationId), 'cercle', 'lifetime', name);
 
   it('gives two concurrent creates of one label two distinct keys, and neither hangs', async () => {
     // Hold the association's tier lock from another session so BOTH creates queue on it, then let
@@ -100,5 +103,25 @@ maybe('a tier key derived from its label, two creates at once, against PostgreSQ
       where: { associationId: ASSO, type: 'membership' },
     });
     expect(rows.map((r) => r.variantKey).sort()).toEqual(['avec-alcool', 'avec-alcool-2']);
+  }, 30_000);
+
+  it('skips a key whose tag a deleted tier still has an active holder of, and adopts nobody', async () => {
+    // "Avec alcool" was deleted before the delete guard existed: its holder kept the tag.
+    await ds.getRepository(UserTag).insert({
+      userId: 'orphan-holder',
+      tagName: 'cotisant:cercle-avec-alcool',
+      issuingAssocId: ASSO_ORPHAN,
+      grantedBy: 'system',
+      expiresAt: null,
+    });
+
+    const created = await saveDerived('Avec alcool', ASSO_ORPHAN);
+
+    expect(created.variantKey).toBe('avec-alcool-2');
+    expect(created.grantedTagName).toBe('cotisant:cercle-avec-alcool-2');
+    const holders = await ds
+      .getRepository(UserTag)
+      .count({ where: { issuingAssocId: ASSO_ORPHAN, tagName: created.grantedTagName! } });
+    expect(holders).toBe(0);
   }, 30_000);
 });

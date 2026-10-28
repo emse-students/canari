@@ -96,19 +96,37 @@ function withoutYearTail(key: string): string {
   return key.replace(YEAR_TAIL, '').replace(/^-+|-+$/g, '');
 }
 
+/** Highest collision suffix `variantKeyFromLabel` tries: `-999` is what `variantKeyCap` keeps room for. */
+const VARIANT_KEY_SUFFIX_MAX = 10 ** (VARIANT_KEY_SUFFIX_ROOM - 1) - 1;
+
+/**
+ * Thrown by `variantKeyFromLabel` when the base key and every suffix up to `-999` are unavailable: a
+ * longer suffix would overflow the tag column (`variantKeyCap` keeps room for four characters), so
+ * the derivation stops rather than hand the database a tag it cannot store.
+ */
+export class VariantKeySpaceExhaustedError extends Error {
+  constructor(readonly base: string) {
+    super(
+      `variantKeyFromLabel: "${base}" and every suffix up to -${VARIANT_KEY_SUFFIX_MAX} are taken`
+    );
+    this.name = 'VariantKeySpaceExhaustedError';
+  }
+}
+
 /**
  * Derives a new tier's `variantKey` from the label a person typed: lowercase, ASCII-folded
  * (accents dropped, ligatures spelled out), every run of other characters one hyphen, a trailing
- * academic year removed, at most `cap` characters, and unique among `taken` (the association's
- * existing keys) and against `isTakenElsewhere` (another association's stems) by a `-2`, `-3`...
- * suffix.
+ * academic year removed, at most `cap` characters, and free - not among `taken` (the association's
+ * existing keys) and not `isUnavailable` (a stem another association derives, or one whose tags
+ * are still held under a deleted tier) - by a `-2`, `-3`... `-999` suffix, past which it throws
+ * `VariantKeySpaceExhaustedError`.
  *
  * The result NEVER matches `YEAR_SHAPED_VARIANT_KEY`, which the server refuses with a 400: a
  * manager who typed "Cotisation 2024-2025" never typed a key, so the label must not earn a refusal
  * about one. The year tail is removed (a dated tag already ENDS in the academic year, so
- * "Cotisation 2026-2027" derives `cotisation`, then `cotisation-2` when that one is taken), removed
- * AGAIN after the length cap since a cut can expose one, and a suffix that would form one is
- * skipped. A single year ("Promo 2024") is kept: `promo-2024` is not year-shaped.
+ * "Cotisation 2026-2027" derives `cotisation`, then `cotisation-2` when that one is taken), and
+ * removed AGAIN after the length cap since a cut can expose one. A suffix of at most three digits
+ * cannot form a year. A single year ("Promo 2024") is kept: `promo-2024` is not year-shaped.
  *
  * The key is a TECHNICAL id (it names the tier's tag and is what Le Cercle reads as `tier`), so a
  * person never types it; it is derived once, at creation, and never follows a later label edit -
@@ -118,7 +136,7 @@ export function variantKeyFromLabel(
   label: string,
   taken: Iterable<string | null>,
   cap: number = VARIANT_KEY_MAX,
-  isTakenElsewhere: (key: string) => boolean = () => false
+  isUnavailable: (key: string) => boolean = () => false
 ): string {
   if (cap < 1) throw new RangeError(`variantKeyFromLabel: no room for a key (cap ${cap})`);
   let lowered = label.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
@@ -127,12 +145,12 @@ export function variantKeyFromLabel(
   const folded = withoutYearTail(hyphenated.slice(0, cap));
   const base = folded || VARIANT_KEY_EMPTY_LABEL.slice(0, cap);
   const used = new Set(taken);
-  const unusable = (key: string): boolean =>
-    used.has(key) || YEAR_SHAPED_VARIANT_KEY.test(key) || isTakenElsewhere(key);
+  const unusable = (key: string): boolean => used.has(key) || isUnavailable(key);
   if (!unusable(base)) return base;
-  let n = 2;
-  while (unusable(`${base}-${n}`)) n += 1;
-  return `${base}-${n}`;
+  for (let n = 2; n <= VARIANT_KEY_SUFFIX_MAX; n += 1) {
+    if (!unusable(`${base}-${n}`)) return `${base}-${n}`;
+  }
+  throw new VariantKeySpaceExhaustedError(base);
 }
 
 /**

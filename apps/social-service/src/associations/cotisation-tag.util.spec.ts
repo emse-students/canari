@@ -4,6 +4,7 @@ import {
   deriveCotisationTag,
   getAcademicYear,
   variantKeyCap,
+  VariantKeySpaceExhaustedError,
   variantKeyFromLabel,
   YEAR_SHAPED_VARIANT_KEY,
 } from './cotisation-tag.util';
@@ -54,10 +55,12 @@ describe('variantKeyFromLabel', () => {
     expect(variantKeyFromLabel('abc 2024-2025 foo', [], 13)).toBe('abc');
   });
 
-  it('skips a collision suffix that would form an academic year', () => {
-    // `2024-1000` ... `2024-9999` would all read as an academic year: skipped, never returned.
-    const taken = ['2024', ...Array.from({ length: 998 }, (_, i) => `2024-${i + 2}`)];
-    expect(variantKeyFromLabel('2024', taken)).toBe('2024-10000');
+  it('stops at -999 with a typed error rather than a key that would overflow the tag', () => {
+    const taken = ['gold', ...Array.from({ length: 997 }, (_, i) => `gold-${i + 2}`)];
+    expect(variantKeyFromLabel('Gold', taken)).toBe('gold-999');
+    expect(() => variantKeyFromLabel('Gold', [...taken, 'gold-999'])).toThrow(
+      VariantKeySpaceExhaustedError
+    );
   });
 
   it('steps past a key another association already makes collide', () => {

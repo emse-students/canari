@@ -41,6 +41,7 @@ import {
   TIER_NOT_RANKABLE,
   TIER_CHECKOUT_OPEN,
   TIER_HAS_HOLDERS,
+  TIER_KEY_EXHAUSTED,
   TIER_KEY_YEAR_SHAPED,
   productOrderRef,
   withCheckoutReturnKey,
@@ -75,10 +76,12 @@ import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './d
 import {
   type CotisationMode,
   cotisationStem,
+  cotisationStemsCollide,
   deriveCotisationTag,
   getAcademicYear,
   tierVariantKeys,
   variantKeyCap,
+  VariantKeySpaceExhaustedError,
   variantKeyFromLabel,
   YEAR_SHAPED_VARIANT_KEY,
 } from './cotisation-tag.util';
@@ -1276,10 +1279,12 @@ export class ProductsService {
    * label get distinct keys (the second waits for the first to commit, then sees its row).
    * Everything that may call another service ran before.
    *
-   * The key is free BY CONSTRUCTION, so nothing here can refuse it: unused among the siblings,
-   * never year-shaped, and colliding with no other association's stem (`stemCollidesElsewhere`,
-   * the same comparison `assertCotisationStemFree` makes on a typed key) - a manager who typed a
-   * label must not meet a refusal about a key they never saw.
+   * The key is free BY CONSTRUCTION, so nothing here refuses it but the exhaustion of its suffixes
+   * (409 `TIER_KEY_EXHAUSTED`): unused among the siblings, never year-shaped, colliding with no other
+   * association's stem (`stemCollidesElsewhere`, the comparison `assertCotisationStemFree` makes on a
+   * typed key), and naming no tag this association still has ACTIVE holders of
+   * (`heldTierStems`) - a recreated "Avec alcool" must not silently adopt the holders a deleted
+   * one left behind. A manager who typed a label must not meet a refusal about a key they never saw.
    */
   private async saveTierWithDerivedKey(
     product: AssociationProduct,
@@ -1293,12 +1298,30 @@ export class ProductsService {
         where: { associationId: product.associationId, type: 'membership' },
       });
       const collidesElsewhere = await stemCollidesElsewhere(manager, product.associationId);
-      const key = variantKeyFromLabel(
-        name,
-        siblings.map((p) => p.variantKey ?? null),
-        variantKeyCap(slug),
-        (candidate) => collidesElsewhere(cotisationStem(slug, candidate))
-      );
+      const heldNames = await this.heldTierTagNames(manager, product.associationId, slug);
+      let key: string;
+      try {
+        key = variantKeyFromLabel(
+          name,
+          siblings.map((p) => p.variantKey ?? null),
+          variantKeyCap(slug),
+          (candidate) =>
+            collidesElsewhere(cotisationStem(slug, candidate)) ||
+            heldNames.some((held) =>
+              cotisationStemsCollide(`cotisant:${cotisationStem(slug, candidate)}`, held)
+            )
+        );
+      } catch (err) {
+        if (!(err instanceof VariantKeySpaceExhaustedError)) throw err;
+        this.logger.warn(
+          `[COTISATION] no free tier key for association=${product.associationId.slice(0, 8)}: "${err.base}" and every suffix are taken`
+        );
+        throw new ConflictException({
+          code: TIER_KEY_EXHAUSTED,
+          message:
+            'Every identifier this label could give a tier is already taken - choose another label',
+        });
+      }
       const derived = deriveCotisationTag(slug, mode, new Date(), key);
       product.variantKey = key;
       product.grantedTagName = derived.tagName;
@@ -1308,6 +1331,32 @@ export class ProductsService {
       );
       return manager.save(AssociationProduct, product);
     });
+  }
+
+  /**
+   * The ACTIVE tag names this association issued under its cotisation root (`cotisant:<slug>` and
+   * `cotisant:<slug>-...`), whatever tier, live or deleted, they belong to. Read inside the derived
+   * create's lock, on its `manager`, so a derived key skips a stem whose holders a deleted tier left
+   * (`orphanTierTags`) instead of re-adopting them. A typed key (older clients) is not checked
+   * against it: that path can still re-adopt (docs/wiki/cotisations.md).
+   */
+  private async heldTierTagNames(
+    manager: EntityManager,
+    associationId: string,
+    slug: string
+  ): Promise<string[]> {
+    const root = `cotisant:${slug}`;
+    const rows: { tagName: string }[] = await manager.query(
+      `SELECT DISTINCT "tagName" FROM user_tags
+        WHERE "issuingAssocId" = $1
+          AND ("expiresAt" IS NULL OR "expiresAt" > now())
+          AND starts_with("tagName", $2)`,
+      [associationId, `${root}-`]
+    );
+    this.logger.debug(
+      `[COTISATION] ${rows.length} held tier tag name(s) under ${root}- for a derived key`
+    );
+    return rows.map((r) => r.tagName);
   }
 
   /**
