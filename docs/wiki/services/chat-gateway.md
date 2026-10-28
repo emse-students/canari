@@ -18,7 +18,8 @@ It does **not** perform encryption, store messages, or make business logic decis
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence of the asked users the caller may see ([audience](#who-may-see-whose-presence-wp-presence-2026-10-18)) |
+| POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000) the caller may see ([audience](#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
+| GET | `/api/presence?users=` | yes | LEGACY, the same answer for clients installed before the POST ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
 | GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
 | GET | `/api/health` | no | Liveness probe |
 
@@ -321,7 +322,7 @@ Decided by the user: **"is X online" is visible to X, and to anyone who shares a
 or a community with X** - nobody else. Until then any signed-in caller could ask about any user id
 (and before 2026-09-10 any caller at all).
 
-The gateway owns no table that says who shares what, so `GET /api/presence` asks the two services
+The gateway owns no table that says who shares what, so a presence read (`POST /api/presence`, and its legacy GET) asks the two services
 that do, concurrently, each about its own tables, and takes the union (`audience.rs`):
 
 | Asked of | Route (`X-Internal-Secret`) | Table |
@@ -344,7 +345,7 @@ key-distribution group has no `dm_group_members` row, so it cannot widen the aud
   logged at boot), or when Redis cannot be read. Half an audience would hide exactly the people the
   missing half would show, and an empty map would read as "nobody is visible". A service refusing the
   GATEWAY (403) reaches the client as this 503, never as a refusal of the client.
-- **400** above `MAX_PRESENCE_USERS` (1000) ids; the URL bounds an honest client well below it.
+- **400** above `MAX_PRESENCE_USERS` (1000) distinct ids; the client splits a longer watchlist into requests of at most that many (`presenceStore.ts`), so an honest client never meets it. A POST body that is not `{ users: string[] }` with a JSON `Content-Type` is also a 400, after the 401 for an anonymous caller.
 - The SCAN of `user:online:{id}:*` runs only for the visible ids, so a crafted id never reaches a
   SCAN pattern unless a service has matched it to a real membership.
 
@@ -383,6 +384,48 @@ Covered by `presence.rs` (the real handler against fake services on loopback, Re
 down so the STATUS says how far a request got), `audience.rs`, one spec per service, the shared
 contract above, and `internal-presence.integration.spec.ts` (social-service, the community query
 and migration 089 against a real PostgreSQL).
+
+### The ids travel in a body, never in the URL (2026-10-28)
+
+Until then the read was `GET /api/presence?users=<id>,<id>,...`, every watched id (64 hex
+characters each) in the request line, every 10 s. A request line is written to every proxy's access
+log, so: a reverse-proxy log scanner flagged the very long query strings as a possible attack, over
+and over; the ids of everybody a member watches sat in logs of a host this project does not own; and
+a long enough watchlist outgrows a proxy's header buffer (nginx's 8 kB default, the edge's limit),
+failing that member's presence with nothing server-side to show for it.
+
+**One route, one body, one split.** `POST /api/presence` takes `{ "users": [...] }` and answers
+exactly what the GET answered (`answer_presence` in `presence.rs` is the one answer behind both): the
+same audience, the same 1000-id cap, the same 401/400/503. `presenceStore.ts` cuts the watchlist into
+requests of at most `PRESENCE_IDS_PER_REQUEST` (= the contract's `maxUserIds`, pinned by
+`presenceStore.contract.test.ts`) in ONE function, `presenceChunks`, in watchlist order; the requests
+of one poll go one after the other, and any of them giving no usable answer leaves the whole map as it
+was. Nothing is timed. nginx needed no change for the POST: the same `location /api/presence`, the
+same `auth_request` (its sub-request carries no body), the CORS layer already allowed POST and mirrors
+the preflight's headers; `apiFetch` logs it at debug like the GET (`POLL_ROUTES` matches the path,
+whatever the method).
+
+**The client sends the POST only to an estate that says it serves it**: `presencePost: true` in
+`GET /api/version`, read through `serverPresencePost()`. A stable ships both stores BEFORE production
+deploys, so for days a new phone build talks to the old gateway, which would answer the POST `405`;
+there the client keeps the legacy GET, one request as before. Before `/api/version` has answered at
+all, the client asks nothing (one debug line) rather than guessing a route. **core-service publishes
+a fact about the gateway** - deliberately: both are built from one release tag and deployed together,
+and `/api/version` is the one capability document every client already reads. The cost: during a
+rolling deploy a client that read the new `/api/version` before the new gateway is up gets a few
+`Presence request failed with status 405` warnings and keeps its map; lines that outlive a deploy are a
+broken deploy.
+
+**What the POST costs, taken knowingly:** it is not retried on a stalled head (`apiFetch` replays a
+GET once, never a write) and it has the write deadline (30 s, not 20 s); the next 10 s tick is the
+retry. A preflighted client pays one more preflight per 2 h for the new method.
+
+**The legacy GET stays for installed clients** and is counted: `LegacyGetTally` writes ONE line per
+window of at least an hour, closed by the first legacy call after it (no timer task) -
+`[presence] legacy GET /api/presence served N calls from M callers in the last Ss`. Silence is the
+zero its removal waits for ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)).
+nginx's access log drops that route's query (`/api/presence?query-redacted`, `access-log-redaction.test.mjs`),
+so even those clients' ids are no longer written there.
 
 **The push is NOT done, and the 10 s poll stands.** A push needs a presence TRANSITION event, and the
 gateway emits none: the key is set in one place (connect), refreshed in another, deleted in three

@@ -88,7 +88,12 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # A GUEST RECEIPT IS NOT LOGGED (2026-10-22, paid public forms WP-P2): `/f/<id>/receipt?receipt=` is\n\
 # a guest'"'"'s proof of a paid answer, the only one it has, so the route keeps its path and drops its\n\
 # query. The page itself sends no Referer (`no-referrer`), so its own requests do not carry it either.\n\
+# A PRESENCE READ IS NOT LOGGED WITH ITS IDS (2026-10-28): the legacy `GET /api/presence?users=` names\n\
+# every user a member watches, 64 hex characters each, so its line lists who that member follows beside\n\
+# their address and grows past what a log scanner accepts. Current clients POST the ids; the query of\n\
+# the clients still calling the GET is dropped here (docs/wiki/legacy-compatibility.md).\n\
 map $request_uri $logged_request_uri {\n\
+    "~^/api/presence[?]" "/api/presence?query-redacted";\n\
     "~^/api/mls/gifs/media(?:[?]|$)" "/api/mls/gifs/media?query-redacted";\n\
     "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
     "~^(?<receipt_path>/f/[^/?]+/receipt)[?]" "${receipt_path}?query-redacted";\n\

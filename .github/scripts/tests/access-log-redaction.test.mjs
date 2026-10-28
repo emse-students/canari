@@ -17,6 +17,8 @@
  *   its own path and drops its query too: it names which GIF the reader loaded.
  * - a guest receipt page (`/f/<id>/receipt?receipt=`) drops its query: the receipt is a paying
  *   guest's only proof of the answer (paid public forms WP-P2).
+ * - a legacy presence read (`/api/presence?users=`) drops its query: it names every user a member
+ *   watches, and its length tripped a log scanner (2026-10-28). Current clients POST the ids.
  *
  * STATIC (CI has no Docker daemon); the behaviour was run against nginx:stable-alpine on 2026-10-06
  * with five request lines, one log line each, the token redacted and `xtoken=` left alone.
@@ -107,6 +109,11 @@ else {
       ['/f/abc-123/receipt?x=1&receipt=SECRET', '/f/abc-123/receipt?query-redacted'],
       ['/f/abc-123/receipt', '/f/abc-123/receipt'],
       ['/f/abc-123?receipt=keep', '/f/abc-123?receipt=keep'],
+      // The legacy presence read names every watched user (2026-10-28): the query goes.
+      [`/api/presence?users=${'a'.repeat(64)},${'b'.repeat(64)}`, '/api/presence?query-redacted'],
+      ['/api/presence', '/api/presence'],
+      ['/api/admin/presence', '/api/admin/presence'],
+      ['/api/presences?users=keep', '/api/presences?users=keep'],
     ];
     for (const [input, expected] of cases) {
       if (apply(input) !== expected) fail(`${input} logs as ${apply(input)}, expected ${expected}`);
@@ -132,5 +139,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  'access-log-redaction: the access log cannot record a token, a GIF search, nor a guest receipt'
+  'access-log-redaction: the access log cannot record a token, a GIF search, a guest receipt, nor presence ids'
 );

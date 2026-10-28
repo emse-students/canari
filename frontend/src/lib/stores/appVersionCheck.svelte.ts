@@ -84,6 +84,16 @@ export function serverLivesMode(): LivesMode {
   return lastCheck?.livesMode ?? 'off';
 }
 
+/**
+ * Whether this estate's gateway takes presence ids in a POST body, as the last `/api/version` answer
+ * said - or `null` when no server has answered yet, which is "not known", never "no". Read by
+ * `presenceStore.ts`, which asks nothing until it is known rather than guessing a route.
+ */
+export function serverPresencePost(): boolean | null {
+  if (!lastCheck || lastCheck.serverVersion === null) return null;
+  return lastCheck.presencePost;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;
