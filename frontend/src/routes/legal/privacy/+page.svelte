@@ -502,10 +502,11 @@
           <tr>
             <td>Abonnements et demandes d'abonnement</td>
             <td>
-              Une demande : jusqu'à son acceptation, son refus (qui la supprime), son retrait, un
-              blocage ou la suppression d'un des deux comptes ; un abonnement : jusqu'à son retrait
-              par l'un ou l'autre, un blocage ou la suppression d'un des deux comptes ; la trace
-              qu'une notification a été envoyée : jusqu'à la suppression d'un des deux comptes
+              Une demande : jusqu'à sa réponse (un refus la supprime), son retrait, un blocage (elle
+              est aussitôt masquée, puis supprimée) ou la suppression d'un des deux comptes ; un
+              abonnement : jusqu'à son retrait par l'un ou l'autre, un blocage (il est aussitôt
+              masqué, puis supprimé) ou la suppression d'un des deux comptes ; la trace qu'une
+              notification a été envoyée : jusqu'à la suppression d'un des deux comptes
             </td>
           </tr>
           <tr>
