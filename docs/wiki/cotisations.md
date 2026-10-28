@@ -818,7 +818,12 @@ to a higher tier").
   to pick a tier without also being allowed to edit the boutique.
 - `POST /api/associations/:id/products/:productId/grant` -> `grantProductPurchase`: records a
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
-  `MANAGE_PRODUCTS`.
+  `MANAGE_PRODUCTS`. **With no amount given, it records what the checkout would charge that
+  beneficiary** (user, 2026-10-29): their grid cell, or the fixed price through `fixedPriceOf` - the
+  preferential `amountCentsMember` when they qualify by `fixedPriceFor`'s rule. It used to record the
+  full `amountCents` whoever the beneficiary was. An amount the cashier types still wins. The price is
+  read before the buyer's tier lock, as the grid cell always was: a tier granted to that buyer in the
+  same instant can leave the default one tier stale, never the grant itself.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
   (`MANAGE_MEMBERS`), the name being one of the association's own tier tags, granted like the
   manual add ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to

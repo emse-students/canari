@@ -1625,7 +1625,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
 
     it('still grants an ordinary product', async () => {
-      const { service, productRepo, purchaseRecordService } = makeService();
+      const { service, productRepo, assoRepo, purchaseRecordService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
       productRepo.findOne.mockResolvedValue(product({ type: 'other', amountCents: 500 }));
       productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
       purchaseRecordService.create.mockResolvedValue({
@@ -1644,6 +1645,62 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // Written inside the grant's transaction (the manager), so the tag and the record commit together.
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
         expect.objectContaining({ paymentMethod: 'cash', amountCents: 500 }),
+        expect.anything()
+      );
+    });
+  });
+
+  describe('a cash sale records the price the checkout would charge its beneficiary (user, 2026-10-29)', () => {
+    /** A fixed-price product whose preferential price goes to holders of the `sans-alcool` tier. */
+    const setUp = (holdsLinkedTier: boolean) => {
+      const made = makeService();
+      made.assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle' }));
+      made.productRepo.findOne.mockResolvedValue(
+        product({
+          amountCents: 1000,
+          amountCentsMember: 300,
+          memberPriceTag: 'cotisant:cercle-sans-alcool',
+        })
+      );
+      made.productRepo.find.mockResolvedValue([
+        product({ id: 'prod-sans', type: 'membership', variantKey: 'sans-alcool' }),
+      ]);
+      made.userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
+        Promise.resolve(holdsLinkedTier && tagName === 'cotisant:cercle-sans-alcool')
+      );
+      made.productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      made.purchaseRecordService.create.mockImplementation((x: unknown) =>
+        Promise.resolve({ ...(x as object), id: 'rec1', paidAt: new Date('2026-10-29T12:00:00Z') })
+      );
+      return made;
+    };
+
+    it('records the preferential amount by default when the beneficiary qualifies', async () => {
+      const { service, purchaseRecordService } = setUp(true);
+      await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 300 }),
+        expect.anything()
+      );
+    });
+
+    it("records the cashier's amount when one is given, over the preferential price", async () => {
+      const { service, purchaseRecordService } = setUp(true);
+      await service.grantProductPurchase('asso1', 'prod1', 'admin1', {
+        userId: 'user1',
+        amountCents: 1000,
+      });
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 1000 }),
+        expect.anything()
+      );
+    });
+
+    it('CONTROL: records the full price when the beneficiary does not qualify', async () => {
+      const { service, purchaseRecordService } = setUp(false);
+      await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 1000 }),
         expect.anything()
       );
     });

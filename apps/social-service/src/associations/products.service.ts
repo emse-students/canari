@@ -3423,6 +3423,9 @@ export class ProductsService {
   /**
    * Manually records a product purchase for a user (cash payment, retroactive grant).
    * Grants membership tags like a real purchase but does not dispatch Cercle webhooks.
+   *
+   * With no `dto.amountCents`, the amount recorded is the one the checkout would charge this
+   * beneficiary: their grid cell, or the fixed price - the preferential one when they qualify.
    */
   async grantProductPurchase(
     associationId: string,
@@ -3485,7 +3488,22 @@ export class ProductsService {
       }
       amountCents = cell;
     } else if (product.amountCents != null) {
-      amountCents = product.amountCents;
+      // The beneficiary is known, so the price the checkout would charge them is known: a cash sale
+      // records the preferential amount when they qualify for it, by the same rule (`fixedPriceOf`).
+      // The cashier overrides it by passing `amountCents` (user, 2026-10-29).
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      if (!asso) throw new NotFoundException('Association not found');
+      const price = this.fixedPriceOf(
+        product,
+        product.amountCents,
+        await this.tierFactsOf(asso, dto.userId)
+      );
+      amountCents = price.amountCents;
+      if (price.preferential) {
+        this.logger.debug(
+          `[SHOP] manual grant at the member price: product=${productId.slice(0, 8)} user=${dto.userId.slice(0, 8)} amount=${amountCents}`
+        );
+      }
     } else {
       throw new BadRequestException('amountCents is required for this product');
     }
