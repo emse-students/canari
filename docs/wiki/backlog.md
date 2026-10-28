@@ -1862,64 +1862,67 @@ on that build. **READ later the same day, with the user's agreement to delete on
 sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
 build, signed in on the local estate only, which is stopped.
 
-## P2 - WP-CHECKPOINT-CAS: the foreground checkpoint writes over a file it did not load (2026-10-23, design: one MLS manager per process, owed a review before code)
+## P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)
 
-**The race.** `write_mls_state_blob` (`concurrency.rs`) writes `mls.bin` blind. Every background
-writer is a compare-and-swap over the bytes it loaded; the foreground is not. A live manager that
-never loaded what a background engine wrote - a resume reload refused as `live-ahead` (the WebView then
-persists the live state, `TauriMlsService.reloadStateFromDisk`) or as an epoch regression
-(`reload_into`) - writes over it. A staged background Add the server accepted is then `ACCEPTED AND
-NOT HELD`, and a background decrypt's ratchet advance is lost the same way. Both are now SAID at
-ERROR when they happen (`report_what_keeping_the_live_state_loses`, `report_background_stages`), not
-prevented. Decided 2026-10-23: not accepted as permanent; its own pull request, stacked after the
-recorded-stage background Welcome
-([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
+**What it changes.** On a phone, the visible app and the background engines share one process and one
+state file. Today a heartbeat deadline decides who may write that file, and on Android the page's
+visibility never changes, so the heartbeat keeps running while the app is hidden. This WP replaces
+the deadline with an explicit owner register held under the existing state-file write lock:
+`Vacant`, `Foreground` (the live manager owns the file and background work stays queued) or `Parked`
+(the app is hidden, the live manager is frozen and checkpointed, and background engines work from the
+file by compare-and-swap). Ownership follows a host-visibility flag that the platform's lifecycle
+callbacks write and that is re-read under the lock at every transition. A live call counts as
+visible. The unpark runs inside the WebView's mutex grant, so nothing waits for it.
 
-**REJECTED 2026-10-23: a per-group reconcile of the file into the live manager.** It needed a
-per-group unsaved-advance flag and a per-group transplant of openmls storage between two managers, and
-it reconciles two states afterwards - a heal, which the rules forbid.
+**Four pull requests, no runtime switch, each better than main alone:**
 
-**The design (for review; nothing built): ONE MLS MANAGER PER PROCESS.** Two managers of one state in
-one process are the race; removing the second removes it.
+1. **The outbox.** One Rust module owns both outbox files behind one OS file lock and writes them
+   atomically. Every sender claims its entries before sealing them and settles them incrementally.
+   Closes a queued reply erased by a concurrent rewrite, a message sent twice by the background and
+   the app, and a lost update of the sent log.
+2. **The teardown and the job fence.** Manager, device key and register are reset in one hold, and
+   every background job is fenced by the generation it started under. Closes state resurrected by a
+   background job after sign-out. **The one-hold teardown of the manager and the key is BUILT
+   (2026-10-27, `end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27));
+   the generation is what is left.** The native slot has no session generation today: a command issued
+   by a destroyed client A that lands after B's `initialiser_mls` acts on B's manager, since the slot
+   says only `Some` or `None`, never whose. Only the TypeScript side fences it (the holder retires A's
+   client before B's login opens anything). The fence: a generation the install stamps and every
+   command carries, refused typed on a mismatch.
+3. **The register.** The register itself; a native park that writes nothing when nothing changed;
+   an unpark that holds no command lock across a decrypt; one native visibility event for the page;
+   on Android, the socket paused while hidden; frames in flight tracked in both directions; a pending
+   external join skipped by every background writer. Closes background delivery starved while the app
+   is hidden, the resume that overwrote a background advance, the blind checkpoint, and a frame
+   stranded by a commit on either side. Jobs with a server effect keep today's refusal.
+4. **The stages.** A background key-group join is staged inside the state file, hidden from every
+   group listing until it is settled, and settled from the server's answer by whoever owns the file
+   next. Closes the joined-but-not-held loss, apart from a bounded late-landing window that is
+   reported. A host test settled the precondition on 2026-10-27: a pending external join survives a
+   save and reload, and dropping the group leaves the key store byte-identical. That test, and a
+   corrected docblock for the external join, land in their own small pull request ahead of PR4.
 
-- **What holds the manager today.** `AppState.mls_manager: Arc<Mutex<Option<MlsManager>>>`
-  (`state.rs`), created empty by `.manage(AppState { .. })` in `lib.rs` and filled by `initialiser_mls`
-  (`commands/mls.rs`) and a `reloaded` resume (`reload_into`, `commands/storage.rs`). The JNI entries
-  cannot reach it: they get no `AppHandle`, and the only process-wide statics are
-  `ANDROID_JAVA_VM` and `ANDROID_CLASS_LOADER` (`lib.rs`). A sign-out sets it back to `None` since
-  2026-10-27 (`end_native_session`).
-- **A process-global handle to THE SAME `Arc`.** `static LIVE_MANAGER: OnceLock<Arc<Mutex<Option<MlsManager>>>>`
-  in `concurrency.rs`, set once in the builder with a clone of the `Arc` handed to `.manage`. Installed
-  means `Some` inside the mutex, so the handle never needs re-installing.
-- **A background engine borrows it while it is `Some`.** Each JNI engine (send, Welcome prepare and
-  settle, decrypt, worker) takes the manager mutex; `Some(manager)` - it runs on that manager, in
-  memory, and persists through the foreground's own checkpoint path (`write_mls_state_blob`, which is
-  then the ONLY writer of `mls.bin` in that process), then tells the WebView (an event, which runs
-  `syncGroupCachesFromNative` and `settleAfterStateReplaced`). `None` - a cold process the FCM service
-  started with no WebView - it loads `mls.bin` as today, by compare-and-swap. The decision is the
-  mutex's content, read under the mutex: no flag, no clock.
-- **Teardown.** BUILT 2026-10-27 (`end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)):
-  a sign-out sets the manager to `None` and keeps `mls.bin`; a state reset (`terminer_session_mls`
-  with `sweepState`) does so in the same hold as the file sweep, so an engine that waited on it finds
-  `None`, then finds no file, and does nothing. A sign-in installs `Some` again through `initialiser_mls`.
-- **OPEN: the native slot has no session generation.** A command issued by a destroyed client A that
-  lands after B's `initialiser_mls` acts on B's manager: the slot says only `Some` or `None`, never
-  WHOSE. Only the TypeScript side fences it today (the holder retires A's client before B's login
-  opens anything). The fence belongs in this work package's second pull request: a generation the
-  install stamps and every command carries, refused typed on a mismatch.
-- **Lock order, one for every path:** Kotlin `MlsStateLock` (background only, outermost) ->
-  `foreground_checkpoint_lock` -> the manager mutex -> `mls_bin_write_lock` (innermost). The foreground
-  never takes `MlsStateLock`, and a background engine that borrows takes the checkpoint lock before the
-  manager, as the foreground does, so no two paths take any pair in opposite orders.
-- **The foreground checkpoint becomes a GUARD.** Its compare-and-swap keeps a process-global digest of
-  the file its manager stands on; a mismatch can then only mean a second writer, which this design
-  removes, so it refuses at ERROR and never reconciles.
-- **The resume reload becomes moot** while a manager is installed (nothing else writes `mls.bin`), and
-  stays for a process restarted under a file a cold engine advanced.
-- **Tests first, with the foreground marked active as in real life:** a JNI send with a live manager
-  advances the live manager and writes nothing of its own; a JNI engine after teardown finds `None` and
-  loads the file; a cold engine and a foreground load in turn see each other's writes; a checkpoint
-  over a moved file refuses at ERROR.
+The design (lock order, interleavings, tests and device rows) is written into the wiki page of the code
+each pull request changes, as it lands. Until then this row is its summary. **Ahead of all four:** a
+small pull request lands the host test of the precondition and corrects the external join's
+docblock, which still calls the join's commit staged.
+
+**Decided.**
+
+- **REJECTED 2026-10-23:** a per-group reconcile of the file into the live manager (a heal).
+- **REJECTED 2026-10-27:** background engines borrowing the live manager; a park driven by the
+  WebView; a park triggered by the renderer's death (the process dies with it); a transition waiting
+  for background jobs; an outbox guarded by two lock families; a park request matched on the session;
+  exporting call keys from a parked manager; a server-side fence for the late landing.
+- **Lock order:** WebView MLS mutex -> background state lock -> checkpoint lock -> manager mutex ->
+  state-file write lock. The outbox lock (one file descriptor per acquisition), the key-group ledger
+  lock and the in-flight set lock are LEAVES: they may be taken under anything, and nothing is taken
+  under them.
+- **On Android the socket follows the host while no call is live**, so a hidden phone is reached by
+  push.
+
+**Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
+iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -2189,6 +2192,8 @@ Each of these is fixed in the tree; what is left is the measurement that would p
 about them is open work** - the story is in `CHANGELOG.md`, the mechanism on the wiki page named,
 the rule in [durable-rules](durable-rules.md). Delete the line once the measurement is taken. The
 phone passes already taken are history: [device-readings-2026-10](device-readings-2026-10.md).
+
+**#2329, the background Welcome staged in the state file (merged 2026-10-24), owes two things before its stable.** (a) One Mi 9T reading: open the app INSIDE a background Welcome's round trip, between the stage written and the server's answer; the app's load reports the stage and settles it exactly once - merged on an acceptance, cleared otherwise - with no second Add and no `ACCEPTED AND NOT HELD`. It is the "app opened inside the round trip" variant of [the background Welcome reading](#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22). (b) Its change to the iOS background-send FFI (a `max_attempts` argument, its header declaration and its Objective-C caller) agrees when read but has never been compiled: CI builds iOS only from a release or a manual dispatch. Owed: one manual `ios.yml` dispatch on `main`, green, before the next stable - otherwise the release is its first compile.
 
 **The native caches sealed at rest (2026-10-22, [mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - built and compiled for Android, the Swift and Objective-C++ halves compiled by CI alone.** Owed on BOTH the Mi 9T and the iPhone, on an UPGRADE over a build that left plaintext files: (a) the first launch logs the key created (`NativeCacheKey: ensure: created` / `[CanariIOS] nativeCacheKey: created`) and the legacy pass (`[NATIVE_CACHE] ... now sealed`); (b) a DM and a salon message pushed with the app KILLED still show their text in the banner; (c) `graine_seeds.json` and `fcm_message_cache.ndjson` start with `CNSEAL1` / `cs1:` (`run-as` on Android, `bench_native_store list` on the iPhone) and the next start injects the cached message; (d) on the iPhone, `graine_seeds.json` and `fcm_message_cache.ndjson` read `isExcludedFromBackup` after a fresh write, in the data directory and in the App Group, while `mls.bin` and `push_context.json` do NOT. **And one rig change**: `phone.mjs graineMirrorSessions` now answers a sealed Android mirror with an error, so NOTIF-20's mirror count needs the app to answer through `bench_native_store` on Android as the iPhone rig already does.
 
@@ -3608,6 +3613,10 @@ The user decided that every Business is created by Canari's onboarding, never li
 2. **Closing a marked payment.** Nothing clears `paid_not_granted` once the money was refunded or the tier granted by hand. Proposal: an admin action in the purchases list that records WHICH of the two happened (refunded or granted), writes a durable row (who, when from the server's own insert, which outcome) and leaves the mark as history; the hourly report then counts only the marked payments with no closing row. No clock decides anything: a marked payment stays reported until a person records its outcome.
 
 **Owed:** the user's yes on the column, and on the closing action; then one pull request with its migration and a real-PostgreSQL test of both.
+
+### P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)
+
+The sweep ([lydia-api](lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) acts only on an answer whose signature verifies over the row's amount written as `request/do` sent it (`"12.50"`). Lydia's documentation names the signed fields but not how the amount is written. The sweep ships OFF in production (`LYDIA_RECONCILE_ENABLED`, computed `false` there, `true` on dev). **Owed, in order:** (0) BEFORE production is switched on, all of: the user's one-off sandbox probe on a validated Business - the `0.50` format read by `request_uuid` AND by `order_ref`, the signature on a PAID and on a CANCELLED request (the command is in #2595); one full dev sweep read in its logs; a clean day of dev logs; and a read-only count on production of the open ended attempts the first tick will read and close (`count`, `min("expiresAt")`, the query is in [lydia-api](lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) - then `compute_lydia_reconcile_enabled` turned `true` for production in a commit; (1) the first real request the sweep reads - a `verified` line settles it; a `does NOT verify` ERROR on a row whose amount is right means the amount is signed another way, fixed in `lydiaStateSignedFields` and nowhere else; (2) then the payer's return and the callback's read made to verify too (they do not, and settling unverified there is unchanged by this lot); (3) a form answer keeps no snapshot of the Business its request was issued to, so one whose association re-linked meanwhile does not verify - a column, so a migration and the user's yes, only if it is ever seen. (4) On the sandbox, which Lydia refusal codes are PERMANENT for `request/state` and for `request/cancel` on a request Lydia ISSUED - first error `2` on an issued-then-expired uuid, measured so far only on a never-issued one: a refusal closes an attempt only from an allowlist, EMPTY for both calls until then, so every refusal is retried and accused at ERROR when the accused list changes - the starvation trade, taken knowingly; a durable bound on retries is a column, so a migration and the user's yes, not built.
 
 ### P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)
 

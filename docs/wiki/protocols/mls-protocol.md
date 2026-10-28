@@ -2450,7 +2450,7 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the
   next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
 
 The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
 which the holder drops with its account, and the WASM module itself holds no manager or key.
