@@ -1,6 +1,6 @@
 # Frontend architecture
 
-**Stack**: SvelteKit 2.9 / Svelte 5 (runes) / TailwindCSS 4 / Tauri 2  
+**Stack**: SvelteKit 3 / Svelte 5 (runes) / TailwindCSS 4 / Tauri 2  
 **Source**: `frontend/`
 
 ## Overview
@@ -9,7 +9,7 @@ The frontend is a SvelteKit application that never renders a component on the se
 
 ### One SPA, two adapters
 
-`svelte.config.js` picks its adapter from `process.env.BUILD_WEB`:
+`kit.config.js` picks its adapter from `process.env.BUILD_WEB`:
 
 | Build | Adapter | Output | Who sets it |
 |---|---|---|---|
@@ -90,7 +90,7 @@ Cloudflare HIT.
 
 The predicate is therefore `type === 'js'`, and it lives in
 [`$lib/server/preload`](../../../frontend/src/lib/server/preload.ts) rather than in
-`hooks.server.ts`, so a test can import it without dragging `$env/dynamic/private` in through the SEO
+`hooks.server.ts`, so a test can import it without dragging `$app/env/private` in through the SEO
 chain - the same split as `$lib/server/handleError`.
 
 **It is written as `=== 'js'`, never as `!== 'css'`.** SvelteKit's default is
@@ -275,6 +275,68 @@ It is worth knowing WHY this was only ever seen on a phone: on desktop V8 the wi
 value changing and the getter running is imperceptible, while on Android WebView - slower, with a
 more aggressive GC - it is wide enough to hit regularly. A race that "cannot happen" on the machine
 it was written on is a race that happens to users.
+
+### A teardown sees the values its effect saw, and a derived read there keeps them (2026-10-27)
+
+Svelte runs every teardown - an `$effect`'s return, an `onMount` return, an `onDestroy` - with the
+values the effect last saw, and that is deliberate (a teardown releases what its run acquired). Two
+different failures follow from it, and only the second is silent.
+
+**1. A `$state` read in a teardown is STALE.** It returns the value from before the current flush.
+Code that ASKS "has the selection moved?" from a teardown is always told "no". `MainChatPage`'s
+receipt effect detected leaving a conversation with `if (convs.selectedContact !== currentContact)`
+in its teardown, so the leave branch never ran. Nothing was flushed or cancelled when the reader
+left inside the 2 s window, and the next conversation's note joined the OLD window: `max(A, B)`,
+delivered by A's callback (for a salon, `claimChannelReadSignal` for A). The leave is now detected
+by the effect's FIRST statement, `readMarks.follow(selected)` (`readMarkDebounce.ts`). The window
+now knows the conversation that opened it, and on a leave it is DELIVERED through that
+conversation's own callback, for a salon as for a DM. A first draft dropped a salon's window on
+leave, on the grounds that its mark is owed durably anyway. But the callback is also what sends
+`markChannelRead`, the silent signal that clears the salon's banner on the account's other devices,
+so dropping it lost that signal. `readMarkDebounce.test.ts` covers the delivery, and
+`readMarkDebounce.leave.svelte.test.ts` pins both the stale read and the call's place in the effect.
+
+**2. A `$derived` read in a teardown is RE-EVALUATED WITH THE STALE VALUES AND KEEPS THAT RUN'S
+DEPENDENCIES** when it depends on something that changed in the flush. Any derived counts, read
+directly or through a prop getter. `untrack` does not help, because it only stops the CALLER from
+subscribing; the derived still rewires itself. It throws nothing. `ChatHeader`'s DM presence effect
+did `return () => unwatchUsers([contactName])`. On leaving a DM, that prop read walked `ChatArea`'s
+`conversation` prop back to `currentConvo` (`useConversations.svelte.ts`), which re-ran with the DM's
+key and kept `conversations.get(dmKey)` as its only map dependency. It ran AFTER the pane had read
+`currentConvo` for the new selection, so nothing read it again. The conversation now open could then
+receive any number of messages: the map, the sidebar and the read marks had them, and the pane stayed
+frozen until the selection changed again. Opening a group as its Welcome landed showed an empty
+transcript; a reload drew it. Parking on a group never reproduced it, because that effect only runs
+for a DM. The proof was a CDP logpoint on `currentConvo` in the dev bundle: it evaluated with the
+DM's key while the selection source held the group's, called from the header's teardown.
+
+The minimal reproduction, on Svelte 5.57.2 (red with or without the `untrack`; green when the
+teardown reads nothing):
+
+```ts
+const map = new SvelteMap([['a', 1], ['b', 1]]);
+let key = $state('a');
+const current = $derived(map.get(key));
+const seen: unknown[] = [];
+$effect.root(() => {
+  $effect(() => { seen.push(current); });          // the reader, declared first
+  $effect(() => {
+    void key;
+    return () => untrack(() => current);           // a teardown that reads the derived
+  });
+});
+flushSync();
+key = 'b'; flushSync();     // the teardown re-runs `current` with key 'a': deps -> map 'a'
+map.set('b', 2); flushSync();
+expect(seen.at(-1)).toBe(2); // fails: 1 - `current` no longer listens to 'b'
+```
+
+**A teardown reads only locals captured in the effect body - never a prop, a `$state` or a
+`$derived`** (`const watched = contactName; watchUsers([watched]); return () =>
+unwatchUsers([watched]);`). A question about the CURRENT state is asked at the start of the next run,
+not in the teardown. `ChatArea.leaveDirect.svelte.test.ts` mounts the real `ChatArea` on the real
+`currentConvo`, leaves a DM, adds a message to the group and asserts it is drawn; it is red with the
+prop read.
 
 ### An uncaught error in the reactive graph is PERMANENT until a reload, so boundaries are placed by blast radius
 
@@ -773,3 +835,14 @@ them - 70 % of the suite's wall-clock. So vitest alone reads a second compile of
   keys equal the app output's keys, and that every key of `messages/{fr,en}.json` is in it.
 - A test that dies with `Failed to resolve import "$lib/paraglide/..."` has not compiled it: run
   `bun run paraglide:compile:test`.
+
+## SvelteKit 3 and adapter-node 6 (2026-10-27)
+
+One pull request, because `adapter-node@6` requires `@sveltejs/kit@3` and `kit@3` drops what `adapter-node@5` used. What moved, so the next reader does not rediscover it:
+
+- **Config.** `svelte.config.js` is refused. The same object lives in `frontend/kit.config.js` (still plain JS, still stamping `kit.version.name` once per process - `kitConfigStamp.test.ts`) and `vite.config.js` passes it to `sveltekit(kitConfig)`. There is no `kit:` namespace any more. `vitest.config.ts` passes `svelte({ configFile: false })`, otherwise the plugin logs "no Svelte config found".
+- **`cookie` override removed.** `overrides.cookie ^0.7` existed to lift kit 2's `cookie@0.6`; kit 3 depends on `cookie@2`, which the pin broke (`parseCookie is not a function`).
+- **adapter-node 6.** `ORIGIN` is gone and so are the three compose lines that set it (2026-10-27): the origin is derived per request: scheme `https` by default, host from `Host` (nginx `@ssr` forwards it); `PROTOCOL_HEADER` is deliberately NOT set (it would trust a client-sendable value; the edge names have no Cloudflare in front). The app has no form action or remote function for the CSRF origin check to guard; **the day one is added, verify the derived origin behind nginx first** (`$host` and the port matter; a local origin would be `https://localhost`), because that check compares it with the browser's. Static assets are served from a table recorded at build time, with content-hash ETags and `GET`/`HEAD` only. The server half of `check-bundle-consistency.mjs` now reads `const global = "__sveltekit_..."` instead of `version_hash`.
+- **Two build warnings, both about `$lib`, and why they stay for now.** (1) `config_option_deprecated_alias`: `alias: { $lib: 'src/lib' }` is deprecated. The replacement, `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`, was RUN on 2026-10-27 and REVERTED: it rewrites 1567 files (7645 imports gain a `.js` extension, comments included), which would conflict with every pull request open on the frontend. It belongs in a quiet window, as ONE mechanical commit with the repository frozen ([backlog](../backlog.md#p3---the-lib-alias-migration-waits-for-a-quiet-frontend-2026-10-27)); that commit removes the alias and this warning. (2) `tsconfig_invalid: "paths" was overwritten. Imports from "$lib" may not typecheck`: a FALSE POSITIVE on Windows. Kit compares the generated path `<root>srclib/*` with `path.resolve(base, ...)`, which on win32 normalises the slash to `srclib*`, so `$lib/*` always mismatches; our tsconfig sets no `paths` and `bun run check` (0 errors) is right. Linux (CI, the images) does not print it. Both disappear with the migration.
+- **Behaviour kept on purpose.** `version.pollInterval: 0` (the app owns stale-build recovery).
+- **UNVERIFIED here:** `goto` now rejects for a URL no route resolves (deep links, notification targets); the `ORIGIN` removal behind nginx; the web app on dev (`frontend-ssr` container, SEO head injection was smoke-tested against a local `build/index.js` only); both phones.

@@ -24,7 +24,7 @@
    * drags it; a second finger anywhere pinches and twists the same one; a tap on empty space
    * deselects; a tap on the already-selected text edits it; releasing over the trash deletes.
    */
-  import { onDestroy, tick } from 'svelte';
+  import { tick } from 'svelte';
   import {
     ArrowRight,
     ChevronLeft,
@@ -155,7 +155,13 @@
     mono: () => m.reels_editor_font_mono(),
   };
 
-  onDestroy(() => URL.revokeObjectURL(source));
+  // Each URL is revoked by the effect that saw it made, from a value captured in its body: a
+  // teardown that read `source` would re-run the derived there - minting a URL nobody revokes -
+  // when the clip changed in the same flush (frontend/architecture, on teardowns).
+  $effect(() => {
+    const url = source;
+    return () => URL.revokeObjectURL(url);
+  });
 
   const gesture = new TransformGesture(liveFrameSize);
   /** The overlay the running gesture handles, and whether it was already selected when it began. */
