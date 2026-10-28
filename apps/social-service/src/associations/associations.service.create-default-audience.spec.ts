@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
-import { SLUG_UNIQUE_CONSTRAINT } from './association-slug.util';
+import { SLUG_EXHAUSTED } from './association-slug.util';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
@@ -33,6 +33,12 @@ function makeService(
   };
   const assoRepo = {
     findOne: jest.fn(() => Promise.resolve(null)),
+    /** The catalog read of the violated index's columns: `*slug*` indexes cover `slug`, others `name`. */
+    query: jest.fn((_sql: string, params: unknown[]) =>
+      Promise.resolve(
+        String(params[0]).includes('slug') ? [{ attname: 'slug' }] : [{ attname: 'name' }]
+      )
+    ),
     create: jest.fn((row: object) => row),
     save: jest.fn(),
     manager: { transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)) },
@@ -158,7 +164,7 @@ describe('AssociationsService.create - a non-admin creator is bound to the campu
 });
 
 describe('AssociationsService.create - the slug is derived, never typed (user, 2026-10-26)', () => {
-  const unique = (constraint = SLUG_UNIQUE_CONSTRAINT) =>
+  const unique = (constraint = 'UQ_associations_slug') =>
     Object.assign(new Error('duplicate key'), { code: '23505', constraint });
 
   it('derives the slug from the name when none is sent, accents folded', async () => {
@@ -208,7 +214,7 @@ describe('AssociationsService.create - the slug is derived, never typed (user, 2
     expect(manager.save).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT retry a unique violation on another index, and rethrows it', async () => {
+  it('does NOT retry a unique violation on another COLUMN, and rethrows it', async () => {
     const { service, manager } = makeService('gardanne');
     manager.save.mockRejectedValueOnce(unique('UQ_some_other_index'));
 
@@ -216,6 +222,29 @@ describe('AssociationsService.create - the slug is derived, never typed (user, 2
       constraint: 'UQ_some_other_index',
     });
     expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks on a violation of the slug column whatever its constraint is called', async () => {
+    const { service, manager, assoRepo } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(unique('live_hand_named_slug_key'));
+
+    const saved = await service.create({ name: 'Club' } as never, 'u', true);
+
+    expect(saved).toMatchObject({ slug: 'club-2' });
+    expect(assoRepo.query).toHaveBeenCalledWith(expect.any(String), [
+      'live_hand_named_slug_key',
+      null,
+    ]);
+  });
+
+  it('refuses with a TYPED code once every candidate is taken', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValue(unique());
+
+    const err = await service.create({ name: '日本' } as never, 'u', true).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).getResponse()).toMatchObject({ code: SLUG_EXHAUSTED });
   });
 
   it('suffixes a name deriving to a reserved route word, and refuses it as an explicit slug', async () => {

@@ -15,9 +15,18 @@ describe('the creation flow asks for no slug', () => {
   const src = read('lib/components/associations/AssociationCreatePage.svelte');
 
   it('has no slug field, state, placeholder or hint, and sends none', () => {
-    // The ONLY mention left is the server's answer, used to redirect to the new page.
-    expect(src.match(/slug/gi)?.length).toBe(src.match(/created\.slug/g)?.length);
-    expect(src).not.toMatch(/slugify|slug:|bind:value=\{slug\}|assoc_new_slug/);
+    // The ONLY mentions left are the server's answer, used to redirect to the new page, and the
+    // typed refusal when no free slug could be derived.
+    const refusal = /ASSOCIATION_SLUG_EXHAUSTED|assoc_new_error_slug_exhausted|no free slug/g;
+    expect(src.replace(refusal, '').match(/slug/gi)?.length).toBe(
+      src.match(/created\.slug/g)?.length
+    );
+    expect(src).not.toMatch(/slugify|slug:|bind:value=\{slug\}|assoc_new_slug_hint/);
+  });
+
+  it('maps the typed no-free-slug refusal to a fr/en sentence, never the server prose', () => {
+    expect(src).toContain('err.code === ASSOCIATION_SLUG_EXHAUSTED');
+    expect(src).toContain('m.assoc_new_error_slug_exhausted()');
   });
 
   it('is submittable with a name alone (plus the reach it already checks)', () => {

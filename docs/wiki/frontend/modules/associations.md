@@ -96,14 +96,31 @@ is the arbiter (a unique violation aborts the transaction it happens in, and a c
 would let two concurrent creates both pass). A slug SENT explicitly (an old client) is still
 validated and refused `400` when taken, including when it loses the race at the index.
 
-Four guards: only a unique violation of the SLUG index (matched by constraint name, never any
-`23505`) is retried; a derived candidate whose cotisation stem would collide with another
+Four guards: only a unique violation of the SLUG column is retried, never any other `23505` - and
+it is classified by the COLUMNS of the index the driver names (`violatesUniqueColumns` in
+`common/pg-errors.ts`, one catalog read on the violation path), not by the constraint's NAME,
+because production's schema is not built by `synchronize` and nothing proves its slug constraint
+carries the name TypeORM would give it (a hand-named one would have turned every derived collision
+into a `500`); a derived candidate whose cotisation stem would collide with another
 association's (`bde-2026-2027` beside `bde`, `assertCotisationStemFree`, recognised by its typed
 `COTISATION_TAG_COLLISION` code through `isCotisationStemCollision`) walks to the next suffix, while
-an explicit slug keeps the `409`; a slug equal to a static route word (`new`, `edit`: `RESERVED_SLUGS`, held equal
-to the route folders by a spec) is never derived bare and is refused when sent; ligatures NFD cannot
-decompose (`oe`, `ae`, `ss`...) are expanded before folding. `association-slug-derivation.integration.spec.ts`
-proves it against a real PostgreSQL (`SOCIAL_IT_DATABASE_URL`).
+an explicit slug keeps the `409`; a slug equal to a static route word (`new`, `edit`: `RESERVED_SLUGS`,
+held equal to the route folders by a spec) is never derived bare and is refused when sent; letters
+NFKD cannot decompose (`oe`, `ae`, `ss`...) are expanded before folding, and NFKD (not NFD) folds
+full-width and other compatibility forms (`ＢＤＥ` is `bde`). `association-slug-derivation.integration.spec.ts`
+proves it against a real PostgreSQL (`SOCIAL_IT_DATABASE_URL`), including a slug constraint renamed
+by hand.
+
+**The walk is capped.** A name with no Latin letter or digit folds to `asso`, so every such name
+shares one base; after `SLUG_MAX_ATTEMPTS` (50) candidates the create is refused `400` with the
+typed code `ASSOCIATION_SLUG_EXHAUSTED`, which the creation page maps to
+`m.assoc_new_error_slug_exhausted()` (add a word to the name) - never the server's English message.
+
+**Order of shipping: the server first.** A store build EMBEDS its frontend, so a build that sends no
+slug must never meet a server that still requires one. The server change ships (production deploy)
+BEFORE, or in the same release as, the first store build carrying the new form - never after. The
+explicit-slug branch kept for old clients is a shim with a removal condition:
+[legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-explicit-slug-sent-on-association-creation-by-a-client-older-than-the-derived-slug).
 
 ## The audience tab and the campus prompt (WP-B, 2026-10-08)
 

@@ -2916,6 +2916,7 @@
   "assoc_new_back": "Back to associations",
   "assoc_new_heading": "Create an association",
   "assoc_new_error_required": "Name is required.",
+  "assoc_new_error_slug_exhausted": "This name is already used too often: add a word to tell it apart.",
   "assoc_new_error_fallback": "Failed to create the association",
   "assoc_new_name_label": "Association name",
   "assoc_new_name_placeholder": "Student Council",

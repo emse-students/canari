@@ -14,7 +14,12 @@ describe('slugifyName', () => {
     expect(slugifyName('  --Liste  Canari 2027!! ')).toBe('liste-canari-2027');
   });
 
-  it('expands ligatures that NFD cannot decompose', () => {
+  it('folds full-width and other compatibility forms (NFKD)', () => {
+    expect(slugifyName('ＢＤＥ　２０２７')).toBe('bde-2027');
+    expect(slugifyName('Club ﬁlm')).toBe('club-film');
+  });
+
+  it('expands ligatures that NFKD cannot decompose', () => {
     expect(slugifyName('Cœur de Lyon')).toBe('coeur-de-lyon');
     expect(slugifyName('Æsir')).toBe('aesir');
     expect(slugifyName('Straße')).toBe('strasse');

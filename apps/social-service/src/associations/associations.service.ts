@@ -54,6 +54,7 @@ import { AssociationCalendarEventCoOwner } from './entities/association-calendar
 import { deriveCotisationTag } from './cotisation-tag.util';
 import {
   RESERVED_SLUGS,
+  SLUG_EXHAUSTED,
   SLUG_MAX_ATTEMPTS,
   SLUG_PATTERN,
   isSlugUniqueViolation,
@@ -370,7 +371,7 @@ export class AssociationsService {
       try {
         return await this.insertAssociation(dto, explicitSlug, logoUrl, userId, isGlobalAdmin);
       } catch (err) {
-        if (!isSlugUniqueViolation(err)) throw err;
+        if (!(await isSlugUniqueViolation(err, this.catalogQuery))) throw err;
         this.logger.warn(`[slug] explicit slug ${explicitSlug} was taken between check and insert`);
         throw new BadRequestException('An association with this slug already exists');
       }
@@ -393,13 +394,23 @@ export class AssociationsService {
           );
           continue;
         }
-        if (!isSlugUniqueViolation(err)) throw err;
+        if (!(await isSlugUniqueViolation(err, this.catalogQuery))) throw err;
         this.logger.log(`[slug] ${candidate} is taken, trying the next suffix`);
       }
     }
     this.logger.error(`[slug] no free slug in ${SLUG_MAX_ATTEMPTS} attempts for "${dto.name}"`);
-    throw new BadRequestException('No free slug could be derived from this name');
+    throw new BadRequestException({
+      code: SLUG_EXHAUSTED,
+      message: 'No free slug could be derived from this name',
+    });
   }
+
+  /**
+   * Reads the catalog OUTSIDE the create transaction a violation has just aborted - what tells a
+   * slug collision from any other unique violation (`isSlugUniqueViolation`).
+   */
+  private readonly catalogQuery = (sql: string, params: unknown[]) =>
+    this.assoRepo.query(sql, params);
 
   /** One create attempt with ONE slug: the row and its default audience rule, in one transaction. */
   private insertAssociation(

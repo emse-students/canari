@@ -3,7 +3,8 @@
  *
  * The slug is derived from the name and the UNIQUE index on `associations.slug` is the arbiter: a
  * collision walks to `-2`, `-3`, each candidate in its own transaction, and a unique violation on
- * ANY OTHER index is not retried. A mock cannot prove the constraint name the driver reports, nor
+ * ANY OTHER column is not retried - classified by the violated index's COLUMNS, so a live schema
+ * that names the slug constraint differently from `synchronize` still walks. A mock cannot prove the constraint name the driver reports, nor
  * that two concurrent creates both land.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; locally, against a throwaway
@@ -22,7 +23,6 @@ import { Association } from './entities/association.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
-import { SLUG_UNIQUE_CONSTRAINT } from './association-slug.util';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -91,13 +91,6 @@ maybe('association slug derivation against PostgreSQL', () => {
     await admin.end();
   });
 
-  it('the constraint name the code expects is the one PostgreSQL built', async () => {
-    const rows = (await ds.query(
-      `SELECT conname FROM pg_constraint WHERE conrelid = 'associations'::regclass AND contype = 'u'`
-    )) as { conname: string }[];
-    expect(rows.map((r) => r.conname)).toContain(SLUG_UNIQUE_CONSTRAINT);
-  });
-
   it("seeded 'club' and 'club-2', 'Club' becomes 'club-3' with exactly ONE audience row", async () => {
     await create('Club');
     await create('Club');
@@ -122,7 +115,7 @@ maybe('association slug derivation against PostgreSQL', () => {
     expect(await assos.count()).toBe(before);
   });
 
-  it('a unique violation on ANOTHER index is rethrown, not retried', async () => {
+  it('a unique violation on ANOTHER column is rethrown, not retried', async () => {
     await ds.query(`CREATE UNIQUE INDEX other_unique ON associations (name) WHERE name = 'Solo'`);
     await create('Solo');
 
@@ -139,6 +132,27 @@ maybe('association slug derivation against PostgreSQL', () => {
 
     // `cotis-2026-2027` beside `cotis` would make a lifetime tag of one a dated tag of the other.
     expect(dated.slug).toBe('cotis-2026-2027-2');
+  });
+
+  it('a slug constraint under ANOTHER name still walks (production is not built by synchronize)', async () => {
+    const [{ conname }] = (await ds.query(
+      `SELECT c.conname FROM pg_constraint c
+         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.conrelid = 'associations'::regclass AND c.contype = 'u' AND a.attname = 'slug'`
+    )) as { conname: string }[];
+    await ds.query(
+      `ALTER TABLE associations RENAME CONSTRAINT "${conname}" TO hand_named_live_key`
+    );
+    try {
+      await create('Renamed');
+      const second = await create('Renamed');
+
+      expect(second.slug).toBe('renamed-2');
+    } finally {
+      await ds.query(
+        `ALTER TABLE associations RENAME CONSTRAINT hand_named_live_key TO "${conname}"`
+      );
+    }
   });
 
   it('an explicit slug is still refused when taken, and a reserved one is refused', async () => {

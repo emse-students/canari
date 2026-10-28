@@ -34,6 +34,7 @@
     audienceRefusalText,
   } from '$lib/associations/audienceRefusal';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { ASSOCIATION_SLUG_EXHAUSTED, SocialApiError } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -186,6 +187,9 @@
       const refusal = audienceRefusalCode(err);
       if (refusal === AUDIENCE_REFUSAL.CREATOR_CAMPUS_REQUIRED) {
         campusMissing = true;
+      } else if (err instanceof SocialApiError && err.code === ASSOCIATION_SLUG_EXHAUSTED) {
+        Log.d(`create.submit: no free slug for this name (${kind})`);
+        error = m.assoc_new_error_slug_exhausted();
       } else {
         error = refusal ? audienceRefusalText(refusal) : copy.failure;
       }

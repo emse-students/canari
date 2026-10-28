@@ -1,5 +1,4 @@
-import { DefaultNamingStrategy } from 'typeorm';
-import { isUniqueViolation } from '../common/pg-errors';
+import { type CatalogQuery, violatesUniqueColumns } from '../common/pg-errors';
 
 /**
  * THE SLUG OF AN ASSOCIATION, LIST OR INSTITUTION IS DERIVED, NEVER TYPED (user, 2026-10-26: a
@@ -9,6 +8,12 @@ import { isUniqueViolation } from '../common/pg-errors';
 
 /** How many numbered candidates (`-2` .. `-N`) a collision may walk before the create gives up. */
 export const SLUG_MAX_ATTEMPTS = 50;
+
+/**
+ * The `code` of the 400 a create gets when every candidate is taken (a name with no Latin letter or
+ * digit folds to `asso`, so fifty such names exhaust it): the client maps it to a fr/en sentence.
+ */
+export const SLUG_EXHAUSTED = 'ASSOCIATION_SLUG_EXHAUSTED';
 
 /** The shape both the DTO and the service hold a slug to. */
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,49}$/;
@@ -22,7 +27,7 @@ export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,49}$/;
 export const RESERVED_SLUGS: ReadonlySet<string> = new Set(['new', 'edit']);
 
 /**
- * Letters that NFD does not decompose, mapped by hand BEFORE folding: without it "Cœur" lost its
+ * Letters that NFKD does not decompose, mapped by hand BEFORE folding: without it "Cœur" lost its
  * `œ` and "Straße" its `ß`, giving `cur` and `strae`.
  */
 const LIGATURES: Readonly<Record<string, string>> = {
@@ -37,7 +42,8 @@ const LIGATURES: Readonly<Record<string, string>> = {
 };
 
 /**
- * Folds a display name to a slug: lowercase, ligatures expanded, ASCII-folded, hyphenated, no edge
+ * Folds a display name to a slug: lowercase, ligatures expanded, ASCII-folded (NFKD, so a
+ * full-width `ＢＤＥ` folds like `BDE`), hyphenated, no edge
  * hyphen. Returns '' when the name holds no letter or digit at all (the caller falls back to a
  * neutral base).
  */
@@ -45,7 +51,7 @@ export function slugifyName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[æœßøđðłþ]/g, (c) => LIGATURES[c])
-    .normalize('NFD')
+    .normalize('NFKD')
     .replace(/\p{M}/gu, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
@@ -68,18 +74,12 @@ export function slugCandidates(name: string): string[] {
   return out;
 }
 
-/** The Postgres name TypeORM gives the `UNIQUE` on `associations.slug` (the entity's `unique: true`). */
-export const SLUG_UNIQUE_CONSTRAINT = new DefaultNamingStrategy().uniqueConstraintName(
-  'associations',
-  ['slug']
-);
-
 /**
- * Whether a driver error is the unique violation of the SLUG index specifically - never any other
- * `23505`, which a retry with another suffix would not cure and must not hide.
+ * Whether a driver error is the unique violation of the SLUG column specifically - never any other
+ * `23505`, which a retry with another suffix would not cure and must not hide. Classified by the
+ * COLUMNS of the violated index, not its name: production's schema is not built by `synchronize`,
+ * so the name TypeORM would give it proves nothing about the live one.
  */
-export function isSlugUniqueViolation(err: unknown): boolean {
-  return (
-    isUniqueViolation(err) && (err as { constraint?: string }).constraint === SLUG_UNIQUE_CONSTRAINT
-  );
+export function isSlugUniqueViolation(err: unknown, query: CatalogQuery): Promise<boolean> {
+  return violatesUniqueColumns(err, ['slug'], query);
 }

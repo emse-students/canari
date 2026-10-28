@@ -2948,6 +2948,7 @@
   "assoc_new_back": "Retour aux associations",
   "assoc_new_heading": "Créer une association",
   "assoc_new_error_required": "Le nom est requis.",
+  "assoc_new_error_slug_exhausted": "Ce nom est déjà trop utilisé : ajoutez-y un mot pour le distinguer.",
   "assoc_new_error_fallback": "Impossible de créer l'association",
   "assoc_new_name_label": "Nom de l'association",
   "assoc_new_name_placeholder": "Bureau des Élèves",
