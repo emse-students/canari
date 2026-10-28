@@ -49,3 +49,27 @@ export function gridPriceLabel(product: AssociationProduct): string | null {
 export function gridPriceIsProvisional(product: AssociationProduct, signedIn: boolean): boolean {
   return !signedIn && product.viewerPrice?.kind === 'grid' && product.viewerPrice.dependsOnProfile;
 }
+
+/**
+ * Why the shop offers NO purchase of this cotisation tier to this viewer, read from the server's
+ * `viewerTierRelation`, or null when it is offered. `held` (that very tier), `lower` (not a rise
+ * over the tier held) and `unranked` (no rank can be established) are each refused by the checkout
+ * with a 409, so the screen offers no button whose every press fails. The relation is never
+ * re-derived here: the server holds the tiers' prices and the viewer's tags.
+ */
+export function tierNotOffered(product: AssociationProduct): 'held' | 'lower' | 'unranked' | null {
+  const relation = product.viewerTierRelation;
+  return relation === 'held' || relation === 'lower' || relation === 'unranked' ? relation : null;
+}
+
+/**
+ * The preferential amount this viewer pays for a fixed-price product, in cents, or null when they
+ * pay the full price (or the product has a grid, a free amount, or no price for them). Read from
+ * the server's `viewerDueCents` - the amount the checkout charges - and NEVER computed from the
+ * product's member-price columns: whether the viewer qualifies rests on tags only the server reads.
+ */
+export function preferentialDueCents(product: AssociationProduct): number | null {
+  const due = product.viewerDueCents;
+  if (product.priceMatrix != null || product.amountCents === null || due == null) return null;
+  return due < product.amountCents ? due : null;
+}

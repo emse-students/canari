@@ -171,23 +171,24 @@ export class LegacyCotisationService {
         // A cotisation bought in Canari outranks anything a legacy list says. Without this the XOR
         // in `grantCotisant` would revoke the tier they paid for and hand them the legacy one -
         // and with 200 BDE and 234 Cercle tags already held across 395 accounts, that is the
-        // ordinary case here, not an edge one.
-        if (await this.userTagService.holdsAnyCotisation(identity.userId, row.associationId)) {
-          await this.close(row, identity.userId, 'already-held');
-          outcome.alreadyHeld++;
-          continue;
-        }
-
+        // ordinary case here, not an edge one. Asked UNDER the buyer's tier lock
+        // (`grantCotisantUnlessHeld`), so a tier being paid for at this very moment is seen too.
+        //
         // Granted BEFORE the row is closed, deliberately. `grantOrRenew` upserts on
         // `(userId, tagName)`, so a crash between the two costs a repeated grant on the next
         // sign-in; closing first would cost the cotisation outright.
-        await this.userTagService.grantCotisant(
+        const granted = await this.userTagService.grantCotisantUnlessHeld(
           row.associationId,
           identity.userId,
           'system:legacy-import',
           row.variantKey,
           { legacy: { batch: row.sourceBatch, sourceLabel: row.sourceLabel, ...row.metadata } }
         );
+        if (!granted) {
+          await this.close(row, identity.userId, 'already-held');
+          outcome.alreadyHeld++;
+          continue;
+        }
         await this.close(row, identity.userId, 'granted');
         outcome.granted++;
         this.logger.log(

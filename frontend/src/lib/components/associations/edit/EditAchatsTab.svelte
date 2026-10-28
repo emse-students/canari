@@ -248,7 +248,17 @@
                 {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>
               <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
-              <td class="text-text-main px-4 py-3">{purchase.productName}</td>
+              <td class="text-text-main px-4 py-3">
+                {purchase.productName}
+                {#if purchase.notGranted}
+                  <span
+                    class="bg-red-err/15 text-red-err ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                    title={m.asso_achats_not_granted_hint()}
+                  >
+                    {m.asso_achats_not_granted()}
+                  </span>
+                {/if}
+              </td>
               <td class="px-4 py-3">
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===

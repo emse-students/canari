@@ -41,6 +41,21 @@ export const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 
 /**
+ * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds, ACTIVE, a sibling
+ * tier whose product price is greater than or equal to it: the sibling XOR would replace the held
+ * tier, a silent downgrade (or a sideways swap paid in full). Holding that very tier answers
+ * `PRODUCT_ALREADY_PURCHASED` instead.
+ */
+export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
+
+/**
+ * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds a sibling tier and
+ * one of the two has no fixed price (a grid, a free amount, or a held tag whose tier product is
+ * gone): no rank can be established, and the sibling XOR would replace the held tier.
+ */
+export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */
@@ -75,6 +90,13 @@ export function withCheckoutReturnKey(
   u.searchParams.set('productId', attempt.productId);
   return u.toString();
 }
+
+/**
+ * The `code` of the 409 a checkout gets when the association's payment routing (its own account,
+ * or an approved parent's) changed between the moment it was resolved - before the buyer's tier
+ * lock, since it calls another service - and the moment the attempt is written under that lock.
+ */
+export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
 
 /**
  * Which request a state read of this attempt names, as core-service's `payments/request-state`
