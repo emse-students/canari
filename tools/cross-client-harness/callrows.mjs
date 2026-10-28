@@ -110,6 +110,14 @@ export const UNMUTE_FLOOR = 0.05;
  * - W4 below the floor - the muted direction never came back, whatever the control did;
  * - W4 below its share of the control - a recovery too small for what the call kept.
  *
+ * WHAT THE NUMBERS REST ON. The 5 % floor is principled: five times the 1 % muted ceiling, so a
+ * "recovered" W4 is never within reach of a muted one. The 0.2 factor rests on ONE reading (alpha.1,
+ * 18.7 % against a control of 11.5 %), so it is loose on purpose and to be tightened once more
+ * readings exist. Its known blind spot: a PARTIAL recovery while the whole call fades in step (W4 at
+ * 5.1 % against a control at 11 %) passes, backstopped only by the enabled-track assertion
+ * (`senderAtUnmute.enabled`). A control ABOVE 1 (the unmuted direction got louder) raises the bar,
+ * which can only produce a false FAIL, never a false PASS.
+ *
  * @param {{before: object, after: object}} m the mute row's measurement
  * @returns {[boolean, string][]}
  */

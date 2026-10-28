@@ -1278,6 +1278,12 @@ const ROW_RULES = [
   // absent from the first reading's window, present in the second) and W5's busy one `cancelled` - so a ring
   // ended for another reason is read by the rule of a row it is not, and stays dirt. `notified=R/N`
   // is forgiven only when R equals N, as the ring's `rang=R/N` is.
+  //
+  // TWO LIMITS, stated. CALL-WEB-7's three reasons cannot be pinned per CALL: the server line carries
+  // only the user's and the call's hashes, which the rule cannot tie to "W2's call" or "W5's" - so in
+  // that row any of the three is forgiven for either call. And CALL-WEB-3 (callee-hangup) and
+  // CALL-WEB-8 (reload) have NO rule: neither was read on `1.5.1-alpha.1`, so their ring-end lines
+  // stay out-of-row dirt until a reading supplies the reasons they really send.
   ...[
     { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2'] },
     { name: 'call ring ended: declined', reasons: 'ended', rows: ['CALL-WEB-4'] },

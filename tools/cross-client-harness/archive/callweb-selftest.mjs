@@ -182,7 +182,7 @@ ok('loud inside a pulse', peakIn(50, 200) > 0.25 * 32767);
 ok('silent between pulses - the swing the rig reads to tell pulsed from steady', peakIn(PULSE_ON_MS + 1, PULSE_PERIOD_MS - 1) === 0);
 ok('each pulse fades in rather than clicking on', Math.abs(at(1)) < 0.01 * 32767);
 
-// ── how each call ENDS, and the record it writes (#2582; read on 1.5.1-alpha.1, 2026-10-27) ───────
+// -- how each call ENDS, and the record it writes (#2582; read on 1.5.1-alpha.1, 2026-10-27) -------
 console.log('the end of a call and its record, per scenario and role');
 const END = (state, outcome, notify) => `log: [20:33:35.528] [Call] ending call ${H} state=${state} outcome=${outcome} notify=${notify} remote=${!notify}`;
 const REC = (outcome) => `log: [20:33:35.531] [CallRecord] ${H} finalized as ${outcome}`;
