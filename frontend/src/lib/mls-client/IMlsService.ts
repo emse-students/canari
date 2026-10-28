@@ -403,6 +403,37 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
 }
 
 /**
+ * True when a native MLS command refused because no manager is installed in this process - never
+ * initialised, or ended by `endNativeMlsSession` (a sign-out, an account switch, a failed install, a
+ * state reset). Reads the `MLS_MANAGER_ABSENT` code of `state.rs`, the contract that crosses the Tauri
+ * boundary, never the sentence after it.
+ *
+ * **WHY A CODE IN A STRING AND NOT A TYPED ERROR FROM THE BOUNDARY.** Tauri can carry a serialised
+ * error object, but every native command returns `Result<_, String>`, and every code `mls-core` and the
+ * shell define (`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, this one) crosses as the leading
+ * token of that string. Moving this one code alone to an object would give the boundary two
+ * conventions and every reader two shapes to accept; the whole boundary moves at once or not at all
+ * ([backlog](../../../../docs/wiki/backlog.md)). Until then the token is read here and nowhere else,
+ * and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
+ */
+export function isMlsManagerAbsent(error: unknown): boolean {
+  return /\bMLS_MANAGER_ABSENT:/.test(String(error));
+}
+
+/**
+ * Thrown by {@link IMlsService.reloadStateFromDisk} when a resume finds no native MLS session under a
+ * signed-in session. The loss is already reported (`reportMlsSessionLost`, which ends the session on
+ * this device and reopens it at the PIN gate); the type tells the resume sequence to stop rather than
+ * run its later steps on a session that is ending.
+ */
+export class MlsSessionVacantError extends Error {
+  constructor(cause: unknown) {
+    super('no native MLS session is installed under the signed-in session', { cause });
+    this.name = 'MlsSessionVacantError';
+  }
+}
+
+/**
  * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
  * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
  * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose
@@ -706,7 +737,8 @@ export interface IMlsService {
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance
    * `mls.bin`; without reloading on resume the warm in-memory state is stale and its next save
    * would clobber that advance (lost-update -> SecretReuse). No-op where there is no background
-   * engine (web/desktop).
+   * engine (web/desktop). Rejects with {@link MlsSessionVacantError} - and only with it - when no
+   * native session is installed any more; every other failure is logged and resolved.
    */
   reloadStateFromDisk(): Promise<void>;
   /**
