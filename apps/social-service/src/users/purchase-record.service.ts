@@ -7,6 +7,7 @@ import {
   type PurchasePaymentMethod,
   type PurchaseStatus,
 } from './entities/purchase-record.entity';
+import { PurchaseRecordClosing } from './entities/purchase-record-closing.entity';
 
 export interface CreatePurchaseData {
   /** NULL for a guest's payment on a public form: a guest has no account. */
@@ -53,11 +54,36 @@ export class PurchaseRecordService {
   }
 
   /**
-   * The number of purchases paid for and not granted (`paid_not_granted`), across every association:
-   * what the hourly report counts (`PaidNotGrantedScheduler`).
+   * The number of purchases paid for and not granted (`paid_not_granted`) that NO person has closed
+   * yet (no `purchase_record_closings` row, migration 113), across every association: what the
+   * hourly report counts (`PaidNotGrantedScheduler`). A closed record keeps its mark as history and
+   * leaves the count; nothing else does.
    */
-  async countPaidNotGranted(): Promise<number> {
-    return this.repo.count({ where: { status: 'paid_not_granted' } });
+  async countUnclosedPaidNotGranted(): Promise<number> {
+    return this.repo
+      .createQueryBuilder('pr')
+      .where('pr.status = :status', { status: 'paid_not_granted' })
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM purchase_record_closings c WHERE c."purchaseRecordId" = pr.id)'
+      )
+      .getCount();
+  }
+
+  /**
+   * The closings of `recordIds`, by purchase record id: at most one each (the unique index of
+   * migration 113). Read through `manager` when given, so a closing reads its own transaction.
+   */
+  async closingsOf(
+    recordIds: string[],
+    manager?: EntityManager
+  ): Promise<Map<string, PurchaseRecordClosing>> {
+    const out = new Map<string, PurchaseRecordClosing>();
+    if (recordIds.length === 0) return out;
+    const rows = await (manager ?? this.repo.manager).find(PurchaseRecordClosing, {
+      where: { purchaseRecordId: In(recordIds) },
+    });
+    for (const row of rows) out.set(row.purchaseRecordId, row);
+    return out;
   }
 
   /** Returns all purchase records for a user, newest first. */

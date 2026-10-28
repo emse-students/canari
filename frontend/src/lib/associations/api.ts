@@ -1846,7 +1846,38 @@ export interface AssociationPurchase {
    * when the payment landed. A refund or a manual grant is owed.
    */
   notGranted?: boolean;
+  /**
+   * How a `notGranted` payment was closed by a manager (`closePaidNotGranted`): `refunded` or
+   * `granted`, null while nobody has recorded it. The `notGranted` mark stays either way.
+   */
+  closedOutcome?: PurchaseClosingOutcome | null;
+  /** When that outcome was recorded, by the server's clock; null while open. */
+  closedAt?: string | null;
+  /**
+   * For an OPEN payment not granted, why the server would refuse to close it as granted (only a
+   * refund is left); null when it may be granted.
+   */
+  grantRefusal?: ClosingGrantRefusal | null;
+  /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
+  buyerTier?: string | null;
+  /**
+   * For an OPEN payment not granted, true when the tier it bought is already held as ITS delivery:
+   * closing it as granted only records that, and grants or replaces nothing.
+   */
+  delivered?: boolean;
 }
+
+/** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise'
+  | 'not-comparable';
+
+/** The two outcomes that close a payment paid for and not granted. */
+export type PurchaseClosingOutcome = 'refunded' | 'granted';
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
@@ -1964,6 +1995,26 @@ export async function grantProductPurchase(
     { method: 'POST', body: JSON.stringify(payload) }
   );
   return row;
+}
+
+/**
+ * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
+ * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
+ * call is refused `PURCHASE_ALREADY_CLOSED`. A `granted` closing carries what the list showed
+ * (`expectDelivered`, the row's `delivered`), and the server refuses `PURCHASE_CLOSING_CHANGED` when
+ * that is no longer so - "nothing is granted" never grants. Requires MANAGE_PRODUCTS.
+ */
+export async function closePaidNotGranted(
+  associationId: string,
+  purchaseId: string,
+  outcome: PurchaseClosingOutcome,
+  expectDelivered: boolean
+): Promise<AssociationPurchase> {
+  const body = outcome === 'granted' ? { outcome, expectDelivered } : { outcome };
+  return request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
 }
 
 /** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */
