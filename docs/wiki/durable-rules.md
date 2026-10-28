@@ -1010,6 +1010,16 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+### A VALIDATOR'S BOUND IS DERIVED FROM THE GENERATOR OF THE VALUE, AND ITS SPEC USES A VALUE OF REAL LENGTH
+
+A composite value (`userId:deviceId`) run through a generic allowlist sized for ONE id was refused on
+every request for as long as the route existed, while its specs - written with `bob:phone-1` - stayed
+green: a short fixture passes every bound. Validate a composite as its parts, each under the rule
+that part is stored under; build fixtures in the generator's own shape, and tie the spec to the
+generator's source so a change there fails here (`sanitize.leaf-identity.spec.ts`). A log sanitizer
+is a validator too: one that prints `invalid` for every real value has erased the evidence its line
+exists for. [mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)
+
 ### A MEASUREMENT TAKEN FROM PRODUCTION NAMES ROLES AND COUNTS, NEVER PEOPLE - THIS REPOSITORY IS PUBLIC
 
 `emse-students/canari` is world-readable, and a production investigation reads production data: a

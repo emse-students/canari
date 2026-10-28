@@ -693,4 +693,10 @@ describe('revokedLeafCandidates', () => {
       )
     ).toEqual(['alice:WEB-1', 'bob:x']);
   });
+
+  it('never asks about a legacy bare leaf, which names no device and would refuse the whole request', () => {
+    expect(revokedLeafCandidates(['bob', 'bob:x', 'dave'], new Set(), 'alice', 'web-1')).toEqual([
+      'bob:x',
+    ]);
+  });
 });

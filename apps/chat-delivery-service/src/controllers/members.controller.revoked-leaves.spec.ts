@@ -74,6 +74,21 @@ describe('MembersController.getRevokedLeaves', () => {
     expect(revoked.find.mock.calls[0][0].where.revokedAt).toBeDefined();
   });
 
+  it('answers a REAL-LENGTH identity - longer than the generic 128 bound, which refused every one', async () => {
+    // The shape `BaseMlsService.generateDeviceId` mints: a 64-hex user, and a device id embedding it.
+    const bob = 'b0b'.padEnd(64, '7');
+    const web = `${bob}:web-${bob}-mh9x2k1q-a7c3`;
+    const tauri = `${bob}:tauri-${bob}-mh9x2k1q-0z9y`;
+    expect(web.length).toBe(147);
+    expect(tauri.length).toBe(149);
+    devices.find.mockResolvedValue([{ userId: 'alice' }, { userId: bob }]);
+    revoked.find.mockResolvedValue([{ userId: bob, deviceId: `tauri-${bob}-mh9x2k1q-0z9y` }]);
+
+    const got = await controller.getRevokedLeaves('kg-1', { identities: [web, tauri] }, 'alice');
+
+    expect(got).toEqual({ revoked: [tauri] });
+  });
+
   it('answers nothing about a user bound to no device row or seat of this group', async () => {
     revoked.find.mockResolvedValue([{ userId: 'stranger', deviceId: 'lost-1' }]);
 
@@ -104,6 +119,11 @@ describe('MembersController.getRevokedLeaves', () => {
     );
     await expect(
       controller.getRevokedLeaves('kg-1', { identities: ['bob:tauri:x'] }, 'alice')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    // ONE malformed identity refuses the whole request - which is why the client sends only device
+    // identities (`revokedLeafCandidates` drops a legacy bare leaf).
+    await expect(
+      controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1', 'bob'] }, 'alice')
     ).rejects.toBeInstanceOf(BadRequestException);
     const tooMany = Array.from({ length: REVOKED_LEAVES_MAX_IDENTITIES + 1 }, (_, i) => `u:${i}`);
     await expect(
