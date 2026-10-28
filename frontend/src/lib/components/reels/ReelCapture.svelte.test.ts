@@ -504,15 +504,17 @@ describe('ReelCapture', () => {
     expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushes);
   });
 
-  it('LEAVING the screen while recording drops the take, asks nothing', async () => {
-    const { shutter, pointer } = await render();
+  it('LEAVING the screen while recording drops the take, asks nothing, and gives the camera back', async () => {
+    const { target, pointer } = await render();
     pointer('pointerdown', 1000);
     vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
     await settle();
     navigationDrain();
     await settle();
     expect(showConfirm).not.toHaveBeenCalled();
-    expect(shutter().getAttribute('aria-pressed')).toBe('false');
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    // The screen is going: the camera is closed with it, never left open behind the next page.
+    expect(target.querySelector('[data-camera-phase="stopped"]')).not.toBeNull();
     expect(framed.stop).toHaveBeenCalled();
   });
 
@@ -1064,5 +1066,133 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
     await settle();
     expect((oncapture.mock.calls[0][0] as File).type).toMatch(/^video\//);
     expect(target.querySelector('[data-reel-publish]')).toBeNull();
+  });
+});
+
+describe('the camera does not open again once the member has left it (Mi 9T, 2026-10-28)', () => {
+  /** A session whose every open is counted: a start is an open, whatever comes of it. */
+  async function renderCounted(extra: Record<string, unknown> = {}) {
+    const open = vi.fn(() => Promise.resolve(stream()));
+    const view = await render({ session: new CameraSession(open), ...extra });
+    return { ...view, open };
+  }
+  const lastEntry = () => {
+    const calls = vi.mocked(pushHistoryOverlay).mock.calls;
+    return calls[calls.length - 1][0];
+  };
+  /** The page hides then shows again, as a backgrounding app does. */
+  const setVisibility = async (state: 'hidden' | 'visible') => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(state);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  it('a take dropped because the screen is being LEFT (a published reel lands on the feed) opens no camera', async () => {
+    const { target, hold, open } = await renderCounted();
+    await hold();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    const opens = open.mock.calls.length;
+
+    lastEntry()('navigation');
+    await settle();
+
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(open.mock.calls.length).toBe(opens);
+    expect(target.querySelector('[data-camera-phase="stopped"]')).not.toBeNull();
+  });
+
+  it('a take handed to a composer opens no camera behind it', async () => {
+    const { target, tap, open } = await renderCounted({
+      destination: 'chat',
+      oncapture: vi.fn(),
+      onclose: vi.fn(),
+    });
+    await tap();
+    const opens = open.mock.calls.length;
+
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+
+    expect(open.mock.calls.length).toBe(opens);
+    expect(target.querySelector('[data-camera-phase="stopped"]')).not.toBeNull();
+  });
+
+  it('a take in REVIEW, its editor or its publish step: the app coming back opens no camera', async () => {
+    const { target, hold, open } = await renderCounted();
+    await hold();
+    const opens = open.mock.calls.length;
+    await setVisibility('hidden');
+    await setVisibility('visible');
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    await setVisibility('hidden');
+    await setVisibility('visible');
+
+    expect(open.mock.calls.length).toBe(opens);
+  });
+
+  it('the gallery picker returning into a REVIEW opens no camera on the way', async () => {
+    const { target, open } = await renderCounted();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    vi.spyOn(input, 'click').mockImplementation(() => {});
+    target
+      .querySelector<HTMLButtonElement>('[aria-label="' + m.reels_capture_gallery() + '"]')!
+      .click();
+    const opens = open.mock.calls.length;
+    // Android: the picker backgrounds the app; it comes back, then the file lands.
+    await setVisibility('hidden');
+    await setVisibility('visible');
+    expect(open.mock.calls.length).toBe(opens);
+
+    const clip = new File([new Uint8Array(3)], 'clip.mp4', { type: 'video/mp4' });
+    Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    await settle();
+
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(open.mock.calls.length).toBe(opens);
+  });
+
+  it('a gallery picker closed with nothing picked brings the preview back', async () => {
+    const { target, open } = await renderCounted();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    vi.spyOn(input, 'click').mockImplementation(() => {});
+    target
+      .querySelector<HTMLButtonElement>('[aria-label="' + m.reels_capture_gallery() + '"]')!
+      .click();
+    const opens = open.mock.calls.length;
+    await setVisibility('hidden');
+    await setVisibility('visible');
+    expect(open.mock.calls.length).toBe(opens);
+
+    input.dispatchEvent(new Event('cancel'));
+    await settle();
+
+    expect(open.mock.calls.length).toBe(opens + 1);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('a picked file the camera cannot take brings the preview back', async () => {
+    const { target, open } = await renderCounted();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    vi.spyOn(input, 'click').mockImplementation(() => {});
+    target
+      .querySelector<HTMLButtonElement>('[aria-label="' + m.reels_capture_gallery() + '"]')!
+      .click();
+    const opens = open.mock.calls.length;
+    await setVisibility('hidden');
+    await setVisibility('visible');
+
+    const doc = new File([new Uint8Array(3)], 'notes.pdf', { type: 'application/pdf' });
+    Object.defineProperty(input, 'files', { value: [doc], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(open.mock.calls.length).toBe(opens + 1);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
   });
 });

@@ -67,6 +67,15 @@
      */
     paused?: boolean;
     /**
+     * Holds a STOPPED camera stopped, without closing a live one: the owner has handed the screen to
+     * something that will decide what comes next (the gallery picker, whose answer may be a review
+     * that needs no camera). On Android the picker backgrounds the app, so its return would reopen
+     * the camera for the fraction of a second before the pick lands in a review (Mi 9T, 2026-10-28).
+     * A live camera is left alone: a picker that does not hide the page (a desktop browser) keeps
+     * its preview. Turning it false opens a stopped camera again, as `paused` does.
+     */
+    deferOpen?: boolean;
+    /**
      * Called just before the app's going to the background takes the camera away, so a take in
      * progress can be ended - and kept - while its tracks still flow.
      */
@@ -91,6 +100,7 @@
     controls,
     faultActions,
     paused = false,
+    deferOpen = false,
     onBeforeRelease,
     onclose,
     microphoneAsked = true,
@@ -231,20 +241,30 @@
       onBeforeRelease?.();
       // `suspend`, not `stop`: the permission dialog backgrounds the app, and its answer is awaited.
       session.suspend();
-    } else if (!paused) {
+    } else if (paused || deferOpen) {
+      // The owner holds the camera off (a review, a screen being left, a pick in flight): the
+      // return is not a reason to open it.
+      console.debug(`[camera] app visible, ${paused ? 'paused' : 'open deferred'} - not reopened`);
+    } else {
       console.debug('[camera] app visible');
       session.resume();
     }
   }
 
-  // Opens the camera on arrival and after a pause, and closes it for one. Only `paused` is read
-  // here: the session's own state is read untracked, or every phase change would re-run this.
+  // Opens the camera on arrival and after a pause, and closes it for one. Only `paused` and
+  // `deferOpen` are read here: the session's own state is read untracked, or every phase change
+  // would re-run this.
   $effect(() => {
     const hold = paused;
+    const defer = deferOpen;
     untrack(() => {
       if (hold) {
         if (session.phase !== 'stopped') session.stop();
-      } else if (session.phase === 'stopped' && document.visibilityState !== 'hidden') {
+      } else if (session.phase !== 'stopped' || document.visibilityState === 'hidden') {
+        return;
+      } else if (defer) {
+        console.debug('[camera] stopped with the open deferred by the owner - not started');
+      } else {
         void session.start();
       }
     });
