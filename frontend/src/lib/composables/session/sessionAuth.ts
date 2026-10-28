@@ -188,6 +188,11 @@ import {
   settleSweptJoinRequests,
 } from '$lib/utils/chat/joinRequests.svelte';
 import {
+  markSweepOwed,
+  setMemberDeviceSweep,
+  takeOwedSweep,
+} from '$lib/utils/chat/memberDeviceAnswers';
+import {
   drainDeferredWelcomeRequests,
   serveWelcomeRequest,
   type WelcomeRequestContext,
@@ -479,14 +484,25 @@ export function makeWelcomeRequestContext(
 /** Processes any pending MLS invitations from our own other devices (multi-device sync). Re-entrant safe. */
 export async function processDeviceInvitationsLocally(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks
+  cb: ChatSessionCallbacks,
+  opts: {
+    /** A member approved an unseen device (`memberDeviceAnswers.ts`): a busy sweep is followed by one more. */
+    owed?: boolean;
+  } = {}
 ) {
-  if (ctx.isSyncing()) return;
+  if (ctx.isSyncing()) {
+    if (opts.owed) {
+      markSweepOwed();
+      cb.log('[PENDING] a sweep is running - one more follows it for the device a member approved');
+    }
+    return;
+  }
   ctx.setIsSyncing(true);
   try {
     // A new person's pending device is never added by the sweep; it raises a member's approval. The
     // sweep reads the server's durable rows, so what a completed one raised replaces what is shown.
     const raised: JoinApprovalRequest[] = [];
+    const notSwept = new Set<string>();
     // Before the sweep reads anything: an ask announced while it reads is not its to take away.
     const sweep = beginJoinRequestSweep();
     const swept = await processPendingInvitations({
@@ -498,11 +514,15 @@ export async function processDeviceInvitationsLocally(
       requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
       log: cb.log,
       onJoinApprovalRequested: (request) => raised.push(request),
+      onGroupNotSwept: (groupId) => notSwept.add(groupId),
     });
-    if (swept) settleSweptJoinRequests(sweep, raised);
+    if (swept) settleSweptJoinRequests(sweep, raised, notSwept);
   } finally {
     ctx.setIsSyncing(false);
   }
+  // A sweep a member's answer asked for while this one ran (`owed`): this one may have passed the
+  // row already, so one more runs - never more than one, however many asked.
+  if (takeOwedSweep()) await processDeviceInvitationsLocally(ctx, cb);
 }
 
 /**
@@ -1289,7 +1309,7 @@ export async function loginImpl(
         // The redirect first, the preview after it (synchronous), the flag last: nothing here may
         // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto(resolve('/login'), { replaceState: true });
+        else void goto(resolve('/login'), { replace: true });
         withdrawLandingPreview('session expired');
         releaseLoginFlag();
         return;
@@ -1948,6 +1968,7 @@ export async function loginImpl(
       loadHistoryForConversation: cb.onLoadHistoryForConversation,
       onChannelMemberJoined: cb.onChannelMemberJoined,
       onChannelMemberKicked: cb.onChannelMemberKicked,
+      onChannelRemovalReleased: cb.onChannelRemovalReleased,
       onChannelUpdated: cb.onChannelUpdated,
       onRolePermissionsChanged: cb.onRolePermissionsChanged,
       onChannelDeleted: cb.onChannelDeleted,
@@ -2047,6 +2068,8 @@ export async function loginImpl(
       addMessageToChat: (senderId, content, contactName, options) =>
         cb.addMessageToChat(senderId, content, contactName, options),
     });
+    // A member's approval of a device this one never saw is carried out by this session's sweep.
+    setMemberDeviceSweep(() => processDeviceInvitationsLocally(ctx, cb, { owed: true }));
     endStartupCatchupPhase();
 
     /**
@@ -2601,13 +2624,13 @@ export async function loginImpl(
       markRestoreAttempted();
       void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto(resolve('/login'), { replaceState: true });
+      else void goto(resolve('/login'), { replace: true });
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
       const loc = window.location;
       void goto(resolve(internalPath(loginReturningTo(loc.pathname, loc.search, loc.hash))), {
-        replaceState: true,
+        replace: true,
       });
     }
   } finally {

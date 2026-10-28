@@ -374,6 +374,10 @@ services:
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
       # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
       LIVE_ENABLED: ${LIVE_ENABLED:-true}
+      # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
+      # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on
+      # production until the amount format Lydia signs is measured.
+      LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-true}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
@@ -423,10 +427,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node's ONE public origin. Locally that is the port nginx publishes, because the
-      # browser's address bar is what `ORIGIN` has to agree with - a mismatch makes adapter-node
-      # refuse form posts as cross-origin.
-      ORIGIN: http://localhost:${CANARI_LOCAL_API_PORT:-8081}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012

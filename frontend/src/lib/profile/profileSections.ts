@@ -19,6 +19,7 @@ import {
   NotebookPen,
   RotateCcwClock,
   Tag,
+  UserCheck,
   UserRound,
   Users,
 } from '@lucide/svelte';
@@ -32,6 +33,8 @@ export const PROFILE_SELF_SEGMENT = 'me';
 export const PROFILE_SECTIONS = [
   'bio',
   'associations',
+  // "Mes abonnes" (WP-F4): the reader's followers and the requests they sent.
+  'followers',
   'subscriptions',
   'career',
   'notepad',
@@ -50,6 +53,7 @@ interface ProfileEntry {
 const ENTRIES: Record<ProfileSection, ProfileEntry> = {
   bio: { label: () => m.profile_bio_heading(), icon: UserRound },
   associations: { label: () => m.profile_assoc_heading(), icon: Building2 },
+  followers: { label: () => m.profile_followers_heading(), icon: UserCheck },
   subscriptions: { label: () => m.profile_subs_heading(), icon: Tag },
   career: { label: () => m.profile_career_heading(), icon: RotateCcwClock },
   notepad: { label: () => m.profile_notepad_heading(), icon: NotebookPen },

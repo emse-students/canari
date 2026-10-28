@@ -1,5 +1,6 @@
 import { Module, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { createHmac } from 'crypto';
 import type { AddressInfo } from 'net';
 import { ChannelService } from './channel.service';
@@ -35,6 +36,8 @@ describe('the removed channels-MVP members/join route', () => {
     process.env.INTERNAL_SHARED_SECRET = SECRET;
 
     @Module({
+      // The release routes carry a per-user throttler, which needs its module to resolve.
+      imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 1000 }])],
       controllers: [ChannelsController],
       providers: [{ provide: ChannelService, useValue: service }],
     })

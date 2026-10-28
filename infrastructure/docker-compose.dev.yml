@@ -483,6 +483,10 @@ services:
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
       # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
+      # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
+      # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on
+      # production until the amount format Lydia signs is measured.
+      LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-false}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       PAYMENT_SERVICE_URL: http://core-service:3012
       FRONTEND_URL: ${FRONTEND_URL:-}
@@ -561,8 +565,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node's ONE public origin, which is `FRONTEND_URL` and never the CORS allowlist.
-      ORIGIN: ${FRONTEND_URL:-https://dev.canari-emse.fr}
+      # adapter-node 6 has no `ORIGIN`: the origin is derived per request (scheme https by default,
+      # host from `Host`, which nginx @ssr forwards). No PROTOCOL_HEADER: it would trust a value a
+      # client can send. Nothing guards a form action today; see architecture.md.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012

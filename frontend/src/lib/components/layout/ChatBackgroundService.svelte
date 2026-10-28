@@ -15,7 +15,7 @@
    */
   import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { navigating } from '$app/state';
   import { internalPath, loginAfterSessionExpiry } from '$lib/utils/internalPath';
   import { m } from '$lib/paraglide/messages';
@@ -72,7 +72,17 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
-  import { removalOutcome } from '$lib/utils/chat/memberRemoval';
+  import {
+    departureToDecide,
+    isOwnLeave,
+    removalOutcome,
+    salonGrants,
+  } from '$lib/utils/chat/memberRemoval';
+  import {
+    commitDepartureIfElected,
+    commitReleasedDepartureIfElected,
+    forgetDeferredRemovals,
+  } from '$lib/utils/graine/departureCommitter';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type {
@@ -228,7 +238,7 @@
     // lands, instead of leaving it waiting for the conversations map to mutate again.
     const targetRoute = chatDeepLinkRoute(id);
     const step = landingStep({
-      arrived: $page.url.pathname === targetRoute,
+      arrived: page.url.pathname === targetRoute,
       routeAlreadyRequested: lastRoutedLanding === landing,
     });
     if (step !== 'await-arrival') lastRoutedLanding = landing;
@@ -692,7 +702,7 @@
       loginPath,
       log: appendLog,
     });
-    void goto(resolve(internalPath(loginPath)), { replaceState: true });
+    void goto(resolve(internalPath(loginPath)), { replace: true });
   }
 
   /**
@@ -717,6 +727,10 @@
     globalMessaging.forgetAccount(appendLog);
     // ...and the media held by a closed new-post composer (`holdPostComposerMedia`).
     forgetPostComposerMedia();
+    // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
+    salonGrants.clear();
+    // ...and the removals this device deferred to an actor, which a release is matched against.
+    forgetDeferredRemovals();
     _loginInProgress = false;
   }
 
@@ -1016,6 +1030,7 @@
                 contactName: channelConversationId,
                 displayName: channelName,
               },
+              lastMessageAt: Date.now(), // creation moment, see groupCreation
             })
           );
         }
@@ -1079,13 +1094,34 @@
               globalConvs.conversations.set(channelConversationId, {
                 ...convo,
                 messages: [...convo.messages, newMsg],
-                lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+                // A join notice is not activity: the seed does not move for it.
               });
             } catch {
               // Non-blocking: system message is best-effort.
             }
           })();
         }
+      },
+      onChannelRemovalReleased: (event: {
+        workspaceId: string;
+        channelId: string;
+        removedUserId: string;
+        releasedBy: string;
+        releasedByDevice: string;
+      }) => {
+        // The actor did not commit a Remove it claimed, and said so: elect for that one scope,
+        // among everybody but the actor.
+        void commitReleasedDepartureIfElected(
+          channelService,
+          {
+            workspaceId: event.workspaceId,
+            channelId: event.channelId,
+            departedUserId: event.removedUserId,
+            releasedByUserId: event.releasedBy,
+            releasedByDeviceId: event.releasedByDevice,
+          },
+          appendLog
+        );
       },
       onChannelMemberKicked: (event: any) => {
         const outcome = removalOutcome({
@@ -1094,7 +1130,13 @@
           channelId: event.channelId,
           channelIsPrivate: event.channelIsPrivate,
         });
-        if (outcome === 'ignore') return;
+        if (outcome === 'ignore') {
+          // Somebody else left or was removed. When the actor cannot commit it - a leave, or an
+          // actor with no leaf in a key group - ONE elected remaining device does (`departureCommitter`).
+          const departure = departureToDecide(event);
+          if (departure) void commitDepartureIfElected(channelService, departure, appendLog);
+          return;
+        }
 
         if (outcome === 'community') {
           const communityName =
@@ -1117,7 +1159,11 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            appendLog(`[CHANNEL] stored copy of ${event.channelId} not deleted: ${String(e)}`)
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -1126,8 +1172,13 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        appendLog(`Removed from channel ${event.channelId}`);
-        showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
+        // A salon this user LEFT is announced to their own devices too (2026-10-27), so they drop
+        // it; being told they were "removed" from it would be false, so a leave says nothing.
+        const selfLeft = isOwnLeave(event, globalSession.userId);
+        appendLog(`${selfLeft ? 'Left' : 'Removed from'} channel ${event.channelId}`);
+        if (!selfLeft) {
+          showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
+        }
       },
       onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
         globalChannels.handleRolePermissionsChanged(event);
@@ -1437,7 +1488,9 @@
       globalConvs.conversations.set(event.conversationId, {
         ...target,
         messages: insertMessageOrdered(target.messages, event.message),
-        lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt),
+        ...(event.lastMessageAt !== undefined
+          ? { lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt) }
+          : {}),
         // `unreadCount` is deliberately untouched: an own message is never unread, and the sender
         // has nothing to say about what this tab has read.
       });
@@ -1481,7 +1534,7 @@
       globalConvs.conversations.set(event.conversationId, {
         ...convo,
         messages: merged.messages,
-        lastMessageAt: event.lastMessageAt,
+        ...(event.lastMessageAt !== undefined ? { lastMessageAt: event.lastMessageAt } : {}),
         unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
       return;
@@ -1497,7 +1550,7 @@
     globalConvs.conversations.set(event.conversationId, {
       ...convo,
       messages: merged,
-      lastMessageAt: event.lastMessageAt,
+      ...(event.lastMessageAt !== undefined ? { lastMessageAt: event.lastMessageAt } : {}),
       unreadCount: isOpenHere ? 0 : event.unreadCount,
     });
   }
@@ -2052,7 +2105,10 @@
   // Safety net for navigations that arrive before onMount's startLoginFlow completes
   // (e.g. the OIDC callback navigates to /posts while onMount already ran with uid=null).
   // Delegates to startLoginFlow which handles both mobile and web paths uniformly.
-  afterNavigate(async ({ to }) => {
+  afterNavigate(async ({ to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
       path === '/login' ||
