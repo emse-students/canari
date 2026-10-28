@@ -64,7 +64,8 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     synchronize,
     uuidExtension: 'pgcrypto' as const,
     installExtensions: false,
-    extra: { options: `-c search_path=${schema},public`, ...pool },
+    // Named after the schema, so `waitersReach` counts only THIS run's sessions.
+    extra: { options: `-c search_path=${schema},public`, application_name: schema, ...pool },
   });
   const ENTITIES = (): Function[] => [
     ProductCheckout,
@@ -231,23 +232,33 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       (value) => ({ value, error: null as unknown }),
       (e: unknown) => ({ value: null as T | null, error: e })
     );
-    expect(await waitersReach(1)).toBe(1);
+    expect(await waitersReach(1, `tier:${ASSO}:${userId}`)).toBe(1);
     await admin.query('COMMIT');
     return pending;
   }
 
   /**
-   * Reads `pg_locks` until `n` sessions wait on an advisory lock (`anyLock`: on any lock, a row lock
-   * included), or a bounded number of reads has gone by; answers the last count. A read loop, never
-   * a clock.
+   * Reads `pg_locks` until `n` of THIS run's sessions (the pools' `application_name`, never the test's
+   * own connection) wait on the advisory lock `key` (`null`: on any lock, a row lock included), or a
+   * bounded number of reads has gone by; answers the last count. Scoped so a concurrent run on the
+   * same cluster cannot be counted. A read loop, never a clock.
    */
-  async function waitersReach(n: number, anyLock = false): Promise<number> {
+  async function waitersReach(n: number, key: string | null): Promise<number> {
     let waiting = 0;
     for (let i = 0; i < 10_000 && waiting < n; i++) {
+      // `pg_stat_activity` is snapshotted once per transaction, and `admin` reads it inside the
+      // transaction holding the lock: without a fresh snapshot a pool session opened since is unseen.
+      await admin.query('SELECT pg_stat_clear_snapshot()');
       const [row] = (
         await admin.query(
-          `SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted` +
-            (anyLock ? '' : ` AND locktype = 'advisory'`)
+          `SELECT count(*)::int AS n FROM pg_locks l
+            WHERE NOT l.granted AND l.pid <> pg_backend_pid()
+              AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)` +
+            (key === null
+              ? ''
+              : ` AND l.locktype = 'advisory' AND l.objsubid = 1
+                  AND (l.classid::int8 << 32 | l.objid::int8) = hashtextextended($2, 0)`),
+          key === null ? [schema] : [schema, key]
         )
       ).rows as { n: number }[];
       waiting = row.n;
@@ -272,10 +283,10 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     ]);
     // The manager's grant of tier B waits for the lock ...
     const manual = settled(tags.grantCotisant(ASSO, buyer, 'manager', 'b'));
-    expect(await waitersReach(1)).toBe(1);
+    expect(await waitersReach(1, `tier:${ASSO}:${buyer}`)).toBe(1);
     // ... and so does the payment of tier A.
     const paid = settled(settle(a.id));
-    expect(await waitersReach(2)).toBe(2);
+    expect(await waitersReach(2, `tier:${ASSO}:${buyer}`)).toBe(2);
     await admin.query('COMMIT');
     const [m, p] = await Promise.all([manual, paid]);
 
@@ -345,9 +356,9 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     ]);
     // Both pass the sibling settle and the preparation before the lock - nothing is open yet.
     const first = settled(service.createCheckoutSession(ASSO, TIER_A, buyer));
-    expect(await waitersReach(1)).toBe(1);
+    expect(await waitersReach(1, `tier:${ASSO}:${buyer}`)).toBe(1);
     const second = settled(service.createCheckoutSession(ASSO, TIER_B, buyer));
-    expect(await waitersReach(2)).toBe(2);
+    expect(await waitersReach(2, `tier:${ASSO}:${buyer}`)).toBe(2);
     await admin.query('COMMIT');
     const outcomes = await Promise.all([first, second]);
 
@@ -406,11 +417,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       oldTag,
     ]);
     const retag = settled(service.update(ASSO, TIER_C, { variantKey: 'c2' } as never, false));
-    const retagWaits = await waitersReach(1, true);
+    const retagWaits = await waitersReach(1, null);
     // The settlement must wait for the retag's commit: deriving the tag before it would write the
     // old name AFTER the rename, which the rename never sees.
     const paid = settled(settle(c.id));
-    const bothWait = await waitersReach(2, true);
+    const bothWait = await waitersReach(2, null);
     // Committed BEFORE asserting: a failed wait must not leave the retag blocked on this row lock.
     await admin.query('COMMIT');
     const [r, p] = await Promise.all([retag, paid]);

@@ -14,7 +14,7 @@ import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
 import {
   pickHeldTier,
-  tierRelationOf,
+  tierRelation,
   type RankedTier,
   type TierRelation,
 } from '../associations/tier-pricing';
@@ -511,8 +511,11 @@ export class UserTagService {
 
   /**
    * Where tier `variantKey` stands against what the user holds, read through `manager` under the
-   * buyer's tier lock: the same `pickHeldTier` / `tierRelationOf` decision a checkout and a
-   * settlement take, on the tiers' PRODUCT prices.
+   * buyer's tier lock, on the tiers' PRODUCT prices: ranked against the ONE tier `pickHeldTier`
+   * picks, as a checkout and a settlement rank. Unlike `tierRelationOf`, a target the user holds
+   * BESIDE a dearer (or unrankable) tier - two legacy tags - is NOT `held`: renewing it would run the
+   * sibling XOR and revoke the tier ranked above it, so it answers `lower` / `unranked` and is
+   * refused. `held` is only the top tier itself.
    */
   private async rankTier(
     assocId: string,
@@ -530,7 +533,7 @@ export class UserTagService {
     const product = (key: string | null) => priced.find((t) => t.variantKey === key) ?? null;
     const target = product(variantKey);
     const held = pickHeldTier(heldKeys.map((k) => ({ variantKey: k, product: product(k) })));
-    const relation = target ? tierRelationOf(target, heldKeys, held) : 'unranked';
+    const relation = target ? tierRelation(target, held) : 'unranked';
     this.logger.debug(
       `[UserTag] tier rank: assoc=${assocId.slice(0, 8)} user=${userId.slice(0, 8)} ` +
         `tier=${variantKey ?? 'base'} held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`

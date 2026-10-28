@@ -52,6 +52,7 @@ import { assertCotisationStemFree, TIER_TAG_NAME_TAKEN } from './cotisation-name
 import {
   fixedPriceFor,
   linkedTierKey,
+  MEMBER_PRICE_TAG_NOT_A_TIER,
   pickHeldTier,
   tierRelationOf,
   type HeldTier,
@@ -1204,9 +1205,10 @@ export class ProductsService {
       this.logger.debug(
         `[SHOP] memberPriceTag refused: association=${asso.id.slice(0, 8)} names no other tier`
       );
-      throw new BadRequestException(
-        'memberPriceTag must name another cotisation tier of this association'
-      );
+      throw new BadRequestException({
+        code: MEMBER_PRICE_TAG_NOT_A_TIER,
+        message: 'memberPriceTag must name another cotisation tier of this association',
+      });
     }
   }
 

@@ -1732,10 +1732,40 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           'cotisant:cercle-avec-alcool',
         ]) {
           const { service } = editing(avecAlcool());
-          await expect(
-            service.update('asso1', 'prod-avec', { memberPriceTag }, false)
-          ).rejects.toThrow(BadRequestException);
+          const err = await service.update('asso1', 'prod-avec', { memberPriceTag }, false).then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err).toBeInstanceOf(BadRequestException);
+          expect((err as BadRequestException).getResponse()).toMatchObject({
+            code: 'MEMBER_PRICE_TAG_NOT_A_TIER',
+          });
         }
+      });
+
+      it('refuses the same link on creation, typed, before anything is saved', async () => {
+        const { service, productRepo } = editing(avecAlcool());
+        const err = await service
+          .create(
+            'asso1',
+            {
+              name: 'Soiree',
+              type: 'other',
+              amountCents: 2000,
+              amountCentsMember: 1000,
+              memberPriceTag: 'cotisant:bde',
+            },
+            false
+          )
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'MEMBER_PRICE_TAG_NOT_A_TIER',
+        });
+        expect(productRepo.save).not.toHaveBeenCalled();
       });
 
       it('accepts a link to a sibling tier, in either tag form', async () => {
