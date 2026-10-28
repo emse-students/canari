@@ -17,7 +17,7 @@ import { mark } from './marker.mjs';
  * The row-group prefixes of section 4.2. A group a runner mints is `<GROUP><n>-<mark tail>`
  * (`FLOOR2-mh3k2a9xq`), so `debris.mjs` can sweep it and nothing a person types matches it.
  */
-export const ROW_GROUPS = ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'ADM', 'DEV', 'BIG', 'TOK', 'NET'];
+export const ROW_GROUPS = ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'ADM', 'DEV', 'BIG', 'TOK', 'NET', 'LIST'];
 
 /**
  * `FLOOR-2` -> `FLOOR2`, `RM-4b` -> `RM4b`, refusing an id that is not a 1.4.1 row. The one lower-case

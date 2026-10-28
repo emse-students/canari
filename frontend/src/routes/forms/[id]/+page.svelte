@@ -557,8 +557,8 @@
       <a
         href={resolve(
           agendaAssociationSlug
-            ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
-            : '/associations'
+            ? `associations/${encodeURIComponent(agendaAssociationSlug)}`
+            : 'associations'
         )}
         class="border-cn-yellow/35 bg-cn-yellow/10 hover:bg-cn-yellow/15 mb-4 flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >

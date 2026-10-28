@@ -5,7 +5,8 @@
  * sits at the right number on the wrong branch, its next commit is accepted, and every healthy
  * member then fails to apply it. A commit a person asked for is that person's decision; a commit a
  * MECHANISM decides on its own - the periodic leaf refresh (`leafRefresh.ts`), the removal of a
- * revoked device's leaf (`strayLeaves.ts`) - must not be what spreads a fork. So both are staged
+ * revoked device's leaf or of a departed member's leaves found by a roster diff (`strayLeaves.ts`,
+ * `rosterReconcile.ts`) - must not be what spreads a fork. So each is staged
  * only when this device's group context (tree hash, confirmed transcript hash) IS the external-join
  * base the server publishes for the epoch (`MlsManager::own_context_matches_base`), checked by
  * `BaseMlsService.assertOnPublishedBranch`.

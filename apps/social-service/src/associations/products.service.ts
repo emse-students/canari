@@ -20,19 +20,25 @@ import {
   CHECKOUT_EXPIRY_MARGIN_MS,
   CHECKOUT_IN_PROGRESS,
   CHECKOUT_ISSUE_WINDOW_MS,
+  COTISATION_DISABLED,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
+  productCheckoutLookup,
   PURCHASE_PRICING_CHANGED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
-import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
+import { toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
-import { UserTagService } from '../users/user-tag.service';
+import {
+  issuedTagKey,
+  TagHeldByAnotherIssuerError,
+  UserTagService,
+} from '../users/user-tag.service';
 import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
@@ -42,10 +48,12 @@ import {
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { cotisationStem, deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
+import { assertCotisationStemFree, TIER_TAG_NAME_TAKEN } from './cotisation-namespace';
 import {
   fixedPriceFor,
   linkedTierKey,
+  MEMBER_PRICE_TAG_NOT_A_TIER,
   pickHeldTier,
   tierRefusal,
   tierRelationOf,
@@ -64,7 +72,10 @@ import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
   amountOutOfRange,
+  classifyCoreCallFailure,
   coreRefusedRequest,
+  LYDIA_REFUSALS_FINAL,
+  type LydiaRefusalsFinal,
   mapCorePaymentError,
 } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
@@ -272,6 +283,8 @@ export interface FailedDelivery {
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); a test overrides it. */
+  protected readonly refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
   constructor(
     @InjectRepository(AssociationProduct)
@@ -746,7 +759,8 @@ export class ProductsService {
       }),
       this.userTagService.listByUser(userId),
     ]);
-    const activeTagNames = new Set(activeTags.map((t) => t.tagName));
+    // A tier tag counts only for the association that issued it.
+    const activeTagKeys = new Set(activeTags.map((t) => issuedTagKey(t.issuingAssocId, t.tagName)));
     const tiersByAssoc = new Map<string, AssociationProduct[]>();
     for (const p of tierProducts) {
       const list = tiersByAssoc.get(p.associationId) ?? [];
@@ -755,7 +769,7 @@ export class ProductsService {
     }
     for (const asso of assos) {
       const facts = await this.tierFactsFrom(asso, tiersByAssoc.get(asso.id) ?? [], (tag) =>
-        activeTagNames.has(tag)
+        activeTagKeys.has(issuedTagKey(asso.id, tag))
       );
       if (!facts) continue;
       byAssoc.set(asso.id, {
@@ -839,6 +853,11 @@ export class ProductsService {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
       await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+      await assertCotisationStemFree(
+        this.productRepo.manager,
+        associationId,
+        cotisationStem(asso.slug, dto.variantKey ?? null)
+      );
       const derived = deriveCotisationTag(
         asso.slug,
         asso.cotisationMode,
@@ -964,7 +983,24 @@ export class ProductsService {
     // `priceMatrix` is resolved above and deliberately kept out of the blanket assign: the DTO
     // holds the RAW document a client sent, and copying it over the parsed one would store a grid
     // nothing validated.
-    const { priceMatrix: _rawMatrix, ...assignable } = dto;
+    // A membership product's granted tag and expiry are DERIVED (`deriveCotisationTag`), never
+    // typed: they are dropped from the assign here exactly as `create` ignores them, so no edit can
+    // store a tag name the association's own tiers do not derive.
+    const {
+      priceMatrix: _rawMatrix,
+      grantedTagName: typedTag,
+      tagExpiresAt: typedExpiry,
+      ...derivable
+    } = dto;
+    const assignable =
+      product.type === 'membership'
+        ? derivable
+        : { ...derivable, grantedTagName: typedTag, tagExpiresAt: typedExpiry };
+    if (product.type === 'membership' && (typedTag !== undefined || typedExpiry !== undefined)) {
+      this.logger.debug(
+        `[SHOP] update of membership product=${productId.slice(0, 8)}: typed grantedTagName/tagExpiresAt ignored (derived)`
+      );
+    }
     const applyEdits = async (target: AssociationProduct, manager: EntityManager) => {
       if (dto.isActive !== undefined) target.activationWithheld = false;
       if (dto.priceMatrix !== undefined) target.priceMatrix = product.priceMatrix;
@@ -1039,6 +1075,7 @@ export class ProductsService {
           `[COTISATION] re-pointed ${linkedIds.length} preferential price link(s) to tier ${current.id.slice(0, 8)}`
         );
       }
+      await this.assertRetagNameFree(associationId, retagging, manager);
       const result: { affected?: number | null } = await manager
         .createQueryBuilder()
         .update('user_tags')
@@ -1052,6 +1089,35 @@ export class ProductsService {
         `[COTISATION] retagged tier ${current.id.slice(0, 8)}: "${retagging.oldTagName}" -> "${retagging.newTagName}" (${result.affected ?? 0} cotisant tag(s) migrated)`
       );
       return this.toSafeProduct(saved);
+    });
+  }
+
+  /**
+   * Refuses (409 `TIER_TAG_NAME_TAKEN`) a retag when a holder of the tier's old tag already holds a
+   * row of the NEW name, whoever issued it: the rename would otherwise meet the `(userId, tagName)`
+   * unique index, or turn a row another association issued into a duplicate holder. Read under the
+   * retag's exclusive association lock, through its `manager`.
+   */
+  private async assertRetagNameFree(
+    associationId: string,
+    retagging: { oldTagName: string; newTagName: string },
+    manager: EntityManager
+  ): Promise<void> {
+    const taken: { userId: string }[] = await manager.query(
+      `SELECT o."userId" FROM user_tags o
+         JOIN user_tags n ON n."userId" = o."userId" AND n."tagName" = $3
+        WHERE o."issuingAssocId" = $1 AND o."tagName" = $2
+        LIMIT 1`,
+      [associationId, retagging.oldTagName, retagging.newTagName]
+    );
+    if (taken.length === 0) return;
+    this.logger.warn(
+      `[COTISATION] retag "${retagging.oldTagName}" -> "${retagging.newTagName}" refused: ` +
+        `a holder already has a row of the new name`
+    );
+    throw new ConflictException({
+      code: TIER_TAG_NAME_TAKEN,
+      message: 'A holder of this tier already holds a tag of the new name',
     });
   }
 
@@ -1081,6 +1147,11 @@ export class ProductsService {
       throw new BadRequestException('Cotisation must be enabled to change a tier');
     }
     await this.assertVariantKeyFree(product.associationId, newVariantKey, product.id, manager);
+    await assertCotisationStemFree(
+      manager,
+      product.associationId,
+      cotisationStem(asso.slug, newVariantKey)
+    );
 
     const now = new Date();
     const oldTag = deriveCotisationTag(asso.slug, asso.cotisationMode, now, product.variantKey);
@@ -1144,9 +1215,10 @@ export class ProductsService {
       this.logger.debug(
         `[SHOP] memberPriceTag refused: association=${asso.id.slice(0, 8)} names no other tier`
       );
-      throw new BadRequestException(
-        'memberPriceTag must name another cotisation tier of this association'
-      );
+      throw new BadRequestException({
+        code: MEMBER_PRICE_TAG_NOT_A_TIER,
+        message: 'memberPriceTag must name another cotisation tier of this association',
+      });
     }
   }
 
@@ -1552,25 +1624,12 @@ export class ProductsService {
     }
     let unproven: string;
     try {
-      const vendorToken = open.vendorToken;
-      if (open.requestId) {
-        const { data } = await firstValueFrom(
-          this.httpService.post<{ outcome?: string }>(
-            coreUrl('payments/cancel-request'),
-            { requestId: open.requestId, connectAccountId: vendorToken },
-            internalCoreRequestConfig()
-          )
+      if (open.requestId && (await this.cancelRequestAtLydia(open)) === 'cancelled') {
+        this.logger.log(
+          `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
         );
-        if (data?.outcome === 'cancelled') {
-          this.logger.log(
-            `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
-          );
-          await this.closeCheckout(open, 'cancelled');
-          return;
-        }
-        if (data?.outcome !== 'already-settled') {
-          throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
-        }
+        await this.closeCheckout(open, 'cancelled');
+        return;
       }
       const status = await this.readAndApplyRequestState(open);
       if (status !== 'open') return;
@@ -1579,15 +1638,76 @@ export class ProductsService {
       unproven = err instanceof Error ? err.message : String(err);
     }
     if (Date.now() >= open.expiresAt.getTime() + CHECKOUT_EXPIRY_MARGIN_MS) {
-      this.logger.error(
-        `[SHOP] checkout ${open.id.slice(0, 8)} is past its expire_time and still unproven ` +
-          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
-          `expired is still recorded by its confirm callback`
-      );
-      await this.closeCheckout(open, 'expired');
+      await this.expireUnprovenCheckout(open, unproven);
       return;
     }
     throw this.previousCheckoutOpen(open.id, unproven);
+  }
+
+  /**
+   * Asks core to cancel the attempt's request at Lydia (`payments/cancel-request`, by its numeric
+   * request id, which the caller has checked is stored). `cancelled`, or `already-settled` when Lydia
+   * had processed it already - paid, cancelled or expired, which only `request/state` tells apart.
+   * Any other answer, or a failed call, THROWS: the request may still be payable.
+   */
+  private async cancelRequestAtLydia(
+    row: ProductCheckout
+  ): Promise<'cancelled' | 'already-settled'> {
+    const { data } = await firstValueFrom(
+      this.httpService.post<{ outcome?: string }>(
+        coreUrl('payments/cancel-request'),
+        { requestId: row.requestId, connectAccountId: row.vendorToken },
+        internalCoreRequestConfig()
+      )
+    );
+    if (data?.outcome === 'cancelled' || data?.outcome === 'already-settled') return data.outcome;
+    throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
+  }
+
+  /**
+   * An attempt whose request Lydia VERIFIABLY reports still `open` past the expire_time Canari sent
+   * it (the reconciliation sweep): cancelled AT LYDIA first, through the cancel the buyer's next
+   * attempt makes, so no payment can land on a request Canari has closed; then closed `cancelled`.
+   * - `already-settled`: Lydia processed it between the read and the cancel. The attempt stays
+   *   `open` and this answers `open`, so the caller reads it once more (the sweep does, at once).
+   * - A cancel Lydia REFUSED with a code measured FINAL (`refusalsFinal.cancel`, empty until
+   *   a sandbox measurement fills it): closed `expired` at ERROR (`expireUnprovenCheckout`). The
+   *   request may then still be payable at Lydia; a payment on it is recorded only if its confirm
+   *   callback arrives, over the closed attempt, at ERROR. Any other refusal - and core answering
+   *   about itself, 401/403 or its 503 - THROWS like a cancel with no answer: retried, never closed.
+   * - No numeric request id (its request/do answer was lost): the cancel cannot name it, closed
+   *   `expired` at ERROR the same way.
+   * - A cancel that got NO answer (no response, a timeout, a 5xx) THROWS and closes nothing: the
+   *   request may still be payable. Answers the status the row now has.
+   */
+  async cancelStillOpenCheckout(row: ProductCheckout, why: string): Promise<ProductCheckoutStatus> {
+    if (!row.requestId) {
+      return this.expireUnprovenCheckout(row, `${why}; no request id to cancel it at Lydia with`);
+    }
+    let outcome: 'cancelled' | 'already-settled';
+    try {
+      outcome = await this.cancelRequestAtLydia(row);
+    } catch (err: unknown) {
+      const failure = classifyCoreCallFailure(err);
+      if (failure.kind !== 'refused' || !this.refusalsFinal.cancel.has(failure.providerCode)) {
+        throw err;
+      }
+      return this.expireUnprovenCheckout(
+        row,
+        `${why}; its cancel at Lydia was refused for good (error ${failure.providerCode})`
+      );
+    }
+    if (outcome === 'already-settled') {
+      this.logger.warn(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} was processed at Lydia ` +
+          `before its cancel (${why}) - left open for one more read`
+      );
+      return row.status;
+    }
+    this.logger.log(
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} cancelled at Lydia (${why})`
+    );
+    return this.closeCheckout(row, 'cancelled');
   }
 
   /**
@@ -1650,39 +1770,51 @@ export class ProductsService {
   }
 
   /**
-   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says. The
-   * request is named by the row's own uuid, or - for an attempt whose issuing call never answered
-   * one - by its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
-   * `paid` is settled (`settlePaidCheckout`), `declined` (state 5) and `cancelled-or-expired`
-   * (state 6: `expired` past the row's `expiresAt`, `cancelled` before it - the state alone cannot
-   * tell them apart) close the row, `not-found` on an order_ref lookup (no request carries it:
-   * request/do never reached Lydia) closes it `cancelled`, `open` and `unknown` change nothing.
-   * Returns the status the row now has, as far as this call knows. A failed read throws. The read
-   * goes to the Business the request was issued to (the row's `vendorToken` snapshot).
+   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says
+   * (`applyRequestState`). The request is named by the row's own uuid, or - for an attempt whose
+   * issuing call never answered one - by its order_ref (`productCheckoutLookup`). A failed read
+   * throws. The read goes to the Business the request was issued to (the row's `vendorToken`
+   * snapshot).
    */
   private async readAndApplyRequestState(row: ProductCheckout): Promise<ProductCheckoutStatus> {
-    const byUuid = !!row.requestUuid && LYDIA_REQUEST_UUID_RE.test(row.requestUuid);
+    const lookup = productCheckoutLookup(row);
     const { data } = await firstValueFrom(
       this.httpService.post<{ state?: string; raw?: string }>(
         coreUrl('payments/request-state'),
-        byUuid
-          ? { sessionId: row.requestUuid, connectAccountId: row.vendorToken }
-          : { orderRef: productOrderRef(row.productId, row.id), connectAccountId: row.vendorToken },
+        { ...lookup, connectAccountId: row.vendorToken },
         internalCoreRequestConfig()
       )
     );
-    this.logger.debug(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: read by ${byUuid ? 'uuid' : 'order_ref'} -> ${data?.state}`
-    );
+    const by = 'sessionId' in lookup ? 'uuid' : 'order_ref';
+    this.logger.debug(`[SHOP] checkout ${row.id.slice(0, 8)}: read by ${by} -> ${data?.state}`);
+    return this.applyRequestState(row, data?.state, data?.raw);
+  }
+
+  /**
+   * Writes what Lydia said about the attempt's request - the ONE mapping of a state onto an attempt,
+   * shared by the payer's return, the confirm callback and the reconciliation sweep (which calls it
+   * only with an answer whose signature it verified). `paid` is settled (`settlePaidCheckout`, the
+   * one writer of `paid`), `declined` (state 5) and `cancelled-or-expired` (state 6: `expired` past
+   * the row's `expiresAt`, `cancelled` before it - the state alone cannot tell them apart) close the
+   * row, `not-found` on an order_ref lookup (no request carries it: request/do never reached Lydia)
+   * closes it `cancelled`, `open` and `unknown` change nothing. Returns the status the row now has,
+   * as far as this call knows. `raw` is the provider's code, for the log only.
+   */
+  async applyRequestState(
+    row: ProductCheckout,
+    wireState: unknown,
+    raw?: string
+  ): Promise<ProductCheckoutStatus> {
+    const lookup = productCheckoutLookup(row);
     // `not-found` is not a request state but the answer of an order_ref LOOKUP that matched no
     // request: request/do never reached Lydia. Read before the one typed mapping of the states.
-    if (data?.state === 'not-found' && !byUuid) {
+    if (wireState === 'not-found' && 'orderRef' in lookup) {
       this.logger.warn(
-        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${productOrderRef(row.productId, row.id)} - never issued, closed cancelled`
+        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${lookup.orderRef} - never issued, closed cancelled`
       );
       return this.closeCheckout(row, 'cancelled');
     }
-    const state = toRequestState(data?.state);
+    const state = toRequestState(wireState);
     if (state === 'paid') {
       this.logger.log(`[SHOP] checkout ${row.id.slice(0, 8)}: request is PAID at the provider`);
       await this.settlePaidCheckout(row.id);
@@ -1702,9 +1834,34 @@ export class ProductsService {
       return row.status;
     }
     this.logger.warn(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${data?.raw ?? JSON.stringify(data?.state)}) - left ${row.status}`
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${raw ?? JSON.stringify(wireState)}) - left ${row.status}`
     );
     return row.status;
+  }
+
+  /**
+   * Closes an attempt whose request has ENDED (past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`, which
+   * the CALLER has checked) and that nothing proved paid - `unproven` says why, for the log. Closed
+   * as `expired`, at ERROR, so it stops blocking its buyer's retry and is never asked about again.
+   * Nothing is lost by it: a payment taken before the request expired is still recorded by its
+   * confirm callback, which asks even of a closed attempt (`handlePurchaseCompleted` ->
+   * `settlePaidCheckout`). Shared by the buyer's next attempt (`settlePreviousOpenAttempt`) and the
+   * reconciliation sweep, which closes an attempt whose read ANSWERED something it cannot act on.
+   * Conditional on `open` (`closeCheckout`): a `paid` written meanwhile stays, and is answered.
+   */
+  async expireUnprovenCheckout(
+    row: ProductCheckout,
+    unproven: string
+  ): Promise<ProductCheckoutStatus> {
+    const status = await this.closeCheckout(row, 'expired');
+    if (status === 'expired') {
+      this.logger.error(
+        `[SHOP] checkout ${row.id.slice(0, 8)} is past its expire_time and still unproven ` +
+          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
+          `expired is still recorded by its confirm callback`
+      );
+    }
+    return status;
   }
 
   /**
@@ -1833,14 +1990,26 @@ export class ProductsService {
       if (product) {
         granted = await this.settlementMayGrant(product, row, manager);
         if (granted) {
-          await this.grantPurchaseTag(
-            manager,
-            product,
-            row.userId,
-            'system',
-            paymentIntentId,
-            false
-          );
+          try {
+            granted = await this.grantPurchaseTag(
+              manager,
+              product,
+              row.userId,
+              'system',
+              paymentIntentId,
+              false
+            );
+          } catch (e) {
+            // The buyer holds the tier's tag NAME under another issuer: nothing was written (the
+            // upsert does not cross issuers, and raises no SQL error), so the payment is recorded
+            // paid but not granted, like a refused rank.
+            if (!(e instanceof TagHeldByAnotherIssuerError)) throw e;
+            this.logger.error(
+              `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier product=${product.id.slice(0, 8)} NOT granted - ` +
+                `user=${row.userId.slice(0, 8)} holds its tag name under another issuer; a refund or a fix is owed`
+            );
+            granted = false;
+          }
         }
       } else {
         // Nothing can be delivered for a product that is gone (no tag, no top-up), so the money is
@@ -2107,6 +2276,8 @@ export class ProductsService {
       });
     }
 
+    this.assertMembershipGrantable(asso, product);
+
     // The profile is the one other input fetched before the lock: a grid that now needs it, read
     // under the lock, would otherwise be priced on the "everyone else" cell without it.
     if (
@@ -2347,7 +2518,7 @@ export class ProductsService {
         new Date(),
         variantKey
       );
-      const tag = await this.userTagService.getActiveTag(userId, tagName);
+      const tag = await this.userTagService.getActiveTag(userId, tagName, asso.id);
       if (tag) {
         return {
           isCotisant: true,
@@ -2376,7 +2547,8 @@ export class ProductsService {
 
   /**
    * `tierFactsFrom` for one user in one association, reading the association's tiers (on sale or
-   * not - holding a withdrawn tier's tag still makes you a cotisant) and the user's tags.
+   * not - holding a withdrawn tier's tag still makes you a cotisant) and the user's tags ISSUED BY
+   * that association: a tag of the same name issued elsewhere holds no tier here.
    */
   private async tierFactsOf(
     asso: Association,
@@ -2389,7 +2561,7 @@ export class ProductsService {
       select: TIER_RANK_COLUMNS,
     });
     return this.tierFactsFrom(asso, tiers, (tag) =>
-      this.userTagService.hasActiveTag(userId, tag, manager)
+      this.userTagService.hasActiveTag(userId, tag, asso.id, manager)
     );
   }
 
@@ -2468,7 +2640,9 @@ export class ProductsService {
     manager: EntityManager
   ): Promise<boolean> {
     for (const tagName of tagNames) {
-      if (await this.userTagService.hasActiveTag(userId, tagName, manager)) return true;
+      if (await this.userTagService.hasActiveTagFromAnyIssuer(userId, tagName, manager)) {
+        return true;
+      }
     }
     return false;
   }
@@ -2544,7 +2718,12 @@ export class ProductsService {
       // so the check stays correct across a yearly rollover.
       const grant = await this.resolveGrantTag(product, manager);
       if (grant) {
-        const hasTag = await this.userTagService.hasActiveTag(userId, grant.tagName, manager);
+        const hasTag = await this.userTagService.hasActiveTag(
+          userId,
+          grant.tagName,
+          product.associationId,
+          manager
+        );
         if (!hasTag) return;
       }
     }
@@ -2756,13 +2935,35 @@ export class ProductsService {
   }
 
   /**
+   * Refuses (409 `COTISATION_DISABLED`) a membership product whose association has no cotisation
+   * mode, BEFORE any money is requested or recorded: `resolveGrantTag` derives no tag without one,
+   * so the purchase would grant nothing. The checkout opening and the cash sale call it, under the
+   * buyer's tier lock, on the association they re-read there.
+   */
+  private assertMembershipGrantable(
+    asso: Pick<Association, 'id' | 'cotisationMode'>,
+    product: Pick<AssociationProduct, 'id' | 'type'>
+  ): void {
+    if (product.type !== 'membership' || asso.cotisationMode) return;
+    this.logger.warn(
+      `[SHOP] refused (${COTISATION_DISABLED}): membership product=${product.id.slice(0, 8)} of ` +
+        `assoc=${asso.id.slice(0, 8)}, whose cotisations are disabled`
+    );
+    throw new ConflictException({
+      code: COTISATION_DISABLED,
+      message: "This association's cotisations are disabled: the product cannot be sold.",
+    });
+  }
+
+  /**
    * Resolves the tag name and expiry to grant for a product purchase.
    * Returns null for non-membership products or membership products with no tag configured.
    * For an association with an active cotisation mode, the tag is derived fresh from the current
    * academic year and the product's `variantKey` (see `deriveCotisationTag`), so a purchase always
    * grants the current period's tier-specific tag even when the stored product tag has not been
-   * re-provisioned since the last yearly rollover. Falls back to the product's stored tag for
-   * membership products without a cotisation mode (arbitrary/legacy tags).
+   * re-provisioned since the last yearly rollover. An association WITHOUT a cotisation mode grants
+   * nothing: its stored tag string is never granted as typed, since only a derived tier tag may be
+   * issued (a membership product requires a mode to be created).
    */
   private async resolveGrantTag(
     product: AssociationProduct,
@@ -2773,7 +2974,10 @@ export class ProductsService {
     if (asso?.cotisationMode) {
       return deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), product.variantKey);
     }
-    return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
+    this.logger.warn(
+      `[SHOP] membership product=${product.id.slice(0, 8)} of an association with no cotisation mode - no tag granted`
+    );
+    return null;
   }
 
   /**
@@ -2790,9 +2994,18 @@ export class ProductsService {
     grantedBy: string,
     paymentIntentId: string | null,
     manualGrant: boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     const grant = await this.resolveGrantTag(product, manager);
-    if (!grant) return;
+    if (!grant) {
+      if (product.type !== 'membership') return true;
+      // A membership product that resolves to no tag grants nothing for the money taken: the
+      // caller records the payment `paid_not_granted`, the durable marker the reports read.
+      this.logger.error(
+        `[SHOP] membership product=${product.id.slice(0, 8)} resolves to no tag - payment by ` +
+          `user=${userId.slice(0, 8)} recorded paid but NOT granted; a refund or a grant is owed`
+      );
+      return false;
+    }
     await this.userTagService.grantOrRenew(
       {
         userId,
@@ -2815,6 +3028,7 @@ export class ProductsService {
       product.variantKey,
       manager
     );
+    return true;
   }
 
   /**
@@ -2838,7 +3052,13 @@ export class ProductsService {
       // Re-read after the locks: a retag committed while this sale waited renamed the tier's tag.
       const current =
         (await manager.findOne(AssociationProduct, { where: { id: product.id } })) ?? product;
-      await this.grantPurchaseTag(
+      // Read after the locks too: cotisations disabled meanwhile refuse the sale, nothing recorded.
+      if (current.type === 'membership') {
+        const asso = await manager.findOne(Association, { where: { id: product.associationId } });
+        if (!asso) throw new NotFoundException('Association not found');
+        this.assertMembershipGrantable(asso, current);
+      }
+      const granted = await this.grantPurchaseTag(
         manager,
         current,
         userId,
@@ -2853,7 +3073,7 @@ export class ProductsService {
           productId: product.id,
           amountCents,
           paymentMethod,
-          status: 'paid',
+          status: receivedStatus(granted),
           stripePaymentIntentId,
           associationId: product.associationId,
           productName: product.name,

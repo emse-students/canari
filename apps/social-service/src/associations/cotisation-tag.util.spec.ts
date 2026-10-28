@@ -1,4 +1,9 @@
-import { deriveCotisationTag, getAcademicYear } from './cotisation-tag.util';
+import {
+  cotisationStem,
+  cotisationStemsCollide,
+  deriveCotisationTag,
+  getAcademicYear,
+} from './cotisation-tag.util';
 
 describe('cotisation-tag util', () => {
   describe('getAcademicYear', () => {
@@ -47,5 +52,25 @@ describe('cotisation-tag util', () => {
         deriveCotisationTag('bde', 'dated', now)
       );
     });
+  });
+});
+
+describe('cotisationStemsCollide', () => {
+  it.each([
+    ['bde', 'bde', true],
+    ['bde-2026-2027', 'bde', true],
+    ['bde', 'bde-sport-2026-2027', false],
+    ['bde-sport', 'bde', false],
+    ['bde-sport', 'bde-sport', true],
+    ['cercle-avec-alcool', 'cercle-avec', false],
+    ['bde-2026', 'bde', false],
+  ])('%s against %s -> %s', (a, b, expected) => {
+    expect(cotisationStemsCollide(a, b)).toBe(expected);
+    expect(cotisationStemsCollide(b, a)).toBe(expected);
+  });
+
+  it('a stem and a key make the stem of a named tier', () => {
+    expect(cotisationStem('bde', 'sport')).toBe('bde-sport');
+    expect(cotisationStem('bde', null)).toBe('bde');
   });
 });

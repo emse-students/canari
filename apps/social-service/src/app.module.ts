@@ -8,6 +8,7 @@ import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
 import { AssociationsModule } from './associations/associations.module';
 import { FollowsModule } from './follows/follows.module';
+import { FollowRequestsModule } from './follows/follow-requests.module';
 import { UserTagModule } from './users/user-tag.module';
 import { PurchaseRecordModule } from './users/purchase-record.module';
 import { ModerationModule } from './moderation/moderation.module';
@@ -59,6 +60,7 @@ import { HealthController } from './health.controller';
     FormsModule,
     AssociationsModule,
     FollowsModule,
+    FollowRequestsModule,
     UserTagModule,
     PurchaseRecordModule,
     ModerationModule,

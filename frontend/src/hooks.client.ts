@@ -7,7 +7,8 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
-import { version } from '$app/environment';
+import type { HandleClientError } from '@sveltejs/kit/hooks';
+import { version } from '$app/env';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -52,10 +53,21 @@ installAppLogFlushTriggers();
 installBootBenchDevTools();
 markBoot('app-first-line');
 
-/** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
-export function handleError({ error }: { error: unknown }): void {
-  console.error('[App] Client error:', error);
-}
+/**
+ * Called on every client-side error SvelteKit catches; logs to console (its default behaviour).
+ *
+ * SvelteKit 3 calls it for the EXPECTED ones too (a 404 on navigation arrives as a `framework`
+ * error), so the level follows the status: a correct answer is a warning, an error nobody named
+ * (`unknown`) or a 5xx is this application failing.
+ */
+export const handleError: HandleClientError = (caught) => {
+  const status = caught.kind === 'unknown' ? 500 : caught.error.status;
+  if (status < 500) {
+    console.warn(`[App] Client navigation error ${status}:`, caught.error);
+    return;
+  }
+  console.error('[App] Client error:', caught.error);
+};
 
 /** Optional init hook - called once before the app starts. No setup needed here. */
 export function init(): void {}

@@ -127,6 +127,14 @@ export function tierRefusal(relation: TierRelation): TierRefusal | null {
 }
 
 /**
+ * The `code` of the 400 a product create or update gets when its `memberPriceTag` names no OTHER
+ * cotisation tier of the product's own association (another association's tag, a non-tier tag, the
+ * product's own tier). Refused at save because such a link prices nothing: `fixedPriceFor` would
+ * charge the full price, silently, to every buyer the admin meant to discount.
+ */
+export const MEMBER_PRICE_TAG_NOT_A_TIER = 'MEMBER_PRICE_TAG_NOT_A_TIER';
+
+/**
  * The sibling tier a stored `memberPriceTag` names, as its `variantKey`, or `undefined` when it
  * names none of `tierKeys`. The tag is matched against each tier's tag STEM (`cotisant:<slug>` or
  * `cotisant:<slug>-<variant>`), with or without an academic-year suffix: a `dated` association's

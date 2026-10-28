@@ -2,6 +2,7 @@
  * The rules of a boutique checkout attempt, as data and pure functions (migration 101,
  * docs/wiki/frontend/modules/payments.md "A product checkout is a row, one per attempt").
  */
+import { LYDIA_REQUEST_UUID_RE } from '../forms/seat-hold';
 
 /**
  * How long a product's Lydia request stays payable, in whole seconds (Lydia's `expire_time`). Set
@@ -55,6 +56,13 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
 /**
+ * The `code` of the 409 a checkout or a cash sale of a membership product gets while its
+ * association has no cotisation mode: no tier tag can be derived, so nothing would be granted for
+ * the money. Refused before any payment is requested or recorded.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */
@@ -96,6 +104,22 @@ export function withCheckoutReturnKey(
  * lock, since it calls another service - and the moment the attempt is written under that lock.
  */
 export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+
+/**
+ * Which request a state read of this attempt names, as core-service's `payments/request-state`
+ * takes it: the `request_uuid` the issuing call answered, or - for an attempt whose issuing call
+ * never answered one - its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
+ * The ONE choice, made for the payer's return, the confirm callback and the reconciliation sweep.
+ */
+export function productCheckoutLookup(attempt: {
+  id: string;
+  productId: string;
+  requestUuid: string | null;
+}): { sessionId: string } | { orderRef: string } {
+  return attempt.requestUuid && LYDIA_REQUEST_UUID_RE.test(attempt.requestUuid)
+    ? { sessionId: attempt.requestUuid }
+    : { orderRef: productOrderRef(attempt.productId, attempt.id) };
+}
 
 /**
  * The `code` of the 409 a checkout gets when its product's price grid came to depend on the buyer's

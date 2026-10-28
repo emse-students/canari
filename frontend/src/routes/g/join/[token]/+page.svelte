@@ -24,8 +24,8 @@
 
   onMount(async () => {
     if (!currentUserId()) {
-      await goto(resolve(`/login?returnTo=${encodeURIComponent(`/g/join/${token}`)}`), {
-        replaceState: true,
+      await goto(resolve(`login?returnTo=${encodeURIComponent(`/g/join/${token}`)}`), {
+        replace: true,
       });
       return;
     }
