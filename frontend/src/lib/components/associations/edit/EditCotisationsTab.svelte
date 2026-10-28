@@ -42,7 +42,7 @@
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
-  import { tierKeyRefusalMessage } from '$lib/associations/tierKeyRefusal';
+  import { tierSaveRefusal } from '$lib/associations/tierKeyRefusal';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -384,10 +384,10 @@
       resetAddTierForm();
       await Promise.all([loadTierProducts(), loadCotisationTiers()]);
     } catch (e) {
-      // A key the server refuses for its shape is the manager's to change: say why.
-      const keyRefusal = tierKeyRefusalMessage(e);
-      tiersError = keyRefusal ?? m.asso_cotisations_tier_create_error();
-      if (keyRefusal) console.warn('[Cotisations] Tier create refused: key shaped like a year');
+      // A key or a preferential-price link the server refuses is the manager's to change: say why.
+      const refusal = tierSaveRefusal(e);
+      tiersError = refusal?.message ?? m.asso_cotisations_tier_create_error();
+      if (refusal) console.warn(`[Cotisations] Tier create refused: code=${refusal.code}`);
       else console.error('[Cotisations] Failed to create tier:', e);
     } finally {
       addingTier = false;
@@ -506,9 +506,9 @@
       // roster's Forfait column are stale until refetched.
       await Promise.all([loadCotisationTiers(), loadRoster(0, true)]);
     } catch (e) {
-      const keyRefusal = tierKeyRefusalMessage(e);
-      tiersError = keyRefusal ?? m.asso_cotisations_membership_save_error();
-      if (keyRefusal) console.warn('[Cotisations] Tier save refused: key shaped like a year');
+      const refusal = tierSaveRefusal(e);
+      tiersError = refusal?.message ?? m.asso_cotisations_membership_save_error();
+      if (refusal) console.warn(`[Cotisations] Tier save refused: code=${refusal.code}`);
       else console.error('[Cotisations] Failed to save tier:', e);
     } finally {
       savingTierId = null;

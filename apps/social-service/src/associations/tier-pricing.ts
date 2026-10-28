@@ -126,10 +126,13 @@ export function tierRefusal(relation: TierRelation): TierRefusal | null {
 }
 
 /**
- * The `code` of the 409 a paid answer gets when its form grants a cotisation tier the association
- * no longer sells (the form's `cotisationVariantKey` names no tier product): the grant could never
- * succeed, for ANY submitter, so no money is taken. Not `TIER_NOT_RANKABLE`, whose sentence speaks
- * of the submitter's current membership - meaningless to someone who holds none.
+ * The `code` of the 409 a paid answer gets when its form grants a cotisation tier that no longer
+ * EXISTS: the form's `cotisationVariantKey` names no tier product of the association, which happens
+ * only when that product was DELETED - a tier merely taken off sale (`isActive` false) is still in
+ * the catalogue (`listCotisationTiers`) and is ranked as usual. The grant could never succeed, for
+ * ANY submitter, so no money is taken. Not `TIER_NOT_RANKABLE`, whose sentence speaks of the
+ * submitter's current membership - meaningless to someone who holds none. (The code says "not
+ * sold" for history; what it means is "gone".)
  */
 export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
 
@@ -140,7 +143,10 @@ export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
  */
 export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
 
-/** Where a paid form's tier stands for one submitter: a `TierRelation`, or the tier is not sold. */
+/**
+ * Where a paid form's tier stands for one submitter: a `TierRelation`, or `not-sold` when the tier's
+ * product no longer exists (`FORM_TIER_NOT_SOLD`).
+ */
 export type FormTierRank = TierRelation | 'not-sold';
 
 /**
@@ -152,7 +158,7 @@ export function formTierRefusal(rank: FormTierRank): TierRefusal | null {
   if (rank === 'not-sold') {
     return {
       code: FORM_TIER_NOT_SOLD,
-      message: 'This form grants a membership tier the association no longer sells',
+      message: 'This form grants a membership tier that no longer exists',
     };
   }
   if (rank === 'held') {

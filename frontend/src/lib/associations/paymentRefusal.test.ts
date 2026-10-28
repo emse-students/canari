@@ -209,7 +209,7 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
-          'This form grants a membership tier the association no longer sells',
+          'This form grants a membership tier that no longer exists',
           'FORM_TIER_NOT_SOLD',
           409
         )
