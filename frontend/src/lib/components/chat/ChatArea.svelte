@@ -64,6 +64,8 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
+  import { ownKeyFingerprint } from '$lib/utils/chat/deviceNoticeWiring';
+  import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import {
     isNarrowChatLayout,
@@ -319,6 +321,21 @@
 
   /** Whether the poll composer modal is open (channels only). */
   let showPollComposer = $state(false);
+
+  // THIS DEVICE'S OWN KEY, shown while it waits to be added (2026-10-27): a member asked to add a
+  // further device of this account is shown the key of the package it would add, and the owner
+  // compares the two here. Read once, when a waiting conversation is first shown. NOT for a person's
+  // invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person, not a key.
+  let ownKey = $state<string | null>(null);
+  const waitingToBeAdded = $derived(
+    conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
+  );
+  $effect(() => {
+    if (!waitingToBeAdded || ownKey !== null) return;
+    void ownKeyFingerprint().then((key) => {
+      if (key !== null) ownKey = key.match(/.{1,4}/g)?.join(' ') ?? key;
+    });
+  });
 
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
@@ -1673,6 +1690,11 @@
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
             <span>{heldNotice}</span>
           </div>
+        {:else if waitingToBeAdded && ownKey}
+          <div class="chat-send-notice is-pending" role="status" data-own-device-key>
+            <LoaderCircle size={16} class="shrink-0 animate-spin" />
+            <span>{m.chat_waiting_own_device_key({ fingerprint: ownKey })}</span>
+          </div>
         {/if}
       {/snippet}
       <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
@@ -1706,7 +1728,7 @@
           {onRemovePendingFile}
           {videoPreparation}
           {isUploading}
-          notice={sendError || heldNotice ? sendNotice : undefined}
+          notice={sendError || heldNotice || (waitingToBeAdded && ownKey) ? sendNotice : undefined}
         />
       </div>
     {/if}
