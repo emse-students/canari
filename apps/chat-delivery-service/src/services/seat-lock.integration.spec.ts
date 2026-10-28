@@ -43,6 +43,7 @@ import { PinVerifier } from '../entities/pin-verifier.entity';
 import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
@@ -250,6 +251,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         DeviceSignatureKey,
         NotificationPreference,
         UserDismissedGroup,
+        // The key groups a revoked device held (migration 041), which an erasure deletes too.
+        RevokedDeviceGroup,
       ],
       synchronize: false,
       uuidExtension: 'pgcrypto',

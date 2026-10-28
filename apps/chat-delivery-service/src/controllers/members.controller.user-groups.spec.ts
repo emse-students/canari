@@ -13,6 +13,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -89,6 +90,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedRepo },
         { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+        { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: DataSource, useValue: {} },

@@ -20,6 +20,7 @@ describe('MembersController.getRevokedLeaves', () => {
   let devices: { findOne: jest.Mock; find: jest.Mock };
   let seats: { findOne: jest.Mock; find: jest.Mock };
   let revoked: { find: jest.Mock };
+  let heldWhenRevoked: { find: jest.Mock };
   let controller: MembersController;
 
   beforeEach(() => {
@@ -40,6 +41,8 @@ describe('MembersController.getRevokedLeaves', () => {
     revoked = {
       find: jest.fn().mockResolvedValue([{ userId: 'bob', deviceId: 'phone-1' }]),
     };
+    // The key groups a revoked device held when its revocation purged its rows: none by default.
+    heldWhenRevoked = { find: jest.fn().mockResolvedValue([]) };
     controller = new MembersController(
       seats as never,
       {} as never,
@@ -49,6 +52,7 @@ describe('MembersController.getRevokedLeaves', () => {
       {} as never,
       {} as never,
       revoked as never,
+      heldWhenRevoked as never,
       {} as never,
       {} as never
     );
@@ -136,6 +140,28 @@ describe('MembersController.getRevokedLeaves', () => {
     await expect(
       controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1'] }, 'alice')
     ).resolves.toEqual({ revoked: ['bob:phone-1'] });
+  });
+
+  it("binds the EXACT device a revocation recorded as having held the group, and none of its user's others", async () => {
+    // THE SOLE-DEVICE CASE: bob's only device was revoked, so its purge left him no row here - but
+    // the purge recorded that THIS device held the key group (`dm_revoked_device_groups`).
+    devices.find.mockResolvedValue([{ userId: 'alice' }]);
+    heldWhenRevoked.find.mockResolvedValue([{ userId: 'bob', deviceId: 'phone-1' }]);
+    revoked.find.mockResolvedValue([
+      { userId: 'bob', deviceId: 'phone-1' },
+      { userId: 'bob', deviceId: 'tablet-9' },
+    ]);
+
+    const got = await controller.getRevokedLeaves(
+      'kg-1',
+      { identities: ['BOB:phone-1', 'bob:tablet-9'] },
+      'alice'
+    );
+
+    // The recorded device is answered (in the caller's spelling); bob's other revoked device was
+    // never recorded here, so bob is not bound for it.
+    expect(got).toEqual({ revoked: ['BOB:phone-1'] });
+    expect(heldWhenRevoked.find.mock.calls[0][0].where.groupId).toBe('kg-1');
   });
 
   it('answers an empty list without reading the revocations', async () => {

@@ -173,6 +173,8 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ds.getRepository(MlsGroupInfo),
       ds.getRepository(QueuedMessage),
       ds.getRepository(RevokedDevice),
+      // The revoked-device bindings are read by the revoked-leaves question alone, not on this path.
+      null as unknown as never,
       redis as unknown as Redis,
       ds
     );

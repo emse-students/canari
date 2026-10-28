@@ -88,6 +88,7 @@ describe('MembersController - lock order of an add and a removal', () => {
       repo() as never,
       repo() as never,
       repo() as never, // RevokedDevice
+      repo() as never, // RevokedDeviceGroup
       redis as never,
       recorded.dataSource
     );
@@ -158,6 +159,7 @@ describe('MembersController - lock order of an add and a removal', () => {
       const groupMemberRepo = { findOne: jest.fn().mockResolvedValue(callerSeat) };
       const controller = new MembersController(
         groupMemberRepo as never,
+        {} as never,
         {} as never,
         {} as never,
         {} as never,

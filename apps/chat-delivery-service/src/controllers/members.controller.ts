@@ -27,6 +27,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -134,6 +135,8 @@ export class MembersController {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(RevokedDeviceGroup)
+    private revokedDeviceGroupRepo: Repository<RevokedDeviceGroup>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource
   ) {}
@@ -870,9 +873,12 @@ export class MembersController {
    *
    * **AN ALLOWLIST, ASKED BY A MEMBER, ABOUT MEMBERS.** The caller must be an admitted member of the
    * group (`assertCallerActsOnGroup`: an active device row for a key group, a seat for a
-   * conversation), AND each identity asked is answered only when its user is bound to THIS group - a
-   * device row in it, of any status, or a seat in it. Anybody else's pair is answered "not revoked"
-   * whatever the truth, so a member of one group cannot read the revocations of people outside it.
+   * conversation), AND each identity asked is answered only when it is bound to THIS group - its
+   * user holds a device row in it, of any status, or a seat in it, or that exact device is recorded
+   * as having held the key group when its revocation purged its rows (`dm_revoked_device_groups`,
+   * {@link RevokedDeviceGroup}: in a key group the device rows were the user's only binding, and the
+   * purge deletes them). Anybody else's pair is answered "not revoked" whatever the truth, so a
+   * member of one group cannot read the revocations of people outside it.
    * The answer adds only "this one is revoked", under the one active-revocation rule
    * (`activeRevocationWhere`), and the route is throttled per user
    * ({@link REVOKED_LEAVES_LIMIT_PER_MINUTE}). The user half is
@@ -920,8 +926,9 @@ export class MembersController {
 
     // The user half both as sent and lowercased: the column holds whichever casing was written.
     const asked = [...new Set(pairs.flatMap((p) => [p.user, p.sentUser]))];
-    // BOUND TO THIS GROUP: only users with a device row or a seat in it are answered at all.
-    const [deviceRows, seatRows] = await Promise.all([
+    // BOUND TO THIS GROUP: only users with a device row or a seat in it are answered at all - or
+    // the exact device a revocation recorded as having held it ({@link RevokedDeviceGroup}).
+    const [deviceRows, seatRows, revokedHeldRows] = await Promise.all([
       this.deviceGroupRepo.find({
         where: { groupId: safeGroupId, userId: In(asked) },
         select: { userId: true },
@@ -930,9 +937,18 @@ export class MembersController {
         where: { groupId: safeGroupId, userId: In(asked) },
         select: { userId: true },
       }),
+      this.revokedDeviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true, deviceId: true },
+      }),
     ]);
     const bound = new Set([...deviceRows, ...seatRows].map((r) => r.userId.toLowerCase()));
-    const inGroup = pairs.filter((p) => bound.has(p.user));
+    const heldWhenRevoked = new Set(
+      revokedHeldRows.map((r) => `${r.userId.toLowerCase()}:${r.deviceId}`)
+    );
+    const inGroup = pairs.filter(
+      (p) => bound.has(p.user) || heldWhenRevoked.has(`${p.user}:${p.device}`)
+    );
     if (inGroup.length === 0) {
       // Not converged: no leaf asked about is bound to this group, so nothing here can be answered -
       // said at log level.

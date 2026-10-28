@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -68,10 +68,11 @@ key set from both, the fallback armed from both, and the FCM visibility each owe
 
 ### What a group owns, and the one list that says so
 
-A group's rows live in **seven** tables, and `GROUP_OWNED_TABLES`
+A group's rows live in **eleven** tables, and `GROUP_OWNED_TABLES`
 ([`utils/group-purge.ts`](../../../apps/chat-delivery-service/src/utils/group-purge.ts)) is the only
-definition of that set: `queued_message`, `dm_group_members`, `dm_device_group_memberships`,
-`mls_commit_log`, `mls_group_info`, `group_invites` - plus `dm_user_dismissed_groups`, which
+definition of that set: `dm_group_members`, `queued_message`, `queued_payload`,
+`dm_device_group_memberships`, `mls_commit_log`, `mls_group_info`, `group_invites`,
+`dm_group_membership_intervals`, `dm_seat_evictions`, `dm_revoked_device_groups` - plus `dm_user_dismissed_groups`, which
 `deleteGroupOwnedRows` takes only on a HARD delete. Plus three Redis key shapes in
 `GROUP_REDIS_KEY_PREFIXES`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
 (`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an

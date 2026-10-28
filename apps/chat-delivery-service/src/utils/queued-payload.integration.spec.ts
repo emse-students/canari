@@ -32,6 +32,7 @@ import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { MessagingService } from '../services/messaging.service';
 import { AppController } from '../app.controller';
 import { tombstoneGroups } from './group-purge';
@@ -104,6 +105,7 @@ const ENTITIES = [
   NotificationPreference,
   GroupMembershipInterval,
   SeatEviction,
+  RevokedDeviceGroup,
 ];
 
 /** A throwaway schema on the test database, dropped afterwards. */

@@ -14,6 +14,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -48,6 +49,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: revokedRepo },
+        { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: {} },
@@ -213,6 +215,7 @@ describe('MembersController.getGroupRosters - the seats still awaiting admission
       {} as never,
       {} as never,
       { find: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
       {} as never,
       {} as never
     );
