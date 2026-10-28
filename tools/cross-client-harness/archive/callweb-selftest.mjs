@@ -205,6 +205,11 @@ ok('COUNTER: ... and NOT on W2 in a connected row', !forgiven('CALL-WEB-1', 'W2'
 ok('CALL-WEB-7: W5 is answered busy and ends at once, recorded busy', forgiven('CALL-WEB-7', 'W5', `log: [Call] ${H} is busy - ending call ${H} at once`) && forgiven('CALL-WEB-7', 'W5', END('calling', 'busy', true)) && forgiven('CALL-WEB-7', 'W5', REC('busy')));
 ok("... W4 records W5's call busy and ends its own as told", forgiven('CALL-WEB-7', 'W4', REC('busy')) && forgiven('CALL-WEB-7', 'W4', END('incall', 'answered-or-unrung', false)));
 ok('COUNTER: a busy answer is dirt outside the busy row', !forgiven('CALL-WEB-1', 'W4', REC('busy')) && !forgiven('CALL-WEB-1', 'W2', `log: [Call] ${H} is busy - ending call ${H} at once`));
+ok('CALL-WEB-3: the callee ends and notifies, the caller is told', forgiven('CALL-WEB-3', 'W4', END('incall', 'answered-or-unrung', true)) && forgiven('CALL-WEB-3', 'W2', END('incall', 'answered-or-unrung', false)) && forgiven('CALL-WEB-3', 'W2', REC('answered')));
+ok('COUNTER: in CALL-WEB-3 the caller ending as if it had hung up stays dirt', !forgiven('CALL-WEB-3', 'W2', END('incall', 'answered-or-unrung', true)));
+const LEFT_END = `log: [02:07:14.100] [Call] ending call ${H} state=incall outcome=answered-or-unrung notify=false remote=false`;
+ok('CALL-WEB-8: W2 ends on the peer leaving the room, neither notifying nor told', forgiven('CALL-WEB-8', 'W2', LEFT_END) && forgiven('CALL-WEB-8', 'W2', REC('answered')));
+ok('COUNTER: ... that end is dirt in any other row', !forgiven('CALL-WEB-1', 'W2', LEFT_END) && !forgiven('CALL-WEB-3', 'W2', LEFT_END));
 ok('COUNTER: the same end at warn stays dirt', !forgiven('CALL-WEB-1', 'W2', END('incall', 'answered-or-unrung', true).replace(/^log/, 'warning')));
 
 {
@@ -236,7 +241,10 @@ ok('a cancelled or unanswered call ends its ring cancelled (CALL-WEB-5, 6)', ['C
 ok('the busy row ends one ring answered then ended, and one cancelled (CALL-WEB-7)', ['answered', 'ended', 'cancelled'].every((r) => expectedIn(END_RING(r), 'CALL-WEB-7')));
 ok('COUNTER: a decline whose ring ended answered stays dirt', !expectedIn(END_RING('answered'), 'CALL-WEB-4'));
 ok('COUNTER: a cancel whose ring ended answered stays dirt', !expectedIn(END_RING('answered'), 'CALL-WEB-5'));
-ok('COUNTER: an answered call whose ring ended cancelled stays dirt', !expectedIn(END_RING('cancelled'), 'CALL-WEB-1'));
+ok('a callee hang-up ends its ring answered, then ended (CALL-WEB-3)', expectedIn(END_RING('answered'), 'CALL-WEB-3') && expectedIn(END_RING('ended'), 'CALL-WEB-3'));
+ok('a reload ends its ring answered (CALL-WEB-8), with its ring-end and presence', expectedIn(END_RING('answered'), 'CALL-WEB-8') && expectedIn(RING_END(0, 0), 'CALL-WEB-8') && expectedIn(CLEARED, 'CALL-WEB-8'));
+ok('COUNTER: a reload whose ring ended `ended` stays dirt - the reloaded page never hung up', !expectedIn(END_RING('ended'), 'CALL-WEB-8'));
+ok('COUNTER: an answered call whose ring ended cancelled stays dirt',!expectedIn(END_RING('cancelled'), 'CALL-WEB-1'));
 ok('COUNTER: a reason nobody sends is a shape nobody has read', rowVerdict(END_RING('lost'), 'CALL-WEB-1')?.expected === false);
 ok('a ring-end that reached every token it tried is expected', expectedIn(RING_END(0, 0), 'CALL-WEB-1') && expectedIn(RING_END(3, 3), 'CALL-WEB-5'));
 ok('COUNTER: ... one that reached FEWER is not', !expectedIn(RING_END(1, 3), 'CALL-WEB-1') && !expectedIn(RING_END(0, 2), 'CALL-WEB-6'));

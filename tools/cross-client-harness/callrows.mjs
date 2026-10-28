@@ -360,7 +360,17 @@ export function callNarration(row, seat) {
     // The caller's own ring screen, primed by the dialling tap, leaves before any stream in every
     // row whose call never connects (read on CALL-WEB-4/5/6, `1.5.1-alpha.1`).
     if (scenario === 'offline') return [...caller, UNANSWERED, ENDING('calling', 'not-answered', true), RECORDED('not-answered'), PRIMED_AWAY];
-    if (scenario === 'reload') return [...caller, at(L, String.raw`\[Call\] the other party left the call room`)];
+    // RELOAD (CALL-WEB-8, read on 1.5.1-alpha.1): the peer LEFT THE ROOM, no MLS hangup came, so W2
+    // ends its answered call itself without notifying (`notify=false remote=false`) - the one end of
+    // the table that is neither the side that ends nor the side told of it.
+    if (scenario === 'reload')
+      return [
+        ...caller,
+        at(L, String.raw`\[Call\] the other party left the call room`),
+        at(L, String.raw`\[Call\] ending call ${H} state=incall outcome=answered-or-unrung notify=false remote=false`),
+        RECORDED('answered'),
+      ];
+    if (scenario === 'callee-hangup') return [...caller, ...ANSWERED_END(false)];
     if (scenario === 'decline') return [...caller, ENDING('calling', 'declined', false), RECORDED('declined'), PRIMED_AWAY];
     if (scenario === 'cancel') return [...caller, HUNG_UP, ENDING('calling', 'cancelled', true), RECORDED('cancelled'), PRIMED_AWAY];
     if (['basic', 'mute', 'busy'].includes(scenario)) return [...caller, HUNG_UP, ...ANSWERED_END(true)];
@@ -372,7 +382,7 @@ export function callNarration(row, seat) {
       return [...callee, at(L, String.raw`\[Call\] declined from the full screen`), PRIMED_AWAY, ENDING('incoming', 'declined', true), RECORDED('declined')];
     if (scenario === 'cancel') return [...callee, PRIMED_AWAY, ENDING('incoming', 'cancelled', false), RECORDED('cancelled')];
     const answered = [...callee, ...CALLEE_ANSWERS, ...CONNECTED];
-    if (scenario === 'callee-hangup') return [...answered, HUNG_UP];
+    if (scenario === 'callee-hangup') return [...answered, HUNG_UP, ...ANSWERED_END(true)];
     // B16: the second invite meets the call in progress (`yieldToOrAnswerBusy`) and is answered
     // busy; W4 writes W5's call as `busy` in their DM, and its own call ends as W2's was.
     if (scenario === 'busy')

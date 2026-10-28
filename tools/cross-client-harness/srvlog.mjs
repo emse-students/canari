@@ -1281,11 +1281,12 @@ const ROW_RULES = [
   //
   // TWO LIMITS, stated. CALL-WEB-7's three reasons cannot be pinned per CALL: the server line carries
   // only the user's and the call's hashes, which the rule cannot tie to "W2's call" or "W5's" - so in
-  // that row any of the three is forgiven for either call. And CALL-WEB-3 (callee-hangup) and
-  // CALL-WEB-8 (reload) have NO rule: neither was read on `1.5.1-alpha.1`, so their ring-end lines
-  // stay out-of-row dirt until a reading supplies the reasons they really send.
+  // that row any of the three is forgiven for either call. CALL-WEB-3 (the callee hangs up) sends
+  // what 1 and 2 send; CALL-WEB-8 (a reload) sends `answered` only - the reloaded page never hangs up,
+  // so no `ended` comes (both read on `1.5.1-alpha.1`, 2026-10-28).
   ...[
-    { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2'] },
+    { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2', 'CALL-WEB-3'] },
+    { name: 'call ring ended: answered, then the peer reloaded', reasons: 'answered', rows: ['CALL-WEB-8'] },
     { name: 'call ring ended: declined', reasons: 'ended', rows: ['CALL-WEB-4'] },
     { name: 'call ring ended: cancelled or unanswered', reasons: 'cancelled', rows: ['CALL-WEB-5', 'CALL-WEB-6'] },
     { name: 'call ring ended: one answered and hung up, one busy', reasons: 'answered|cancelled|ended', rows: ['CALL-WEB-7'] },
