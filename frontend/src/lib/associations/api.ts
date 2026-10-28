@@ -203,9 +203,17 @@ export interface Association {
   updatedAt: string;
 }
 
+/**
+ * The `code` of the creation refused because no free slug could be derived from the name
+ * (social-service `SLUG_EXHAUSTED`): a name with no Latin letter or digit folds to `asso`, and the
+ * server walks at most fifty suffixes. Read from `SocialApiError.code`, never from the message.
+ */
+export const ASSOCIATION_SLUG_EXHAUSTED = 'ASSOCIATION_SLUG_EXHAUSTED';
+
 export interface CreateAssociationPayload {
   name: string;
-  slug: string;
+  /** Never sent by the app: the server derives it from the name (a technical id is never typed). */
+  slug?: string;
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;
