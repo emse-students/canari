@@ -261,10 +261,18 @@ The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish
 history entry carries it, and only then opens the composer or the search field.
 
 The order is the whole fix. The strip is a navigation, and the root layout's `beforeNavigate`
-closes every open overlay first (`drainHistoryOverlayStack`). SvelteKit 3's `goto` awaits the
-route's intent before it reaches that hook. Kit 2 reached it synchronously, inside the route's
-effect, before the Modal had registered. So since #2613 a composer opened in the same tick was
-closed as it opened.
+closes every open overlay first (`drainHistoryOverlayStack`). Kit 2 kept the arriving navigation
+open through `await commit_promise; await tick(); await tick();`, and `_before_navigate` skips every
+callback while one is open, so a strip fired by the arriving page ran no hook and drained nothing.
+Kit 3 ends the navigation as soon as the page has settled (`finish_navigation`), so the strip runs
+the hooks. Since #2613 a composer opened in the same tick was therefore closed as it opened. A
+replace issued while an overlay's own history entry is under the pointer would also overwrite that
+entry: a second reason to strip first.
+
+Whether the strip landed is read off the page, never off the error. Kit rejects an overtaken
+navigation with an untyped `Error('navigation aborted')`. A strip overtaken by another navigation
+drops the command with an info line, and only a strip that failed on the feed itself is logged as
+an error.
 
 On the Mi 9T the sequence was read over CDP: the overlay pushed at 130 ms, the dialog mounted at
 134, unmounted at 164 with no popstate, and the router's replace at 180, which also overwrote the

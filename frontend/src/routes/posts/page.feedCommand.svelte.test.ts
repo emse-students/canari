@@ -4,8 +4,8 @@
  *
  * The feed performs each command and strips it with a `goto`. That `goto` is a navigation, and the
  * root layout's `beforeNavigate` closes every open overlay (`drainHistoryOverlayStack`). SvelteKit
- * 3's `goto` awaits the route's intent before it reaches that hook, so a composer opened in the same
- * tick had already registered and was closed the instant it opened (Mi 9T, 2026-10-28). The `goto`
+ * 2 skipped that hook for a `goto` fired while the arrival was still open; SvelteKit 3 runs it, so a
+ * composer opened in the same tick was closed the instant it opened (Mi 9T, 2026-10-28). The `goto`
  * double below is kit 3's order: a microtask, the layout's drain, then the new URL.
  *
  * What this cannot see: the real router, the real root layout and the WebView's history. It pins
@@ -122,6 +122,21 @@ describe('the feed commands of the app header', () => {
 
     expect(goto.mock.calls[0][0]).not.toContain('search');
     expect(document.getElementById('posts-search')!.classList.contains('hidden')).toBe(false);
+  });
+
+  it('drops the command, without accusing, when another navigation overtakes the strip', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    goto.mockImplementation(async () => {
+      await Promise.resolve();
+      drainHistoryOverlayStack();
+      page.url = new URL('https://canari.test/chat');
+      throw new Error('navigation aborted');
+    });
+    open('compose=1');
+    await settle();
+
+    expect(composer()).toBeNull();
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('keeps the other parameters of the address it strips', async () => {

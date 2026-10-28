@@ -301,25 +301,35 @@
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
     // THE STRIP FIRST, THE COMMAND ONCE IT HAS LANDED. The strip is a navigation, and the root
-    // layout closes every open overlay before one (`drainHistoryOverlayStack`). SvelteKit 3's
-    // `goto` reaches that hook only after awaiting the route's intent, so a modal opened in this
-    // same tick had already registered and was closed as it opened (Mi 9T, 2026-10-28): the
-    // command acts after the navigation instead, when nothing is left to drain it.
+    // layout closes every open overlay before one (`drainHistoryOverlayStack`). SvelteKit 2 kept
+    // the arriving navigation open through two ticks after its commit, and skipped every hook
+    // while it was, so a strip fired by the arriving page ran no drain. SvelteKit 3 ends it as soon
+    // as the page has settled, so the strip runs the hooks, and a modal opened in this same tick
+    // was closed as it opened (Mi 9T, 2026-10-28). The command acts once the strip has landed.
+    // That a replace would also overwrite an overlay's own history entry is the second reason.
+    const perform = () => {
+      if (compose) showCreateModal = true;
+      if (search) {
+        searchOpen = true;
+        // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
+        queueMicrotask(() => searchInput?.focus());
+      }
+    };
+    // Whether the strip landed is read off the page, never off the error: kit rejects an overtaken
+    // navigation with an untyped `Error`, and the feed still on screen is the fact that decides.
+    const landed = () => page.url.pathname === u.pathname;
     void goto(resolve(internalPath(feedPath(u))), { replace: true, reset: false }).then(
       () => {
-        if (page.url.pathname !== u.pathname) {
-          Log.i('POSTS', 'feed command dropped: the strip was overtaken by another navigation');
+        if (landed()) perform();
+        else Log.i('POSTS', 'feed command dropped: the strip was overtaken by another navigation');
+      },
+      (e: unknown) => {
+        if (!landed()) {
+          Log.i('POSTS', `feed command dropped: the strip was overtaken (${String(e)})`);
           return;
         }
-        if (compose) showCreateModal = true;
-        if (search) {
-          searchOpen = true;
-          // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
-          queueMicrotask(() => searchInput?.focus());
-        }
-      },
-      (e: unknown) =>
-        console.error(`[POSTS] feed command not performed: its strip failed: ${String(e)}`)
+        console.error(`[POSTS] feed command not performed: its strip failed: ${String(e)}`);
+      }
     );
   });
 
