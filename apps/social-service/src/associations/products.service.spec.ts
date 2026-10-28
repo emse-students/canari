@@ -215,6 +215,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ),
       listByUser: jest.fn(() => Promise.resolve([])),
       listHeldCotisationTiers: jest.fn(() => Promise.resolve([])),
+      // No tag of a deleted tier unless a test says so (`OrphanTierTag[]`).
+      heldOrphanTierTags: jest.fn(() => Promise.resolve([] as unknown[])),
+      heldOrphanTierTagsOf: jest.fn(() => Promise.resolve(new Map())),
+      countActiveTierHolders: jest.fn(() => Promise.resolve(0)),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       revokeByName: jest.fn(() => Promise.resolve()),
       revokeSiblingTierTags: jest.fn(() => Promise.resolve()),
@@ -664,6 +668,29 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         service.create('asso1', { name: 'Sport', type: 'membership', variantKey: 'sport' }, false)
       ).rejects.toMatchObject({ response: { code: COTISATION_TAG_COLLISION } });
       expect(productRepo.save).not.toHaveBeenCalled();
+    });
+
+    // `cotisant:bde-2024-2025` is the base tier's dated tag: a tier keyed like a year could not be
+    // told from it, and once deleted its holders would read as base holders, not as orphans.
+    it('refuses a tier key shaped like an academic year, alone or as a suffix', async () => {
+      for (const variantKey of ['2024-2025', 'gold-2024-2025']) {
+        const { service, assoRepo, productRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+        await expect(
+          service.create('asso1', { name: 'Year', type: 'membership', variantKey }, false)
+        ).rejects.toThrow('cannot be named like an academic year');
+        expect(productRepo.save).not.toHaveBeenCalled();
+      }
+      // CONTROL: a key holding digits that is not a year range is accepted.
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      await expect(
+        service.create(
+          'asso1',
+          { name: 'Promo', type: 'membership', variantKey: 'promo-2024' },
+          false
+        )
+      ).resolves.toBeDefined();
     });
 
     it('ignores any client-supplied grantedTagName for membership products', async () => {
@@ -1172,6 +1199,21 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
       t.productRepo.findOne.mockResolvedValue(tierProduct('libre'));
       expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TIER_NOT_COMPARABLE');
+      expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
+    });
+
+    // A tag of a deleted tier has no price: the closing ranks it as a checkout does, so granting
+    // by hand cannot swap a deleted DEAR tier for a cheap one.
+    it('refuses PURCHASE_HELD_TIER_DELETED, not NOT_COMPARABLE, when the buyer holds the tag of a DELETED tier', async () => {
+      const t = closing([marked({ productId: 'prod-top' })], {
+        held: [],
+        catalogue: FULL_CATALOGUE,
+      });
+      t.productRepo.findOne.mockResolvedValue(tierProduct('top'));
+      (t.userTagService as any).heldOrphanTierTagsOf.mockResolvedValue(
+        new Map([['user1', [{ tagName: 'cotisant:bde-gone', variantKey: 'gone' }]]])
+      );
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_HELD_TIER_DELETED');
       expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
     });
 
@@ -2110,6 +2152,95 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(
         await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
       ).toBe('PRODUCT_ALREADY_PURCHASED');
+    });
+
+    // A tier deleted while people still held it: its tag names no product, so no price. Read as
+    // holding nothing, its holder could buy a cheaper tier and the XOR would never drop the tag.
+    it('refuses any tier, TIER_NOT_RANKABLE, to a holder of a DELETED tier', async () => {
+      for (const target of [sansAlcool(), avecAlcool()]) {
+        const made = buyer(target, [sansAlcool(), avecAlcool()], []);
+        made.userTagService.heldOrphanTierTags.mockResolvedValue([
+          { tagName: 'cotisant:cercle-premium', variantKey: 'premium' },
+        ]);
+        expect(
+          await conflictCode((made.service as any).resolvePurchase('asso1', target.id, 'user1'))
+        ).toBe('TIER_NOT_RANKABLE');
+      }
+    });
+
+    describe('deleting a tier people still hold', () => {
+      /** A manager deleting `prod-sans` while `holders` people hold it. */
+      function deleting(holders: number) {
+        const made = makeService();
+        made.assoRepo.findOne.mockResolvedValue(cercle());
+        made.productRepo.findOne.mockResolvedValue(sansAlcool());
+        made.manager.count = jest.fn(() => Promise.resolve(2));
+        made.manager.remove = jest.fn(() => Promise.resolve());
+        made.userTagService.countActiveTierHolders.mockResolvedValue(holders);
+        return made;
+      }
+
+      it('is refused 409 TIER_HAS_HOLDERS with the count, under the EXCLUSIVE association lock', async () => {
+        const { service, manager, userTagService } = deleting(3);
+        const err = await service.delete('asso1', 'prod-sans').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'TIER_HAS_HOLDERS',
+          holderCount: 3,
+        });
+        // Scoped to THIS association: another one's count is never read, nor told.
+        expect(userTagService.countActiveTierHolders).toHaveBeenCalledWith(
+          'asso1',
+          'cercle',
+          'sans-alcool',
+          manager
+        );
+        // The retag's lock, exclusive, and nothing removed.
+        expect(manager.query).toHaveBeenCalledWith(
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          ['tier:asso1']
+        );
+        expect(manager.remove).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: goes through when nobody holds it', async () => {
+        const { service, manager } = deleting(0);
+        await service.delete('asso1', 'prod-sans');
+        expect(manager.remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'prod-sans' }));
+      });
+
+      it('counts the holders with cotisations switched OFF too', async () => {
+        const made = deleting(1);
+        made.assoRepo.findOne.mockResolvedValue(
+          asso({ id: 'asso1', slug: 'cercle', cotisationMode: null })
+        );
+        const err = await made.service.delete('asso1', 'prod-sans').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'TIER_HAS_HOLDERS'
+        );
+        expect(made.manager.remove).not.toHaveBeenCalled();
+      });
+
+      it('is refused 409 TIER_CHECKOUT_OPEN while a payment of the tier may still land', async () => {
+        const { service, manager } = deleting(0);
+        manager.query.mockImplementation((sql: string) =>
+          Promise.resolve(sql.includes('FROM product_checkouts') ? [{ n: 1 }] : [])
+        );
+        const err = await service.delete('asso1', 'prod-sans').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'TIER_CHECKOUT_OPEN'
+        );
+        expect(manager.remove).not.toHaveBeenCalled();
+      });
     });
 
     it('sells a gridded tier at its cell to a buyer holding no tier', async () => {
