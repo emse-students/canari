@@ -348,11 +348,11 @@ capability. The table is what the container's own config does:
 | URL | Request line in the log | `Referrer-Policy` on the page |
 | --- | --- | --- |
 | `/f/<id>/receipt?receipt=` | `/f/<id>/receipt?query-redacted` | `no-referrer` (every `/f/` page) |
-| `/c/join/<token>`, `/g/join/<token>` | `/c/join/redacted`, `/g/join/redacted` | `no-referrer` |
-| `/auth/callback?code=&state=` | `/auth/callback?query-redacted` | `no-referrer` |
+| `/c/join/<token>`, `/g/join/<token>` | `/c/join/redacted`, `/g/join/redacted` (the whole segment, any alphabet; a query, if any, becomes `?query-redacted`) | `strict-origin` |
+| `/auth/callback?code=&state=`, `/auth/callback/?...` | `/auth/callback?query-redacted` (slash kept) | `strict-origin` |
 | `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
 | `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
-| a join path quoted percent-encoded in any query (`/login?returnTo=%2Fc%2Fjoin%2F<token>`) | the token replaced by `redacted` | `no-referrer` on `/login` (any query) |
+| a query naming a join path anywhere, plain or percent-encoded (`/login?returnTo=%2Fc%2Fjoin%2F<token>`) | `<path>?query-redacted`, so a second invite in it goes too | `strict-origin` on `/login` (any query) |
 | a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
 
 How it is built, in `Dockerfile.frontend`:
@@ -368,26 +368,47 @@ How it is built, in `Dockerfile.frontend`:
   receipt or callback query, or any `token` key is logged as `<origin>/redacted`. Every other referer
   is unchanged, and a request without one still logs `"-"`: nginx writes `"-"` for an absent header
   but writes `""` for a map's empty value (measured), so the map gives `""` the stock `"-"`.
+- **Every rule is linear in its input.** A request line or a Referer is chosen by the client and can
+  be as long as the header buffer (8 kB by default). The first referer map had an optional origin group
+  (`[^/?#]*`) followed by a wildcard, so a long host with no delimiter was re-split against the
+  wildcard at every length: ~100 ms per 8 kB line. With PCRE's JIT off by default, the match limit
+  then makes nginx write an alert and log the field as `"-"`. The origin group now has to end at a
+  delimiter (a lookahead), and each repetition in the token map can stop only at `&`. The gate runs
+  every rule on 16 000-character inputs shaped against it, with a 25 ms budget (the old form took
+  ~200-250 ms there; the new one takes well under 1 ms). On the built image, an 8 kB adversarial
+  Referer is answered in 5 ms, logged whole, and leaves no alert.
 - **The referrer policy is the existing `$capability_referrer_policy` map** (until 2026-10-28 called
   `$public_form_referrer_policy`), sent by `@ssr` and `@app_shell`. It is keyed on `$request_uri`, so
-  the degraded shell gets it too. Measured on the built image against a stub SSR and against no SSR:
-  the join, callback, receipt and login pages answer `no-referrer` through both blocks, and `/chat`,
-  `/c/joinx/...`, `/auth/callbacks` and `/logins` answer none. `/login` is covered because a join page
-  sends a signed-out reader there with the invite in `returnTo`.
-- **The pages also carry `<meta name="referrer" content="no-referrer">`** (the two join pages, the
-  callback, login and the receipt page). The Tauri app has no nginx, a dev server sends no header, and a
-  client-side navigation onto one of these pages gets no response header, so the `<meta>` covers all
-  three. Two limits. A `<meta>` removed on leaving the page does not restore the previous policy, so
-  the rest of that document session sends no Referer, which is harmless. And in Tauri every API call
-  is cross-origin to the public host, so the default policy already sent only an origin there.
+  the degraded shell gets it too. `/login` is covered because a join page sends a signed-out reader
+  there with the invite in `returnTo`. Measured on the built image: the join, callback and login pages
+  answer `strict-origin`, the receipt page `no-referrer`, and `/chat` and `/logins` answer none.
+- **`strict-origin` for the 2026-10-28 pages, not `no-referrer`, and the trade-off.** The app never
+  reloads its document, so a policy set by one of these pages lasts for the rest of the tab. The Fetch
+  standard ("append a request Origin header") makes a non-GET request under `no-referrer` carry
+  `Origin: null`. Every NestJS service logs that as a refused CORS origin (`cors-origins.ts`), and the
+  auth logs record `origin=null`. `strict-origin` sends only the origin as Referer, so no path or
+  token leaves, and it keeps the real `Origin`. The cost is the referer PATH in this log for the rest
+  of a tab that passed through one of these pages: requests made later in that tab log only their
+  origin. Measured in Chrome 156 against the built image (HTTP loopback): a same-origin POST from
+  `/login` carried `Origin: http://127.0.0.1:18080` and `Referer: http://127.0.0.1:18080/`. A POST from
+  the `no-referrer` receipt page ALSO carried the real `Origin` and an empty Referer. So Chromium does
+  not apply the `null` rule there. WebKit (the iOS app and Safari) and Firefox were not measured, and
+  neither was HTTPS. The receipt page keeps the `no-referrer` it shipped with.
+- **The pages also carry the same policy as a `<meta name="referrer">`** (`strict-origin` on the two
+  join pages, the callback and login, `no-referrer` on the receipt page). The Tauri app has no nginx, a
+  dev server sends no header, and a client-side navigation onto one of these pages gets no response
+  header, so the `<meta>` covers all three. In Tauri every API call is cross-origin to the public host,
+  so the default policy already sent only an origin there.
 - `%` is spelled `%%` in the Dockerfile because the config is written by `printf`; the gate reads it
   back as one.
 
 Gates: `.github/scripts/tests/access-log-redaction.test.mjs` runs all three maps, in order, against a
 case that must be redacted and a near-miss that must stay readable for every rule. Removing any single
-rule fails it. `static-headers.test.mjs` does the same for the policy map, and
-`frontend/src/routes/capabilityReferrer.test.ts` pins the `<meta>` in the five pages. The built image
-passes `nginx -t`. Run with real requests, its access log held none of the secrets sent.
+rule fails it. The same test asserts the log line field for field, and runs the linear-time budget
+above. `static-headers.test.mjs` does the same for the policy map, and
+`frontend/src/routes/capabilityReferrer.test.ts` pins the `<meta>` and its value in the five pages.
+The built image passes `nginx -t`. Run with real requests, its access log held none of the secrets
+sent.
 
 **What this config does NOT govern.** It controls the container's OWN access log and the response
 headers it sends, and nothing else:

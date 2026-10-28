@@ -103,7 +103,7 @@ const compileMap = (source, target) => {
   );
   if (rules.length === 0) return null;
   if (!new RegExp(`default \\$${source};`).test(body)) return null;
-  return (input) => {
+  const apply = (input) => {
     if (exact.has(input)) return exact.get(input);
     for (const { re, value } of rules) {
       const m = input.match(re);
@@ -111,7 +111,20 @@ const compileMap = (source, target) => {
     }
     return input;
   };
+  apply.rules = rules;
+  return apply;
 };
+
+// THE LINE ITSELF, field for field: the stock `main` shape with the two redacted variables in place
+// of `$request` and `$http_referer`, and the diagnostic tail. A lost space between two quoted fields
+// still parses as a log line and splits every field after it wrongly.
+const EXPECTED_FORMAT =
+  'log_format canari_redacted "$remote_addr - $remote_user [$time_local] ' +
+  '\\\\"$request_method $logged_request_uri $server_protocol\\\\" $status $body_bytes_sent ' +
+  '\\\\"$logged_http_referer\\\\" \\\\"$http_user_agent\\\\" \\\\"$http_x_forwarded_for\\\\" ' +
+  'rt=$request_time urt=$upstream_response_time ust=$upstream_status ' +
+  'ce=$sent_http_content_encoding deg=$sent_http_x_canari_degraded";';
+if (format !== EXPECTED_FORMAT) fail(`the log format is not the expected line:\n  ${format}`);
 
 // The format prints the referer only through its redacting map.
 if (/\$http_referer/.test(format)) fail('the log format prints $http_referer raw');
@@ -179,14 +192,28 @@ if (routeMap && tokenMap && refererMap) {
       ['/api/mls/link-preview', '/api/mls/link-preview'],
       // The OIDC callback's one-time code (2026-10-28).
       ['/auth/callback?code=SECRET&state=S', '/auth/callback?query-redacted'],
+      ['/auth/callback/?code=SECRET&state=S', '/auth/callback/?query-redacted'],
       ['/auth/callbacks?code=keep', '/auth/callbacks?code=keep'],
+      ['/auth/callback//?code=keep', '/auth/callback//?code=keep'],
       ['/auth/login?code=keep', '/auth/login?code=keep'],
-      // An invite token in a path, and quoted in a login returnTo (2026-10-28).
+      // An invite token in a path - its whole segment, whatever its alphabet (base64url today, a
+      // percent-encoded byte tomorrow) - and quoted in a login returnTo, which loses its whole query
+      // so a second invite in it cannot survive the first (2026-10-28).
       ['/c/join/INVITE-SECRET', '/c/join/redacted'],
       ['/g/join/INVITE-SECRET', '/g/join/redacted'],
-      ['/c/join/INVITE-SECRET?token=JWT', '/c/join/redacted?token=redacted'],
-      ['/login?returnTo=%2Fc%2Fjoin%2FINVITE-SECRET', '/login?returnTo=%2Fc%2Fjoin%2Fredacted'],
-      ['/login?returnTo=%2fg%2fjoin%2fINVITE-SECRET', '/login?returnTo=%2fg%2fjoin%2fredacted'],
+      ['/c/join/Ab_9-x%41SECRET', '/c/join/redacted'],
+      ['/c/join/%41SECRET', '/c/join/redacted'],
+      ['/c/join/INVITE-SECRET?token=JWT', '/c/join/redacted?query-redacted'],
+      ['/login?returnTo=%2Fc%2Fjoin%2FINVITE-SECRET', '/login?query-redacted'],
+      ['/login?returnTo=%2fg%2fjoin%2fINVITE-SECRET', '/login?query-redacted'],
+      ['/login?returnTo=%2Fc%2Fjoin%2F%41SECRET', '/login?query-redacted'],
+      [
+        '/login?returnTo=%2Fc%2Fjoin%2FFIRST-SECRET&next=%2Fg%2Fjoin%2FSECOND-SECRET',
+        '/login?query-redacted',
+      ],
+      ['/x?a=/c/join/PLAIN-SECRET&b=/g/join/OTHER-SECRET', '/x?query-redacted'],
+      ['/login?returnTo=%2Fc%2Fjoinx%2Fkeep', '/login?returnTo=%2Fc%2Fjoinx%2Fkeep'],
+      ['/login?returnTo=%2Fabc%2Fjoin%2Fkeep', '/login?returnTo=%2Fabc%2Fjoin%2Fkeep'],
       ['/api/channels/invites/INVITE-SECRET', '/api/channels/invites/redacted'],
       ['/api/channels/invites/INVITE-SECRET/accept', '/api/channels/invites/redacted/accept'],
       ['/api/mls/group-invites/INVITE-SECRET', '/api/mls/group-invites/redacted'],
@@ -213,6 +240,17 @@ if (routeMap && tokenMap && refererMap) {
     ],
     ['https://canari.emse.fr/f/abc/receipt?receipt=SECRET', 'https://canari.emse.fr/redacted'],
     ['https://canari.emse.fr/auth/callback?code=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/auth/callback/?code=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/c/join/%41SECRET', 'https://canari.emse.fr/redacted'],
+    [
+      'https://canari.emse.fr/login?returnTo=%2Fc%2Fjoin%2FA-SECRET&n=%2Fg%2Fjoin%2FB-SECRET',
+      'https://canari.emse.fr/redacted',
+    ],
+    [
+      'https://canari.emse.fr/auth/callbacks?code=keep',
+      'https://canari.emse.fr/auth/callbacks?code=keep',
+    ],
+    ['https://canari.emse.fr/c/join/', 'https://canari.emse.fr/c/join/'],
     ['https://canari.emse.fr/x?a=1&%74oken=SECRET', 'https://canari.emse.fr/redacted'],
     ['https://canari.emse.fr/api/ws?token=SECRET', 'https://canari.emse.fr/redacted'],
     ['https://canari.emse.fr/chat', 'https://canari.emse.fr/chat'],
@@ -228,6 +266,44 @@ if (routeMap && tokenMap && refererMap) {
   for (const [input, expected] of referers) {
     const got = refererMap(input);
     if (got !== expected) fail(`referer ${input} logs as ${got}, expected ${expected}`);
+  }
+
+  // EVERY RULE IS LINEAR (2026-10-28). A request line or a Referer is attacker-chosen and up to the
+  // header buffer (8 kB by default) long; a rule that backtracks quadratically costs ~100 ms per line
+  // there and, at the PCRE match limit, makes nginx write an alert and log the field as "-". Each
+  // rule runs on 16 000-character inputs shaped against it (a host with no delimiter, runs of `&`,
+  // of `/`, of `?`, of near-miss keys and near-miss join paths). A quadratic rule takes hundreds of
+  // milliseconds on these; a linear one well under one, so the budget leaves room for a slow runner.
+  const n = 16000;
+  const adversarial = {
+    longHost: `https://${'a'.repeat(n)}`,
+    longHostQuery: `https://${'a'.repeat(n)}?`,
+    noScheme: 'a'.repeat(n),
+    colons: 'a:'.repeat(n / 2),
+    amps: `/x?${'a&'.repeat(n / 2)}`,
+    nearKeys: `/x?${'tokex&'.repeat(n / 6)}`,
+    oneKeyThenNear: `/x?token=1${'&tokenx'.repeat(n / 7)}`,
+    slashes: '/'.repeat(n),
+    nearJoins: `/x?${'%2fc%2fjoi'.repeat(n / 10)}`,
+    questionMarks: '?'.repeat(n),
+    joinPathRuns: `/c/join/${'a/'.repeat(n / 2)}`,
+  };
+  const BUDGET_MS = 25;
+  for (const [mapName, map] of [
+    ['route', routeMap],
+    ['token', tokenMap],
+    ['referer', refererMap],
+  ]) {
+    for (const { re } of map.rules) {
+      for (const [shape, input] of Object.entries(adversarial)) {
+        const started = performance.now();
+        re.test(input);
+        const ms = performance.now() - started;
+        if (ms > BUDGET_MS) {
+          fail(`${mapName} rule ${re.source.slice(0, 60)}... took ${ms.toFixed(0)} ms on ${shape}`);
+        }
+      }
+    }
   }
 }
 
