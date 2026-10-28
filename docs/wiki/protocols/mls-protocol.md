@@ -2339,8 +2339,10 @@ the revocation answer about every other leaf of that key group, for every member
 
 The four log fields that carry a leaf identity (`[SENDER_MISMATCH] verified=`, the
 `[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`, `[COMMIT] external_leaf_foreign leaf=`) go
-through `sanitizeLeafLogValue`: the user half cut to 8 characters as every other line prints a user,
-the device half kept, since it is what tells two devices of one person apart.
+through `sanitizeLeafLogValue` (`cutLeafIdentity`, `utils/log-repeat.ts`): the user id cut to 8
+characters as every other line prints a user - in the user half AND inside the device half, which
+embeds it (`web-<user>-<time36>-<rand>`) - and the rest of the device kept, since it is what tells
+two devices of one person apart. No full user id reaches these lines (owner decision, 2026-10-29).
 
 **Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
 the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge

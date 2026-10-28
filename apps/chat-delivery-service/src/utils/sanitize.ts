@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
-import { cutUserId } from './log-repeat';
+import { cutLeafIdentity, cutUserId } from './log-repeat';
 
 /** Allowlist regex for generic query/path values: alphanumerics plus `_`, `.`, `:`, `@`, `-`, up to 128 chars. */
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
@@ -42,9 +42,10 @@ export function parseLeafIdentity(value: unknown): LeafIdentity | null {
 }
 
 /**
- * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value: the user half
- * cut ({@link cutUserId}, as every other line here prints a user), the device half kept - it is
- * what tells two devices of one person apart. A bare user id (a field that may name only the user)
+ * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value by
+ * {@link cutLeafIdentity}: the user id cut wherever it appears, the device half's embedded copy
+ * included, and the rest of the device kept - it is what tells two devices of one person apart. A
+ * bare user id (a field that may name only the user)
  * is cut the same way. Anything else reads as {@link sanitizeLogValue} reads it: `invalid`, or
  * `absent` when nothing was sent - never a refusal.
  *
@@ -54,7 +55,7 @@ export function parseLeafIdentity(value: unknown): LeafIdentity | null {
 export function sanitizeLeafLogValue(value: unknown, absent = 'unstated'): string {
   if (typeof value === 'string') {
     const leaf = parseLeafIdentity(value.trim());
-    if (leaf !== null) return `${cutUserId(leaf.userId)}:${leaf.deviceId}`;
+    if (leaf !== null) return cutLeafIdentity(leaf.userId, leaf.deviceId);
   }
   const plain = sanitizeLogValue(value, absent);
   return plain === absent || plain === 'invalid' ? plain : cutUserId(plain);

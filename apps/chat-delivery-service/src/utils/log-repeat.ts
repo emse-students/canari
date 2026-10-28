@@ -46,3 +46,18 @@ function isPowerOfTen(n: number): boolean {
 export const cutUserId = (id: string | null | undefined): string => String(id ?? '').slice(0, 8);
 /** See {@link cutUserId}. */
 export const cutDeviceId = (id: string | null | undefined): string => String(id ?? '').slice(0, 12);
+
+/**
+ * A leaf identity `userId:deviceId` for a log line: the user id cut ({@link cutUserId}) WHEREVER it
+ * appears - as the user half, and inside the device half, which embeds it
+ * (`<platform>-<userId>-<time36>-<rand>`, `BaseMlsService.generateDeviceId`) - and the rest of the
+ * device kept, so two devices of one person still print differently. {@link cutDeviceId} would
+ * keep only `web-<8 of the user>`, the same for every web device of that person. The embedded copy
+ * is matched without case: the user half is compared that way everywhere else.
+ */
+export function cutLeafIdentity(userId: string, deviceId: string): string {
+  const user = cutUserId(userId);
+  if (user === userId) return `${userId}:${deviceId}`;
+  const embedded = new RegExp(userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  return `${user}:${deviceId.replace(embedded, user)}`;
+}

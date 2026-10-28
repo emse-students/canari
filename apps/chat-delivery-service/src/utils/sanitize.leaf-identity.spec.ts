@@ -87,10 +87,43 @@ describe('parseLeafIdentity - near misses, one rule each', () => {
   });
 });
 
-describe('sanitizeLeafLogValue - a leaf identity is evidence, its user half cut', () => {
-  it.each(['web', 'tauri'])('prints a real %s identity, the user half cut to 8', (p) => {
-    const device = deviceIdLike(p, USER, 1_761_600_000_000);
-    expect(sanitizeLeafLogValue(`${USER}:${device}`)).toBe(`${USER.slice(0, 8)}:${device}`);
+describe('sanitizeLeafLogValue - a leaf identity is evidence, its user id cut everywhere', () => {
+  const cut = USER.slice(0, 8);
+
+  it.each(['web', 'tauri'])(
+    'prints a real %s identity with the user cut in both halves, the device tail kept',
+    (p) => {
+      const printed = sanitizeLeafLogValue(`${USER}:${deviceIdLike(p, USER, 1_761_600_000_000)}`);
+      expect(printed).toBe(`${cut}:${deviceIdLike(p, cut, 1_761_600_000_000)}`);
+      // The device embeds its user: no full user id may survive anywhere in the line.
+      expect(printed).not.toContain(USER);
+    }
+  );
+
+  it('keeps two devices of one person distinguishable, and never prints the user id in full', () => {
+    const phone = sanitizeLeafLogValue(
+      `${USER}:${deviceIdLike('tauri', USER, 1_761_600_000_000, 'a7c3')}`
+    );
+    const laptop = sanitizeLeafLogValue(
+      `${USER}:${deviceIdLike('tauri', USER, 1_761_600_000_001, '0z9y')}`
+    );
+    const browser = sanitizeLeafLogValue(
+      `${USER}:${deviceIdLike('web', USER, 1_761_600_000_000, 'a7c3')}`
+    );
+    expect(new Set([phone, laptop, browser]).size).toBe(3);
+    for (const line of [phone, laptop, browser]) expect(line).not.toContain(USER);
+  });
+
+  it('masks the embedded user id whatever case the user half was sent in', () => {
+    const printed = sanitizeLeafLogValue(`${USER.toUpperCase()}:${deviceIdLike('web', USER, 1)}`);
+    expect(printed.toLowerCase()).not.toContain(USER);
+    expect(printed).toBe(
+      `${USER.toUpperCase().slice(0, 8)}:web-${USER.toUpperCase().slice(0, 8)}-1-zzzz`
+    );
+  });
+
+  it('leaves a short user id and its device alone - there is nothing to cut', () => {
+    expect(sanitizeLeafLogValue('bob:dev-b')).toBe('bob:dev-b');
   });
 
   it('cuts a bare user id the same way - a field that may name only the user', () => {
