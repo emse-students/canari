@@ -66,3 +66,27 @@ export function tierVariantKeys(products: Array<{ variantKey: string | null }>):
   const keys = [...new Set(products.map((p) => p.variantKey))];
   return keys.sort((a, b) => (a === null ? 1 : 0) - (b === null ? 1 : 0));
 }
+
+/**
+ * The part of an association's cotisation tag that does not depend on the year:
+ * `<slug>` for the base tier, `<slug>-<variant>` for a named one. Every tag the tier grants is
+ * `cotisant:<stem>` (lifetime) or `cotisant:<stem>-<academicYear>` (dated).
+ */
+export function cotisationStem(slug: string, variant?: string | null): string {
+  return variant ? `${slug}-${variant}` : slug;
+}
+
+const ACADEMIC_YEAR_SUFFIX = /^\d{4}-\d{4}$/;
+
+/**
+ * Whether two cotisation stems can derive the same tag name in some mode and year: when they are
+ * equal, or when one is the other followed by `-<academicYear>` (a lifetime tag of the longer
+ * then equals a dated tag of the shorter). Any other pair derives disjoint names, since a dated
+ * tag adds exactly one academic-year suffix. Two DIFFERENT associations' stems must never collide,
+ * or one association's grants would write the other's tag names.
+ */
+export function cotisationStemsCollide(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length < b.length ? [a, b] : [b, a];
+  return long.startsWith(`${short}-`) && ACADEMIC_YEAR_SUFFIX.test(long.slice(short.length + 1));
+}

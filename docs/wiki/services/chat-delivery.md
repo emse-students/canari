@@ -693,11 +693,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
   settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
   the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
-  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
-  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
-  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
-  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
-  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+  the stage, and the state reset's sweep (`end_native_session`, through `remove_mls_state_held`)
+  holds that lock, so it removes both or neither. The entry names its commit's digest, so a settle
+  forgets its own stage and never a later one of the same group. The warm mark is STICKY for a
+  signed-in session (set by the foreground load, cleared only when the native session ends -
+  `end_native_session`, 2026-10-27), so a process Android keeps alive refuses every background
+  Welcome; its rate is owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -725,7 +726,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
   target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
   against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
-  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  the MLS state (`remove_mls_state_held`, under the teardown's hold) sweeps the memo and its `.tmp` with it - and deletes
   `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
   finish; the owner record
   (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody

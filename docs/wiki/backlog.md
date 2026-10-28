@@ -27,6 +27,73 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Cotisation-disabled follow-ups (after the tier stack lands)
+
+Left by the review of #2584; none is built. Start after the tier stack has merged.
+
+- **P2 - a paid form that grants a cotisation still takes money after its association disables
+  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
+  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
+  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
+  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
+  record is written), but the grant is still retried as if it could succeed. Fix it like the
+  product path: refuse opening the payment of a granting form while the association has no
+  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
+- **P3 - the purchases tab mislabels a refusal.** `EditAchatsTab.svelte` logs "cash grant refused:
+  amount out of range" for ANY code `providerRefusalMessage` words (`COTISATION_DISABLED`
+  included): log the code.
+- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
+  membership product with a cotisation mode but no stored tag opens a checkout, then ends
+  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
+  operator, privately.
+- **P3 - `/shop` still offers the buy button for a membership product of an association whose
+  cotisations are disabled**: hide or disable it, as for a refused tier.
+- **P3 - the changelog fragment `tag-grant-scoped-to-issuer.md` does not mention
+  `COTISATION_DISABLED`**: add the clause.
+- **P3 - test nit:** the negative assertion in the "renews the dearer" test should use
+  `expect.objectContaining({ tagName })`.
+- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
+  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
+  never one whose tier is no longer a rise when the sweep settles it.
+- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
+  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
+- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
+  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
+  local fresh-database run only - CI never shows it. Make the spec create what it reads.
+
+## Display follow-ups to the shop pricing (after the tier stack lands)
+
+Left by the review of #2544; none is built. Start after the tier stack (#2544 and its followers)
+has merged.
+
+- **P2 - the association page does not show what the checkout charges.** It lists the same products
+  as `/shop` but prints the product's `amountCents` (a holder of the linked tier sees the full price
+  while the preferential one is charged) and offers the buy button for a `held`, `lower` or
+  `unranked` tier, which answers a 409. Reuse `/shop`'s `preferentialDueCents` and `tierNotOffered`
+  rather than a second computation (`frontend` `AssociationDetailView.svelte`, the product list).
+- **P3 - two docs claim the settlement's rule for a form grant.** `rankTier`'s and
+  `RankedGrantOutcome`'s comments in `user-tag.service.ts` say a form grant is ranked like a
+  settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
+- **P3 - a legacy `memberPriceTag` row WARNs on every quote** (`fixedPriceOf`,
+  `products.service.ts`): warn once per product per process, or move it to the hourly report.
+- **P3 - the shop can name the wrong held tier** for a viewer holding two legacy tiers
+  (`heldTierName`, `shop/+page.svelte`); wording only.
+- **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
+  message (fr, en).
+- **P3 - the tier-lock integration spec builds its lock key by hand** (`waitersReach`): use
+  `buyerTierLockKey()`.
+- **Decision owed to the user - the cash sale's amount.** `grantProductPurchase` records the full
+  `amountCents` by default even when the beneficiary qualifies for the preferential price: decide
+  whether the cash path records the preferential amount.
+
+## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more (decision owed, 2026-10-28)
+
+A form that grants a cotisation tier and charges for more than the tier (an event, a meal) applies
+the shop's rise rule to the whole answer: a holder of that tier or a dearer one is refused before
+any payment ([cotisations](cotisations.md#rising-to-a-higher-tier)). Kept that way by the review of
+#2597 rather than splitting the payment from the grant. Owed: the user's confirmation, or the rule a
+form should follow instead (sell the rest and skip the grant, or a form without the grant).
+
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
 **Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
@@ -255,6 +322,11 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
 - **The rig's volume lines and its own probes** (JOIN_*, WELCOME_REQ, DISCOVERY, 409/400/403 probes,
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
+
+## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
+
+A production count of legacy tier tags without a consistent issuer is owed to the operator after
+the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
 
 ## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
 
@@ -1293,6 +1365,10 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
   device events taken from an account's state while it is being unbound seal their conversations in
   that account's record, for good, by the same rule - the option above would lift those as well;
+- **two tabs of one account merge their records and err towards withholding**: a tab that loaded
+  before another tab lifted a device can write that device back, and after a restart it is withheld
+  again until a member's approval lifts it once more - a cost in availability only, never an answer
+  to a device that should not have one;
 - **the departed bound costs detection**: past it, a conversation is sealed and the records of its
   departed withheld devices dropped, so one of them that later comes back by itself is no longer
   known as withheld there - what it then adds gets no line. History stays closed (the seal); only
@@ -1962,7 +2038,13 @@ visible. The unpark runs inside the WebView's mutex grant, so nothing waits for 
    the app, and a lost update of the sent log.
 2. **The teardown and the job fence.** Manager, device key and register are reset in one hold, and
    every background job is fenced by the generation it started under. Closes state resurrected by a
-   background job after sign-out.
+   background job after sign-out. **The one-hold teardown of the manager and the key is BUILT
+   (2026-10-27, `end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27));
+   the generation is what is left.** The native slot has no session generation today: a command issued
+   by a destroyed client A that lands after B's `initialiser_mls` acts on B's manager, since the slot
+   says only `Some` or `None`, never whose. Only the TypeScript side fences it (the holder retires A's
+   client before B's login opens anything). The fence: a generation the install stamps and every
+   command carries, refused typed on a mismatch.
 3. **The register.** The register itself; a native park that writes nothing when nothing changed;
    an unpark that holds no command lock across a decrypt; one native visibility event for the page;
    on Android, the socket paused while hidden; frames in flight tracked in both directions; a pending
@@ -1997,6 +2079,26 @@ docblock, which still calls the join's commit staged.
 
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
+
+## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
+
+Every Tauri command returns `Result<_, String>`, and every code the TypeScript side reads
+(`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, `MLS_MANAGER_ABSENT`) crosses as the string's
+leading token, read by one predicate each (`isKeystoreKeyUnavailable`, `classifyStateLoadFailure`,
+`isMlsManagerAbsent`). Tauri can serialise an error object instead: one `{ code, message }` type for
+every command, decoded into typed errors at the one `invoke` boundary. All codes move in one pull
+request, never one at a time (two conventions would give every reader two shapes)
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
+
+A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
+makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" -> the rotation fails
+-> the session is lost -> PIN gate. Each lap costs the member one PIN entry and is logged at ERROR
+(`reportMlsSessionLost`); nothing is revoked or erased, so the loop is visible and harmless but not
+broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
+stops the unlock with its own typed outcome instead of another lap
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -2372,6 +2474,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **decide whether a cash sale of a tier records the preferential amount** when the beneficiary qualifies (today the full price by default) | decision | [the entry](#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands) |
+| **confirm the rule for a paid form that grants a tier AND charges for more**: kept refused for a holder of an equal or dearer tier (review of #2597, 2026-10-28) | decision | [the entry](#a-paid-form-that-grants-a-tier-is-refused-to-a-holder-of-an-equal-or-dearer-tier-even-when-it-sells-more-decision-owed-2026-10-28) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
@@ -2864,7 +2968,7 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
+**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
 ### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
 

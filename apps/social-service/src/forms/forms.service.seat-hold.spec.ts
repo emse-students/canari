@@ -132,7 +132,11 @@ describe('FormsService - the seat a pending payment holds', () => {
         await roundTrip();
       }),
     };
-    const userTagService = { grantCotisant: jest.fn(() => Promise.resolve({})) };
+    const userTagService = {
+      grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      // The paid form's pre-check before any payment request: nothing held, so a rise.
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
+    };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
     function runUpdate(state: {
@@ -582,7 +586,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       // The settling id has its own column; the request's uuid is never overwritten with it.
       expect(rows[0].paymentSettledBy).toBe('req-1');
       expect(rows[0].stripeSessionId).toBeUndefined();
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(rows[0].cotisationGrantedAt).toBeTruthy();
       expect(rows[0].purchaseRecordedAt).toBeTruthy();
@@ -601,10 +605,14 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('late'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('1500 cents'));
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(rows[0].cotisationGrantedAt).toBeNull();
-      // The payer's trace that they paid stays: the refund happens outside the application.
+      // The payer's trace that they paid stays: the refund happens outside the application. It is
+      // MARKED: the form grants a tier, and no seat means no tier was granted.
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
     });
 
     it('treats a pending row past the hold as released even before the job ran', async () => {
@@ -746,7 +754,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('s1', 'req-1');
       await Promise.all([service.markPaid('s1', 'req-1'), service.markPaid('s1', 'req-1')]);
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -756,11 +764,11 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         rows: [row({ id: 's1', paymentStatus: 'pending', paymentRequestedAt: ago(1000) })],
       });
-      userTagService.grantCotisant.mockRejectedValueOnce(new Error('core-service down'));
+      userTagService.grantCotisantIfARise.mockRejectedValueOnce(new Error('core-service down'));
       await service.markPaid('s1', 'req-1');
       expect(rows[0].cotisationGrantedAt).toBeNull();
       await service.markPaid('s1', 'req-1');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(2);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(2);
       expect(rows[0].cotisationGrantedAt).toBeTruthy();
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
@@ -771,7 +779,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         rows: [row({ id: 's1', paymentStatus: 'paid', stripeSessionId: 'req-1' })],
       });
       await service.markPaid('s1', 'req-1');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -813,7 +821,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('s1', second);
       expect(rows[0].paymentStatus).toBe('paid');
       expect(rows[0]).toMatchObject({ paymentSettledBy: first, stripeSessionId: 'uuid-1' });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
@@ -841,7 +849,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(error).toHaveBeenCalledWith(expect.stringContaining('999'));
       expect(error).toHaveBeenCalledWith(expect.stringContaining('by 124'));
       expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: '124' });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -875,7 +883,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('late', '777');
       expect(rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(error).toHaveBeenCalledWith(expect.stringContaining('newer'));
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
     });
 
     it('is an ordinary late payment when the other answer is someone else', async () => {
@@ -1000,7 +1008,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
       ).resolves.toEqual({ ok: true, outcome: 'paid' });
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
     });
 
     // A failed read is not a verdict: the seat is kept and core answers Lydia a retryable 503.
@@ -1123,7 +1131,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         stripeSessionId: 'uuid-old',
         paymentSettledBy: '555',
       });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
     });
 
     // P2-a: a request that cannot be shown dead or paid refuses the retry instead of leaving two
@@ -1490,7 +1498,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['request-state', { sessionId: UUID_OLD, connectAccountId: 'vendor' }],
       ]);
       expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: UUID_OLD });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
     });
 
     it('then a late callback for the same payment is a replay, accused of nothing', async () => {
@@ -1504,7 +1512,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.confirmPayment('mine');
       await service.markPaid('mine', '555');
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(error).not.toHaveBeenCalled();
       // The same row, then confirmed by a request it never named: THAT is accused. Without this
@@ -1567,7 +1575,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.confirmPayment('mine');
       expect(rows[0].paymentStatus).toBe('pending');
       expect(rows[0].paymentSettledBy ?? null).toBeNull();
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(UUID_NEW));
     });
 
@@ -1611,7 +1619,7 @@ describe('FormsService - the seat a pending payment holds', () => {
           requestState: state,
         });
         expect(rows[0].paymentStatus).toBe('cancelled');
-        expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+        expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
         // The released row holds no seat and is not reused: the retry writes a new answer and
         // issues ONE request, with no cancel of the dead one.
         core.calls.length = 0;
@@ -1792,7 +1800,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       for (const step of steps) await r[step]();
       expect(r.rows[0].paymentStatus).toBe('paid');
       expect(r.transitions).toEqual(['s1:pending->paid']);
-      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
     });
@@ -1801,7 +1809,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       const r = makeRoutes();
       await Promise.all([r.callback(), r.payerReturn()]);
       expect(r.transitions).toEqual(['s1:pending->paid']);
-      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -1864,7 +1872,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         await r.service.expireStalePendingPayments(new Date(T0.getTime() + 9 * HOLD_MS));
         expect(r.rows[0].paymentStatus).toBe('paid');
         expect(r.transitions).toEqual(['s1:pending->paid']);
-        expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+        expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       }
     );
 
@@ -1875,7 +1883,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       // race to a `paid`, or it won and the payment then lands on `cancelled` as a late payment.
       // The form has room either way, so both orders end `paid`.
       expect(r.rows[0].paymentStatus).toBe('paid');
-      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -1892,7 +1900,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await r.payerReturn();
       expect(r.rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(r.transitions).toEqual(['s1:pending->cancelled', 's1:cancelled->paid_over_capacity']);
-      expect(r.userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(r.userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
   });
@@ -2141,7 +2149,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
         expect.objectContaining({ userId: null, source: 'form', amountCents: 1500 })
       );
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
     });
 
     // A granting form holding a guest row was made private after the guest answered (a public form
@@ -2160,7 +2168,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('guest', '777');
       await service.markPaid('guest', GUEST_UUID);
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledTimes(1);
       expect(error).toHaveBeenCalledWith(expect.stringContaining('no account to grant it to'));
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);

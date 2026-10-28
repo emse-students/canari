@@ -41,6 +41,28 @@ export const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 
 /**
+ * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds, ACTIVE, a sibling
+ * tier whose product price is greater than or equal to it: the sibling XOR would replace the held
+ * tier, a silent downgrade (or a sideways swap paid in full). Holding that very tier answers
+ * `PRODUCT_ALREADY_PURCHASED` instead.
+ */
+export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
+
+/**
+ * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds a sibling tier and
+ * one of the two has no fixed price (a grid or a free amount): no rank can be established, and the
+ * sibling XOR would replace the held tier.
+ */
+export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+
+/**
+ * The `code` of the 409 a checkout or a cash sale of a membership product gets while its
+ * association has no cotisation mode: no tier tag can be derived, so nothing would be granted for
+ * the money. Refused before any payment is requested or recorded.
+ */
+export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
  * The `code` of the 409 a checkout gets while another attempt of the same buyer and product is being
  * issued right now (a double click): issuing a second would leave two payable requests.
  */
@@ -77,6 +99,13 @@ export function withCheckoutReturnKey(
 }
 
 /**
+ * The `code` of the 409 a checkout gets when the association's payment routing (its own account,
+ * or an approved parent's) changed between the moment it was resolved - before the buyer's tier
+ * lock, since it calls another service - and the moment the attempt is written under that lock.
+ */
+export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+
+/**
  * Which request a state read of this attempt names, as core-service's `payments/request-state`
  * takes it: the `request_uuid` the issuing call answered, or - for an attempt whose issuing call
  * never answered one - its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
@@ -91,3 +120,11 @@ export function productCheckoutLookup(attempt: {
     ? { sessionId: attempt.requestUuid }
     : { orderRef: productOrderRef(attempt.productId, attempt.id) };
 }
+
+/**
+ * The `code` of the 409 a checkout gets when its product's price grid came to depend on the buyer's
+ * profile (promo, formation) between the moment the purchase was prepared - before the buyer's tier
+ * lock, where the profile is fetched since it calls another service - and the moment it is priced
+ * under that lock. Nothing is opened; trying again fetches what the grid now needs.
+ */
+export const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';

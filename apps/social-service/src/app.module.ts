@@ -45,6 +45,11 @@ import { HealthController } from './health.controller';
         url: process.env.DATABASE_URL,
         autoLoadEntities: true,
         synchronize: process.env.NODE_ENV !== 'production',
+        // node-postgres waits FOREVER for a free pool connection by default (0). A request that
+        // cannot get one in 10 s fails alone, instead of the whole service hanging for good once
+        // the pool (10) is held by transactions each waiting for a second connection
+        // (docs/wiki/cotisations.md, "One lock per buyer per association").
+        extra: { connectionTimeoutMillis: 10_000 },
       }),
       // Creates the extensions an entity's DDL needs before `synchronize` runs (btree_gist for
       // the bookings exclusion); production, unsynchronised, gets them from migration 087.

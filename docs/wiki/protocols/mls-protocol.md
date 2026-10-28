@@ -2582,12 +2582,80 @@ once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 
 | `IDENTITY_MISMATCH` | `mismatch` | rotates, as before | none |
 
 **On a phone, an owner record comes first.** `mls.bin` is one file per install, so `initialiser_mls`
-writes `mls.owner` (the account id) each time a state OPENS, and `delete_mls_state` removes both. When
-a load fails and the record names ANOTHER account, `TauriMlsService._initImpl` throws
-`SavedStateOfAnotherAccountError` before any branch above runs - nothing re-sealed, rotated or
-written - and the gate (`device_holds_other_account`) withholds the reset that would delete that
-account's state. No record is absence of proof and changes nothing. The browser keeps one state per
-account and has no record.
+writes `mls.owner` (the account id) each time a state OPENS, and a state reset
+(`terminer_session_mls` with `sweepState`) removes both. When a load fails and the record names
+ANOTHER account, `TauriMlsService._initImpl` throws `SavedStateOfAnotherAccountError` before any
+branch above runs - nothing re-sealed, rotated or written - and the gate
+(`device_holds_other_account`) withholds the reset that would delete that account's state. No record
+is absence of proof and changes nothing. The browser keeps one state per account and has no record.
+
+#### The native manager does not outlive its account (2026-10-27)
+
+On a phone the manager is process-wide (`AppState.mls_manager`, with its cached at-rest key
+`device_key`), and a sign-out is an in-app navigation, not a restart. Until 2026-10-27 the slot was
+only ever written `Some`: account A's manager and key stayed installed into account B's session, and a
+FAILED `initialiser_mls` of B left them in place. The guarantee now:
+
+- **One teardown, one hold.** `end_native_session` (`concurrency.rs`) takes
+  `foreground_checkpoint_lock`, then the manager mutex (the device-key mutex inside it), then
+  `mls_bin_write_lock`, and under that one hold empties the slot, clears the key, clears the
+  warm-process mark (`live_manager_in_process`) and - for a reset - sweeps `mls.bin` and every file
+  built from it (`remove_mls_state_held`). Poisoned locks are taken anyway: a teardown that refused
+  would leave the previous manager installed. The manager is dropped after the locks are released, and
+  nothing under the hold calls into the JVM or the WebView.
+- **One command, one helper.** `terminer_session_mls { reason, sweepState }` is the command, and
+  `endNativeMlsSession` (`lib/utils/nativeMlsSession.ts`) the only caller: the MLS holder's retirement
+  (sign-out, account switch - after the final checkpoint, since it needs the manager) and reset (a
+  stopped or failed login, a revoked device), both inside `whenRetired`, which the next login awaits;
+  a failed `initialiser_mls`; `removeMlsState` and the factory wipe (with the sweep). `clear_app_data`
+  also ends it natively before it wipes. A sign-out keeps `mls.bin` for the account's next sign-in.
+- **A failed install leaves the slot empty by construction.** `initialiser_mls` creates an install
+  guard before its first fallible step; every exit that does not reach the install (an `Err`, a panic)
+  runs the teardown when the guard drops.
+- **An absent manager is a typed refusal.** Every MLS command reads the slot through
+  `live_manager` / `live_manager_mut` (`state.rs`) and answers `MLS_MANAGER_ABSENT`, read on the
+  TypeScript side by `isMlsManagerAbsent` - never the sentence. A command waiting on the manager mutex
+  during a teardown gets that code once it is released; it never acts on the previous manager and never
+  waits for a new one. A resume reload into an empty slot is refused the same way: it refreshes a live
+  manager and never installs one.
+- **A LOST MLS SESSION ENDS THE LIVE SESSION ON THIS DEVICE AND REOPENS IT AT THE PIN GATE - it
+  never signs out.** Two paths meet it: a resume whose reload answers `MLS_MANAGER_ABSENT`
+  (`MlsSessionVacantError`, which stops the resume sequence), and a failed `rotateDeviceIdentity`
+  during a live session - reported as an empty slot only when the native side answered
+  `MLS_MANAGER_ABSENT`, as a failed rotation otherwise (a full disk; web has no native slot). Both
+  call `reportMlsSessionLost` (`lib/mls-client/mlsSessionLoss.ts`, at ERROR); the shell answers with
+  `reopenAtPinGate`: `endLostSessionImpl` stops the socket, the timers and the conversations, retires
+  the client WITHOUT a final checkpoint (it no longer describes what is installed) and ends the native
+  session (`lost session`), then the PIN gate opens for the same account. A login or a recovery in
+  flight is STOPPED by it, as by a sign-out: its abort carries `'lost session'`, its next stage check
+  throws `LoginStoppedBySignOutError` (`by: 'lost session'`), and the client retires on its end, which
+  the gate's next login awaits - so a rotation failing in a login's connection sync no longer lets that
+  login run on into group discovery. NOT `clearAuth`: a lost MLS
+  session is a local fact, not a 401/403, and a sign-out would revoke the server session and the
+  identity provider's, clear the restore key, the push registration and the shares - and an offline
+  user could not sign back in. NOT a re-initialisation either: re-installing in place would choose an
+  identity and a key on the user's behalf - the stored device id is still the old one after a failed
+  rotation - where the unlock reopens the disk state through every gate it has.
+- **A sign-out with no live session still retires the holder's client.** The PIN gate's recovery
+  opens the state with the old PIN before its PIN change; when the change fails, the gate's exit finds
+  no session, and the opened manager and key are ended through the same retirement.
+- **A recovery in flight is tracked as a login is** (`loginInFlightSettled`, `loginInFlightAbort`): a
+  sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
+  (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
+  longer land after the native session was ended.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
+  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
+  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
+  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
+  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
+- **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
+  device's exit) logs at DEBUG.
+- **Open: the slot has no session generation** - a command of a destroyed client landing after the
+  next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+
+The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
+which the holder drops with its account, and the WASM module itself holds no manager or key.
 
 #### v2 - the browser seals with WebCrypto, every platform reads it (2026-10-12)
 
