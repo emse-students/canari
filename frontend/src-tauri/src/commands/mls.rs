@@ -600,7 +600,7 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
 /// **IT IS A COMMAND RATHER THAN A LINE IN `initialiser_mls`, AND THAT IS THE WHOLE POINT.** It used
 /// to be a `log::info!` inside `load_or_create`, which put an O(pool) walk that deserialises every
 /// stored bundle in front of the first screen: 24.5 ms against 12.9 ms at a 1000-package pool,
-/// measured on OXYGEN 2026-09-17 - half of a cold load. Web already called its own census after
+/// measured on the workstation 2026-09-17 - half of a cold load. Web already called its own census after
 /// `MLS ready` for exactly that reason. Now both do.
 ///
 /// Returns the line rather than logging it, so the ONE place that decides where a diagnostic is

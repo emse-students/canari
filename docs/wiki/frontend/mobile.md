@@ -1441,7 +1441,7 @@ one place: it has no `adb reverse`**, so it reaches the workstation by its addre
 does it - `ios.yml` dispatched with `local_url`:
 
 ```sh
-gh workflow run ios.yml --ref <branch> -f local_url=http://192.168.1.32:8081 \
+gh workflow run ios.yml --ref <branch> -f local_url=http://<LAN ip>:8081 \
   -f local_client_id="$(grep ^VITE_AUTHENTIK_CLIENT_ID= frontend/.env | cut -d= -f2-)"
 ```
 
@@ -3582,7 +3582,7 @@ of its kind in five days:
 
 ```json
 {"event": "/application/o/authorize/?client_id=...&redirect_uri=tauri%3A%2F%2Flocalhost%2Fauth%2Fcallback&...",
- "status": 400, "remote": "146.70.98.237",
+ "status": 400, "remote": "<reviewer-ip>",
  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"}
 ```
 

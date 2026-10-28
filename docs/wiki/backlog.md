@@ -3220,7 +3220,7 @@ can discriminate, and the lines are to be EXPLAINED where they are read, never s
 
 ### P3 - ONE MAINTENANCE PASS IS ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED
 
-`prune_expired_key_packages` costs **10.08 ms** at a 1000-bundle pool (criterion, OXYGEN; 88 % is
+`prune_expired_key_packages` costs **10.08 ms** at a 1000-bundle pool (criterion, workstation; 88 % is
 `serde_json` decoding, [cold-start](frontend/cold-start.md)) inside `load_or_create`, in front of the
 first screen - NATIVE ONLY. It is maintenance (what it deletes must be deleted and nothing else deletes
 it), so moving it needs a TRIGGER, and a clock is forbidden. **The blocking condition**: name a durable
