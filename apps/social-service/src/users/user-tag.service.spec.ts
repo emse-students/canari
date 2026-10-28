@@ -570,10 +570,12 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.delete).toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
       });
       expect(repo.delete).not.toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-avec-alcool',
+        issuingAssocId: 'asso1',
       });
     });
   });
