@@ -26,6 +26,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { isCommunityDebris, isGroupDebris } from '../debris.mjs';
 import { mark } from '../marker.mjs';
+import { REMOVAL_ROWS } from '../removalrows.mjs';
 import { ROW_GROUPS, rowGroupName, rowMessageMark } from '../rowkit.mjs';
 
 const problems = [];
@@ -170,6 +171,10 @@ const communitySpared = (name, why) => {
 };
 // The salon runner (`archive/salon.mjs`) mints its community as `rowGroupName(id)`, one per run.
 for (const row of ['RM-4', 'RM-4b', 'RM-5', 'RM-6', 'RM-8']) communitySwept(rowGroupName(row), `salon.mjs rowGroupName('${row}')`);
+// The removal rows (`archive/removals.mjs`): `RM <row id without hyphens, ten letters>-<tail>`.
+for (const row of Object.keys(REMOVAL_ROWS)) communitySwept(`RM ${mark(row.replace(/-/g, '').slice(0, 10))}`, `removals.mjs for ${row}`);
+communitySpared(`RM ${mark('SOMETHINGE')}`, 'a stem no removal row mints');
+communitySpared('RM SALONREVOK', 'the stem without a run tail names no run');
 // The COMM checks' venues, one with its arm.
 communitySwept(`C8 ${mark('COMM8')}`, 'the COMM venue shape');
 communitySwept(`C12 shared ${mark('COMM12')}`, "COMM-12's arm between the two");

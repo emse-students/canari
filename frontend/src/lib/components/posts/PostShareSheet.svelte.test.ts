@@ -56,10 +56,10 @@ afterEach(() => {
   native = false;
 });
 
-function open(onClose = vi.fn()) {
+function open(onClose = vi.fn(), onSentInApp?: () => void) {
   const instance = mount(PostShareSheet, {
     target: document.body,
-    props: { open: true, postId: 'p1', onClose },
+    props: { open: true, postId: 'p1', onClose, onSentInApp },
   });
   mounted.push(() => unmount(instance));
   flushSync();
@@ -89,6 +89,17 @@ describe('PostShareSheet', () => {
     button('New').click();
     expect(onClose).toHaveBeenCalled();
     expect(sendPostLinkInApp).toHaveBeenCalledWith('p1', 'g-new');
+  });
+
+  it('says the link was sent in the app only when its landing was published', () => {
+    const onSentInApp = vi.fn();
+    sendPostLinkInApp.mockReturnValueOnce(false);
+    open(vi.fn(), onSentInApp);
+    button('New').click();
+    expect(onSentInApp).not.toHaveBeenCalled();
+    sendPostLinkInApp.mockReturnValueOnce(true);
+    button('Old').click();
+    expect(onSentInApp).toHaveBeenCalledOnce();
   });
 
   it('copies the link from the bottom row', () => {

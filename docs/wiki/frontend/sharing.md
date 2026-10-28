@@ -37,6 +37,11 @@ message, a picture or a post opens the system sheet.
    Names are reduced to their last segment and a conservative character set
    (`share/SharedFileName.kt`). `onCreate` skips a relaunch (`savedInstanceState`,
    `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) so a share is never offered twice.
+   **A share that kept no file keeps no folder**: a text share, or one whose every stream was
+   refused, deletes its `shared_inbox/<id>/` before the manifest is written. No manifest entry names
+   that folder, so nothing else would delete it while the process lives - text shares left one
+   empty folder each until 2026-10-27 (Mi 9T); `sweepOrphansOnce` removes those at the next process
+   start. Guard: `androidShareInbox.test.ts`.
 3. **The handoff is a file, `pending_share.json`** in the Tauri data directory, because a cold start
    gets the intent before the page exists and a value pushed into a page that then navigates is
    lost. It is written to a `.tmp` and renamed into place, so a drain on a return to the foreground
@@ -69,8 +74,12 @@ message, a picture or a post opens the system sheet.
    (`share_items_lost`).
 5. **"Envoyer a..."** is the forward picker (`ForwardMessageModal`, `variant="share"`): DMs, groups
    and salons. It opens only when the session is up, so the PIN always comes first, with no clock.
-   The pick is published as a deep-link landing (`notifNav.navigate` + `chatDeepLinkRoute`), so the
-   conversation opens exactly as a tapped notification would, salons under `/communities` included.
+   The pick is published as a deep-link landing (`notifNav.navigate`, and NOTHING else), so the
+   conversation opens exactly as a tapped notification would, salons under `/communities` included:
+   the landing effect in `ChatBackgroundService` routes and selects. `landShareOn` used to `goto`
+   the route as well, and on a phone already on `/chat` that navigation's `beforeNavigate` drained
+   the overlay stack AFTER the effect had opened the conversation - the share was staged in a
+   composer that closed at once (read on the Mi 9T, 2026-10-27, `1.5.0`).
    **A landing that ends without displaying its target** (abandoned, or the member went elsewhere)
    gives the share back to the picker (`incomingShare.releaseTarget`): the landing ending is the
    fact that says so.
@@ -192,7 +201,11 @@ post page's header all open it. Canari has no presence and no story, so neither 
   picked - so the S1 picker never opens for it - `landShareOn` opens that conversation as a tapped
   notification would, and the chat page puts the link in the composer (`takeFor`). **The member
   sends with Send; a word can be typed first**, which is Instagram's message field without a second
-  one. The navigation drains the overlay stack, so the sheet and the reel viewer close with it.
+  one. The landing does not navigate when the conversation's section is already shown, so nothing
+  drains the overlay stack then: the sheet closes itself, and **the reel viewer closes on the
+  sheet's `onSentInApp`**, called only when the landing was published (`sendPostLinkInApp` returns
+  true). Without it a reel sent from `/chat` or `/communities` left the viewer over the composer
+  holding the link (review of #2609, 2026-10-27).
 - The sheet is loaded on its first open (`import()`), never with a card: it reads the conversation
   list (`globalChatSingleton`), which a feed scrolled past must not pay for.
 - `offerTo` stamps the share with the page's current FLOOR (the last sign-out it saw): it was made
@@ -237,7 +250,7 @@ the viewer) and from the post page; a tap lands in the conversation with the lin
 Send draws the card; a tap on a reel's card opens the viewer; the recipient without the post's space
 sees "unavailable"; "Copier le lien" and "Partager via..." from both. Tests:
 `PostShareSheet.svelte.test.ts`, `sharePost.test.ts`, `shareDestinations.test.ts`,
-`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet),
+`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet, a sent reel closes the viewer),
 `LinkPreviewCard.reel.svelte.test.ts` and `canariLinkPreview.test.ts` (a reel's card opens the
 viewer, a post's its page).
 
