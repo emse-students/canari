@@ -4713,6 +4713,9 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract joinByExternalCommit(
     groupInfoBytes: Uint8Array
   ): Promise<{ groupId: string; commit: Uint8Array }>;
+  /** Whether an external commit on this GroupInfo would bring this device in as a FURTHER DEVICE
+   *  OF A MEMBER: its tree holds a leaf of this user and none of this device's own. */
+  protected abstract isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean>;
 
   /**
    * Runs one staged commit transaction under the MLS lock: stage (no merge) -> validate the epoch
@@ -6795,7 +6798,10 @@ export abstract class BaseMlsService implements IMlsService {
    * that branch: {@link groupInfoChannel} routes those to their own transport, so a 403 here is
    * always a chat group we are genuinely outside of.
    */
-  async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
+  async externalJoin(
+    groupId: string,
+    opts: { asAFurtherDevice?: 'ask' } = {}
+  ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
     if (getTabLeadership() === 'follower') {
@@ -6888,6 +6894,28 @@ export abstract class BaseMlsService implements IMlsService {
             baseEpoch: gi.baseEpoch,
             serverEpoch: gi.activeEpoch,
           };
+        }
+
+        // A FURTHER DEVICE OF A MEMBER DOES NOT LET ITSELF INTO A CONVERSATION (2026-10-27), decided
+        // on THIS GroupInfo's tree - the one the commit would be built on and every member's verdict
+        // reads - so an honest device never makes the entry a member says as nobody's. Read again on
+        // every attempt: each one fetched a fresh base.
+        if (opts.asAFurtherDevice === 'ask') {
+          let further: boolean;
+          try {
+            further = await this.isFurtherDeviceIn(fromBase64(gi.groupInfo));
+          } catch (e) {
+            console.warn(
+              `[MLS] externalJoin ${short}... the served tree could not be read for the door: ${String(e).slice(0, 120)}`
+            );
+            return { joined: false, reason: 'build_failed' };
+          }
+          if (further) {
+            console.log(
+              `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
+            );
+            return { joined: false, reason: 'further_device' };
+          }
         }
 
         // BUILD THE COMMIT AND THE BASE IT CREATES IN THE SAME BREATH. An external commit is applied
@@ -7286,16 +7314,16 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** Who the device events go to - the new-device notices (`deviceNotices.svelte.ts`). */
-  private deviceEventConsumer: ((events: DeviceEvent[]) => Promise<void>) | null = null;
+  private deviceEventConsumer: ((events: DeviceEvent[]) => Promise<boolean>) | null = null;
   /** Serialises the hand-overs, so two drains ending together deliver in order. */
-  private deviceEventHandOver: Promise<void> = Promise.resolve();
+  private deviceEventHandOver: Promise<unknown> = Promise.resolve();
 
   /**
    * Registers the consumer of device events, or removes it (`null`, sign-out). Registering hands it
    * whatever the state already holds - events recorded while nothing listened (a previous session,
    * a background Add written to `mls.bin`) - so the bounded store drains rather than filling.
    */
-  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void {
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void {
     this.deviceEventConsumer = consumer;
     console.debug(`[TRUST] device-event consumer ${consumer ? 'registered' : 'removed'}`);
     if (consumer) void this.handOverDeviceEvents('consumer registered');
@@ -7310,16 +7338,25 @@ export abstract class BaseMlsService implements IMlsService {
    * A consumer that throws loses the events it was handed - logged at error, since that is a notice
    * the user will never see; the consumer isolates each event itself so one cannot cost the others.
    */
-  protected handOverDeviceEvents(why: string): Promise<void> {
-    const run = this.deviceEventHandOver.then(async () => {
+  /** {@link IMlsService.settleDeviceEvents}: one more hand-over, chained after any pending one. */
+  settleDeviceEvents(why: string): Promise<boolean> {
+    return this.handOverDeviceEvents(why);
+  }
+
+  /** @returns whether the events were handed over and decided ({@link settleDeviceEvents}). */
+  protected handOverDeviceEvents(why: string): Promise<boolean> {
+    const run = this.deviceEventHandOver.then(async (): Promise<boolean> => {
       const consumer = this.deviceEventConsumer;
-      if (!consumer) return;
+      if (!consumer) {
+        console.debug(`[TRUST] no device-event consumer registered (${why}) - nothing decided`);
+        return false;
+      }
       let events: DeviceEvent[];
       try {
         events = await this.takeDeviceEventsNative();
       } catch (e) {
         console.error(`[TRUST] device events not taken (${why}) - they stay in the state:`, e);
-        return;
+        return false;
       }
       // AN EMPTY TAKE IS HANDED OVER TOO: the consumer parks an event whose evidence the server did
       // not answer, and each hand-over - registration, every drain end, every own Add - is the
@@ -7328,12 +7365,13 @@ export abstract class BaseMlsService implements IMlsService {
         console.debug(`[TRUST] ${events.length} device event(s) handed to the notices (${why})`);
       }
       try {
-        await consumer(events);
+        return await consumer(events);
       } catch (e) {
         console.error(
           `[TRUST] the device-notice consumer failed - ${events.length} event(s) lost:`,
           e
         );
+        return false;
       }
     });
     this.deviceEventHandOver = run;
@@ -7798,6 +7836,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
+  abstract ownSignatureKey(): Promise<Uint8Array>;
   abstract takeForkFindings(): Promise<ForkFinding[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
 }
