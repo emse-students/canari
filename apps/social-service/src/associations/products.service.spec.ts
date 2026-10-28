@@ -578,12 +578,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(grant.expiresAt).toBeInstanceOf(Date);
     });
 
-    it('falls back to the stored tag for a membership product without a cotisation mode', async () => {
+    it('grants NOTHING for a membership product without a cotisation mode: a stored tag is never granted as typed', async () => {
       const { service, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
       const legacy = product({
         type: 'membership',
-        grantedTagName: 'cotisant:legacy',
+        grantedTagName: 'cotisant:another-association',
         tagExpiresAt: null,
       });
 
@@ -591,8 +591,34 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         legacy,
         (service as any).productRepo.manager
       );
-      expect(grant.tagName).toBe('cotisant:legacy');
-      expect(grant.expiresAt).toBeNull();
+      expect(grant).toBeNull();
+    });
+
+    it('an update never stores a typed grantedTagName on a membership product, and keeps it on another type', async () => {
+      const { service, productRepo } = makeService();
+      const tier = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:bde',
+        tagExpiresAt: null,
+      });
+      productRepo.findOne.mockResolvedValue(tier);
+
+      await service.update(
+        'asso1',
+        'prod1',
+        { grantedTagName: 'cotisant:another-association', tagExpiresAt: null } as never,
+        false
+      );
+      expect(productRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ grantedTagName: 'cotisant:bde' })
+      );
+
+      const other = product({ type: 'other', grantedTagName: null });
+      productRepo.findOne.mockResolvedValue(other);
+      await service.update('asso1', 'prod1', { grantedTagName: 'vip:bde' } as never, false);
+      expect(productRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ grantedTagName: 'vip:bde' })
+      );
     });
 
     it('returns null for a non-membership product', async () => {

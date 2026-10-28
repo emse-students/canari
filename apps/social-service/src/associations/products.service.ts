@@ -971,7 +971,24 @@ export class ProductsService {
     // `priceMatrix` is resolved above and deliberately kept out of the blanket assign: the DTO
     // holds the RAW document a client sent, and copying it over the parsed one would store a grid
     // nothing validated.
-    const { priceMatrix: _rawMatrix, ...assignable } = dto;
+    // A membership product's granted tag and expiry are DERIVED (`deriveCotisationTag`), never
+    // typed: they are dropped from the assign here exactly as `create` ignores them, so no edit can
+    // store a tag name the association's own tiers do not derive.
+    const {
+      priceMatrix: _rawMatrix,
+      grantedTagName: typedTag,
+      tagExpiresAt: typedExpiry,
+      ...derivable
+    } = dto;
+    const assignable =
+      product.type === 'membership'
+        ? derivable
+        : { ...derivable, grantedTagName: typedTag, tagExpiresAt: typedExpiry };
+    if (product.type === 'membership' && (typedTag !== undefined || typedExpiry !== undefined)) {
+      this.logger.debug(
+        `[SHOP] update of membership product=${productId.slice(0, 8)}: typed grantedTagName/tagExpiresAt ignored (derived)`
+      );
+    }
     const applyEdits = async (target: AssociationProduct, manager: EntityManager) => {
       if (dto.isActive !== undefined) target.activationWithheld = false;
       if (dto.priceMatrix !== undefined) target.priceMatrix = product.priceMatrix;
@@ -2796,8 +2813,9 @@ export class ProductsService {
    * For an association with an active cotisation mode, the tag is derived fresh from the current
    * academic year and the product's `variantKey` (see `deriveCotisationTag`), so a purchase always
    * grants the current period's tier-specific tag even when the stored product tag has not been
-   * re-provisioned since the last yearly rollover. Falls back to the product's stored tag for
-   * membership products without a cotisation mode (arbitrary/legacy tags).
+   * re-provisioned since the last yearly rollover. An association WITHOUT a cotisation mode grants
+   * nothing: its stored tag string is never granted as typed, since only a derived tier tag may be
+   * issued (a membership product requires a mode to be created).
    */
   private async resolveGrantTag(
     product: AssociationProduct,
@@ -2808,7 +2826,10 @@ export class ProductsService {
     if (asso?.cotisationMode) {
       return deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), product.variantKey);
     }
-    return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
+    this.logger.warn(
+      `[SHOP] membership product=${product.id.slice(0, 8)} of an association with no cotisation mode - no tag granted`
+    );
+    return null;
   }
 
   /**

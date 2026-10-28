@@ -442,6 +442,21 @@ maybe('a tag grant is scoped to the association that grants it (PostgreSQL)', ()
     expect(row.variantKey).toBe('c');
   });
 
+  it("an update cannot type a membership product's granted tag: the derived one stays", async () => {
+    await products.update(
+      OWN,
+      TIER_A,
+      { grantedTagName: 'cotisant:autre-it', tagExpiresAt: null } as never,
+      false
+    );
+
+    const [row] = await ds.query(
+      `SELECT "grantedTagName" FROM association_products WHERE id = $1`,
+      [TIER_A]
+    );
+    expect(row.grantedTagName).toBe(TAG_A);
+  });
+
   it("the sibling XOR still swaps the association's OWN tier, and only that", async () => {
     const user = newUser();
     await tags.grantCotisant(OWN, user, 'it', 'a');

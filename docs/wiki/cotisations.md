@@ -97,8 +97,12 @@ label/price and lets admins add further tiers (WP-COT-6).
 `ProductsService.create` **auto-derives** `grantedTagName`/`tagExpiresAt` server-side for any
 `type: 'membership'` product from the association's `slug`/`cotisationMode` + the product's own
 `variantKey` - a client-supplied `grantedTagName` is always ignored for this type, so the tag string
-never drifts from `deriveCotisationTag`. Creating a membership product requires cotisation to already
-be enabled (`cotisationMode` set), since the tag can't be derived otherwise.
+never drifts from `deriveCotisationTag`. `ProductsService.update` drops `grantedTagName` and
+`tagExpiresAt` for a membership product the same way, and `resolveGrantTag` grants NOTHING for a
+membership product whose association has no `cotisationMode`: a stored tag string is never granted as
+typed, so every tag a membership purchase issues is a derived tier tag. Creating a membership product
+requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived
+otherwise.
 
 `ProductsService.provisionCotisationProduct` (called after `PATCH /associations/:id` when
 `cotisationEnabled` is true, e.g. mode edits) resyncs **every** `membership` product's tag - not just
