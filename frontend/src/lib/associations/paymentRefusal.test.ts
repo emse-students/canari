@@ -162,6 +162,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'The pricing of this product changed while the purchase was opened.',
+          'PURCHASE_PRICING_CHANGED',
+          409
+        )
+      )
+    ).toBe(m.shop_purchase_pricing_changed());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'A checkout of this product is already being opened.',
           'CHECKOUT_IN_PROGRESS',
           409

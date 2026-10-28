@@ -24,10 +24,9 @@ import {
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
-  TIER_NOT_A_RISE,
-  TIER_NOT_RANKABLE,
   PAYMENT_ROUTING_CHANGED,
   productCheckoutLookup,
+  PURCHASE_PRICING_CHANGED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
@@ -44,6 +43,7 @@ import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
   PurchaseRecord,
+  receivedStatus,
   type PurchasePaymentMethod,
 } from '../users/entities/purchase-record.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -55,6 +55,7 @@ import {
   linkedTierKey,
   MEMBER_PRICE_TAG_NOT_A_TIER,
   pickHeldTier,
+  tierRefusal,
   tierRelationOf,
   type HeldTier,
   type TierRelation,
@@ -148,24 +149,6 @@ interface CotisantStatus {
 }
 
 /**
- * The typed 409 of each tier relation the checkout refuses (`assertTierIsARise`); null = sold.
- * `held` keeps `PRODUCT_ALREADY_PURCHASED`, the code the shop already words.
- */
-const TIER_REFUSALS: Record<TierRelation, { code: string; message: string } | null> = {
-  none: null,
-  higher: null,
-  held: { code: PRODUCT_ALREADY_PURCHASED, message: 'You already hold this membership' },
-  lower: {
-    code: TIER_NOT_A_RISE,
-    message: 'You already hold a membership tier worth at least this one',
-  },
-  unranked: {
-    code: TIER_NOT_RANKABLE,
-    message: 'Your current membership tier cannot be compared with this one',
-  },
-};
-
-/**
  * What one viewer pays for one product, resolved server-side.
  *
  * `kind` is the discriminator and not a nicety: "there is no grid" and "the grid closed this
@@ -214,6 +197,27 @@ interface PreparedPurchase {
   paymentTarget: PaymentTarget;
   vendorToken: string;
   profile: { promo: number | null; formation: string | null };
+  /**
+   * Whether `profile` was FETCHED: only for a grid priced on promo or formation, as the product read
+   * before the lock had one. A grid that needs it under the lock while it was not fetched cannot be
+   * priced without a call there (`decidePurchase` refuses `PURCHASE_PRICING_CHANGED`).
+   */
+  profileFetched: boolean;
+}
+
+/**
+ * True when two routings send the money to the same place on the same terms - EVERY field of the
+ * `PaymentTarget` the request is built from (provider, account, receiving association, readiness,
+ * delegation), so one that changed in a field nobody listed is never taken for the same.
+ */
+function sameRouting(a: PaymentTarget, b: PaymentTarget): boolean {
+  return (
+    a.provider === b.provider &&
+    a.connectAccountId === b.connectAccountId &&
+    a.targetAssociationId === b.targetAssociationId &&
+    a.ready === b.ready &&
+    a.delegated === b.delegated
+  );
 }
 
 /** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
@@ -2008,8 +2012,12 @@ export class ProductsService {
           }
         }
       } else {
+        // Nothing can be delivered for a product that is gone (no tag, no top-up), so the money is
+        // recorded with the marker a refund is owed on, never as an ordinary purchase.
+        granted = false;
         this.logger.error(
-          `[SHOP] checkout ${row.id.slice(0, 8)}: product ${row.productId.slice(0, 8)} no longer exists - the purchase is recorded, no tag granted`
+          `[SHOP] checkout ${row.id.slice(0, 8)}: product ${row.productId.slice(0, 8)} no longer exists - ` +
+            'payment recorded paid_not_granted, nothing delivered; a refund is owed'
         );
       }
       const record = await this.purchaseRecordService.create(
@@ -2019,7 +2027,7 @@ export class ProductsService {
           productId: row.productId,
           amountCents: row.amountCents,
           paymentMethod: 'online',
-          status: granted ? 'paid' : 'paid_not_granted',
+          status: receivedStatus(granted),
           stripePaymentIntentId: paymentIntentId,
           associationId: row.associationId,
           productName: row.productName,
@@ -2214,18 +2222,28 @@ export class ProductsService {
           : 'Association has not completed onboarding to receive payments'
       );
     }
-    const profile = await this.pricingFacts.profileFor(
-      userId,
-      product.priceMatrix ? dimensionsNeedProfile(product.priceMatrix.dimensions) : false
-    );
-    return { associationId, productId, provider, paymentTarget, vendorToken, profile };
+    const profileFetched = product.priceMatrix
+      ? dimensionsNeedProfile(product.priceMatrix.dimensions)
+      : false;
+    const profile = await this.pricingFacts.profileFor(userId, profileFetched);
+    return {
+      associationId,
+      productId,
+      provider,
+      paymentTarget,
+      vendorToken,
+      profile,
+      profileFetched,
+    };
   }
 
   /**
    * The half of a purchase that reads only this database, so it may run under the buyer's tier
    * lock: reloads the association and the product BY ID, re-validates the routing
    * `preparePurchase` decided against them (`routeWith`, no call: same provider, the parent read by
-   * id) and refuses `PAYMENT_ROUTING_CHANGED` if it no longer holds - then ranks and prices.
+   * id) and refuses `PAYMENT_ROUTING_CHANGED` if ANY field of it changed (`sameRouting`), and
+   * `PURCHASE_PRICING_CHANGED` if the grid now needs a profile that was not fetched - then ranks and
+   * prices.
    * EVERY read goes through `manager`, the lock holder's transaction: a read on another pool
    * connection would hold the buyer's lock while waiting for a free connection. Sequential, since
    * one connection runs one query at a time.
@@ -2247,11 +2265,7 @@ export class ProductsService {
       throw new NotFoundException('Product not found or inactive');
     }
     const now = await this.routeWith(asso, prepared.provider, manager);
-    if (
-      !now.ready ||
-      now.connectAccountId !== paymentTarget.connectAccountId ||
-      now.targetAssociationId !== paymentTarget.targetAssociationId
-    ) {
+    if (!now.ready || !sameRouting(now, paymentTarget)) {
       this.logger.warn(
         `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
           'routing changed while the purchase was being prepared'
@@ -2263,6 +2277,24 @@ export class ProductsService {
     }
 
     this.assertMembershipGrantable(asso, product);
+
+    // The profile is the one other input fetched before the lock: a grid that now needs it, read
+    // under the lock, would otherwise be priced on the "everyone else" cell without it.
+    if (
+      product.priceMatrix &&
+      dimensionsNeedProfile(product.priceMatrix.dimensions) &&
+      !prepared.profileFetched
+    ) {
+      this.logger.warn(
+        `[SHOP] refused (${PURCHASE_PRICING_CHANGED}): product=${product.id.slice(0, 8)} - its grid ` +
+          'now prices on the profile, which was not fetched while the purchase was being prepared'
+      );
+      throw new ConflictException({
+        code: PURCHASE_PRICING_CHANGED,
+        message: 'The pricing of this product changed while the purchase was opened.',
+      });
+    }
+
     const facts = await this.tierFactsOf(asso, userId, manager);
     const isCotisant = (facts?.heldKeys.length ?? 0) > 0;
     if (product.type === 'membership') {
@@ -2592,7 +2624,7 @@ export class ProductsService {
       `[SHOP] tier rank: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
         `held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`
     );
-    const refusal = TIER_REFUSALS[relation];
+    const refusal = tierRefusal(relation);
     if (!refusal) return;
     this.logger.log(
       `[SHOP] refused (${refusal.code}): product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
@@ -3041,7 +3073,7 @@ export class ProductsService {
           productId: product.id,
           amountCents,
           paymentMethod,
-          status: granted ? 'paid' : 'paid_not_granted',
+          status: receivedStatus(granted),
           stripePaymentIntentId,
           associationId: product.associationId,
           productName: product.name,

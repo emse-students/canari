@@ -1899,7 +1899,7 @@
   "asso_achats_source_form": "Form",
   "asso_achats_payment_cash": "Cash / manual",
   "asso_achats_not_granted": "Not granted",
-  "asso_achats_not_granted_hint": "Paid, but the membership tier was not granted: it was not a rise over the tier the buyer held. Refund the buyer or grant the tier by hand.",
+  "asso_achats_not_granted_hint": "Paid, but what was bought was not delivered (a membership tier that was not a rise, a product since deleted, or a form paid after it was full). Check what the buyer holds now before refunding: it may have been delivered since. Otherwise refund the buyer or grant it by hand.",
   "asso_achats_payment_online": "Online",
   "asso_achats_count_label": [
     {
@@ -3215,6 +3215,7 @@
   "shop_tier_not_rankable": "Your current membership cannot be exchanged for this one online. Contact the association.",
   "shop_cotisation_disabled": "This association's membership is not on sale at the moment.",
   "shop_payment_routing_changed": "The association's payment account has just changed. Nothing was charged: please try again.",
+  "shop_purchase_pricing_changed": "The pricing of this item has just changed. Nothing was charged: please try again.",
   "shop_checkout_in_progress": "Another payment of yours is already being opened. You can try again in three minutes at most.",
   "shop_previous_checkout_open": "A previous payment request of yours is still open. Try again once it has expired, at most 35 minutes after it was started.",
   "shop_return_checking": "Checking the payment...",

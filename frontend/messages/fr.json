@@ -1931,7 +1931,7 @@
   "asso_achats_source_form": "Formulaire",
   "asso_achats_payment_cash": "Espèces / manuel",
   "asso_achats_not_granted": "Non accordé",
-  "asso_achats_not_granted_hint": "Payé, mais la cotisation n'a pas été accordée : elle n'était pas une montée par rapport à celle que l'acheteur détenait. Remboursez-le ou accordez la cotisation à la main.",
+  "asso_achats_not_granted_hint": "Payé, mais l'achat n'a pas été délivré (une cotisation qui n'était pas une montée, un article supprimé depuis, ou un formulaire payé une fois complet). Vérifiez ce que l'acheteur détient avant de rembourser : il a pu être délivré depuis. Sinon, remboursez-le ou accordez-le à la main.",
   "asso_achats_payment_online": "En ligne",
   "asso_achats_count_label": [
     {
@@ -3247,6 +3247,7 @@
   "shop_tier_not_rankable": "Votre cotisation actuelle ne peut pas être échangée contre celle-ci en ligne. Contactez l'association.",
   "shop_cotisation_disabled": "La cotisation de cette association n'est pas en vente pour le moment.",
   "shop_payment_routing_changed": "Le compte de paiement de l'association vient de changer. Rien n'a été débité : réessayez.",
+  "shop_purchase_pricing_changed": "Le tarif de cet article vient de changer. Rien n'a été débité : réessayez.",
   "shop_checkout_in_progress": "Un autre de vos paiements est déjà en train de s'ouvrir. Vous pourrez réessayer dans trois minutes au plus.",
   "shop_previous_checkout_open": "Une de vos demandes de paiement précédentes est encore ouverte. Réessayez quand elle aura expiré, au plus tard 35 minutes après son lancement.",
   "shop_return_checking": "Vérification du paiement...",
