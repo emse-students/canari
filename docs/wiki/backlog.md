@@ -256,7 +256,7 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
-## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #PRNUM
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
 
 On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
 reviewed it and published it. The app's logs and the system's own records agree on two short,
