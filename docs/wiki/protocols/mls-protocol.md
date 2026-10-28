@@ -2133,9 +2133,27 @@ whose whole identity is in that list, by device (`removeMemberDevice`), after th
 fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
 candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
 so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
-`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
-collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
-question from the refresh's cost ([backlog](../backlog.md)).
+`[STRAY] ... NOT removed` and nothing is staged).
+
+**Key groups too, since 2026-10-27.** `group-rosters` never answers a key group (its roster is
+social-service's), so the key-group roster pass (`reconcileDistributionGroupRoster`) asks its own
+question: `POST mls/groups/:groupId/revoked-leaves` with the leaves the user diff KEEPS (never this
+device's, never a departing user's), answered only to an admitted member of the group, only about
+identities whose user is BOUND TO THAT GROUP (a device row or a seat in it - anybody else's pair is
+answered "not revoked"), throttled per user, the user half without case. It removes the named
+leaves the FRESH tree still holds by device (`removeMemberDevice`, same published-branch check,
+its base read from the scope), after the departures. An unanswered question removes no device that
+pass and says so - never read as "none revoked". **The question is asked again only when the leaves
+asked about changed** since the last answered pass on that group in this session; otherwise that
+answer is reused. A device revoked while a tree stands still is therefore seen at the next
+session's first pass - the convergent pass this always relied on. The read runs under the `read`
+head deadline (`DEADLINE_MS.read`), because it runs inside the scope's serialised roster pass: a
+hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The server says a
+converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
+
+**Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
+the server line counts a leaf it cannot bind as `outside`. Widening the binding is tracked in the
+[backlog](../backlog.md).
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
 commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership

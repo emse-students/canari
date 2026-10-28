@@ -1827,8 +1827,8 @@ the server no longer lists - and the pass is now serialised per scope
 arriving while a pass still waits share it, so the actor's pass and a load's cannot both commit the
 same Remove. One writer: the actor's own device, on its leader tab. A shared pass logs through every
 caller that shares it. **The lane is bounded by its transports, not by a timer**: each pass awaits a
-local tree read, the roster and base reads (`apiFetch`'s response-head deadline, a typed
-`RequestDeadlineError`), at most one commit (the MLS lock-hold budget) and a local persist, so every
+local tree read, the roster, base and revoked-leaves reads (each under a response-head deadline, a
+typed `RequestDeadlineError`), at most one commit (the MLS lock-hold budget) and a local persist, so every
 pass settles, and a failed one is swallowed by the lane's tail rather than holding the scope - a
 hung actor pass cannot stall a community's opening. A removal the gate refuses re-reads the tree:
 "already gone" when another device removed them first, "still hold a leaf" only when they do.

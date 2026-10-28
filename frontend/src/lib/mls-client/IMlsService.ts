@@ -1450,6 +1450,12 @@ export interface IMlsService {
    * a group it did not answer is absent from both sets, and nothing is decided for it.
    */
   getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch>;
+  /**
+   * Which of `identities` (leaves of `groupId`'s tree, `userId:deviceId`) belong to a revoked device
+   * (`POST /api/mls/groups/:groupId/revoked-leaves`) - the revocation read a KEY group has. Throws
+   * when the server did not answer; only an identity sent can come back.
+   */
+  getRevokedLeaves(groupId: string, identities: string[]): Promise<string[]>;
   /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<UserGroupRow[]>;
   /** Fetches server metadata for one group (name, soft-delete tombstone). */
