@@ -659,7 +659,7 @@ export class TauriMlsService extends BaseMlsService {
    *
    * THE NATIVE TWIN OF `WebMlsService.logKeyPackageCensus`, and the reason it exists is that it used
    * to have no twin at all: native printed the census from inside `load_or_create`, which is on the
-   * awaited path of `initialiser_mls` - in front of the first screen. Measured on OXYGEN
+   * awaited path of `initialiser_mls` - in front of the first screen. Measured on the workstation
    * 2026-09-17, 5 groups, 1000-package pool: a cold load costs 24.5 ms with the diagnostic and
    * 12.9 ms without it. The web call site's own docblock already said a thousand deserialised
    * bundles do not belong in front of the connected badge; native was doing exactly that.

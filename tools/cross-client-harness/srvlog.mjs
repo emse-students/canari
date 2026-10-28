@@ -258,7 +258,7 @@ const BENIGN = [
   /\[ChannelService\] \[CHANNEL_PUSH\] channel=\S+ message=\S+ recipients=\d+/,
   // NOT OURS, AND ATTRIBUTED RATHER THAN GUESSED. `[404] POST /inform` arrives on the SSR server
   // every ~18 seconds; nothing in the client bundle or the SSR output contains that path, and the
-  // nginx log names the caller: `"AirControl Agent v1.0"` from 10.0.0.47 - a Ubiquiti access point
+  // nginx log names the caller: `"AirControl Agent v1.0"` from a LAN address - a Ubiquiti access point
   // on the LAN looking for its UniFi controller, which answers `inform` on that path. It found this
   // host instead.
   //

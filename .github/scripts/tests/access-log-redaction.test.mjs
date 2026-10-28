@@ -17,6 +17,8 @@
  *   its own path and drops its query too: it names which GIF the reader loaded.
  * - a guest receipt page (`/f/<id>/receipt?receipt=`) drops its query: the receipt is a paying
  *   guest's only proof of the answer (paid public forms WP-P2).
+ * - a legacy presence read (`/api/presence?users=`) drops its query: it names every user a member
+ *   watches, and its length tripped a log scanner (2026-10-28). Current clients POST the ids.
  * - a URL carrying a capability (2026-10-28): the link previews and the link check drop their
  *   query, the OIDC callback its query, an invite route keeps its path with the token replaced -
  *   and a join path quoted percent-encoded in a query too. The `token` key spelled twice,
@@ -166,6 +168,11 @@ if (routeMap && tokenMap && refererMap) {
       ['/f/abc-123/receipt?x=1&receipt=SECRET', '/f/abc-123/receipt?query-redacted'],
       ['/f/abc-123/receipt', '/f/abc-123/receipt'],
       ['/f/abc-123?receipt=keep', '/f/abc-123?receipt=keep'],
+      // The legacy presence read names every watched user (2026-10-28): the query goes.
+      [`/api/presence?users=${'a'.repeat(64)},${'b'.repeat(64)}`, '/api/presence?query-redacted'],
+      ['/api/presence', '/api/presence'],
+      ['/api/admin/presence', '/api/admin/presence'],
+      ['/api/presences?users=keep', '/api/presences?users=keep'],
       // The token key, however it is spelled (2026-10-28): twice, percent-encoded, another case,
       // an array. Each loses its whole query; `xtoken` and a value that merely says token stay.
       ['/api/ws?token=A&x=1&token=B', '/api/ws?query-redacted'],
@@ -359,5 +366,6 @@ if (failures.length > 0) {
 }
 console.log(
   'access-log-redaction: the access log cannot record a token, a GIF search, a guest receipt, ' +
-    'a link a reader opened, an OIDC code nor an invite, in the request line or the referer'
+    'presence ids, a link a reader opened, an OIDC code nor an invite, in the request line or ' +
+    'the referer'
 );
