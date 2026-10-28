@@ -21,10 +21,13 @@
  */
 import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { evaluate, listTargets, connect } from '../cross-client-harness/cdp.mjs';
 import { armIfPhone, resolveDevice } from '../cross-client-harness/device.mjs';
 
-const RUNS = process.env.BENCH_RUNS ?? 'F:/Programmation/canari-harness/ios-bench/runs';
+// The rig's state dir, beside the repository's parent (the harness convention); BENCH_RUNS overrides.
+const RUNS =
+  process.env.BENCH_RUNS ?? fileURLToPath(new URL('../../../../canari-harness/ios-bench/runs', import.meta.url));
 const argv = process.argv.slice(2);
 const modeIdx = argv.indexOf('--mode');
 const MODE = modeIdx >= 0 ? argv[modeIdx + 1] : 'unspecified';

@@ -21,6 +21,7 @@ export function createMlsServiceStub(
     leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
     setDeviceEventConsumer: vi.fn(),
+    settleDeviceEvents: vi.fn().mockResolvedValue(true),
     // Default: a device never seen - a verifier test overrides it with the key it pins.
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
     // Default: no departure seen.
@@ -102,6 +103,7 @@ export function createMlsServiceStub(
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
+    heldGroupsKnown: vi.fn().mockReturnValue(true),
     notifyConversationAvailable: vi.fn(),
     notifyCommitsApplied: vi.fn(),
     // Still a member by default: eviction is the exception, and a stub that answered `false` would
@@ -133,6 +135,7 @@ export function createMlsServiceStub(
     ),
     // As every server since step A answers: addressed history answers are routed.
     getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
+    getRevokedLeaves: vi.fn().mockResolvedValue([]),
     getGroupRosters: vi.fn().mockResolvedValue({
       rosters: new Map(),
       refused: new Set(),

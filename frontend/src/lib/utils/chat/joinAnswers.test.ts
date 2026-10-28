@@ -23,7 +23,13 @@ import { handleWelcomeRequest } from './actions';
 import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
 import {
+  memberDeviceAnswer,
+  setMemberDeviceSweep,
+  undoMemberDeviceDecline,
+} from './memberDeviceAnswers';
+import {
   answerJoinRequest,
+  isOwnDeviceAsk,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -352,6 +358,152 @@ describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
     m.mlsService.declineJoinRequest = vi.fn().mockRejectedValue(new Error('403'));
 
     expect((await declineJoinRequest(request, m.deps)).done).toBe(false);
+  });
+});
+
+/**
+ * AN UNSEEN DEVICE OF A MEMBER (`kind: 'device'`): the answer is about ONE DEVICE under ONE KEY. Add
+ * records the member's approval bound to the key fingerprint the entry showed and starts the sweep
+ * that adds it; Decline records the refusal in this conversation. Neither touches the person's seat -
+ * they are a member, their other devices stay.
+ */
+describe('a device ask - answered for the device, never for the seat', () => {
+  const deviceAsk: JoinRequest = {
+    groupId: GROUP,
+    userId: 'peer',
+    deviceIds: ['never-seen'],
+    kind: 'device',
+    keyFingerprint: 'a1b2c3d4e5f60718',
+  };
+  afterEach(() => setMemberDeviceSweep(null));
+
+  it('Add records the approval under the shown key and starts the sweep; no invite, no seat touched', async () => {
+    const m = memberSide();
+    const sweep = vi.fn().mockResolvedValue(undefined);
+    setMemberDeviceSweep(sweep);
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toEqual({
+      kind: 'approved',
+      fingerprint: 'a1b2c3d4e5f60718',
+    });
+    expect(sweep).toHaveBeenCalledOnce();
+    expect(m.invite).not.toHaveBeenCalled();
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+  });
+
+  it('the Add resolves on the tap - it never waits for the sweep it started', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(() => new Promise<void>(() => {}));
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+  });
+
+  it('an entry with no key, or naming two devices, approves nothing', async () => {
+    const m = memberSide();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { keyFingerprint: _unused, ...keyless } = deviceAsk;
+    expect((await admitJoinRequest(keyless, m.deps)).done).toBe(false);
+    expect(
+      (await admitJoinRequest({ ...deviceAsk, deviceIds: ['never-seen', 'other'] }, m.deps)).done
+    ).toBe(false);
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toBeNull();
+    expect(memberDeviceAnswer(GROUP, 'peer', 'other')).toBeNull();
+    error.mockRestore();
+  });
+
+  it('Add in a 1:1 conversation is answered too - the device of a DM peer', async () => {
+    const m = memberSide();
+    m.deps.conversations = conversations('direct');
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+  });
+
+  it('Decline is per conversation, asks the server for nothing, and can be undone', async () => {
+    const m = memberSide();
+    const sweep = vi.fn().mockResolvedValue(undefined);
+    setMemberDeviceSweep(sweep);
+
+    expect(await declineJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toEqual({ kind: 'declined' });
+    expect(memberDeviceAnswer('other-group', 'peer', 'never-seen')).toBeNull();
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+    expect(m.mlsService.removeMemberFromServer).not.toHaveBeenCalled();
+
+    undoMemberDeviceDecline(GROUP, 'peer', 'never-seen');
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toBeNull();
+    expect(sweep).toHaveBeenCalledOnce();
+  });
+
+  it('an Add in one conversation never lifts a Decline given in another', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+
+    await declineJoinRequest({ ...deviceAsk, groupId: 'other-group' }, m.deps);
+    await admitJoinRequest(deviceAsk, m.deps);
+
+    expect(memberDeviceAnswer('other-group', 'peer', 'never-seen')).toEqual({ kind: 'declined' });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')?.kind).toBe('approved');
+  });
+
+  it('is its own entry beside an ask of the same person, and tells the own account apart', () => {
+    raiseJoinRequest({ groupId: GROUP, requesterUserId: 'peer', requesterDeviceId: 'p-1' });
+    raiseJoinRequest({
+      groupId: GROUP,
+      requesterUserId: 'peer',
+      requesterDeviceId: 'never-seen',
+      kind: 'device',
+      keyFingerprint: 'a1b2c3d4e5f60718',
+    });
+
+    const asks = pendingJoinRequests();
+    expect(asks).toHaveLength(2);
+    const device = asks.find((a) => a.kind === 'device');
+    expect(device?.deviceIds).toEqual(['never-seen']);
+    expect(isOwnDeviceAsk(device!, 'Peer')).toBe(true);
+    expect(isOwnDeviceAsk(device!, 'me')).toBe(false);
+  });
+
+  it('two unseen devices of one member are TWO entries, and one tap approves one', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+    for (const [deviceId, keyFingerprint] of [
+      ['phone-new', '1111111111111111'],
+      ['laptop-new', '2222222222222222'],
+    ]) {
+      raiseJoinRequest({
+        groupId: GROUP,
+        requesterUserId: 'peer',
+        requesterDeviceId: deviceId,
+        kind: 'device',
+        keyFingerprint,
+        deviceLabel: deviceId,
+      });
+    }
+
+    const asks = pendingJoinRequests().filter((a) => a.kind === 'device');
+    expect(asks.map((a) => a.deviceIds)).toEqual([['phone-new'], ['laptop-new']]);
+    expect(asks.map((a) => a.keyFingerprint)).toEqual(['1111111111111111', '2222222222222222']);
+
+    expect(await admitJoinRequest(asks[0], m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'phone-new')?.kind).toBe('approved');
+    expect(memberDeviceAnswer(GROUP, 'peer', 'laptop-new')).toBeNull();
+  });
+
+  it('the same device showing another key replaces its entry - the member answers the key now shown', () => {
+    const ask = {
+      groupId: GROUP,
+      requesterUserId: 'peer',
+      requesterDeviceId: 'never-seen',
+      kind: 'device' as const,
+    };
+    raiseJoinRequest({ ...ask, keyFingerprint: '1111111111111111' });
+    raiseJoinRequest({ ...ask, keyFingerprint: '9999999999999999' });
+
+    const asks = pendingJoinRequests().filter((a) => a.kind === 'device');
+    expect(asks).toHaveLength(1);
+    expect(asks[0].keyFingerprint).toBe('9999999999999999');
   });
 });
 

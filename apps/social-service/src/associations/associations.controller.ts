@@ -51,6 +51,7 @@ import {
   CreateAssociationCalendarEventDto,
   CreateProductDto,
   GrantCotisantDto,
+  ClosePaidNotGrantedDto,
   GrantProductPurchaseDto,
   GrantTagDto,
   ListCotisantsQueryDto,
@@ -1168,8 +1169,9 @@ export class AssociationsController {
   }
 
   /**
-   * Manually grants a cotisation tag to a user (cash payment or admin override).
-   * Requires MANAGE_MEMBERS flag.
+   * Manually grants a cotisation tag to a user (cash payment or admin override): one of THIS
+   * association's tier tags, granted like the roster's manual add (`grantTagForAssociation`); the
+   * derived expiry applies unless one is given. Requires MANAGE_MEMBERS flag.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1179,12 +1181,11 @@ export class AssociationsController {
     @Headers('x-user-id') grantedBy: string,
     @Body() dto: GrantTagDto
   ) {
-    return this.userTagService.grantOrRenew({
+    return this.userTagService.grantTagForAssociation(id, {
       userId: dto.userId,
       tagName: dto.tagName,
-      issuingAssocId: id,
       grantedBy,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
     });
   }
 
@@ -1355,6 +1356,30 @@ export class AssociationsController {
   async exportAssociationPurchases(@Param('id') id: string, @Res() res: Response) {
     const { buffer, title } = await this.productsService.exportAssociationPurchases(id);
     this.sendXlsxDownload(res, buffer, title, 'achats');
+  }
+
+  /**
+   * Closes a payment marked `paid_not_granted` by recording which outcome settled it - `refunded`
+   * or `granted` (the closing grants the tier by hand). Once per payment; the mark stays as history
+   * and the hourly report stops counting it. Requires MANAGE_PRODUCTS, like the rest of this list.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/purchases/:purchaseId/close')
+  closePaidNotGranted(
+    @Param('id') id: string,
+    @Param('purchaseId', ParseUUIDPipe) purchaseId: string,
+    @Headers('x-user-id') closedBy: string,
+    @Body() dto: ClosePaidNotGrantedDto
+  ) {
+    return this.productsService.closePaidNotGranted(
+      id,
+      purchaseId,
+      closedBy,
+      dto.outcome,
+      // Validated present for `granted` (`ClosePaidNotGrantedDto`); a refund reads no tier.
+      dto.expectDelivered ?? false
+    );
   }
 
   /** Lists buyers for a boutique product. Requires MANAGE_PRODUCTS flag. */

@@ -62,7 +62,7 @@ pull request.
 
 `apply-blueprints.sh` les applique depuis la machine ou tourne le conteneur. Les
 blueprints voyagent sur stdin avec `apply-blueprints.py`, donc rien n est monte ni
-copie dans `/srv/miconnect`. **Un fichier de `blueprints/held/` n est jamais
+copie dans `<miconnect-dir>`. **Un fichier de `blueprints/held/` n est jamais
 envoye** et chaque execution le nomme : c est une decision de l utilisateur,
 levee par un `git revert` (depuis le 2026-10-17, `45-consent.yaml` - voir
 [authentik](../../docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)) :

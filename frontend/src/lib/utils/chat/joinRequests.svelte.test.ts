@@ -60,6 +60,15 @@ describe('joinRequests - a sweep settles what it no longer raises', () => {
     expect(pendingJoinRequests().map((r) => r.userId)).toEqual(['dave']);
   });
 
+  it('keeps the asks of a group the sweep did not read through - its add lock was busy', () => {
+    raiseJoinRequest({ ...ask('carol', 'c1', 'g1'), kind: 'device', keyFingerprint: 'f1' });
+    raiseJoinRequest(ask('dave', 'd1', 'g2'));
+
+    settleSweptJoinRequests(beginJoinRequestSweep(), [], new Set(['g1']));
+
+    expect(pendingJoinRequests().map((r) => r.groupId)).toEqual(['g1']);
+  });
+
   it('keeps an ask announced while the sweep was reading - its rows may predate it', () => {
     raiseJoinRequest({ ...ask('carol', 'c1'), askId: 'a-carol' });
     const sweep = beginJoinRequestSweep();

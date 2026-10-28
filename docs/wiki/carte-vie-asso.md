@@ -637,9 +637,10 @@ of that number - the cost is accepted, and owed a measurement on the dev pre-rel
 
 **A width is not a line break, and handing one to jsPDF asks it to guess again.** The vector text
 layer used to re-wrap every run with `splitTextToSize`, which measures in jsPDF's own metrics rather
-than the browser's. Measured on the production A0 export, 2026-09-27: "Lounes BRIAND--RAVIDAT" came
-out as "Lounes BRIAND--R / AVIDAT", broken mid-word, while the preview - and the raster underneath
-the text - showed the browser's own break, "Lounes BRIAND-- / RAVIDAT". "Jeanne BOUSSONNIERE" went
+than the browser's. Measured on the production A0 export, 2026-09-27 (the names below are fictional,
+of the same shape as the two members' real ones): "Lilian VERNAY--MAZOYER" came
+out as "Lilian VERNAY--M / AZOYER", broken mid-word, while the preview - and the raster underneath
+the text - showed the browser's own break, "Lilian VERNAY-- / MAZOYER". "Jeanne VALCOURNIERE" went
 the other way, set on one line with an empty line where its second should have been. Both are the
 same defect: two engines deciding the same question.
 

@@ -1,15 +1,15 @@
 /**
  * Vitest stub for `$app/paths` (its virtual `__sveltekit/paths` module exists only inside SvelteKit).
  *
- * `resolve` keeps the one behaviour a test can observe: the app is served at the root, so `base` is
- * empty and a path comes back unchanged - and, like the real one, a path that does not start with `/`
- * is refused rather than passed through, so a test cannot bless a call the app would throw on.
+ * `resolve` follows SvelteKit 3's two forms: a string starting with `/` is a ROUTE ID and a string
+ * that does not is a PATHNAME, which gains its leading slash. The app is served at the root, so the
+ * base is empty and both come back as an absolute path.
  */
-export const base = '';
-
 export function resolve(path: string): string {
-  if (!path.startsWith('/')) {
-    throw new Error(`Cannot use resolve(...) with a non-absolute pathname (got "${path}")`);
-  }
-  return base + path;
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+/** Matches nothing: a unit test has no route table. */
+export async function match(_url: string | URL): Promise<null> {
+  return null;
 }

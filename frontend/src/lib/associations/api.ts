@@ -1745,6 +1745,22 @@ export interface AssociationProduct {
    */
   viewerActiveTier?: string | null;
   /**
+   * Where this cotisation tier stands against the tier the viewer holds ACTIVE for the same
+   * association: `none` (not a tier, or nothing held - buyable), `higher` (a rise - buyable),
+   * `held` (that very tier - refused, `PRODUCT_ALREADY_PURCHASED`), `lower` (same or lower product
+   * price - refused, `TIER_NOT_A_RISE`), `unranked` (a tier is held and one of the two has no fixed
+   * price - refused, `TIER_NOT_RANKABLE`). Set by the shop and per-association listings.
+   */
+  viewerTierRelation?: 'none' | 'higher' | 'held' | 'lower' | 'unranked';
+  /**
+   * Cents a checkout would charge THIS viewer now - the admin's preferential price
+   * (`amountCentsMember`) when the viewer qualifies, else the full price, or the grid's cell. Null
+   * when the product is not buyable at a price the server can name (a refused tier, a grid that does
+   * not sell this combination, a free amount). Display it; never recompute money client-side.
+   * Purchase caps and tag gates are NOT folded in. Set by the shop and per-association listings.
+   */
+  viewerDueCents?: number | null;
+  /**
    * The pricing grid: the criteria this product discriminates on, and one price per combination.
    * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
    *
@@ -1825,7 +1841,43 @@ export interface AssociationPurchase {
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
+  /**
+   * A cotisation tier paid for and NOT granted: it was no longer a rise over the tier the buyer held
+   * when the payment landed. A refund or a manual grant is owed.
+   */
+  notGranted?: boolean;
+  /**
+   * How a `notGranted` payment was closed by a manager (`closePaidNotGranted`): `refunded` or
+   * `granted`, null while nobody has recorded it. The `notGranted` mark stays either way.
+   */
+  closedOutcome?: PurchaseClosingOutcome | null;
+  /** When that outcome was recorded, by the server's clock; null while open. */
+  closedAt?: string | null;
+  /**
+   * For an OPEN payment not granted, why the server would refuse to close it as granted (only a
+   * refund is left); null when it may be granted.
+   */
+  grantRefusal?: ClosingGrantRefusal | null;
+  /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
+  buyerTier?: string | null;
+  /**
+   * For an OPEN payment not granted, true when the tier it bought is already held as ITS delivery:
+   * closing it as granted only records that, and grants or replaces nothing.
+   */
+  delivered?: boolean;
 }
+
+/** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise'
+  | 'not-comparable';
+
+/** The two outcomes that close a payment paid for and not granted. */
+export type PurchaseClosingOutcome = 'refunded' | 'granted';
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
@@ -1943,6 +1995,26 @@ export async function grantProductPurchase(
     { method: 'POST', body: JSON.stringify(payload) }
   );
   return row;
+}
+
+/**
+ * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
+ * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
+ * call is refused `PURCHASE_ALREADY_CLOSED`. A `granted` closing carries what the list showed
+ * (`expectDelivered`, the row's `delivered`), and the server refuses `PURCHASE_CLOSING_CHANGED` when
+ * that is no longer so - "nothing is granted" never grants. Requires MANAGE_PRODUCTS.
+ */
+export async function closePaidNotGranted(
+  associationId: string,
+  purchaseId: string,
+  outcome: PurchaseClosingOutcome,
+  expectDelivered: boolean
+): Promise<AssociationPurchase> {
+  const body = outcome === 'granted' ? { outcome, expectDelivered } : { outcome };
+  return request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
 }
 
 /** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */

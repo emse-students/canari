@@ -99,7 +99,7 @@ operations notes** (never written here: this repository is public). Every line r
 | P6 | social-service's log: one `[LIVE_REPORT_AGE] pending=0` line an hour | present (the alarm runs whatever the switch says) |
 | P7 | the media store has no `live/` prefix on production | empty |
 | P8 | Redis has no `live:seats` key on production | absent |
-| P9 | the host proxy's connections in use at a busy hour (`ss`, read only) against its ~1 500 | the headroom recorded, as the cap's fourth figure ([lives](../../services/lives.md#the-viewer-cap-wp-l4)) |
+| P9 | the host proxy's connections in use at a busy hour (`ss`, read only) against its host-wide budget | the headroom recorded, as the cap's fourth figure ([lives](../../services/lives.md#the-viewer-cap-wp-l4)) |
 
 ## 5. The privacy policy wording - HELD for the owner
 
@@ -189,7 +189,7 @@ What bounds it, from the measurements on record:
 | --- | --- | --- | --- |
 | The host's uplink | ~90-107 Mb/s out on 443, from ONE outside client, two hours; campus viewers unmeasured | [realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md) 2a, 4 | **24 today** |
 | A viewer's copy | 3.08 Mb/s mean from the Mi 9T **app WebView** at a 2.5 Mb/s ask (iPhone Safari 2.32); the encoder floors at ~2.6 Mb/s on Android even at 480p | WP-L1 through the dev ingest, draft #2109; `frontend/src/lib/live/constants.ts` | **3.08 > the 3.0 the cap divides by**: 24 x 3.08 = 73.9 Mb/s, 2.7 % over the 72 Mb/s share. The client now asks 2.0 Mb/s; what the app WebView produces at that ask is not on record |
-| The host proxy's connections | ~1 500 for every site on the host, 4 per seated viewer | [lives](../../services/lives.md#the-viewer-cap-wp-l4); `live-segments-route.test.mjs` fails past a quarter of it | **cap 93** (93 x 4 = 372 <= 375) without the school IT department |
+| The host proxy's connections | a host-wide budget set by the school IT department for every site on the host, 4 per seated viewer | [lives](../../services/lives.md#the-viewer-cap-wp-l4); `live-segments-route.test.mjs` fails past a quarter of it | **cap 93** (four connections each, inside that quarter) without the school IT department |
 | nginx per address | `limit_conn 24` = the cap (a full audience behind ONE campus address); `limit_rate` 6 Mb/s per fetch | `Dockerfile.frontend`, asserted equal to the cap | moves WITH the cap; above ~93 it becomes a rate (the cap in disguise, [live](live.md#abuse-limits-that-are-not-a-viewer-cap)) |
 | The manifest poll | one request a second per viewer into social-service, Postgres pool 10 (4 for ingest) | [live](live.md#the-manifest-poll-grows-with-the-audience-too) | unmeasured; invisible at 24, the next wall at several hundred |
 | An edge in front of segments | the tunnel ~19 Mb/s on a MISS, so ~6 lives fully missed; Cloudflare's terms on video through the cache UNREAD | [live](live.md#the-delivery-sealed-segments-from-a-cloudflare-cache) | only once the cache exists |

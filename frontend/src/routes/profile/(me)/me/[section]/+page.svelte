@@ -6,6 +6,7 @@
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
   import ProfileBioSection from '$lib/components/profile/ProfileBioSection.svelte';
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
+  import ProfileFollowersSection from '$lib/components/profile/ProfileFollowersSection.svelte';
   import ProfileInfoSection from '$lib/components/profile/ProfileInfoSection.svelte';
   import ProfileNotepadSection from '$lib/components/profile/ProfileNotepadSection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
@@ -32,7 +33,7 @@
       hasSponsorship: model.hasSponsorship,
     };
     if (!mayOpenProfileSection(section, facts)) {
-      void goto(resolve('/profile'), { replaceState: true });
+      void goto(resolve('profile'), { replace: true });
     }
   });
 </script>
@@ -54,6 +55,8 @@
           loading={model.membershipsLoading}
         />
       </ProfileCard>
+    {:else if section === 'followers'}
+      <ProfileFollowersSection />
     {:else if section === 'subscriptions'}
       <ProfileSubscriptionsSection />
     {:else if section === 'career'}
