@@ -43,4 +43,20 @@ describe('verifyLydiaSignature', () => {
     const fields = { amount: '12' };
     expect(verifyLydiaSignature(fields, 'secret', 'not-hex')).toBe(false);
   });
+
+  it('refuses a correct signature with trailing junk, which a hex decode alone would accept', () => {
+    const fields = { amount: '12', transaction_identifier: '123' };
+    const sig = signLydiaParams(fields, 'YOUR_PRIVATE_TOKEN');
+    // Control: Buffer.from stops at the first non-hex character, so these decode to the SAME bytes.
+    expect(Buffer.from(`${sig}zz`, 'hex').equals(Buffer.from(sig, 'hex'))).toBe(true);
+    for (const forged of [`${sig}zz`, `${sig}\n`, `${sig} `, `${sig}0`, `${sig}00`]) {
+      expect(verifyLydiaSignature(fields, 'YOUR_PRIVATE_TOKEN', forged)).toBe(false);
+    }
+  });
+
+  it('accepts the signature in upper case, the same 32 hex digits', () => {
+    const fields = { amount: '12', transaction_identifier: '123' };
+    const sig = signLydiaParams(fields, 'YOUR_PRIVATE_TOKEN');
+    expect(verifyLydiaSignature(fields, 'YOUR_PRIVATE_TOKEN', sig.toUpperCase())).toBe(true);
+  });
 });

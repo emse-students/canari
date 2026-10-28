@@ -13,15 +13,29 @@ export function signLydiaParams(fields: Record<string, string>, privateToken: st
   return createHash('md5').update(payload).digest('hex');
 }
 
-/** Verifies a signature received from Lydia (webhooks, callbacks) against the expected fields. */
+/**
+ * The shape of an MD5 signature: exactly 32 hex digits. Checked BEFORE decoding, because
+ * `Buffer.from(value, 'hex')` stops at the first non-hex character and keeps what it read: a
+ * correct signature followed by junk (`<32 hex>zz`, `<32 hex>
+`) used to decode to the same 16
+ * bytes and verify.
+ */
+export const LYDIA_SIGNATURE_RE = /^[0-9a-f]{32}$/i;
+
+/**
+ * Verifies a signature received from Lydia (callbacks, `request/state` answers) against the
+ * expected fields. A received value that is not exactly 32 hex digits is refused before any
+ * comparison; the comparison itself is constant-time.
+ */
 export function verifyLydiaSignature(
   fields: Record<string, string>,
   privateToken: string,
   receivedSignature: string
 ): boolean {
-  const expected = signLydiaParams(fields, privateToken);
-  const expectedBuf = Buffer.from(expected, 'hex');
+  if (typeof receivedSignature !== 'string' || !LYDIA_SIGNATURE_RE.test(receivedSignature)) {
+    return false;
+  }
+  const expectedBuf = Buffer.from(signLydiaParams(fields, privateToken), 'hex');
   const receivedBuf = Buffer.from(receivedSignature, 'hex');
-  if (expectedBuf.length !== receivedBuf.length) return false;
   return timingSafeEqual(expectedBuf, receivedBuf);
 }

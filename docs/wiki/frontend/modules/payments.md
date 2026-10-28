@@ -313,9 +313,10 @@ signatures redacted). One request, `request_id 12115506`, created with `order_re
 
 - **The answer carries no amount**, so `confirm-payment` trusts that the request it reads is the
   one the row stored at issue time (its own uuid, never the client's) and that its amount is the
-  one `request/do` was sent. **Its `signature` is not verified**: the scheme is undocumented for
-  this call, and the answer is read server to server over TLS from Lydia's own host, which is
-  what makes it trustworthy here - not the signature.
+  one `request/do` was sent. **Its `signature` is not verified on this path**: the answer is read
+  server to server over TLS from Lydia's own host. (Since 2026-10-27 Lydia's documentation is read:
+  the signature covers the amount and the id read, not the state, and the reconciliation sweep
+  verifies it - [lydia-api](../../lydia-api.md#requeststate---read-a-request).)
 
 **State 1 (paid) and state 5 (declined by the payer) were measured on dev, sandbox, on
 2026-10-21**: `1` is a paid request, `5` a payer's decline, which sends NO callback and ends on
@@ -730,7 +731,13 @@ that wrote it dispatches the top-up - eight racing completions against a real Po
 once (the control without `IS NULL` wrote it eight times). The tag's `manualGrant` says how the
 purchase was PAID (cash or online), never inferred from a missing id.
 
-**Who triggers it.** The payer's return: the shop page polls
+**Who triggers it.** The reconciliation sweep, for an attempt still `open` once its request has
+ended, on a VERIFIED answer only ([lydia-api](../../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for):
+`applyRequestState`, the one mapping the return and the callback use) - an attempt whose read gave
+a FINAL answer it cannot act on (a mismatch, unsigned, no usable key, a refusal on the allowlist) is
+closed `expired` (`expireUnprovenCheckout`), which only a later callback still records over; one Lydia
+says is still open is cancelled there first; no answer, a fault of core, a refusal not known final or a
+failed write leaves it open for the next tick. The payer's return: the shop page polls
 `POST /api/associations/:id/products/:productId/checkouts/:checkoutId/confirm` while the attempt
 is open (at most 10 reads, 3 s apart, throttled per user and attempt like the form's
 `confirm-payment`) and says paid / still waiting / declined / not completed through Paraglide

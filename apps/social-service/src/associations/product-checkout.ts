@@ -2,6 +2,7 @@
  * The rules of a boutique checkout attempt, as data and pure functions (migration 101,
  * docs/wiki/frontend/modules/payments.md "A product checkout is a row, one per attempt").
  */
+import { LYDIA_REQUEST_UUID_RE } from '../forms/seat-hold';
 
 /**
  * How long a product's Lydia request stays payable, in whole seconds (Lydia's `expire_time`). Set
@@ -73,4 +74,20 @@ export function withCheckoutReturnKey(
   u.searchParams.set('association_id', attempt.associationId);
   u.searchParams.set('productId', attempt.productId);
   return u.toString();
+}
+
+/**
+ * Which request a state read of this attempt names, as core-service's `payments/request-state`
+ * takes it: the `request_uuid` the issuing call answered, or - for an attempt whose issuing call
+ * never answered one - its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
+ * The ONE choice, made for the payer's return, the confirm callback and the reconciliation sweep.
+ */
+export function productCheckoutLookup(attempt: {
+  id: string;
+  productId: string;
+  requestUuid: string | null;
+}): { sessionId: string } | { orderRef: string } {
+  return attempt.requestUuid && LYDIA_REQUEST_UUID_RE.test(attempt.requestUuid)
+    ? { sessionId: attempt.requestUuid }
+    : { orderRef: productOrderRef(attempt.productId, attempt.id) };
 }
