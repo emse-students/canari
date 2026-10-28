@@ -59,6 +59,7 @@
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
   import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
+  import { fileInputAnswersEveryClose } from '$lib/utils/fileInputCancel';
   import {
     abandonHistoryOverlay,
     pushHistoryOverlay,
@@ -189,6 +190,20 @@
   const ios = isIosTauriRuntime();
   /** The gallery is the native library (the iOS app), never a file input. */
   const nativeGallery = opensNatively(currentAttachRuntime(false), 'library');
+  /**
+   * WHETHER THE GALLERY'S ANSWER IS CERTAIN. A file input on an engine that fires `cancel` answers
+   * every close, so a deferred open always ends by itself and "Rouvrir la camera" is never needed -
+   * offering it would only flash it in the ~200 ms between the page coming back and a pick's
+   * `change` (Mi 9T, 2026-10-28). The native library and an older engine may never answer: there the
+   * member's tap is the way back.
+   */
+  const galleryAlwaysAnswers =
+    !nativeGallery &&
+    typeof navigator !== 'undefined' &&
+    fileInputAnswersEveryClose(navigator.userAgent);
+  console.debug(
+    `[reel-capture] the gallery ${galleryAlwaysAnswers ? 'answers every close' : 'may never answer: a reopen tap is offered'}`
+  );
 
   async function loadLimits() {
     limitsFault = null;
@@ -671,7 +686,9 @@
     flipAllowed={lensFlipAllowed(capture)}
     paused={capture.kind === 'review' || leaving}
     deferOpen={picking}
-    onreopen={() => endPicking('none, the member reopened the camera')}
+    onreopen={galleryAlwaysAnswers
+      ? undefined
+      : () => endPicking('none, the member reopened the camera')}
     {onBeforeRelease}
     {onclose}
     microphoneAsked={rules.microphone === 'with-lens'}
