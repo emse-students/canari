@@ -192,6 +192,18 @@ describe('NotificationRow sentence', () => {
     expect(refused.textContent).toContain('a refusé votre demande');
     expect(refused.textContent).not.toContain('a commenté');
   });
+
+  // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.
+  it('says a person asks to follow you, and that a person accepted your request', () => {
+    const follow = (type: string) => ({ ...postRow(type), postId: 'member-1', text: '' });
+    const asked = renderRow(follow('follow_request'));
+    expect(asked.textContent).toContain(m.notif_follow_request_text());
+    expect(asked.textContent).not.toContain('a commenté');
+    expect(asked.querySelector('[aria-label^="Logo de"]')).toBeNull();
+    const accepted = renderRow(follow('follow_accepted'));
+    expect(accepted.textContent).toContain(m.notif_follow_accepted_text());
+    expect(accepted.textContent).not.toContain('a commenté');
+  });
 });
 
 /**

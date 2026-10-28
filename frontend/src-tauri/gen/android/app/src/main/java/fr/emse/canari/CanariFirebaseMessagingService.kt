@@ -4772,6 +4772,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_started_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_live_started_body) }
             )
+            // A follow request and its acceptance (WP-F2): the person names the title, the body is
+            // a fixed sentence - the server sends no fragment for these keys.
+            "social_follow_request" -> Pair(
+                res.getString(R.string.notif_social_follow_request_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_follow_request_body) }
+            )
+            "social_follow_accepted" -> Pair(
+                res.getString(R.string.notif_social_follow_accepted_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_follow_accepted_body) }
+            )
             // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences - no
             // actor (which moderator acted is not theirs to read) and no fragment.
             "social_live_cut" -> Pair(

@@ -125,7 +125,6 @@ describe('the post a publisher gets back carries the rights they actually hold',
         {} as PostInteractionsService,
         {} as PostNotificationsService,
         associationsService as unknown as AssociationsService,
-        {} as FollowsService,
         { isUserMuted: jest.fn(() => Promise.resolve(false)) } as unknown as ModerationService
       );
       return { ctrl, calls, associationsService };

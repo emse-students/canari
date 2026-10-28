@@ -3,7 +3,7 @@
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { BellOff, Repeat2 } from '@lucide/svelte';
+  import { BellOff, Repeat2, UserPlus } from '@lucide/svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -15,10 +15,12 @@
   } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
   import {
+    FOLLOW_REQUESTS_ROUTE,
     REPUBLICATION_REQUESTS_ROUTE,
     resolveNotificationHref,
   } from '$lib/posts/notificationTarget';
   import { countMyRepublicationRequests } from '$lib/proposals/api';
+  import { countFollowRequests } from '$lib/follows/api';
   import { getAssociation } from '$lib/associations/api';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -51,11 +53,16 @@
    * notification and the push still lead there.
    */
   let pendingRequests = $state(0);
+  /** How many follow requests wait on this reader (WP-F4), drawn the same way. */
+  let pendingFollowRequests = $state(0);
 
   onMount(() => {
     countMyRepublicationRequests()
       .then((count) => (pendingRequests = count))
       .catch((e: unknown) => Log.d('notifications', `request count failed: ${String(e)}`));
+    countFollowRequests()
+      .then((count) => (pendingFollowRequests = count))
+      .catch((e: unknown) => Log.d('notifications', `follow request count failed: ${String(e)}`));
   });
 
   onMount(() => {
@@ -141,6 +148,16 @@
       {/each}
     </div>
   </PageHeader>
+
+  {#if pendingFollowRequests > 0}
+    <a
+      href={resolve(FOLLOW_REQUESTS_ROUTE)}
+      class="border-cn-border bg-cn-surface text-text-main mb-3 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors hover:border-amber-400"
+    >
+      <UserPlus size={16} strokeWidth={2.5} class="shrink-0 text-amber-600 dark:text-amber-400" />
+      {m.follow_requests_banner({ count: pendingFollowRequests })}
+    </a>
+  {/if}
 
   {#if pendingRequests > 0}
     <a

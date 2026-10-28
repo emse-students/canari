@@ -70,6 +70,10 @@
     <string name="notif_social_coorganise_proposed_body">An event to co-organise</string>
     <string name="notif_social_live_started_title">%1$s is live</string>
     <string name="notif_social_live_started_body">Tap to watch</string>
+    <string name="notif_social_follow_request_title">%1$s asks to follow you</string>
+    <string name="notif_social_follow_request_body">Tap to answer</string>
+    <string name="notif_social_follow_accepted_title">%1$s accepted your request</string>
+    <string name="notif_social_follow_accepted_body">Your request was accepted</string>
     <string name="notif_social_live_cut_title">Your live was stopped</string>
     <string name="notif_social_live_cut_body">Moderators cut your live. This is a warning.</string>
     <string name="notif_social_live_suspended_title">Lives suspended</string>

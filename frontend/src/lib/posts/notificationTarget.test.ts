@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
+  FOLLOW_REQUESTS_ROUTE,
   KNOWN_NOTIFICATION_TYPES,
   isKnownNotificationType,
   notificationHref,
@@ -57,7 +58,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(25);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(27);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -68,6 +69,14 @@ describe('notificationHref', () => {
         liveModeration.includes(type);
       expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
+  });
+
+  it('sends a follow request to the inbox and an acceptance to the person who said yes (WP-F4)', () => {
+    // `postId` is the ASKER for the first and the accepter for the second - never a post.
+    expect(notificationHref({ type: 'follow_request', postId: 'asker-1' })).toBe(
+      FOLLOW_REQUESTS_ROUTE
+    );
+    expect(notificationHref({ type: 'follow_accepted', postId: 'bob-1' })).toBe('/profile/bob-1');
   });
 
   it.each(['live_cut', 'live_suspended', 'live_withdrawn'])(
