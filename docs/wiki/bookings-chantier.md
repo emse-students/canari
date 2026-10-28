@@ -145,6 +145,46 @@ validated as a 400), `columns.test.ts`, `booking-calendar.spec.ts` (no doubled s
 at 390 the button had crushed the hint to one word a line, so the hint now holds a basis and the
 button wraps below it. Not yet seen against a running API.
 
+## WP-R2 as built - the booker's week (D45-D48, 2026-10-27)
+
+Front only: no route, no migration. The page still reads `GET spaces/:id/slots`, now ONE read of
+the week plus the day before it (`weekReadRange`, the same day-before rule as `slotsReadRange`: the
+server keeps a unit by its WINDOW's date, so Monday 00:30 of a Sunday-night window is in no read that
+starts on Monday).
+
+- **One view, chosen by the width** (`SCHEDULE_AGENDA_QUERY`, as the agenda). **`SpacePlanning` and the
+  grid/planning switch are deleted** (D47, Q-R8): so are `gridRows`, `gridOpeningDate`, `planning` and
+  their messages. A unit sits in the column of the day it STARTS on, so the grid needs no "window
+  date" and no "next day" row.
+- **`weekLayout` (pure, `lib/bookings/grid.ts`)** lays ONE column's units out: a unit's top is the
+  WALL minute of its start and its height its elapsed length, so 18:00 is 18:00 every day, daylight
+  saving included, and nothing is ever shifted. The one disagreement between wall and elapsed time
+  is a fall-back night's doubled hour: its two units sit at the same wall time, overlap, and share
+  the width in lanes like two slots of a list (allowed since WP-B2), so every later unit keeps its
+  own wall time. (A first version displaced the second one and carried the shift: the rest of that
+  day sat an hour low, found in review.) The
+  axis is whole hours around what the week offers; an hour is tall enough for the shortest unit to
+  hold a line (4 to 12 rem). A night window crossing midnight is two columns, as its two days.
+- **A day is `open`, `none` (nothing left to take on the device's clock) or `closed` (nothing
+  offered).** On a desktop a closed day FOLDS to a narrow strip (Q-R10); on a phone the strip's dot says
+  `open` / `none` / closed, from the same read as the day under it.
+- **Desktop (`WeekBar`)**: previous / next week, "Aujourd'hui" only when the week shown does not hold
+  today, the week's dates, and the legend, whose words are the grid's own (`bookings_cell_*`).
+  **Phone (`DayStrip`)**: the seven days of the week, the chosen one marked, a week step either side,
+  and ONE day on its own axis below. The chosen weekday is kept when the week moves.
+- **The column selector (`ColumnSelect`, D46) shows only for several columns** (D44): pills up to five,
+  a list beyond, each with how many units one may take in the week read. The drag, the 250 ms finger
+  hold, the step ceiling and the chip are unchanged, now along a DAY (`dragRange` is untouched).
+- **The poster is already a banner on this page** (`SpacePoster`, WP-B5): nothing changed there.
+- **Kept on purpose**: the sentence that nobody is notified (D13) stays until WP-N lands, since it is
+  true until then.
+
+**Proof.** `grid.test.ts` (the week's dates, the read's first day, wall-time placement across both
+2026-10-24..26, the 25 contiguous hours of the fall-back day, a Friday night and a Sunday night, folded and full days, lanes,
+the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every drag case along a day,
+plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
+next paragraph says.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to

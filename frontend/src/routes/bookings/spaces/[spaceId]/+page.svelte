@@ -3,24 +3,16 @@
   import { onMount, untrack } from 'svelte';
   import { page } from '$app/state';
   import { resolve } from '$app/paths';
-  import {
-    CalendarDays,
-    ChevronLeft,
-    ChevronRight,
-    LayoutGrid,
-    Link,
-    List,
-    Pencil,
-    QrCode,
-  } from '@lucide/svelte';
+  import { CalendarDays, Link, Pencil, QrCode } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import SpacePoster from '$lib/components/bookings/SpacePoster.svelte';
   import EmptyState from '$lib/components/shared/EmptyState.svelte';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
-  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
-  import SpacePlanning from '$lib/components/bookings/booker/SpacePlanning.svelte';
+  import ColumnSelect from '$lib/components/bookings/booker/ColumnSelect.svelte';
+  import DayStrip from '$lib/components/bookings/booker/DayStrip.svelte';
+  import WeekBar from '$lib/components/bookings/booker/WeekBar.svelte';
   import BookingSheet from '$lib/components/bookings/booker/BookingSheet.svelte';
   import BlockSheet from '$lib/components/bookings/booker/BlockSheet.svelte';
   import UnitDetailSheet from '$lib/components/bookings/booker/UnitDetailSheet.svelte';
@@ -37,15 +29,17 @@
   import {
     BLOCK_LENGTH_CHOICES,
     bookingUnitLimit,
-    formatDay,
+    formatWeekRange,
+    freeCount,
     freeRunFrom,
-    gridOpeningDate,
-    gridRows,
-    planning,
-    slotsReadRange,
+    unitDay,
     unitsInOrder,
+    weekDates,
+    weekLayout,
+    weekReadRange,
     windowRefusal,
     zoneDiffersFromDevice,
+    WEEK_DAYS,
   } from '$lib/bookings/grid';
   import { addDays, localDate } from '$lib/bookings/zonedTime';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
@@ -64,21 +58,16 @@
   import { Log } from '$lib/utils/Log';
 
   /**
-   * THE BOOKER'S PAGE OF ONE SPACE (WP-B5): the grid of a date or the planning of the next free
-   * units (D14, the default following the screen width as the agenda's), the sheets that book,
-   * block and read a taken unit, and the space's link and QR code (D16). The server holds every
-   * rule: this page reads what it is sent, draws the booking window on the device's clock - redrawn
-   * every minute and at the opening instant - and lets every tap reach the server's answer.
+   * THE BOOKER'S PAGE OF ONE SPACE (WP-B5, WP-R2): the WEEK of one column, days as columns on a
+   * desktop and one day under a week strip on a phone (D46, D48; the width decides, as the agenda's
+   * does, and there is no other view since D47), the sheets that book, block and read a taken unit,
+   * and the space's link and QR code (D16). One read holds the week and the day before it, so the
+   * strip's dots, the day and the column selector's counts come from the same answer. The server
+   * holds every rule: this page reads what it is sent, draws the booking window on the device's
+   * clock - redrawn every minute and at the opening instant - and lets every tap reach the server's
+   * answer.
    */
 
-  /** Days one grid read covers: a week, so moving day to day rarely asks again. */
-  const GRID_DAYS = 7;
-  /** Days the planning reads ahead. */
-  const PLANNING_DAYS = 14;
-  /** Next free units the planning shows per resource. */
-  const PLANNING_PER_RESOURCE = 6;
-
-  type View = 'grid' | 'planning';
   type Sheet =
     | {
         kind: 'book';
@@ -102,37 +91,44 @@
   let loadError = $state('');
   let slotsError = $state('');
   let nowMs = $state(Date.now());
-  let view = $state<View>(isScheduleAgendaViewport() ? 'planning' : 'grid');
-  /** Set once the reader picks a view: the width no longer decides for them. */
-  let viewChosen = false;
+  /** A phone draws one day under the strip; wider screens draw the week. */
+  let narrow = $state(isScheduleAgendaViewport());
+  /** The day shown (a phone), and with it the week shown. */
   let date = $state('');
+  /** The column one books: a space with several columns shows one at a time (D44, D46). */
+  let resourceId = $state('');
   let sheet = $state<Sheet | null>(null);
   let qrOpen = $state(false);
 
   const today = $derived(space ? localDate(nowMs, space.timeZone) : '');
-  /** Where "today" leads on the grid: a night window still running after midnight, else today. */
-  const homeDate = $derived(today ? gridOpeningDate(slots, today, nowMs) : '');
-  const rows = $derived(
-    space
-      ? gridRows(
-          space.resources.map((r) => r.id),
-          slots,
-          date,
-          space.timeZone
-        )
-      : []
+  const resource = $derived(
+    space ? (space.resources.find((r) => r.id === resourceId) ?? space.resources[0]) : null
   );
-  const planned = $derived(
-    space
-      ? planning(
-          space,
-          space.resources.map((r) => r.id),
-          slots,
-          nowMs,
-          PLANNING_PER_RESOURCE
-        )
-      : []
+  const weekAll = $derived(date ? weekDates(date) : []);
+  const columnUnits = $derived(resource ? unitsInOrder(slots, resource.id) : []);
+  /** The week of the chosen column: the strip's dots, and the desktop grid. */
+  const week = $derived(space ? weekLayout(columnUnits, weekAll, space, nowMs) : null);
+  /** What the grid draws: the week, or on a phone the chosen day alone on its own axis. */
+  const layout = $derived(
+    space ? (narrow ? weekLayout(columnUnits, [date], space, nowMs) : week) : null
   );
+  const freeCounts = $derived(
+    new Map(
+      space
+        ? space.resources.map((r) => [
+            r.id,
+            freeCount(
+              unitsInOrder(slots, r.id).filter((u) =>
+                weekAll.includes(unitDay(u, space!.timeZone))
+              ),
+              space!,
+              nowMs
+            ),
+          ])
+        : []
+    )
+  );
+  const weekLabel = $derived(weekAll.length ? formatWeekRange(weekAll) : '');
   const notOpenYet = $derived(
     space?.opensAt && Date.parse(space.opensAt) > nowMs ? space.opensAt : null
   );
@@ -144,8 +140,8 @@
   });
 
   onMount(() =>
-    onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => {
-      if (!viewChosen) view = narrow ? 'planning' : 'grid';
+    onViewportChange(SCHEDULE_AGENDA_QUERY, (isNarrow) => {
+      narrow = isNarrow;
     })
   );
 
@@ -177,10 +173,8 @@
       space = loadedSpace;
       nowMs = Date.now();
       date = localDate(nowMs, loadedSpace.timeZone);
+      resourceId = loadedSpace.resources[0]?.id ?? '';
       await Promise.all([readMine(), ensureSlots(true)]);
-      if (id !== spaceId) return;
-      // Every read starts the day before, so a night window still running is in hand.
-      date = gridOpeningDate(slots, date, nowMs);
     } catch (e) {
       if (id !== spaceId) return;
       Log.i('BOOKINGS', `space read failed space=${id}: ${String(e)}`);
@@ -206,40 +200,40 @@
     }
   }
 
-  /** The dates the current view shows, read when they are not already (or `force`d after a write). */
+  /** The last read asked for: an older answer arriving after it is for a week no longer shown. */
+  let slotsRead = 0;
+
+  /** The week shown, read when it is not already (or `force`d after a write). */
   async function ensureSlots(force = false) {
     if (!space) return;
-    const { from, to } =
-      view === 'planning' ? slotsReadRange(today, PLANNING_DAYS) : slotsReadRange(date, GRID_DAYS);
-    const span = view === 'planning' ? to : date;
-    if (!force && loaded && loaded.from <= from && span <= loaded.to) return;
+    // Bumped on EVERY call, the cache hit included: a slow read for a week left behind must not
+    // land once the view came back to a week already held.
+    const mine = ++slotsRead;
+    const { from, to } = weekReadRange(date);
+    if (!force && loaded && loaded.from <= from && to <= loaded.to) return;
     slotsError = '';
     try {
-      slots = await getSlots(space.id, from, to);
+      const read = await getSlots(space.id, from, to);
+      if (mine !== slotsRead) return;
+      slots = read;
       loaded = { from, to };
       nowMs = Date.now();
     } catch (e) {
+      if (mine !== slotsRead) return;
       Log.i('BOOKINGS', `slots read failed ${from}..${to}: ${String(e)}`);
       slotsError = describeBookingRefusal(e, m.common_load_error());
     }
   }
 
-  function chooseView(next: View) {
-    viewChosen = true;
-    view = next;
+  /** A whole week at a time: the same weekday on a phone, so the strip keeps its place. */
+  function moveWeek(weeks: number) {
+    date = addDays(date, weeks * WEEK_DAYS);
     void ensureSlots();
   }
 
-  function moveDate(days: number) {
-    date = addDays(date, days);
+  function chooseDate(next: string) {
+    date = next;
     void ensureSlots();
-  }
-
-  /** Back to today - or to the night window still running, which belongs to yesterday's grid. */
-  async function goToday() {
-    date = today;
-    await ensureSlots();
-    date = gridOpeningDate(slots, today, nowMs);
   }
 
   /**
@@ -345,15 +339,14 @@
     />
   {:else}
     <div class="space-y-4">
-      <SegmentedControl
-        items={[
-          { key: 'grid', label: m.bookings_view_grid(), icon: LayoutGrid },
-          { key: 'planning', label: m.bookings_view_planning(), icon: List },
-        ]}
-        value={view}
-        onSelect={chooseView}
-        label={m.bookings_view_label()}
-      />
+      {#if space.resources.length > 1 && resource}
+        <ColumnSelect
+          resources={space.resources}
+          value={resource.id}
+          counts={freeCounts}
+          onSelect={(id) => (resourceId = id)}
+        />
+      {/if}
 
       {#if notOpenYet}
         <p class="border-cn-border bg-cn-bg text-text-main rounded-xl border px-4 py-3 text-sm">
@@ -373,52 +366,40 @@
         >
           {slotsError}
         </p>
-      {:else if view === 'grid'}
-        <div class="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-            aria-label={m.bookings_day_previous()}
-            onclick={() => moveDate(-1)}
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <div class="flex min-w-0 flex-col items-center">
-            <p class="text-text-main truncate text-sm font-bold first-letter:uppercase">
-              {formatDay(date, true)}
-            </p>
-            {#if date !== homeDate}
-              <button
-                type="button"
-                class="text-xs font-semibold text-amber-700 hover:underline dark:text-amber-400"
-                onclick={() => void goToday()}
-              >
-                {m.bookings_day_today()}
-              </button>
-            {/if}
-          </div>
-          <button
-            type="button"
-            class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-            aria-label={m.bookings_day_next()}
-            onclick={() => moveDate(1)}
-          >
-            <ChevronRight size={20} />
-          </button>
-        </div>
-        {#if rows.length === 0}
-          <p class="text-text-muted py-8 text-center text-sm">{m.bookings_day_empty()}</p>
+      {:else if resource && week && layout}
+        {#if narrow}
+          <DayStrip
+            days={week.days}
+            {date}
+            {today}
+            label={weekLabel}
+            onSelect={chooseDate}
+            onPrevious={() => moveWeek(-1)}
+            onNext={() => moveWeek(1)}
+          />
         {:else}
-          <SpaceGrid {space} resources={space.resources} {rows} {nowMs} onPick={pick} />
+          <WeekBar
+            label={weekLabel}
+            away={!weekAll.includes(today)}
+            onPrevious={() => moveWeek(-1)}
+            onNext={() => moveWeek(1)}
+            onToday={() => chooseDate(today)}
+          />
         {/if}
-      {:else}
-        <SpacePlanning
-          {space}
-          resources={space.resources}
-          entries={planned}
-          days={PLANNING_DAYS}
-          onPick={pick}
-        />
+        {#if layout.endMin === layout.startMin}
+          <p class="text-text-muted py-8 text-center text-sm">
+            {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+          </p>
+        {:else}
+          <SpaceGrid
+            {space}
+            {resource}
+            {layout}
+            mode={narrow ? 'day' : 'week'}
+            {nowMs}
+            onPick={pick}
+          />
+        {/if}
       {/if}
 
       <p class="text-text-muted text-xs">{m.bookings_space_no_notification_note()}</p>
