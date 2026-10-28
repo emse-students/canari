@@ -1,6 +1,6 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { channelScope } from '$lib/mls-client/distributionScope';
-import { commitRemovalNow, commitSalonRevoke } from './commitRemoval';
+import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
+import { commitCommunityKick, commitRemovalNow, commitSalonRevoke } from './commitRemoval';
 
 /**
  * THE ACTOR OF A REMOVAL COMMITS IT (channel-encryption section 10). A revoke used to be committed
@@ -19,6 +19,7 @@ const runtime = vi.hoisted(() => ({
   ready: true,
   held: true,
   scope: null as unknown,
+  scopes: [] as unknown[],
 }));
 vi.mock('./runtime', () => ({
   isGraineReady: () => runtime.ready,
@@ -28,6 +29,7 @@ vi.mock('./runtime', () => ({
     mlsService: {
       distributionGroupFor: () => (runtime.held ? 'kg-salon' : null),
       getLocalGroups: () => (runtime.held ? ['kg-salon'] : []),
+      distributionScopes: () => runtime.scopes,
     },
   }),
 }));
@@ -48,6 +50,7 @@ beforeEach(() => {
   runtime.ready = true;
   runtime.held = true;
   runtime.scope = salon;
+  runtime.scopes = [];
 });
 
 describe('commitRemovalNow', () => {
@@ -108,6 +111,37 @@ describe('commitSalonRevoke', () => {
     await expect(commitSalonRevoke(channels, 'chan-9', 'bob', log)).resolves.toEqual({
       kind: 'unknown-scope',
     });
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('commitCommunityKick', () => {
+  it("commits in the community's group, then in each private salon of THAT community held here", async () => {
+    runtime.scopes = [
+      workspaceScope('ws-1'),
+      salon,
+      channelScope('ws-1', 'chan-2'),
+      channelScope('ws-other', 'chan-3'),
+    ];
+
+    const outcomes = await commitCommunityKick(channels, 'ws-1', 'bob', log);
+
+    // The kick strips every salon's access in the same server call, so each group owes a Remove.
+    expect(reconcile.mock.calls.map((c) => c[1])).toEqual([
+      workspaceScope('ws-1'),
+      salon,
+      channelScope('ws-1', 'chan-2'),
+    ]);
+    expect(outcomes).toHaveLength(3);
+  });
+
+  it('asks no salon when the community pass was refused for a reason every salon shares', async () => {
+    leadership.value = 'follower';
+    runtime.scopes = [salon];
+
+    await expect(commitCommunityKick(channels, 'ws-1', 'bob', log)).resolves.toEqual([
+      { kind: 'not-leader' },
+    ]);
     expect(reconcile).not.toHaveBeenCalled();
   });
 });

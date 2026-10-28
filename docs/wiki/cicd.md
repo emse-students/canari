@@ -2059,6 +2059,7 @@ are builder stages and the local compose file, which reach no estate.
   half is reported, so the half that moved would never retire. **The retirement now also reads each
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
   parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
+- **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
 
 **2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
 
@@ -2193,11 +2194,9 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### Two frontend advisories wait on the kit 3 chantier (2026-10-24)
+### One frontend advisory is ignored, and it is not about kit (2026-10-28)
 
-`GHSA-pfhg-q3qv-9q6r` and `GHSA-27mw-82g8-phjj` are LOW SvelteKit advisories (an open redirect through enhanced form submission, an XSS through an untrusted `cache-control` header on a prerendered page), fixed only in `@sveltejs/kit` 3.x. The user put the majors (kit 3, adapter-node 6, webrtc 0.21) after the stable as their own chantiers, so the frontend tree ignores both until Dependabot's #2154 lands, and that pull request deletes them. Unlike media-service's, these rest on a decision, not on reachability. **The retirement check is now its own step, `Every ignored advisory is still reported`, run for every tree whose `matrix.audit` carries an `--ignore`**: it re-audits the tree at its own level without them and fails on an id nothing reports any more, so the day kit 3 merges the two ignores go red rather than stay.
-
-A third frontend ignore, `GHSA-gcqx-w48m-w2h4` (2026-10-28), is the other kind: LOW, `deepmerge` <= 4.3.1, no fixed version, reachable only through build tooling (`@sveltejs/vite-plugin-svelte`, `@rollup/plugin-node-resolve`), merging the project's own configuration. That no copy reaches the shipped bundle was not verified; the same retirement step removes it when the audit stops naming it.
+(The two SvelteKit GHSAs it once carried left with the kit 3 upgrade.) `GHSA-gcqx-w48m-w2h4` (2026-10-28), is the other kind: LOW, `deepmerge` <= 4.3.1, no fixed version, reachable only through build tooling (`@sveltejs/vite-plugin-svelte`, `@rollup/plugin-node-resolve`), merging the project's own configuration. That no copy reaches the shipped bundle was not verified; the same retirement step removes it when the audit stops naming it.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 

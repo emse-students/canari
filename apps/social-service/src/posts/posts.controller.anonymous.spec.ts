@@ -5,7 +5,6 @@ import type { PostsService } from './posts.service';
 import type { PostInteractionsService } from './post-interactions.service';
 import type { PostNotificationsService } from './post-notifications.service';
 import type { AssociationsService } from '../associations/associations.service';
-import type { FollowsService } from '../follows/follows.service';
 import type { ModerationService } from '../moderation/moderation.service';
 
 /**
@@ -40,7 +39,6 @@ describe('PostsController.createPost - anonymous/associationId precedence', () =
       {} as PostInteractionsService,
       {} as PostNotificationsService,
       associationsService as unknown as AssociationsService,
-      {} as FollowsService,
       moderationService as unknown as ModerationService
     );
     return { ctrl, created };
