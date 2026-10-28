@@ -45,7 +45,7 @@
 
 <li class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border px-3 py-2.5">
   <a
-    href={resolve(`/profile/${encodeURIComponent(userId)}`)}
+    href={resolve('/profile/[id]', { id: encodeURIComponent(userId) })}
     class="flex min-w-0 flex-1 items-center gap-3"
     data-follow-person={userId}
   >
