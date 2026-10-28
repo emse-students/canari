@@ -2167,8 +2167,8 @@ publishing a reel from a gallery video works, its sheet draws the grid, "Copier 
 "Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
 read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
 was deleted from that page's menu - the viewer itself has no author menu.
-**Still owed on the Mi 9T:** S6 from a reel once the defect below is fixed (the in-app send, then
-the viewer closing on it, #2609), and the undrained half of kill-and-relaunch.
+**Still owed on the Mi 9T:** the undrained half of kill-and-relaunch (S6 from a reel and #2609's
+dismissal read `PASS` once the defect below was fixed).
 **Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
 system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
 `<name> (1).mp3`, no longer `<name>.mp3 (1)`.
@@ -2193,7 +2193,12 @@ The post menu and the `/posts/<id>` page pass a constant id and a boolean `open`
 same sheet works there. Fix where the id is read: the row captures `postId` before it closes, and a
 viewer test drives a row of the REAL sheet rather than `PostShareSheetStub`, whose one button
 closes and never reads the id afterwards. #2609's "the viewer closes after an in-app send" is unread until then.
-**Fix in review: #2644** (the id read before the close, and a sheet test mounted as the viewer mounts it).
+**Fix MERGED (#2644), read `PASS` on the Mi 9T, rig build `203e46606` on dev (2026-10-28), synthetic reel:**
+a tap on a conversation of the viewer's sheet closes the viewer and opens that DM with the reel's link
+waiting in its composer, NOT sent (#2609's dismissal; `[sharePost] sending the link of <id>`, then
+`[SHARE] landing on <conversation>`). "Partager via..." opens the system chooser on the link, and
+"Copier le lien" logs `copying the public link of <id>`. No error in the window. The draft was cleared
+and the reel deleted.
 
 ## P3 - New-device alerts queue one at a time, never forget a device that has left, and push the full-screen camera down (Mi 9T, 2026-10-28)
 
