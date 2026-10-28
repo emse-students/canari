@@ -83,6 +83,7 @@
     commitReleasedDepartureIfElected,
     forgetDeferredRemovals,
   } from '$lib/utils/graine/departureCommitter';
+  import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type {
@@ -729,6 +730,8 @@
     forgetPostComposerMedia();
     // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
     salonGrants.clear();
+    // ...and the revocation answers it was given, which the next account must ask for itself.
+    forgetRevokedLeafAnswers();
     // ...and the removals this device deferred to an actor, which a release is matched against.
     forgetDeferredRemovals();
     _loginInProgress = false;

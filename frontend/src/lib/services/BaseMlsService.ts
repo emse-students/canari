@@ -4115,6 +4115,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.fetchGroupRosters(groupIds);
   }
 
+  async getRevokedLeaves(groupId: string, identities: string[]): Promise<string[]> {
+    return this.delivery.fetchRevokedLeaves(groupId, identities);
+  }
+
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     return this.delivery.getUserGroups(userId);
   }
