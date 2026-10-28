@@ -959,6 +959,18 @@ Two causes, both in `CameraScreen`'s hold-off contract. (1) Dropping the take to
 
 Fix: `ReelCapture` holds the camera off while the screen is LEAVING (`paused` includes it; only a navigation that ends with the screen still mounted clears it, `afterNavigate`), and while the gallery picker is open (`CameraScreen.deferOpen`: a STOPPED camera stays stopped until the picker answers - a pick, a refused pick, or the input's `cancel` - while a LIVE camera is never closed by it, so a desktop picker keeps its preview). Every decline is a `[camera]` / `[reel-capture]` debug line naming what declined it. `CameraSession` is unchanged. Pinned by `ReelCapture.svelte.test.ts` (opens counted through the injected opener) and `CameraScreen.svelte.test.ts` (the `deferOpen` contract). The live broadcaster (`LiveBroadcaster`) shares `CameraSession` but not `CameraScreen`: it has no review, no gallery and no drop back to a preview, and resumes only in `preview`/`starting`.
 
+### Its three loose ends, closed (follow-up to #2647)
+
+**A picker that never answers has a way back, and it is a gesture.** `deferOpen` is lifted by the picker's answer, and two kinds of picker never give one: an engine with no `cancel` event on a file input (Chromium < 113, so Android System WebView < 113; Safari and WKWebView < 16.4, so iOS < 16.4) and a native dismissal its plugin never settles. The deferral then stayed set and the stand-in said "Ouverture de la camera" for ever, with no controls (they render only while `live`). Now, while the camera is `stopped`, the open deferred, nothing pauses it and the page is on screen, `CameraScreen` replaces the stand-in's "opening" with a real button, "Rouvrir la camera" (`data-camera-reopen`, `onreopen`): the member's tap makes the owner lift the deferral (`endPicking`) and the camera opens. Not a timer: no clock can tell a slow picker from a dead one, and only the member knows they are back. A pick that still lands after the tap goes to its review as before.
+
+**`leaving` is cleared only by a fact proving the screen is still the current one**, and each of the three is pinned by a test that fails when its body is deleted:
+
+- a navigation that ENDED with the screen mounted - `afterNavigate` (the test captures the registered callback and plays it after a drain);
+- a navigation that drained the take and then did NOT happen - `beforeNavigate`'s `navigation.complete` is refused when a `beforeNavigate` cancels it (`guardUnsavedChanges` does) or a newer navigation aborts it. The refusal carries no type, and the error message is not read; the discriminator is `$app/state`'s `navigating.to`: null means no navigation is under way, so this screen is the one shown and the camera may open; non-null is the newer navigation, which ends in `afterNavigate` or in the teardown;
+- the page restored from the back-forward cache - `pageshow` with `persisted` (a navigation out of the app drains with `type: 'leave'`, and the JS heap comes back with `leaving` still set).
+
+One case the refusal cannot separate: a `leave` navigation (the tab closing) cancelled by a guard rejects `complete` AT ONCE, before the browser's unload dialog is answered, so `leaving` is cleared even if the member then confirms and the page unloads. The camera open that follows is asked of a page being torn down; nothing in the page can tell the two answers apart, since the dialog's answer is never reported to it. It needs a guard active on the reel screen AND a tab close, so it is left as stated.
+
 
 ## Audit of 2026-10-11 - are CanaReels functional and optimised? (code read at `origin/main` `1a9b4b91d`, Mi 9T measured)
 
