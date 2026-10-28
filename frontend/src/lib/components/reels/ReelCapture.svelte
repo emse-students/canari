@@ -22,7 +22,8 @@
    * hold, no 90 s cap to read.
    */
   import { onDestroy, onMount } from 'svelte';
-  import { afterNavigate } from '$app/navigation';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
+  import { navigating } from '$app/state';
   import { Images, RefreshCcw } from '@lucide/svelte';
   import CameraScreen from './CameraScreen.svelte';
   import ReelShutter from './ReelShutter.svelte';
@@ -135,7 +136,10 @@
    * THE SCREEN IS BEING LEFT (a navigation drained the take's entry, or the take went to a composer
    * that closes the camera). The take is dropped back to `ready`, and `ready` would open the camera:
    * after a publish it did, for 0.3-0.7 s on the destination page (Mi 9T, 2026-10-28). So the camera
-   * is held off from here; only a navigation that leaves this screen MOUNTED clears it.
+   * is held off from here, and cleared only by a fact proving the screen is still the current one:
+   * a navigation that ended with it MOUNTED (`afterNavigate`), a navigation that did not happen
+   * (its `complete` refused with none other under way), or the page restored from the back-forward
+   * cache (`pageshow` with `persisted`). Never by a clock.
    */
   let leaving = $state(false);
   /**
@@ -205,6 +209,32 @@
     leaving = false;
   });
 
+  // A navigation that drained the take may still not happen: a `beforeNavigate` cancels it (an
+  // unsaved-changes guard), or a newer one aborts it. Its `complete` is refused either way; only when
+  // NO navigation is under way is this screen still the one shown. An abort leaves the newer one in
+  // `navigating`, and that one ends in `afterNavigate` or in the teardown.
+  beforeNavigate(({ complete }) => {
+    complete.catch(() => {
+      if (destroyed || !leaving) return;
+      if (navigating.to) {
+        console.debug('[reel-capture] a navigation was refused, another is under way: it decides');
+        return;
+      }
+      console.debug('[reel-capture] a navigation did not happen: the camera may open again');
+      leaving = false;
+    });
+  });
+
+  /**
+   * The page came back from the back-forward cache with this screen on it: whatever was leaving it
+   * (a navigation out of the app) is over, and the screen is the current one.
+   */
+  function onPageShow(event: PageTransitionEvent) {
+    if (!event.persisted || !leaving) return;
+    console.debug('[reel-capture] restored from the back-forward cache: the camera may open again');
+    leaving = false;
+  }
+
   /** From here the camera stays closed: the take is dropped because the screen is going. */
   function markLeaving(why: string) {
     console.debug(`[reel-capture] leaving (${why}) in ${capture.kind}: the camera stays closed`);
@@ -214,6 +244,8 @@
   onMount(() => {
     console.debug(`[reel-capture] opened for ${destination}`);
     if (needsLimits) void loadLimits();
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
   });
 
   /** A short buzz where the member's finger meets a decision, when they have vibrations on. */
@@ -639,6 +671,7 @@
     flipAllowed={lensFlipAllowed(capture)}
     paused={capture.kind === 'review' || leaving}
     deferOpen={picking}
+    onreopen={() => endPicking('none, the member reopened the camera')}
     {onBeforeRelease}
     {onclose}
     microphoneAsked={rules.microphone === 'with-lens'}
