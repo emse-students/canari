@@ -147,7 +147,12 @@ ok("the phone's feed edge exclusion is forgiven on the broadcaster, NOT on a vie
 const SUMMARY = (dropped) => `log: [19:25:01.790] [LIVE-PIPE] summary: 15 segments, 0.7 MB, seal 2.3 ms avg, two-fragment chunks 5, not on keyframe 0, dropped ${dropped}, generations open 1`;
 ok("the pipeline's clean summary is forgiven on the broadcaster; one that dropped a segment is not", forgiven('LIVE-STALL-1', 'A1', SUMMARY(0)) && !forgiven('LIVE-STALL-1', 'A1', SUMMARY(1)));
 ok('the feed is forgiven on the broadcaster too (it composes from there)', forgiven('LIVE-WEB-2', 'A1', 'debug: [19:13:45.540] [LIVE] feed card: 0 open live(s)'));
+const EDGE_LINE = 'debug: [GESTURE] left-edge exclusion cleared';
 // The phone's in-app navigation to the composer (LIVE-WEB-2 on A1 582975676, 2026-10-28), verbatim.
+// Both sentences are pinned against the app source, so a reworded log breaks here, not in a run.
+const APP = (p) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../frontend/src/lib/utils', p), 'utf8');
+ok('avatarPresence.ts still writes "<missing> of <asked> have no photo - not requested"', APP('avatarPresence.ts').includes("'AvatarPresence',\n      `${chunk.length - present.size} of ${chunk.length} have no photo - not requested`"));
+ok('nameMirror.ts still writes "mirrored N name(s), N removal(s), N held"', APP('users/nameMirror.ts').includes("'NameMirror',\n      `mirrored ${batch.size - removed.length} name(s), ${removed.length} removal(s), ${held} held`"));
 const AVATARS = 'debug: [14:58:19.625] [2026-10-28T13:58:19.625Z] [AvatarPresence] 1 of 1 have no photo - not requested';
 const NAMES = 'debug: [14:58:19.650] [2026-10-28T13:58:19.650Z] [NameMirror] mirrored 1 name(s), 0 removal(s), 5 held';
 ok("the phone broadcaster's avatar and name-mirror decisions are forgiven", forgiven('LIVE-WEB-2', 'A1', AVATARS) && forgiven('LIVE-STALL-1', 'A1', NAMES));
@@ -156,8 +161,19 @@ ok('... NOT outside a LIVE row', !forgiven('CALL-WEB-1', 'A1', AVATARS));
 ok('an avatar question left unanswered stays dirt', ['HTTP 404 for 3 id(s) - each avatar is asked', 'the gallery could not say for 3 id(s) - each avatar is asked', 'could not ask for 3 id(s): TypeError: Load failed - each avatar is asked'].every((s) => !forgiven('LIVE-WEB-2', 'A1', `debug: [AvatarPresence] ${s}`)));
 ok('a name-mirror REMOVAL stays dirt (nothing in a live row deletes an account)', !forgiven('LIVE-WEB-2', 'A1', NAMES.replace('0 removal(s)', '1 removal(s)')));
 ok('a dropped batch and a failed store stay dirt', !forgiven('LIVE-WEB-2', 'A1', 'debug: [NameMirror] account changed since 2 change(s) were learned - dropped') && !forgiven('LIVE-WEB-2', 'A1', 'warn: [NAME_MIRROR] store failed, 2 change(s) kept: Error: denied'));
-ok('the same decisions at warn stay dirt', !forgiven('LIVE-WEB-2', 'A1', AVATARS.replace('debug:', 'warn:')));
-ok('a phone that REBOOTS mid-row stays dirt: the boot narration is not forgiven', !forgiven('LIVE-WEB-2', 'A1', 'debug: [RESTORE] 12 conversation row(s) seeded - history follows'));
+ok('the same decisions at warn stay dirt', !forgiven('LIVE-WEB-2', 'A1', AVATARS.replace('debug:', 'warn:')) && !forgiven('LIVE-WEB-2', 'A1', NAMES.replace('debug:', 'warn:')));
+// THE SEAT SCOPE: both live rows broadcast from A1, so only a table with a WEB broadcaster can show
+// that the phone list is joined for an app seat alone (a mutation dropping `isAppSeat`, or widening it
+// to every seat letter, must fail here).
+const WEB_BY = { 'LIVE-FAKE': { by: 'W2', viewers: ['W4'] } };
+const webForgiven = (line) => ignoringExpectedLog(rep([line]), liveNarration('LIVE-FAKE', 'W2', WEB_BY)).unexplained.length === 0;
+ok('a WEB broadcaster is not given the phone list', !webForgiven(AVATARS) && !webForgiven(NAMES));
+ok('... while it keeps the broadcaster narration (the fake table is read)', webForgiven(EDGE_LINE));
+ok('an iOS app broadcaster is given it', ignoringExpectedLog(rep([NAMES]), liveNarration('LIVE-FAKE', 'I1', { 'LIVE-FAKE': { by: 'I1', viewers: [] } })).unexplained.length === 0);
+// THE TRAILING ANCHOR: a longer line that starts the same way is another sentence.
+ok('a longer avatar line stays dirt', !forgiven('LIVE-WEB-2', 'A1', `${AVATARS}, then the request failed`));
+ok('a longer name-mirror line stays dirt', !forgiven('LIVE-WEB-2', 'A1', `${NAMES}, store failed`));
+ok('a phone that REBOOTS mid-row stays dirt: the boot narration is not forgiven',!forgiven('LIVE-WEB-2', 'A1', 'debug: [RESTORE] 12 conversation row(s) seeded - history follows'));
 ok('a viewer stall at warn stays dirt',!forgiven('LIVE-STALL-1', 'W2', `warn: ${STALL}`));
 ok('an append failure stays dirt', !forgiven('LIVE-STALL-1', 'W2', `error: [LIVE] viewer ${S}: append failed (1 in a row)`));
 

@@ -227,7 +227,7 @@ const BROADCASTER = [
  * TAP, not a page load, so these are decisions of an in-app navigation, not of a boot: the boot
  * narration (`PAGE_BOOT_NARRATION`) is NOT forgiven here, and a phone that reloads mid-row stays dirt.
  *
- * - `[AvatarPresence] N of M have no photo - not requested`: the feed asked the server which authors
+ * - `[AvatarPresence] <missing> of <asked> have no photo - not requested`: the feed asked the server which authors
  *   have a photo and DECIDED not to fetch the rest (#1840). Only that answered shape is forgiven; every
  *   fallback (`HTTP <status>`, `could not say`, `could not ask` - each ends "each avatar is asked") is
  *   the question going unanswered, and stays dirt.
@@ -275,9 +275,11 @@ const VIEWER = [
  *
  * @param {string} row a `LIVE_ROWS` id
  * @param {string} seat
+ * @param {Record<string, {by: string, viewers: string[]}>} [rows] the table; the self-test passes one
+ *   with a WEB broadcaster, a shape no live row has yet, to prove the app-seat scope holds
  */
-export function liveNarration(row, seat) {
-  const spec = LIVE_ROWS[row];
+export function liveNarration(row, seat, rows = LIVE_ROWS) {
+  const spec = rows[row];
   if (!spec) return [];
   if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : BROADCASTER;
   if (spec.viewers.includes(seat)) return VIEWER;
