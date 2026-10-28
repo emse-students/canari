@@ -45,7 +45,13 @@ export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 export const MAX_REMEMBERED_UNINVITED_ENTRIES = 5000;
 
 /** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
-const UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning', 'direct-peer'];
+const UNINVITED_ENTRY_KINDS: readonly string[] = [
+  'new-person',
+  'returning',
+  'direct-peer',
+  // A never-seen device of a member that entered a conversation by its own commit (2026-10-27).
+  'unvouched-device',
+];
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()

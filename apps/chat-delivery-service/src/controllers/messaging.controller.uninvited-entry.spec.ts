@@ -80,11 +80,13 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     await report('dave:dev4', 10, 'direct-peer');
     await report('carol:dev3', 11);
     await report('erin:dev5', 12, 'kind=new-person forged');
+    await report('bob:dev6', 13, 'unvouched-device');
 
     expect(warn.mock.calls[0][0]).toContain('kind=returning');
     expect(warn.mock.calls[1][0]).toContain('kind=direct-peer');
     expect(warn.mock.calls[2][0]).toContain('kind=unstated');
     expect(warn.mock.calls[3][0]).toMatch(/^\[UNINVITED_ENTRY\] kind=invalid /);
+    expect(warn.mock.calls[4][0]).toContain('kind=unvouched-device');
   });
 
   it('refuses a reporter who is not a member of the group, and counts nothing', async () => {

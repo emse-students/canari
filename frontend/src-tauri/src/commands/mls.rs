@@ -1177,6 +1177,23 @@ pub(crate) fn exporter_group_info(
         .map_err(|e| e.to_string())
 }
 
+/// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+/// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+#[tauri::command]
+pub(crate) async fn mls_external_join_is_a_further_device(
+    group_info_bytes: Vec<u8>,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .external_join_is_a_further_device(&group_info_bytes)
+        .map_err(|e| e.to_string())
+}
+
 /// Joins a group via an external commit built from a served GroupInfo. The returned group is at
 /// epoch N+1 with the commit *staged*: the caller submits the commit for epoch validation
 /// server-side (against the GroupInfo's base epoch), then `confirmer_commit` if accepted, or
@@ -1601,6 +1618,21 @@ pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<S
         log::error!("[GRAINE_SIG] signature batch task failed: {e}");
         e.to_string()
     })?
+}
+
+/// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
+///
+/// ASYNC so the UI's call never waits on the manager mutex on the main thread.
+#[tauri::command]
+pub(crate) async fn mls_own_signature_key(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.own_signature_key())
 }
 
 /// Signs a v2 session ENDORSEMENT with this device's MLS credential key.

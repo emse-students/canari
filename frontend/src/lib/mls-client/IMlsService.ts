@@ -129,6 +129,12 @@ export type ExternalJoinOutcome =
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
   /**
+   * NOT ATTEMPTED (`asAFurtherDevice: 'ask'`): the served tree holds a leaf of this device's user
+   * and none of its own, so the commit would bring in a FURTHER DEVICE OF A MEMBER - an entry every
+   * member says as one nobody made. Its door is a member's Add; the caller asks for it.
+   */
+  | { joined: false; reason: 'further_device' }
+  /**
    * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
    * Nothing is claimed about membership; nothing else this account commits is accepted for
    * `retryAfterMs`, so a sweep stops there rather than ask group after group.
@@ -810,7 +816,17 @@ export interface IMlsService {
    * and once at registration for what the state already holds - or removes it with `null`. The
    * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
    */
-  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void;
+  /**
+   * Hands every device event already merged to the consumer and resolves once it has decided them,
+   * after any hand-over still running. A history answer awaits it before reading who is withheld
+   * (`historyWithheld.ts`): the drain's own hand-over is not awaited by anything, so an answer
+   * scheduled in the same drain as an entry would otherwise read the record before it exists.
+   *
+   * @returns whether the events were decided: `false` when no consumer is registered, the take
+   * failed, or the consumer failed or could not decide them - and an answer then refuses.
+   */
+  settleDeviceEvents(why: string): Promise<boolean>;
   /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
@@ -1087,7 +1103,18 @@ export interface IMlsService {
    * peer Welcome (self-service recovery). The outcome is a TYPE, not a boolean: see
    * {@link ExternalJoinOutcome} for why each refusal has to reach its caller distinguishable.
    */
-  externalJoin(groupId: string): Promise<ExternalJoinOutcome>;
+  externalJoin(
+    groupId: string,
+    opts?: {
+      /**
+       * `ask` for a CONVERSATION: a join that would bring this device in as a further device of a
+       * member is not built ({@link ExternalJoinOutcome} `further_device`), decided on the tree of
+       * the very GroupInfo each attempt fetches. A key group, which every member enters this way,
+       * leaves it unset.
+       */
+      asAFurtherDevice?: 'ask';
+    }
+  ): Promise<ExternalJoinOutcome>;
   /**
    * Declares `groupId` to be the Graine key-distribution group of `scope`, so every later decision
    * that differs for it is taken from a registered fact rather than rediscovered.
@@ -1321,6 +1348,13 @@ export interface IMlsService {
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
   getLocalGroups(): string[];
+
+  /**
+   * Whether {@link getLocalGroups} is known to describe the loaded state: an unfilled cache (a
+   * listing that failed or was skipped, a client not created yet) says nothing about what is held,
+   * so nothing may be decided from a group's absence while this is false.
+   */
+  heldGroupsKnown(): boolean;
   /**
    * Whether this device is still a member of the group.
    *
@@ -1406,6 +1440,11 @@ export interface IMlsService {
    * against that leaf, so no new key has to be distributed or trusted.
    */
   signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
+  /**
+   * This device's own credential signature key, public half - the key its leaves and KeyPackages
+   * carry, and the one a member is shown when asked to add it. Throws before the engine is ready.
+   */
+  ownSignatureKey(): Promise<Uint8Array>;
   /**
    * Hands over the fork findings mls-core recorded since the last call, and forgets them
    * (`mls-core/src/fork_check.rs`): frames whose signed epoch fingerprint was not this device's at

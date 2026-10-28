@@ -1481,6 +1481,11 @@ export class WebMlsService extends BaseMlsService {
     return this.client.export_group_info(groupId) as Uint8Array;
   }
 
+  /** WASM client wrapper - `external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return this.client.external_join_is_a_further_device(groupInfoBytes);
+  }
+
   /** WASM client wrapper - builds an external commit from a served GroupInfo and stages it. Returns
    *  [group_id, commit] from the WASM boundary. */
   protected async joinByExternalCommit(
@@ -1725,6 +1730,12 @@ export class WebMlsService extends BaseMlsService {
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */
   graineSignatureEngine(): GraineSignatureEngine {
     return wasmGraineSignatureEngine();
+  }
+
+  /** WASM client wrapper - this device's own credential signature key, public half. */
+  async ownSignatureKey(): Promise<Uint8Array> {
+    if (!this.client) throw new Error('[MLS] WASM client not ready - no own signature key yet');
+    return this.client.own_signature_key() as Uint8Array;
   }
 
   /** WASM client wrapper - this device's credential key signs `message` (a v2 endorsement). */
