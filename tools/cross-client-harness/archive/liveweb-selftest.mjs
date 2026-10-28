@@ -60,6 +60,7 @@ const sameTick = stallsOf([JOINED, STALL, GAP(4675, 4675), SEEK, WAITING]);
 ok('a seek printed just after the gap, resolving a stall from BEFORE it, counts before', sameTick.stallsBefore === 1 && sameTick.stallSeeksBefore === 1 && sameTick.stallSeeksAfter === 0);
 ok('... and passes L-F1', stallFacts('W2', sameTick).every(([o]) => o));
 ok('COUNTER: a stall after the gap whose seek follows it still counts after, and fails', failsOn('W2', stallsOf([JOINED, STALL, GAP(4675, 4675), SEEK, STALL, SEEK]), /stalled 1 time\(s\) and seeked 1 time\(s\) after/));
+ok('COUNTER: a post-gap stall whose seek is absorbed by an older open stall still fails on its stall line', failsOn('W2', stallsOf([JOINED, STALL, GAP(4675, 4675), STALL, SEEK]), /stalled 1 time\(s\)/));
 ok('COUNTER: a stall seek after the gap with no stall open counts after, and fails', failsOn('W2', stallsOf([JOINED, GAP(4675, 4675), SEEK]), /seeked 1 time\(s\) after/));
 const FRACTIONAL = `[00:16:30.000] [LIVE] viewer ${S} stalled at 43.62 (target 4634.20000000298 ms)`;
 const w4 = stallsOf([JOINED, GAP(3613, 3613), FRACTIONAL, SEEK]);

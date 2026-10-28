@@ -93,7 +93,9 @@ export function stallsOf(lines) {
       // A STALL SEEK BELONGS TO THE STALL IT RESOLVES, not to where its line falls: the player names
       // the gap and then seeks in the same tick, so the seek out of a stall taken BEFORE the first gap
       // is printed just after it (LIVE-WEB-2 and LIVE-STALL-1 on 1.5.1-alpha.1, W2). A seek with no
-      // stall left open is counted where it falls.
+      // stall left open is counted where it falls. A pre-gap stall left open can absorb ONE later seek,
+      // and that is safe: the player emits a stall seek only out of a stall, and any stall LINE after
+      // the gap is counted after on its own and still fails the row.
       const of = unresolved.length ? unresolved.shift() : after;
       out[of ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
     } else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
