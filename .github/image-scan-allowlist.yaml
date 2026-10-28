@@ -180,9 +180,9 @@ vulnerabilities:
   # msgpack through `django-channels-postgres` (its own workspace package) and `autobahn`; oauthlib
   # through `requests-oauthlib`, authentik's client side of an external OAuth source. Scoped by
   # purl, so a different build of any of them is not covered, and the retirement check reads each
-  # entry as `id package version`. A second msgpack copy (1.1.2, no fixed version published) shows
-  # in the table but is not gated by `--ignore-unfixed`, so it has no entry. NOT verified for any of
-  # the three: which authentik process imports it at runtime, and whether input an outsider controls
+  # entry as `id package version`. A second msgpack copy (1.1.2, outside the lockfile read
+  # here, so its origin is unverified; fixed in 1.2.3 too) is covered by a second purl on the
+  # same entry. NOT verified for any of the three: which authentik process imports it at runtime, and whether input an outsider controls
   # reaches the vulnerable call; the advisories name denial of service (dnspython, msgpack), and
   # oauthlib's text was not read in full.
   - id: CVE-2026-114605
@@ -192,7 +192,8 @@ vulnerabilities:
   - id: CVE-2026-114613
     purls:
       - "pkg:pypi/msgpack@1.2.1"
-    statement: "msgpack 1.2.1 (memory leak while deserializing a map) in authentik 2026.8.5: required by django-channels-postgres and autobahn, so it decodes authentik's own internal messages; whether any of that input comes from outside the deployment was not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+      - "pkg:pypi/msgpack@1.1.2"
+    statement: "msgpack 1.2.1 and 1.1.2 (memory leak while deserializing a map) in authentik 2026.8.5: required by django-channels-postgres and autobahn, so it decodes authentik's own internal messages; whether any of that input comes from outside the deployment was not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
   - id: CVE-2026-49272
     purls:
       - "pkg:pypi/oauthlib@3.3.1"
