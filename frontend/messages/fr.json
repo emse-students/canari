@@ -1995,6 +1995,7 @@
   "asso_cotisations_tier_create_button": "Créer le palier",
   "asso_cotisations_tier_create_error": "Erreur lors de la création du palier.",
   "asso_cotisations_tier_key_year_shaped": "L'identifiant d'un palier ne peut pas être, ni se terminer par, une année universitaire (comme 2024-2025) : il serait confondu avec les étiquettes annuelles de cotisation. Choisissez un autre identifiant, par exemple « or » ou « promo-2024 ».",
+  "asso_cotisations_member_price_tag_not_a_tier": "Le tarif préférentiel doit viser les détenteurs d'un AUTRE palier de cette association : le palier choisi est celui-ci, ou n'est pas l'un des siens. Choisissez l'un de ses autres paliers, ou laissez le tarif préférentiel vide.",
   "asso_cotisations_tier_delete_confirm": "Supprimer le palier \"{name}\" ? Cette action est irréversible.",
   "asso_cotisations_tier_delete_error": "Erreur lors de la suppression du palier.",
   "asso_cotisations_tier_delete_has_holders": [
@@ -2566,7 +2567,7 @@
   "form_view_error_payment_failed": "Le paiement a échoué. Vous pouvez soumettre à nouveau le formulaire.",
   "form_previous_payment_open": "Votre demande de paiement précédente est encore ouverte. Réessayez quand elle aura expiré, au plus tard 30 minutes après son lancement.",
   "form_tier_already_held": "Vous détenez déjà la cotisation que ce formulaire accorde.",
-  "form_tier_not_sold": "Ce formulaire accorde une cotisation que l'association ne vend plus. Contactez l'association.",
+  "form_tier_not_sold": "Ce formulaire accorde une cotisation qui n'existe plus. Contactez l'association.",
   "form_already_answered": "Vous avez déjà répondu à ce formulaire : aucun nouveau paiement n'a été demandé.",
   "form_guest_pending_limit": "Trois réponses de cette connexion attendent déjà leur paiement sur ce formulaire. Payez-en une, ou attendez qu'elle expire (30 minutes au plus), puis réessayez.",
   "form_view_submission_already_paid": "Votre paiement précédent a bien été reçu : votre réponse est enregistrée, rien de plus à payer.",

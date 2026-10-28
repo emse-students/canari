@@ -806,7 +806,7 @@ export class FormsService {
   /**
    * Refuses, BEFORE any payment request is opened, a paid answer to a form that grants a cotisation
    * tier the submitter could not be granted - the boutique checkout's rule, with a form's own
-   * wording (`formTierRefusal`): a tier the association no longer sells (`FORM_TIER_NOT_SOLD`, for
+   * wording (`formTierRefusal`): a tier that no longer exists - deleted - (`FORM_TIER_NOT_SOLD`, for
    * everybody: the grant would throw on it), the tier already held (`FORM_TIER_ALREADY_HELD`), or
    * one that is not a rise over the tier held (`TIER_NOT_A_RISE`, `TIER_NOT_RANKABLE`). Without it
    * the money was taken and the grant refused afterwards, leaving a refund owed
@@ -834,9 +834,10 @@ export class FormsService {
 
   /**
    * Where the tier a paid form grants stands for `userId`: `not-sold` when the association has
-   * cotisation tiers and none carries `variantKey` (the grant validates against that same catalogue
-   * and would refuse it), else the ranked grant's own decision (`rankCotisationTier`). An
-   * association with no cotisation at all answers `none`, as before.
+   * cotisation tiers and none carries `variantKey` - its product was deleted, since the catalogue
+   * keeps tiers taken off sale (the grant validates against that same catalogue and would refuse
+   * it) - else the ranked grant's own decision (`rankCotisationTier`), handed the catalogue already
+   * read so it is read once. An association with no cotisation at all answers `none`, as before.
    */
   private async formTierRank(
     associationId: string,
@@ -846,12 +847,12 @@ export class FormsService {
     const tiers = await this.userTagService.listCotisationTiers(associationId);
     if (tiers.length > 0 && !tiers.some((t) => t.variantKey === variantKey)) {
       this.logger.warn(
-        `[Forms] the form's tier ${variantKey ?? 'base'} is not among the ${tiers.length} tier(s) ` +
-          `of assoc=${associationId.slice(0, 8)} - no paid answer is taken until the form is fixed`
+        `[Forms] the form's tier ${variantKey ?? 'base'} no longer exists among the ${tiers.length} ` +
+          `tier(s) of assoc=${associationId.slice(0, 8)} - no paid answer is taken until the form is fixed`
       );
       return 'not-sold';
     }
-    return this.userTagService.rankCotisationTier(associationId, userId, variantKey);
+    return this.userTagService.rankCotisationTier(associationId, userId, variantKey, tiers);
   }
 
   /**

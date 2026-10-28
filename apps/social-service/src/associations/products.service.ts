@@ -876,11 +876,23 @@ export class ProductsService {
     products: AssociationProduct[],
     userId: string | undefined
   ): Promise<ShopProduct[]> {
+    // The associations are read ONCE, for both readers: the viewer's tier facts need their slug and
+    // mode, and the cotisation-disabled mark their mode. A guest looking at no membership product
+    // needs neither, so nothing is read.
+    const needsAssociations = userId !== undefined || products.some((p) => p.type === 'membership');
+    const assocIds = [...new Set(products.map((p) => p.associationId))];
+    const assos =
+      needsAssociations && assocIds.length > 0
+        ? await this.assoRepo.find({
+            where: { id: In(assocIds) },
+            select: { id: true, slug: true, cotisationMode: true },
+          })
+        : [];
     const statusByAssoc = userId
-      ? await this.cotisantStatusFor(userId, [...new Set(products.map((p) => p.associationId))])
+      ? await this.cotisantStatusFor(userId, assos)
       : new Map<string, CotisantStatus>();
     const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
-    const disabled = await this.cotisationDisabledAssociations(products);
+    const disabled = this.cotisationDisabledAssociations(products, assos);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
       const facts = status?.facts ?? null;
@@ -907,20 +919,18 @@ export class ProductsService {
   /**
    * The associations, among those `products` sell a membership of, whose cotisations are disabled
    * (no cotisation mode): what the checkout refuses with `COTISATION_DISABLED`
-   * (`assertMembershipGrantable`), read once for the listing. No query without a membership product.
+   * (`assertMembershipGrantable`), from the associations the listing already read (`assos`).
    */
-  private async cotisationDisabledAssociations(
-    products: AssociationProduct[]
-  ): Promise<Set<string>> {
-    const ids = [
-      ...new Set(products.filter((p) => p.type === 'membership').map((p) => p.associationId)),
-    ];
-    if (ids.length === 0) return new Set();
-    const assos = await this.assoRepo.find({
-      where: { id: In(ids) },
-      select: { id: true, cotisationMode: true },
-    });
-    const disabled = new Set(assos.filter((a) => !a.cotisationMode).map((a) => a.id));
+  private cotisationDisabledAssociations(
+    products: AssociationProduct[],
+    assos: Pick<Association, 'id' | 'cotisationMode'>[]
+  ): Set<string> {
+    const selling = new Set(
+      products.filter((p) => p.type === 'membership').map((p) => p.associationId)
+    );
+    const disabled = new Set(
+      assos.filter((a) => selling.has(a.id) && !a.cotisationMode).map((a) => a.id)
+    );
     if (disabled.size > 0) {
       this.logger.debug(
         `[SHOP] listing: membership products of ${disabled.size} association(s) with cotisations disabled - not offered`
@@ -1039,7 +1049,8 @@ export class ProductsService {
   }
 
   /**
-   * Given a user and a set of association ids, returns per-association cotisation status: whether
+   * Given a user and the associations already read (`assos`), returns per-association cotisation
+   * status: whether
    * the user holds ANY active tier tag for it (`isCotisant`, back-compat `membersOnly`/generic
    * semantics - see `isBuyerCotisant`), which specific tier (`variantKey`) they hold first in
    * `tierVariantKeys` order (`activeTier`, WP-COT-3), and their `TierFacts`. Loads each
@@ -1048,15 +1059,12 @@ export class ProductsService {
    */
   private async cotisantStatusFor(
     userId: string,
-    assocIds: string[]
+    assos: Pick<Association, 'id' | 'slug' | 'cotisationMode'>[]
   ): Promise<Map<string, CotisantStatus>> {
     const byAssoc = new Map<string, CotisantStatus>();
-    if (assocIds.length === 0) return byAssoc;
-    const [assos, tierProducts, activeTags] = await Promise.all([
-      this.assoRepo.find({
-        where: { id: In(assocIds) },
-        select: { id: true, slug: true, cotisationMode: true },
-      }),
+    if (assos.length === 0) return byAssoc;
+    const assocIds = assos.map((a) => a.id);
+    const [tierProducts, activeTags] = await Promise.all([
       // Every tier, on sale or not: `isActive` gates BUYING a forfait, never recognizing the one
       // a user already holds (see `listCotisationTiers`).
       this.productRepo.find({

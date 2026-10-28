@@ -299,8 +299,9 @@ answer that owes money, online or in cash, and refuses through `formTierRefusal`
 the checkout's `tierRefusal` mapping, with two codes a form words its own way). `lower` and
 `unranked` answer the shop's codes and sentences; the tier already held answers
 `409 FORM_TIER_ALREADY_HELD` ("you already hold the membership this form grants", not the shop's
-"already bought this product"); and a form whose `cotisationVariantKey` names a tier the association
-no longer sells answers `409 FORM_TIER_NOT_SOLD` to EVERY submitter, a holder of nothing included,
+"already bought this product"); and a form whose `cotisationVariantKey` names a tier that no longer
+exists - its product was DELETED; a tier only taken off sale stays in the catalogue and is ranked as
+usual - answers `409 FORM_TIER_NOT_SOLD` to EVERY submitter, a holder of nothing included,
 checked against the tier catalogue before any rank (the grant validates against that catalogue and
 would throw on it). It is a pre-check outside any lock; the grant re-ranks under the buyer's lock when
 the money lands (`grantCotisantIfARise`), and a refusal there is the `paid_not_granted` case below.
@@ -503,7 +504,9 @@ UI" below); `paymentRefusal.ts` words each refusal code.
 **A `memberPriceTag` that prices nothing is refused at save.** Create and update answer
 `400 MEMBER_PRICE_TAG_NOT_A_TIER` when the tag names no OTHER cotisation tier of the product's own
 association (another association's tag, a non-tier tag, the product's own tier): such a link would
-charge every buyer the full price, silently. Two rows can still carry one, and both are charged in
+charge every buyer the full price, silently. The tier form words that refusal for the manager from its
+code (`tierSaveRefusal` in `frontend/src/lib/associations/tierKeyRefusal.ts`, beside the year-shaped
+key refusal). Two rows can still carry one, and both are charged in
 full with a `WARN` once per product per process: a row written before the rule (an unrelated edit still saves), and
 a sibling whose linked tier product was DELETED - deleting a tier does not clear or refuse the links
 naming it, so the admin re-points or clears them by hand.

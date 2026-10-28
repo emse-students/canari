@@ -630,6 +630,23 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.query).not.toHaveBeenCalled();
     });
 
+    // The form's pre-check already read the catalogue: handed over, it is not read again.
+    it('rankCotisationTier ranks on a catalogue it is handed, without reading it again', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-avec-alcool');
+      const tiers = await service.listCotisationTiers('asso1');
+      const catalogueReads = jest.spyOn(service, 'listCotisationTiers');
+
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool', tiers)).toBe(
+        'lower'
+      );
+      expect(catalogueReads).not.toHaveBeenCalled();
+      // CONTROL: without it, the catalogue is read.
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('lower');
+      expect(catalogueReads).toHaveBeenCalledTimes(1);
+    });
+
     // A tier deleted while held: its tag names no product. Ranked as holding nothing, a paid grant
     // of a cheaper tier went through and the XOR never dropped it.
     it('refuses a paid grant to a holder of a DELETED tier as unranked, granting nothing', async () => {
