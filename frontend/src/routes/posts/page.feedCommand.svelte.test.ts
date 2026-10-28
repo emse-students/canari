@@ -143,6 +143,48 @@ describe('the feed commands of the app header', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it('drops the command when the strip RESOLVES but another navigation left the feed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    goto.mockImplementation(async () => {
+      await Promise.resolve();
+      drainHistoryOverlayStack();
+      page.url = new URL('https://canari.test/chat');
+    });
+    open('compose=1');
+    await settle();
+
+    expect(composer()).toBeNull();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('accuses a strip that fails while the feed is still on screen, and performs nothing', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    goto.mockImplementation(async () => {
+      await Promise.resolve();
+      throw new Error('strip refused');
+    });
+    open('compose=1');
+    await settle();
+
+    expect(composer()).toBeNull();
+    expect(error).toHaveBeenCalledOnce();
+    expect(String(error.mock.calls[0][0])).toContain('its strip failed');
+  });
+
+  it('performs the command when the overtaking navigation stays on the feed (decided: the path decides)', async () => {
+    // `landed()` compares the pathname only: a navigation to another feed address is still the feed,
+    // and the member's Publish there is still what they asked for.
+    goto.mockImplementation(async () => {
+      await Promise.resolve();
+      drainHistoryOverlayStack();
+      page.url = new URL('https://canari.test/posts?feed=followed');
+    });
+    open('compose=1');
+    await settle();
+
+    expect(composer()).not.toBeNull();
+  });
+
   it('keeps the other parameters of the address it strips', async () => {
     open('feed=followed&compose=1');
     await settle();
