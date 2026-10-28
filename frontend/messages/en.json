@@ -3649,6 +3649,7 @@
   "post_poll_selection_full_hint": "Limit of {count} answers reached",
   "reels_camera_title": "Camera",
   "reels_camera_starting": "Opening the camera…",
+  "reels_camera_reopen": "Open the camera again",
   "reels_camera_denied_title": "Canari cannot use the camera",
   "reels_camera_denied_body": "Allow the camera and the microphone for Canari in the phone's settings, then try again.",
   "reels_camera_denied_body_camera_only": "Allow the camera for Canari in the phone's settings, then try again.",
