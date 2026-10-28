@@ -1105,6 +1105,13 @@ describe('the camera does not open again once the member has left it (Mi 9T, 202
     await settle();
   };
   afterEach(() => vi.restoreAllMocks());
+  /** The page runs in an Android WebView of this Chromium major (read once, when the screen mounts). */
+  const asEngine = (chromium: number) =>
+    vi
+      .spyOn(navigator, 'userAgent', 'get')
+      .mockReturnValue(
+        `Mozilla/5.0 (Linux; Android 11; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/${chromium}.0.0.0 Mobile Safari/537.36`
+      );
 
   it('a take dropped because the screen is being LEFT (a published reel lands on the feed) opens no camera', async () => {
     const { target, hold, open } = await renderCounted();
@@ -1274,6 +1281,7 @@ describe('the camera does not open again once the member has left it (Mi 9T, 202
   it('a gallery picker that NEVER says it closed leaves a tap that brings the camera back', async () => {
     // An engine with no `cancel` event on a file input (Chromium < 113, Safari < 16.4), or a native
     // dismissal the plugin never settles: no answer ever comes.
+    asEngine(112);
     const { target, open } = await renderCounted();
     const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
     vi.spyOn(input, 'click').mockImplementation(() => {});
@@ -1294,6 +1302,30 @@ describe('the camera does not open again once the member has left it (Mi 9T, 202
     expect(open.mock.calls.length).toBe(opens + 1);
     expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
     expect(target.querySelector('[data-camera-reopen]')).toBeNull();
+  });
+
+  it('an engine whose picker answers every close never offers the reopen: the return says "opening" until the answer', async () => {
+    // Mi 9T, 2026-10-28: a pick's `change` lands ~200 ms AFTER the page is visible again, and the
+    // reopen offered in that window flashed on screen.
+    asEngine(141);
+    const { target, open } = await renderCounted();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    vi.spyOn(input, 'click').mockImplementation(() => {});
+    target
+      .querySelector<HTMLButtonElement>('[aria-label="' + m.reels_capture_gallery() + '"]')!
+      .click();
+    const opens = open.mock.calls.length;
+    await setVisibility('hidden');
+    await setVisibility('visible');
+
+    expect(target.querySelector('[data-camera-reopen]')).toBeNull();
+    expect(target.textContent).toContain(m.reels_camera_starting());
+    expect(open.mock.calls.length).toBe(opens);
+
+    input.dispatchEvent(new Event('cancel'));
+    await settle();
+    expect(open.mock.calls.length).toBe(opens + 1);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
   });
 
   it('a picked file the camera cannot take brings the preview back', async () => {
