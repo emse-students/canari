@@ -7,9 +7,9 @@ operators' private notes: it maps a shared host. The model and history are in
 
 ## 1. The host disk
 
-Disk pressure on the shared host is real and is the reason for the standing image and build-cache
-prune (never a volume) above a usage threshold. Reclaimable space is mostly dangling images from
-the eight Canari services, about two gigabytes per deploy generation.
+Disk pressure on the shared host is real. Reclaimable space is mostly dangling images from the
+eight Canari services, about two gigabytes per deploy generation; nothing is installed on that host
+to reclaim it without the DSI's written agreement ([durable-rules](../durable-rules.md)).
 
 ### Logs
 

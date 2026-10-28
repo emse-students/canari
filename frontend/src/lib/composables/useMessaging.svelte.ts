@@ -40,9 +40,10 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import {
+  advanceLastMessageAt,
   insertMessageOrdered,
   mergeMessagesInInputOrder,
-  messageTime,
+  tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
@@ -929,7 +930,7 @@ export function useMessaging() {
         ctx.conversations.set(normalized, {
           ...convo,
           messages: nextMessages,
-          lastMessageAt: Math.max(convo.lastMessageAt ?? 0, upgraded.timestamp.getTime()),
+          lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [upgraded]),
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
@@ -963,7 +964,9 @@ export function useMessaging() {
             type: 'message_added',
             conversationId: normalized,
             message: upgraded,
-            lastMessageAt: updatedConvo.lastMessageAt ?? upgraded.timestamp.getTime(),
+            ...(updatedConvo.lastMessageAt !== undefined
+              ? { lastMessageAt: updatedConvo.lastMessageAt }
+              : {}),
             unreadCount: updatedConvo.unreadCount ?? 0,
             ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
@@ -996,7 +999,7 @@ export function useMessaging() {
       ...convo,
       unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+      lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}`);
 
@@ -1007,7 +1010,7 @@ export function useMessaging() {
         type: 'message_added',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
         unreadCount: nextUnreadCount,
         ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       });
@@ -1023,7 +1026,7 @@ export function useMessaging() {
         type: 'own_message_composed',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
       });
     }
 
@@ -1109,7 +1112,7 @@ export function useMessaging() {
   /**
    * Appends multiple messages in a single reactive update and one batch IndexedDB write.
    * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
-   * cause UI jank. Updates `lastMessageAt` to the max timestamp in the batch.
+   * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
@@ -1252,14 +1255,13 @@ export function useMessaging() {
 
     const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
-    const batchMaxTs = merged.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 
     if (current) {
       ctx.conversations.set(normalized, {
         ...current,
         unreadCount: nextUnreadCount,
         messages: merged,
-        lastMessageAt: Math.max(current.lastMessageAt ?? 0, batchMaxTs),
+        lastMessageAt: advanceLastMessageAt(current.lastMessageAt, merged),
       });
     } else {
       // Same rule as the vanished-conversation return at the top: never silent. The rows are still
@@ -1350,7 +1352,7 @@ export function useMessaging() {
       type: 'messages_batch',
       conversationId: normalized,
       messages: brandNew,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
+      ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, brandNew)),
       unreadCount: nextUnreadCount,
     });
 

@@ -39,7 +39,7 @@ moment WP-2 lands. The dev ESTATE survives, with a new job.
 >    conventions et te renseigner.
 > 5) Dependabot continue de merge sur main si tout va bien.
 
-And, on the campaign rig of the previous machine: *"Lithium est accessible mais pas utile. Reprends
+And, on the campaign rig of the previous machine: *"[L'ancienne machine] est accessible mais pas utile. Reprends
 de 0."*
 
 ## 2. The twelve decisions - DECIDED, NOT TO BE RELITIGATED
@@ -60,7 +60,7 @@ undoing a decision, not finishing the work.
 | 9 | Tester programmes | **alpha -> internal channels only**: Play *internal testing* and a TestFlight INTERNAL group. No Beta App Review in the loop. |
 | 10 | Dependabot | **The in-house `dependabot-auto-merge.yml` stays**, ceiling and sweep included. No native auto-merge. |
 | 11 | Local TLS | **Plain HTTP with `ALLOW_INSECURE_COOKIES=true`.** The cookie divergence this creates is a documented reservation, not a defect - see section 4. |
-| 12 | The campaign board | **Reset to zero, old verdicts archived** as "rig LITHIUM, ledger lost". The rig restarts from nothing. |
+| 12 | The campaign board | **Reset to zero, old verdicts archived** as "previous machine's rig, ledger lost". The rig restarts from nothing. |
 
 Also decided: the phone and the emulator DO target the local stack, over `adb reverse`; an `-alpha`
 build points at **`dev.canari-emse.fr`**, and only a stable tag points at production.
@@ -83,7 +83,7 @@ jobs" on the run that already exists, not a new trigger.
 
 ## 4. What is already MEASURED - do not re-derive any of this
 
-All measured on 2026-09-02 on the current machine (`OXYGEN`) and against the remote.
+All measured on 2026-09-02 on the current machine (the workstation) and against the remote.
 
 - **`origin/dev` is identical to `main`**: zero commits ahead, zero files of diff. There is nothing
   to merge; the branch is a pure delete.
@@ -135,7 +135,7 @@ All measured on 2026-09-02 on the current machine (`OXYGEN`) and against the rem
 Measured during WP-0, and each one changes something downstream:
 
 - **A PHONE IS ATTACHED TO THIS MACHINE**, so `CLAUDE.md`'s "campaign PAUSED for want of a phone" and
-  its whole BLOCKED-ON-HARDWARE queue item are **false here**. It is a **Xiaomi Mi 9T** (`davinci`, Android 16, SDK 36), not LITHIUM's Pixel 6a - so a device verdict taken on the Pixel does
+  its whole BLOCKED-ON-HARDWARE queue item are **false here**. It is a **Xiaomi Mi 9T** (`davinci`, Android 16, SDK 36), not the previous machine's Pixel 6a - so a device verdict taken on the Pixel does
   not transfer, and neither does the SDK-37 defect that needed the `android-mcp` patch. WP-5 and the
   device table in [backlog](backlog.md) both have to be re-read against this.
 - **The Play tester tracks ALREADY EXIST**: `internal`, `alpha` and `beta` are all serving `0.10.12`
@@ -530,7 +530,7 @@ survive a replug.
       is the precise failure that file exists to prevent, since a check clicking a name nobody
       renders opens NOTHING and then reports on whatever conversation was on screen. Absent beats
       plausible. The Chrome profiles follow the accounts, being enrolments of them
-- [x] the board reset, old verdicts archived in a dated "rig LITHIUM, ledger lost" section -
+- [x] the board reset, old verdicts archived in a dated "previous machine's rig, ledger lost" section -
       **DONE 2026-09-03, as a separate PAGE rather than a section.**
       [cross-client-testing-archive](cross-client-testing-archive.md) holds the old board verbatim;
       the live board keeps the ladder and the rows and returns 142 cells to `pending`. A section

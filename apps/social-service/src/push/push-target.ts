@@ -1,3 +1,10 @@
+/**
+ * The `target` naming a person's follow-request inbox (WP-F4), and the deep-link host for it: the tap
+ * of a `follow_request` push. A build older than the inbox does not own the host and lands on the
+ * notifications list (the hook's unknown-host branch), where the request's row is.
+ */
+export const FOLLOW_REQUESTS_TARGET = 'follow-requests';
+
 /** The `target` naming a person's republication requests page (D38b), and the deep-link host for it. */
 export const REPUBLICATION_REQUESTS_TARGET = 'republication-requests';
 
@@ -62,6 +69,11 @@ export function socialDeepLink(data: Record<string, string>): string {
   // the answer is given. A TYPED target, from a closed set - never a path the payload names.
   if (data.target === REPUBLICATION_REQUESTS_TARGET) {
     return `fr.emse.canari://${REPUBLICATION_REQUESTS_TARGET}`;
+  }
+  // A follow request (WP-F4): the inbox where it is answered. Before `postId`, which a follow notice
+  // carries as the ASKER's id - a `post/<id>` link would open a post that does not exist.
+  if (data.target === FOLLOW_REQUESTS_TARGET) {
+    return `fr.emse.canari://${FOLLOW_REQUESTS_TARGET}`;
   }
   // A notice with no page of its own (a cut live, a suspension, a withdrawal): the notifications
   // list, where its row says it. Before `postId`, which such a notice carries as the live's id or

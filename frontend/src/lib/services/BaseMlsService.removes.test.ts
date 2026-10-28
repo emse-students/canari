@@ -219,3 +219,63 @@ describe('BaseMlsService - the departed-member removal reads the base through th
     expect(ctx.ownContextMatchesBase).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A MEMBER WHO STAYS, WITH ONE REVOKED DEVICE, ON A KEY GROUP - through the real service: the
+ * revocation question goes to the delivery service, the removal reads its base through the scope
+ * transport (never chat-delivery, which refuses a key group), and only the revoked device's leaf is
+ * removed - the member's other device stays.
+ */
+describe('BaseMlsService - a revoked device of a member who stays, on a key group', () => {
+  it('removes exactly the revoked leaf, vouched for by the scope base', async () => {
+    const real = BaseMlsService.prototype as unknown as Record<string, unknown>;
+    const scope = workspaceScope('ws-1');
+    const transport = {
+      fetch: vi.fn().mockResolvedValue({ groupInfo: 'Zm9v', baseEpoch: 5, activeEpoch: 5 }),
+      publish: vi.fn(),
+    };
+    const ctx = {
+      delivery: {
+        fetchRevokedLeaves: vi.fn().mockResolvedValue(['bob:lost-phone']),
+        fetchGroupInfo: vi.fn().mockRejectedValue(new Error('403 from chat-delivery')),
+      },
+      distributionGroupInfo: transport,
+      distributionScopeByGroup: new Map([['kg-1', scope]]),
+      knownDistributionGroups: new Set(['kg-1']),
+      freshEpoch: vi.fn().mockResolvedValue(5),
+      ownContextMatchesBase: vi.fn().mockResolvedValue(true),
+      stageRemoveMembersByDevice: vi.fn().mockResolvedValue({}),
+      runCommitTransaction: vi.fn(
+        async (_g: string, stage: (intent: Uint8Array) => Promise<unknown>, _opts: unknown) => {
+          await stage(new Uint8Array());
+          return {};
+        }
+      ),
+      groupInfoChannel: real.groupInfoChannel,
+      assertOnPublishedBranch: real.assertOnPublishedBranch,
+    };
+    const call = <T>(name: string, ...args: unknown[]) =>
+      (real[name] as (...a: unknown[]) => Promise<T>).call(ctx, ...args);
+
+    const revoked = await call<string[]>('getRevokedLeaves', 'kg-1', [
+      'bob:web-1',
+      'bob:lost-phone',
+    ]);
+    await call('removeMemberDevice', 'kg-1', revoked);
+
+    expect(ctx.delivery.fetchRevokedLeaves).toHaveBeenCalledWith('kg-1', [
+      'bob:web-1',
+      'bob:lost-phone',
+    ]);
+    expect(transport.fetch).toHaveBeenCalledWith(scope);
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+    expect(ctx.stageRemoveMembersByDevice).toHaveBeenCalledWith(
+      'kg-1',
+      ['bob:lost-phone'],
+      expect.anything()
+    );
+    expect(ctx.runCommitTransaction.mock.calls[0][2]).toEqual({
+      removes: [{ userId: 'bob', deviceId: 'lost-phone' }],
+    });
+  });
+});
