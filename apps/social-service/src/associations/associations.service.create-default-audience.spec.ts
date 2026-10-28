@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { SLUG_EXHAUSTED } from './association-slug.util';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
@@ -32,6 +33,12 @@ function makeService(
   };
   const assoRepo = {
     findOne: jest.fn(() => Promise.resolve(null)),
+    /** The catalog read of the violated index's columns: `*slug*` indexes cover `slug`, others `name`. */
+    query: jest.fn((_sql: string, params: unknown[]) =>
+      Promise.resolve(
+        String(params[0]).includes('slug') ? [{ attname: 'slug' }] : [{ attname: 'name' }]
+      )
+    ),
     create: jest.fn((row: object) => row),
     save: jest.fn(),
     manager: { transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)) },
@@ -153,5 +160,121 @@ describe('AssociationsService.create - a non-admin creator is bound to the campu
 
     expect(manager.query).not.toHaveBeenCalledWith(BDE_GOVERNED_CAMPUSES_SQL, expect.anything());
     expect(manager.insert).toHaveBeenCalled();
+  });
+});
+
+describe('AssociationsService.create - the slug is derived, never typed (user, 2026-10-26)', () => {
+  const unique = (constraint = 'UQ_associations_slug') =>
+    Object.assign(new Error('duplicate key'), { code: '23505', constraint });
+
+  it('derives the slug from the name when none is sent, accents folded', async () => {
+    const { service, assoRepo } = makeService('gardanne');
+
+    await service.create({ name: 'Bureau des Élèves' } as never, 'u', true);
+
+    expect(assoRepo.findOne).not.toHaveBeenCalled();
+    expect(assoRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'bureau-des-eleves' })
+    );
+  });
+
+  it('appends -2, -3 on each unique violation, the index being the arbiter', async () => {
+    const { service, manager, assoRepo } = makeService('gardanne');
+    manager.save
+      .mockRejectedValueOnce(unique())
+      .mockRejectedValueOnce(unique())
+      .mockImplementation((row: object) => Promise.resolve({ ...row, id: 'new-asso' }));
+
+    const saved = await service.create({ name: 'Club' } as never, 'u', true);
+
+    expect(saved).toMatchObject({ slug: 'club-3' });
+    expect(assoRepo.create.mock.calls.map((c) => (c[0] as { slug: string }).slug)).toEqual([
+      'club',
+      'club-2',
+      'club-3',
+    ]);
+  });
+
+  it("walks past a derived candidate whose cotisation stem collides with another association's", async () => {
+    const { service, manager } = makeService('gardanne', [], [{ slug: 'bde', variantKey: null }]);
+
+    const saved = await service.create({ name: 'BDE 2026-2027' } as never, 'u', true);
+
+    expect(saved).toMatchObject({ slug: 'bde-2026-2027-2' });
+    expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows a failure that is not a unique violation, without retrying', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(new Error('connection lost'));
+
+    await expect(service.create({ name: 'Club' } as never, 'u', true)).rejects.toThrow(
+      'connection lost'
+    );
+    expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry a unique violation on another COLUMN, and rethrows it', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(unique('UQ_some_other_index'));
+
+    await expect(service.create({ name: 'Club' } as never, 'u', true)).rejects.toMatchObject({
+      constraint: 'UQ_some_other_index',
+    });
+    expect(manager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks on a violation of the slug column whatever its constraint is called', async () => {
+    const { service, manager, assoRepo } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(unique('live_hand_named_slug_key'));
+
+    const saved = await service.create({ name: 'Club' } as never, 'u', true);
+
+    expect(saved).toMatchObject({ slug: 'club-2' });
+    expect(assoRepo.query).toHaveBeenCalledWith(expect.any(String), [
+      'live_hand_named_slug_key',
+      null,
+    ]);
+  });
+
+  it('refuses with a TYPED code once every candidate is taken', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValue(unique());
+
+    const err = await service.create({ name: '日本' } as never, 'u', true).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).getResponse()).toMatchObject({ code: SLUG_EXHAUSTED });
+  });
+
+  it('suffixes a name deriving to a reserved route word, and refuses it as an explicit slug', async () => {
+    const { service, assoRepo } = makeService('gardanne');
+
+    await service.create({ name: 'New' } as never, 'u', true);
+    expect(assoRepo.create).toHaveBeenCalledWith(expect.objectContaining({ slug: 'new-2' }));
+    await expect(
+      service.create({ name: 'X', slug: 'new' } as never, 'u', true)
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('still refuses an explicit slug that is taken, and validates its shape', async () => {
+    const { service, assoRepo } = makeService('gardanne');
+    assoRepo.findOne.mockResolvedValueOnce({ id: 'other' } as never);
+
+    await expect(
+      service.create({ name: 'Club', slug: 'club' } as never, 'u', true)
+    ).rejects.toThrow('already exists');
+    await expect(
+      service.create({ name: 'Club', slug: 'Bad Slug' } as never, 'u', true)
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses an explicit slug that loses the race at the unique index', async () => {
+    const { service, manager } = makeService('gardanne');
+    manager.save.mockRejectedValueOnce(unique());
+
+    await expect(
+      service.create({ name: 'Club', slug: 'club' } as never, 'u', true)
+    ).rejects.toThrow('already exists');
   });
 });
