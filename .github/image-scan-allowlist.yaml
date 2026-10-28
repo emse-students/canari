@@ -150,6 +150,21 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     statement: "undici 6.28.0 bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy."
 
+  # Two more advisories on the same npm-bundled undici 6.28.0 (2026-10-28), fixed in 6.29.1: re-read
+  # that day, node:24-alpine (24.22.1, npm 11.19.1, built 2026-10-21) still carries 6.28.0, so there
+  # is no patched tag to move to. Scoped by purl to that one version, so a newer npm is not covered
+  # and the rescan retires each entry the day the image moves. Verified: the file is under npm's own
+  # node_modules and frontend-ssr's final stage runs `node index.js` only; not verified: that nothing
+  # else in the image shells out to npm.
+  - id: CVE-2026-109383
+    purls:
+      - "pkg:npm/undici@6.28.0"
+    statement: "undici 6.28.0 (certificate validation bypass) bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy. No patched node:24-alpine yet; remove when the tag ships npm with undici >= 6.29.1."
+  - id: CVE-2026-87018
+    purls:
+      - "pkg:npm/undici@6.28.0"
+    statement: "undici 6.28.0 (denial of service via TLS renegotiation) bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy. No patched node:24-alpine yet; remove when the tag ships npm with undici >= 6.29.1."
+
   # --- brotli-libs 1.2.0-r1, in the Alpine 3.24 images (decided 2026-10-24) ---------------------
   # Reported in adminer, nginx:1.31.8-alpine (the edge), nginx:stable-alpine (the frontend base) and
   # postgres:18-alpine. Every one of those pins was already the newest upstream build: Alpine shipped
