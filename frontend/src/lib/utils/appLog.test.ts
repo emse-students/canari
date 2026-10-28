@@ -117,15 +117,15 @@ describe('the batch', () => {
     expect(redactedValues).toBe(2);
   });
 
-  it("keeps a DOMException's name and message - the layout's page crash line (v1.3.0-alpha.2)", async () => {
+  it("keeps a DOMException's name and message - the page crash line (v1.3.0-alpha.2)", async () => {
     const crash = new DOMException('[object Object] could not be cloned.', 'DataCloneError');
     appLog.captureConsoleLine('error', [
-      '[Layout] page crash on /bookings/spaces/[spaceId]/edit:',
+      '[App] page crash on /bookings/spaces/[spaceId]/edit:',
       crash,
     ]);
     const { text } = await appLog.readAppLog();
     expect(text).toMatch(
-      / E \[Layout\] page crash on \/bookings\/spaces\/\[spaceId\]\/edit: DataCloneError: \[object Object\] could not be cloned\.$/m
+      / E \[App\] page crash on \/bookings\/spaces\/\[spaceId\]\/edit: DataCloneError: \[object Object\] could not be cloned\.$/m
     );
   });
 

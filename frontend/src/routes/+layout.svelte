@@ -752,25 +752,10 @@
           bind:this={pageScrollWrap}
           class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
-          <!-- console.error enters the in-app log (appLog.ts); the route id names the page there,
-               where no URL bar does, and carries no member's id. -->
-          <svelte:boundary
-            onerror={(e) => console.error(`[Layout] page crash on ${page.route.id ?? '?'}:`, e)}
-          >
-            {@render children?.()}
-            {#snippet failed(_error, reset)}
-              <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-                <p class="text-text-muted text-sm">{m.layout_error_boundary_message()}</p>
-                <button
-                  type="button"
-                  onclick={reset}
-                  class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
-                >
-                  {m.common_retry_button()}
-                </button>
-              </div>
-            {/snippet}
-          </svelte:boundary>
+          <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
+               armed with `+error.svelte` and reported through `handleClientError` - one held here
+               could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
+          {@render children?.()}
         </div>
       </main>
 

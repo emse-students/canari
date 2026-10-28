@@ -347,13 +347,46 @@ therefore placed by what an error would take down with it, not by how important 
 | Where | What it wraps | Shape |
 | --- | --- | --- |
 | `src/routes/+layout.svelte` | `<ChatBackgroundService />` | invisible service - `onerror` that LOGS, no fallback UI |
-| `src/routes/+layout.svelte` | `{@render children?.()}` | every page - `{#snippet failed}` with a retry control |
+| SvelteKit's root (`kit/src/runtime/components/root.svelte`) | every route node | every page - `routes/+error.svelte`, reported by `handleClientError` ([below](#a-page-that-crashes)) |
 | `src/lib/components/MainChatPage.svelte` | the `{#key}` around `ChatArea` | component - `onerror` that logs |
 
 The rule for anything new: a global service or a layout takes a logging `onerror` with no fallback; a
-whole page or a visible feature takes a `failed` snippet with a reset; a light component inside a page
-takes NOTHING - the page's boundary already covers it, and a boundary per component only makes the
-real one harder to find.
+visible feature inside a page takes a `failed` snippet with a reset; a whole page takes NOTHING (Kit
+already wraps it); a light component inside a page takes NOTHING - the page's boundary already covers
+it, and a boundary per component only makes the real one harder to find.
+
+### A page that crashes
+
+**SvelteKit 3 owns the page boundary, so the app owns only the report and the screen.** Kit wraps
+every route node in its own `<svelte:boundary>`, armed with the root `+error.svelte` and placed
+INSIDE the layout's `children` - closer to the page than anything `+layout.svelte` can draw. Until
+#2613 the root layout held a boundary around `{@render children?.()}` that logged `[Layout] page
+crash on <route>` and drew a Retry; under Kit 3 it could never fire, and a crashed page showed Kit's
+error page with a button to `/login`. Observed on the static build (a page throwing from `$effect`,
+both on first load and on a client navigation): `page.status` 500, `page.error` `{ status: 500,
+message: 'Internal Error' }`, and the client `handleError` hook CALLED (Kit runs every boundary error
+through it as `transformError`) - so the report was not lost, only stripped of its route.
+
+So the layout boundary is gone and the two halves sit where Kit calls them:
+
+- **The report** is `handleClientError` (`$lib/navigation/handleClientError.ts`, the client hook):
+  `[App] page crash on <route id>:` at error for an `unknown` throw or a 5xx, `[App] navigation
+  error <status> on <route id>:` at warn for a 4xx. The route id, never the URL: it names the page
+  in the in-app log without carrying a member's or a post's id. **The route is `match(event.url)`,
+  never `event.route.id`**: Kit 3.1.0's `initialize` builds the event from the state BEFORE it
+  assigns the first navigation's, so every crash before the reader's first client navigation arrives
+  with `route.id === null` (read on the static build as `page crash on ?`); the `url` is right in
+  every case.
+- **The screen** is `routes/+error.svelte`: a 5xx offers Retry - `goto` to the same address with
+  `refreshAll`, because a navigation is what makes Kit reset a failed boundary (its `resetters`
+  drain after the next navigation settles) - and every status offers the home page, never `/login`.
+
+Kit's boundary is at depth 1 only when no nearer `+error.svelte` exists; a route that adds one gets
+its own, and the report still goes through the same hook. `routes/pageCrash.svelte.test.ts` mounts
+Kit's real `root.svelte` with a throwing page and the real `+error.svelte`; it cannot see Kit's
+navigation resetting the boundary on Retry, which was read on the static build: a page that threw
+once drew again. Kit leaves `page.status` at 500 and `page.error` set after that recovery (the
+same-address navigation does not count as a page change), and only `+error.svelte` reads either.
 
 ### An anchored dropdown must be portalled, never absolutely positioned
 
