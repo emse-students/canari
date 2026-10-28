@@ -1973,9 +1973,25 @@ text-only inbox folder is deleted at once and a removed staged file leaves `shar
 the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
 and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
 post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
-chooser carries the post's link. **Still owed on the Mi 9T:** S6 from a reel (dev holds none),
-S3 of a picture, a PDF and a video out of a conversation (needs a media message in a conversation
-the rig does not use), several photos in one share, and a kill-and-relaunch with a share waiting.
+chooser carries the post's link. **Second pass, same build and day, synthetic media only:** S3
+`PASS` - a PNG, a PDF and an MP4 sent into a bench DM each open the system chooser on the decrypted
+file ("Partager l'image" with its preview; "Partage de 1 fichier" named `.pdf` / `.mp4`), the log
+showing `share_staged` with the right type and size; deleting the three messages (one choice, a
+definitive delete) leaves three "message deleted" tombstones, and the last copy stays in `cache/share_out/` until the
+next share, a sign-out or a launch, as [share-out](frontend/share-out.md#the-decrypted-copy-and-how-long-it-lives)
+says (the launch sweep was read: `share_out: 1 removed`). Several photos `PASS` - three PNGs from
+Files in one share: `SEND_MULTIPLE`, `3 stream(s)`, three `copied`, "3 FICHIERS EN ATTENTE" in the
+open conversation; removing all three leaves `shared_inbox/` empty and no manifest. Kill-and-relaunch:
+a text share drained into the "Envoyer a..." picker, then `force-stop`, is **not offered again** -
+the drain had claimed `pending_share.json` (`drained (109 bytes)`), so the share lived only in the
+dead page; [sharing](frontend/sharing.md#owed) expects "the waiting share kept" across a kill, which
+covers an UNDRAINED manifest and says nothing of one already in the picker. S6 from a reel **`FAIL`**:
+publishing a reel from a gallery video works, its sheet draws the grid, "Copier le lien" and
+"Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
+read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
+was deleted from that page's menu - the viewer itself has no author menu.
+**Still owed on the Mi 9T:** S6 from a reel once the defect below is fixed (the in-app send, then
+the viewer closing on it, #2609), and the undrained half of kill-and-relaunch.
 **S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
 Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
@@ -1983,6 +1999,20 @@ is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
+
+## P1 - The reel viewer's share sheet does nothing: every row reads a post id its own close erased (Mi 9T, 2026-10-28)
+
+In the CanaReels viewer, "Partager" opens `PostShareSheet`, and each of its rows - a conversation of
+the grid, "Copier le lien", "Partager via..." - closes the sheet and nothing else happens: no
+landing, no clipboard, no chooser, and the WebView logs `Uncaught TypeError: Cannot read properties
+of null (reading 'slice')` (three of three rows read, 1.5.1 `da43b8447`). **The cause, read in the
+code:** the sheet's `act()` calls `close()` BEFORE the action, and `ReelViewer` mounts the sheet with
+`postId={shareFor}` and `onClose={() => (shareFor = null)}`; the action then reads the live prop,
+now `null`, and `sendPostLinkInApp` / `copyPostLink` / `sharePostLinkOut` throw on `postId.slice`.
+The post menu and the `/posts/<id>` page pass a constant id and a boolean `open`, which is why the
+same sheet works there. Fix where the id is read: the row captures `postId` before it closes, and a
+viewer test drives a row of the REAL sheet rather than `PostShareSheetStub`, whose one button
+closes and never reads the id afterwards. #2609's "the viewer closes after an in-app send" is unread until then.
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
