@@ -1965,7 +1965,13 @@ visible. The unpark runs inside the WebView's mutex grant, so nothing waits for 
    the app, and a lost update of the sent log.
 2. **The teardown and the job fence.** Manager, device key and register are reset in one hold, and
    every background job is fenced by the generation it started under. Closes state resurrected by a
-   background job after sign-out.
+   background job after sign-out. **The one-hold teardown of the manager and the key is BUILT
+   (2026-10-27, `end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27));
+   the generation is what is left.** The native slot has no session generation today: a command issued
+   by a destroyed client A that lands after B's `initialiser_mls` acts on B's manager, since the slot
+   says only `Some` or `None`, never whose. Only the TypeScript side fences it (the holder retires A's
+   client before B's login opens anything). The fence: a generation the install stamps and every
+   command carries, refused typed on a mismatch.
 3. **The register.** The register itself; a native park that writes nothing when nothing changed;
    an unpark that holds no command lock across a decrypt; one native visibility event for the page;
    on Android, the socket paused while hidden; frames in flight tracked in both directions; a pending
@@ -2000,6 +2006,26 @@ docblock, which still calls the join's commit staged.
 
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
+
+## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
+
+Every Tauri command returns `Result<_, String>`, and every code the TypeScript side reads
+(`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, `MLS_MANAGER_ABSENT`) crosses as the string's
+leading token, read by one predicate each (`isKeystoreKeyUnavailable`, `classifyStateLoadFailure`,
+`isMlsManagerAbsent`). Tauri can serialise an error object instead: one `{ code, message }` type for
+every command, decoded into typed errors at the one `invoke` boundary. All codes move in one pull
+request, never one at a time (two conventions would give every reader two shapes)
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
+
+A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
+makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" -> the rotation fails
+-> the session is lost -> PIN gate. Each lap costs the member one PIN entry and is logged at ERROR
+(`reportMlsSessionLost`); nothing is revoked or erased, so the loop is visible and harmless but not
+broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
+stops the unlock with its own typed outcome instead of another lap
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -2867,7 +2893,7 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
+**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
 ### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
 

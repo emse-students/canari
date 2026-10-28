@@ -158,7 +158,7 @@ export function killAdbServer() {
  * What the app still holds on DISK, which is the half no CDP connection can see.
  *
  * `footprint.mjs` measures the WebView's stores; on a phone those are only part of the answer,
- * because `wipeDeviceToFactory` also calls the native `delete_mls_state` and `clear_app_data`, and
+ * because `wipeDeviceToFactory` also calls the native `terminer_session_mls` and `clear_app_data`, and
  * both write to the Tauri app data directory rather than to any web origin. A row that asks whether
  * a revoked PHONE was really erased and reads only localStorage has measured the smaller half.
  *

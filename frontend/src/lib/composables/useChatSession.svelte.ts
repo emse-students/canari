@@ -29,6 +29,7 @@ import {
   loginImpl,
   prefetchPinSaltImpl,
   endSessionImpl,
+  endLostSessionImpl,
   settleSessionEndByRevocationImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
@@ -51,6 +52,7 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 
@@ -76,10 +78,14 @@ export function useChatSession() {
 
   // ── Services ──────────────────────────────────────────────────────────────
   /** The MLS client and its retirement at a sign-out - see `mlsHolder.ts`. */
-  const mlsHolder = createMlsHolder(() => {
-    if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-    return createMlsService();
-  });
+  const mlsHolder = createMlsHolder(
+    () => {
+      if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
+      return createMlsService();
+    },
+    // A sign-out and an account switch keep `mls.bin` for the account's next sign-in.
+    (reason) => endNativeMlsSession(reason, { sweepState: false })
+  );
   /** The client the current `callService` was built over, so a retired one is never kept. */
   let callServiceMls: IMlsService | null = null;
   let storage: IStorage | null = $state(null);
@@ -168,7 +174,7 @@ export function useChatSession() {
     // Services
     ensureMls,
     resetMls: (only) => mlsHolder.reset(only),
-    retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
+    retireMls: (finalWrite, why) => mlsHolder.retire(finalWrite, why),
     whenMlsRetired: () => mlsHolder.whenRetired(),
     isMlsRetiring: () => mlsHolder.isRetiring(),
     getStorage: () => storage,
@@ -462,6 +468,9 @@ export function useChatSession() {
     /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
     endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       endSessionImpl(ctx, cb),
+    /** Stops the live session on this device only, its MLS session lost; the credential is kept. */
+    endLostSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
+      endLostSessionImpl(ctx, cb),
     /**
      * The session-expired reaction's half of a revocation: when the refresh refusal said the session
      * died because its owner revoked this device, returns the device to a fresh install (the one
