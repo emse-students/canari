@@ -7,12 +7,11 @@
  * green throughout. These tests build identities in the CLIENT GENERATOR's own shape, and the last
  * block reads that generator's source, so a change to it fails here rather than in the field.
  */
-import { BadRequestException } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
   parseLeafIdentity,
-  sanitizeLeafIdentity,
+  sanitizeLeafLogValue,
   sanitizeLogValue,
   SAFE_QUERY_VALUE_REGEX,
 } from './sanitize';
@@ -31,14 +30,14 @@ function deviceIdLike(platform: string, userId: string, nowMs: number, rand = 'z
 /** The latest millisecond a JS clock can name: the longest `Date.now().toString(36)` there is. */
 const LAST_MS = 8.64e15;
 
-describe('parseLeafIdentity / sanitizeLeafIdentity - real identities', () => {
+describe('parseLeafIdentity - real identities', () => {
   it.each(['web', 'tauri'])('accepts a real %s identity, longer than 128 characters', (p) => {
     const identity = `${USER}:${deviceIdLike(p, USER, 1_761_600_000_000)}`;
     // The premise of the defect: the generic allowlist refuses it whole.
     expect(identity.length).toBeGreaterThan(128);
     expect(SAFE_QUERY_VALUE_REGEX.test(identity)).toBe(false);
 
-    expect(sanitizeLeafIdentity(identity, 'identity')).toEqual({
+    expect(parseLeafIdentity(identity)).toEqual({
       identity,
       userId: USER,
       deviceId: deviceIdLike(p, USER, 1_761_600_000_000),
@@ -61,7 +60,7 @@ describe('parseLeafIdentity / sanitizeLeafIdentity - real identities', () => {
   });
 });
 
-describe('parseLeafIdentity / sanitizeLeafIdentity - near misses, one rule each', () => {
+describe('parseLeafIdentity - near misses, one rule each', () => {
   const device = deviceIdLike('web', USER, 1_761_600_000_000);
 
   it.each([
@@ -81,29 +80,63 @@ describe('parseLeafIdentity / sanitizeLeafIdentity - near misses, one rule each'
     ['a non-ASCII letter', `${USER}:web-é`],
   ])('refuses %s', (_rule, value) => {
     expect(parseLeafIdentity(value)).toBeNull();
-    expect(() => sanitizeLeafIdentity(value, 'identity')).toThrow(BadRequestException);
   });
 
   it.each([42, null, undefined, {}, [USER]])('refuses a non-string %p', (value) => {
     expect(parseLeafIdentity(value)).toBeNull();
   });
+});
 
-  it('names the field and the shape in the refusal', () => {
-    expect(() => sanitizeLeafIdentity('nope', 'identity')).toThrow(
-      /identity must be userId:deviceId/
-    );
+describe('sanitizeLeafLogValue - a leaf identity is evidence, its user half cut', () => {
+  it.each(['web', 'tauri'])('prints a real %s identity, the user half cut to 8', (p) => {
+    const device = deviceIdLike(p, USER, 1_761_600_000_000);
+    expect(sanitizeLeafLogValue(`${USER}:${device}`)).toBe(`${USER.slice(0, 8)}:${device}`);
+  });
+
+  it('cuts a bare user id the same way - a field that may name only the user', () => {
+    expect(sanitizeLeafLogValue(USER)).toBe(USER.slice(0, 8));
+  });
+
+  it('still refuses a forged line shaped like an identity, and says what was absent', () => {
+    expect(sanitizeLeafLogValue(`${USER}:web-1\n[HISTORY] forged`)).toBe('invalid');
+    expect(sanitizeLeafLogValue(`${'a'.repeat(129)}:${'b'.repeat(10)}`)).toBe('invalid');
+    expect(sanitizeLeafLogValue(undefined, 'unreadable')).toBe('unreadable');
+    expect(sanitizeLeafLogValue(42)).toBe('invalid');
+  });
+
+  it('leaves the generic log value as it was: a real identity is not one', () => {
+    expect(sanitizeLogValue(`${USER}:${deviceIdLike('web', USER, 1)}`)).toBe('invalid');
   });
 });
 
-describe('sanitizeLogValue - a leaf identity is evidence, not `invalid`', () => {
-  it.each(['web', 'tauri'])('prints a real %s identity', (p) => {
-    const identity = `${USER}:${deviceIdLike(p, USER, 1_761_600_000_000)}`;
-    expect(sanitizeLogValue(identity)).toBe(identity);
+/**
+ * THE SHARED RULE. The client sends only what `isAddressableLeafIdentity` accepts, and both sides run
+ * every case of `libs/contracts/leaf-identity.cases.json` - so the client never sends what this
+ * service skips, nor withholds what it would answer.
+ */
+describe('the leaf identity contract, server side', () => {
+  // Relative to this file inside the monorepo: the contract lives at its root, outside the app.
+  const root = resolve(__dirname, '../../../..');
+  const contract = JSON.parse(
+    readFileSync(resolve(root, 'libs/contracts/leaf-identity.cases.json'), 'utf8')
+  ) as {
+    accept: { name: string; identity: string }[];
+    reject: { name: string; identity: string }[];
+  };
+  const deviceId = JSON.parse(
+    readFileSync(resolve(root, 'libs/contracts/device-id.json'), 'utf8')
+  ) as { pattern: string };
+
+  it.each(contract.accept.map((c) => [c.name, c.identity]))('answers %s', (_name, identity) => {
+    expect(parseLeafIdentity(identity)?.identity).toBe(identity);
   });
 
-  it('still refuses a forged line shaped like an identity', () => {
-    expect(sanitizeLogValue(`${USER}:web-1\n[HISTORY] forged`)).toBe('invalid');
-    expect(sanitizeLogValue(`${'a'.repeat(129)}:${'b'.repeat(10)}`)).toBe('invalid');
+  it.each(contract.reject.map((c) => [c.name, c.identity]))('skips %s', (_name, identity) => {
+    expect(parseLeafIdentity(identity)).toBeNull();
+  });
+
+  it('bounds each half by the device-id contract', () => {
+    expect(SAFE_QUERY_VALUE_REGEX.source).toBe(deviceId.pattern);
   });
 });
 
@@ -114,6 +147,8 @@ describe('sanitizeLogValue - a leaf identity is evidence, not `invalid`', () => 
  * worst case here (and in `parseLeafIdentity`'s doc) before changing the expectation.
  */
 describe('the device-id generator this bound is derived from', () => {
+  // A path into the frontend package: this spec runs in the monorepo only (as CI does), never from
+  // a lone copy of this app.
   const source = readFileSync(
     resolve(__dirname, '../../../../frontend/src/lib/services/BaseMlsService.ts'),
     'utf8'

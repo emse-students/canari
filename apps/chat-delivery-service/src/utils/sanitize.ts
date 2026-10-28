@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { cutUserId } from './log-repeat';
 
 /** Allowlist regex for generic query/path values: alphanumerics plus `_`, `.`, `:`, `@`, `-`, up to 128 chars. */
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
@@ -25,6 +26,10 @@ export interface LeafIdentity {
  * is stored under, which is all the allowlist was for (no whitespace, no newline, no quote reaches a
  * log line or a query parameter); the pair's own bound is therefore 128 + 1 + 128.
  * `sanitize.leaf-identity.spec.ts` ties this to the generator's shape so the two cannot drift again.
+ *
+ * **THE CLIENT APPLIES THE SAME RULE BEFORE IT SENDS** (`isAddressableLeafIdentity`,
+ * `frontend/src/lib/mls-client/leafIdentity.ts`): both sides run every case of
+ * `libs/contracts/leaf-identity.cases.json`.
  */
 export function parseLeafIdentity(value: unknown): LeafIdentity | null {
   if (typeof value !== 'string') return null;
@@ -37,17 +42,22 @@ export function parseLeafIdentity(value: unknown): LeafIdentity | null {
 }
 
 /**
- * {@link parseLeafIdentity} for a value the request DEPENDS on: a 400 naming `fieldName` and what a
- * leaf identity is, on anything else.
+ * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value: the user half
+ * cut ({@link cutUserId}, as every other line here prints a user), the device half kept - it is
+ * what tells two devices of one person apart. A bare user id (a field that may name only the user)
+ * is cut the same way. Anything else reads as {@link sanitizeLogValue} reads it: `invalid`, or
+ * `absent` when nothing was sent - never a refusal.
+ *
+ * A real identity is longer than the 128 bound, so these fields printed `invalid` until 2026-10-28
+ * - the evidence each report exists to carry - and then printed the whole user id.
  */
-export function sanitizeLeafIdentity(value: unknown, fieldName: string): LeafIdentity {
-  const leaf = parseLeafIdentity(value);
-  if (leaf === null) {
-    throw new BadRequestException(
-      `${fieldName} must be userId:deviceId - one ':' between two non-empty values of [a-zA-Z0-9_.@-], at most 128 characters each`
-    );
+export function sanitizeLeafLogValue(value: unknown, absent = 'unstated'): string {
+  if (typeof value === 'string') {
+    const leaf = parseLeafIdentity(value.trim());
+    if (leaf !== null) return `${cutUserId(leaf.userId)}:${leaf.deviceId}`;
   }
-  return leaf;
+  const plain = sanitizeLogValue(value, absent);
+  return plain === absent || plain === 'invalid' ? plain : cutUserId(plain);
 }
 
 /**
@@ -138,18 +148,15 @@ export function isUnresolvedIdentity(value: string): boolean {
  * {@link SAFE_QUERY_VALUE_REGEX} - which is also what stops a caller writing newlines into a log and
  * forging lines in it.
  *
- * A LEAF IDENTITY (`userId:deviceId`, {@link parseLeafIdentity}) is printed too: three reports carry
- * one (`verifiedIdentity`, `entrant`, `peer`), a real one is longer than the 128 bound, and until
- * 2026-10-28 every one of them printed `invalid` - the evidence each report exists to carry.
+ * A field that carries a leaf identity uses {@link sanitizeLeafLogValue} instead: a real one is
+ * longer than the 128 bound.
  */
 export function sanitizeLogValue(value: unknown, absent = 'unstated'): string {
   if (value === undefined || value === null || value === '') return absent;
   if (typeof value !== 'string') return 'invalid';
   const trimmed = value.trim();
   if (!trimmed) return absent;
-  return SAFE_QUERY_VALUE_REGEX.test(trimmed) || parseLeafIdentity(trimmed) !== null
-    ? trimmed
-    : 'invalid';
+  return SAFE_QUERY_VALUE_REGEX.test(trimmed) ? trimmed : 'invalid';
 }
 
 /**

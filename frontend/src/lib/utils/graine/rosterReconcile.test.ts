@@ -691,12 +691,50 @@ describe('revokedLeafCandidates', () => {
         'Alice',
         'web-1'
       )
-    ).toEqual(['alice:WEB-1', 'bob:x']);
+    ).toEqual({ candidates: ['alice:WEB-1', 'bob:x'], malformed: 0 });
   });
 
-  it('never asks about a legacy bare leaf, which names no device and would refuse the whole request', () => {
-    expect(revokedLeafCandidates(['bob', 'bob:x', 'dave'], new Set(), 'alice', 'web-1')).toEqual([
-      'bob:x',
+  it('never asks about a legacy bare leaf, and does not count it: a known shape', () => {
+    expect(revokedLeafCandidates(['bob', 'bob:x', 'dave'], new Set(), 'alice', 'web-1')).toEqual({
+      candidates: ['bob:x'],
+      malformed: 0,
+    });
+  });
+
+  it('leaves out and COUNTS a crafted credential, and still asks about every other leaf', () => {
+    const real = `${'b0b'.padEnd(64, '7')}:tauri-${'b0b'.padEnd(64, '7')}-mh9x2k1q-0z9y`;
+    expect(
+      revokedLeafCandidates(
+        [real, 'mallory:dev 1', 'mallory:dév', `eve:${'d'.repeat(129)}`, 'x:y:z', 'carl:ok'],
+        new Set(),
+        'alice',
+        'web-1'
+      )
+    ).toEqual({ candidates: [real, 'carl:ok'], malformed: 4 });
+  });
+});
+
+describe('a crafted credential in a key group', () => {
+  it('does not cost the other leaves their revocation question, and is said by count', async () => {
+    const bob = 'b0b'.padEnd(64, '7');
+    const real = `${bob}:web-${bob}-mh9x2k1q-a7c3`;
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', real, 'mallory:dev 1']);
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'alice' },
+      { userId: bob },
+      { userId: 'mallory' },
     ]);
+    getRevokedLeaves.mockResolvedValue([real]);
+    const lines: string[] = [];
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+      lines.push(m)
+    );
+
+    expect(getRevokedLeaves).toHaveBeenCalledExactlyOnceWith('dist-group', [real]);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('dist-group', [real]);
+    expect(lines.join(' | ')).toContain('1 leaf/leaves outside the leaf-identity rule');
+    // The count only: a leaf identity names a person.
+    expect(lines.join(' | ')).not.toContain('mallory');
   });
 });

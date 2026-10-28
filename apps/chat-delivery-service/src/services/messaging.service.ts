@@ -120,6 +120,7 @@ import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
   sanitizeLogValue,
+  sanitizeLeafLogValue,
   sanitizeStringIdList,
   assertCallerOwnsUserId,
   isUnresolvedIdentity,
@@ -2258,7 +2259,7 @@ export class MessagingService {
     if (frame.external && frame.leafIdentity !== `${committer}:${deviceId}`) {
       this.logger.warn(
         `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} device=${deviceId} ` +
-          `sender=${sanitizeLogValue(committer)} leaf=${sanitizeLogValue(frame.leafIdentity)}`
+          `sender=${sanitizeLogValue(committer)} leaf=${sanitizeLeafLogValue(frame.leafIdentity)}`
       );
       throw new ForbiddenException({
         error: 'commit_identity_mismatch',
