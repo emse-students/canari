@@ -1833,6 +1833,12 @@ pass settles, and a failed one is swallowed by the lane's tail rather than holdi
 hung actor pass cannot stall a community's opening. A removal the gate refuses re-reads the tree:
 "already gone" when another device removed them first, "still hold a leaf" only when they do.
 
+**A community kick, the same way** (`commitCommunityKick`, from the community admin panel): the
+kick cuts and strips the person from the community AND from every private salon in one server call,
+so the actor commits in the community's key group and then in each private salon's group of that
+community it holds, one at a time. A `channel.member.kicked` broadcast about somebody else stays
+`ignore` on every receiver (`memberRemoval.ts`): the commit is the actor's, never the fan-out's.
+
 What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
 above, unchanged): an actor that holds no key group for the scope (an admin revoking a private salon
 they are not in), a follower tab, a session with no Graine runtime - and **an access-list rewrite**
