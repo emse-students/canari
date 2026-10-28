@@ -7,6 +7,18 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
  */
 export type PurchasePaymentMethod = 'online' | 'stripe' | 'cash';
 
+/**
+ * Where a purchase stands. `paid_not_granted` is money taken for a cotisation tier that was NOT
+ * granted, because at settlement it was no longer a rise over the tier the buyer held
+ * (docs/wiki/cotisations.md "Rising to a higher tier"): a refund or a manual grant is owed. It is
+ * money received, so the association's purchases list it beside `paid`; it never counts as having
+ * bought the product. Stored in the existing varchar column, which carries no CHECK.
+ */
+export type PurchaseStatus = 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired';
+
+/** The statuses of money actually received: what the association's purchases list. */
+export const RECEIVED_PURCHASE_STATUSES: PurchaseStatus[] = ['paid', 'paid_not_granted'];
+
 /** Immutable audit record for a completed purchase (form submission or boutique product). */
 @Entity('purchase_records')
 export class PurchaseRecord {
@@ -38,7 +50,7 @@ export class PurchaseRecord {
   paymentMethod: PurchasePaymentMethod;
 
   @Column({ length: 30 })
-  status: 'paid' | 'pending_cash' | 'cancelled' | 'expired';
+  status: PurchaseStatus;
 
   @Column({ nullable: true })
   stripePaymentIntentId: string | null;

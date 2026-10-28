@@ -1,9 +1,16 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { lockBuyerTiers } from './buyer-tier-lock';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
+import {
+  pickHeldTier,
+  tierRelation,
+  type RankedTier,
+  type TierRelation,
+} from '../associations/tier-pricing';
 
 /** Data required to grant or renew a membership tag. */
 export interface GrantTagData {
@@ -14,6 +21,16 @@ export interface GrantTagData {
   expiresAt?: Date | null;
   metadata?: Record<string, unknown>;
 }
+
+/**
+ * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted, or refused
+ * because the tier is not a rise over the one the user holds (`lower`, `unranked`) - the same rule a
+ * settlement applies, so a paid grant never swaps out a dearer tier by the XOR.
+ */
+export type RankedGrantOutcome = { granted: UserTag } | { refused: TierRelation };
+
+/** How `grantCotisantLocked` treats a tier the user may already hold. */
+type GrantRule = 'manual' | 'unless-holding-any' | 'only-a-rise';
 
 /** One row of an association's active cotisant roster, enriched with shared-`users`-table fields. */
 export interface CotisantRosterItem {
@@ -231,46 +248,187 @@ export class UserTagService {
     variantKey: string | null = null,
     metadata: Record<string, unknown> = {}
   ): Promise<UserTag> {
-    const rows: { slug: string; cotisationMode: CotisationMode | null }[] =
-      await this.repo.manager.query(
+    const outcome = await this.grantCotisantLocked(
+      assocId,
+      userId,
+      grantedBy,
+      variantKey,
+      metadata,
+      'manual'
+    );
+    if (!outcome || !('granted' in outcome)) {
+      throw new Error('grantCotisant: a manual grant is never skipped nor refused');
+    }
+    return outcome.granted;
+  }
+
+  /**
+   * `grantCotisant` for a PAID grant that is not a manager's decision (a form that grants a tier):
+   * ranked under the buyer's tier lock like a settlement, so it grants only `none`, `held` (a
+   * renewal) or `higher`, and refuses `lower` and `unranked` - the XOR would otherwise replace a
+   * dearer tier the user paid for. A refusal grants nothing and changes nothing; the caller records
+   * the payment as paid but not granted.
+   */
+  async grantCotisantIfARise(
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>
+  ): Promise<RankedGrantOutcome> {
+    const outcome = await this.grantCotisantLocked(
+      assocId,
+      userId,
+      grantedBy,
+      variantKey,
+      metadata,
+      'only-a-rise'
+    );
+    if (!outcome) throw new Error('grantCotisantIfARise: a ranked grant is never skipped');
+    return outcome;
+  }
+
+  /**
+   * `grantCotisant`, except that it grants NOTHING (and answers null) when the user already holds
+   * any tier of the association - asked UNDER the buyer's tier lock, so a tier paid for at the same
+   * moment is seen and kept instead of being swapped out by the XOR. The legacy claim's path: a
+   * cotisation bought in Canari outranks anything a legacy list says.
+   */
+  async grantCotisantUnlessHeld(
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>
+  ): Promise<UserTag | null> {
+    const outcome = await this.grantCotisantLocked(
+      assocId,
+      userId,
+      grantedBy,
+      variantKey,
+      metadata,
+      'unless-holding-any'
+    );
+    return outcome && 'granted' in outcome ? outcome.granted : null;
+  }
+
+  /**
+   * Grants a raw tag in the name of `assocId` (the admin's "grant a tag" endpoint) under the
+   * buyer's tier lock: the tag may be one of the association's tier tags, so it must not interleave
+   * with a settlement or another grant ranking or swapping that buyer's tiers.
+   */
+  async grantTagForAssociation(assocId: string, data: GrantTagData): Promise<UserTag> {
+    return this.repo.manager.transaction(async (manager) => {
+      await lockBuyerTiers(manager, assocId, data.userId);
+      return this.grantOrRenew({ ...data, issuingAssocId: assocId }, manager);
+    });
+  }
+
+  /**
+   * The body of `grantCotisant`, `grantCotisantUnlessHeld` and `grantCotisantIfARise`. EVERYTHING
+   * it reads - the association, its tiers, the tag to derive, what the user holds - is read through
+   * the transaction's `manager` AFTER the buyer's tier lock, so a retag or a grant committed while it
+   * waited is what it sees. Null: skipped because a tier is held (`unless-holding-any`).
+   */
+  private async grantCotisantLocked(
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null,
+    metadata: Record<string, unknown>,
+    rule: GrantRule
+  ): Promise<RankedGrantOutcome | null> {
+    return this.repo.manager.transaction(async (manager) => {
+      await lockBuyerTiers(manager, assocId, userId);
+      const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
         `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
         [assocId]
       );
-    const asso = rows[0];
-    if (!asso) throw new NotFoundException('Association not found');
-    if (!asso.cotisationMode) {
-      throw new BadRequestException('Cotisation is not enabled for this association');
-    }
+      const asso = rows[0];
+      if (!asso) throw new NotFoundException('Association not found');
+      if (!asso.cotisationMode) {
+        throw new BadRequestException('Cotisation is not enabled for this association');
+      }
 
-    const tiers = await this.listCotisationTiers(assocId);
-    // Validate the tier against the association's own catalogue. An arbitrary variantKey would
-    // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
-    if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
-      throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
-    }
-    // The same trap in reverse: an association that dropped its base tier in favour of named ones
-    // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
-    if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
-      throw new BadRequestException('This association has no base tier - a tier must be chosen');
-    }
+      const tiers = await this.listCotisationTiers(assocId, { manager });
+      // Validate the tier against the association's own catalogue. An arbitrary variantKey would
+      // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
+      if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
+        throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
+      }
+      // The same trap in reverse: an association that dropped its base tier in favour of named ones
+      // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
+      if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
+        throw new BadRequestException('This association has no base tier - a tier must be chosen');
+      }
 
-    const { tagName, expiresAt } = deriveCotisationTag(
-      asso.slug,
-      asso.cotisationMode,
-      new Date(),
-      variantKey
-    );
-    this.logger.debug(
-      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName}`
-    );
-    return this.repo.manager.transaction(async (manager) => {
+      const { tagName, expiresAt } = deriveCotisationTag(
+        asso.slug,
+        asso.cotisationMode,
+        new Date(),
+        variantKey
+      );
+      this.logger.debug(
+        `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
+      );
+      if (
+        rule === 'unless-holding-any' &&
+        (await this.heldVariantKeys(userId, tiers, manager)).length > 0
+      ) {
+        this.logger.debug(
+          `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+        );
+        return null;
+      }
+      if (rule === 'only-a-rise') {
+        const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
+        if (relation === 'lower' || relation === 'unranked') {
+          this.logger.error(
+            `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
+              `refused for user=${userId.slice(0, 8)}: ${relation} against the tier held - nothing granted`
+          );
+          return { refused: relation };
+        }
+      }
       const tag = await this.grantOrRenew(
         { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
         manager
       );
       await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
-      return tag;
+      return { granted: tag };
     });
+  }
+
+  /**
+   * Where tier `variantKey` stands against what the user holds, read through `manager` under the
+   * buyer's tier lock, on the tiers' PRODUCT prices: ranked against the ONE tier `pickHeldTier`
+   * picks, as a checkout and a settlement rank. Unlike `tierRelationOf`, a target the user holds
+   * BESIDE a dearer (or unrankable) tier - two legacy tags - is NOT `held`: renewing it would run the
+   * sibling XOR and revoke the tier ranked above it, so it answers `lower` / `unranked` and is
+   * refused. `held` is only the top tier itself.
+   */
+  private async rankTier(
+    assocId: string,
+    userId: string,
+    variantKey: string | null,
+    tiers: CotisationTierInfo[],
+    manager: EntityManager
+  ): Promise<TierRelation> {
+    const priced: RankedTier[] = await manager.query(
+      `SELECT "variantKey", "amountCents", "priceMatrix" FROM association_products
+        WHERE "associationId" = $1 AND type = 'membership'`,
+      [assocId]
+    );
+    const heldKeys = await this.heldVariantKeys(userId, tiers, manager);
+    const product = (key: string | null) => priced.find((t) => t.variantKey === key) ?? null;
+    const target = product(variantKey);
+    const held = pickHeldTier(heldKeys.map((k) => ({ variantKey: k, product: product(k) })));
+    const relation = target ? tierRelation(target, held) : 'unranked';
+    this.logger.debug(
+      `[UserTag] tier rank: assoc=${assocId.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+        `tier=${variantKey ?? 'base'} held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`
+    );
+    return relation;
   }
 
   /**
@@ -279,8 +437,12 @@ export class UserTagService {
    * This is the "is a member" question - the one a member price asks, since a discount for
    * cotisants means all of them.
    */
-  async holdsAnyCotisation(userId: string, assocId: string): Promise<boolean> {
-    return this.holdsOneOfTiers(userId, assocId, null, true);
+  async holdsAnyCotisation(
+    userId: string,
+    assocId: string,
+    manager?: EntityManager
+  ): Promise<boolean> {
+    return this.holdsOneOfTiers(userId, assocId, null, true, manager);
   }
 
   /**
@@ -312,9 +474,10 @@ export class UserTagService {
     userId: string,
     assocId: string,
     variantKey: string | null,
-    anyTier: boolean
+    anyTier: boolean,
+    manager?: EntityManager
   ): Promise<boolean> {
-    const tiers = await this.listCotisationTiers(assocId);
+    const tiers = await this.listCotisationTiers(assocId, { manager });
     if (tiers.length === 0) {
       this.logger.debug(
         `[UserTag] holdsCotisation assoc=${assocId.slice(0, 8)} has no cotisation tier - false`
@@ -330,7 +493,7 @@ export class UserTagService {
       );
       return false;
     }
-    return (await this.heldVariantKeys(userId, wanted)).length > 0;
+    return (await this.heldVariantKeys(userId, wanted, manager)).length > 0;
   }
 
   /**
@@ -341,15 +504,19 @@ export class UserTagService {
    * cotisant "avec alcool" and a cotisant "sans alcool" land in different cells, and asking one
    * boolean question per bucket would re-derive the same tags once per column.
    */
-  async listHeldCotisationTiers(userId: string, assocId: string): Promise<(string | null)[]> {
-    const tiers = await this.listCotisationTiers(assocId);
+  async listHeldCotisationTiers(
+    userId: string,
+    assocId: string,
+    manager?: EntityManager
+  ): Promise<(string | null)[]> {
+    const tiers = await this.listCotisationTiers(assocId, { manager });
     if (tiers.length === 0) {
       this.logger.debug(
         `[UserTag] listHeldCotisationTiers assoc=${assocId.slice(0, 8)} has no cotisation tier - none`
       );
       return [];
     }
-    return this.heldVariantKeys(userId, tiers);
+    return this.heldVariantKeys(userId, tiers, manager);
   }
 
   /**
@@ -406,18 +573,23 @@ export class UserTagService {
    */
   private async heldVariantKeys(
     userId: string,
-    tiers: CotisationTierInfo[]
+    tiers: CotisationTierInfo[],
+    manager?: EntityManager
   ): Promise<(string | null)[]> {
     const held: (string | null)[] = [];
     for (const tier of tiers) {
-      if (await this.hasActiveTag(userId, tier.tagName)) held.push(tier.variantKey);
+      if (await this.hasActiveTag(userId, tier.tagName, manager)) held.push(tier.variantKey);
     }
     return held;
   }
 
-  /** Returns true when the user has an active (non-expired) tag with the given name. */
-  async hasActiveTag(userId: string, tagName: string): Promise<boolean> {
-    const tag = await this.repo.findOne({ where: { userId, tagName } });
+  /**
+   * Returns true when the user has an active (non-expired) tag with the given name. Pass `manager`
+   * inside a transaction (under the buyer's tier lock), so the read uses ITS connection.
+   */
+  async hasActiveTag(userId: string, tagName: string, manager?: EntityManager): Promise<boolean> {
+    const repo = manager ? manager.getRepository(UserTag) : this.repo;
+    const tag = await repo.findOne({ where: { userId, tagName } });
     if (!tag) return false;
     if (!tag.expiresAt) return true;
     return tag.expiresAt > new Date();
@@ -444,8 +616,15 @@ export class UserTagService {
    * other one - the caller's `:id` must constrain the row it reaches.
    */
   async revoke(tagId: string, issuingAssocId: string): Promise<void> {
-    const res = await this.repo.delete({ id: tagId, issuingAssocId });
-    if (!res.affected) throw new NotFoundException('Tag not found');
+    await this.repo.manager.transaction(async (manager) => {
+      // The holder is known only from the row, so it is read first; the delete then runs under
+      // the holder's tier lock, never between a checkout's rank and its attempt row.
+      const tag = await manager.findOne(UserTag, { where: { id: tagId, issuingAssocId } });
+      if (!tag) throw new NotFoundException('Tag not found');
+      await lockBuyerTiers(manager, issuingAssocId, tag.userId);
+      const res = await manager.delete(UserTag, { id: tagId, issuingAssocId });
+      if (!res.affected) throw new NotFoundException('Tag not found');
+    });
     this.logger.log(`[UserTag] Revoked tag ${tagId} (assoc=${issuingAssocId})`);
   }
 
