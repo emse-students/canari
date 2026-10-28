@@ -26,10 +26,11 @@ import {
   TIER_NOT_A_RISE,
   TIER_NOT_RANKABLE,
   PAYMENT_ROUTING_CHANGED,
+  productCheckoutLookup,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
-import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
+import { toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
@@ -64,7 +65,10 @@ import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
   amountOutOfRange,
+  classifyCoreCallFailure,
   coreRefusedRequest,
+  LYDIA_REFUSALS_FINAL,
+  type LydiaRefusalsFinal,
   mapCorePaymentError,
 } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
@@ -269,6 +273,8 @@ export interface FailedDelivery {
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); a test overrides it. */
+  protected readonly refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
   constructor(
     @InjectRepository(AssociationProduct)
@@ -1550,25 +1556,12 @@ export class ProductsService {
     }
     let unproven: string;
     try {
-      const vendorToken = open.vendorToken;
-      if (open.requestId) {
-        const { data } = await firstValueFrom(
-          this.httpService.post<{ outcome?: string }>(
-            coreUrl('payments/cancel-request'),
-            { requestId: open.requestId, connectAccountId: vendorToken },
-            internalCoreRequestConfig()
-          )
+      if (open.requestId && (await this.cancelRequestAtLydia(open)) === 'cancelled') {
+        this.logger.log(
+          `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
         );
-        if (data?.outcome === 'cancelled') {
-          this.logger.log(
-            `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
-          );
-          await this.closeCheckout(open, 'cancelled');
-          return;
-        }
-        if (data?.outcome !== 'already-settled') {
-          throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
-        }
+        await this.closeCheckout(open, 'cancelled');
+        return;
       }
       const status = await this.readAndApplyRequestState(open);
       if (status !== 'open') return;
@@ -1577,15 +1570,76 @@ export class ProductsService {
       unproven = err instanceof Error ? err.message : String(err);
     }
     if (Date.now() >= open.expiresAt.getTime() + CHECKOUT_EXPIRY_MARGIN_MS) {
-      this.logger.error(
-        `[SHOP] checkout ${open.id.slice(0, 8)} is past its expire_time and still unproven ` +
-          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
-          `expired is still recorded by its confirm callback`
-      );
-      await this.closeCheckout(open, 'expired');
+      await this.expireUnprovenCheckout(open, unproven);
       return;
     }
     throw this.previousCheckoutOpen(open.id, unproven);
+  }
+
+  /**
+   * Asks core to cancel the attempt's request at Lydia (`payments/cancel-request`, by its numeric
+   * request id, which the caller has checked is stored). `cancelled`, or `already-settled` when Lydia
+   * had processed it already - paid, cancelled or expired, which only `request/state` tells apart.
+   * Any other answer, or a failed call, THROWS: the request may still be payable.
+   */
+  private async cancelRequestAtLydia(
+    row: ProductCheckout
+  ): Promise<'cancelled' | 'already-settled'> {
+    const { data } = await firstValueFrom(
+      this.httpService.post<{ outcome?: string }>(
+        coreUrl('payments/cancel-request'),
+        { requestId: row.requestId, connectAccountId: row.vendorToken },
+        internalCoreRequestConfig()
+      )
+    );
+    if (data?.outcome === 'cancelled' || data?.outcome === 'already-settled') return data.outcome;
+    throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
+  }
+
+  /**
+   * An attempt whose request Lydia VERIFIABLY reports still `open` past the expire_time Canari sent
+   * it (the reconciliation sweep): cancelled AT LYDIA first, through the cancel the buyer's next
+   * attempt makes, so no payment can land on a request Canari has closed; then closed `cancelled`.
+   * - `already-settled`: Lydia processed it between the read and the cancel. The attempt stays
+   *   `open` and this answers `open`, so the caller reads it once more (the sweep does, at once).
+   * - A cancel Lydia REFUSED with a code measured FINAL (`refusalsFinal.cancel`, empty until
+   *   a sandbox measurement fills it): closed `expired` at ERROR (`expireUnprovenCheckout`). The
+   *   request may then still be payable at Lydia; a payment on it is recorded only if its confirm
+   *   callback arrives, over the closed attempt, at ERROR. Any other refusal - and core answering
+   *   about itself, 401/403 or its 503 - THROWS like a cancel with no answer: retried, never closed.
+   * - No numeric request id (its request/do answer was lost): the cancel cannot name it, closed
+   *   `expired` at ERROR the same way.
+   * - A cancel that got NO answer (no response, a timeout, a 5xx) THROWS and closes nothing: the
+   *   request may still be payable. Answers the status the row now has.
+   */
+  async cancelStillOpenCheckout(row: ProductCheckout, why: string): Promise<ProductCheckoutStatus> {
+    if (!row.requestId) {
+      return this.expireUnprovenCheckout(row, `${why}; no request id to cancel it at Lydia with`);
+    }
+    let outcome: 'cancelled' | 'already-settled';
+    try {
+      outcome = await this.cancelRequestAtLydia(row);
+    } catch (err: unknown) {
+      const failure = classifyCoreCallFailure(err);
+      if (failure.kind !== 'refused' || !this.refusalsFinal.cancel.has(failure.providerCode)) {
+        throw err;
+      }
+      return this.expireUnprovenCheckout(
+        row,
+        `${why}; its cancel at Lydia was refused for good (error ${failure.providerCode})`
+      );
+    }
+    if (outcome === 'already-settled') {
+      this.logger.warn(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} was processed at Lydia ` +
+          `before its cancel (${why}) - left open for one more read`
+      );
+      return row.status;
+    }
+    this.logger.log(
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request ${row.requestId} cancelled at Lydia (${why})`
+    );
+    return this.closeCheckout(row, 'cancelled');
   }
 
   /**
@@ -1648,39 +1702,51 @@ export class ProductsService {
   }
 
   /**
-   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says. The
-   * request is named by the row's own uuid, or - for an attempt whose issuing call never answered
-   * one - by its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
-   * `paid` is settled (`settlePaidCheckout`), `declined` (state 5) and `cancelled-or-expired`
-   * (state 6: `expired` past the row's `expiresAt`, `cancelled` before it - the state alone cannot
-   * tell them apart) close the row, `not-found` on an order_ref lookup (no request carries it:
-   * request/do never reached Lydia) closes it `cancelled`, `open` and `unknown` change nothing.
-   * Returns the status the row now has, as far as this call knows. A failed read throws. The read
-   * goes to the Business the request was issued to (the row's `vendorToken` snapshot).
+   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says
+   * (`applyRequestState`). The request is named by the row's own uuid, or - for an attempt whose
+   * issuing call never answered one - by its order_ref (`productCheckoutLookup`). A failed read
+   * throws. The read goes to the Business the request was issued to (the row's `vendorToken`
+   * snapshot).
    */
   private async readAndApplyRequestState(row: ProductCheckout): Promise<ProductCheckoutStatus> {
-    const byUuid = !!row.requestUuid && LYDIA_REQUEST_UUID_RE.test(row.requestUuid);
+    const lookup = productCheckoutLookup(row);
     const { data } = await firstValueFrom(
       this.httpService.post<{ state?: string; raw?: string }>(
         coreUrl('payments/request-state'),
-        byUuid
-          ? { sessionId: row.requestUuid, connectAccountId: row.vendorToken }
-          : { orderRef: productOrderRef(row.productId, row.id), connectAccountId: row.vendorToken },
+        { ...lookup, connectAccountId: row.vendorToken },
         internalCoreRequestConfig()
       )
     );
-    this.logger.debug(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: read by ${byUuid ? 'uuid' : 'order_ref'} -> ${data?.state}`
-    );
+    const by = 'sessionId' in lookup ? 'uuid' : 'order_ref';
+    this.logger.debug(`[SHOP] checkout ${row.id.slice(0, 8)}: read by ${by} -> ${data?.state}`);
+    return this.applyRequestState(row, data?.state, data?.raw);
+  }
+
+  /**
+   * Writes what Lydia said about the attempt's request - the ONE mapping of a state onto an attempt,
+   * shared by the payer's return, the confirm callback and the reconciliation sweep (which calls it
+   * only with an answer whose signature it verified). `paid` is settled (`settlePaidCheckout`, the
+   * one writer of `paid`), `declined` (state 5) and `cancelled-or-expired` (state 6: `expired` past
+   * the row's `expiresAt`, `cancelled` before it - the state alone cannot tell them apart) close the
+   * row, `not-found` on an order_ref lookup (no request carries it: request/do never reached Lydia)
+   * closes it `cancelled`, `open` and `unknown` change nothing. Returns the status the row now has,
+   * as far as this call knows. `raw` is the provider's code, for the log only.
+   */
+  async applyRequestState(
+    row: ProductCheckout,
+    wireState: unknown,
+    raw?: string
+  ): Promise<ProductCheckoutStatus> {
+    const lookup = productCheckoutLookup(row);
     // `not-found` is not a request state but the answer of an order_ref LOOKUP that matched no
     // request: request/do never reached Lydia. Read before the one typed mapping of the states.
-    if (data?.state === 'not-found' && !byUuid) {
+    if (wireState === 'not-found' && 'orderRef' in lookup) {
       this.logger.warn(
-        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${productOrderRef(row.productId, row.id)} - never issued, closed cancelled`
+        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${lookup.orderRef} - never issued, closed cancelled`
       );
       return this.closeCheckout(row, 'cancelled');
     }
-    const state = toRequestState(data?.state);
+    const state = toRequestState(wireState);
     if (state === 'paid') {
       this.logger.log(`[SHOP] checkout ${row.id.slice(0, 8)}: request is PAID at the provider`);
       await this.settlePaidCheckout(row.id);
@@ -1700,9 +1766,34 @@ export class ProductsService {
       return row.status;
     }
     this.logger.warn(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${data?.raw ?? JSON.stringify(data?.state)}) - left ${row.status}`
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${raw ?? JSON.stringify(wireState)}) - left ${row.status}`
     );
     return row.status;
+  }
+
+  /**
+   * Closes an attempt whose request has ENDED (past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`, which
+   * the CALLER has checked) and that nothing proved paid - `unproven` says why, for the log. Closed
+   * as `expired`, at ERROR, so it stops blocking its buyer's retry and is never asked about again.
+   * Nothing is lost by it: a payment taken before the request expired is still recorded by its
+   * confirm callback, which asks even of a closed attempt (`handlePurchaseCompleted` ->
+   * `settlePaidCheckout`). Shared by the buyer's next attempt (`settlePreviousOpenAttempt`) and the
+   * reconciliation sweep, which closes an attempt whose read ANSWERED something it cannot act on.
+   * Conditional on `open` (`closeCheckout`): a `paid` written meanwhile stays, and is answered.
+   */
+  async expireUnprovenCheckout(
+    row: ProductCheckout,
+    unproven: string
+  ): Promise<ProductCheckoutStatus> {
+    const status = await this.closeCheckout(row, 'expired');
+    if (status === 'expired') {
+      this.logger.error(
+        `[SHOP] checkout ${row.id.slice(0, 8)} is past its expire_time and still unproven ` +
+          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
+          `expired is still recorded by its confirm callback`
+      );
+    }
+    return status;
   }
 
   /**

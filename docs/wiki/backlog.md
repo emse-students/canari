@@ -256,6 +256,22 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
+
+On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
+reviewed it and published it. The app's logs and the system's own records agree on two short,
+unrequested opens. Nothing stayed open: the session released the late stream itself.
+
+| When | App log (`[camera-session]`, `[camera]`, `[reel-capture]`) | System record |
+| --- | --- | --- |
+| The gallery picker returns, before the pick reaches its review | `back on screen - reopening` / `start user (#3)`, then `ready -> review on picked`, `stop`, `opened user`, `#3 came back after the session moved on - releasing it` | `dumpsys audio`: a CAMCORDER recording for ~0.5 s |
+| After Publish, with the feed already on screen | `published`, `the screen is being left: the take is dropped`, `the take was dismissed`, `start user (#5)`, `stop`, `opened user: camera 1, facing front`, `#5 came back ... releasing it`, `released` | `dumpsys media.camera`: CONNECT then DISCONNECT of the front camera; `dumpsys audio`: a CAMCORDER recording for ~0.33 s |
+| +33 s, +78 s, and in the reel viewer | nothing | no camera client, no recording |
+
+Causes, the fix and its tests: [reels](frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28).
+**Owed: one reading on the Mi 9T** - no CONNECT and no CAMCORDER window after a publish or a gallery
+return.
+
 ## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
 
 A member joins a community mid-session, so the client starts a full listing of that community's
@@ -1222,6 +1238,60 @@ than the rule still auto-Adds a link joiner and "only by a member" holds only fr
 ([legacy-compatibility](legacy-compatibility.md)); the `[UNINVITED_ENTRY] kind=new-person` count on
 production once the build serves both stores; and a second step on the receiving side (private
 operations notes).
+
+## An unseen device of a member is asked about before it is added (2026-10-27): interim built
+
+Built: an automatic Add no longer brings in a device of a member unless its own leaf is in that
+group's tree or a member approved it, one device at a time, under the key it showed; a pin never
+counts. A further device of a member asks a member rather than joining itself, decided on the tree
+of the GroupInfo its commit would be built on (a device whose own leaf is there, and a user's first
+device in a group, keep their own door); one that does join itself is reported and written in the
+conversation, decided per group, with "Not me" on the owner's alert, and is answered no history
+until a member vouches for it; and a waiting device shows its owner its own key
+([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). The user
+confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons. Owed:
+
+- the production rate of device enrolments per week (and how many are a second device of an
+  account), which is the number of taps it costs - and how often a device enrols while none of its
+  conversations has a member online, which now waits instead of joining itself;
+- **the hourly stranded report cannot tell a device waiting for a member's tap from a stranded
+  one**: both are a `pending` seat with no Welcome, no add in flight and no admission. The device
+  knows which it is (its join answers `further_device`); the report needs that fact on the seat - e.g. the
+  `welcome_request` the waiting device sends, recorded per seat - before its count can be read as
+  defects again;
+- a hardware reading of the owner's own new phone approved from the old one, the two keys compared;
+- **who can still be flagged honestly**: a device on a client older than this change still joins
+  by itself beside its user's other devices, and is flagged wherever it was never in the group - the
+  rollout's cost, until `minClientVersion` carries the tree-based door. A current client cannot be:
+  its door is the observer's predicate without the departure half. The departure record's cap
+  (`MAX_RECORDED_DEPARTURES`, 8192 per device, oldest evicted) and an observer that joined after a
+  device left only widen what reads as `firstInGroup`, so they matter for those older clients alone;
+- **an honest device flagged during the rollout** (an older client joining by itself) that then adds
+  a new person makes that person's device withheld too, by this member, until another member's Add
+  or an approval lifts it;
+- the native background engine keeps no record of withheld devices, so it never marks a device added
+  by one (`added_by_unvouched` is set by the app alone); history is answered only by the app, so
+  this costs a notice, not a message;
+- **the same class, not gated**: the member-initiated paths that add a user's devices with no tree
+  to check them against (details in the private operations notes) close with the real fix;
+- the Android background welcome now stages nothing (only a device already in the tree passes its
+  rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
+  native callers if the real fix is not built;
+- **a seal is for good, and an honest user can reach one**: a conversation is sealed (no history
+  answered there by this member) when the native queue of device events overflowed for it. The
+  queue holds 512 events and is emptied only by the app, so a phone whose background engine merges
+  for a long time while the app stays closed, in busy communities, can pass it. No path unseals.
+  Owed: the seals counted (each is an ERROR line naming its cause; a report of their rate per week);
+  and, as a design option NOT built, a lift once every leaf added at or after the overflow's epoch
+  has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
+  device events taken from an account's state while it is being unbound seal their conversations in
+  that account's record, for good, by the same rule - the option above would lift those as well;
+- **the departed bound costs detection**: past it, a conversation is sealed and the records of its
+  departed withheld devices dropped, so one of them that later comes back by itself is no longer
+  known as withheld there - what it then adds gets no line. History stays closed (the seal); only
+  the notice is lost;
+- the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
+  after which this ask remains only as a shim for users without one.
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 
@@ -3607,6 +3677,10 @@ The user decided that every Business is created by Canari's onboarding, never li
 2. **Closing a marked payment.** Nothing clears `paid_not_granted` once the money was refunded or the tier granted by hand. Proposal: an admin action in the purchases list that records WHICH of the two happened (refunded or granted), writes a durable row (who, when from the server's own insert, which outcome) and leaves the mark as history; the hourly report then counts only the marked payments with no closing row. No clock decides anything: a marked payment stays reported until a person records its outcome.
 
 **Owed:** the user's yes on the column, and on the closing action; then one pull request with its migration and a real-PostgreSQL test of both.
+
+### P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)
+
+The sweep ([lydia-api](lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) acts only on an answer whose signature verifies over the row's amount written as `request/do` sent it (`"12.50"`). Lydia's documentation names the signed fields but not how the amount is written. The sweep ships OFF in production (`LYDIA_RECONCILE_ENABLED`, computed `false` there, `true` on dev). **Owed, in order:** (0) BEFORE production is switched on, all of: the user's one-off sandbox probe on a validated Business - the `0.50` format read by `request_uuid` AND by `order_ref`, the signature on a PAID and on a CANCELLED request (the command is in #2595); one full dev sweep read in its logs; a clean day of dev logs; and a read-only count on production of the open ended attempts the first tick will read and close (`count`, `min("expiresAt")`, the query is in [lydia-api](lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) - then `compute_lydia_reconcile_enabled` turned `true` for production in a commit; (1) the first real request the sweep reads - a `verified` line settles it; a `does NOT verify` ERROR on a row whose amount is right means the amount is signed another way, fixed in `lydiaStateSignedFields` and nowhere else; (2) then the payer's return and the callback's read made to verify too (they do not, and settling unverified there is unchanged by this lot); (3) a form answer keeps no snapshot of the Business its request was issued to, so one whose association re-linked meanwhile does not verify - a column, so a migration and the user's yes, only if it is ever seen. (4) On the sandbox, which Lydia refusal codes are PERMANENT for `request/state` and for `request/cancel` on a request Lydia ISSUED - first error `2` on an issued-then-expired uuid, measured so far only on a never-issued one: a refusal closes an attempt only from an allowlist, EMPTY for both calls until then, so every refusal is retried and accused at ERROR when the accused list changes - the starvation trade, taken knowingly; a durable bound on retries is a column, so a migration and the user's yes, not built.
 
 ### P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)
 
