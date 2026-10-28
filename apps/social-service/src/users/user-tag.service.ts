@@ -75,10 +75,12 @@ export interface GrantTagData {
 }
 
 /**
- * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted, or refused
- * because the tier is not a rise over the one the user holds (`lower`, `unranked`) - the same rule a
- * settlement applies, so a paid grant never swaps out a dearer tier by the XOR - or because the
- * user holds the tag's name under another issuer (`TAG_HELD_BY_ANOTHER_ISSUER`).
+ * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted - for `none`,
+ * `higher`, or `held` (a renewal of the very tier held) - or refused because the tier is not a rise
+ * over the one the user holds (`lower`, `unranked`), so a paid grant never swaps out a dearer tier
+ * by the XOR, or because the user holds the tag's name under another issuer
+ * (`TAG_HELD_BY_ANOTHER_ISSUER`). Not a boutique settlement's rule: a settlement decides on the tier
+ * its checkout froze (`settlementVerdict`) and never grants a tier already held.
  */
 export type RankedGrantOutcome =
   | { granted: UserTag }
@@ -485,8 +487,8 @@ export class UserTagService {
 
   /**
    * `grantCotisant` for a PAID grant that is not a manager's decision (a form that grants a tier):
-   * ranked under the buyer's tier lock like a settlement, so it grants only `none`, `held` (a
-   * renewal) or `higher`, and refuses `lower` and `unranked` - the XOR would otherwise replace a
+   * ranked under the buyer's tier lock (`rankTier`, on the tiers' product prices), so it grants
+   * only `none`, `held` (a renewal) or `higher`, and refuses `lower` and `unranked` - the XOR would otherwise replace a
    * dearer tier the user paid for. A refusal grants nothing and changes nothing; the caller records
    * the payment as paid but not granted.
    */
@@ -724,23 +726,28 @@ export class UserTagService {
    * must refuse a non-rise BEFORE it opens a payment (a paid form that grants a tier): the same
    * `rankTier` decision the ranked grant takes, read outside any lock. It is a pre-check, not the
    * verdict - the grant re-ranks under the buyer's tier lock when the money lands. `none` when the
-   * association has no cotisation.
+   * association has no cotisation. `tiers`, when the caller already read the catalogue
+   * (`listCotisationTiers`, the same unlocked read), is used instead of reading it again.
    */
   async rankCotisationTier(
     assocId: string,
     userId: string,
-    variantKey: string | null
+    variantKey: string | null,
+    tiers?: CotisationTierInfo[]
   ): Promise<TierRelation> {
     const manager = this.repo.manager;
-    const tiers = await this.listCotisationTiers(assocId, { manager });
-    if (tiers.length === 0) return 'none';
-    return this.rankTier(assocId, userId, variantKey, tiers, manager);
+    const catalogue = tiers ?? (await this.listCotisationTiers(assocId, { manager }));
+    if (catalogue.length === 0) return 'none';
+    return this.rankTier(assocId, userId, variantKey, catalogue, manager);
   }
 
   /**
    * Where tier `variantKey` stands against what the user holds, read through `manager` under the
    * buyer's tier lock, on the tiers' PRODUCT prices: ranked against the ONE tier `pickHeldTier`
-   * picks, as a checkout and a settlement rank. Unlike `tierRelationOf`, a target the user holds
+   * picks, the tier a checkout ranks against too. A settlement does not rank: it grants on the tier
+   * its checkout froze (`settlementVerdict`). A target with no product is `unranked`; a paid form
+   * refuses that case earlier, as a tier that no longer exists (`FORM_TIER_NOT_SOLD`). Unlike
+   * `tierRelationOf` (the checkout's), a target the user holds
    * BESIDE a dearer (or unrankable) tier - two legacy tags - is NOT `held`: renewing it would run the
    * sibling XOR and revoke the tier ranked above it, so it answers `lower` / `unranked` and is
    * refused. `held` is only the top tier itself.

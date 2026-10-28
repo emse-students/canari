@@ -120,8 +120,8 @@ export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
 
 /**
- * The body `code` of social-service's 409 when a paid answer's form grants a cotisation tier its
- * association no longer sells: refused to everybody, a holder of no membership included, so the
+ * The body `code` of social-service's 409 when a paid answer's form grants a cotisation tier that
+ * no longer exists (its product was deleted): refused to everybody, a holder of no membership included, so the
  * sentence speaks of the form, not of the submitter's membership.
  */
 export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';

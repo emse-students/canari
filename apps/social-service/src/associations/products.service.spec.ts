@@ -2698,6 +2698,30 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect(sans).toMatchObject({ cotisationDisabled: false, viewerDueCents: 1500 });
       });
 
+      // The tier facts and the cotisation-disabled mark both need the associations: one read.
+      it('reads the associations ONCE for a signed-in listing, and not at all for a guest with no membership', async () => {
+        const { service, productRepo, assoRepo, userTagService } = makeService();
+        productRepo.find.mockResolvedValue([sansAlcool(), avecAlcool()]);
+        assoRepo.find.mockResolvedValue([cercle()]);
+        userTagService.listByUser.mockResolvedValue([
+          { tagName: 'cotisant:cercle-sans-alcool', issuingAssocId: 'asso1' },
+        ]);
+
+        const listing = await service.listByAssoc('asso1', 'user1');
+        expect(assoRepo.find).toHaveBeenCalledTimes(1);
+        expect(listing.find((p) => p.id === 'prod-avec')).toMatchObject({
+          viewerTierRelation: 'higher',
+          cotisationDisabled: false,
+        });
+
+        assoRepo.find.mockClear();
+        productRepo.find.mockResolvedValue([
+          product({ id: 'prod-goodies', type: 'other', amountCents: 500 }),
+        ]);
+        await service.listByAssoc('asso1');
+        expect(assoRepo.find).not.toHaveBeenCalled();
+      });
+
       it('names the tier a preferential price is linked to, whichever tier the viewer holds first', async () => {
         const { service, productRepo, assoRepo, userTagService } = makeService();
         productRepo.find.mockResolvedValue([sansAlcool(), avecAlcool()]);

@@ -674,14 +674,15 @@ describe('FormsService - cotisation configuration and granting', () => {
       expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
         'asso1',
         'user1',
-        'sans-alcool'
+        'sans-alcool',
+        []
       );
       expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
     });
 
-    // A form naming a tier the association no longer sells refuses EVERYONE, a holder of nothing
+    // A form naming a tier that no longer exists (deleted) refuses EVERYONE, a holder of nothing
     // included, with its own code - never `TIER_NOT_RANKABLE`, which speaks of a membership held.
-    it('refuses a tier the association no longer sells with FORM_TIER_NOT_SOLD, before ranking', async () => {
+    it('refuses a tier that no longer exists with FORM_TIER_NOT_SOLD, before ranking', async () => {
       const { service, userTagService, submissionRepo } = makeService({
         form: grantingForm,
         tiers: [
@@ -701,7 +702,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
     });
 
-    it('CONTROL: a tier still sold is ranked, and a holder of nothing is taken', async () => {
+    it('CONTROL: a tier that still exists is ranked, and a holder of nothing is taken', async () => {
       const { service, userTagService } = makeService({
         form: grantingForm,
         tiers: [
@@ -714,7 +715,14 @@ describe('FormsService - cotisation configuration and granting', () => {
       });
 
       await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
-      expect(userTagService.rankCotisationTier).toHaveBeenCalled();
+      // The catalogue is read ONCE per submit and handed to the rank.
+      expect(userTagService.listCotisationTiers).toHaveBeenCalledTimes(1);
+      expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'sans-alcool',
+        [expect.objectContaining({ variantKey: 'sans-alcool' })]
+      );
     });
 
     it('CONTROL: a rise is taken', async () => {

@@ -1963,6 +1963,7 @@
   "asso_cotisations_tier_create_button": "Create tier",
   "asso_cotisations_tier_create_error": "Failed to create the tier.",
   "asso_cotisations_tier_key_year_shaped": "A tier identifier cannot be, or end with, an academic year (such as 2024-2025): it would be confused with the yearly membership tags. Choose another identifier, for example \"gold\" or \"promo-2024\".",
+  "asso_cotisations_member_price_tag_not_a_tier": "The discounted price must be for holders of ANOTHER tier of this association: the tier chosen is this one, or not one of its tiers. Pick one of its other tiers, or leave the discounted price empty.",
   "asso_cotisations_tier_delete_confirm": "Delete the tier \"{name}\"? This action is irreversible.",
   "asso_cotisations_tier_delete_error": "Failed to delete the tier.",
   "asso_cotisations_tier_delete_has_holders": [
@@ -2534,7 +2535,7 @@
   "form_view_error_payment_failed": "Payment failed. You can submit the form again.",
   "form_previous_payment_open": "Your previous payment request is still open. Try again once it has expired, at most 30 minutes after it was started.",
   "form_tier_already_held": "You already hold the membership this form grants.",
-  "form_tier_not_sold": "This form grants a membership the association no longer sells. Contact the association.",
+  "form_tier_not_sold": "This form grants a membership that no longer exists. Contact the association.",
   "form_already_answered": "You have already answered this form: no new payment was requested.",
   "form_guest_pending_limit": "Three answers from this connection are already waiting for payment on this form. Pay one, or wait for it to expire (30 minutes at most), then try again.",
   "form_view_submission_already_paid": "Your previous payment was received: your answer is recorded, nothing more to pay.",
