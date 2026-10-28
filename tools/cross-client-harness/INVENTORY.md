@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-112 scripts.
+113 scripts.
 
 | script | what it is |
 |---|---|
@@ -50,6 +50,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `deployed-wasm-check.mjs` | Asks a DEPLOYED estate whether the `mls-core` WebAssembly it serves can panic on the target it |
 | `device-census.mjs` | THE PURE HALF OF THE DEVICE CENSUS - the SQL text, and every function that turns one of its rows |
 | `device.mjs` | WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
+| `devicenotice.mjs` | THE "NOUVEL APPAREIL" NOTICES A MINTING ROW LEAVES ON THE OWNER'S SEATS, DISMISSED THE WAY THE |
 | `devicerows.mjs` | THE DEVICE ROWS OF THE 1.4.1 CAMPAIGN - DEV-1..4, DEV-6, DEV-7 and DUP-7 - their table and judges. |
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
 | `epochfork.mjs` | IS THIS DEVICE AT THE GROUP'S EPOCH - the predicate no row asked, as a pure comparison. |
@@ -254,7 +255,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-66 scripts.
+67 scripts.
 
 | script | what it is |
 |---|---|
@@ -272,6 +273,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
 | `archive/deploy-selftest.mjs` | A ROW DEV WAS REDEPLOYED UNDER IS ABSENT, NOT FAILING - AND THE GATE ASKS DEV, NOT DOCKER. |
 | `archive/deployed-wasm-selftest.mjs` | THE POST-DEPLOY WASM CHECK MUST REFUSE WHAT IT IS MEANT TO REFUSE, AND ONLY THAT. |
+| `archive/devicenotice-selftest.mjs` | THE "NOUVEL APPAREIL" DISMISSAL'S ALLOWLIST, PINNED (`devicenotice.mjs`). |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
 | `archive/devrows-selftest.mjs` | THE DEVICE ROWS' OWN JUDGEMENTS, PINNED (`devicerows.mjs`). |
 | `archive/epochfork-selftest.mjs` | Pins `epochfork.mjs`: the comparison that tells a healthy conversation from an epoch-forked one, |
@@ -382,4 +384,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-321 scripts in total.
+323 scripts in total.

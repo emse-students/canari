@@ -142,6 +142,11 @@ pinned by `archive/campaign-selftest.mjs`):
   the rig's accounts that no live seat holds and the ledger records creating (each DEV row mints and
   abandons one). Read only by default; `--purge --expect N` purges exactly the N it printed, through
   `purge-devices.mjs`. A web seat that does not answer refuses the plan - its device would look stale.
+- **The "Nouvel appareil" notices a mint leaves on the owner's other seats** are dismissed by the
+  minting row itself, after its verdict, through the banner's "Compris" (`devicenotice.mjs`, pinned
+  by `archive/devicenotice-selftest.mjs`; wired in `archive/devrows.mjs` and `archive/removals.mjs`).
+  It is an allowlist of the ids the row minted: the first notice of any other device stops it and is
+  reported at `error`, for a human to read. `cleanup.mjs` does not touch notices.
 - **Not guarded, deliberately**: `dismissLocally` (it removes only the rig device's own copy of a
   conversation already deleted) and the message deletions of `mut.mjs` and `search.mjs`, which pick
   the bubble by the run term of a message the row itself sent seconds earlier.
