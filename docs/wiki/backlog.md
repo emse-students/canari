@@ -27,6 +27,32 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Cotisation-disabled follow-ups (after the tier stack lands)
+
+Left by the review of #2584; none is built. Start after the tier stack has merged.
+
+- **P2 - a paid form that grants a cotisation still takes money after its association disables
+  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
+  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
+  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
+  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
+  record is written), but the grant is still retried as if it could succeed. Fix it like the
+  product path: refuse opening the payment of a granting form while the association has no
+  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
+- **P3 - the purchases tab mislabels a refusal.** `EditAchatsTab.svelte` logs "cash grant refused:
+  amount out of range" for ANY code `providerRefusalMessage` words (`COTISATION_DISABLED`
+  included): log the code.
+- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
+  membership product with a cotisation mode but no stored tag opens a checkout, then ends
+  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
+  operator, privately.
+- **P3 - `/shop` still offers the buy button for a membership product of an association whose
+  cotisations are disabled**: hide or disable it, as for a refused tier.
+- **P3 - the changelog fragment `tag-grant-scoped-to-issuer.md` does not mention
+  `COTISATION_DISABLED`**: add the clause.
+- **P3 - test nit:** the negative assertion in the "renews the dearer" test should use
+  `expect.objectContaining({ tagName })`.
+
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 
 Left by the review of #2544; none is built. Start after the tier stack (#2544 and its followers)
