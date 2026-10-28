@@ -49,6 +49,8 @@ const HELD = '00000000-0000-4000-8000-0000000000d3';
 const UNHELD = '00000000-0000-4000-8000-0000000000d4';
 /** A tier a FORM grants, whose answers wait for their money. */
 const FORMED = '00000000-0000-4000-8000-0000000000d9';
+/** A tier keyed like an academic year, as a row written before such keys were refused. */
+const YEARED = '00000000-0000-4000-8000-0000000000da';
 const RACED = '00000000-0000-4000-8000-0000000000d5';
 const WAITED = '00000000-0000-4000-8000-0000000000d6';
 /** A tier of ASSO whose tag stem is ANOTHER association's base stem (its slug extends ASSO's). */
@@ -141,6 +143,7 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       [HELD, 'held', 2000],
       [UNHELD, 'unheld', 2000],
       [FORMED, 'formed', 2000],
+      [YEARED, '2024-2025', 2000],
       [RACED, 'raced', 2000],
       [WAITED, 'waited', 2000],
       [CROSSED, 'xb', 2000],
@@ -354,6 +357,20 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     await answer('paid', 'now()');
     await service.delete(ASSO, FORMED);
     expect(await productExists(FORMED)).toBe(false);
+  });
+
+  it('a retag TO a year-shaped key is refused; a retag FROM one to a plain key is accepted', async () => {
+    const refused = await settled(service.update(ASSO, LOW, { variantKey: '2026-2027' }, false));
+    expect((refused.error as { getResponse(): { code: string } }).getResponse().code).toBe(
+      'TIER_KEY_YEAR_SHAPED'
+    );
+    const [low] = await ds.query(`SELECT "variantKey" FROM association_products WHERE id = $1`, [
+      LOW,
+    ]);
+    expect(low.variantKey).toBe('low');
+
+    const saved = await service.update(ASSO, YEARED, { variantKey: 'yeared' }, false);
+    expect(saved).toMatchObject({ variantKey: 'yeared', grantedTagName: tag('yeared') });
   });
 
   it('CONTROL: deletes a tier nobody holds', async () => {

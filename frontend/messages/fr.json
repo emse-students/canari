@@ -1994,6 +1994,7 @@
   "asso_cotisations_tier_add_title": "Nouveau palier",
   "asso_cotisations_tier_create_button": "Créer le palier",
   "asso_cotisations_tier_create_error": "Erreur lors de la création du palier.",
+  "asso_cotisations_tier_key_year_shaped": "L'identifiant d'un palier ne peut pas être, ni se terminer par, une année universitaire (comme 2024-2025) : il serait confondu avec les étiquettes annuelles de cotisation. Choisissez un autre identifiant, par exemple « or » ou « promo-2024 ».",
   "asso_cotisations_tier_delete_confirm": "Supprimer le palier \"{name}\" ? Cette action est irréversible.",
   "asso_cotisations_tier_delete_error": "Erreur lors de la suppression du palier.",
   "asso_cotisations_tier_delete_has_holders": [

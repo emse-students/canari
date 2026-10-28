@@ -1962,6 +1962,7 @@
   "asso_cotisations_tier_add_title": "New tier",
   "asso_cotisations_tier_create_button": "Create tier",
   "asso_cotisations_tier_create_error": "Failed to create the tier.",
+  "asso_cotisations_tier_key_year_shaped": "A tier identifier cannot be, or end with, an academic year (such as 2024-2025): it would be confused with the yearly membership tags. Choose another identifier, for example \"gold\" or \"promo-2024\".",
   "asso_cotisations_tier_delete_confirm": "Delete the tier \"{name}\"? This action is irreversible.",
   "asso_cotisations_tier_delete_error": "Failed to delete the tier.",
   "asso_cotisations_tier_delete_has_holders": [

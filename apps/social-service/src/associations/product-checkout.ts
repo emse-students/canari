@@ -71,6 +71,13 @@ export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
 
 /**
+ * The `code` of the 400 a tier creation or retag gets when its key is, or ends with, an academic
+ * year (`2024-2025`): its tag would be the name of another tier's `dated` tag
+ * (`ProductsService.assertVariantKeyFree`). The client words it with the shape to avoid.
+ */
+export const TIER_KEY_YEAR_SHAPED = 'TIER_KEY_YEAR_SHAPED';
+
+/**
  * The `code` of the 409 a manager gets when deleting a cotisation tier while one of its checkout
  * attempts may still be paid (at most `PRODUCT_REQUEST_LIFETIME_SECONDS` + `CHECKOUT_EXPIRY_MARGIN_MS`
  * after it opened): deleted then, that payment could deliver nothing and a refund would be owed.
