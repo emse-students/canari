@@ -12,6 +12,7 @@ import {
   userIdOfLeaf,
 } from '$lib/mls-client/leafIdentity';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { Log } from '$lib/utils/Log';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
@@ -79,6 +80,27 @@ import { isGraineReady, rawChannelId, requireGraineRuntime } from './runtime';
  * runs the roster DIFF, which no event payload steers, so an election can only remove somebody the
  * scope's roster no longer names.
  */
+
+/**
+ * THE DEVICE THIS RECEIVER DEFERRED TO, per key group and departed user: written when a removal is
+ * left to the actor's device (`actor-commits`), consumed by the release that names THAT device. A
+ * release is bound to a leaf of its caller, not to the removal it releases - any user allowed to
+ * remove members could name one of their own devices - so the receiver's own deferral is the fact
+ * that decides, and a release naming any other device changes nothing (`not-deferred`). In memory:
+ * a reload runs a roster pass of its own, which is the backstop a forgotten deferral falls to.
+ * Bounded by the removals this session received; emptied at sign-out ({@link forgetDeferredRemovals}).
+ */
+const deferredTo = new Map<string, string>();
+
+/** The {@link deferredTo} key of `departedUserId`'s Remove in `groupId`. */
+function deferralKey(groupId: string, departedUserId: string): string {
+  return `${groupId}|${canonicalUserId(departedUserId)}`;
+}
+
+/** Forgets every deferral: the next account's removals are decided on nothing of this one. */
+export function forgetDeferredRemovals(): void {
+  deferredTo.clear();
+}
 
 /** How many leaves of the tree may be elected - and read the roster to find out. */
 export const ELECTION_WINDOW = 4;
@@ -182,8 +204,9 @@ interface DepartureFacts {
    */
   releasedByUserId?: string;
   /**
-   * The device that released it. Only a receiver whose tree holds THAT leaf deferred to it on the
-   * removal event; any other elected then, and re-deciding there would race its own election.
+   * The device that released it. Only a receiver that DEFERRED to that device on the removal event
+   * ({@link deferredTo}) re-decides; any other elected then, and re-deciding there would race its own
+   * election.
    */
   releasedByDeviceId?: string;
 }
@@ -285,6 +308,22 @@ async function decideForScope(
     log(`[GRAINE] DEPARTURE ${departed} from ${label}: no key group held here - nothing to decide`);
     return 'not-held';
   }
+  // A RELEASE IS RE-DECIDED ONLY WHERE THIS RECEIVER DEFERRED TO THE RELEASING DEVICE. Said at
+  // debug level: an actor holding no key group releases to every member, and most deferred nothing.
+  if (event.releasedByUserId) {
+    const key = deferralKey(groupId, event.departedUserId);
+    const releasing = canonicalIdentity(
+      `${event.releasedByUserId}:${event.releasedByDeviceId ?? ''}`
+    );
+    if (!releasing || deferredTo.get(key) !== releasing) {
+      Log.d(
+        'GRAINE',
+        `DEPARTURE ${departed} from ${label}: released by a device this receiver did not defer to - nothing to re-decide`
+      );
+      return 'not-deferred';
+    }
+    deferredTo.delete(key);
+  }
   try {
     // THE TREE AND ITS EPOCH, READ TOGETHER: the window is a function of both, and a commit merged
     // between two separate reads would pair one tree with another's epoch.
@@ -310,23 +349,8 @@ async function decideForScope(
       event.actorUserId && event.actorDeviceId
         ? canonicalIdentity(`${event.actorUserId}:${event.actorDeviceId}`)
         : null;
-    // A RELEASE IS RE-DECIDED ONLY WHERE THE REMOVAL DEFERRED TO THE RELEASING DEVICE: a tree
-    // without its leaf elected a committer on the removal event itself, without the claim.
-    if (event.releasedByUserId) {
-      const releasingLeaf = canonicalIdentity(
-        `${event.releasedByUserId}:${event.releasedByDeviceId ?? ''}`
-      );
-      if (
-        !releasingLeaf ||
-        !leafIdentities.some((identity) => canonicalIdentity(identity) === releasingLeaf)
-      ) {
-        log(
-          `[GRAINE] DEPARTURE ${departed} from ${label}: released by a device that holds no leaf here - this scope was decided on the removal itself, without the claim; nothing to re-decide`
-        );
-        return 'not-deferred';
-      }
-    }
     if (actorLeaf && leafIdentities.some((identity) => canonicalIdentity(identity) === actorLeaf)) {
+      deferredTo.set(deferralKey(groupId, event.departedUserId), actorLeaf);
       log(
         `[GRAINE] DEPARTURE ${departed} from ${label}: the actor's device ${actorLeaf.slice(0, 8)} holds a leaf - left to it; decided again only if it releases it`
       );

@@ -163,11 +163,12 @@ Chrome loads its first frame and then fails the seek with `PIPELINE_ERROR_DECODE
 reader would have been handed a broken video. Remuxing the SAME packets under an `avcC` built from
 the in-band sets made Chrome play, seek and append it, which isolates the record. It is
 [mediabunny issue 559](https://github.com/Vanilagy/mediabunny/issues/559), open upstream.
-**Fix**: `frontend/patches/mediabunny@1.61.4.patch` - on a key packet whose in-band SPS/PPS differ
+**Fix**: `frontend/patches/mediabunny@1.62.1.patch` - on a key packet whose in-band SPS/PPS differ
 from the encoder's record, the record is rebuilt from the in-band ones (the bitstream IS the
 truth), logged at warn. An encoder whose key frames carry no parameter sets (Chrome's) is untouched.
 Its behavioural test is `mediabunnyAvcDescription.test.ts`, replaying Firefox's bytes through a fake
 `VideoEncoder`; delete both when upstream fixes 559.
+**2026-10-27, mediabunny 1.62.1:** upstream's 1.61.6 notes say "workaround for Firefox emitting an incorrect AVCC record (#559)", yet the behavioural test FAILS without the patch (the record stays `03 01 ...`), so the patch was ported to 1.62.1 instead of dropped. Re-run the test without the patch at each bump; the day it passes bare, delete both. The 1.62 line otherwise hardens DEMUXING of hostile input, and the app muxes (`prepareVideoForUpload.ts`) and only reads files it just wrote.
 
 **Readings, Windows desktop, 2026-10-14** (headless Firefox 158 and Chrome 154 running the seam
 itself; the member's own file and a synthetic AV1 + AAC-LC 53.8 MB, 1080p, 49 s stand-in):
