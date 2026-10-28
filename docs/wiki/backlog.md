@@ -1293,6 +1293,10 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
   device events taken from an account's state while it is being unbound seal their conversations in
   that account's record, for good, by the same rule - the option above would lift those as well;
+- **two tabs of one account merge their records and err towards withholding**: a tab that loaded
+  before another tab lifted a device can write that device back, and after a restart it is withheld
+  again until a member's approval lifts it once more - a cost in availability only, never an answer
+  to a device that should not have one;
 - **the departed bound costs detection**: past it, a conversation is sealed and the records of its
   departed withheld devices dropped, so one of them that later comes back by itself is no longer
   known as withheld there - what it then adds gets no line. History stays closed (the seal); only

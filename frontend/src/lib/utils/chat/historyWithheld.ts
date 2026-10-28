@@ -78,8 +78,10 @@ let persist: (() => void) | null = null;
 let fullReported = false;
 /**
  * The records this session removed ON PURPOSE - a lift, a replacement under a new key, the trim, the
- * departed bound - by {@link recordKey}. A merge of the stored copy ({@link adoptHistoryRecords})
- * never brings one of them back; any other stored record is adopted, since another tab wrote it.
+ * departed bound - by {@link recordKey}, and not yet written: the stored copy still holding one of
+ * them predates the removal, so a merge ({@link adoptHistoryRecords}) does not bring it back. Once
+ * the removal is written ({@link historyWithheldWritten}), a record that re-appears in storage is a
+ * newer fact from another tab and is adopted.
  */
 let withdrawn = new Set<string>();
 
@@ -256,16 +258,26 @@ export function adoptHistorySeals(groupIds: readonly string[]): void {
  * another tab withdrew comes back from this tab's memory - a merge errs towards withholding.
  */
 export function adoptHistoryRecords(stored: readonly WithheldDevice[]): void {
-  const here = new Set(withheld.map(recordKey));
-  const added = stored.filter((e) => {
+  let adopted = 0;
+  for (const e of stored) {
     const key = recordKey(e);
-    if (here.has(key) || withdrawn.has(key)) return false;
-    here.add(key);
-    return true;
-  });
-  if (added.length === 0) return;
-  withheld = [...withheld, ...added];
-  console.log(`[HISTORY_WITHHELD] ${added.length} record(s) written by another tab adopted`);
+    if (withdrawn.has(key) || withheld.some((h) => recordKey(h) === key)) continue;
+    // ONE RECORD PER DEVICE: the same device under another key here was replaced in another tab -
+    // the stored one is the newer fact, and two would let an approval of either leave the other.
+    withheld = [...withheld.filter((h) => !matches(h, e.groupId, e.identity)), e];
+    adopted++;
+  }
+  if (adopted > 0) {
+    console.log(`[HISTORY_WITHHELD] ${adopted} record(s) written by another tab adopted`);
+  }
+}
+
+/**
+ * Says the records as they stand were written to the stored copy: the removals of this session are
+ * in it now, so what re-appears there later is another tab's newer fact ({@link withdrawn}).
+ */
+export function historyWithheldWritten(): void {
+  withdrawn = new Set();
 }
 
 /**

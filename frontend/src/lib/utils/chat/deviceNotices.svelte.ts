@@ -26,6 +26,7 @@ import {
   adoptHistoryRecords,
   adoptHistorySeals,
   historySealedGroups,
+  historyWithheldWritten,
   inheritsWithholding,
   sealHistoryIn,
   noteDeviceAddedByAMember,
@@ -286,6 +287,7 @@ function writeStored(userId: string): void {
   };
   try {
     localStorage.setItem(ACCOUNT_KEY.deviceNotices(userId), JSON.stringify(stored));
+    historyWithheldWritten();
   } catch (e) {
     // Shown for this session; only its survival across a reload is lost.
     console.error(`[DEVICE_NOTICE] notices not persisted, a reload will forget them: ${String(e)}`);

@@ -816,35 +816,61 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     warn.mockRestore();
   });
 
-  it('keeps a record another tab added when this tab writes, and never revives one it lifted', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  describe('two tabs of one account', () => {
     const key = ACCOUNT_KEY.deviceNotices('alice');
     const write = (historyWithheld: unknown[]) => {
       const stored = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
       localStorage.setItem(key, JSON.stringify({ ...stored, historyWithheld }));
     };
-    const lifted = { groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' };
-    write([lifted]);
-    forgetDeviceNotices();
-    loadDeviceNotices('alice');
-    // This tab lifts it: a member's Add vouches for the device.
-    noteDeviceAddedByAMember('group-1', 'bob:tab', 'carol:p');
-    expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(false);
-
-    // The processing tab, which loaded before the lift, writes its own copy back - with the lifted
-    // record, and one it added since this tab loaded.
-    const added = { groupId: 'group-1', identity: 'bob:web-2', fingerprint: 'bb' };
-    write([lifted, added]);
-    // This tab writes for an unrelated reason (a notice dismissed).
-    sealHistoryIn('group-no-bob', 'device events were dropped');
-
-    const written = JSON.parse(localStorage.getItem(key) ?? '{}') as {
-      historyWithheld?: { identity: string }[];
+    const stored = () =>
+      (
+        JSON.parse(localStorage.getItem(key) ?? '{}') as {
+          historyWithheld?: { identity: string; fingerprint: string }[];
+        }
+      ).historyWithheld ?? [];
+    const reload = (records: unknown[]) => {
+      write(records);
+      forgetDeviceNotices();
+      loadDeviceNotices('alice');
     };
-    expect(written.historyWithheld?.map((e) => e.identity)).toEqual(['bob:web-2']);
-    expect(historyWithheldFrom('group-1', 'bob:web-2')).toBe(true);
-    expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(false);
-    warn.mockRestore();
+
+    it('a lift is written at once - the copy that predates it does not bring the record back', () => {
+      reload([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' }]);
+      noteDeviceAddedByAMember('group-1', 'bob:tab', 'carol:p');
+      expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(false);
+      expect(stored()).toEqual([]);
+    });
+
+    it('a record another tab writes after the lift is adopted - the newer fact, withheld', () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const record = { groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' };
+      reload([record]);
+      noteDeviceAddedByAMember('group-1', 'bob:tab', 'carol:p');
+      // Another tab withholds it again (or writes back its older copy), plus one of its own.
+      const added = { groupId: 'group-1', identity: 'bob:web-2', fingerprint: 'bb' };
+      write([record, added]);
+      // This tab writes for an unrelated reason.
+      sealHistoryIn('group-no-bob', 'device events were dropped');
+
+      expect(stored().map((e) => e.identity)).toEqual(['bob:tab', 'bob:web-2']);
+      expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(true);
+      expect(historyWithheldFrom('group-1', 'bob:web-2')).toBe(true);
+      log.mockRestore();
+    });
+
+    it('keeps ONE record per device - a replacement another tab wrote wins', () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      reload([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' }]);
+      // Another tab saw the device change its key: it replaced the record.
+      write([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'bb' }]);
+      sealHistoryIn('group-no-bob', 'device events were dropped');
+
+      expect(stored()).toEqual([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'bb' }]);
+      expect(historyWithheldEntries()).toEqual([
+        { groupId: 'group-1', identity: 'bob:tab', fingerprint: 'bb' },
+      ]);
+      log.mockRestore();
+    });
   });
 
   it('seals no key group on a dropped-events marker - it answers no history anyway', async () => {
