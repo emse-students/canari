@@ -602,6 +602,52 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     }
   });
 
+  describe('a claim stands only for a notice sent', () => {
+    const noticesOf = async (asker: string) =>
+      (
+        await q(
+          `SELECT "followedUserId" AS p FROM user_follow_notices WHERE "followerUserId" = $1`,
+          [asker]
+        )
+      ).rows.map((r) => r.p as string);
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('a block landing just before the push releases the claim, and a later ask pushes', async () => {
+      // The block commits after the ask's own re-read, before the notification's: the window
+      // between them, forced by blocking as the notification's re-read starts.
+      const query = ds.query.bind(ds);
+      jest
+        .spyOn(ds, 'query')
+        .mockImplementation(async (sql: string, params?: Parameters<DataSource['query']>[1]) => {
+          if (/^\s*SELECT NOT NOT EXISTS/.test(sql)) await block('bob', 'ann');
+          return query(sql, params);
+        });
+      expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
+      jest.restoreAllMocks();
+      expect(pushed).toEqual([]);
+      expect(await noticesOf('ann')).toEqual([]);
+      // Lifted, withdrawn and asked again: bob is told, since he never was.
+      await q(`DELETE FROM user_blocks`);
+      await requests.leave('ann', 'bob');
+      await requests.ask('ann', 'bob');
+      expect(pushed.map((x) => x.to)).toEqual(['bob']);
+      expect(await noticesOf('ann')).toEqual(['bob']);
+    });
+
+    it('a notification that throws releases the claim, and a later ask pushes', async () => {
+      jest
+        .spyOn(PostNotificationsService.prototype, 'createNotification')
+        .mockRejectedValueOnce(new Error('notification store down'));
+      expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
+      expect(pushed).toEqual([]);
+      expect(await noticesOf('ann')).toEqual([]);
+      await requests.leave('ann', 'bob');
+      await requests.ask('ann', 'bob');
+      expect(pushed.map((x) => x.to)).toEqual(['bob']);
+    });
+  });
+
   it('an acceptance whose block landed after it is written tells nobody', async () => {
     await requests.ask('ann', 'bob');
     pushed.length = 0;

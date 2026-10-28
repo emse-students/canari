@@ -270,12 +270,17 @@ export class FollowRequestsService {
    * request (`requestClaimed`), because the daily cap counts those rows and must count them
    * exactly; an acceptance's is claimed here. A re-asked request still gets its bell row back (no
    * push, one per pair), since the request is real again; an acceptance already told stays silent.
-   * Nothing is sent across a block that committed since the row was written - a request notice
-   * claimed by then stays claimed, so that pair is not pushed again. BEST-EFFORT AND
+   * Nothing is sent across a block that committed since the row was written. BEST-EFFORT AND
    * LOUD: the row of `user_follows` is the durable fact and is already committed, so a
    * notification that fails is logged and the answer stands - failing the request would make the
-   * asker try again for a request that exists. A claim whose notification then failed is not
-   * retried: one missed bell row, logged, against a loop that could push without end.
+   * asker try again for a request that exists.
+   *
+   * A CLAIM STANDS ONLY FOR A NOTICE SENT: when this call holds the claim and then sends nothing -
+   * a block now stands, or writing the notification throws - the claim is released
+   * ({@link releaseClaim}), as the retracted ask releases its own. Otherwise the pair would read as
+   * told when nobody was: a slot of the daily cap spent, and a later legitimate ask silenced. A
+   * release does not loop: the next push for the pair needs a NEW ask, which the per-minute
+   * throttle and the two caps bound.
    */
   private async notifyQuietly(
     recipientId: string,
@@ -311,6 +316,7 @@ export class FollowRequestsService {
         this.logger.warn(
           `[FOLLOW-REQ] ${type} to ${short(recipientId)} not sent: a block now stands between them`
         );
+        if (requestClaimed === true) await this.releaseClaim(follower, followed, 'request');
         return;
       }
       const claimed =
@@ -324,7 +330,12 @@ export class FollowRequestsService {
               )) as unknown[]
             ).length > 0;
       if (claimed) {
-        await this.notifications.createNotification(notification);
+        try {
+          await this.notifications.createNotification(notification);
+        } catch (e) {
+          await this.releaseClaim(follower, followed, NOTICE_KIND[type]);
+          throw e;
+        }
         return;
       }
       if (type !== FOLLOW_REQUEST_NOTIFICATION) {
@@ -343,6 +354,31 @@ export class FollowRequestsService {
     } catch (e) {
       this.logger.warn(
         `[FOLLOW-REQ] ${type} to ${short(recipientId)} not written: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  /**
+   * Gives back a `user_follow_notices` claim whose notice was never sent, so the pair does not read
+   * as told. Logged either way; a failed release leaves one claim with nobody told, said so here.
+   */
+  private async releaseClaim(
+    followerUserId: string,
+    followedUserId: string,
+    kind: FollowNoticeKind
+  ): Promise<void> {
+    try {
+      await this.dataSource.query(
+        `DELETE FROM user_follow_notices
+          WHERE "followerUserId" = $1 AND "followedUserId" = $2 AND kind = $3`,
+        [followerUserId, followedUserId, kind]
+      );
+      this.logger.log(
+        `[FOLLOW-REQ] ${kind} notice of ${short(followerUserId)} -> ${short(followedUserId)} released: nothing was sent`
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[FOLLOW-REQ] ${kind} notice of ${short(followerUserId)} -> ${short(followedUserId)} NOT released, nobody was told: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }

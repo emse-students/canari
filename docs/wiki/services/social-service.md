@@ -1053,7 +1053,9 @@ notifies through `PostsModule` - which already imports `FollowsModule`.
   a block pushes nothing. Both interleavings are forced with a trigger in the PostgreSQL spec.
 - **Told once per pair, from durable state**: the first `follow_request` (and the first
   `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies (a
-  request's claim is made in the ask's transaction, above; a retracted ask releases it), so
+  request's claim is made in the ask's transaction, above; a claim whose notice is never sent - the
+  ask retracted, a block landing before the push, a notification that throws - is released, so the
+  pair never reads as told when nobody was), so
   ask -> withdraw -> ask in a loop pushes once. Never a clock. A re-asked request gets its bell
   row back WITHOUT a push (deleted and rewritten, so one per pair), since the request is real
   again; a claim whose notification then failed is logged and not retried.

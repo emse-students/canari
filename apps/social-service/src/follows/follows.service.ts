@@ -312,8 +312,9 @@ export class FollowsService {
    * block - and its push to the person who just blocked. The block is committed before the severing
    * is called, so it is visible to this read, made after the insert committed: if it stands, the
    * request this call wrote is deleted and the ask is refused as a block, before anything notifies.
-   * The notice row this call claimed goes with it: nobody was told, so it charges no daily cap and
-   * does not silence the push of an ask made after the block is lifted.
+   * The notice row this call claimed goes with it, in the same statement: nobody was told, so it
+   * charges no daily cap and does not silence the push of an ask made after the block is lifted -
+   * the rule `FollowRequestsService.notifyQuietly` applies too, to a claim it ends up not sending.
    */
   private async retractIfBlockedSince(
     written: { id: string; noticeClaimed: boolean },
@@ -325,17 +326,21 @@ export class FollowsService {
       [followerUserId, followedUserId]
     );
     if (!row?.blocked) return;
-    await this.userFollowRepo.query(`DELETE FROM user_follows WHERE id = $1 AND status = $2`, [
-      written.id,
-      FOLLOW_PENDING,
-    ]);
-    if (written.noticeClaimed) {
-      await this.userFollowRepo.query(
-        `DELETE FROM user_follow_notices
-          WHERE "followerUserId" = $1 AND "followedUserId" = $2 AND kind = $3`,
-        [followerUserId, followedUserId, REQUEST_NOTICE]
-      );
-    }
+    // ONE statement, so the request and its claim go together: a crash between two deletes would
+    // leave a claim standing for a notice nobody received.
+    await this.userFollowRepo.query(
+      `WITH request AS (DELETE FROM user_follows WHERE id = $1 AND status = $2 RETURNING id)
+       DELETE FROM user_follow_notices
+        WHERE $6::boolean AND "followerUserId" = $3 AND "followedUserId" = $4 AND kind = $5`,
+      [
+        written.id,
+        FOLLOW_PENDING,
+        followerUserId,
+        followedUserId,
+        REQUEST_NOTICE,
+        written.noticeClaimed,
+      ]
+    );
     this.logger.warn(
       `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: a block committed during the ask - request retracted`
     );
