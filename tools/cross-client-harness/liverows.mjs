@@ -43,7 +43,9 @@ const GAP = new RegExp(String.raw`^\[LIVE\] viewer ${S}: a delivery gap of (\d+)
 // THE SPELLINGS ARE `livePlayer.ts`'s ON MAIN AFTER #2583 (the L-F1 fix), read from the source: a
 // pattern that matched no real line would make this judge pass on every viewer. `stallsOf` also
 // keeps every viewer line that SAYS stall and matches neither, and such a line fails the row.
-const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \(target \d+ ms\))?$`);
+const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \(target \d+(?:\.\d+)? ms\))?$`);
+// `\.\d+`: the stall line prints the target UNROUNDED (`livePlayer.ts`, `${this.policy.targetMs}`),
+// read as `4634.20000000298 ms` on LIVE-STALL-1 (1.5.1-alpha.1) - the gap and seek lines round it.
 const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live edge \(stall\) at [\d.]+(?:, \d+ ms behind)?$`);
 const NOT_A_STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting while seeking at [\d.]+ - not a stall$`);
 const SAYS_STALL = /^\[LIVE\] viewer .*stall/;
@@ -66,6 +68,8 @@ const sentence = (line) => stripStamp(String(line).replace(/^(?:log|info|debug|v
 export function stallsOf(lines) {
   const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [], endAnswers: 0, strayEndAnswers: 0 };
   let answered = false;
+  /** Each stall not yet resolved by a seek, oldest first: true when it came after the first gap. */
+  const unresolved = [];
   for (const raw of lines) {
     const s = sentence(raw);
     if (answered && !STOPPED_ON_END.test(s)) out.strayEndAnswers++;
@@ -82,9 +86,17 @@ export function stallsOf(lines) {
       continue;
     }
     const after = out.gaps.length > 0;
-    if (STALL.test(s)) out[after ? 'stallsAfter' : 'stallsBefore']++;
-    else if (STALL_SEEK.test(s)) out[after ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
-    else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
+    if (STALL.test(s)) {
+      out[after ? 'stallsAfter' : 'stallsBefore']++;
+      unresolved.push(after);
+    } else if (STALL_SEEK.test(s)) {
+      // A STALL SEEK BELONGS TO THE STALL IT RESOLVES, not to where its line falls: the player names
+      // the gap and then seeks in the same tick, so the seek out of a stall taken BEFORE the first gap
+      // is printed just after it (LIVE-WEB-2 and LIVE-STALL-1 on 1.5.1-alpha.1, W2). A seek with no
+      // stall left open is counted where it falls.
+      const of = unresolved.length ? unresolved.shift() : after;
+      out[of ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
+    } else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
   }
   if (answered) out.strayEndAnswers++; // an end answer as the very last line stopped nothing
   return out;

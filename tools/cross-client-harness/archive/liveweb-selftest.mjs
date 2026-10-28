@@ -54,6 +54,17 @@ ok('... and passes L-F1, the seek wait included (it is not a stall)', stallFacts
 const relapsed = stallsOf([JOINED, GAP(3960, 4500), STALL, SEEK]);
 ok('a stall AFTER the first gap counts after', relapsed.stallsAfter === 1 && relapsed.stallSeeksAfter === 1);
 ok('... and fails L-F1', failsOn('W2', relapsed, /after its first delivery gap/));
+// THE 1.5.1-alpha.1 ORDER (W2, LIVE-WEB-2 and LIVE-STALL-1): a stall, then in ONE tick the gap and the
+// seek out of that stall. The seek belongs to the stall before the gap.
+const sameTick = stallsOf([JOINED, STALL, GAP(4675, 4675), SEEK, WAITING]);
+ok('a seek printed just after the gap, resolving a stall from BEFORE it, counts before', sameTick.stallsBefore === 1 && sameTick.stallSeeksBefore === 1 && sameTick.stallSeeksAfter === 0);
+ok('... and passes L-F1', stallFacts('W2', sameTick).every(([o]) => o));
+ok('COUNTER: a stall after the gap whose seek follows it still counts after, and fails', failsOn('W2', stallsOf([JOINED, STALL, GAP(4675, 4675), SEEK, STALL, SEEK]), /stalled 1 time\(s\) and seeked 1 time\(s\) after/));
+ok('COUNTER: a stall seek after the gap with no stall open counts after, and fails', failsOn('W2', stallsOf([JOINED, GAP(4675, 4675), SEEK]), /seeked 1 time\(s\) after/));
+const FRACTIONAL = `[00:16:30.000] [LIVE] viewer ${S} stalled at 43.62 (target 4634.20000000298 ms)`;
+const w4 = stallsOf([JOINED, GAP(3613, 3613), FRACTIONAL, SEEK]);
+ok('a stall line with an unrounded target is READ (not "a spelling moved")', w4.unread.length === 0 && w4.stallsAfter === 1);
+ok('COUNTER: ... and a stall after the gap in that spelling still fails L-F1', failsOn('W4', w4, /after its first delivery gap/));
 ok('the pre-#2583 spellings are still counted, never skipped', stallsOf([GAP(1, 2), STALL_OLD, SEEK_OLD]).stallsAfter === 1 && stallsOf([GAP(1, 2), STALL_OLD, SEEK_OLD]).stallSeeksAfter === 1);
 const never = stallsOf([JOINED, STALL, SEEK, STALL, SEEK]);
 ok('stalls with no gap ever named fail: the target buffer never moved (the build without the fix)', never.gaps.length === 0 && failsOn('W4', never, /never named a delivery gap/));
