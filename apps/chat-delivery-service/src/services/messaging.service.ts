@@ -42,7 +42,6 @@ import { readDisabledCategories, readGroupNotificationLevel } from './notificati
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
-import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
 import {
@@ -921,7 +920,7 @@ export class MessagingService {
    * **A REVOCATION RECORDS THE KEY GROUPS THE DEVICE HELD** (`recordKeyGroupsHeld`, passed by the
    * device deletion alone): in a key group the device rows deleted here are the only thing binding
    * the user to the group, and the revoked-leaves question answers a leaf only when it is bound. So
-   * one {@link RevokedDeviceGroup} row per key group is written IN THE SAME TRANSACTION, from the
+   * one `dm_revoked_device_groups` row per key group is written IN THE SAME TRANSACTION, from the
    * rows this deletes - a crash between the two cannot lose the binding. Conversations need none:
    * their seat stays. The GC and the PIN reset do not revoke, so they record nothing.
    */
@@ -2854,7 +2853,6 @@ export class MessagingService {
       // nobody who needs it, so it ends here, on that state.
       await this.clearParting(groupId, [...admitted, { userId: committer, deviceId }], traceId);
       const parting = await this.declaredPartingDevices(groupId, body.removes, traceId);
-      await this.endRevokedDeviceBindings(groupId, body.removes, traceId);
       await this.sendMessage(
         {
           groupId,
@@ -2973,51 +2971,6 @@ export class MessagingService {
       `[COMMIT][${traceId}] PARTING group=${groupId.slice(0, 8)} removes=${declared.length} - commit also queued to ${parting.length} removed device(s)${parting.length > 0 ? `: ${parting.map((p) => `${cutUserId(p.userId)}:${cutDeviceId(p.deviceId)}`).join(',')}` : ''}`
     );
     return parting;
-  }
-
-  /**
-   * Ends the {@link RevokedDeviceGroup} bindings an accepted commit's declared `removes` names: the
-   * one device of a person named with it, every device of a person named alone. The binding exists
-   * so a revoked leaf can still be answered about, and a Remove that landed is that leaf gone.
-   *
-   * DECLARED, NOT PROVEN (see {@link ValidateCommitBody.removes}): the server cannot read the commit.
-   * A false declaration ends a binding early, which returns that one leaf to the state before the
-   * table existed - answerable through any other binding its user still has, otherwise not.
-   * Best-effort: a failure leaves a row that answers about a leaf no tree holds, which nothing asks.
-   */
-  private async endRevokedDeviceBindings(
-    groupId: string,
-    removes: ValidateCommitBody['removes'],
-    traceId: string
-  ): Promise<void> {
-    const declared = (Array.isArray(removes) ? removes : []).filter(
-      (r): r is { userId: string; deviceId?: string } =>
-        typeof r?.userId === 'string' &&
-        r.userId.length > 0 &&
-        (r.deviceId === undefined || typeof r.deviceId === 'string')
-    );
-    if (declared.length === 0) return;
-    try {
-      const results = await Promise.all(
-        declared.map((r) =>
-          this.deviceGroupRepo.manager.delete(RevokedDeviceGroup, {
-            groupId,
-            userId: r.userId,
-            ...(r.deviceId === undefined ? {} : { deviceId: r.deviceId }),
-          })
-        )
-      );
-      const ended = results.reduce((n, r) => n + (r.affected ?? 0), 0);
-      if (ended > 0) {
-        this.logger.log(
-          `[COMMIT][${traceId}] REVOKED_BINDING group=${groupId.slice(0, 8)} ended=${ended} - the Remove of a revoked device landed`
-        );
-      }
-    } catch (e) {
-      this.logger.warn(
-        `[COMMIT][${traceId}] revoked-device binding(s) NOT ended group=${groupId.slice(0, 8)} - a row outlives its leaf, which nothing asks about: ${String(e)}`
-      );
-    }
   }
 
   /**

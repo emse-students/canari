@@ -2157,12 +2157,9 @@ deletes** (2026-10-27): the device deletion (`DELETE mls/devices/...`, the one p
 writes one `dm_revoked_device_groups` row per KEY group the device held, `(groupId, userId,
 deviceId)`, in the transaction that deletes its device rows, and the question binds that exact
 device through it. Not a status on the device row, which every routing and admission path reads. A
-row ends on state: an accepted commit whose declared `removes` names that device (or its user
-alone) deletes it (`endRevokedDeviceBindings`) - a declaration the server cannot prove, so a false
-one ends a binding early and returns that leaf to the state before the table - and the group's end
-(`GROUP_OWNED_TABLES`) and the account's erasure take the rest. **Forward-only**: a device revoked
-before the table existed has no row and nothing reconstructs one; what those leaves need is in the
-[backlog](../backlog.md).
+row ends with the group (`GROUP_OWNED_TABLES`) and with the account's erasure - never on a commit's
+declared `removes`, which the server cannot prove. A row that outlives its leaf answers only about a
+leaf no tree holds. **Forward-only**; earlier revocations are tracked separately.
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
 commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership

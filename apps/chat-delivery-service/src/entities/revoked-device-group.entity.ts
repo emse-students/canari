@@ -14,10 +14,10 @@ import { Entity, PrimaryColumn, CreateDateColumn, Index } from 'typeorm';
  * NOT a status on the device row: `dm_device_group_memberships` is read by every routing and
  * admission path, and a `revoked` row there would be a denylist each of them must learn to skip.
  *
- * Ends on STATE, never on a clock: deleted when an accepted commit DECLARES the Remove of that device
- * (or of its user) in that group (`MessagingService.endRevokedDeviceBindings`), with the group
- * (`GROUP_OWNED_TABLES`) and with the account. FORWARD-ONLY: a device revoked before this table
- * existed has no row, and nothing here reconstructs one.
+ * Ends with the group (`GROUP_OWNED_TABLES`) and with the account, never on a clock, and never on
+ * a commit's declaration: the server cannot read a commit, so a declared Remove proves nothing, and
+ * a row that outlives its leaf answers only about a leaf no tree asks about. Bounded: one row per key
+ * group a revoked device held. Forward-only (migration 041).
  */
 @Entity('dm_revoked_device_groups')
 @Index('IDX_dm_revoked_device_groups_group_user', ['groupId', 'userId'])

@@ -13,7 +13,6 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
-import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 
 /**
  * A DEVICE THAT IS DELETED, REVOKED OR COLLECTED LEAVES EVERY GROUP WITH ITS QUEUE, IN ONE
@@ -25,14 +24,13 @@ describe('MessagingService - purgeDeviceFootprint', () => {
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
   /** Every statement the transaction ran, in order: a recording INSERT, then the deletes. */
   let txSteps: string[];
-  const managerDelete = jest.fn();
   const transaction = jest.fn();
   const repo = () => ({
     find: jest.fn().mockResolvedValue([]),
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
   });
   let deviceGroupRepo: ReturnType<typeof repo> & {
-    manager: { transaction: jest.Mock; delete: jest.Mock };
+    manager: { transaction: jest.Mock };
   };
   let queuedRepo: ReturnType<typeof repo>;
   const redis = { srem: jest.fn().mockResolvedValue(1) };
@@ -41,7 +39,6 @@ describe('MessagingService - purgeDeviceFootprint', () => {
     jest.clearAllMocks();
     txDeletes = [];
     txSteps = [];
-    managerDelete.mockResolvedValue({ affected: 1 });
     transaction.mockImplementation((cb: (m: unknown) => Promise<unknown>) =>
       cb({
         query: (sql: string) => {
@@ -58,7 +55,7 @@ describe('MessagingService - purgeDeviceFootprint', () => {
         }),
       })
     );
-    deviceGroupRepo = { ...repo(), manager: { transaction, delete: managerDelete } };
+    deviceGroupRepo = { ...repo(), manager: { transaction } };
     deviceGroupRepo.find.mockResolvedValue([{ groupId: 'g-1' }, { groupId: 'g-2' }]);
     queuedRepo = repo();
     const module: TestingModule = await Test.createTestingModule({
@@ -114,44 +111,5 @@ describe('MessagingService - purgeDeviceFootprint', () => {
 
     expect(txSteps).toEqual(['DELETE QueuedMessage', 'DELETE DeviceGroupMembership']);
     expect(purged.keyGroupsRecorded).toBe(0);
-  });
-
-  /** A binding ends on STATE: the accepted commit that declares the Remove of that device. */
-  describe('endRevokedDeviceBindings', () => {
-    const end = (removes: unknown) =>
-      (
-        service as unknown as {
-          endRevokedDeviceBindings: (g: string, r: unknown, t: string) => Promise<void>;
-        }
-      ).endRevokedDeviceBindings('kg-1', removes, 'trace');
-
-    it('ends the one device named with its person, and every device of a person named alone', async () => {
-      await end([{ userId: 'bob', deviceId: 'b1' }, { userId: 'carol' }]);
-
-      expect(managerDelete).toHaveBeenCalledWith(RevokedDeviceGroup, {
-        groupId: 'kg-1',
-        userId: 'bob',
-        deviceId: 'b1',
-      });
-      expect(managerDelete).toHaveBeenCalledWith(RevokedDeviceGroup, {
-        groupId: 'kg-1',
-        userId: 'carol',
-      });
-    });
-
-    it('touches nothing for a commit that declares nothing', async () => {
-      await end(undefined);
-      await end([{ deviceId: 'b1' }]);
-
-      expect(managerDelete).not.toHaveBeenCalled();
-    });
-
-    it('logs a failure and never throws: the commit is already accepted', async () => {
-      const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-      managerDelete.mockRejectedValue(new Error('db down'));
-
-      await expect(end([{ userId: 'bob', deviceId: 'b1' }])).resolves.toBeUndefined();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT ended'));
-    });
   });
 });
