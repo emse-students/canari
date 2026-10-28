@@ -236,11 +236,16 @@ describe('history is withheld from an unverified device', () => {
   afterEach(() => bindHistoryWithheld([], null));
   const stillThere = async () => true;
 
-  function serveTo(to: string, server: 'addressed' | 'broadcast' = 'addressed') {
+  function serveTo(
+    to: string,
+    server: 'addressed' | 'broadcast' = 'addressed',
+    tree: string[] = ['user-b:another-device', REQUESTER]
+  ) {
     const mlsService = createMlsServiceStub();
     if (server === 'broadcast') {
       vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
     }
+    vi.mocked(mlsService.getGroupMemberIdentities).mockResolvedValue(tree);
     const log = vi.fn();
     return {
       mlsService,
@@ -284,6 +289,17 @@ describe('history is withheld from an unverified device', () => {
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Not broadcasting history'));
+    vi.restoreAllMocks();
+  });
+
+  it('broadcasts again once the withheld device has left the tree', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1', stillThere);
+    const { mlsService, done } = serveTo(REQUESTER, 'broadcast', [REQUESTER]);
+    await done;
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();
   });
 

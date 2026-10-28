@@ -31,10 +31,16 @@ import { memberDeviceAnswer } from './memberDeviceAnswers';
  *   ({@link historyWithheldFrom}).
  *
  * PER MEMBER: each device withholds on its own verdict, and another member who did not decide the
- * entry the same way may still answer. Persisted with the device notices of the account
- * (`deviceNotices.svelte.ts`), so a restart does not lift it. Past {@link MAX_HISTORY_WITHHELD}
- * records, the ones whose device has LEFT its conversation's tree go first; a record whose device is
- * still there is never dropped - past the bound, the list grows rather than answer anyone it named.
+ * entry the same way may still answer. Held in memory for the session whatever happens to storage,
+ * and persisted with the device notices of the account (`deviceNotices.svelte.ts`), so a restart does
+ * not lift it - unless that write failed, which `writeStored` says at ERROR: the state is not
+ * re-derived from the trees at start-up.
+ *
+ * BOUNDED WITHOUT EVER RE-OPENING: past {@link MAX_HISTORY_WITHHELD} records in all, the ones whose
+ * device has LEFT its conversation's tree go first, and a record whose device is still there is never
+ * dropped. Past {@link MAX_WITHHELD_PER_GROUP} in ONE conversation, that conversation is SEALED: no
+ * history is answered there to anyone, for good, said once at ERROR - fail closed, at a size no honest
+ * conversation reaches.
  */
 export interface WithheldDevice {
   groupId: string;
@@ -47,10 +53,15 @@ export interface WithheldDevice {
 /** Past this many records, the ones whose device left its tree are dropped. */
 export const MAX_HISTORY_WITHHELD = 256;
 
+/** Past this many withheld devices in one conversation, it is sealed: no history answered there. */
+export const MAX_WITHHELD_PER_GROUP = 32;
+
 /** Whether `identity` still holds a leaf in `groupId`'s tree, or `'unreadable'`. */
 export type LeafStillIn = (groupId: string, identity: string) => Promise<boolean | 'unreadable'>;
 
 let withheld: WithheldDevice[] = [];
+/** The conversations past {@link MAX_WITHHELD_PER_GROUP}: no history answered there at all. */
+let sealed = new Set<string>();
 let persist: (() => void) | null = null;
 
 function matches(entry: WithheldDevice, groupId: string, identity: string): boolean {
@@ -104,6 +115,15 @@ export async function withholdHistoryFrom(
   console.warn(
     `[HISTORY_WITHHELD] no history is answered to ${canonical} in ${groupId.slice(0, 8)}... until a member vouches for it`
   );
+  if (
+    !sealed.has(groupId) &&
+    withheld.filter((e) => e.groupId === groupId).length > MAX_WITHHELD_PER_GROUP
+  ) {
+    sealed = new Set([...sealed, groupId]);
+    console.error(
+      `[HISTORY_WITHHELD] more than ${MAX_WITHHELD_PER_GROUP} devices withheld in ${groupId.slice(0, 8)}... - the conversation is sealed, no history is answered there to anyone`
+    );
+  }
   await trimToBound(leafStillIn);
   persist?.();
 }
@@ -127,6 +147,23 @@ export function committerIsWithheld(
 ): boolean {
   if (addedBy === null || sameDeviceIdentity(addedBy, identity)) return false;
   return historyWithheldFrom(groupId, addedBy);
+}
+
+/**
+ * Whether a device event inherits the withholding of its committer ({@link committerIsWithheld}),
+ * EXCEPT a device back in this group under the very key pinned for it (`pinned`, not `firstInGroup`):
+ * that is the same device returning, which held this history already - so a withheld device cannot
+ * paint a real member's device unvouched by removing and re-adding it.
+ */
+export function inheritsWithholding(event: {
+  groupId: string;
+  identity: string;
+  addedBy: string | null;
+  trust: string;
+  firstInGroup?: boolean;
+}): boolean {
+  if (event.trust === 'pinned' && event.firstInGroup !== true) return false;
+  return committerIsWithheld(event.groupId, event.identity, event.addedBy);
 }
 
 /**
@@ -156,6 +193,7 @@ export function noteDeviceAddedByAMember(
  * after the record.
  */
 export function historyWithheldFrom(groupId: string, to: string): boolean {
+  if (sealed.has(groupId)) return true;
   const entry = withheld.find((e) => matches(e, groupId, to));
   if (!entry) return false;
   const answer = memberDeviceAnswer(
@@ -171,13 +209,37 @@ export function historyWithheldFrom(groupId: string, to: string): boolean {
 }
 
 /**
- * Whether any device is withheld in `groupId` - then no history answer there may be broadcast,
- * since every leaf reads a broadcast.
+ * Whether a device withheld in `groupId` still holds a leaf in its tree - then no history answer
+ * there may be broadcast, since every leaf reads a broadcast. A record whose device left the tree does
+ * not count; a sealed conversation always does. The tree is read (`readLeaves`) only when the
+ * conversation has a record at all, and a tree that cannot be read counts as withheld: fail closed.
  */
-export function anyHistoryWithheldIn(groupId: string): boolean {
-  return withheld
-    .filter((e) => e.groupId === groupId)
-    .some((e) => historyWithheldFrom(groupId, e.identity));
+export async function anyHistoryWithheldIn(
+  groupId: string,
+  readLeaves: () => Promise<readonly string[]>
+): Promise<boolean> {
+  if (sealed.has(groupId)) return true;
+  const records = withheld.filter((e) => e.groupId === groupId);
+  if (records.length === 0) return false;
+  let leaves: readonly string[];
+  try {
+    leaves = await readLeaves();
+  } catch (e) {
+    console.warn(
+      `[HISTORY_WITHHELD] tree of ${groupId.slice(0, 8)}... unreadable - its withheld devices are taken as present: ${String(e)}`
+    );
+    return true;
+  }
+  return records.some(
+    (e) =>
+      leaves.some((leaf) => sameDeviceIdentity(leaf, e.identity)) &&
+      historyWithheldFrom(groupId, e.identity)
+  );
+}
+
+/** The sealed conversations, for the account's persisted notices. */
+export function historySealedGroups(): string[] {
+  return [...sealed];
 }
 
 /** The records, for the account's persisted notices. */
@@ -192,9 +254,11 @@ export function historyWithheldEntries(): WithheldDevice[] {
  */
 export function bindHistoryWithheld(
   entries: readonly WithheldDevice[],
-  onChange: (() => void) | null
+  onChange: (() => void) | null,
+  sealedGroups: readonly string[] = []
 ): void {
   withheld = [...entries];
+  sealed = new Set(sealedGroups);
   persist = onChange;
 }
 

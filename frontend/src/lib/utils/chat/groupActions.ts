@@ -986,7 +986,10 @@ export async function sendFullHistoryBundle(
   // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
   // frame this was before step A, and it carries no message.
   const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
-    if (!addressed && anyHistoryWithheldIn(groupId)) {
+    if (
+      !addressed &&
+      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
+    ) {
       log(
         `[HISTORY_BUNDLE] Not broadcasting the state-only frame in ${groupId.slice(0, 8)}... - a device there is withheld (${why})`
       );
@@ -1133,7 +1136,10 @@ async function sendBundleChunks(
     addressed = chosen.mode === 'addressed';
     // A BROADCAST IS READ BY EVERY LEAF, a withheld device's included (`historyWithheld.ts`): while
     // one is withheld here, an answer that cannot be addressed is not sent at all.
-    if (!addressed && anyHistoryWithheldIn(groupId)) {
+    if (
+      !addressed &&
+      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
+    ) {
       log(
         `[HISTORY_BUNDLE] Not broadcasting history in ${groupId.slice(0, 8)}... - a device there is withheld, and a broadcast would reach it`
       );

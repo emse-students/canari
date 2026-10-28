@@ -670,6 +670,77 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     warn.mockRestore();
   });
 
+  it('an entry and the Add it makes, handed over in ONE delivery, are both withheld - in commit order', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    // Delivered out of order on purpose: the drain's order is not trusted, the epochs are.
+    await deliverDeviceEvents(
+      [
+        selfEntry({ identity: 'bob:second', addedBy: 'bob:new-tablet', epoch: 6 }),
+        selfEntry({ epoch: 5 }),
+      ],
+      ctx
+    );
+    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(true);
+    expect(historyWithheldFrom('group-1', 'bob:second')).toBe(true);
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:second' })
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('withholds at first sight even while the conversation row is not loaded, and the line follows the row', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, conversations } = makeCtx({
+      storedConversation: async () => ({ lifecycle: 'active' }),
+    });
+    await deliverDeviceEvents([selfEntry({ groupId: 'group-late' })], ctx);
+    await deliverDeviceEvents(
+      [selfEntry({ groupId: 'group-late', identity: 'bob:second', addedBy: 'bob:new-tablet' })],
+      ctx
+    );
+    expect(reporter).not.toHaveBeenCalled();
+    expect(historyWithheldFrom('group-late', 'bob:new-tablet')).toBe(true);
+    expect(historyWithheldFrom('group-late', 'bob:second')).toBe(true);
+
+    conversations.set('group-late', { conversationType: 'group', messages: [] });
+    await deliverDeviceEvents([], ctx);
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:new-tablet' })
+    );
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:second' })
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("a real member's device removed and re-added by a withheld device is not painted unvouched", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx } = makeCtx();
+    await deliverDeviceEvents([selfEntry()], ctx);
+    reporter.mockClear();
+    await deliverDeviceEvents(
+      [
+        selfEntry({
+          identity: 'bob:phone-1',
+          addedBy: 'bob:new-tablet',
+          trust: 'pinned',
+          firstInGroup: false,
+        }),
+      ],
+      ctx
+    );
+    expect(reporter).not.toHaveBeenCalled();
+    expect(historyWithheldFrom('group-1', 'bob:phone-1')).toBe(false);
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
   it('withholds history from a device that changed its own key by its own commit', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});

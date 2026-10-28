@@ -3,8 +3,11 @@ import {
   bindHistoryWithheld,
   committerIsWithheld,
   historyWithheldEntries,
+  historySealedGroups,
   historyWithheldFrom,
+  inheritsWithholding,
   MAX_HISTORY_WITHHELD,
+  MAX_WITHHELD_PER_GROUP,
   noteDeviceAddedByAMember,
   withholdHistoryFrom,
 } from './historyWithheld';
@@ -30,8 +33,42 @@ describe('historyWithheld', () => {
     expect(historyWithheldFrom('g1', 'bob:web-9')).toBe(true);
     expect(historyWithheldFrom('g2', 'bob:web-9')).toBe(false);
     expect(historyWithheldFrom('g1', 'bob:phone-1')).toBe(false);
-    expect(anyHistoryWithheldIn('g1')).toBe(true);
-    expect(anyHistoryWithheldIn('g2')).toBe(false);
+    expect(await anyHistoryWithheldIn('g1', async () => ['bob:web-9'])).toBe(true);
+    expect(await anyHistoryWithheldIn('g2', async () => ['bob:web-9'])).toBe(false);
+  });
+
+  it('counts for broadcasts only a withheld device still in the tree, and an unreadable tree as present', async () => {
+    await withholdHistoryFrom('g1', 'bob:web-9', 'fp', stillThere);
+    expect(await anyHistoryWithheldIn('g1', async () => ['alice:phone-a'])).toBe(false);
+    expect(
+      await anyHistoryWithheldIn('g1', async () => {
+        throw new Error('not held');
+      })
+    ).toBe(true);
+    // A conversation with no record never reads its tree.
+    const read = vi.fn(async () => []);
+    expect(await anyHistoryWithheldIn('g2', read)).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a device back under its pinned key does not inherit its committer's withholding", async () => {
+    await withholdHistoryFrom('g1', 'bob:web-9', 'fp', stillThere);
+    const add = { groupId: 'g1', identity: 'alice:phone-a', addedBy: 'bob:web-9' };
+    expect(inheritsWithholding({ ...add, trust: 'pinned', firstInGroup: false })).toBe(false);
+    expect(inheritsWithholding({ ...add, trust: 'first-sight', firstInGroup: true })).toBe(true);
+    expect(inheritsWithholding({ ...add, trust: 'pinned', firstInGroup: true })).toBe(true);
+  });
+
+  it('seals a conversation past its bound: no history answered there to anyone, and it survives a restore', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i <= MAX_WITHHELD_PER_GROUP; i++) {
+      await withholdHistoryFrom('g1', `bob:web-${i}`, 'fp', stillThere);
+    }
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(true);
+    expect(historyWithheldFrom('g2', 'alice:phone-a')).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('sealed'));
+    bindHistoryWithheld([], null, historySealedGroups());
+    expect(historyWithheldFrom('g1', 'alice:phone-a')).toBe(true);
   });
 
   it("is lifted by a member's commit adding that device, never by its own", async () => {

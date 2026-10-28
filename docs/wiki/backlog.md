@@ -1146,6 +1146,9 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   its door is the observer's predicate without the departure half. The departure record's cap
   (`MAX_RECORDED_DEPARTURES`, 8192 per device, oldest evicted) and an observer that joined after a
   device left only widen what reads as `firstInGroup`, so they matter for those older clients alone;
+- **an honest device flagged during the rollout** (an older client joining by itself) that then adds
+  a new person makes that person's device withheld too, by this member, until another member's Add
+  or an approval lifts it;
 - the native background engine keeps no record of withheld devices, so it never marks a device added
   by one (`added_by_unvouched` is set by the app alone); history is answered only by the app, so
   this costs a notice, not a message;

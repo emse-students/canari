@@ -23,7 +23,8 @@ import {
   bindHistoryWithheld,
   historyWithheldEntries,
   isWithheldDevice,
-  committerIsWithheld,
+  historySealedGroups,
+  inheritsWithholding,
   noteDeviceAddedByAMember,
   withholdHistoryFrom,
   type LeafStillIn,
@@ -155,6 +156,8 @@ interface Stored {
   owedUninvited: DeviceEvent[];
   /** The devices no history is answered to (`historyWithheld.ts`). */
   historyWithheld: WithheldDevice[];
+  /** The conversations where no history is answered at all (`historyWithheld.ts`). */
+  historySealed: string[];
 }
 
 /** A contact line decided owed but not yet written everywhere, retried at each delivery. */
@@ -174,6 +177,7 @@ const EMPTY: Stored = {
   refusedSeen: [],
   owedUninvited: [],
   historyWithheld: [],
+  historySealed: [],
 };
 
 function isOwedLine(v: unknown): v is OwedLine {
@@ -242,6 +246,7 @@ function readStored(userId: string): Stored {
       historyWithheld: Array.isArray(parsed.historyWithheld)
         ? parsed.historyWithheld.filter(isWithheldDevice)
         : [],
+      historySealed: strings(parsed.historySealed),
     };
   } catch (e) {
     console.error(`[DEVICE_NOTICE] stored notices corrupt, dropped: ${String(e)}`);
@@ -259,6 +264,7 @@ function writeStored(userId: string): void {
     refusedSeen,
     owedUninvited,
     historyWithheld: historyWithheldEntries(),
+    historySealed: historySealedGroups(),
   };
   try {
     localStorage.setItem(ACCOUNT_KEY.deviceNotices(userId), JSON.stringify(stored));
@@ -281,9 +287,13 @@ export function loadDeviceNotices(userId: string): void {
   owedLines = stored.owedLines;
   refusedSeen = stored.refusedSeen;
   owedUninvited = stored.owedUninvited;
-  bindHistoryWithheld(stored.historyWithheld, () => {
-    if (boundAccount === userId) writeStored(userId);
-  });
+  bindHistoryWithheld(
+    stored.historyWithheld,
+    () => {
+      if (boundAccount === userId) writeStored(userId);
+    },
+    stored.historySealed
+  );
   for (const n of stored.pending) pending.set(n.key, n);
   if (stored.pending.length > 0) {
     console.log(`[DEVICE_NOTICE] ${stored.pending.length} unseen new-device alert(s) restored`);
@@ -351,20 +361,13 @@ export async function deliverDeviceEvents(
   delivered: DeviceEvent[],
   ctx: DeviceNoticeContext
 ): Promise<void> {
-  // WHAT AN UNVOUCHED DEVICE ADDS IS UNVOUCHED TOO (`historyWithheld.ts`): marked before anything
-  // decides on the event, so the line, the report and the withholding all follow.
-  const events = delivered.map((event) =>
-    committerIsWithheld(event.groupId, event.identity, event.addedBy)
-      ? { ...event, addedByUnvouched: true }
-      : event
-  );
   if (!boundAccount) {
-    console.error(`[DEVICE_NOTICE] no account bound - ${events.length} device event(s) dropped`);
+    console.error(`[DEVICE_NOTICE] no account bound - ${delivered.length} device event(s) dropped`);
     return;
   }
   // An empty hand-over with nothing parked is every drain's: nothing to do, nothing to say.
   if (
-    events.length === 0 &&
+    delivered.length === 0 &&
     undecided.length === 0 &&
     owedLines.length === 0 &&
     owedUninvited.length === 0
@@ -377,22 +380,25 @@ export async function deliverDeviceEvents(
   // and the stored copy must still lose them.
   const hadOwedLines = owedLines.length > 0;
   await retryOwedLines(ctx, trees);
-  // A member's Add of a device vouches for it: history withheld from it is answered again.
-  for (const event of events) {
+  // WHO IS WITHHELD IS DECIDED FIRST, ONE EVENT AT A TIME, IN COMMIT ORDER (`historyWithheld.ts`).
+  // A drain hands over every commit it merged at once, so an unvouched entry and an Add made by that
+  // very device can arrive together: each event is marked against the record as the events before it
+  // left it. And it is decided here whether or not the conversation row is loaded - the line waits
+  // for the row (`noteUninvitedEntries`), the withholding does not.
+  const events: DeviceEvent[] = [];
+  for (const raw of inCommitOrder(delivered)) {
+    // WHAT AN UNVOUCHED DEVICE ADDS IS UNVOUCHED TOO: marked before anything decides on the event,
+    // so the line, the report and the withholding all follow.
+    const event = inheritsWithholding(raw) ? { ...raw, addedByUnvouched: true } : raw;
+    events.push(event);
+    // A member's Add of a device vouches for it: history withheld from it is answered again.
     noteDeviceAddedByAMember(event.groupId, event.identity, event.addedBy);
-    // A DEVICE THAT CHANGED ITS OWN KEY BY ITS OWN COMMIT (an id still in the tree, under a key nothing
-    // proves) is answered no history either; its notice is the key-change one, not a line here.
-    if (
-      event.trust === 'key-changed' &&
-      event.addedBy !== null &&
-      sameDeviceIdentity(event.addedBy, event.identity) &&
-      !ctx.isDistributionGroup(event.groupId)
-    ) {
+    if (withheldOnSight(event, ctx)) {
       await withholdHistoryFrom(
         event.groupId,
         event.identity,
         event.keyFingerprint,
-        leafStillIn(ctx)
+        leafStillIn(ctx, trees)
       );
     }
   }
@@ -482,13 +488,44 @@ export async function deliverDeviceEvents(
   }
 }
 
-/** Reads, from the conversation's own tree, whether a device still holds a leaf there. */
-function leafStillIn(ctx: DeviceNoticeContext): LeafStillIn {
+/** The events, stably ordered by epoch - the order their commits were merged in. */
+function inCommitOrder(events: readonly DeviceEvent[]): DeviceEvent[] {
+  return events
+    .map((event, i) => ({ event, i }))
+    .sort((a, b) => a.event.epoch - b.event.epoch || a.i - b.i)
+    .map(({ event }) => event);
+}
+
+/**
+ * Whether no history is answered to this event's device from now on: an entry no member made by a
+ * device of a member ({@link entersAsUnvouchedDevice}, a mark inherited from its committer included),
+ * or a device that changed its own key by its own commit (an id still in the tree, under a key nothing
+ * proves - its notice is the key-change one, not a line). Never this device itself, never in a key
+ * group this session knows as one.
+ */
+function withheldOnSight(event: DeviceEvent, ctx: DeviceNoticeContext): boolean {
+  if (ctx.isDistributionGroup(event.groupId)) return false;
+  if (sameDeviceIdentity(event.identity, `${ctx.ownUserId}:${ctx.ownDeviceId}`)) return false;
+  if (entersAsUnvouchedDevice(event)) return true;
+  return (
+    event.trust === 'key-changed' &&
+    event.addedBy !== null &&
+    sameDeviceIdentity(event.addedBy, event.identity)
+  );
+}
+
+/**
+ * Reads, from the conversation's own tree, whether a device still holds a leaf there - one read per
+ * conversation per delivery (`trees`), whatever the number of records checked.
+ */
+function leafStillIn(
+  ctx: DeviceNoticeContext,
+  trees: Record<string, Promise<string[]>>
+): LeafStillIn {
   return async (groupId, identity) => {
+    if (!Object.hasOwn(trees, groupId)) trees[groupId] = ctx.memberIdentities(groupId);
     try {
-      return (await ctx.memberIdentities(groupId)).some((leaf) =>
-        sameDeviceIdentity(leaf, identity)
-      );
+      return (await trees[groupId]).some((leaf) => sameDeviceIdentity(leaf, identity));
     } catch (e) {
       console.warn(
         `[HISTORY_WITHHELD] tree of ${groupId.slice(0, 8)}... unreadable, its record is kept: ${String(e)}`
@@ -546,15 +583,6 @@ async function noteUninvitedEntries(
         continue;
       }
       reportUninvitedEntry(event, decided.kind);
-      // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE until a member vouches for it.
-      if (decided.kind === 'unvouched-device') {
-        await withholdHistoryFrom(
-          event.groupId,
-          event.identity,
-          event.keyFingerprint,
-          leafStillIn(ctx)
-        );
-      }
       if (decided.kind === 'new-person' || decided.kind === 'unvouched-device') {
         await writeUninvitedLine(event, decided.kind, decided.convo, ctx);
       }
