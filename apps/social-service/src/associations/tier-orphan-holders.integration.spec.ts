@@ -47,6 +47,8 @@ const HIGH = '00000000-0000-4000-8000-0000000000d2';
 /** Each delete test gets a tier of its own, so a deletion never changes another test's catalogue. */
 const HELD = '00000000-0000-4000-8000-0000000000d3';
 const UNHELD = '00000000-0000-4000-8000-0000000000d4';
+/** A tier a FORM grants, whose answers wait for their money. */
+const FORMED = '00000000-0000-4000-8000-0000000000d9';
 const RACED = '00000000-0000-4000-8000-0000000000d5';
 const WAITED = '00000000-0000-4000-8000-0000000000d6';
 /** A tier of ASSO whose tag stem is ANOTHER association's base stem (its slug extends ASSO's). */
@@ -108,6 +110,20 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       await admin.query(readFileSync(join(__dirname, '../migrations', name), 'utf8'));
     }
     await admin.query('RESET lock_timeout');
+    // The buyers' display names a closed purchase is answered with (`enrichPurchaseRecords`).
+    await admin.query(
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
+    );
+    // The columns a tier delete reads of a form granting it and of its answers awaiting money.
+    await admin.query(
+      `CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "grantsCotisation" boolean NOT NULL,
+         "cotisationVariantKey" varchar(100))`
+    );
+    await admin.query(
+      `CREATE TABLE submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "formId" uuid NOT NULL,
+         "userId" varchar(255), "paymentStatus" varchar NOT NULL, "paymentRequestedAt" timestamp,
+         "totalPaid" int NOT NULL DEFAULT 0)`
+    );
 
     await ds.getRepository(Association).save(
       ds.getRepository(Association).create({
@@ -124,6 +140,7 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       [HIGH, 'high', 3000],
       [HELD, 'held', 2000],
       [UNHELD, 'unheld', 2000],
+      [FORMED, 'formed', 2000],
       [RACED, 'raced', 2000],
       [WAITED, 'waited', 2000],
       [CROSSED, 'xb', 2000],
@@ -216,6 +233,40 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       ])) as { tagName: string }[]
     ).map((r) => r.tagName);
 
+  /**
+   * A boutique payment of tier `productId` recorded `paid_not_granted`, written directly: what a
+   * settlement refused leaves for a manager to close. Answers the record id.
+   */
+  async function markedRecord(userId: string, productId: string): Promise<string> {
+    const record = await ds.getRepository(PurchaseRecord).save(
+      ds.getRepository(PurchaseRecord).create({
+        userId,
+        source: 'product',
+        productId,
+        formId: null,
+        amountCents: 1000,
+        paymentMethod: 'online',
+        status: 'paid_not_granted',
+        stripePaymentIntentId: null,
+        associationId: ASSO,
+        productName: 'Tier low',
+      })
+    );
+    return record.id;
+  }
+
+  const tagRows = (userId: string) =>
+    ds.query(
+      `SELECT "tagName", "issuingAssocId", "expiresAt", metadata FROM user_tags
+        WHERE "userId" = $1 ORDER BY "tagName"`,
+      [userId]
+    );
+
+  const closingsOf = (recordId: string) =>
+    ds.query(`SELECT outcome FROM purchase_record_closings WHERE "purchaseRecordId" = $1`, [
+      recordId,
+    ]);
+
   const productExists = async (id: string) =>
     (await ds.query(`SELECT 1 FROM association_products WHERE id = $1`, [id])).length === 1;
 
@@ -269,6 +320,40 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     expect(error).toBeInstanceOf(ConflictException);
     expect(conflictBody(error)).toMatchObject({ code: 'TIER_HAS_HOLDERS', holderCount: 2 });
     expect(await productExists(HELD)).toBe(true);
+  });
+
+  // The other way a tier is paid for: deleted while a form answer waits for its money, the grant
+  // would name a tier that no longer exists and land `paid_not_granted`.
+  it('refuses to delete a tier a form answer is still paying for (online, live; or cash), TIER_CHECKOUT_OPEN', async () => {
+    const formId = '00000000-0000-4000-8000-0000000000f1';
+    await admin.query(
+      `INSERT INTO forms (id, "associationId", "grantsCotisation", "cotisationVariantKey")
+       VALUES ($1, $2, true, 'formed')`,
+      [formId, ASSO]
+    );
+    const answer = (status: string, requestedAt: string | null) =>
+      admin.query(
+        `INSERT INTO submissions ("formId", "userId", "paymentStatus", "paymentRequestedAt")
+         VALUES ($1, $2, $3, ${requestedAt ?? 'NULL'}) RETURNING id`,
+        [formId, newBuyer(), status]
+      );
+    const refusedCode = async () =>
+      conflictBody((await settled(service.delete(ASSO, FORMED))).error).code;
+
+    const live = await answer('pending', 'now()');
+    expect(await refusedCode()).toBe('TIER_CHECKOUT_OPEN');
+    await admin.query(`DELETE FROM submissions WHERE id = $1`, [live.rows[0].id]);
+
+    const cash = await answer('pending_cash', null);
+    expect(await refusedCode()).toBe('TIER_CHECKOUT_OPEN');
+    await admin.query(`DELETE FROM submissions WHERE id = $1`, [cash.rows[0].id]);
+    expect(await productExists(FORMED)).toBe(true);
+
+    // CONTROL: an online answer past its hold, and a paid one, hold nothing back.
+    await answer('pending', "now() - interval '1 hour'");
+    await answer('paid', 'now()');
+    await service.delete(ASSO, FORMED);
+    expect(await productExists(FORMED)).toBe(false);
   });
 
   it('CONTROL: deletes a tier nobody holds', async () => {
@@ -388,14 +473,13 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     expect(await heldTags(stranger)).toEqual([GONE, tag('low')]);
   });
 
-  it('the legacy claim grants its tier over the tag of a DELETED tier, and swaps it out', async () => {
+  it('the legacy claim leaves the tag of a DELETED tier to a manager: nothing granted, nothing swapped', async () => {
     const buyer = newBuyer();
     await giveTag(buyer, GONE);
+    const before = await tagRows(buyer);
 
-    expect(await tags.grantCotisantUnlessHeld(ASSO, buyer, 'legacy', 'low', {})).toMatchObject({
-      tagName: tag('low'),
-    });
-    expect(await heldTags(buyer)).toEqual([tag('low')]);
+    expect(await tags.grantCotisantUnlessHeld(ASSO, buyer, 'legacy', 'low', {})).toBeNull();
+    expect(await tagRows(buyer)).toEqual(before);
   });
 
   it('a raw grant in the cotisant namespace that is not one of its own tier tags is refused', async () => {
@@ -442,5 +526,45 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     expect(n).toBeGreaterThan(0);
     // The other association's base tag is its own tier, not an orphan of either.
     expect(await tags.countOrphanTierTags()).toBe(n);
+  });
+
+  // A hand grant goes through the sibling swap: unranked against a deleted tier, it would replace
+  // a deleted DEAR tier with a cheap one - the paid downgrade a checkout already refuses.
+  it('closing as granted for a holder of a DELETED tier is refused PURCHASE_HELD_TIER_DELETED, nothing written', async () => {
+    const buyer = newBuyer();
+    await giveTag(buyer, GONE);
+    const before = await tagRows(buyer);
+    const record = await markedRecord(buyer, LOW);
+
+    const refused = await settled(service.closePaidNotGranted(ASSO, record, 'm', 'granted', false));
+
+    expect(conflictBody(refused.error).code).toBe('PURCHASE_HELD_TIER_DELETED');
+    // The orphan stays as it was (no stamp), and no cheaper tier was swapped in.
+    expect(await tagRows(buyer)).toEqual(before);
+    expect(await heldTags(buyer)).toEqual([GONE]);
+    expect(await closingsOf(record)).toEqual([]);
+    const [{ status }] = await ds.query(`SELECT status FROM purchase_records WHERE id = $1`, [
+      record,
+    ]);
+    expect(status).toBe('paid_not_granted');
+
+    // The repair the refusal names: a manager's roster grant swaps the orphan out, and the closing
+    // then finds that grant as this payment's delivery.
+    await tags.grantCotisant(ASSO, buyer, 'manager', 'low');
+    expect(await heldTags(buyer)).toEqual([tag('low')]);
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted', true);
+    expect(closed).toMatchObject({ closedOutcome: 'granted' });
+    expect(await closingsOf(record)).toEqual([{ outcome: 'granted' }]);
+  });
+
+  it('CONTROL: the same closing for a buyer holding no orphan grants the tier', async () => {
+    const buyer = newBuyer();
+    const record = await markedRecord(buyer, LOW);
+
+    const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted', false);
+
+    expect(closed).toMatchObject({ closedOutcome: 'granted' });
+    expect(await heldTags(buyer)).toEqual([tag('low')]);
+    expect(await closingsOf(record)).toEqual([{ outcome: 'granted' }]);
   });
 });

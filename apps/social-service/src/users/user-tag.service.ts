@@ -511,7 +511,8 @@ export class UserTagService {
 
   /**
    * `grantCotisant`, except that it grants NOTHING (and answers null) when the user already holds
-   * any tier of the association - asked UNDER the buyer's tier lock, so a tier paid for at the same
+   * any tier of the association, the tag of a DELETED tier included (`heldOrphanTierTags`: only a
+   * manager may swap one out) - asked UNDER the buyer's tier lock, so a tier paid for at the same
    * moment is seen and kept instead of being swapped out by the XOR. The legacy claim's path: a
    * cotisation bought in Canari outranks anything a legacy list says.
    */
@@ -676,16 +677,17 @@ export class UserTagService {
     this.logger.debug(
       `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName} rule=${rule}`
     );
-    // A tag of a DELETED tier does not count as held here: the legacy claim grants its tier and
-    // the sibling XOR below swaps the orphan out. No money changes hands, so there is no paid
-    // downgrade to prevent, and keeping the orphan would leave the holder with a tier nobody
-    // can rank - strictly worse than the claim.
+    // A tag of a DELETED tier counts as holding one here: granting would run the sibling XOR and
+    // delete it - possibly a dearer PAID tier, the only record of what the holder paid - on a
+    // claim no manager made. The claim neither grants nor swaps; a manager's explicit grant is
+    // what replaces an orphan.
     if (
       rule === 'unless-holding-any' &&
-      (await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0
+      ((await this.heldVariantKeys(userId, assocId, tiers, manager)).length > 0 ||
+        (await this.heldOrphanTierTags(userId, assocId, tiers, manager)).length > 0)
     ) {
       this.logger.debug(
-        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}`
+        `[UserTag] grantCotisant skipped: user=${userId.slice(0, 8)} already holds a tier of assoc=${assocId}, a deleted one included`
       );
       return null;
     }

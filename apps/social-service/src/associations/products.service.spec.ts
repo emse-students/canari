@@ -670,6 +670,29 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(productRepo.save).not.toHaveBeenCalled();
     });
 
+    // `cotisant:bde-2024-2025` is the base tier's dated tag: a tier keyed like a year could not be
+    // told from it, and once deleted its holders would read as base holders, not as orphans.
+    it('refuses a tier key shaped like an academic year, alone or as a suffix', async () => {
+      for (const variantKey of ['2024-2025', 'gold-2024-2025']) {
+        const { service, assoRepo, productRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+        await expect(
+          service.create('asso1', { name: 'Year', type: 'membership', variantKey }, false)
+        ).rejects.toThrow('cannot be named like an academic year');
+        expect(productRepo.save).not.toHaveBeenCalled();
+      }
+      // CONTROL: a key holding digits that is not a year range is accepted.
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      await expect(
+        service.create(
+          'asso1',
+          { name: 'Promo', type: 'membership', variantKey: 'promo-2024' },
+          false
+        )
+      ).resolves.toBeDefined();
+    });
+
     it('ignores any client-supplied grantedTagName for membership products', async () => {
       const { service, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
@@ -1181,7 +1204,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
     // A tag of a deleted tier has no price: the closing ranks it as a checkout does, so granting
     // by hand cannot swap a deleted DEAR tier for a cheap one.
-    it('refuses PURCHASE_TIER_NOT_COMPARABLE when the buyer holds the tag of a DELETED tier', async () => {
+    it('refuses PURCHASE_HELD_TIER_DELETED, not NOT_COMPARABLE, when the buyer holds the tag of a DELETED tier', async () => {
       const t = closing([marked({ productId: 'prod-top' })], {
         held: [],
         catalogue: FULL_CATALOGUE,
@@ -1190,7 +1213,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       (t.userTagService as any).heldOrphanTierTagsOf.mockResolvedValue(
         new Map([['user1', [{ tagName: 'cotisant:bde-gone', variantKey: 'gone' }]]])
       );
-      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_TIER_NOT_COMPARABLE');
+      expect(codeOf(await grantRefused(t))).toBe('PURCHASE_HELD_TIER_DELETED');
       expect((t.userTagService as any).grantCotisantWithin).not.toHaveBeenCalled();
     });
 

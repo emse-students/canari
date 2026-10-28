@@ -664,9 +664,9 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       });
     });
 
-    // No money changes hands in a legacy claim, so there is no paid downgrade to prevent: keeping a
-    // tier nobody can rank would leave the holder worse off than the claim.
-    it('the legacy claim grants its tier over the tag of a DELETED tier, and swaps it out', async () => {
+    // The claim has no manager behind it: swapping the orphan out would DELETE the tag of a deleted,
+    // possibly dearer, paid tier - the only record of what the holder paid. Left to a manager.
+    it('the legacy claim grants nothing to a holder of the tag of a DELETED tier, and swaps nothing', async () => {
       const { service, repo } = makeService();
       mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
         'cotisant:cercle-premium',
@@ -675,12 +675,19 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
       expect(
         await service.grantCotisantUnlessHeld('asso1', 'user1', 'legacy', 'sans-alcool', {})
+      ).toBeNull();
+      expect(repo.delete).not.toHaveBeenCalled();
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: the legacy claim grants its tier to a user holding no tier, deleted or not', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantUnlessHeld('asso1', 'user1', 'legacy', 'sans-alcool', {})
       ).toMatchObject({ tagName: 'cotisant:cercle-sans-alcool' });
-      expect(repo.delete).toHaveBeenCalledWith({
-        userId: 'user1',
-        tagName: 'cotisant:cercle-premium',
-        issuingAssocId: 'asso1',
-      });
     });
 
     it('rankCotisationTier answers none for an association without cotisation', async () => {

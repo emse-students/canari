@@ -1903,7 +1903,8 @@ export type ClosingGrantRefusal =
   | 'year-over'
   | 'target-held'
   | 'not-a-rise'
-  | 'not-comparable';
+  | 'not-comparable'
+  | 'held-tier-deleted';
 
 /** The two outcomes that close a payment paid for and not granted. */
 export type PurchaseClosingOutcome = 'refunded' | 'granted';

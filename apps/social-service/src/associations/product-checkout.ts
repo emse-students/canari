@@ -203,3 +203,11 @@ export const PURCHASE_YEAR_OVER = 'PURCHASE_YEAR_OVER';
  * be told from a move down. A refund is the outcome left.
  */
 export const PURCHASE_TIER_NOT_COMPARABLE = 'PURCHASE_TIER_NOT_COMPARABLE';
+
+/**
+ * The `code` of the 409 a closing as `granted` gets when the buyer holds the tag of a tier that was
+ * DELETED (an orphan, docs/wiki/cotisations.md "A tier deleted while people still hold it"): it has
+ * no price, so no rank. Unlike `PURCHASE_TIER_NOT_COMPARABLE` a repair exists - a manager grants the
+ * tier from the roster (the sibling swap removes the orphan), then closes the payment as `granted`.
+ */
+export const PURCHASE_HELD_TIER_DELETED = 'PURCHASE_HELD_TIER_DELETED';
