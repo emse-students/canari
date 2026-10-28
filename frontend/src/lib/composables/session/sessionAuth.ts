@@ -3004,6 +3004,13 @@ export async function changePinImpl(
  *
  * Throws a user-facing message when the new PIN is wrong, the old PIN does not decrypt
  * the local state, or there is no local state to recover.
+ *
+ * **A RECOVERY IS A FLOW IN FLIGHT, TRACKED AS A LOGIN IS** (`loginInFlightSettled`). It opens the
+ * state and installs a native manager while no session is live, so a sign-out from the gate during it
+ * found "nothing to stop": the client was destroyed mid-await and the native session ended before the
+ * recovery's own `initialiser_mls` installed one, which then stayed installed. A sign-out now retires
+ * the client on the recovery's END, and the recovery stops - typed, `LoginStoppedBySignOutError` -
+ * at the next step that would touch the state, so it never builds a client the sign-out cannot see.
  */
 export async function recoverPinImpl(
   ctx: SessionContext,
@@ -3012,6 +3019,47 @@ export async function recoverPinImpl(
   newPin: string,
   onProgress?: PinProgressCallback
 ): Promise<void> {
+  let settleRecovery: () => void = () => {};
+  const recoverySettled = new Promise<void>((done) => (settleRecovery = done));
+  const recoveryAbort = new AbortController();
+  loginInFlightSettled = recoverySettled;
+  loginInFlightAbort = recoveryAbort;
+  /** Throws, typed, once a sign-out has stopped this recovery - checked before each step on the state. */
+  const stillWanted = (stage: string): void => {
+    if (!recoveryAbort.signal.aborted) return;
+    cb.log(`[PIN_RECOVER] Stopped by a sign-out before ${stage} - the state is left as it was.`);
+    throw new LoginStoppedBySignOutError(stage);
+  };
+  try {
+    await recoverPinSteps(
+      ctx,
+      cb,
+      oldPin,
+      newPin,
+      { signal: recoveryAbort.signal, stillWanted },
+      onProgress
+    );
+  } finally {
+    if (loginInFlightSettled === recoverySettled) loginInFlightSettled = null;
+    if (loginInFlightAbort === recoveryAbort) loginInFlightAbort = null;
+    settleRecovery();
+  }
+}
+
+/**
+ * The steps of {@link recoverPinImpl}. `stop.signal` cancels its network waits once a sign-out stopped
+ * it (a request with no deadline would hold the retirement, and the next sign-in, behind it), and
+ * `stop.stillWanted` throws, typed, before each step that would touch the state.
+ */
+async function recoverPinSteps(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  oldPin: string,
+  newPin: string,
+  stop: { signal: AbortSignal; stillWanted: (stage: string) => void },
+  onProgress?: PinProgressCallback
+): Promise<void> {
+  const { stillWanted } = stop;
   const userId = ctx.getUserId();
   if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
   cb.log('[PIN_RECOVER] Starting recovery...');
@@ -3020,21 +3068,31 @@ export async function recoverPinImpl(
   // The state is read as a signed-out session LEFT it, so its final checkpoint lands first (see
   // `loginImpl`), and the client that wrote it is retired before `ensureMls` below builds ours.
   await ctx.whenMlsRetired();
+  stillWanted('reading the stored state');
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
     throw new LocalizedError(m.auth_no_local_state_recover());
   }
 
-  // The new PIN must be the real (rotated) account PIN: verify its verifier server-side.
-  const token = await getToken();
-  const salt = await fetchPinSalt(ctx, userId, token);
-  const newVerifier = await computePinVerifier(userId, newPin, salt);
-  const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ userId, verifier: newVerifier }),
-  });
+  // The new PIN must be the real (rotated) account PIN: verify its verifier server-side. A sign-out
+  // cancels these waits; the cancellation is named as the stop it is, never as an unreachable server.
+  let salt: string;
+  let res: Response;
+  try {
+    const token = await getToken();
+    salt = await fetchPinSalt(ctx, userId, token, stop.signal);
+    const newVerifier = await computePinVerifier(userId, newPin, salt);
+    res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ userId, verifier: newVerifier }),
+      signal: stop.signal,
+    });
+  } catch (e) {
+    stillWanted('the new PIN check');
+    throw e;
+  }
   if (!res.ok) throw new LocalizedError(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
   if (data.status !== 'ok') {
@@ -3067,10 +3125,12 @@ export async function recoverPinImpl(
     hardwareKeyB64 = read.key;
   }
   if (hardwareKeyB64) {
+    stillWanted('opening the state with the hardware-held key');
     const opened = await ctx.ensureMls().openLocalStateWithKey(userId, hardwareKeyB64, state);
     if (opened.opened) {
       await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
       cb.log('[PIN_RECOVER] The state opens with the hardware-held key - nothing to move.');
+      stillWanted('the login with the hardware-held key');
       ctx.setPin(newPin);
       onProgress?.({ percent: 92, stage: 'login' });
       await loginImpl(ctx, cb);
@@ -3087,6 +3147,7 @@ export async function recoverPinImpl(
 
   // THE SAME PATH AS AN IN-SESSION CHANGE (`performPinChange`). Only the MLS source differs: the
   // stored blob, opened (non-destructively) with the old key - the proof the old PIN is right.
+  stillWanted('opening the state with the old PIN');
   try {
     await performPinChange(
       {
@@ -3138,7 +3199,9 @@ export async function recoverPinImpl(
     throw e;
   }
   // Every store now under the hardware-held key: the marker says so (idempotent when it already did).
+  // The mark records what the disk now holds, so it is written even when a sign-out came meanwhile.
   if (hardwareKeyB64) await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
+  stillWanted('the login after the re-seal');
   ctx.setPin(newPin);
   cb.log('[PIN_RECOVER] Local state re-sealed with the new device key.');
 
@@ -3177,7 +3240,7 @@ export async function recoverPinImpl(
 export function tearDownLiveSession(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
-  reason: 'logout' | 'revoked'
+  reason: 'logout' | 'revoked' | 'lost'
 ): Promise<void> {
   unregisterOutbox();
   // Detach the reconnect listener too, or a regained network would promote a session that no
@@ -3219,6 +3282,9 @@ export function tearDownLiveSession(
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
     // the write that must not survive the wipe, so the persister is uninstalled without one.
+    // NOR FOR A LOST SESSION (`endLostSessionImpl`): the client in memory no longer describes what
+    // is installed - no manager at all, or an identity a failed rotation never recorded - and its
+    // checkpoint would write that over the state the PIN gate is about to reopen.
     releasePersister();
     finalWrite = Promise.resolve();
   }
@@ -3350,4 +3416,34 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
   ctx.setStorage(null);
   ctx.setAuthToken('');
   cb.log('[LOGOUT] Live session stopped.');
+}
+
+/**
+ * Ends the live session ON THIS DEVICE ONLY, because the MLS session under it is lost
+ * (`reportMlsSessionLost`): the shell then reopens it at the PIN gate.
+ *
+ * **A LOST MLS SESSION IS A LOCAL FACT, NOT A STATUS - SO IT IS NEVER A SIGN-OUT.** Only a 401/403 may
+ * end an account's session. `clearAuth` would revoke the session on the server (and the identity
+ * provider's with it), clear the restore key, end the push registration and erase the shares - and an
+ * offline user could not sign back in at all. Here the credential, the push registration and every
+ * local store stay; what goes is what runs: the socket, the timers, the in-memory conversations and
+ * the MLS client, retired WITHOUT a final checkpoint (`tearDownLiveSession('lost')`), and the native
+ * session behind it. The unlock then reads the state as the disk holds it, through every gate.
+ */
+export function endLostSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+  if (!ctx.isLoggedIn()) {
+    cb.log('[SESSION] MLS session lost with no live session on this device - nothing to stop.');
+    return;
+  }
+  try {
+    ctx.ensureMls().pauseSocket();
+  } catch (e) {
+    cb.log(`[SESSION] Could not release the socket - frames may still arrive: ${String(e)}`);
+  }
+  const nothingWritten = tearDownLiveSession(ctx, cb, 'lost');
+  void ctx
+    .retireMls(nothingWritten, 'lost session')
+    .then(() => cb.log('[SESSION] MLS client retired - the unlock opens the state afresh.'));
+  ctx.setStorage(null);
+  cb.log('[SESSION] Live session stopped on this device - the credential is kept.');
 }

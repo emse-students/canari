@@ -1,5 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
-import { reportMlsSessionVacated } from '$lib/mls-client/mlsSessionVacancy';
+import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import type {
   IMlsService,
   GroupMeta,
@@ -16,6 +16,7 @@ import {
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
+  isMlsManagerAbsent,
   resolveMlsPublicUrls,
 } from '$lib/mls-client';
 import {
@@ -3294,13 +3295,18 @@ export abstract class BaseMlsService implements IMlsService {
           if (refused instanceof MlsStateWriteRefusedError) {
             this.endDocumentAfterRefusedRotation();
           } else {
-            // ANY OTHER FAILURE ENDS THE SESSION TOO. The rotation moved this client's device id
-            // before its load; a failed load also emptied the native slot (the install guard), so
-            // the old identity is no longer installed and the new one never was. Restoring the old
-            // one in place would re-open a state behind the session's back; a sign-in reopens it as
-            // the disk holds it, and the id on disk is still the old one (it is recorded only after
-            // the rotation's checkpoint).
-            reportMlsSessionVacated('identity rotation failed');
+            // ANY OTHER FAILURE ENDS THE LIVE SESSION ON THIS DEVICE TOO, into the PIN gate. The
+            // rotation moved this client's device id before its load, while the id on disk is still
+            // the old one (it is recorded only after the rotation's checkpoint): the client in memory
+            // describes an identity nothing recorded. Restoring the old one in place would re-open a
+            // state behind the session's back; the unlock reopens it as the disk holds it. The cause
+            // is named for what it is - a native slot found EMPTY is said so only when the native
+            // side answered that (on Tauri; web has no native slot), never assumed from a failure.
+            reportMlsSessionLost(
+              isMlsManagerAbsent(refused)
+                ? 'identity rotation found no native session'
+                : 'identity rotation failed'
+            );
           }
           throw refused;
         }

@@ -2434,18 +2434,32 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   during a teardown gets that code once it is released; it never acts on the previous manager and never
   waits for a new one. A resume reload into an empty slot is refused the same way: it refreshes a live
   manager and never installs one.
-- **An empty slot under a signed-in session ENDS THE SESSION into the sign-in screen.** Two paths
-  meet it: a resume whose reload answers `MLS_MANAGER_ABSENT` (`MlsSessionVacantError`, which stops
-  the resume sequence), and a failed `rotateDeviceIdentity` during a live session, whose failed
-  re-enrolment load ran the install guard. Both call `reportMlsSessionVacated`
-  (`lib/mls-client/mlsSessionVacancy.ts`), whose handler the shell wires to the session-expired path.
-  NOT a re-initialisation: an empty slot means a teardown ran, and re-installing from there would
-  choose an identity and a key on the user's behalf - the stored device id is still the old one after
-  a failed rotation - where a sign-in reopens the disk state through every gate it has.
+- **A LOST MLS SESSION ENDS THE LIVE SESSION ON THIS DEVICE AND REOPENS IT AT THE PIN GATE - it
+  never signs out.** Two paths meet it: a resume whose reload answers `MLS_MANAGER_ABSENT`
+  (`MlsSessionVacantError`, which stops the resume sequence), and a failed `rotateDeviceIdentity`
+  during a live session - reported as an empty slot only when the native side answered
+  `MLS_MANAGER_ABSENT`, as a failed rotation otherwise (a full disk; web has no native slot). Both
+  call `reportMlsSessionLost` (`lib/mls-client/mlsSessionLoss.ts`, at ERROR); the shell answers with
+  `reopenAtPinGate`: `endLostSessionImpl` stops the socket, the timers and the conversations, retires
+  the client WITHOUT a final checkpoint (it no longer describes what is installed) and ends the native
+  session (`lost session`), then the PIN gate opens for the same account. NOT `clearAuth`: a lost MLS
+  session is a local fact, not a 401/403, and a sign-out would revoke the server session and the
+  identity provider's, clear the restore key, the push registration and the shares - and an offline
+  user could not sign back in. NOT a re-initialisation either: re-installing in place would choose an
+  identity and a key on the user's behalf - the stored device id is still the old one after a failed
+  rotation - where the unlock reopens the disk state through every gate it has.
 - **A sign-out with no live session still retires the holder's client.** The PIN gate's recovery
   opens the state with the old PIN before its PIN change; when the change fails, the gate's exit finds
-  no session and no login in flight, and the opened manager and key are ended through the same
-  retirement.
+  no session, and the opened manager and key are ended through the same retirement.
+- **A recovery in flight is tracked as a login is** (`loginInFlightSettled`, `loginInFlightAbort`): a
+  sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
+  (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
+  longer land after the native session was ended.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
+  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
+  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
+  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
+  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
 - **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the

@@ -99,7 +99,9 @@ vi.mock('$lib/utils/chat/connection', async (importOriginal) => {
 });
 
 const { clearAuth, setSignOutHandler } = await import('$lib/stores/auth');
-const { loginImpl, endSessionImpl } = await import('./sessionAuth');
+const { loginImpl, endSessionImpl, recoverPinImpl } = await import('./sessionAuth');
+const { loadMlsState } = await import('$lib/utils/hex');
+const { LoginStoppedBySignOutError } = await import('./loginErrors');
 const { createMlsHolder } = await import('./mlsHolder');
 
 type Held = { promise: Promise<void> } | null;
@@ -500,5 +502,39 @@ describe('a sign-out during a login in progress', () => {
     expect(logs(s.cb)).not.toContain('[INIT] Login stopped');
     expect(logs(s.cb)).not.toContain('wipe FAILED');
     expect(errors.mock.calls.flat().join(' ')).not.toContain('wipe failed');
+  });
+});
+
+/**
+ * A SIGN-OUT DURING THE PIN GATE'S RECOVERY STOPS IT. The recovery opens the state and installs a
+ * native manager while no session is live, and it was not tracked as a flow in flight: a sign-out
+ * found "nothing to stop", the native session ended at once, and the recovery then went on to open
+ * the state - installing a manager nothing would end.
+ */
+describe('a sign-out during the PIN recovery', () => {
+  it('stops it before it touches the state, and retires on its end', async () => {
+    pinCheckHangs = true;
+    vi.mocked(loadMlsState).mockResolvedValueOnce(new Uint8Array([1]));
+    const a = fakeClient();
+    const s = session([a.client]);
+
+    const recovery = recoverPinImpl(s.ctx, s.cb, '1111', '2222').then(
+      () => null,
+      (e: unknown) => e
+    );
+    await pinCheckReached.promise;
+
+    // The gate's exit, during the new PIN's check.
+    await clearAuth();
+    const stopped = await recovery;
+    await s.holder.whenRetired();
+
+    expect(stopped).toBeInstanceOf(LoginStoppedBySignOutError);
+    // No client was built for the stopped recovery, so nothing opened the state.
+    expect(a.known.init).not.toHaveBeenCalled();
+    expect(Object.keys(a.known)).not.toContain('openLocalStateWithKey');
+    expect(logs(s.cb)).toContain('[LOGOUT] Signed out during a login');
+    expect(logs(s.cb)).toContain('[PIN_RECOVER] Stopped by a sign-out before the new PIN check');
+    expect(s.endNative).toHaveBeenCalledWith('sign-out');
   });
 });

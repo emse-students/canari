@@ -401,16 +401,24 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
  * initialised, or ended by `endNativeMlsSession` (a sign-out, an account switch, a failed install, a
  * state reset). Reads the `MLS_MANAGER_ABSENT` code of `state.rs`, the contract that crosses the Tauri
  * boundary, never the sentence after it.
+ *
+ * **WHY A CODE IN A STRING AND NOT A TYPED ERROR FROM THE BOUNDARY.** Tauri can carry a serialised
+ * error object, but every native command returns `Result<_, String>`, and every code `mls-core` and the
+ * shell define (`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, this one) crosses as the leading
+ * token of that string. Moving this one code alone to an object would give the boundary two
+ * conventions and every reader two shapes to accept; the whole boundary moves at once or not at all
+ * ([backlog](../../../../docs/wiki/backlog.md)). Until then the token is read here and nowhere else,
+ * and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
  */
 export function isMlsManagerAbsent(error: unknown): boolean {
-  return String(error).includes('MLS_MANAGER_ABSENT');
+  return /\bMLS_MANAGER_ABSENT:/.test(String(error));
 }
 
 /**
  * Thrown by {@link IMlsService.reloadStateFromDisk} when a resume finds no native MLS session under a
- * signed-in session. The vacancy is already reported (`reportMlsSessionVacated`, which ends the
- * session into the sign-in screen); the type tells the resume sequence to stop rather than run its
- * later steps on a session that is ending.
+ * signed-in session. The loss is already reported (`reportMlsSessionLost`, which ends the session on
+ * this device and reopens it at the PIN gate); the type tells the resume sequence to stop rather than
+ * run its later steps on a session that is ending.
  */
 export class MlsSessionVacantError extends Error {
   constructor(cause: unknown) {

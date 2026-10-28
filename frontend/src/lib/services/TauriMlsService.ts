@@ -17,7 +17,7 @@ import {
   MlsSessionVacantError,
   type MlsInitOptions,
 } from '$lib/mls-client';
-import { reportMlsSessionVacated } from '$lib/mls-client/mlsSessionVacancy';
+import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
@@ -1064,10 +1064,10 @@ export class TauriMlsService extends BaseMlsService {
       if (isMlsManagerAbsent(e)) {
         // NO NATIVE SESSION UNDER A RESUMING ONE: a teardown ran (a sign-out, a failed install or
         // rotation) and a resume reload never installs a manager. Carrying on would leave a session
-        // on screen whose every MLS command fails, so it is reported - the shell ends it into the
-        // sign-in screen (`mlsSessionVacancy.ts` says why that and not a re-init) - and the resume
-        // sequence is told to stop.
-        reportMlsSessionVacated('resume found no native session');
+        // on screen whose every MLS command fails, so it is reported - the shell ends it on this
+        // device and reopens it at the PIN gate (`mlsSessionLoss.ts` says why that and not a re-init
+        // or a sign-out) - and the resume sequence is told to stop.
+        reportMlsSessionLost('resume found no native session');
         throw new MlsSessionVacantError(e);
       }
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background

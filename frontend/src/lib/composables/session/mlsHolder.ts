@@ -28,9 +28,10 @@ export interface MlsHolder {
   reset(only?: IMlsService): void;
   /**
    * Lets go of the current client now and destroys it once `finalWrite` settles. `finalWrite` must
-   * never reject: it is the teardown's flush, which reports its own failure.
+   * never reject: it is the teardown's flush, which reports its own failure. `why` names the end in
+   * the native log: a sign-out unless the session was lost (`endLostSessionImpl`).
    */
-  retire(finalWrite: Promise<void>): Promise<void>;
+  retire(finalWrite: Promise<void>, why?: 'sign-out' | 'lost session'): Promise<void>;
   /** Settles once every retired client's final write has landed and the client is destroyed. */
   whenRetired(): Promise<void>;
   /** True while a retired client's final write is still in flight. */
@@ -74,7 +75,7 @@ export function createMlsHolder(
       const ended = endNativeLogged(only ? 'stopped login' : 'client reset');
       retirement = Promise.all([retirement, ended]).then(() => undefined);
     },
-    retire(finalWrite) {
+    retire(finalWrite, why = 'sign-out') {
       const leaving = current;
       current = null;
       pending += 1;
@@ -86,7 +87,7 @@ export function createMlsHolder(
         .then(() => leaving?.destroy?.())
         .catch((e) => console.error(`[LOGOUT] destroying the retired MLS client failed: ${e}`))
         // AFTER the final write (it checkpoints through the manager this removes).
-        .then(() => endNativeLogged('sign-out'))
+        .then(() => endNativeLogged(why))
         .finally(() => {
           pending -= 1;
         });

@@ -24,7 +24,8 @@ const { registerMlsStatePersister, unregisterMlsStatePersister, activeMlsStatePe
   await import('$lib/mls-client/mlsStatePersisterRegistry');
 import type { IMlsService } from '$lib/mls-client';
 import type { MlsStatePersister } from '$lib/mls-client/mlsStatePersister';
-const { endSessionImpl } = await import('./sessionAuth');
+const { endSessionImpl, endLostSessionImpl } = await import('./sessionAuth');
+const { reopenAtPinGate } = await import('./reopenAtPinGate');
 const { resumeConnectionImpl } = await import('./sessionConnection');
 
 const fetchMock = vi.fn<() => Promise<Response>>();
@@ -46,7 +47,8 @@ function liveSession() {
   const mls = holder.ensure() as unknown as (typeof clients)[number];
   const ensureMls = vi.fn(() => holder.ensure());
   const ctx = {
-    retireMls: (finalWrite: Promise<void>) => holder.retire(finalWrite),
+    retireMls: (finalWrite: Promise<void>, why?: 'sign-out' | 'lost session') =>
+      holder.retire(finalWrite, why),
     whenMlsRetired: () => holder.whenRetired(),
     isMlsRetiring: () => holder.isRetiring(),
     timers: { reconnect: null, health: null, syncWatchdog: null, connectionWatchdog: null },
@@ -159,6 +161,60 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(s.endNative).toHaveBeenCalledWith('sign-out');
       // The next sign-in builds its own client, not the probe's.
       expect(s.ctx.ensureMls()).not.toBe(probe);
+    } finally {
+      setSignOutHandler(null);
+    }
+  });
+});
+
+/**
+ * A LOST MLS SESSION REOPENS AT THE PIN GATE AND SIGNS NOBODY OUT. It is a local fact, not a 401/403:
+ * the expired-session path it used to take ran `clearAuth`, which revoked the session on the server
+ * (and the identity provider's), cleared the restore key, ended the push registration and erased the
+ * shares - and an offline user could not sign back in.
+ */
+describe('a lost MLS session', () => {
+  afterEach(() => unregisterMlsStatePersister());
+
+  it('ends the live session on this device only and lands on the PIN gate - no logout, no revoke, no final write', async () => {
+    const s = liveSession();
+    const a = heldPersister();
+    registerMlsStatePersister(a.persister);
+    const signedOut = vi.fn();
+    setSignOutHandler(signedOut);
+    const steps: string[] = [];
+    const openPinGate = vi.fn(async () => {
+      steps.push('gate');
+    });
+    try {
+      await reopenAtPinGate({
+        why: 'resume found no native session',
+        endLiveSession: () => {
+          endLostSessionImpl(s.ctx, s.cb);
+          steps.push('ended');
+        },
+        releaseLoginFlow: () => steps.push('released'),
+        openPinGate,
+        log: s.log,
+      });
+      await s.ctx.whenMlsRetired();
+
+      // Nothing of a sign-out ran: no `clearAuth` (whose handler this is), no request at all.
+      expect(signedOut).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(s.ctx.setAuthToken).not.toHaveBeenCalled();
+      // What runs is stopped, in order, and the account lands on the PIN gate.
+      expect(steps).toEqual(['ended', 'released', 'gate']);
+      expect(s.ctx.isLoggedIn()).toBe(false);
+      expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
+      expect(s.clearConversations).toHaveBeenCalledTimes(1);
+      // The client in memory no longer describes what is installed: it is never checkpointed.
+      expect(a.persister.flushEncrypted).not.toHaveBeenCalled();
+      expect(s.clients[0].destroy).toHaveBeenCalledTimes(1);
+      expect(s.endNative).toHaveBeenCalledWith('lost session');
+      expect(s.log.mock.calls.flat().join('\n')).toContain(
+        'MLS session LOST (resume found no native session)'
+      );
     } finally {
       setSignOutHandler(null);
     }

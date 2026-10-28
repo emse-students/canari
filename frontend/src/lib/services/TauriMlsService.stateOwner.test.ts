@@ -14,7 +14,7 @@ import {
   SavedStateOfAnotherAccountError,
   SavedStateUnopenedError,
 } from '$lib/mls-client';
-import { setMlsSessionVacatedHandler } from '$lib/mls-client/mlsSessionVacancy';
+import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -198,7 +198,7 @@ describe('TauriMlsService resume - no native session under a signed-in one', () 
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => setMlsSessionVacatedHandler(null));
+  afterEach(() => setMlsSessionLostHandler(null));
 
   it('reports the vacancy and rejects with MlsSessionVacantError', async () => {
     invoke.mockImplementation((cmd: string) =>
@@ -208,8 +208,8 @@ describe('TauriMlsService resume - no native session under a signed-in one', () 
           )
         : Promise.resolve(undefined)
     );
-    const vacated = vi.fn();
-    setMlsSessionVacatedHandler(vacated);
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
     const svc = new TauriMlsService() as unknown as {
       _deviceKeyB64: string;
       reloadStateFromDisk(): Promise<void>;
@@ -217,7 +217,7 @@ describe('TauriMlsService resume - no native session under a signed-in one', () 
     svc._deviceKeyB64 = KEY;
 
     await expect(svc.reloadStateFromDisk()).rejects.toBeInstanceOf(MlsSessionVacantError);
-    expect(vacated).toHaveBeenCalledWith('resume found no native session');
+    expect(lost).toHaveBeenCalledWith('resume found no native session');
   });
 
   it('any other reload failure is logged and the resume carries on, as before', async () => {
@@ -226,8 +226,8 @@ describe('TauriMlsService resume - no native session under a signed-in one', () 
         ? Promise.reject(new Error('reload mls.bin: aead::Error'))
         : Promise.resolve(undefined)
     );
-    const vacated = vi.fn();
-    setMlsSessionVacatedHandler(vacated);
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
     const svc = new TauriMlsService() as unknown as {
       _deviceKeyB64: string;
       reloadStateFromDisk(): Promise<void>;
@@ -235,6 +235,6 @@ describe('TauriMlsService resume - no native session under a signed-in one', () 
     svc._deviceKeyB64 = KEY;
 
     await expect(svc.reloadStateFromDisk()).resolves.toBeUndefined();
-    expect(vacated).not.toHaveBeenCalled();
+    expect(lost).not.toHaveBeenCalled();
   });
 });

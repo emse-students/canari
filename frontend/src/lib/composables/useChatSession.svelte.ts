@@ -29,6 +29,7 @@ import {
   loginImpl,
   prefetchPinSaltImpl,
   endSessionImpl,
+  endLostSessionImpl,
   settleSessionEndByRevocationImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
@@ -173,7 +174,7 @@ export function useChatSession() {
     // Services
     ensureMls,
     resetMls: (only) => mlsHolder.reset(only),
-    retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
+    retireMls: (finalWrite, why) => mlsHolder.retire(finalWrite, why),
     whenMlsRetired: () => mlsHolder.whenRetired(),
     isMlsRetiring: () => mlsHolder.isRetiring(),
     getStorage: () => storage,
@@ -467,6 +468,9 @@ export function useChatSession() {
     /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
     endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       endSessionImpl(ctx, cb),
+    /** Stops the live session on this device only, its MLS session lost; the credential is kept. */
+    endLostSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
+      endLostSessionImpl(ctx, cb),
     /**
      * The session-expired reaction's half of a revocation: when the refresh refusal said the session
      * died because its owner revoked this device, returns the device to a fresh install (the one

@@ -10,7 +10,7 @@ import {
   REFUSED_ROTATION_RELOADS_KEY,
 } from '$lib/mls-client/refusedRotationReloads';
 import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
-import { setMlsSessionVacatedHandler } from '$lib/mls-client/mlsSessionVacancy';
+import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
 import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 import { DeviceRevokedByOwnerError, DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
@@ -170,27 +170,41 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     expect(impl).toHaveBeenCalledTimes(1);
   });
 
-  it('does not end the document for a rotation that failed for any other reason', async () => {
-    const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
-    const ctx = makeCtx({
-      generateKeyPackageImpl: impl,
-      persistCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
-    });
+  /**
+   * ANY OTHER FAILED ROTATION LOSES THE SESSION, NAMED FOR WHAT IT IS. A checkpoint that failed (a full
+   * disk) says nothing about the native slot - and web has none - so it is reported as a failed
+   * rotation, never as an empty slot; the outcome is the same local one (the PIN gate).
+   */
+  it('does not end the document for a rotation that failed for any other reason - it reports a failed rotation', async () => {
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
+      const ctx = makeCtx({
+        generateKeyPackageImpl: impl,
+        persistCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
+      });
 
-    await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
-    expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+      await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
+      expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+      expect(lost).toHaveBeenCalledWith('identity rotation failed');
+    } finally {
+      setMlsSessionLostHandler(null);
+      error.mockRestore();
+    }
   });
 
   /**
-   * A ROTATION THAT FAILS IN A LIVE SESSION ENDS THE SESSION. Its load failing emptied the native slot
-   * (the install guard) after the client's id had moved: the old identity is no longer installed and
-   * the new one never was, so carrying on leaves a signed-in screen whose every MLS command is refused.
-   * The vacancy is reported - the shell ends the session into the sign-in screen - and the id on disk
-   * is still the old one, which is what that sign-in reopens.
+   * A ROTATION WHOSE LOAD FOUND NO NATIVE SESSION LOSES THE SESSION, AND SAYS SO. The native side
+   * answered `MLS_MANAGER_ABSENT` after the client's id had moved: the old identity is no longer
+   * installed and the new one never was, so carrying on leaves a signed-in screen whose every MLS
+   * command is refused. The loss is reported - the shell reopens the session at the PIN gate - and the
+   * id on disk is still the old one, which is what that unlock reopens.
    */
-  it('reports the session vacant when the re-enrolment load fails, the stored id untouched', async () => {
-    const vacated = vi.fn();
-    setMlsSessionVacatedHandler(vacated);
+  it('reports the empty native slot when the re-enrolment load says so, the stored id untouched', async () => {
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const ctx = makeCtx({
@@ -202,11 +216,11 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
 
       await expect(generateKeyPackage(ctx)).rejects.toThrow('install failed');
 
-      expect(vacated).toHaveBeenCalledWith('identity rotation failed');
+      expect(lost).toHaveBeenCalledWith('identity rotation found no native session');
       expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
       expect(localStorage.getItem('mls_device_id_u')).toBeNull();
     } finally {
-      setMlsSessionVacatedHandler(null);
+      setMlsSessionLostHandler(null);
       error.mockRestore();
     }
   });

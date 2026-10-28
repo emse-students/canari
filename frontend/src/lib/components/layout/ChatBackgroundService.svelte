@@ -28,7 +28,8 @@
   } from '$lib/utils/deviceKeyVault';
   import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
   import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
-  import { setMlsSessionVacatedHandler } from '$lib/mls-client/mlsSessionVacancy';
+  import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
+  import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -697,6 +698,26 @@
   }
 
   /**
+   * A lost MLS session (`reportMlsSessionLost`): the live session ends on this device and the account
+   * reopens at the PIN gate. NOT `handleSessionExpired`: nothing here is a 401/403, so nothing is
+   * revoked, erased or signed out - see `reopenAtPinGate`.
+   */
+  async function handleMlsSessionLost(why: MlsSessionLoss) {
+    await reopenAtPinGate({
+      why,
+      endLiveSession: () => globalSession.endLostSession(sessionCb()),
+      releaseLoginFlow: () => {
+        dismissAuthPrompts();
+        pinError = '';
+        _loginInProgress = false;
+        globalSession.isLoginInProgress = false;
+      },
+      openPinGate: () => openPinModal(globalSession.userId || currentUserId() || ''),
+      log: appendLog,
+    });
+  }
+
+  /**
    * The device half of every sign-out, run by `clearAuth` before it drops the credential.
    *
    * TWO THINGS OUTLIVED A SIGN-OUT, AND TOGETHER THEY LOCKED THE NEXT SIGN-IN OUT (Mi 9T,
@@ -1352,9 +1373,9 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
-    // A signed-in session with no native MLS session under it ends the same way: into the sign-in
-    // screen, which reopens the state as the disk holds it (`mlsSessionVacancy.ts`).
-    setMlsSessionVacatedHandler(() => void handleSessionExpired());
+    // A signed-in session whose MLS session is lost is NOT an expired one - that is a status, this a
+    // local fact (`mlsSessionLoss.ts`) - so it ends on this device only and reopens at the PIN gate.
+    setMlsSessionLostHandler((why) => void handleMlsSessionLost(why));
     // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
     setSignOutHandler(handleSignedOut);
 
@@ -1362,7 +1383,7 @@
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
-      setMlsSessionVacatedHandler(null);
+      setMlsSessionLostHandler(null);
       setSignOutHandler(null);
       setGraineRepairListener(null);
     };
@@ -1752,9 +1773,11 @@
             await globalSession.ensureMls().reloadStateFromDisk();
           } catch (e) {
             if (!(e instanceof MlsSessionVacantError)) throw e;
-            // The vacancy was reported and the session is ending into the sign-in screen: no later
-            // step of this resume may run on it.
-            appendLog('[RESUME] Stopped - no native MLS session under this session; it is ending.');
+            // The loss was reported and the session is reopening at the PIN gate: no later step of
+            // this resume may run on it.
+            appendLog(
+              '[RESUME] Stopped - no native MLS session under this session; it reopens at the PIN gate.'
+            );
             return;
           }
           stepDone('reload');

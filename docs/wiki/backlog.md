@@ -1924,6 +1924,16 @@ docblock, which still calls the join's commit staged.
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
 
+## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
+
+Every Tauri command returns `Result<_, String>`, and every code the TypeScript side reads
+(`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, `MLS_MANAGER_ABSENT`) crosses as the string's
+leading token, read by one predicate each (`isKeystoreKeyUnavailable`, `classifyStateLoadFailure`,
+`isMlsManagerAbsent`). Tauri can serialise an error object instead: one `{ code, message }` type for
+every command, decoded into typed errors at the one `invoke` boundary. All codes move in one pull
+request, never one at a time (two conventions would give every reader two shapes)
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
 A key-group external commit and a key group's Welcome target are now asked of social-service

@@ -3,6 +3,7 @@ import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 /** Why the native MLS session ends - carried to the native log line, never branched on. */
 export type NativeMlsSessionEnd =
   | 'sign-out'
+  | 'lost session'
   | 'stopped login'
   | 'client reset'
   | 'failed initialiser_mls'
