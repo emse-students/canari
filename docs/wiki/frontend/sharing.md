@@ -42,6 +42,11 @@ message, a picture or a post opens the system sheet.
    that folder, so nothing else would delete it while the process lives - text shares left one
    empty folder each until 2026-10-27 (Mi 9T); `sweepOrphansOnce` removes those at the next process
    start. Guard: `androidShareInbox.test.ts`.
+   **At rest**: the manifest (files dir) and the copies (`cache/shared_inbox/`) live in the app's
+   credential-encrypted storage - unreadable until the first unlock after boot, then readable by the
+   app's uid alone - and neither is backed up (the cache never is; the data domain is excluded).
+   Nothing is added on top: an app-held key protects nothing against an attacker who can already
+   act as the app (the reasoning is under the iOS path, "At rest").
 3. **The handoff is a file, `pending_share.json`** in the Tauri data directory, because a cold start
    gets the intent before the page exists and a value pushed into a page that then navigates is
    lost. It is written to a `.tmp` and renamed into place, so a drain on a return to the foreground
@@ -292,17 +297,18 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    only opens the app - it never reaches the push routing (which would accuse a missing target).
    A running app also gets the Darwin notification `fr.emse.canari.share-ready`.
 3. **The app imports** (`commands/app_group_share.rs`, Rust so it is tested here and so ONE
-   implementation serves every caller): at bootstrap, on `didBecomeActive`, on the Darwin signal, and
-   inside `read_and_clear_pending_share` itself before its claim. It TRIES the lock (never waits: a
+   implementation serves every caller): at bootstrap, on `didBecomeActive`, on the Darwin signal, at
+   the unlock (item 5), and inside `read_and_clear_pending_share` itself before its claim. It TRIES the lock (never waits: a
    capture in progress is `Busy`, and the next activation imports), claims the group manifest by
    rename, MOVES `<AppGroup>/shared_inbox/<id>` to the app cache's `shared_inbox/<id>` (one volume,
    a rename - a failed move deletes the source and errors, there is no copy fallback), rewrites each
    path to the moved file of the same name, and hands over to the data directory's
    `pending_share.json` with Android's replace-by-epoch semantics. When it imported, `canari_ios.mm`
    removes the banner and dispatches `canari:incoming-share`. The once-per-process orphan sweep
-   covers BOTH inboxes (the App Group one only when the lock is free), and with the lock held deletes
-   the App Group root's leftover claim and staging files (an allowlist: `pending_share.json.importing`,
-   `.replacing`, `.tmp`, `share_epoch.tmp` - the NSE's files sit beside them). **The launch import
+   covers BOTH inboxes (the App Group one only when the lock is free), and settles the leftover claim
+   and staging files of the app data directory and - with the lock held - of the App Group root (an
+   allowlist: `pending_share.json.draining`, `.importing`, `.replacing`, `.tmp`, `share_epoch.tmp` -
+   the NSE's files sit beside them; a claim is put back or deleted as lost, item 5). **The launch import
    and sweep run before the Rust logger exists**, so they answer CODES that `canari_ios.mm` NSLogs
    (`IMPORT_*`; the sweep's `CanariShareSweep` report with its `SWEEP_*` bits), pinned on both sides
    by the vitest. Deferring them until the logger exists was refused: Tauri creates the WebView
@@ -327,9 +333,79 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native
    caches' helper, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
    The extension also excludes the WHOLE `<AppGroup>/shared_inbox/` directory on every capture - it
-   holds share copies and nothing else, unlike the App Group root. Sealing the manifests is NOT done:
-   three writers (Kotlin, Swift, Rust) and the extension holds no key; the gap is a P2 in
-   [backlog](../backlog.md#p2---a-waiting-share-is-plaintext-at-rest-the-manifest-carries-the-shared-text-found-2026-10-24).
+   holds share copies and nothing else, unlike the App Group root.
+   **At rest, a waiting share is LOCKED WITH THE DEVICE (2026-10-27).** The extension writes its
+   folder, every copy and the manifest under Data Protection's `CompleteUnlessOpen` class
+   (`ShareCapture.lockedAtRest`, `.completeFileProtectionUnlessOpen`): a CLOSED file cannot be opened
+   while the phone is locked, as under `Complete`, but a capture the lock interrupts can finish - it
+   runs under an expiring activity (a long iCloud video), and under `Complete` its open copies stop
+   writing and no new file can be created once the phone locks, losing the share. The app's
+   `write_pending` gives the app-side manifest `Complete` while it is still empty
+   (`native_cache::protect_until_unlocked`, failing closed - a persistent refusal there loses the
+   share, said at ERROR, never routed around). The App Group's default,
+   `CompleteUntilFirstUserAuthentication`, left all of it readable on a locked phone once it had been
+   unlocked since boot. The move into the app cache is a rename, and a class belongs to the file, not
+   the path; the import READS it back on the first copy (`[SHARE] share <id>: moved copy protection =
+   ...`) rather than assuming it.
+   **A locked read deletes nothing.** Every claim goes through `handoff::claim_and_read` (the
+   extension's `claimPending` is its Swift twin): a read refused with `EPERM` - the OS error CODE iOS
+   answers for a protected file while locked, never a message; in Swift the POSIX error under
+   Foundation's read error, by domain and code - moves the claim back and answers `Protected`. The
+   move back is `renamex_np(RENAME_EXCL)`, so a manifest that landed meanwhile is never overwritten:
+   the claim then stays under its claim name. Any other failure is a broken file and is still
+   deleted, so "locked" is no hiding place for corruption. **The code cannot say why**: an `EPERM`
+   from another cause is treated the same, and that file is kept - put back at every claim, its
+   inbox never swept, said each time.
+   **The app consumes nothing while its side is locked.** Before it claims the App Group manifest,
+   the import reads (never claims) the app data's waiting manifest and probes a protected write
+   there (`app_side_locked`, `probe_protected_write`); either refused by Data Protection answers
+   `IMPORT_PROTECTED` with the share still whole in the App Group, and the unlock imports it with
+   the ordinary newest-wins rule, both shares readable then. Only a lock in the instant between
+   that check and the hand-over's claim still meets a locked waiting share: that answers its own
+   code, `IMPORT_DROPPED_OVER_LOCKED`, NSLogged at ERROR (at launch the only logger), never the
+   "imported once unlocked" of `IMPORT_PROTECTED`. The probe's refusal keeps its code at every
+   step - the create, the protection (`native_cache::protect_until_unlocked` reads the `NSError`'s
+   POSIX code, top level or under `NSUnderlyingErrorKey`) and the reopen - so a locked device is
+   classified, never reported as a failed hand-over. A lock landing AFTER the hand-over has claimed
+   the waiting share and before it writes the new manifest refuses both writes: both shares are
+   lost, in a window of a few file calls, and one ERROR line names both.
+   **A share arriving over a LOCKED waiting one is the one that goes - keep-old, against the usual
+   newest-wins, deliberately.** It is reached in that instant on the app side, and in the extension
+   when the phone locks during a capture (a long iCloud video) while an older share waits. Why: the
+   waiting share cannot be read, so neither its session (epoch) nor its copies can be known - to
+   replace it would delete a share the member was already told is ready ("Choisissez la
+   conversation"), unseen; dropping the new one is said to the member who is sharing right now (the
+   extension answers `.failed`, its card says the share could not be prepared), and at ERROR in both
+   logs. The alternative (leave the old claim as `.replacing`, write the new manifest, and let the
+   launch sweep delete the old as `SWEEP_CLAIM_LOST`) was rejected: once an import has carried the
+   newer share out, no manifest waits beside that claim, so the sweep PUTS IT BACK and the next
+   import replaces the newer share with the older one.
+   **The sweep** leaves an inbox whose manifest is locked whole (`SWEEP_PROTECTED`): which copies it
+   names cannot be read. A CLAIM a dead process left (`.draining`, `.importing`, `.replacing`, in the
+   app data directory and the App Group) is a whole share nobody took: put back when no manifest
+   waits (`SWEEP_CLAIM_RESTORED`) - a rename, which works while locked - and deleted as lost when one
+   does (`SWEEP_CLAIM_LOST`, an ERROR line). A staging `.tmp` is deleted.
+   **Who asks about the lock.** The launch sweep and import run from `canari_ios_bootstrap`, BEFORE
+   `ffi::start_app()` creates the application object, so they put no question to UIKit (one put there
+   answers NO on every launch) - a locked launch is Rust's to answer, safely. Where the application
+   object exists (an activation, the extension's signal) the import is not tried while
+   `isProtectedDataAvailable` is false, and says so only when a share waits. **The unlock is an
+   event**: `UIApplicationProtectedDataDidBecomeAvailable` (also delivered to an app resumed after
+   it) imports the App Group share and, when a manifest already waits in the app data directory - a
+   drain that found it locked after a locked launch - sends the page `canari:incoming-share`, the
+   page draining only at its mount and on that event. Nothing retries on a timer. Tests:
+   `handoff.rs` (a locked read leaves the file, a file landing meanwhile is never overwritten, a
+   broken one is deleted), `app_group_share.rs` (a locked manifest leaves both inboxes whole; a
+   locked App Group share, a locked app data manifest and a refused protected write consume
+   nothing; a share or refusals arriving over a locked one answer `DroppedOverLocked` and delete
+   nothing waiting; a leftover claim is put back or deleted as lost), `iosShareExtension.test.ts`
+   (the classes, the put-back, every import code said by its own case, no UIKit question at
+   bootstrap, the unlock observer).
+   **Why not an app-level seal.** The backlog's first shape sealed the text with the install's cache
+   key (`CNSEAL1`). Rejected: it protected the text while the copies stayed plain, cost two crypto
+   twins of the envelope (Kotlin, Swift) or the Rust library in a memory-capped extension, and an
+   attacker who reads the app's files on an unlocked phone can use its Keystore or Keychain entry
+   too. The platform's protection covers text and files alike.
    **No log line names a shared file**: a copy is `<index>_<sender's name>`, so `take_picked_file`
    and `discard_picked_file` say the share id and the byte count, never the path.
 

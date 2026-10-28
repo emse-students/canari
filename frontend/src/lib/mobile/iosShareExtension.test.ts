@@ -127,6 +127,84 @@ describe('the names the extension, the app and Android share', () => {
     );
   });
 
+  it('writes a waiting share locked with the device: the folder, every copy, the manifest', () => {
+    // `CompleteUnlessOpen`: a closed file is unreadable while the phone is locked, and a capture the
+    // lock interrupts can still finish (sharing.md, "At rest"). Never plain `Complete` here.
+    expect(swiftCapture).toMatch(
+      /static let lockedAtRest: \[FileAttributeKey: Any\] = \[\.protectionKey: FileProtectionType\.completeUnlessOpen\]/
+    );
+    expect(swiftCapture).toMatch(
+      /createDirectory\(\s*at: dir, [^)]*attributes: ShareCapture\.lockedAtRest\)/
+    );
+    expect(swiftCapture).toMatch(
+      /createFile\(\s*atPath: target\.path, [^)]*attributes: ShareCapture\.lockedAtRest\)/
+    );
+    expect(swiftCapture).toMatch(
+      /data\.write\(to: staging, options: \[\.completeFileProtectionUnlessOpen\]\)/
+    );
+    expect(swiftCapture).not.toMatch(/FileProtectionType\.complete\b(?!UnlessOpen)/);
+    expect(swiftCapture).not.toMatch(/\.completeFileProtection\b(?!UnlessOpen)/);
+  });
+
+  it('puts a locked waiting manifest back, classified by domain and code, never deleted', () => {
+    const claimBody = swiftCapture.slice(
+      swiftCapture.indexOf('private func claimPending('),
+      swiftCapture.indexOf('private func deleteClaim(')
+    );
+    // The put-back comes before any delete, and refuses to overwrite what landed meanwhile.
+    expect(claimBody).toContain('if ShareCapture.isLockedRead(error) {');
+    expect(claimBody).toContain('renamex_np(claimed.path, pending, UInt32(RENAME_EXCL))');
+    expect(claimBody.indexOf('return .locked')).toBeLessThan(claimBody.indexOf('deleteClaim('));
+    const locked = swiftCapture.slice(
+      swiftCapture.indexOf('static func isLockedRead('),
+      swiftCapture.indexOf('private func writePending(')
+    );
+    expect(locked).toContain('NSPOSIXErrorDomain');
+    expect(locked).toContain('Int(EPERM)');
+    expect(locked).toContain('NSUnderlyingErrorKey');
+    expect(locked).not.toMatch(/localizedDescription|\.description/);
+    // The Rust side reads the same code, and puts back the same way (handoff.rs).
+    const handoff = read(resolve(TAURI, 'src/commands/handoff.rs'));
+    expect(handoff).toContain('const EPERM: i32 = 1;');
+    expect(handoff).toContain('libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL)');
+  });
+
+  it('asks UIKit about the lock only where the application object exists', () => {
+    const ios = read(resolve(APPLE, 'Sources/canari/canari_ios.mm'));
+    // The bootstrap runs before `ffi::start_app()` creates the application object: a question put
+    // to it there answers NO on every launch, and skipped the sweep on every cold start.
+    const bootstrap = ios.slice(
+      ios.indexOf('void canari_ios_bootstrap(void) {'),
+      ios.indexOf('bool canari_ios_is_in_foreground(void)')
+    );
+    expect(bootstrap).not.toContain('isProtectedDataAvailable');
+    expect(bootstrap).toContain('CanariImportAppGroupShare(@"launch")');
+    const importBody = ios.slice(
+      ios.indexOf('static BOOL CanariImportAppGroupShare('),
+      ios.indexOf('static void CanariImportAppGroupShareIfUnlocked(')
+    );
+    expect(importBody).not.toContain('isProtectedDataAvailable');
+    expect(ios.match(/isProtectedDataAvailable/g)?.length).toBe(1);
+    expect(ios).toContain('CanariImportAppGroupShareIfUnlocked(@"activation")');
+    expect(ios).toContain('CanariImportAppGroupShareIfUnlocked(@"share ready")');
+    // The unlock imports, and offers a share a locked drain left in the app data (no timer).
+    expect(bootstrap).toMatch(
+      /addObserverForName:UIApplicationProtectedDataDidBecomeAvailable\s[^}]*CanariOnProtectedDataAvailable\(\)/
+    );
+    const unlockStart = ios.indexOf('static void CanariOnProtectedDataAvailable(void) {');
+    const unlock = ios.slice(unlockStart, ios.indexOf('\n}\n', unlockStart));
+    expect(unlock).toContain('CanariShareManifestWaits(CanariTauriDataDir())');
+    expect(unlock).toContain('CanariTellPageOfShare(@"unlock")');
+    // The manifest the native side stats is the one Rust writes.
+    const header = read(resolve(APPLE, 'Sources/canari/canari_rust_bridge.h'));
+    expect(capture(header, /#define CANARI_SHARE_PENDING_FILE "([^"]+)"/)).toBe(
+      capture(
+        read(resolve(TAURI, 'src/commands/handoff.rs')),
+        /PENDING_SHARE_FILE: &str = "([^"]+)"/
+      )
+    );
+  });
+
   it('answers the native side in codes both sides read the same way', () => {
     // The launch import and sweep run before the Rust logger exists: their codes ARE the log.
     const header = read(resolve(APPLE, 'Sources/canari/canari_rust_bridge.h'));
@@ -138,14 +216,32 @@ describe('the names the extension, the app and Android share', () => {
       const shift = /^1u? << (\d+)$/.exec(expr.trim());
       return shift ? 1 << Number(shift[1]) : Number(expr.trim());
     };
-    const imports = ['IMPORTED', 'NOTHING', 'BUSY', 'DROPPED', 'NO_DIRS', 'NO_GROUP', 'FAILED'];
+    const imports = [
+      'IMPORTED',
+      'NOTHING',
+      'BUSY',
+      'DROPPED',
+      'PROTECTED',
+      'DROPPED_OVER_LOCKED',
+      'NO_DIRS',
+      'NO_GROUP',
+      'FAILED',
+    ];
+    // Every code is said by its own case: at launch that line is the only logger.
+    const ios = read(resolve(APPLE, 'Sources/canari/canari_ios.mm'));
     for (const name of imports) {
       expect(asNumber(headerDefine(`IMPORT_${name}`)), name).toBe(
         asNumber(rustConst(`IMPORT_${name}`))
       );
+      expect(ios, name).toContain(`case CANARI_SHARE_IMPORT_${name}:`);
     }
+    expect([...rustGroup.matchAll(/const IMPORT_(\w+): i32/g)].map((m) => m[1]).sort()).toEqual(
+      [...imports].sort()
+    );
+    // A drop over a locked share is a loss, said at ERROR.
+    expect(ios).toMatch(/case CANARI_SHARE_IMPORT_DROPPED_OVER_LOCKED:[^;]*ERROR/);
     const sweeps = [...rustGroup.matchAll(/const SWEEP_(\w+): u32/g)].map((m) => m[1]);
-    expect(sweeps.length).toBe(9);
+    expect(sweeps.length).toBe(12);
     for (const name of sweeps) {
       expect(asNumber(headerDefine(`SWEEP_${name}`)), name).toBe(
         asNumber(rustConst(`SWEEP_${name}`))
@@ -168,22 +264,35 @@ describe('the names the extension, the app and Android share', () => {
 
   it('sweeps exactly the leftover names the two writers can leave', () => {
     const pendingFile = capture(swiftCapture, /static let pendingFile = "([^"]+)"/);
-    const leftovers = [
-      ...capture(rustGroup, /GROUP_LEFTOVERS: \[&str; \d+\] = \[([^\]]+)\]/).matchAll(/"([^"]+)"/g),
-    ]
-      .map((m) => m[1])
-      .sort();
-    expect(leftovers).toEqual(
+    const names = (constant: string) =>
       [
+        ...capture(
+          rustGroup,
+          new RegExp(`${constant}: \\[&str; \\d+\\] = \\[([^\\]]+)\\]`)
+        ).matchAll(/"([^"]+)"/g),
+      ]
+        .map((m) => m[1])
+        .sort();
+    // A claim holds a whole share: put back, or deleted as lost - said either way.
+    expect(names('CLAIM_LEFTOVERS')).toEqual(
+      [
+        `${pendingFile}.draining`, // the page's drain (handoff::take_handoff)
         `${pendingFile}.importing`, // the app's claim (import_group_share)
-        `${pendingFile}.replacing`, // the extension's claim, and the app's sweep claim
+        `${pendingFile}.replacing`, // the extension's claim, and the app's hand-over and sweep claims
+      ].sort()
+    );
+    expect(names('STAGING_LEFTOVERS')).toEqual(
+      [
         `${pendingFile}.tmp`, // either side's manifest write
         `${capture(swiftCapture, /static let epochFile = "([^"]+)"/)}.tmp`, // the epoch copy's write
       ].sort()
     );
     expect(swiftCapture).toContain('ShareCapture.pendingFile + ".replacing"');
     expect(swiftCapture).toContain('ShareCapture.pendingFile + ".tmp"');
-    expect(rustGroup).toContain('claim(group, PENDING_SHARE_FILE, "importing")');
+    expect(rustGroup).toContain('claim(group, PENDING_SHARE_FILE, "importing", read)');
+    expect(read(resolve(TAURI, 'src/commands/handoff.rs'))).toContain(
+      'claim_and_read(dir, name, "draining", read_handoff)'
+    );
   });
 
   it('tells the app a share is ready only once the lock is released, under an expiring activity', () => {
