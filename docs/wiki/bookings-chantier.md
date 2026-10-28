@@ -158,9 +158,11 @@ starts on Monday).
   date" and no "next day" row.
 - **`weekLayout` (pure, `lib/bookings/grid.ts`)** lays ONE column's units out: a unit's top is the
   WALL minute of its start and its height its elapsed length, so 18:00 is 18:00 every day, daylight
-  saving included. The one disagreement between wall and elapsed time is a fall-back night's doubled
-  hour: a unit that starts after the previous one ended is never drawn above where that one ended.
-  Units that truly overlap (two slots of a list, allowed since WP-B2) share the width in lanes. The
+  saving included, and nothing is ever shifted. The one disagreement between wall and elapsed time
+  is a fall-back night's doubled hour: its two units sit at the same wall time, overlap, and share
+  the width in lanes like two slots of a list (allowed since WP-B2), so every later unit keeps its
+  own wall time. (A first version displaced the second one and carried the shift: the rest of that
+  day sat an hour low, found in review.) The
   axis is whole hours around what the week offers; an hour is tall enough for the shortest unit to
   hold a line (4 to 12 rem). A night window crossing midnight is two columns, as its two days.
 - **A day is `open`, `none` (nothing left to take on the device's clock) or `closed` (nothing
@@ -178,7 +180,7 @@ starts on Monday).
   true until then.
 
 **Proof.** `grid.test.ts` (the week's dates, the read's first day, wall-time placement across both
-2026-10-24..26, the doubled hour, a Friday night and a Sunday night, folded and full days, lanes,
+2026-10-24..26, the 25 contiguous hours of the fall-back day, a Friday night and a Sunday night, folded and full days, lanes,
 the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every drag case along a day,
 plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
 next paragraph says.

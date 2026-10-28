@@ -237,7 +237,7 @@
   }
 </script>
 
-<!-- The week scrolls inside its own box, never the page, and the hour axis stays in view. -->
+<!-- The week scrolls inside its own box, never the page, and the hour axis stays in view (sticky). -->
 <div
   class="border-cn-border bg-cn-surface relative overflow-x-auto rounded-2xl border"
   data-swipe-nav-ignore
@@ -253,7 +253,7 @@
   <div role="group" aria-label={m.bookings_grid_caption({ space: space.name })}>
     {#if mode === 'week'}
       <div class="grid gap-x-1 pe-1" style:grid-template-columns={columns}>
-        <span></span>
+        <span class="bg-cn-surface sticky left-0 z-10"></span>
         {#each layout.days as day (day.date)}
           {@const head = formatDayHead(day.date)}
           <div
@@ -280,7 +280,7 @@
       oncontextmenu={(e) => press?.touch && e.preventDefault()}
       role="presentation"
     >
-      <div class="relative" style:height="{bodyRem}rem" aria-hidden="true">
+      <div class="bg-cn-surface sticky left-0 z-10" style:height="{bodyRem}rem" aria-hidden="true">
         {#each hours as min (min)}
           <span
             class="text-text-muted absolute right-1 -translate-y-1/2 text-xs tabular-nums"
@@ -305,7 +305,7 @@
           {#if folded(day)}
             <div class="bg-cn-border/20 absolute inset-0 rounded-lg" aria-hidden="true"></div>
           {/if}
-          {#each day.placed as placed, idx (placed.unit.startMs)}
+          {#each day.placed as placed, idx (`${placed.unit.startMs}-${placed.unit.endMs}`)}
             {@const unit = placed.unit}
             {@const cell = reading(unit)}
             {@const joinedAbove = sameRun(day.cells[idx - 1], unit)}

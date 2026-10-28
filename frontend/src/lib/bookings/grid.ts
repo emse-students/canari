@@ -230,27 +230,21 @@ const MAX_HOUR_REM = 12;
 const MIN_UNIT_REM = 1.75;
 
 /**
- * Where one day's units sit. A unit sits at its start's WALL minute and is as tall as it LASTS, so
- * a 18:00 unit is at 18:00 on every day, daylight-saving included. The one place wall time and
- * elapsed time disagree is a fall-back night's doubled hour: the second 02:30 would land on the
- * first, so a unit that starts after the previous one ENDED is never drawn above where that one
- * ended. Units that truly overlap (two slots of a list) keep their own times and share the width.
+ * Where one day's units sit. A unit sits at its start's WALL minute and is as tall as it LASTS, so a
+ * 18:00 unit is at 18:00 on every day, daylight saving included, and nothing is ever shifted: the
+ * only place wall time and elapsed time disagree is a change night. On a fall-back night the doubled
+ * 02:00 hour holds two units at the same wall time; they OVERLAP like two slots of a list and share
+ * the width in lanes, so every later unit stays on its own wall time. (Displacing the second one
+ * pushed the whole rest of the day an hour down.)
  */
 function placeDay(units: readonly SlotUnit[], zone: string): PlacedUnit[] {
-  const placed: PlacedUnit[] = [];
-  let previous: SlotUnit | null = null;
-  let previousBottom = 0;
-  for (const unit of units) {
-    const wall = wallMinutes(unit.startMs, zone);
-    const heightMin = (unit.endMs - unit.startMs) / 60_000;
-    const after = previous !== null && previous.endMs <= unit.startMs;
-    const topMin = after ? Math.max(wall, previousBottom) : wall;
-    placed.push({ unit, topMin, heightMin, lane: 0, lanes: 1 });
-    if (!previous || unit.endMs > previous.endMs) {
-      previous = unit;
-      previousBottom = topMin + heightMin;
-    }
-  }
+  const placed: PlacedUnit[] = units.map((unit) => ({
+    unit,
+    topMin: wallMinutes(unit.startMs, zone),
+    heightMin: (unit.endMs - unit.startMs) / 60_000,
+    lane: 0,
+    lanes: 1,
+  }));
   let cluster: PlacedUnit[] = [];
   let laneEnds: number[] = [];
   const closeCluster = () => {

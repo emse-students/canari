@@ -31,6 +31,7 @@
     formatWeekRange,
     freeCount,
     freeRunFrom,
+    unitDay,
     unitsInOrder,
     weekDates,
     weekLayout,
@@ -113,7 +114,16 @@
   const freeCounts = $derived(
     new Map(
       space
-        ? space.resources.map((r) => [r.id, freeCount(unitsInOrder(slots, r.id), space!, nowMs)])
+        ? space.resources.map((r) => [
+            r.id,
+            freeCount(
+              unitsInOrder(slots, r.id).filter((u) =>
+                weekAll.includes(unitDay(u, space!.timeZone))
+              ),
+              space!,
+              nowMs
+            ),
+          ])
         : []
     )
   );
@@ -189,17 +199,24 @@
     }
   }
 
+  /** The last read asked for: an older answer arriving after it is for a week no longer shown. */
+  let slotsRead = 0;
+
   /** The week shown, read when it is not already (or `force`d after a write). */
   async function ensureSlots(force = false) {
     if (!space) return;
     const { from, to } = weekReadRange(date);
     if (!force && loaded && loaded.from <= from && to <= loaded.to) return;
+    const mine = ++slotsRead;
     slotsError = '';
     try {
-      slots = await getSlots(space.id, from, to);
+      const read = await getSlots(space.id, from, to);
+      if (mine !== slotsRead) return;
+      slots = read;
       loaded = { from, to };
       nowMs = Date.now();
     } catch (e) {
+      if (mine !== slotsRead) return;
       Log.i('BOOKINGS', `slots read failed ${from}..${to}: ${String(e)}`);
       slotsError = describeBookingRefusal(e, m.common_load_error());
     }

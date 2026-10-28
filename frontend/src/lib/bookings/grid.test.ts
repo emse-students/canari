@@ -189,15 +189,27 @@ describe('the week (WP-R2, D46)', () => {
     expect(tops).toEqual([1080, 1080]);
   });
 
-  it('draws the doubled hour of a fall-back night below the first one, not on it', () => {
-    // 2026-10-25: 02:00-03:00 happens twice (UTC+2 then UTC+1), as two units of 60 min.
-    const first = { ...parisUnit('2026-10-25T02:00', 60, '+02:00') };
-    const second = { ...parisUnit('2026-10-25T02:00', 60, '+01:00') };
-    const layout = weekLayout([second, first], ['2026-10-25'], paris, at('2026-10-20T00:00:00Z'));
-    const [one, two] = layout.days[0].placed;
-    expect([one.topMin, two.topMin]).toEqual([120, 180]);
-    expect(layout.days[0].cells).toEqual([first, second]);
-    expect(one.lanes).toBe(1);
+  it('draws the doubled hour of a fall-back night side by side, and moves nothing else', () => {
+    // 2026-10-25 in Paris lasts 25 hours: 02:00-03:00 happens twice (UTC+2, then UTC+1).
+    const day = Array.from({ length: 25 }, (_, i) => {
+      const startMs = at('2026-10-24T22:00:00Z') + i * 3_600_000;
+      return { date: '2026-10-25', startMs, endMs: startMs + 3_600_000, state: 'free' as const };
+    });
+    const layout = weekLayout(day, ['2026-10-25'], paris, at('2026-10-20T00:00:00Z'));
+    const placed = layout.days[0].placed;
+    // The wall hours 0,1,2,2,3,4,...,23: every unit on its own wall time, the shift never carried.
+    expect(placed.map((p) => p.topMin / 60)).toEqual([
+      0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    ]);
+    expect(placed.map((p) => [p.lane, p.lanes]).slice(0, 5)).toEqual([
+      [0, 1],
+      [0, 1],
+      [0, 2],
+      [1, 2],
+      [0, 1],
+    ]);
+    expect(layout.days[0].cells[2].startMs).toBeLessThan(layout.days[0].cells[3].startMs);
+    expect([layout.startMin, layout.endMin]).toEqual([0, 1440]);
   });
 
   it('puts the morning of a night window on its own day, which the read that starts the day before holds', () => {
