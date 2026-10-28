@@ -3,7 +3,7 @@ import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/di
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { canonicalIdentity, canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
@@ -445,6 +445,10 @@ export function forgetRevokedLeafAnswers(): void {
  * and one that removed its own leaf would only strand the group it holds. PURE.
  *
  * The user half is compared without case, the device half exact - the canonical identity Rust binds.
+ *
+ * ONLY DEVICE IDENTITIES (`user:device`, {@link canonicalIdentity}): a legacy BARE leaf names no
+ * device, so no revocation can name it - and the server refuses the WHOLE request over one identity
+ * that is not `userId:deviceId`, so sending it would cost every other leaf its answer.
  */
 export function revokedLeafCandidates(
   leafIdentities: string[],
@@ -456,6 +460,7 @@ export function revokedLeafCandidates(
   return [
     ...new Set(
       leafIdentities.filter((identity) => {
+        if (canonicalIdentity(identity) === null) return false;
         const user = userIdOfLeaf(identity);
         if (!user || strayUserIds.has(user)) return false;
         return !(user === self && identity.slice(identity.indexOf(':') + 1) === selfDeviceId);

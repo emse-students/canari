@@ -405,6 +405,19 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
 - Owed: round it where it is printed, as the other two lines do.
 
+## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
+
+- Audited after the revoked-leaves 400 ([durable-rules](durable-rules.md#a-validators-bound-is-derived-from-the-generator-of-the-value-and-its-spec-uses-a-value-of-real-length)):
+  every other `sanitizeQueryValue` field in chat-delivery fits its generator today (UUIDs, 64-hex
+  user ids, device ids of at most ~87 characters).
+- The latent gap: a user id is minted under "visible ASCII, no ':'" with NO length bound
+  (`core-service/src/users/user-id.ts`), the device id EMBEDS it, and the services refuse a user id
+  over 128 or outside `[a-zA-Z0-9_.:@-]`, and a device id outside social-service's
+  `[A-Za-z0-9_-]{1,128}`. A user id of more than ~40 characters, or holding `.` or `@`, mints a
+  device that some route refuses. Holds today only because the provider's ids are 64-hex.
+- Owed: one shared shape for the user id and the device id, asserted by the minting side and every
+  validator, rather than four regexes that agree by accident.
+
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
 This is a finding, not design. It is open until it is known why the frame arrives late.
@@ -1640,7 +1653,10 @@ key groups, and they are NOT the same question:
   and removes exactly those by device, staged on the published branch
   ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
   Owed: its run on dev, and the row that revokes a device of a community member and reads the key
-  group's tree afterwards. It runs on every community load; the revoking device itself does not
+  group's tree afterwards. **Its first dev run found every request refused 400** (the identity ran
+  through the generic 128 bound, which every real identity exceeds) - fixed 2026-10-28, owed that
+  run again on the fix
+  ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)). It runs on every community load; the revoking device itself does not
   trigger a pass (not built). **Its scope is limited by the
   binding** (a key group's device rows); widening it is a schema change, approved 2026-10-27 and
   BUILT as its own draft pull request (`dm_revoked_device_groups`, chat-delivery migration 041,

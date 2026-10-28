@@ -1316,7 +1316,7 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
-| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which of up to 1000 sent leaf identities belong to a revoked device - key groups included; admitted members only, about users bound to the group, throttled per user ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which of up to 1000 sent leaf identities belong to a revoked device - key groups included; admitted members only, about users bound to the group, throttled per user; each identity is validated as `userId` + `deviceId`, never against the 128 bound as a whole (a real one is 147-149 characters) ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 

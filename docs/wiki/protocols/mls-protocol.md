@@ -2311,6 +2311,21 @@ head deadline (`DEADLINE_MS.read`), because it runs inside the scope's serialise
 hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The server says a
 converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
 
+**Each identity is validated as TWO values, never as one** (`sanitizeLeafIdentity`,
+`chat-delivery-service/src/utils/sanitize.ts`): exactly one colon, and each half under the rule that
+half is stored under (`[a-zA-Z0-9_.:@-]{1,128}`, untrimmed). Until 2026-10-28 the whole pair went
+through the generic 128-character allowlist, and a real identity is longer: the device id EMBEDS its
+user (`BaseMlsService.generateDeviceId`, `<platform>-<user>-<base36 time>-<base36 rand>`), so a
+64-hex user gives 147 characters on the web and 149 on a Tauri build. Every request was refused 400
+and the pass logged `could not ask ... no device removed this pass` - the mechanism was inert in the
+field while its specs, written with `bob:phone-1`, were green. `sanitize.leaf-identity.spec.ts` now
+builds identities in the generator's shape and reads the generator's source, so the two cannot drift
+again. One malformed identity still refuses the whole request, so the client sends device identities
+only: a legacy BARE leaf names no device and is never a candidate (`revokedLeafCandidates`). The
+three reports that carry a leaf identity in a log field (`[SENDER_MISMATCH] verified=`,
+`[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`) printed `invalid` for the same reason;
+`sanitizeLogValue` reads a leaf identity too.
+
 **Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
 the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge
 deletes** (2026-10-27): the device deletion (`DELETE mls/devices/...`, the one purge that revokes)
