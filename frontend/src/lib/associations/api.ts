@@ -203,9 +203,17 @@ export interface Association {
   updatedAt: string;
 }
 
+/**
+ * The `code` of the creation refused because no free slug could be derived from the name
+ * (social-service `SLUG_EXHAUSTED`): a name with no Latin letter or digit folds to `asso`, and the
+ * server walks at most fifty suffixes. Read from `SocialApiError.code`, never from the message.
+ */
+export const ASSOCIATION_SLUG_EXHAUSTED = 'ASSOCIATION_SLUG_EXHAUSTED';
+
 export interface CreateAssociationPayload {
   name: string;
-  slug: string;
+  /** Never sent by the app: the server derives it from the name (a technical id is never typed). */
+  slug?: string;
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;
@@ -419,11 +427,37 @@ export class SocialApiError extends ApiRefusalError {
      * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
      * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
      */
-    readonly amountBounds: AmountBounds | null = null
+    readonly amountBounds: AmountBounds | null = null,
+    /**
+     * How many people still hold the cotisation tier a `TIER_HAS_HOLDERS` refusal would not delete
+     * ({@link holderCountOf}), so the screen words the number itself.
+     */
+    readonly holderCount: number | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier people still
+ * hold: its `holderCount` rides beside it. They are moved to another tier (or revoked) first.
+ */
+export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier while one of its
+ * payments may still land (at most about 35 minutes after it was opened).
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
+export function holderCountOf(body: unknown): number | null {
+  if (!body || typeof body !== 'object') return null;
+  const { holderCount } = body as Record<string, unknown>;
+  return typeof holderCount === 'number' && Number.isInteger(holderCount) && holderCount > 0
+    ? holderCount
+    : null;
 }
 
 /** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
@@ -459,6 +493,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let message = raw || res.statusText;
   let code: string | null = null;
   let amountBounds: AmountBounds | null = null;
+  let holderCount: number | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -480,10 +515,12 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     }
     // An amount refusal carries its allowed range beside the code, as numbers.
     amountBounds = amountBoundsOf(parsed);
+    // A tier delete refused for its holders carries how many, as a number.
+    holderCount = holderCountOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status, amountBounds);
+  return new SocialApiError(message, code, res.status, amountBounds, holderCount);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -1761,6 +1798,17 @@ export interface AssociationProduct {
    */
   viewerDueCents?: number | null;
   /**
+   * A membership product whose association's cotisations are disabled: the checkout refuses it
+   * (`COTISATION_DISABLED`). Set by the shop and per-association listings.
+   */
+  cotisationDisabled?: boolean;
+  /**
+   * The `variantKey` of the tier `memberPriceTag` names, as the server reads the tag - what a
+   * preferential price is worded "for holders of". Absent when there is no tag, when it names no
+   * tier, or when the server did not read the viewer's tiers. Never re-derived from the tag here.
+   */
+  memberPriceTierKey?: string | null;
+  /**
    * The pricing grid: the criteria this product discriminates on, and one price per combination.
    * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
    *
@@ -1842,11 +1890,45 @@ export interface AssociationPurchase {
   firstName: string | null;
   lastName: string | null;
   /**
-   * A cotisation tier paid for and NOT granted: it was no longer a rise over the tier the buyer held
-   * when the payment landed. A refund or a manual grant is owed.
+   * Money received for something NOT delivered: a boutique tier the settlement did not grant (no
+   * longer a rise over the tier held), a product deleted or a buyer erased before the payment
+   * landed, or a paid form that grants a tier and did not grant it. A refund or a manual grant is
+   * owed.
    */
   notGranted?: boolean;
+  /**
+   * How a `notGranted` payment was closed by a manager (`closePaidNotGranted`): `refunded` or
+   * `granted`, null while nobody has recorded it. The `notGranted` mark stays either way.
+   */
+  closedOutcome?: PurchaseClosingOutcome | null;
+  /** When that outcome was recorded, by the server's clock; null while open. */
+  closedAt?: string | null;
+  /**
+   * For an OPEN payment not granted, why the server would refuse to close it as granted (only a
+   * refund is left); null when it may be granted.
+   */
+  grantRefusal?: ClosingGrantRefusal | null;
+  /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
+  buyerTier?: string | null;
+  /**
+   * For an OPEN payment not granted, true when the tier it bought is already held as ITS delivery:
+   * closing it as granted only records that, and grants or replaces nothing.
+   */
+  delivered?: boolean;
 }
+
+/** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise'
+  | 'not-comparable'
+  | 'held-tier-deleted';
+
+/** The two outcomes that close a payment paid for and not granted. */
+export type PurchaseClosingOutcome = 'refunded' | 'granted';
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
@@ -1964,6 +2046,26 @@ export async function grantProductPurchase(
     { method: 'POST', body: JSON.stringify(payload) }
   );
   return row;
+}
+
+/**
+ * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
+ * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
+ * call is refused `PURCHASE_ALREADY_CLOSED`. A `granted` closing carries what the list showed
+ * (`expectDelivered`, the row's `delivered`), and the server refuses `PURCHASE_CLOSING_CHANGED` when
+ * that is no longer so - "nothing is granted" never grants. Requires MANAGE_PRODUCTS.
+ */
+export async function closePaidNotGranted(
+  associationId: string,
+  purchaseId: string,
+  outcome: PurchaseClosingOutcome,
+  expectDelivered: boolean
+): Promise<AssociationPurchase> {
+  const body = outcome === 'granted' ? { outcome, expectDelivered } : { outcome };
+  return request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
 }
 
 /** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */

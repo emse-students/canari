@@ -14,6 +14,7 @@ import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { m } from '$lib/paraglide/messages';
+import type { CallEndReason } from '$lib/proto/codec';
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -64,6 +65,11 @@ export interface SystemEnvelope {
      * as finalized, so the "ended" state survives translation of `text`.
      */
     endedAt?: number;
+    /**
+     * How a call that was never answered ended, as a type (absent: it was answered, and `text`
+     * carries the duration). Written by the ONE call-record writer, never read back from `text`.
+     */
+    outcome?: CallEndReason;
   };
 }
 
@@ -199,6 +205,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 starterId: ce.starterId,
                 startedAt: ce.startedAt,
                 ...(typeof ce.endedAt === 'number' ? { endedAt: ce.endedAt } : {}),
+                ...(isCallEndReason(ce.outcome) ? { outcome: ce.outcome } : {}),
               }
             : undefined;
         return {
@@ -447,6 +454,35 @@ export function mkCallStartedEnvelope(
     text: m.chat_system_call_started({ starter: starterName }),
     callEvent: { callId, starterId, startedAt },
   };
+}
+
+const CALL_END_REASONS: readonly string[] = ['cancelled', 'declined', 'not-answered', 'busy'];
+
+function isCallEndReason(v: unknown): v is CallEndReason {
+  return typeof v === 'string' && CALL_END_REASONS.includes(v);
+}
+
+/**
+ * The system text of a call that was never answered, read from THIS device's side of it.
+ * The caller reads what became of its call; the callee reads a missed call (a call that was
+ * cancelled, unanswered or met a busy line is the same thing to the person who did not pick up),
+ * except a ring it refused itself.
+ */
+export function buildCallOutcomeText(
+  outcome: CallEndReason,
+  isCaller: boolean,
+  callerName: string
+): string {
+  if (outcome === 'declined') return m.chat_system_call_declined();
+  if (!isCaller) return m.chat_system_call_missed({ caller: callerName });
+  switch (outcome) {
+    case 'cancelled':
+      return m.chat_system_call_cancelled();
+    case 'busy':
+      return m.chat_system_call_busy();
+    case 'not-answered':
+      return m.chat_system_call_not_answered();
+  }
 }
 
 /** Returns the system text after a call ends, including its duration. */

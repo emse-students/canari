@@ -8,6 +8,7 @@ function harness(initial = '') {
   const session = createEditSession({
     getText: () => box.text,
     setText: (t) => (box.text = t),
+    bindDraftWriter: () => (t) => (box.text = t),
     save,
   });
   return { box, save, session };
@@ -76,12 +77,40 @@ describe('createEditSession', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it('reset leaves the text alone: the conversation changed and the text went with it', () => {
-    const { box, session } = harness('ancien');
+  it('reset gives the draft back to the conversation the edit began in, never to the one open now', () => {
+    // Two conversations, each with its own draft, as `useMessaging.draftByConversation` keeps them.
+    const drafts = new Map<string, string>([['A', 'brouillon de A']]);
+    let open = 'A';
+    const session = createEditSession({
+      getText: () => drafts.get(open) ?? '',
+      setText: (t) => drafts.set(open, t),
+      bindDraftWriter: () => {
+        const bound = open;
+        return (t) => drafts.set(bound, t);
+      },
+      save: vi.fn(),
+    });
     session.begin('m1', 'bonjour');
-    box.text = '';
+    expect(drafts.get('A')).toBe('bonjour');
+    open = 'B';
+    drafts.set('B', 'brouillon de B');
     session.reset();
     expect(session.original).toBeNull();
-    expect(box.text).toBe('');
+    expect(drafts.get('A')).toBe('brouillon de A');
+    expect(drafts.get('B')).toBe('brouillon de B');
+  });
+
+  it('reset after a switch from one edit to another still gives back the FIRST draft', () => {
+    const { box, session } = harness('ancien');
+    session.begin('m1', 'bonjour');
+    session.begin('m2', 'salut');
+    session.reset();
+    expect(box.text).toBe('ancien');
+  });
+
+  it('reset with no edit touches nothing', () => {
+    const { box, session } = harness('texte');
+    session.reset();
+    expect(box.text).toBe('texte');
   });
 });

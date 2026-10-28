@@ -3,7 +3,7 @@
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
@@ -20,13 +20,18 @@
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
-  import ProductCard from '$lib/components/shop/ProductCard.svelte';
   import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
-  import { hasUnrankedTier, nonTierProducts, offeredTiers } from '$lib/shop/productCards';
+  import ProductCard from '$lib/components/shop/ProductCard.svelte';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { associationAccent } from '$lib/associations/accent';
+  import {
+    cotisationDisabledForAssociation,
+    hasUnrankedTier,
+    nonTierProducts,
+    offeredTiers,
+  } from '$lib/shop/productCards';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -44,12 +49,12 @@
   let loading = $state(true);
   let error = $state('');
   let customAmounts = $state<Record<string, number>>({});
-  /** The type of the product the payer paid for, so the banner can say what the payment bought. */
-  let returnProductType = $state<AssociationProduct['type'] | null>(null);
   const SHOP_TABS = ['products', 'partnerships'] as const;
   type ShopTab = (typeof SHOP_TABS)[number];
   /** What the page says about the checkout attempt the payer came back from, if any. */
   let checkoutReturn = $state<CheckoutReturnView | null>(null);
+  /** The type of the product the payer paid for, so the banner can say what the payment bought. */
+  let returnProductType = $state<AssociationProduct['type'] | null>(null);
   /** Ceiling on how long the page keeps asking before it says the payment is still unconfirmed. */
   const MAX_CHECKOUT_POLLS = 10;
   const CHECKOUT_POLL_INTERVAL_MS = 3000;
@@ -100,9 +105,9 @@
   }
 
   /**
-   * What a paid return says. The confirm answer carries only the attempt's STATUS - no amount and no
-   * delivery state - so a top-up says the payment was received and the credit follows, never that
-   * it landed.
+   * What a paid return says. The confirm answer carries only the attempt's STATUS - no amount and
+   * no Cercle delivery state - so a top-up says the payment was received and the credit follows,
+   * never that it already landed.
    */
   function paidText(): string {
     if (returnProductType === 'balance_topup') return m.shop_return_topup_paid();
@@ -118,14 +123,18 @@
     notCompleted: () => m.shop_return_not_completed(),
     unknown: () => m.shop_return_unknown(),
   };
-  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let shopTab = $state<ShopTab>(parseTab(page.url.searchParams.get('tab'), SHOP_TABS, 'products'));
 
   /** Opens a segment without adding a history entry: Back still leaves the shop. */
   function switchTab(next: ShopTab) {
     Log.d('shop: segment', next);
     shopTab = next;
-    replaceState(resolve(internalPath(tabUrl(page.url, next, 'products'))), page.state);
+    void goto(resolve(internalPath(tabUrl(page.url, next, 'products'))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
   }
 
   const isLoggedIn = $derived(!!currentUserId());
@@ -172,17 +181,18 @@
       loading = false;
     }
 
-    // The checkout return is consumed once. Through SvelteKit's `replaceState`, never the raw
+    // The checkout return is consumed once. Through SvelteKit's shallow `goto`, never the raw
     // History API: a raw write erased the router's own entry state, and the open `?tab=` with it.
     // Success and fail URLs land here alike: what the payer is told is the ATTEMPT's status, read
     // from the server, never which of Lydia's two URLs sent them back.
     const params = page.url.searchParams;
     if (CHECKOUT_RETURN_PARAMS.some((name) => params.has(name))) {
       const target = checkoutReturnTarget(params);
-      replaceState(
-        resolve(internalPath(withoutQuery(page.url, CHECKOUT_RETURN_PARAMS))),
-        page.state
-      );
+      void goto(resolve(internalPath(withoutQuery(page.url, CHECKOUT_RETURN_PARAMS))), {
+        shallow: true,
+        replace: true,
+        state: page.state,
+      });
       if (target) void followCheckout(target);
       else console.warn('[shop] checkout return names no attempt, nothing to confirm');
     }
@@ -248,7 +258,8 @@
             {@const asso = associations.get(assocId)}
             {@const tiers = offeredTiers(assocProducts)}
             {@const others = nonTierProducts(assocProducts)}
-            {#if asso && (tiers.length > 0 || others.length > 0)}
+            {@const disabled = cotisationDisabledForAssociation(assocProducts)}
+            {#if asso && (tiers.length > 0 || others.length > 0 || disabled)}
               <section class="space-y-4">
                 <!-- Association header -->
                 <div class="flex items-center gap-3">
@@ -272,16 +283,20 @@
 
                 <!-- One membership card with the tiers inside, then one card per other product -->
                 <div class={CARD_GRID}>
-                  {#if tiers.length > 0}
+                  {#if tiers.length > 0 || disabled}
                     <MembershipCard
                       {tiers}
+                      allProducts={assocProducts}
                       accentColor={associationAccent(asso)}
                       unrankedHint={hasUnrankedTier(assocProducts)}
+                      cotisationDisabled={disabled}
+                      signedIn={isLoggedIn}
                     />
                   {/if}
                   {#each others as product (product.id)}
                     <ProductCard
                       {product}
+                      siblings={assocProducts}
                       accentColor={associationAccent(asso)}
                       bind:customAmountCents={customAmounts[product.id]}
                       signedIn={isLoggedIn}

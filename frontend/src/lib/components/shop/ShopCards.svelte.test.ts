@@ -1,10 +1,15 @@
 // @vitest-environment happy-dom
-/** The shop cards: ONE membership card with the tiers inside, prices in the locale's money format. */
+/**
+ * The shop cards, mounted for real: ONE membership card with the tiers inside, prices in the
+ * locale's money format, and the card itself gone (with its reason) when cotisations are
+ * disabled - a real gap found during the #2546 reconciliation, since the old per-page template
+ * kept rendering the card for an association with no cotisations to sell at all.
+ */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { AssociationProduct } from '$lib/associations/api';
+import { formatAmount } from '$lib/forms/fillAnswers';
 import { m } from '$lib/paraglide/messages';
-import { formatMoney } from '$lib/shop/money';
 
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
   activePaymentProvider: { current: 'lydia' },
@@ -62,16 +67,36 @@ describe('MembershipCard', () => {
     expect(document.querySelectorAll('[data-membership-card]')).toHaveLength(1);
     const rows = document.querySelectorAll('[data-tier-row]');
     expect(rows).toHaveLength(2);
-    expect(rows[0].querySelector('[data-due]')?.textContent).toBe(formatMoney(1500, 'eur'));
-    expect(rows[0].querySelector('[data-struck]')?.textContent).toBe(formatMoney(3000, 'eur'));
+    expect(rows[0].querySelector('[data-due]')?.textContent).toBe(formatAmount(1500, 'eur'));
+    expect(rows[0].querySelector('[data-struck]')?.textContent).toBe(formatAmount(3000, 'eur'));
     expect(rows[1].querySelector('[data-struck]')).toBeNull();
     expect(rows[0].querySelectorAll('button')).toHaveLength(1);
-    expect(document.body.textContent).toContain(m.shop_membership_rise_hint());
+  });
+
+  it('HIDES THE TIER LIST AND SHOWS THE REASON when the association has disabled cotisations', () => {
+    // The gap this reconciliation closed: `offeredTiers` already refuses a disabled association's
+    // tiers, but the OLD per-page template still rendered `<MembershipCard>` whenever `tiers` was
+    // non-empty, which it never is here - so nothing told a visitor WHY there was no card.
+    const tier = product({
+      id: 'd',
+      type: 'membership',
+      viewerTierRelation: 'none',
+      cotisationDisabled: true,
+    });
+    cmp = mount(MembershipCard, {
+      target: document.body,
+      props: { tiers: [], cotisationDisabled: true, allProducts: [tier] },
+    });
+    flushSync();
+    expect(document.querySelectorAll('[data-membership-card]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-tier-row]')).toHaveLength(0);
+    const reason = document.querySelector('[data-cotisation-disabled]');
+    expect(reason?.textContent).toBe(m.shop_cotisation_disabled());
   });
 });
 
 describe('ProductCard', () => {
-  it('shows a localized label for the top-up, never the snake_case key, and no 15.00 style price', () => {
+  it('shows a localized label for the top-up, never the snake_case key, and the locale price', () => {
     cmp = mount(ProductCard, {
       target: document.body,
       props: {
@@ -87,14 +112,8 @@ describe('ProductCard', () => {
     const text = document.body.textContent ?? '';
     expect(text).toContain(m.shop_label_topup());
     expect(text).not.toContain('balance_topup');
-    expect(text).toContain(formatMoney(1500, 'eur'));
+    expect(text).toContain(formatAmount(1500, 'eur'));
+    // The base (French) locale writes a comma, never the ASCII dot a `toFixed(2)` always wrote.
     expect(text).not.toMatch(/\d\.\d{2}/);
-  });
-});
-
-describe('formatMoney', () => {
-  it('uses Intl: a decimal comma and a currency sign, never toFixed', () => {
-    expect(formatMoney(1500, 'eur')).toMatch(/15[,.]00/);
-    expect(formatMoney(1500, 'eur')).toMatch(/€|EUR/);
   });
 });

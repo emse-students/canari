@@ -1,5 +1,6 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
+  import { internalPath } from '$lib/utils/internalPath';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Log } from '$lib/utils/Log';
@@ -63,9 +64,14 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
-  import ProductCard from '$lib/components/shop/ProductCard.svelte';
   import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
-  import { hasUnrankedTier, nonTierProducts, offeredTiers } from '$lib/shop/productCards';
+  import ProductCard from '$lib/components/shop/ProductCard.svelte';
+  import {
+    cotisationDisabledForAssociation,
+    hasUnrankedTier,
+    nonTierProducts,
+    offeredTiers,
+  } from '$lib/shop/productCards';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
 
@@ -152,8 +158,6 @@
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
   let shopCustomAmounts = $state<Record<string, number>>({});
-  /** The cotisation tiers this viewer may still buy, shown as ONE card. */
-  const shopTiers = $derived(offeredTiers(products));
 
   /** What decides which conditional sections exist: ONE rule, shared by the hub and the route guard. */
   const content = $derived({
@@ -225,7 +229,7 @@
     if (loading || !asso || !activeSection) return;
     if (!mayOpenPublicSection(activeSection, content)) {
       Log.d('AssociationDetailView: section refused, back to the hub', activeSection);
-      void goto(resolve(publicSectionHref(base, slug)), { replaceState: true });
+      void goto(resolve(internalPath(publicSectionHref(base, slug))), { replace: true });
     }
   });
 
@@ -242,14 +246,14 @@
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.
       if (loaded.type === 'list' && kind !== 'list') {
-        await goto(resolve(publicSectionHref('/lists', slug, activeSection)), {
-          replaceState: true,
+        await goto(resolve(internalPath(publicSectionHref('/lists', slug, activeSection))), {
+          replace: true,
         });
         return;
       }
       if (loaded.type !== 'list' && kind === 'list') {
-        await goto(resolve(publicSectionHref('/associations', slug, activeSection)), {
-          replaceState: true,
+        await goto(resolve(internalPath(publicSectionHref('/associations', slug, activeSection))), {
+          replace: true,
         });
         return;
       }
@@ -400,22 +404,15 @@
               {asso.name}
             </h1>
             <!--
-            THE META LINE IS A FLEX ROW, NOT A RUN OF TEXT, and the separators are its children.
-            Written as prose it read `{/if}@{asso.slug}`, and Svelte TRIMS the whitespace at the end
-            of an `{#if}` block - so the space that was supposed to follow the middot never reached
-            the DOM and production showed `BDE - Bureau des Eleves ·@minestagnard`. Spacing carried
-            by `gap-*` cannot be trimmed by a compiler, which is the whole reason for the shape.
-
-            NO MEMBER COUNT (user, 2026-09-23). The members tab states it, and on a list it printed
-            "0 membre" for a campaign whose roster is simply not registered yet.
+            NO SLUG UNDER THE TITLE (user, 2026-10-26: a technical id is never shown to a person).
+            A list keeps its parent's name. NO MEMBER COUNT (user, 2026-09-23): the members tab
+            states it, and on a list it printed "0 membre" for a roster not registered yet.
           -->
-            <p class="text-text-muted flex flex-wrap items-center gap-x-1.5 text-xs">
-              {#if kind === 'list' && asso.parentName}
+            {#if kind === 'list' && asso.parentName}
+              <p class="text-text-muted text-xs">
                 <span class="text-text-main font-semibold">{asso.parentName}</span>
-                <span aria-hidden="true">&#183;</span>
-              {/if}
-              <span>@{asso.slug}</span>
-            </p>
+              </p>
+            {/if}
             <!--
             THE SECOND LOGO SITS WITH THE SECOND NAME, not with the first (user, 2026-09-23: *"ce
             n'est pas logique d'avoir logo1 puis titre1 et titre2 puis logo2"*). Both logos used to
@@ -598,17 +595,22 @@
             {m.asso_view_all_shop()}
           </a>
         </div>
+        <!-- One membership card with the tiers inside, then one card per other product -->
         <div class={CARD_GRID}>
-          {#if shopTiers.length > 0}
+          {#if offeredTiers(products).length > 0 || cotisationDisabledForAssociation(products)}
             <MembershipCard
-              tiers={shopTiers}
+              tiers={offeredTiers(products)}
+              allProducts={products}
               accentColor={cardAccentColor}
               unrankedHint={hasUnrankedTier(products)}
+              cotisationDisabled={cotisationDisabledForAssociation(products)}
+              signedIn={userId !== null}
             />
           {/if}
           {#each nonTierProducts(products) as product (product.id)}
             <ProductCard
               {product}
+              siblings={products}
               accentColor={cardAccentColor}
               bind:customAmountCents={shopCustomAmounts[product.id]}
               signedIn={userId !== null}

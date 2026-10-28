@@ -2,12 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { AssociationProduct } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
 import {
-  dueCents,
+  cotisationDisabledForAssociation,
   hasUnrankedTier,
   nonTierProducts,
   offeredTiers,
   productDisplayName,
-  struckCents,
 } from './productCards';
 
 const product = (over: Partial<AssociationProduct>): AssociationProduct =>
@@ -55,12 +54,11 @@ describe('offeredTiers', () => {
     expect(offeredTiers([low, held, rise, none]).map((t) => t.id)).toEqual(['rise', 'none']);
   });
 
-  it('offers no action when the listing does not say where a tier stands (old server)', () => {
-    const unknown = product({ id: 'u', type: 'membership', variantKey: 'u' });
-    expect(offeredTiers([unknown])).toEqual([]);
+  it('is empty for the holder of the highest tier: no membership card at all', () => {
+    expect(offeredTiers([low, held])).toEqual([]);
   });
 
-  it('offers NO action on an unranked tier, and hints only when a membership is held', () => {
+  it('offers NO row on an unranked tier, and hints only when a membership is held', () => {
     const unranked = product({
       id: 'un',
       type: 'membership',
@@ -72,8 +70,23 @@ describe('offeredTiers', () => {
     expect(hasUnrankedTier([unranked, product({ viewerIsCotisant: true })])).toBe(true);
   });
 
-  it('is empty for the holder of the highest tier: no membership card at all', () => {
-    expect(offeredTiers([low, held])).toEqual([]);
+  it("offers a tier the listing did not annotate, same as viewerPrice.ts's own canonical call", () => {
+    // `tierNotOffered` (viewerPrice.ts, the ONE decision) buckets an unset `viewerTierRelation`
+    // with 'none'/'higher', not with 'held'/'lower'/'unranked' - this wrapper adds no second
+    // opinion on top of it, so an old listing with no relation at all is offered, not hidden.
+    const unknown = product({ id: 'u', type: 'membership', variantKey: 'u' });
+    expect(offeredTiers([unknown]).map((t) => t.id)).toEqual(['u']);
+  });
+
+  it('offers no row once the association disables cotisations, even on an otherwise-rising tier', () => {
+    const disabled = product({
+      id: 'd',
+      type: 'membership',
+      variantKey: 'd',
+      viewerTierRelation: 'higher',
+      cotisationDisabled: true,
+    });
+    expect(offeredTiers([disabled])).toEqual([]);
   });
 
   it('never lists a non-membership product, and nonTierProducts is its complement', () => {
@@ -83,22 +96,20 @@ describe('offeredTiers', () => {
   });
 });
 
-describe('dueCents and struckCents', () => {
-  it('shows the server due amount with the full price struck when it is a rise', () => {
-    const rise = product({ type: 'membership', amountCents: 3000, viewerDueCents: 1500 });
-    expect(dueCents(rise)).toBe(1500);
-    expect(struckCents(rise)).toBe(3000);
+describe('cotisationDisabledForAssociation', () => {
+  it('reads the flag off any membership product of the association', () => {
+    const a = product({ type: 'membership', cotisationDisabled: true });
+    const b = product({
+      type: 'membership',
+      cotisationDisabled: false,
+      viewerTierRelation: 'none',
+    });
+    expect(cotisationDisabledForAssociation([b, a])).toBe(true);
+    expect(cotisationDisabledForAssociation([b])).toBe(false);
   });
 
-  it('strikes nothing when the viewer pays the full price', () => {
-    const full = product({ amountCents: 3000, viewerDueCents: 3000 });
-    expect(struckCents(full)).toBeNull();
-  });
-
-  it('is null for a free amount', () => {
-    expect(
-      dueCents(product({ amountCents: null, allowCustomAmount: true, viewerDueCents: null }))
-    ).toBeNull();
+  it('ignores a non-membership product carrying no such flag', () => {
+    expect(cotisationDisabledForAssociation([product({ type: 'balance_topup' })])).toBe(false);
   });
 });
 

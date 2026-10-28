@@ -8,16 +8,29 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
 export type PurchasePaymentMethod = 'online' | 'stripe' | 'cash';
 
 /**
- * Where a purchase stands. `paid_not_granted` is money taken for a cotisation tier that was NOT
- * granted, because at settlement it was no longer a rise over the tier the buyer held
- * (docs/wiki/cotisations.md "Rising to a higher tier"): a refund or a manual grant is owed. It is
- * money received, so the association's purchases list it beside `paid`; it never counts as having
- * bought the product. Stored in the existing varchar column, which carries no CHECK.
+ * Where a purchase stands. `paid_not_granted` is money taken for something NOT delivered: a
+ * boutique cotisation tier the settlement did not grant (no longer a rise over the tier held, or
+ * held under another issuer - docs/wiki/cotisations.md "Rising to a higher tier"), a product
+ * deleted or a buyer account erased before the payment landed, or a paid form that grants a tier
+ * and did not grant it (refused as not a rise, paid with no seat, or not held when recorded). A
+ * form that grants no tier is recorded `paid` even when it was paid with no seat. A refund or a
+ * manual grant is owed. It is money received, so the association's purchases list it beside
+ * `paid`; it never counts as having bought the product. Stored in the existing varchar column,
+ * which carries no CHECK.
  */
 export type PurchaseStatus = 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired';
 
 /** The statuses of money actually received: what the association's purchases list. */
 export const RECEIVED_PURCHASE_STATUSES: PurchaseStatus[] = ['paid', 'paid_not_granted'];
+
+/**
+ * The status of money received, from whether what it paid for was delivered: `paid`, or
+ * `paid_not_granted` - the durable marker a refund or a manual grant is owed on. ONE decision for
+ * every path that records a payment (a boutique settlement, a form's fulfilment).
+ */
+export function receivedStatus(delivered: boolean): 'paid' | 'paid_not_granted' {
+  return delivered ? 'paid' : 'paid_not_granted';
+}
 
 /** Immutable audit record for a completed purchase (form submission or boutique product). */
 @Entity('purchase_records')

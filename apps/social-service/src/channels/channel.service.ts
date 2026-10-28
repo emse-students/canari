@@ -192,6 +192,19 @@ export function channelAccessState(channel: Channel) {
   };
 }
 
+/** A device id as a client spells it: one path-safe token, short. */
+const DEVICE_ID_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * The `actorDeviceId` field of a removal event: the device the ACTOR says will commit the key-group
+ * Remove, so the receivers leave it to that device instead of electing one (`departureCommitter.ts`
+ * on the client). Echoed only in its plain shape; anything else is dropped, and the receivers then
+ * elect - the same answer an older client that names no device gets. It vouches for nothing.
+ */
+export function committingDevice(actorDeviceId?: string): { actorDeviceId?: string } {
+  return actorDeviceId && DEVICE_ID_SHAPE.test(actorDeviceId) ? { actorDeviceId } : {};
+}
+
 /**
  * 409 code: a departure that could not complete this time - its name was settled `cancelled` by the
  * drain, or a private salon was granted since its first read. The person is still a member and a
@@ -1009,6 +1022,10 @@ export class ChannelService implements OnApplicationBootstrap {
         workspaceSlug: workspace?.slug,
         workspaceName: workspace?.name,
         visibility: channel.isPrivate ? 'private' : 'public',
+        // Orders this grant against a removal of the same salon (`announceSalonRemoval`), for the
+        // people it names.
+        accessRevision: channel.accessRevision,
+        grantedUserIds: userIds,
       },
       userIds
     );
@@ -2544,6 +2561,7 @@ export class ChannelService implements OnApplicationBootstrap {
       throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
     }
     channel.allowedUsers = granted.channel.allowedUsers;
+    channel.accessRevision = granted.channel.accessRevision;
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
@@ -2556,6 +2574,8 @@ export class ChannelService implements OnApplicationBootstrap {
         roleName: 'Administrateur',
         joinedBy: actorUserId,
         invitedBy: actorUserId,
+        // Orders this grant against a removal of the same salon (`announceSalonRemoval`).
+        accessRevision: channel.accessRevision,
       },
       audience
     );
@@ -3929,7 +3949,10 @@ export class ChannelService implements OnApplicationBootstrap {
         }
         // Made public meanwhile: the community membership above is the whole grant.
         if (granted.outcome === 'public') channel.isPrivate = false;
-        else if (granted.outcome === 'granted') channel.allowedUsers = granted.channel.allowedUsers;
+        else if (granted.outcome === 'granted') {
+          channel.allowedUsers = granted.channel.allowedUsers;
+          channel.accessRevision = granted.channel.accessRevision;
+        }
       }
 
       // Publish event to notify the invited user and connected clients
@@ -3946,6 +3969,8 @@ export class ChannelService implements OnApplicationBootstrap {
           roleName: grantedRole?.name ?? this.mapRoleInputToWorkspaceRoleName(input.roleName),
           joinedBy: input.targetUserId,
           invitedBy: input.actorUserId,
+          // Orders this grant against a removal of the same salon (`announceSalonRemoval`).
+          accessRevision: channel.accessRevision,
         },
         audience
       );
@@ -4001,7 +4026,164 @@ export class ChannelService implements OnApplicationBootstrap {
       (m) => this.stripFromChannels(m, [channel], input.userId)
     );
 
+    // ANNOUNCED LIKE A REMOVAL, with the leaver as its own actor (2026-10-27). The leaver cannot
+    // commit their own Remove from the salon's key group, and nothing told the members who can: the
+    // leave was committed only by a member's next app load. Every remaining member's client elects
+    // ONE online device to commit it (`departureCommitter.ts`); the leaver's other devices drop the
+    // salon. No committing device: the leaver's own leaf is the one leaving.
+    await this.announceSalonRemoval(channel, input.userId, input.userId);
+
     return { success: true };
+  }
+
+  /**
+   * Tells the salon's audience AND the removed person that `removedUserId` lost the salon.
+   * `allowedUsers` was already stripped, so the removed person is added back by name - losing
+   * access is the one event its subject must receive.
+   *
+   * The payload carries the salon's `accessRevision` as the strip left it, so a client that has
+   * already seen a LATER grant of the same salon (a leave and a quick re-invitation) does not purge
+   * the salon it is back in; and the actor's committing device when the actor named one, so the
+   * receivers leave the key-group Remove to it (`departureCommitter.ts`).
+   *
+   * **AFTER THE WRITE, AND NEVER ITS FAILURE.** The removal is committed when this runs; a pub/sub
+   * failure turning it into a 500 would tell the caller it did not happen, and a retry would answer
+   * "not a member". It is logged at error level and the next roster read converges every client.
+   */
+  private async announceSalonRemoval(
+    channel: Channel,
+    removedUserId: string,
+    actorUserId: string,
+    actorDeviceId?: string
+  ): Promise<void> {
+    try {
+      const audience = await this.channelAudience(channel);
+      await this.redis.publishChannelEvent(
+        'channel.member.removed',
+        {
+          channelId: channel.id,
+          channelName: channel.name,
+          workspaceId: channel.workspaceId,
+          removedUserId,
+          removedBy: actorUserId,
+          // Only a private channel is actually lost by the target.
+          isPrivate: channel.isPrivate,
+          accessRevision: channel.accessRevision,
+          ...committingDevice(actorDeviceId),
+        },
+        [...new Set([...audience, removedUserId])]
+      );
+    } catch (e) {
+      this.logger.error(
+        `[CHANNEL] removal of ${removedUserId.slice(0, 8)} from channel=${channel.id} committed but NOT announced: ${String(e)} - clients converge on their next roster read`
+      );
+    }
+  }
+
+  /**
+   * THE ACTOR RELEASES A KEY-GROUP REMOVE IT CLAIMED AND KNOWS IT DID NOT COMMIT (channel-encryption
+   * section 10, 2026-10-27). A kick or a revoke names the actor's committing device, and every
+   * receiver leaves the scope's Remove to it. When that device's roster pass ends with the removed
+   * person still holding a leaf and NO commit of its own whose outcome is unknown - nothing staged,
+   * or a definite refusal - it says so here, and the scope's remaining members elect a committer on
+   * THIS event and on nothing else: a receiver never decides against a claim on a guess that the
+   * actor's commit failed.
+   *
+   * `channelId` null releases the COMMUNITY's key group; a salon's is released by
+   * {@link releaseChannelRemoval}. One scope per release, because the actor commits its scopes one
+   * after the other and a salon's commit may still be in flight when the community's is released.
+   *
+   * WHO MAY: the same permission as the removal itself (`assertActorMayRemoveMembers`, no target to
+   * compare - the person is no longer a member), and only about somebody the scope no longer holds:
+   * a release about a member is refused `409`. A spurious release costs one election for a person
+   * the roster already excludes, which the roster diff decides anyway - it can never remove a member.
+   *
+   * THE RELEASING DEVICE TRAVELS WITH IT (`releasedByDevice`, the same plain shape as
+   * {@link committingDevice}), and is required: a receiver re-decides only a scope whose tree holds
+   * that device's leaf - the receivers that deferred to it. One whose tree does not hold it already
+   * elected on the removal event itself, and a second election there would race the first.
+   *
+   * The announcement IS the release, so a failure to publish is answered `503`, not swallowed.
+   */
+  private async releaseRemoval(
+    workspaceId: string,
+    channel: Channel | null,
+    removedUserId: string,
+    actorUserId: string,
+    actorDevice: string | undefined
+  ): Promise<{ success: true }> {
+    const releasedByDevice = committingDevice(actorDevice).actorDeviceId;
+    if (!releasedByDevice) {
+      throw new BadRequestException('actorDevice must name the releasing device');
+    }
+    await this.assertActorMayRemoveMembers(workspaceId, actorUserId, [], 'skip');
+    let audience: string[];
+    if (channel) {
+      if (channelIsReadableBy(channel, removedUserId)) {
+        throw new ConflictException('This person can still read this salon - nothing to release');
+      }
+      audience = await this.channelAudience(channel);
+    } else {
+      const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+      if (!workspace) throw new NotFoundException('Workspace not found');
+      audience = await this.getWorkspaceMemberIds(workspaceId);
+      if (audience.some((u) => u.trim().toLowerCase() === removedUserId)) {
+        throw new ConflictException('This person is still a member - nothing to release');
+      }
+    }
+    try {
+      await this.redis.publishChannelEvent(
+        'channel.member.removal-released',
+        {
+          workspaceId,
+          channelId: channel?.id ?? null,
+          removedUserId,
+          releasedBy: actorUserId,
+          releasedByDevice,
+        },
+        audience.filter((u) => u !== actorUserId)
+      );
+    } catch (e) {
+      this.logger.error(
+        `[CHANNEL] release of the removal of ${removedUserId.slice(0, 8)} workspace=${workspaceId} channel=${channel?.id ?? '-'} NOT announced: ${String(e)}`
+      );
+      throw new ServiceUnavailableException('The release could not be announced');
+    }
+    this.logger.log(
+      `[CHANNEL] removal of ${removedUserId.slice(0, 8)} released by ${actorUserId.slice(0, 8)} workspace=${workspaceId} channel=${channel?.id ?? '-'} - its remaining members elect a committer`
+    );
+    return { success: true };
+  }
+
+  /** {@link releaseRemoval} for a community's key group. */
+  async releaseWorkspaceRemoval(
+    workspaceId: string,
+    removedUserId: string,
+    actorUserId: string,
+    actorDevice?: string
+  ): Promise<{ success: true }> {
+    return this.releaseRemoval(workspaceId, null, removedUserId, actorUserId, actorDevice);
+  }
+
+  /** {@link releaseRemoval} for a PRIVATE salon's key group - a public salon has none. */
+  async releaseChannelRemoval(
+    channelId: string,
+    removedUserId: string,
+    actorUserId: string,
+    actorDevice?: string
+  ): Promise<{ success: true }> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+    if (!channel.isPrivate) {
+      throw new BadRequestException('A public salon has no key group of its own');
+    }
+    return this.releaseRemoval(
+      channel.workspaceId,
+      channel,
+      removedUserId,
+      actorUserId,
+      actorDevice
+    );
   }
 
   /**
@@ -4115,7 +4297,12 @@ export class ChannelService implements OnApplicationBootstrap {
    * Kicks a member from the workspace entirely (removes from all channels). Requires
    * MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by `assertActorMayRemoveMembers`.
    */
-  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
+  async kickFromWorkspace(
+    workspaceId: string,
+    targetUserId: string,
+    actorUserId: string,
+    actorDeviceId?: string
+  ) {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
@@ -4136,15 +4323,24 @@ export class ChannelService implements OnApplicationBootstrap {
     // Notify the kicked user and remaining workspace members
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     const notifyIds = [...new Set([...remainingMemberIds, targetUserId])];
-    await this.redis.publishChannelEvent(
-      'channel.member.kicked',
-      {
-        workspaceId,
-        kickedUserId: targetUserId,
-        kickedBy: actorUserId,
-      },
-      notifyIds
-    );
+    // AFTER THE WRITE, AND NEVER ITS FAILURE - the same rule as `announceSalonRemoval`: the kick is
+    // committed, and a 500 here would tell the caller it did not happen.
+    try {
+      await this.redis.publishChannelEvent(
+        'channel.member.kicked',
+        {
+          workspaceId,
+          kickedUserId: targetUserId,
+          kickedBy: actorUserId,
+          ...committingDevice(actorDeviceId),
+        },
+        notifyIds
+      );
+    } catch (e) {
+      this.logger.error(
+        `[WORKSPACE] kick of ${targetUserId.slice(0, 8)} from workspace=${workspaceId} committed but NOT announced: ${String(e)} - clients converge on their next roster read`
+      );
+    }
 
     this.logger.log(
       `[WORKSPACE] kick workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
@@ -4349,7 +4545,12 @@ export class ChannelService implements OnApplicationBootstrap {
    *  distribution; a public channel has no per-user roster to edit (the user is still a workspace member and can re-join if invited again).
    *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
    *  `assertActorMayRemoveMembers`. */
-  async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
+  async removeMemberFromChannel(
+    channelId: string,
+    targetUserId: string,
+    actorUserId: string,
+    actorDeviceId?: string
+  ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -4384,21 +4585,7 @@ export class ChannelService implements OnApplicationBootstrap {
     // Notify the removed user and everyone who can still see the salon. `allowedUsers` was
     // stripped just above, so the target is no longer in the audience and is added back by name -
     // losing access is the one event its subject must receive.
-    const audience = await this.channelAudience(channel);
-    const notifyIds = [...new Set([...audience, targetUserId])];
-    await this.redis.publishChannelEvent(
-      'channel.member.removed',
-      {
-        channelId,
-        channelName: channel.name,
-        workspaceId: channel.workspaceId,
-        removedUserId: targetUserId,
-        removedBy: actorUserId,
-        // See kickMember: only a private channel is actually lost by the target.
-        isPrivate: channel.isPrivate,
-      },
-      notifyIds
-    );
+    await this.announceSalonRemoval(channel, targetUserId, actorUserId, actorDeviceId);
 
     // No key is rotated here, and none can be: the seed that opens this channel's messages lives on
     // the sending devices. Removing someone from the community makes them ineligible for the
