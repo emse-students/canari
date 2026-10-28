@@ -40,7 +40,7 @@
   function openProfile(e: MouseEvent) {
     e.stopPropagation();
     e.preventDefault();
-    void goto(resolve(`/profile/${userId}`));
+    void goto(resolve(`profile/${userId}`));
   }
 </script>
 

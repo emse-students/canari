@@ -58,27 +58,22 @@ describe('handleError separates a correct answer from a failure', () => {
 
   it('logs a 404 at warn, with no stack and no colour', () => {
     const result = handleError({
-      error: new Error('Not found'),
+      kind: 'framework',
+      error: { status: 404, message: 'Not Found' },
       event: evt('GET', '/.env'),
-      status: 404,
-      message: 'Not Found',
     } as never);
 
     expect(error).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith('[404] GET /.env');
-    expect(result).toEqual({ message: 'Not Found' });
+    // Nothing is returned: SvelteKit's own status and safe message stand.
+    expect(result).toBeUndefined();
   });
 
   it('logs a 500 at error, WITH its stack', () => {
     const boom = new Error('boom');
     boom.stack = 'Error: boom\n    at somewhere';
 
-    handleError({
-      error: boom,
-      event: evt('POST', '/chat'),
-      status: 500,
-      message: 'Internal Error',
-    } as never);
+    handleError({ kind: 'unknown', error: boom, event: evt('POST', '/chat') } as never);
 
     expect(warn).not.toHaveBeenCalled();
     const printed = String(error.mock.calls[0][0]);
@@ -89,10 +84,9 @@ describe('handleError separates a correct answer from a failure', () => {
 
   it('never colours a line itself - the level and the stack are what sort them', () => {
     handleError({
-      error: new Error('x'),
+      kind: 'framework',
+      error: { status: 404, message: 'Not Found' },
       event: evt('GET', '/nope'),
-      status: 404,
-      message: 'Not Found',
     } as never);
 
     expect(String(warn.mock.calls[0][0])).not.toContain('\x1b[');
