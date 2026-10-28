@@ -594,6 +594,16 @@ handler now reads `navigating.to?.url` (else the current location) through `logi
 redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
 `sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
 
+## A return target is held to the page's origin (2026-10-28)
+
+A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain
+`<a href>` as well as `goto` and the stored sign-in return. `safeInternalPath`
+(`utils/internalPath.ts`) is the ONE gate: a target is validated against the page's origin, by the
+URL parser's own resolution rather than a reading of its first characters, and control characters
+and backslashes are refused at any position. A refused value falls back to the caller's default and
+logs its length, never the value. Tests: `internalPath.test.ts` (the function) and
+`routes/forms/create/page.backLink.svelte.test.ts` (a rendered link).
+
 ## A token that names another account than the local identity is refused (2026-10-10)
 
 The MLS identity (`canari_saved_user`, the `userId` the WASM client is initialised with) comes from
