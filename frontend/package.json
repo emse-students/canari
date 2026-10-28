@@ -1,6 +1,6 @@
 {
   "name": "canari",
-  "version": "1.5.0-alpha.2",
+  "version": "1.5.1-alpha.1",
   "private": true,
   "description": "",
   "license": "SEE LICENSE IN ../LICENSE",
@@ -63,7 +63,7 @@
     "highlight.js": "^11.12.0",
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
-    "mediabunny": "^1.61.4",
+    "mediabunny": "^1.62.1",
     "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
     "svelte-dnd-action": "^0.9.80",
@@ -71,9 +71,9 @@
   },
   "devDependencies": {
     "@inlang/paraglide-js": "^2.29.1",
-    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/adapter-node": "^6.0.0",
     "@sveltejs/adapter-static": "^4.0.0",
-    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/kit": "^3.1.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.12.4",
@@ -99,13 +99,12 @@
   },
   "overrides": {
     "brace-expansion": "^5.0.12",
-    "cookie": "^0.7.0",
     "dompurify": "^3.4.16",
     "nanoid": "^3.3.18",
     "postcss": "^8.5.10"
   },
   "patchedDependencies": {
     "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
-    "mediabunny@1.61.4": "patches/mediabunny@1.61.4.patch"
+    "mediabunny@1.62.1": "patches/mediabunny@1.62.1.patch"
   }
 }

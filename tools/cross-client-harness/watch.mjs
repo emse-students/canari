@@ -1574,6 +1574,18 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  // WHICH SOCKET CLOSED, by its PATH: `webSocketClosed` carries only a requestId, so a call's own
+  // signalling socket ending with the call and the gateway dropping read the same. The created event
+  // names the URL; only its pathname is kept - the call socket carries its token in the query.
+  const wsPaths = new Map();
+  for (const ev of (cx.consumed ?? []).concat(cx.events)) {
+    if (ev?.method !== 'Network.webSocketCreated') continue;
+    try {
+      wsPaths.set(ev.params.requestId, new URL(ev.params.url).pathname);
+    } catch {
+      wsPaths.set(ev.params.requestId, '?');
+    }
+  }
   /** Socket handshakes that completed in the window - informational, never gating. */
   const wsOpen = [];
   const exceptions = [];
@@ -1629,7 +1641,7 @@ export async function report(w) {
       }
       case 'Network.webSocketFrameError':
       case 'Network.webSocketClosed':
-        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
+        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}${wsPaths.has(p.requestId) ? ` path=${wsPaths.get(p.requestId)}` : ''}` });
         break;
       // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
       // close followed by a reconnection are different findings, and before this the second half was
@@ -3468,7 +3480,11 @@ export function dirtOf(rep) {
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
 export function gate(verdict, reports, observations = {}) {
-  const entries = Object.entries(reports).filter(([, r]) => r);
+  // A ROUTE'S FIRST PRELOAD is forgiven HERE, once, for every row and every seat - not per runner:
+  // COMM's runners call `gate` directly and carried it as dirt while the MLS rows did not.
+  const entries = Object.entries(reports)
+    .filter(([, r]) => r)
+    .map(([label, r]) => [label, forgivingFirstRoutePreloads(r)]);
   const dirty = entries.filter(([, r]) => !r.clean);
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
@@ -3705,6 +3721,37 @@ export function atLevels(levels, re) {
 /** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
 const levelOfEntry = (line) => /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
 
+/** A route's first preload in a document: `pathname` is the route preloaded. */
+const FIRST_ROUTE_PRELOAD = /\[RoutePreload\] \{"pathname":"(\/[a-z]*)","first":true\}$/;
+
+/**
+ * A ROUTE IS PRELOADED ONCE PER DOCUMENT, on the first in-app navigation that reaches it, and says so
+ * at debug (`[RoutePreload] {"pathname":"/chat","first":true}`). `PAGE_BOOT_NARRATION` forgives it
+ * only in a window whose document was replaced. A seat the preflight reloaded JUST BEFORE the row
+ * makes its first navigations inside the row's window instead: read on LIST-RACE-1 on
+ * `1.5.0-alpha.1` (2026-10-27), on W1, W8 and A1.
+ *
+ * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug - applied
+ * by `gate` to every seat of every row, the one place every runner passes through. A
+ * pathname preloaded twice in one window is a document that booted twice, or a preload that is not
+ * the first, and both copies stay dirt. So does `"first":false`, or the line at another level.
+ */
+export function forgivingFirstRoutePreloads(rep) {
+  if (!Array.isArray(rep?.unexplained)) return rep;
+  const seen = new Map();
+  for (const line of rep.unexplained) {
+    const m = FIRST_ROUTE_PRELOAD.exec(line);
+    if (m && levelOfEntry(line) === 'debug') seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+  }
+  const once = [...seen].filter(([, n]) => n === 1).map(([p]) => p);
+  if (!once.length) return rep;
+  const esc = (s) => s.replace(/[/]/g, '\\/');
+  return ignoringExpectedLog(
+    rep,
+    once.map((p) => atLevels(['debug'], new RegExp(`^\\[RoutePreload\\] \\{"pathname":"${esc(p)}","first":true\\}$`)))
+  );
+}
+
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
   // one list silently compared a different string from the others and every `^`-anchored rule in it
@@ -3753,6 +3800,37 @@ export function ignoringExpectedLog(rep, needles) {
       // going back to a stdout dump the run has long scrolled past.
       unmatched: needles.filter((n) => !matched.has(n)).map(String),
     },
+  };
+}
+
+/**
+ * The same report with the closes of NAMED sockets forgiven, and `clean` recomputed.
+ *
+ * A call's signalling socket (`/api/call`) opens with the call and closes when it ends: one close
+ * per call on each seat that was in it, and the close IS the hang-up. That close is expected and
+ * necessary, and nothing else's is. Matched on the socket's PATH (tagged by `report` from its
+ * `webSocketCreated`), exactly - so the chat gateway dropping during a call stays a finding, and so
+ * does a close whose socket the window never saw open (no `path=` at all).
+ *
+ * FORGIVEN, NOT DELETED: kept as `wsEventsForgiven`, out of the gate.
+ *
+ * @param {object} rep a `report` result
+ * @param {string[]} paths socket pathnames whose closes are this row's own, e.g. `['/api/call']`
+ */
+export function forgivingSocketCloses(rep, paths) {
+  const own = (t) => paths.some((p) => t.endsWith(` path=${p}`));
+  const wsEvents = rep.wsEvents.filter((t) => !own(t));
+  return {
+    ...rep,
+    wsEvents,
+    wsEventsForgiven: rep.wsEvents.filter(own),
+    clean:
+      rep.errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      wsEvents.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
   };
 }
 

@@ -23,8 +23,8 @@ export function parseTab<T extends string>(
  * The base-less app path with `?tab=` set to `tab`, or removed when `tab` is the default so the
  * bare path stays the canonical link. The caller passes it through `resolve(internalPath(...))`. Every other query parameter and the hash are kept.
  */
-export function tabUrl(current: URL, tab: string, fallback: string): string {
-  const next = new URL(current);
+export function tabUrl(current: Pick<URL, 'href'>, tab: string, fallback: string): string {
+  const next = new URL(current.href);
   if (tab === fallback) next.searchParams.delete('tab');
   else next.searchParams.set('tab', tab);
   return `${appPathFromPathname(next.pathname)}${next.search}${next.hash}`;
@@ -35,8 +35,8 @@ export function tabUrl(current: URL, tab: string, fallback: string): string {
  * included) and the hash kept. For a one-shot marker a page consumes on arrival - the shop's
  * `purchase_success` - so a reload does not consume it twice.
  */
-export function withoutQuery(current: URL, names: readonly string[]): string {
-  const next = new URL(current);
+export function withoutQuery(current: Pick<URL, 'href'>, names: readonly string[]): string {
+  const next = new URL(current.href);
   for (const name of names) next.searchParams.delete(name);
   return `${appPathFromPathname(next.pathname)}${next.search}${next.hash}`;
 }

@@ -220,7 +220,7 @@ import {
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
-import type { ICallMsg } from '$lib/proto/codec';
+import type { CallEndReason, ICallMsg } from '$lib/proto/codec';
 import {
   closeDeletedAccountHandles,
   wipeDeletedAccountLocalData,
@@ -1309,7 +1309,7 @@ export async function loginImpl(
         // The redirect first, the preview after it (synchronous), the flag last: nothing here may
         // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto(resolve('/login'), { replaceState: true });
+        else void goto(resolve('/login'), { replace: true });
         withdrawLandingPreview('session expired');
         releaseLoginFlag();
         return;
@@ -1937,8 +1937,14 @@ export async function loginImpl(
     ctx.getCallService()?.setChatNotifier({
       onCallStarted: (groupId: string, callId: string) =>
         recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
-      onCallEnded: (groupId: string, callId: string) =>
-        recordCallEnded(getCallSystemMessageContext(), groupId, callId),
+      onCallEnded: (groupId: string, callId: string, outcome?: CallEndReason, starterId?: string) =>
+        recordCallEnded(
+          getCallSystemMessageContext(),
+          groupId,
+          callId,
+          outcome,
+          starterId ?? ctx.getUserId()
+        ),
     });
 
     setupMessageHandler({
@@ -2617,13 +2623,13 @@ export async function loginImpl(
       markRestoreAttempted();
       void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto(resolve('/login'), { replaceState: true });
+      else void goto(resolve('/login'), { replace: true });
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
       const loc = window.location;
       void goto(resolve(internalPath(loginReturningTo(loc.pathname, loc.search, loc.hash))), {
-        replaceState: true,
+        replace: true,
       });
     }
   } finally {

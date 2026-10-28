@@ -1398,6 +1398,12 @@ export interface IMlsService {
    */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /**
+   * Removes every leaf of the given users in one commit that a roster DIFF decided rather than a
+   * person (the stray sweep, the key-group roster pass): staged only when this device's context is
+   * the base the server publishes, else it throws `UnpublishedBranchError` having staged nothing.
+   */
+  removeDepartedMembers(groupId: string, userIds: string[]): Promise<void>;
+  /**
    * Every leaf identity (`userId:deviceId`) in the group's MLS ratchet tree, read locally.
    *
    * THE TREE IS THE ONLY AUTHORITY ON WHO CAN READ A GROUP. {@link getGroupMembers} answers who

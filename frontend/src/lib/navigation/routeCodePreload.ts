@@ -1,4 +1,5 @@
 import { preloadCode } from '$app/navigation';
+import { match } from '$app/paths';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -27,6 +28,15 @@ import { Log } from '$lib/utils/Log';
 const preloads = new Map<string, Promise<void>>();
 
 /**
+ * SvelteKit 3's `preloadCode` takes a ROUTE ID, no longer a pathname: the path is matched to its
+ * route first. A path no route owns has no code to fetch, which is not an error.
+ */
+async function preloadPathCode(pathname: string): Promise<void> {
+  const matched = await match(pathname);
+  if (matched) await preloadCode(matched.id);
+}
+
+/**
  * Preloads `pathname`'s route code unless this document already did (or is doing) so.
  *
  * @param pathname an in-app path such as `/communities`.
@@ -35,7 +45,7 @@ const preloads = new Map<string, Promise<void>>();
  */
 export function preloadRouteCodeOnce(
   pathname: string,
-  preload: (pathname: string) => Promise<void> = preloadCode
+  preload: (pathname: string) => Promise<void> = preloadPathCode
 ): Promise<void> {
   const known = preloads.get(pathname);
   if (known) return known;

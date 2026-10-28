@@ -19,6 +19,7 @@
  * the unanswered rows wait {@link UNANSWERED_ROUNDS} rounds for it, so the window closes before the
  * rig would - the first offline reading hung up at 60.0 s and measured its own hang-up.
  */
+import { captionWith } from './messages.mjs';
 import { atLevels } from './watch.mjs';
 
 export const ROUND_MS = 500;
@@ -37,15 +38,54 @@ const CALLEE = 'third';
 
 /** The rows `archive/callweb.mjs` plays. `restart` lists the seats closed during the row and reopened. */
 export const CALL_WEB_ROWS = {
-  'CALL-WEB-1': { scenario: 'basic', devices: ['W2', 'W4'], callee: CALLEE, what: 'W2 calls W4, W4 accepts: connected, audio both ways (bytes and heard energy), W2 hangs up, both ends end' },
+  'CALL-WEB-1': { scenario: 'basic', devices: ['W2', 'W4'], callee: CALLEE, what: 'W2 calls W4, W4 accepts: connected, audio both ways (bytes and heard energy), W2 hangs up, both ends end, both DMs record a call that lasted' },
   'CALL-WEB-2': { scenario: 'mute', devices: ['W2', 'W4'], callee: CALLEE, what: "W2 mutes and unmutes mid-call: muted, W2's track is disabled and W4 hears under 1 % of what it heard; unmuted, at least 20 % again" },
   'CALL-WEB-3': { scenario: 'callee-hangup', devices: ['W2', 'W4'], callee: CALLEE, what: 'the callee hangs up a connected call: both ends end' },
-  'CALL-WEB-4': { scenario: 'decline', devices: ['W2', 'W4'], callee: CALLEE, what: 'W4 declines while ringing: both ends end, the call never connects' },
-  'CALL-WEB-5': { scenario: 'cancel', devices: ['W2', 'W4'], callee: CALLEE, what: "W2 hangs up while W4 rings: W4's ring stops, W2 ends" },
-  'CALL-WEB-6': { scenario: 'offline', devices: ['W2'], closed: ['W4', 'W8'], callee: CALLEE, what: "every device of the callee closed: W2 rings until the server's 60 s window closes, then ends" },
-  'CALL-WEB-7': { scenario: 'busy', devices: ['W2', 'W4', 'W5'], callee: CALLEE, what: 'W5 calls W4 while W4 is in a call with W2: W4 does not ring over it, the call in progress keeps flowing, W5 ends at its window' },
+  'CALL-WEB-4': { scenario: 'decline', devices: ['W2', 'W4'], callee: CALLEE, what: 'W4 declines while ringing: both ends end, the call never connects, and neither DM records it as a call that lasted' },
+  'CALL-WEB-5': { scenario: 'cancel', devices: ['W2', 'W4'], callee: CALLEE, what: "W2 hangs up while W4 rings: W4's ring stops, W2 ends, and neither DM records it as a call that lasted" },
+  'CALL-WEB-6': { scenario: 'offline', devices: ['W2'], closed: ['W4', 'W8'], callee: CALLEE, what: "every device of the callee closed: W2 rings until the server's 60 s window closes, then ends, and its DM does not record a call that lasted" },
+  'CALL-WEB-7': { scenario: 'busy', devices: ['W2', 'W4', 'W5'], callee: CALLEE, what: 'W5 calls W4 while W4 is in a call with W2: W4 does not ring over it, the call in progress keeps flowing, W5 is told W4 is busy within 10 s, and neither end of W5\'s DM records a call that lasted' },
   'CALL-WEB-8': { scenario: 'reload', devices: ['W2', 'W4'], callee: CALLEE, what: "W4's page reloads mid-call: W2's call ends" },
 };
+
+/** The path of a call's signalling socket (`CallService.ts`, `/api/call`): its close is the call ending. */
+export const CALL_SOCKET_PATH = '/api/call';
+
+/** Rounds within which a busy callee's answer reaches the second caller (B16): 10 s, a sixth of the ring window. */
+export const BUSY_ROUNDS = 20;
+
+/**
+ * THE CONVERSATION RECORD OF THE ROW'S CALL (B15), read on each seat in the DM it names: seat ->
+ * the seat on the other end of that DM. The offline row reads the caller only - every device of
+ * the callee is closed - and the busy row reads the SECOND call, W5's, on both of its ends.
+ */
+export const RECORD_SEATS = {
+  basic: { W2: 'W4', W4: 'W2' },
+  decline: { W2: 'W4', W4: 'W2' },
+  cancel: { W2: 'W4', W4: 'W2' },
+  offline: { W2: 'W4' },
+  busy: { W5: 'W4', W4: 'W5' },
+};
+
+/** The stable halves of the app's own call records, read from its message file (a reworded string moves them). */
+const afterStarter = (key) => captionWith(key, { starter: '\u0001', duration: '\u0002' }).split('\u0001')[1].split('\u0002')[0].trim();
+const STARTED_HALF = afterStarter('chat_system_call_started');
+const ENDED_HALF = afterStarter('chat_system_call_ended');
+
+/**
+ * What a record says: `'duration'` (a call that lasted), `'started'` (begun and never finalised),
+ * `'other'` (anything else - a missed, declined or not-answered record) or `null` (no record read).
+ */
+export function recordForm(text) {
+  if (typeof text !== 'string' || !text) return null;
+  if (text.includes(ENDED_HALF)) return 'duration';
+  if (text.includes(STARTED_HALF)) return 'started';
+  return 'other';
+}
+const recordsAre = (records, pred) => !!records && Object.keys(records).length > 0 && Object.values(records).every((t) => pred(recordForm(t)));
+const recordsSaid = (records) => JSON.stringify(records ?? null);
+/** B15: a call nobody answered is recorded on every end it reached, and never as a call that lasted. */
+const unanswered = (m) => [recordsAre(m.records, (f) => f === 'other'), `the unanswered call is not recorded as one (${recordsSaid(m.records)})`];
 
 /** Audio flowing both ways in a window: connected on both seats, packets and bytes in and out. */
 export const bothWays = (flow) => Object.values(flow).every((s) => s.state === 'connected' && s.recv > 0 && s.bytes > 0 && s.sent > 0);
@@ -61,6 +101,9 @@ export const CALL_JUDGES = {
     [bothWays(m.flow), 'audio did not flow both ways'],
     [m.flow.W2.heard > 0 && m.flow.W4.heard > 0, 'a seat heard no audio energy'],
     [m.down.W2 !== null && m.down.W4 !== null, 'the hang-up did not end both seats'],
+    // THE POSITIVE CONTROL OF THE RECORD READER: an answered call IS a call with a duration, so a
+    // reader that found nothing here would make every unanswered row's record judge vacuous.
+    [recordsAre(m.records, (f) => f === 'duration'), `the answered call is not recorded as a call with a duration (${recordsSaid(m.records)})`],
   ],
   mute: (m) => [
     [m.rang !== null, 'W4 never rang'],
@@ -80,19 +123,25 @@ export const CALL_JUDGES = {
     [m.rang !== null, 'W4 never rang'],
     [m.down.W2 !== null && m.down.W4 !== null, 'the decline did not end both seats'],
     [m.neverConnected, 'the declined call connected'],
+    unanswered(m),
   ],
   cancel: (m) => [
     [m.rang !== null, 'W4 never rang'],
     [m.ringStopped !== null, "W4's ring did not stop after the caller hung up"],
     [m.down.W2 !== null, "the caller's call did not end"],
+    unanswered(m),
   ],
-  offline: (m) => [[m.ended !== null, `the caller's call did not end within ${UNANSWERED_ROUNDS} rounds of an unanswered ring`]],
+  offline: (m) => [[m.ended !== null, `the caller's call did not end within ${UNANSWERED_ROUNDS} rounds of an unanswered ring`], unanswered(m)],
   busy: (m) => [
     [m.rang !== null, 'W4 never rang for the first call'],
     [m.secondRing === null, "W4 rang for the second call over the call in progress"],
     [bothWays(m.flow), 'the call in progress stopped flowing during the second call'],
     [m.secondEnded !== null, "the second caller's call did not end within its window"],
+    // B16: a busy callee is an ANSWER, so the second caller learns it in a few rounds - not at the
+    // server's 60 s ring window, which is what an unanswered call costs.
+    [m.secondEnded !== null && m.secondEnded <= BUSY_ROUNDS, `the second caller was not told the callee is busy within ${BUSY_ROUNDS} rounds (${m.secondEnded ?? 'never'})`],
     [m.down.W2 !== null && m.down.W4 !== null, 'the hang-up did not end both seats'],
+    unanswered(m),
   ],
   reload: (m) => [
     [bothWays(m.flow), 'audio did not flow both ways before the reload'],
@@ -108,8 +157,20 @@ export function callOwn(scenario, measured) {
   return { verdict: failures.length ? 'FAIL' : 'PASS', failures };
 }
 
+/** The tone's pulse: {@link PULSE_ON_MS} of tone, then silence, every {@link PULSE_PERIOD_MS}. */
+export const PULSE_PERIOD_MS = 500;
+export const PULSE_ON_MS = 250;
+/** Each pulse fades in and out over this, so its edges are not clicks spread across the spectrum. */
+const PULSE_RAMP_MS = 10;
+
 /**
- * A 16-bit mono PCM WAV of a pure tone, for `--use-file-for-fake-audio-capture` (Chrome loops it).
+ * A 16-bit mono PCM WAV of a PULSED tone, for `--use-file-for-fake-audio-capture` (Chrome loops it).
+ *
+ * WHY PULSED. CALL-WEB-2 on 1.5.0 read a seat's steady tone at 2.1 % while muted but only 14 % of
+ * its baseline after the unmute, on a baseline itself small. A STEADY tone is what WebRTC's noise
+ * suppressor is built to learn as background and attenuate, so that reading could not tell the
+ * product's unmute from the rig's own signal being suppressed. A tone that stops and starts four
+ * times a second is not stationary, so a low reading on it is no longer the rig's to explain.
  *
  * @param {number} hz
  * @param {number} [seconds]
@@ -118,8 +179,16 @@ export function callOwn(scenario, measured) {
  */
 export function toneWav(hz, seconds = 4, rate = 48_000) {
   const n = seconds * rate;
+  const period = (PULSE_PERIOD_MS * rate) / 1000;
+  const on = (PULSE_ON_MS * rate) / 1000;
+  const ramp = (PULSE_RAMP_MS * rate) / 1000;
+  const envelope = (i) => {
+    const t = i % period;
+    if (t >= on) return 0;
+    return Math.min(1, t / ramp, (on - t) / ramp);
+  };
   const data = Buffer.alloc(n * 2);
-  for (let i = 0; i < n; i++) data.writeInt16LE(Math.round(Math.sin((2 * Math.PI * hz * i) / rate) * 0.3 * 32767), i * 2);
+  for (let i = 0; i < n; i++) data.writeInt16LE(Math.round(Math.sin((2 * Math.PI * hz * i) / rate) * envelope(i) * 0.3 * 32767), i * 2);
   const h = Buffer.alloc(44);
   h.write('RIFF', 0);
   h.writeUInt32LE(36 + data.length, 4);
@@ -179,7 +248,10 @@ const CONNECTED = [
   // `decrypt-failed=0` and `no-key=0` ARE THE ASSERTION: a report with a failure stays dirt.
   at(L, String.raw`\[Call\] E2E worker report \((${N} s after connected|call end, call=${H})\): .+ decrypt-failed=0 short=${N} \(empty ${N}\) no-key=0 .+`),
   at(L, String.raw`\[Call\] E2E path check \(${N} s after connected\): no media around the transform \(packets sent audio=${N} video=0 received audio=${N} video=0\)`),
-  at(L, String.raw`\[Call\] ICE gathering complete \(host=${N} srflx=${N} relay=${N} ice=connected\)`),
+  // `checking` TOO: gathering ends when TURN answers, and on a fast host pair that can be before the
+  // checks conclude (CALL-WEB-2, 2026-10-27). It is the CALL-GATHER-0 diagnostic, written once per
+  // peer connection. `failed`, `disconnected` and `closed` stay dirt - each is a call in trouble.
+  at(L, String.raw`\[Call\] ICE gathering complete \(host=${N} srflx=${N} relay=${N} ice=(checking|connected)\)`),
   at(L, String.raw`\[Call\] (iceGatheringState=(gathering|complete)|iceConnectionState=(checking|connected)|connectionState=(connecting|connected))`),
   at(L, String.raw`\[Call\] signalingState=(have-local-offer|have-remote-offer|stable)`),
   at(L, String.raw`\[Call\] remote ICE end-of-candidates`),

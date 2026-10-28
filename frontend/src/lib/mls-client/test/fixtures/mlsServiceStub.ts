@@ -122,6 +122,7 @@ export function createMlsServiceStub(
     declineJoinRequest: vi.fn().mockResolvedValue('withdrawn'),
     removeMember: vi.fn().mockResolvedValue(undefined),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
+    removeDepartedMembers: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
