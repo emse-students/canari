@@ -211,9 +211,8 @@ reach 84 Mb/s. Every byte also crosses Cloudflare TURN twice (phone leg and SFU 
   a question to the DSI before a live event.
 - **Headroom now** (2026-10-15 20:04 UTC): load average `0.35 0.72 0.79` on 4 cores; `free -m`
   6 129 MB available of 11 967 (1 217 MB swap in use); `docker stats --no-stream` tops at
-  `canari-prod-frontend-ssr-1` 25 %, everything else under 3 %. **Disk: `/` 75 % used, 11 GB free** -
-  the threshold the user set for the image prune ([backlog](../backlog.md#decided-by-the-user-on-2026-10-11)),
-  so a live recording kept on this disk competes with it.
+  `canari-prod-frontend-ssr-1` 25 %, everything else under 3 %. **Disk: `/` 75 % used, 11 GB free**,
+  so a live recording kept on this disk competes with everything else on it.
 - **Request burst** (`bun throughput.mjs https://canari.emse.fr/_app/version.json 20 10`, 2026-10-15
   20:07:53 UTC, **200 requests, 20 concurrent**, a 37-byte file): 200 x `200` in 1.57 s, **~127
   requests/s**. That is bound by this client's round trip (~157 ms per request per connection,
