@@ -155,6 +155,45 @@ export function linkedTierKey(
   return undefined;
 }
 
+/**
+ * A cotisation tag an association issued for a tier it no longer has: what a holder keeps when the
+ * tier's product is deleted (docs/wiki/cotisations.md "A tier deleted while people still hold it").
+ * `variantKey` is the key read back from the tag name (`null` for the base tier's stem), and never
+ * equals the key of a tier that exists.
+ */
+export interface OrphanTierTag {
+  tagName: string;
+  variantKey: string | null;
+}
+
+const ACADEMIC_YEAR_TAIL = /-\d{4}-\d{4}$/;
+
+/**
+ * Which of `tagNames` - tags ISSUED BY the association whose slug is `slug` - are cotisation tags of
+ * a tier that is not among `tierKeys`. A tag is in the association's cotisation namespace when it is
+ * `cotisant:<slug>` or starts with `cotisant:<slug>-`; it belongs to an existing tier when
+ * `linkedTierKey` matches it (with or without an academic-year suffix, so a `dated` tag of a past or
+ * present year and a `lifetime` tag of the same tier both do). Everything else in the namespace is
+ * an orphan. The caller passes only rows the association itself issued, which is what keeps another
+ * association whose slug happens to extend this one (`bde` and `bde-ski`) out of it.
+ */
+export function orphanTierTags(
+  tagNames: readonly string[],
+  slug: string,
+  tierKeys: readonly (string | null)[]
+): OrphanTierTag[] {
+  const root = `cotisant:${slug}`;
+  const orphans: OrphanTierTag[] = [];
+  for (const tagName of new Set(tagNames)) {
+    if (tagName !== root && !tagName.startsWith(`${root}-`)) continue;
+    if (linkedTierKey(tagName, slug, [...tierKeys]) !== undefined) continue;
+    const rest = tagName.slice(root.length + 1);
+    const variant = /^\d{4}-\d{4}$/.test(rest) ? '' : rest.replace(ACADEMIC_YEAR_TAIL, '');
+    orphans.push({ tagName, variantKey: variant || null });
+  }
+  return orphans.sort((a, b) => (a.tagName < b.tagName ? -1 : a.tagName > b.tagName ? 1 : 0));
+}
+
 /** The pricing columns of a product with one price for everybody (no grid). */
 export interface FixedPricedProduct {
   amountCents: number;
