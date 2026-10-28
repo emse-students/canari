@@ -951,6 +951,14 @@ Mi 9T: "Discard this capture?" reappeared over the posts feed after publishing o
 
 Fix at the source: `historyOverlayStack` passes a reason to close handlers (`'back'` from popstate, `'navigation'` from the drain). The take's handler asks only for `'back'`; for `'navigation'` it clears the editor and publish step, aborts a recording and drops the take, with no question and no re-armed entry. Tests: `ReelCapture.svelte.test.ts` (review, publish step, editor, recording, discard) and `historyOverlayStack.test.ts`. Other handlers ignore the reason and are unchanged.
 
+## The camera does not open again once the member has left it (Mi 9T, 2026-10-28)
+
+The system's own records (`dumpsys media.camera`, `dumpsys audio`) showed the app's front camera and a CAMCORDER recording open for 0.3-0.7 s in two places the member had already left: after a Publish, with the feed on screen, and on the gallery picker's return, before the picked video reached its review. Nothing was held: the session's generation guard released the late stream (`#N came back after the session moved on`). The defect was the START, and a release that heals it is still a defect.
+
+Two causes, both in `CameraScreen`'s hold-off contract. (1) Dropping the take to `ready` - the navigation drain of the section above, and a composer hand-back (`leaveWithTake`) - lifted `paused`, whose effect opened the camera on a screen that was being unmounted. (2) The gallery picker backgrounds the app on Android; its return ran `CameraSession.resume()` while the state was still `ready`, and the picked file landed in a review only after the open was asked.
+
+Fix: `ReelCapture` holds the camera off while the screen is LEAVING (`paused` includes it; only a navigation that ends with the screen still mounted clears it, `afterNavigate`), and while the gallery picker is open (`CameraScreen.deferOpen`: a STOPPED camera stays stopped until the picker answers - a pick, a refused pick, or the input's `cancel` - while a LIVE camera is never closed by it, so a desktop picker keeps its preview). Every decline is a `[camera]` / `[reel-capture]` debug line naming what declined it. `CameraSession` is unchanged. Pinned by `ReelCapture.svelte.test.ts` (opens counted through the injected opener) and `CameraScreen.svelte.test.ts` (the `deferOpen` contract). The live broadcaster (`LiveBroadcaster`) shares `CameraSession` but not `CameraScreen`: it has no review, no gallery and no drop back to a preview, and resumes only in `preview`/`starting`.
+
 
 ## Audit of 2026-10-11 - are CanaReels functional and optimised? (code read at `origin/main` `1a9b4b91d`, Mi 9T measured)
 

@@ -209,6 +209,9 @@ export class TauriMlsService extends BaseMlsService {
     this._cacheStamp.set(groupId, stamp);
     if (epoch !== null) {
       this._epochByGroupId.set(groupId, epoch);
+      // An epoch the manager answered proves it holds the group: a listing this read overtook skips
+      // it (touched since), so the read adds it itself (see `syncGroupCachesFromNative`).
+      this._knownGroups.add(groupId);
       logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch });
       return;
     }
@@ -1549,6 +1552,8 @@ export class TauriMlsService extends BaseMlsService {
       if (this.cacheWriteAllowed(groupId, stamp)) {
         this._cacheStamp.set(groupId, stamp);
         this._epochByGroupId.set(groupId, epoch);
+        // Held, as the manager just said - see `readEpochIntoCache`.
+        this._knownGroups.add(groupId);
       }
       return epoch;
     } catch (e) {
@@ -1566,6 +1571,13 @@ export class TauriMlsService extends BaseMlsService {
   protected async exportGroupInfo(groupId: string): Promise<Uint8Array> {
     const gi = await invoke<number[]>('exporter_group_info', { groupId });
     return new Uint8Array(gi);
+  }
+
+  /** Tauri-native `invoke` wrapper - `mls_external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('mls_external_join_is_a_further_device', {
+      groupInfoBytes: Array.from(groupInfoBytes),
+    });
   }
 
   /** Tauri-native `invoke` wrapper - builds an external commit from a served GroupInfo and stages it.
@@ -1736,6 +1748,11 @@ export class TauriMlsService extends BaseMlsService {
   /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
   async graineRun(groupId: string): Promise<GraineRunReading> {
     return invoke<GraineRunReading>('graine_run', { groupId });
+  }
+
+  /** This device's own credential signature key (`mls_own_signature_key`). */
+  async ownSignatureKey(): Promise<Uint8Array> {
+    return new Uint8Array(await invoke<number[]>('mls_own_signature_key'));
   }
 
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */
