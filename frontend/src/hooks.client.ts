@@ -9,6 +9,8 @@
 
 import type { HandleClientError } from '@sveltejs/kit/hooks';
 import { version } from '$app/env';
+import { resolve } from '$app/paths';
+import type { AppPath } from '$lib/utils/internalPath';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -28,8 +30,6 @@ import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 import { shopReturnPath } from '$lib/shop/checkoutReturn';
-import { resolve } from '$app/paths';
-import type { AppPath } from '$lib/utils/internalPath';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
