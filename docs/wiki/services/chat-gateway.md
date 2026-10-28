@@ -474,7 +474,7 @@ never a status code. Run it from `infrastructure-frontend-1`, the one container 
 ### The variable used to feed three consumers that wanted a single origin
 
 `frontend-ssr`'s `ORIGIN` - adapter-node's public origin - read `${ALLOW_ORIGIN:-...}` and was
-measured on prod holding the whole comma-separated list as one origin. It reads `FRONTEND_URL` now.
+measured on prod holding the whole comma-separated list as one origin. It read `FRONTEND_URL` after that, and since adapter-node 6 (2026-10-27) there is no `ORIGIN` at all: the origin is derived per request ([architecture](../frontend/architecture.md)).
 The nginx `frontend` service's `ORIGIN`, `VITE_GATEWAY_URL` and `VITE_DELIVERY_URL` read it too and
 are **deleted**: that image is `nginx:stable-alpine` serving a build with no entrypoint
 substituting anything, and a `VITE_` variable is baked in at BUILD time by the workflows writing
