@@ -1289,7 +1289,7 @@ export async function loginImpl(
         // The redirect first, the preview after it (synchronous), the flag last: nothing here may
         // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto(resolve('/login'), { replaceState: true });
+        else void goto(resolve('/login'), { replace: true });
         withdrawLandingPreview('session expired');
         releaseLoginFlag();
         return;
@@ -2602,13 +2602,13 @@ export async function loginImpl(
       markRestoreAttempted();
       void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto(resolve('/login'), { replaceState: true });
+      else void goto(resolve('/login'), { replace: true });
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
       const loc = window.location;
       void goto(resolve(internalPath(loginReturningTo(loc.pathname, loc.search, loc.hash))), {
-        replaceState: true,
+        replace: true,
       });
     }
   } finally {

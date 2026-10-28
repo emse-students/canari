@@ -2339,6 +2339,7 @@ are both ON with no backfill). It lives in THIS service because every push is se
 | `reactions` | `social_reaction`, and the DM reaction (`reaction: 'true'`) | `sendPushToUser` |
 | `events` | the six `event_*` keys | `sendPushToUser` |
 | `forms` | `form_opening_soon`, `form_open`, `form_paid_over_capacity` (the organiser alert, [forms](../frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off): filed under the EXISTING id, since a new id is a switch older clients cannot draw), `type: 'form_reminder'` | `sendPushToUser` |
+| `follows` | `social_follow_request`, `social_follow_accepted` (WP-F4). A NEW id on purpose: a follow request is no other category's kind. An older build cannot draw its switch, but the choice is per ACCOUNT and decided here, so a switch flipped on any newer device silences every device. Off, the request still waits in the inbox | `sendPushToUser` |
 
 The id list and the push-to-category map are ONE file, `services/push-category.ts`; the frontend
 mirrors the ids (`frontend/src/lib/notifications/categories.ts`) and `categories.contract.test.ts`

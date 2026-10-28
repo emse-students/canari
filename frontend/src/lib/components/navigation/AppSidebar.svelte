@@ -53,7 +53,10 @@
     isExpanded = false;
   }
 
-  afterNavigate(() => {
+  afterNavigate(({ shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     // Collapse the sidebar after navigation only when the cursor has left it.
     if (!isHovering) {
       isExpanded = false;

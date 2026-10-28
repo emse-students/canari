@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-111 scripts.
+112 scripts.
 
 | script | what it is |
 |---|---|
@@ -102,6 +102,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `purge-devices.mjs` | Deletes NAMED devices of an account, through the real UI. |
 | `recv.mjs` | Waits for one message to ARRIVE on one client, and ends on the bubble rather than on a clock. |
 | `reload.mjs` | Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
+| `removalrows.mjs` | KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - A REMOVAL IS COMMITTED, NOT ONLY UNROUTED. |
 | `results.mjs` | Append-only result log for the campaign. |
 | `rowkit.mjs` | THE PURE HALF OF EVERY 1.4.1 ROW RUNNER - the names a row mints, and how its verdict is composed. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
@@ -149,7 +150,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-94 scripts.
+95 scripts.
 
 | script | what it is |
 |---|---|
@@ -236,6 +237,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
 | `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
+| `archive/removals.mjs` | KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - a removal is COMMITTED, not only unrouted. |
 | `archive/roster.mjs` | THE MEMBERSHIP TABLE ITSELF - the four rows nothing on this board could have caught. |
 | `archive/salon.mjs` | THE SALON ROWS OF THE 1.4.1 CAMPAIGN - the removal bound (#2284) on a salon's access list. |
 | `archive/search.mjs` | SEARCH-1..6 - the two searches this app has (in-conversation full-history, and the sidebar |
@@ -252,7 +254,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-65 scripts.
+66 scripts.
 
 | script | what it is |
 |---|---|
@@ -303,6 +305,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/picker-selftest.mjs` | THE RIG CHOOSES AN OPTION OF THE IN-APP PICKER BY ITS DRAWN LABEL, AND REFUSES WITH A REASON. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
+| `archive/removals-selftest.mjs` | THE REMOVAL ROWS' JUDGE, PINNED (`removalrows.mjs`): a clean measurement passes, each fact broken |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
 | `archive/salon-selftest.mjs` | THE SALON ROWS' OWN JUDGEMENTS, PINNED (`salonrows.mjs`). |
 | `archive/seedargs-selftest.mjs` | THE SEEDER'S GRAMMAR REFUSES WHAT IT DOES NOT KNOW, AND THIS HOLDS IT TO THAT. |
@@ -379,4 +382,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-318 scripts in total.
+321 scripts in total.

@@ -5,6 +5,7 @@ import {
   commitReleasedDepartureIfElected,
   electDepartureCommitter,
   electionWindow,
+  forgetDeferredRemovals,
   windowOffset,
 } from './departureCommitter';
 
@@ -346,6 +347,50 @@ describe('a departure left to the actor is decided again ONLY on its release', (
     releasedByUserId: 'Carol',
     releasedByDeviceId: 'dev-c',
   };
+
+  // Every case starts from a receiver that DEFERRED Bob's Remove to Carol's device on the removal.
+  beforeEach(async () => {
+    forgetDeferredRemovals();
+    await expect(commitDepartureIfElected(channels, kickedByCarol, log)).resolves.toEqual([
+      'actor-commits',
+    ]);
+    lines = [];
+    vi.mocked(channels.listMembers).mockClear();
+    vi.mocked(channels.listWorkspaceMembers).mockClear();
+  });
+
+  it('a release naming a device this receiver did not defer to changes nothing - even a leaf of its caller', async () => {
+    // A release is bound to a leaf of whoever posts it, not to the removal: Mallory, allowed to
+    // remove members and holding a leaf here, names her own device. Nothing was deferred to it.
+    runtime.leaves = ['alice:dev-a', 'carol:dev-c', 'mallory:dev-m', 'bob:dev-b'];
+    await expect(
+      commitReleasedDepartureIfElected(
+        channels,
+        { ...releasedByCarol, releasedByUserId: 'mallory', releasedByDeviceId: 'dev-m' },
+        log
+      )
+    ).resolves.toBe('not-deferred');
+    expect(channels.listMembers).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+    // ...and the deferral to Carol stands: HER release is still decided.
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'elected-here'
+    );
+  });
+
+  it('a release is consumed once, and forgotten at sign-out', async () => {
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'elected-here'
+    );
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'not-deferred'
+    );
+    await commitDepartureIfElected(channels, kickedByCarol, log);
+    forgetDeferredRemovals();
+    await expect(commitReleasedDepartureIfElected(channels, releasedByCarol, log)).resolves.toBe(
+      'not-deferred'
+    );
+  });
 
   it('a release NEVER elects the actor that released it, online and first in the window as it is', async () => {
     // Carol released it: she will not commit it. Her device is online and holds a leaf, and at an

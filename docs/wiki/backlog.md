@@ -29,7 +29,7 @@ half, the shipped half is a pointer, never a retelling.
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Not built. Starts AFTER the stable `1.4.1`, not before.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -89,44 +89,123 @@ shown on the first open after a future update, covering many features of the app
 product work for after the stable, none is designed yet; ask the user for the wording and the
 placement of (b) and the scope of (c) before building.
 
-### The work packages, in order, each with its starting point and its proof
+### The work packages, in order: one small pull request each, its starting point and its proof
 
-- **WP-F1 - follow status and the setting** (a DATA MIGRATION: it ships with a stable only on the
-  user's go). Add `status` (`pending` / `accepted`) to `user_follows`, every existing row
-  `accepted`; NO setting (every person is private, user 2026-10-25). Start: `apps/social-service/src/follows/entities/user-follow.entity.ts`,
-  `follows/follows.service.ts:81` (`followUser`), `posts/posts.controller.ts:181`. Proof:
-  migration idempotence spec, a follow of a person lands `pending`, of an entity `accepted`.
-- **WP-F2 - every reader of `user_follows` reads accepted rows only.** Enumerate the consumers, not
-  only the feed: the Suivis arm (`posts/posts.service.ts` ~1361 and `getFollowedUserIdsForUser`),
-  the announce sweep (`spaces/reader-spaces.ts`, the two `user_follows` subqueries), the live start
-  push (`lives/live-announcer.ts`), the account erasure. Proof: a pending follower gets no Suivis
-  row, no announce, no live push.
-- **WP-F3 - the request inbox, the followers list and "remove follower".** Reuse the D38b inbox
-  pattern (`/notifications/requests`); accept, refuse, remove; a refusal and a removal tell nobody.
-  User-facing strings through Paraglide. Proof: component tests plus a rig row (two contexts: ask,
-  accept, see; remove, stop seeing).
-- **WP-F4 - a block deletes pending requests both ways**, beside the existing severing
-  (`apps/core-service/src/users/user-blocks.service.ts:164`). Proof: a block leaves no row in
-  either direction, whatever its status.
-- **WP-F5 - the visibility predicate** (a DISCLOSURE change: adversarial Opus review mandatory).
-  Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
-  (`spaces/reader-spaces.ts:204-242`), NEVER for an anonymous post (following someone must not
-  unmask what they posted anonymously), never through a read grant, and keep it monotone for the
-  newly-reached computation. Ships only after WP-F3 is live, so every user can see and prune the
-  grandfathered followers before those followers gain cross-space reach (see risks). Proof: an
-  integration matrix (accepted / pending / none x same space / other space x personal / anonymous
-  / association post), and the existing read-grants spec unchanged.
-- **WP-F6 - member reposts.** The consent setting (per author, per post); the SQL alongside the
-  republication kinds (`posts/republication-sql.ts:6` and `:14` restrict republishers to entities
-  today); the consent check modelled on `posts/personal-republications.service.ts:159`; feed
-  placement in Suivis at the repost time; the newly-reached notification; the cascades (hide,
-  delete, block, erasure); reels included; the share action in
-  `frontend/src/lib/posts/sharePost.ts`. Proof: the D38b refusal list re-run for a member
-  reposter, a hide removing every repost, a notification only for the newly reached.
-- **WP-F7 - texts.** Privacy policy (`/legal/privacy`), register C5
-  ([register](compliance/register-of-processing.md)), terms (`/legal/cgu`), in the same pull
-  request as the code that makes them true, and the D34-D41 tables of
-  [profiles-and-access](profiles-and-access.md).
+Planned 2026-10-27 against `main` at `a97e1cea5`. **Releases, not merges, are the unit that
+matters here:** WP-F1 to WP-F4 and WP-F7 reach users in ONE stable - F1 alone would turn every new
+follow into a request nobody can answer - and that stable carries a data migration, so it ships on
+the user's go. WP-F5 and WP-F6 each follow in a LATER stable. **The two packages marked DISCLOSURE
+(F5, F6) get an adversarial Opus security review before the lead arms them**; the others get the
+ordinary review.
+
+- **WP-F1 - the data model, the migration, and every reader counting accepted rows only. BUILT,
+  draft pull request #2589.** Migration 114 adds `user_follows.status` (`pending` / `accepted`, a
+  CHECK) with every existing row `accepted` (decision 3), then sets the default to `pending` so a
+  writer that forgets the column fails closed; a partial index on what is pending FOR a person
+  serves F2's inbox. `POST /api/posts/users/:id/follow` now writes a `pending` request and answers
+  `{ ok, status }`; `DELETE` unfollows or withdraws; `GET .../follow-status` answers
+  `{ following, status }` (`following` kept true for a request, for older clients -
+  [legacy-compatibility](legacy-compatibility.md)). NO setting (Q1). Old WP-F2 is folded in, because
+  a pending row read as a follow would be a leak the day F1 merges: the Suivis arm
+  (`getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`), the personal
+  republication's newly-reached rule and the live push (`liveAudienceSql`) all AND ONE fragment,
+  `acceptedFollowSql` (`follows/follow-status.ts`); the erasure and the block severing delete
+  whatever the status. Proof: `user-follow-status.integration.spec.ts` (existing rows accepted,
+  replay a no-op, a status-less insert pending, the CHECK), a pending follower in the reader-spaces,
+  personal-republication and lives PostgreSQL specs - all three fail when the fragment is `TRUE` -
+  and `follows.service.spec.ts` (a follow lands pending, a re-ask never downgrades an accepted one).
+  Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25).
+- **WP-F2 - the request API: inbox, accept, refuse, and the one notification. BUILT, draft pull
+  request #2601, stacked on #2589.** Start:
+  `follows/follows.service.ts`, `posts/posts.controller.ts` (the follow routes), the D38b request
+  queue in `posts/personal-republications.service.ts` for the shape. `GET` the pending requests FOR
+  the caller (the partial index of 114), `POST .../accept` (pending -> accepted, under a row lock so
+  a concurrent withdraw cannot be accepted), `POST .../refuse` (the row is deleted; a refusal tells
+  nobody and does not stop a later ask). A new request notifies ONE person through the existing
+  `PostNotificationsService` (a `follow_request` type: a bell row and a push, `contentKey` for the
+  native renderers, NOT in `MUTABLE_PUSH_TYPES`); an acceptance notifies the requester
+  (`follow_accepted`) - each at most ONCE per pair, from a `user_follow_notices` row (never a
+  clock), and the ask route is throttled per caller. An ask of an id that is not a person is 404
+  `FOLLOW_TARGET_NOT_FOUND`, an ask across a block 403 `FOLLOW_BLOCKED`, both decided inside the one
+  `INSERT ... SELECT`. The block severing deletes both directions whatever the status, and the
+  request bell rows with them: a spec pins it.
+  Proof: unit specs for each transition, a PostgreSQL spec for accept-vs-withdraw, the
+  `post-notifications` spec for the two types, and the block case.
+- **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #2605, stacked
+  on #2601.** `GET` my ACCEPTED followers (a person sees
+  only their own list), `DELETE` one of them (the row goes, the removed person is told nothing and
+  may ask again), and `GET` my own outgoing requests so a request can be withdrawn from a list.
+  Start: `FollowsService`, the controller. Proof: a spec that a removed follower drops out of the
+  Suivis arm, the announce and the live push at once (the F1 readers), and that one person cannot
+  read another's list.
+- **WP-F4 - the client screens, every string through Paraglide (`messages/fr.json` and `en.json`).
+  BUILT, draft pull request #2616 (stacked on #2605).** As built: the inbox is
+  `/notifications/follow-requests` (banner on `/notifications`, host `follow-requests`); "Mes
+  abonnes" is the profile section `followers`, with the sent requests under it; the push renderers
+  were F2's; a `follows` notification category with its switch; the rig row is FOL-REQ-1 on
+  [cross-client-testing](cross-client-testing.md). The plan as written:
+  The profile button in three states (Suivre / Demande envoyee / Abonne(e)), reading `status`; the
+  request inbox beside the D38b requests in the notifications screen (accept / refuse); "Mes
+  abonnes" with "Retirer" in the profile; the bell rows of `follow_request` / `follow_accepted`
+  and their push renderers (Kotlin, Swift, web). Start:
+  `frontend/src/routes/profile/[id]/+page.svelte:175`, `frontend/src/lib/posts/api.ts:669`.
+  Proof: component tests, `bun run check`, and a rig row (two contexts: ask, see "Demande envoyee",
+  accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
+  until the floor passes this stable.
+  **Left open by the 2026-10-27 review, each owed before the item it names:**
+  - **Pagination of the three lists, a PRECONDITION OF WP-F5.** The inbox, "Mes abonnes" and the
+    sent requests each load the first 100 rows (`FOLLOW_PAGE_MAX`) and no more. Harmless while a
+    follower only means Suivis; once F5 makes a follower a READER across spaces, a person must be
+    able to see and prune every one of them, so F5 does not arm until the screens page.
+  - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
+    the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
+    through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
+    that saves any switch silently re-enables `follows` - and the same holds for every category
+    added after a build shipped. The server cannot tell what the caller knew: the fix is a client
+    that sends the categories it knows (`known`) so the server keeps the rest, and it protects only
+    builds that send it - the floor (`minClientVersion`) closes the rest. Measured: not yet; the
+    window is a person who turned `follows` off on a new build and then saves a switch on an old one.
+  - **Should `minClientVersion` move with this stable?** A build older than WP-F4 reads
+    `following: true` for a PENDING request (the legacy field, [legacy-compatibility](legacy-compatibility.md)),
+    so it shows "Suivi" for an ask nobody has answered, and it has no inbox to answer one. Nothing
+    leaks - the reader filters are server-side - but the person asked can only answer from a new
+    build. A decision for the user when the stable is cut, with the share of old clients measured
+    from the version header then.
+  - **P3 - a row the block severing missed comes back when the block is lifted.** The severing is
+    a best-effort cross-service call: when it does not run, the request or follow stays in
+    `user_follows`, hidden by every reader while the block stands - and visible again, as it was,
+    the moment the block is lifted. The unblock reaches social-service only as a feed-cache drop,
+    which does not name the pair. The fix is an unblock call that names the pair and deletes what
+    is left between them; until then the stale row is a pending request the person may still
+    refuse, or a follow either side may end.
+  - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
+    one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
+- **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
+  arming).** Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
+  someone must not unmask what they posted anonymously), never through a read grant, and monotone
+  for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else
+  (decision 5). Ships only in a stable AFTER the one carrying F3 and F4, with a one-time notice to
+  every person that their followers will see their posts across spaces, so the grandfathered
+  followers can be pruned first. Proof: an integration matrix (accepted / pending / none x same
+  space / other space x personal / anonymous / association post), the read-grants spec unchanged,
+  and the privacy-policy paragraph in the same pull request.
+- **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
+  review before arming).** The consent setting (per author, per post); the SQL beside the
+  republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
+  on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
+  reaching the reposter's ACCEPTED followers only (Q2); never an anonymous post; blocks both ways;
+  the cascades (hide, delete, block, erasure); feed placement in Suivis at the repost time; the
+  D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
+  Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
+  notification only for the newly reached, and the policy paragraph in the same pull request.
+- **WP-F7 - the register and the privacy policy for follow requests.** Register C5
+  ([register](compliance/register-of-processing.md)): the request, its answer, the followers list,
+  retention (a request until answered or withdrawn; a follow until removed or either account is
+  erased). The privacy policy (`/legal/privacy`, its public face - both change together), the
+  terms (`/legal/cgu`) if they name following, and the D34-D41 tables of
+  [profiles-and-access](profiles-and-access.md). Merges before the stable carrying F1-F4; F5 and F6
+  each amend these texts in their own pull request.
 
 ### Risks, and what proves each away
 
@@ -876,6 +955,27 @@ classify the refusal against the commit log the client just read. Say "still rea
 departed member's leaves are still in the tree after that read; say "removed by another member's
 commit" when the log already removed them. Never branch on the error's message: the outcome is a
 fact the caller already holds.
+
+## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
+
+`watchUsers` / `unwatchUsers` (`presenceStore.ts`) add to and delete from one `Set`. Several holders
+watch the same peer at once: the DM's `ChatHeader`, that DM's sidebar `ConversationTile`, and a
+salon's `ChannelMembersList` (`ChannelMembersList.svelte:59` releases every member id it watched).
+When one of them releases, the peer leaves the poll for all of them. Leaving a DM therefore stops
+polling a peer whose sidebar tile is still on screen, and the dot freezes until something else
+watches that peer again. Owed: count the holders per id, with the release decrementing. Add a unit
+test with two holders and one release, which must still poll. The WP-PRESENCE push that replaces the
+poll needs the same count for its watch set.
+
+## P3 - A conversation tile watches the presence of the peer it MOUNTED with, never the one it shows later (review of #2618, 2026-10-27)
+
+`ConversationTile.svelte` calls `watchUsers([contactName])` in `onMount`. A tile whose `contactName`
+or `isDirect` changes while it stays mounted (a keyed list that reuses the component, or a row whose
+identity resolves after mount) keeps watching the first peer. Owed: an `$effect` on `contactName` and
+`isDirect`, capturing the watched id in its body as `ChatHeader` does
+([architecture](frontend/architecture.md#a-teardown-sees-the-values-its-effect-saw-and-a-derived-read-there-keeps-them-2026-10-27)),
+with a test that changes the prop and asserts the watch moves. It is cheap to fix together with the
+ref-count entry above.
 
 ## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 
@@ -1978,10 +2078,15 @@ suggestions (`INSendMessageIntent`).
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
-- **A text staged while an edit is open merges into the edit.** A refused send or a share that
-  lands on the conversation being edited goes through `restoreFailedDraft` into the composer, which
-  holds the edited message's text: the restored text becomes part of the edit, not of the draft the
-  edit will give back.
+- **A text restored while an edit is open is LOST.** A refused send answered (or a share landing)
+  on the conversation being edited goes through `restoreFailedDraft` into the composer, which holds
+  the edited message's text; `cancel`, `confirm` and `reset` then put back the draft saved at
+  `begin` (`editSession.svelte.ts`), and the restored text is gone - or, on `confirm`, saved as part
+  of the edited message.
+- **The salon ledger detour stays, for durability.** A salon text resumed after the member left the
+  salon goes back to the ledger (`recordUnsentSalonText`), not straight into that salon's draft
+  through the gated writer: the ledger is persisted, the drafts are memory only, so a page closed
+  before the next visit would lose it. Simplifying it waits for drafts that outlive the page.
 - **A mention dropdown can outlive a conversation switch.** `useMentionAutocomplete` closes only on
   input: type `@ali` in A, switch to B before the debounced search answers or with the list open,
   and the list (A's members) stays over B's composer until the next keystroke.
@@ -1991,19 +2096,41 @@ suggestions (`INSendMessageIntent`).
 
 [chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
 
-## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
+## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
 
-`pending_share.json` holds the shared TEXT in the clear, in three places: the App Group (written by
-the iOS Share Extension), the app data directory on iOS (written by `app_group_share.rs`) and on
-Android (written by `IncomingShare.kt`). The copies in `shared_inbox/` are plaintext too. Since
-the review of the Share Extension (PR #2295) both iOS manifests and the App Group inbox are
-EXCLUDED FROM BACKUPS, and Android excludes its whole data domain, so what is left is the file on
-the device while it waits - the same exposure as the copy a system picker leaves in the cache. Not
-a small reuse of the native-cache seal (`native_cache.rs`): the Kotlin and Swift writers would need
-a twin of its envelope, and the extension holds no key (its entitlement is the App Group alone).
-The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT with the install's
-cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
-and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
+A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
+`CompleteUnlessOpen`, the app-side manifest's `Complete` - a locked read deletes nothing, and the
+unlock offers what the lock held back; Android keeps its credential-encrypted storage, with the
+reasoning written down. The app-level seal first sketched here was rejected, with its reasons:
+[sharing](frontend/sharing.md) ("At rest", iOS path item 5). Nothing here compiles iOS, so the
+Swift, the Objective-C and the iOS-only Rust ride the next iOS build.
+
+**Owed on the iPhone, with a passcode set, waiting more than 10 s after each lock** (the key is
+discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and category `share`:
+
+1. Cold launch, unlocked: the `launch sweep:` line appears, and no `deferred` line (the sweep and
+   import no longer ask UIKit before it exists).
+2. Share a text and a photo, unlocked: `moved copy protection = ...` names the expected class
+   (`NSFileProtectionCompleteUnlessOpen` for a copy), and no protection or `setAttributes` error.
+3. Share again with Canari killed, so it waits in the App Group undrained; lock, wait, send a push:
+   the launch import line says `locked with the device` - NOT `ERROR: the share could not be moved
+   or handed over` (a refused protection or create must classify as locked, by its code) - the
+   share is still in the App Group, and no `dropped`, `unreadable` or deletion line.
+   Seeing instead a refusal named `NSCocoaErrorDomain 513` WITHOUT an underlying POSIX error is the
+   outcome this reading exists to find, not a regression: Foundation then gave no code to classify
+   by. Record it here as measured, and the classification is redesigned from that fact.
+4. Unlock straight into Canari: the share is offered on the first activation.
+5. Variant of 3 where the share already sits in the app data directory (imported, not yet drained),
+   and the locked push launch mounts the page: after the unlock it is offered with no new launch
+   (`a share waits (unlock), the page was told`).
+6. A large iCloud video, the phone locked during the capture: with nothing waiting, the share
+   survives; with an older share waiting, that one is not deleted and the new one is refused, said
+   on the extension's card and in its log. KEEP-OLD BY CHOICE: the locked older share cannot be
+   read, and the member was already told it is ready; the member sharing now is told of the
+   failure. The reasons, and the newest-wins alternative rejected, are in
+   [sharing](frontend/sharing.md) ("At rest"). The app side no longer meets this case while
+   locked: it consumes nothing until the unlock, where newest wins as usual.
+7. Sign out while locked, then unlock: the old share is dropped as stale.
 
 ## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
 
@@ -2047,6 +2174,10 @@ Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlis
 build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG` (the compose
 default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
 request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
+**Also allowlisted on 2026-10-27 for the same image, same condition (a release that ships them):** dnspython 2.8.0 (`CVE-2026-114605`, fixed in 2.9.0), msgpack 1.2.1 (`CVE-2026-114613`, 1.2.3) and oauthlib 3.3.1 (`CVE-2026-49272`, 4.0.0). Each entry is scoped by purl and retires through the same check, so the bump pull request deletes all four together.
+
+**Frontend build tooling, 2026-10-28:** `GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1, prototype poisoning in `mergeObject()`, no fixed version published) is ignored in the frontend's dependency audit with its reachability argument in `code-analysis.yml`. Delete the ignore when a fixed `deepmerge` reaches the tree; the audit's retirement step fails until it is.
 
 ## Owed a VERIFICATION, and nothing else
 
@@ -3032,6 +3163,10 @@ and FAILS the day an ignored id is no longer reported, naming the ignore, its pr
 with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
 webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
 step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
+### P3 - the $lib alias migration waits for a quiet frontend (2026-10-27)
+
+SvelteKit 3 deprecates `alias: { $lib: 'src/lib' }`; the deprecation warning prints on EVERY build and sync. The fix is `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`: 1567 files, 7645 imports gaining a `.js` extension. Tried and reverted on 2026-10-27 because it conflicts with every open frontend pull request. **Do it as ONE mechanical commit while the frontend is frozen; trigger: the open frontend pull requests are few.** It removes the alias in `kit.config.js` and, on Windows, the false `tsconfig_invalid` warning ([architecture](frontend/architecture.md#sveltekit-3-and-adapter-node-6-2026-10-27)).
 
 ### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
