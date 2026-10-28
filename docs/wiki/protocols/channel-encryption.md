@@ -1911,7 +1911,7 @@ left to that same backstop**: an actor that lost tab leadership between the kick
 (`not-leader`) releases nothing; a salon the actor's tree holds but this session never registered
 has no scope to commit or release from; receivers at different epochs may compute different windows
 (the epoch gate keeps one commit); the actor's OWN other devices are outside the release's audience,
-so they never re-decide it. A release refused by the per-user throttle (60 per minute, across all
+so they never re-decide it. The deferral is held per TAB: if leadership moves to another tab between the removal and the release, the new leader says `not-deferred`, and if the others had left the Remove to this device nobody commits it until a load. A deferral is consumed before the tree is read, so a release decided `unreadable` loses it. A new removal of the same person in the same group ends any earlier deferral, so a release of the earlier one cannot start a second election. A release refused by the per-user throttle (60 per minute, across all
 communities) is logged `NOT announced` and falls to the backstop too. An actor holding no key group
 for the scope releases to every member: the ones that did not defer say `not-deferred` at debug
 level only. **Rollout**: the deferral, the release and the route's `400` without a device ship in
