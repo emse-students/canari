@@ -1578,13 +1578,15 @@ key groups, and they are NOT the same question:
   old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
   caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
   re-measured with it.
-- **The revoked device's leaf.** The roster collector (`reconcileDistributionGroupRoster`) does not
-  read the `revoked` answer, so a revoked device's leaf stays in every key group it was in and can
-  read every seed distributed there until the group is re-created. The server now refuses its
-  COMMITS (`validateCommit`, `DEVICE_REVOKED`) and its routing is purged, so it receives nothing new
-  through the delivery service - what is left is the cryptographic half. Owed: the same allowlist
-  there, staged on the published branch like the conversation one; a removal IS a departure, so it
-  rotates, as it should.
+- **The revoked device's leaf - BUILT 2026-10-27, not shipped.** The key-group roster pass now asks
+  `POST mls/groups/:groupId/revoked-leaves` which of the leaves it keeps belong to a revoked device
+  and removes exactly those by device, staged on the published branch
+  ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+  Owed: its run on dev, and the row that revokes a device of a community member and reads the key
+  group's tree afterwards. It runs on every community load; the revoking device itself does not
+  trigger a pass (not built). **Its scope is limited by the
+  binding** (a key group's device rows); widening it is a schema change, approved 2026-10-27 and
+  built as its own draft pull request, reaching production only with the user's yes at the stable.
 
 ## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
 

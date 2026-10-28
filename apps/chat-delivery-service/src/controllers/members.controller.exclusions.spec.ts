@@ -5,6 +5,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { MembersController } from './members.controller';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -262,6 +263,8 @@ describe('MembersController - membership intervals and the exclusions read', () 
         { provide: DataSource, useValue: dataSource },
       ],
     })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();

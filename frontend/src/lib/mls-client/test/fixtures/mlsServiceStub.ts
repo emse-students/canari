@@ -135,6 +135,7 @@ export function createMlsServiceStub(
     ),
     // As every server since step A answers: addressed history answers are routed.
     getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
+    getRevokedLeaves: vi.fn().mockResolvedValue([]),
     getGroupRosters: vi.fn().mockResolvedValue({
       rosters: new Map(),
       refused: new Set(),

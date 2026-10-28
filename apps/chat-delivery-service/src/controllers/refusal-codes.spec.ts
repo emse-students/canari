@@ -7,6 +7,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { InvitationsController } from './invitations.controller';
 import { MembersController } from './members.controller';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { NotificationPreferencesController } from './notification-preferences.controller';
 import { SecurityController } from './security.controller';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -75,6 +76,8 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: MessagingService, useValue: {} },
         ],
       })
+        .overrideGuard(UserThrottlerGuard)
+        .useValue({ canActivate: () => true })
         .overrideGuard(HeaderAuthGuard)
         .useValue({ canActivate: () => true })
         .compile();
@@ -148,6 +151,8 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: DataSource, useValue: { manager: { query: jest.fn() } } },
         ],
       })
+        .overrideGuard(UserThrottlerGuard)
+        .useValue({ canActivate: () => true })
         .overrideGuard(HeaderAuthGuard)
         .useValue({ canActivate: () => true })
         .compile();
@@ -205,6 +210,8 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
         ],
       })
         .overrideGuard(ThrottlerGuard)
+        .useValue({ canActivate: () => true })
+        .overrideGuard(UserThrottlerGuard)
         .useValue({ canActivate: () => true })
         .overrideGuard(HeaderAuthGuard)
         .useValue({ canActivate: () => true })

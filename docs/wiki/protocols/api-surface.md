@@ -144,6 +144,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member (current members only) |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which sent leaf identities belong to a revoked device (key groups included) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 

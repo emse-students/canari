@@ -30,9 +30,10 @@ describe('ChatBackgroundService - a removal broadcast', () => {
     expect(handler).toMatch(/if \(!selfLeft\) \{\s*showToast\(m\.channel_removed_from_channel\(/);
   });
 
-  it('forgets the salon grants seen on sign-out', () => {
+  it('forgets the salon grants and the revocation answers on sign-out', () => {
     const signOut = source.slice(source.indexOf('function handleSignedOut'));
     expect(signOut.slice(0, 1500)).toContain('salonGrants.clear();');
+    expect(signOut.slice(0, 1500)).toContain('forgetRevokedLeafAnswers();');
   });
 
   it('decides a released Remove on the release event alone, never on a reconnect', () => {

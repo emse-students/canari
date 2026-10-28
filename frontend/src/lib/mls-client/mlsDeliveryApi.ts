@@ -144,6 +144,13 @@ export const HISTORY_BATCH_MAX_GROUPS = 50;
  */
 export const GROUP_ROSTERS_MAX_GROUPS = 200;
 
+/**
+ * MIRRORS `REVOKED_LEAVES_MAX_IDENTITIES` in chat-delivery-service's `members.controller.ts`: the
+ * most leaf identities one `POST /api/mls/groups/:groupId/revoked-leaves` carries. Chunked by it,
+ * so the limit is never learnt by being refused.
+ */
+export const REVOKED_LEAVES_MAX_IDENTITIES = 1000;
+
 /** What one {@link MlsDeliveryApi.fetchGroupRosters} read answered. */
 export interface GroupRosterBatch {
   /** Roster user ids by group, for every group the server answered. */
@@ -2561,6 +2568,51 @@ export class MlsDeliveryApi {
         addressedAnswers: body?.addressedAnswers === true,
       };
     });
+  }
+
+  /**
+   * Which of `identities` - leaves of `groupId`'s tree, as `userId:deviceId` - belong to a revoked
+   * device, `REVOKED_LEAVES_MAX_IDENTITIES` per `POST /api/mls/groups/:groupId/revoked-leaves`. The
+   * one revocation read a KEY group has: `group-rosters` never answers one.
+   *
+   * THROWS on any answer that is not one (a refusal, a 404 from a server that predates the route, a
+   * transport failure): the caller then removes nobody, and an unanswered question must not reach
+   * it looking like "none revoked". AN ALLOWLIST: only an identity this call SENT can come back.
+   *
+   * Under the `read` head deadline (`DEADLINE_MS.read`, `requestDeadline.ts`), though it is a POST:
+   * it changes nothing, and it runs inside a scope's serialised roster pass, whose termination rests
+   * on every read in it ending - a hang is a `RequestDeadlineError`, which the pass reports and ends
+   * on, releasing the lane.
+   */
+  async fetchRevokedLeaves(groupId: string, identities: string[]): Promise<string[]> {
+    const sent = new Set(identities);
+    const revoked: string[] = [];
+    for (let i = 0; i < identities.length; i += REVOKED_LEAVES_MAX_IDENTITIES) {
+      const chunk = identities.slice(i, i + REVOKED_LEAVES_MAX_IDENTITIES);
+      const res = await trackedFetch(
+        this.f,
+        `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/revoked-leaves`,
+        {
+          method: 'POST',
+          headers: await this.auth({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ identities: chunk }),
+        },
+        { requestClass: 'read' }
+      );
+      if (!res.ok) {
+        throw new Error(
+          `revoked-leaves of ${groupId.slice(0, 8)}... not answered: ${res.status} body=${(await res.text()).slice(0, 200)}`
+        );
+      }
+      const data = (await res.json()) as { revoked?: unknown };
+      if (!Array.isArray(data.revoked)) {
+        throw new Error(`revoked-leaves of ${groupId.slice(0, 8)}... answered no list`);
+      }
+      for (const id of data.revoked) {
+        if (typeof id === 'string' && sent.has(id)) revoked.push(id);
+      }
+    }
+    return revoked;
   }
 
   /**
