@@ -7,7 +7,11 @@
  * touched.
  */
 export type RemovalOutcome =
-  /** Somebody else was removed: nothing local changes. */
+  /**
+   * Somebody else was removed: nothing local changes. The key-group Remove it owes is committed by
+   * the device that performed the kick or the revoke (`utils/graine/commitRemoval.ts`), never by
+   * every receiver of this fan-out.
+   */
   | 'ignore'
   /** This user was removed from the whole community: purge the workspace. */
   | 'community'
