@@ -60,6 +60,12 @@ Left by the review of #2584; none is built. Start after the tier stack has merge
 - **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
   database lacks tables it touches (`association_calendar_events` among them), so it fails on a
   local fresh-database run only - CI never shows it. Make the spec create what it reads.
+- **P3 - retagging a tier leaves the forms that grant the old key behind.** Changing a tier's key
+  does not update the `cotisationVariantKey` of the forms granting the old one: those forms then
+  refuse every new answer (the tier ranks `unranked`) and an answer already in flight ends
+  `paid_not_granted`. Either carry the new key to those forms in the retag's transaction, or refuse
+  the retag while a form still names the old key; the hourly `[PAID_NOT_GRANTED]` line is what
+  names a payment it already caught.
 
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 
