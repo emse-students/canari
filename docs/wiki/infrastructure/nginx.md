@@ -352,7 +352,7 @@ capability. The table is what the container's own config does:
 | `/auth/callback?code=&state=` | `/auth/callback?query-redacted` | `no-referrer` |
 | `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
 | `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
-| a join path quoted percent-encoded in any query (`/login?returnTo=%2Fc%2Fjoin%2F<token>`) | the token replaced by `redacted` | - |
+| a join path quoted percent-encoded in any query (`/login?returnTo=%2Fc%2Fjoin%2F<token>`) | the token replaced by `redacted` | `no-referrer` on `/login` (any query) |
 | a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
 
 How it is built, in `Dockerfile.frontend`:
@@ -371,10 +371,11 @@ How it is built, in `Dockerfile.frontend`:
 - **The referrer policy is the existing `$capability_referrer_policy` map** (until 2026-10-28 called
   `$public_form_referrer_policy`), sent by `@ssr` and `@app_shell`. It is keyed on `$request_uri`, so
   the degraded shell gets it too. Measured on the built image against a stub SSR and against no SSR:
-  all four page shapes answer `no-referrer` through both blocks, and `/chat`, `/c/joinx/...` and
-  `/auth/callbacks` answer none.
+  the join, callback, receipt and login pages answer `no-referrer` through both blocks, and `/chat`,
+  `/c/joinx/...`, `/auth/callbacks` and `/logins` answer none. `/login` is covered because a join page
+  sends a signed-out reader there with the invite in `returnTo`.
 - **The pages also carry `<meta name="referrer" content="no-referrer">`** (the two join pages, the
-  callback and the receipt page). The Tauri app has no nginx, a dev server sends no header, and a
+  callback, login and the receipt page). The Tauri app has no nginx, a dev server sends no header, and a
   client-side navigation onto one of these pages gets no response header, so the `<meta>` covers all
   three. Two limits. A `<meta>` removed on leaving the page does not restore the previous policy, so
   the rest of that document session sends no Referer, which is harmless. And in Tauri every API call
@@ -385,7 +386,7 @@ How it is built, in `Dockerfile.frontend`:
 Gates: `.github/scripts/tests/access-log-redaction.test.mjs` runs all three maps, in order, against a
 case that must be redacted and a near-miss that must stay readable for every rule. Removing any single
 rule fails it. `static-headers.test.mjs` does the same for the policy map, and
-`frontend/src/routes/capabilityReferrer.test.ts` pins the `<meta>` in the four pages. The built image
+`frontend/src/routes/capabilityReferrer.test.ts` pins the `<meta>` in the five pages. The built image
 passes `nginx -t`. Run with real requests, its access log held none of the secrets sent.
 
 **What this config does NOT govern.** It controls the container's OWN access log and the response

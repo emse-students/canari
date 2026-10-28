@@ -214,9 +214,9 @@ for (const block of locations) {
 }
 
 // A PAGE WHOSE URL CARRIES A CAPABILITY SENDS NO REFERER, AS A HEADER (2026-10-22 for the public
-// forms, paid public forms WP-P2; 2026-10-28 for the two join pages and the OIDC callback). The guest
-// receipt page carries its receipt in the query, a join page its invite in the path, the callback a
-// one-time code in the query, and a <meta> in a page that boots on the client applies only after its
+// forms, paid public forms WP-P2; 2026-10-28 for the two join pages, the OIDC callback and login). The
+// guest receipt page carries its receipt in the query, a join page its invite in the path, the callback
+// a one-time code in the query, login an invite in its returnTo, and a <meta> in a page that boots on the client applies only after its
 // first chunk requests have left with the full URL. So both blocks that send a page - the SSR answer
 // and the degraded shell - send the policy, and the map that decides it, run here on sample URIs,
 // gives `no-referrer` to those pages and nothing to any other (each near-miss is a case).
@@ -253,6 +253,11 @@ if (!referrerMap) {
     ['/x/c/join/abc', ''],
     ['/auth/callbacks', ''],
     ['/auth/login', ''],
+    ['/login?returnTo=%2Fc%2Fjoin%2FINVITE-SECRET', 'no-referrer'],
+    ['/login', 'no-referrer'],
+    ['/logins', ''],
+    ['/login-help', ''],
+    ['/x/login?returnTo=keep', ''],
     ['/forms/abc-123', ''],
     ['/', ''],
     ['/feed?f=1', ''],

@@ -6,8 +6,9 @@
  * that boots on the client sends its first chunk requests before any <meta> applies. The Tauri app
  * has no nginx, a dev server sends no such header, and a client-side navigation onto one of these
  * pages receives no response header at all - so each page also carries the <meta>. The receipt
- * page's own rendered test checks its <meta> in the DOM; this one pins the same line in the other
- * three, read from their source because each needs a session, a router and a service to render.
+ * page's own rendered test checks its <meta> in the DOM; this one pins the same line in the others,
+ * read from their source because each needs a session, a router and a service to render. The login
+ * page is one of them: a join page sends an unsigned-in reader there with the invite in `returnTo`.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,6 +22,7 @@ describe('capability pages send no Referer', () => {
     'c/join/[token]/+page.svelte',
     'g/join/[token]/+page.svelte',
     'auth/callback/+page.svelte',
+    'login/+page.svelte',
     'f/[id]/receipt/+page.svelte',
   ]) {
     it(`${page} declares no-referrer in its head`, () => {

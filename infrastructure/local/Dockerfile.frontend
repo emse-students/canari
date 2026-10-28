@@ -128,7 +128,8 @@ map $http_referer $logged_http_referer {\n\
 # A PAGE WHOSE URL CARRIES A CAPABILITY SENDS NO REFERER (2026-10-22 for `/f/`, paid public forms WP-P2;\n\
 # 2026-10-28 for the two join pages and the OIDC callback). `/f/<id>/receipt` carries a guest'"'"'s receipt\n\
 # in its query, `/c/join/<token>` and `/g/join/<token>` an invite in their path, `/auth/callback` a\n\
-# one-time code in its query; each page boots on the client, so the first requests it makes (its own\n\
+# one-time code in its query, `/login` an invite in its returnTo when a join page sent a reader there\n\
+# signed out; each page boots on the client, so the first requests it makes (its own\n\
 # chunks) leave before any <meta> in it can apply, carrying the whole URL as their Referer. So the\n\
 # policy is a HEADER of the page itself. Keyed on $request_uri, which @app_shell'"'"'s try_files does not\n\
 # rewrite. An empty value sends no header, so every other page is unchanged.\n\
@@ -137,6 +138,7 @@ map $request_uri $capability_referrer_policy {\n\
     "~^/f/" "no-referrer";\n\
     "~^/[cg]/join/" "no-referrer";\n\
     "~^/auth/callback(?:[?]|$)" "no-referrer";\n\
+    "~^/login(?:[?]|$)" "no-referrer";\n\
 }\n\
 # FIVE DIAGNOSTIC FIELDS TRAIL THE LINE (2026-10-18), for the intermittent Messenger preview failure the\n\
 # access log could not explain: it held two response sizes for one crawler hit and nothing to say why.\n\
