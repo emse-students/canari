@@ -134,6 +134,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     };
     const userTagService = {
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      // The paid form's pre-check before any payment request: nothing held, so a rise.
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
     };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
@@ -605,8 +607,12 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('1500 cents'));
       expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(rows[0].cotisationGrantedAt).toBeNull();
-      // The payer's trace that they paid stays: the refund happens outside the application.
+      // The payer's trace that they paid stays: the refund happens outside the application. It is
+      // MARKED: the form grants a tier, and no seat means no tier was granted.
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
     });
 
     it('treats a pending row past the hold as released even before the job ran', async () => {

@@ -50,8 +50,8 @@ export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 
 /**
  * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds a sibling tier and
- * one of the two has no fixed price (a grid, a free amount, or a held tag whose tier product is
- * gone): no rank can be established, and the sibling XOR would replace the held tier.
+ * one of the two has no fixed price (a grid or a free amount): no rank can be established, and the
+ * sibling XOR would replace the held tier.
  */
 export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
@@ -120,3 +120,11 @@ export function productCheckoutLookup(attempt: {
     ? { sessionId: attempt.requestUuid }
     : { orderRef: productOrderRef(attempt.productId, attempt.id) };
 }
+
+/**
+ * The `code` of the 409 a checkout gets when its product's price grid came to depend on the buyer's
+ * profile (promo, formation) between the moment the purchase was prepared - before the buyer's tier
+ * lock, where the profile is fetched since it calls another service - and the moment it is priced
+ * under that lock. Nothing is opened; trying again fetches what the grid now needs.
+ */
+export const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';

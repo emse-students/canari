@@ -27,6 +27,73 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Cotisation-disabled follow-ups (after the tier stack lands)
+
+Left by the review of #2584; none is built. Start after the tier stack has merged.
+
+- **P2 - a paid form that grants a cotisation still takes money after its association disables
+  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
+  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
+  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
+  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
+  record is written), but the grant is still retried as if it could succeed. Fix it like the
+  product path: refuse opening the payment of a granting form while the association has no
+  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
+- **P3 - the purchases tab mislabels a refusal.** `EditAchatsTab.svelte` logs "cash grant refused:
+  amount out of range" for ANY code `providerRefusalMessage` words (`COTISATION_DISABLED`
+  included): log the code.
+- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
+  membership product with a cotisation mode but no stored tag opens a checkout, then ends
+  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
+  operator, privately.
+- **P3 - `/shop` still offers the buy button for a membership product of an association whose
+  cotisations are disabled**: hide or disable it, as for a refused tier.
+- **P3 - the changelog fragment `tag-grant-scoped-to-issuer.md` does not mention
+  `COTISATION_DISABLED`**: add the clause.
+- **P3 - test nit:** the negative assertion in the "renews the dearer" test should use
+  `expect.objectContaining({ tagName })`.
+- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
+  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
+  never one whose tier is no longer a rise when the sweep settles it.
+- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
+  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
+- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
+  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
+  local fresh-database run only - CI never shows it. Make the spec create what it reads.
+
+## Display follow-ups to the shop pricing (after the tier stack lands)
+
+Left by the review of #2544; none is built. Start after the tier stack (#2544 and its followers)
+has merged.
+
+- **P2 - the association page does not show what the checkout charges.** It lists the same products
+  as `/shop` but prints the product's `amountCents` (a holder of the linked tier sees the full price
+  while the preferential one is charged) and offers the buy button for a `held`, `lower` or
+  `unranked` tier, which answers a 409. Reuse `/shop`'s `preferentialDueCents` and `tierNotOffered`
+  rather than a second computation (`frontend` `AssociationDetailView.svelte`, the product list).
+- **P3 - two docs claim the settlement's rule for a form grant.** `rankTier`'s and
+  `RankedGrantOutcome`'s comments in `user-tag.service.ts` say a form grant is ranked like a
+  settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
+- **P3 - a legacy `memberPriceTag` row WARNs on every quote** (`fixedPriceOf`,
+  `products.service.ts`): warn once per product per process, or move it to the hourly report.
+- **P3 - the shop can name the wrong held tier** for a viewer holding two legacy tiers
+  (`heldTierName`, `shop/+page.svelte`); wording only.
+- **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
+  message (fr, en).
+- **P3 - the tier-lock integration spec builds its lock key by hand** (`waitersReach`): use
+  `buyerTierLockKey()`.
+- **Decision owed to the user - the cash sale's amount.** `grantProductPurchase` records the full
+  `amountCents` by default even when the beneficiary qualifies for the preferential price: decide
+  whether the cash path records the preferential amount.
+
+## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more (decision owed, 2026-10-28)
+
+A form that grants a cotisation tier and charges for more than the tier (an event, a meal) applies
+the shop's rise rule to the whole answer: a holder of that tier or a dearer one is refused before
+any payment ([cotisations](cotisations.md#rising-to-a-higher-tier)). Kept that way by the review of
+#2597 rather than splitting the payment from the grant. Owed: the user's confirmation, or the rule a
+form should follow instead (sell the rest and skip the grant, or a form without the grant).
+
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
 **Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
@@ -2406,6 +2473,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **decide whether a cash sale of a tier records the preferential amount** when the beneficiary qualifies (today the full price by default) | decision | [the entry](#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands) |
+| **confirm the rule for a paid form that grants a tier AND charges for more**: kept refused for a holder of an equal or dearer tier (review of #2597, 2026-10-28) | decision | [the entry](#a-paid-form-that-grants-a-tier-is-refused-to-a-holder-of-an-equal-or-dearer-tier-even-when-it-sells-more-decision-owed-2026-10-28) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |

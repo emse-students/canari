@@ -2,6 +2,7 @@ import {
   fixedPriceFor,
   linkedTierKey,
   pickHeldTier,
+  tierRefusal,
   tierRelation,
   tierRelationOf,
 } from './tier-pricing';
@@ -149,5 +150,18 @@ describe("fixedPriceFor - the preferential price is the admin's, never computed"
       amountCents: 3000,
       preferential: false,
     });
+  });
+});
+
+describe('tierRefusal - one mapping from a relation to the typed 409, for the shop and the forms', () => {
+  it('sells none and higher', () => {
+    expect(tierRefusal('none')).toBeNull();
+    expect(tierRefusal('higher')).toBeNull();
+  });
+
+  it('answers each refused relation with the code the client words', () => {
+    expect(tierRefusal('held')?.code).toBe('PRODUCT_ALREADY_PURCHASED');
+    expect(tierRefusal('lower')?.code).toBe('TIER_NOT_A_RISE');
+    expect(tierRefusal('unranked')?.code).toBe('TIER_NOT_RANKABLE');
   });
 });

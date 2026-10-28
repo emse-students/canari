@@ -2085,6 +2085,38 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(result.amountCents).toBe(9000);
     });
 
+    // The profile is fetched before the lock, from the product read then; a grid that came to need
+    // it by the time the product is re-read under the lock cannot be priced without a call there.
+    it('refuses PURCHASE_PRICING_CHANGED when the grid needs a profile the preparation did not fetch', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne
+        .mockResolvedValueOnce(product({ amountCents: 1000 }))
+        .mockResolvedValue(product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 1 }) }));
+
+      const err = await (service as any).resolvePurchase('asso1', 'prod1', 'user1').then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+        'PURCHASE_PRICING_CHANGED'
+      );
+      expect(pricingFacts.profileFor).toHaveBeenCalledWith('user1', false);
+    });
+
+    it('CONTROL: a grid that needed the profile from the start is priced from it', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
+      );
+      pricingFacts.profileFor.mockResolvedValue({ promo: 2025, formation: null });
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(7000);
+    });
+
     it('prices an unrecognised promo from the generated "everyone else" cell', async () => {
       const { service, productRepo, assoRepo, pricingFacts } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
@@ -2591,6 +2623,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.records[0]).toMatchObject({ amountCents: 1500 });
     });
 
+    // Nothing is delivered for a product deleted while its buyer was paying: the money is recorded
+    // with the marker a refund is owed on, never as an ordinary paid purchase.
+    it('a payment for a product deleted meanwhile is recorded paid_not_granted, at ERROR', async () => {
+      const t = setup();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { checkoutId } = await t.checkout();
+      t.productRepo.findOne.mockResolvedValue(null);
+      t.setState('paid');
+
+      await t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1');
+
+      expect(t.records).toHaveLength(1);
+      expect(t.records[0]).toMatchObject({ status: 'paid_not_granted', productId: 'prod1' });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('a refund is owed'));
+      expect(t.userTagService.grantOrRenew).not.toHaveBeenCalled();
+      error.mockRestore();
+    });
+
     describe('two cotisation tiers of one association never both settle', () => {
       const sans = () =>
         product({
@@ -2660,6 +2710,31 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
         expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
         expect(t.checkouts.rows).toEqual([]);
+      });
+
+      // EVERY field of the routing is compared, not only the account and the receiving association:
+      // a prepared routing that differs in delegation alone is refused like any other change.
+      it('refuses PAYMENT_ROUTING_CHANGED when the routing differs in a field other than the account', async () => {
+        const t = cercleBuyer();
+        const prepared = await (t.service as any).preparePurchase('asso1', 'prod-avec', 'user1');
+        const stale = {
+          ...prepared,
+          paymentTarget: { ...prepared.paymentTarget, delegated: true },
+        };
+
+        const err = await (t.service as any)
+          .decidePurchase(stale, 'user1', undefined, t.checkouts.tx)
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'PAYMENT_ROUTING_CHANGED'
+        );
+        // CONTROL: the routing as prepared passes.
+        await expect(
+          (t.service as any).decidePurchase(prepared, 'user1', undefined, t.checkouts.tx)
+        ).resolves.toMatchObject({ amountCents: 3000 });
       });
 
       it("opening a tier cancels the buyer's open attempt of a SIBLING tier first", async () => {

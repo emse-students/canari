@@ -63,7 +63,9 @@ import {
 } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
+import { tierRefusal } from '../associations/tier-pricing';
 import { PurchaseRecordService } from '../users/purchase-record.service';
+import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { toManagerView, toSubmitterView } from './submission.projection';
 import {
@@ -802,6 +804,36 @@ export class FormsService {
   }
 
   /**
+   * Refuses, BEFORE any payment request is opened, a paid answer to a form that grants a cotisation
+   * tier which is not a rise over the tier the submitter holds - the boutique checkout's rule
+   * (`tierRefusal`, the one mapping), with its typed 409 codes. Without it the money was taken and
+   * the grant refused afterwards, leaving a refund owed (`paid_not_granted`). A pre-check: the grant
+   * re-ranks under the buyer's tier lock when the payment lands (`grantCotisantIfARise`).
+   */
+  private async assertGrantedTierIsARise(
+    form: Pick<Form, 'id' | 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    userId: string | undefined
+  ): Promise<void> {
+    if (!form.grantsCotisation || !form.associationId || !userId) return;
+    const relation = await this.userTagService.rankCotisationTier(
+      form.associationId,
+      userId,
+      form.cotisationVariantKey
+    );
+    const refusal = tierRefusal(relation);
+    this.logger.debug(
+      `[Forms] granted tier rank: form=${form.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+        `tier=${form.cotisationVariantKey ?? 'base'} relation=${relation}`
+    );
+    if (!refusal) return;
+    this.logger.log(
+      `[Forms] submit refused (${refusal.code}): form=${form.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+        `tier=${form.cotisationVariantKey ?? 'base'} is not a rise (relation=${relation})`
+    );
+    throw new ConflictException(refusal);
+  }
+
+  /**
    * Grants the form's configured cotisation tier to a submitter whose payment just landed.
    * Shared by the online-payment confirmation path (`markPaid`) and the cash validation path, which had a copy
    * each.
@@ -890,8 +922,8 @@ export class FormsService {
     // ERROR, once: the flag is claimed and kept, so a replay of the payment does not say it again.
     // A tier refused as not a rise is a payment taken for nothing granted: its purchase record says
     // so (`paid_not_granted`), the durable marker the association's purchases and the hourly report
-    // read.
-    let tierNotGranted = false;
+    // read. `grant` is what THIS call decided; null when it ran no grant (`formTierDelivered`).
+    let grant: 'granted' | 'not-granted' | 'failed' | null = null;
     if (seatGiven && (await this.claimFulfilment(submission.id, 'cotisationGrantedAt'))) {
       if (!submission.userId) {
         if (form.grantsCotisation) {
@@ -909,7 +941,7 @@ export class FormsService {
         );
         if (granted === 'failed')
           await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
-        tierNotGranted = granted === 'not-granted';
+        grant = granted;
       }
     }
     if (
@@ -918,13 +950,14 @@ export class FormsService {
       (await this.claimFulfilment(submission.id, 'purchaseRecordedAt'))
     ) {
       try {
+        const delivered = await this.formTierDelivered(form, submission, seatGiven, grant);
         await this.purchaseRecordService.create({
           userId: submission.userId,
           source: 'form',
           formId: submission.formId,
           amountCents: submission.totalPaid,
           paymentMethod: how.paymentMethod,
-          status: tierNotGranted ? 'paid_not_granted' : 'paid',
+          status: receivedStatus(delivered),
           associationId: form.associationId,
           productName: form.title ?? 'Formulaire',
         });
@@ -940,6 +973,54 @@ export class FormsService {
     if (submission.paymentStatus === 'paid_over_capacity') {
       await this.alertOrganisersOnce(submission.id, form);
     }
+  }
+
+  /**
+   * Whether the tier a paid form grants was delivered, as its purchase record must say
+   * (`receivedStatus`). `grant` is the decision THIS call took, when it took one. When it took none -
+   * a replay whose grant was claimed by an earlier run, or a late payment that landed with no seat
+   * and so ran no grant - the answer is read from what the submitter holds NOW: without a seat
+   * nothing was granted, otherwise the form's tier is held or it is not. A form that grants no tier,
+   * or a guest's payment (nobody to grant to, logged where it is claimed), is delivered as paid.
+   * Every "not delivered" is logged at ERROR. The read can OVER-mark - a replay racing the run that
+   * is still granting, a failed grant a later replay retries, a tier risen from since - and nothing
+   * clears a mark, so the mark says "check before refunding", never "refund".
+   */
+  private async formTierDelivered(
+    form: Pick<Form, 'id' | 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    submission: Pick<Submission, 'id' | 'userId'>,
+    seatGiven: boolean,
+    grant: 'granted' | 'not-granted' | 'failed' | null
+  ): Promise<boolean> {
+    if (!form.grantsCotisation || !form.associationId || !submission.userId) return true;
+    if (grant === 'granted') return true;
+    // Refused as not a rise: `grantCotisantIfARise` logged it at ERROR already.
+    if (grant === 'not-granted') return false;
+    const tier = form.cotisationVariantKey ?? 'base';
+    if (!seatGiven) {
+      this.logger.error(
+        `[Forms] submission ${submission.id} on form ${form.id} paid with no seat given: tier ` +
+          `${tier} NOT granted - recorded paid_not_granted, a refund is owed unless it is granted by hand`
+      );
+      return false;
+    }
+    const holds = await this.userTagService.holdsCotisationTier(
+      submission.userId,
+      form.associationId,
+      form.cotisationVariantKey
+    );
+    if (holds) {
+      this.logger.debug(
+        `[Forms] submission ${submission.id}: tier ${tier} held at record time - recorded paid`
+      );
+      return true;
+    }
+    this.logger.error(
+      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held at record ` +
+        `time (grant ${grant ?? 'decided by another run'}) - recorded paid_not_granted; check the ` +
+        'tier is still not held before refunding (a concurrent or later grant does not clear the mark)'
+    );
+    return false;
   }
 
   /**
@@ -1237,6 +1318,9 @@ export class FormsService {
     if (oneAnswer) {
       await this.assertNoOtherAnswer(this.submissionRepo.manager, id, input.userId!, previous?.id);
     }
+    // A form that grants a tier takes money for it: refused here, before anything is cancelled or
+    // opened, when it is not a rise over the tier held - the boutique's rule and codes.
+    if (totalCents > 0) await this.assertGrantedTierIsARise(form, input.userId);
     if (previous) {
       const settled = await this.settleOpenRequest(previous, form);
       if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
