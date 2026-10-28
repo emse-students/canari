@@ -221,6 +221,30 @@ const BROADCASTER = [
   at(D, String.raw`\[LIVE-BROADCAST\] dispose in (preview|ended)`),
 ];
 
+/**
+ * WHAT THE PHONE SAYS WHILE IT TAPS ITS WAY TO THE COMPOSER, and only the phone, only as the
+ * broadcaster (read on LIVE-WEB-2, A1 on the #2652 head 582975676, 2026-10-28). A1 reaches the feed by a
+ * TAP, not a page load, so these are decisions of an in-app navigation, not of a boot: the boot
+ * narration (`PAGE_BOOT_NARRATION`) is NOT forgiven here, and a phone that reloads mid-row stays dirt.
+ *
+ * - `[AvatarPresence] <missing> of <asked> have no photo - not requested`: the feed asked the server which authors
+ *   have a photo and DECIDED not to fetch the rest (#1840). Only that answered shape is forgiven; every
+ *   fallback (`HTTP <status>`, `could not say`, `could not ask` - each ends "each avatar is asked") is
+ *   the question going unanswered, and stays dirt.
+ * - `[NameMirror] mirrored N name(s), 0 removal(s), N held`: the names this navigation resolved were
+ *   written to the native file the push path reads (WP-MENTION-NAME, #2047). Only a mobile Tauri build
+ *   prints it, so a web seat saying it is a finding. A REMOVAL is an account the server just called
+ *   deleted, which nothing in a live row deletes, so `1 removal(s)` stays dirt; so do the dropped-batch
+ *   line and the `[NAME_MIRROR] store failed` warn.
+ */
+const PHONE_BROADCASTER = [
+  at(D, String.raw`\[AvatarPresence\] ${N} of ${N} have no photo - not requested`),
+  at(D, String.raw`\[NameMirror\] mirrored ${N} name\(s\), 0 removal\(s\), ${N} held`),
+];
+
+/** A native app seat (`A1` Android, `I1` iOS) - the only one that prints the NameMirror line. */
+const isAppSeat = (seat) => /^[AI]\d+$/.test(seat);
+
 /** A viewer, from the feed to the end it was told about. */
 const VIEWER = [
   ...FEED,
@@ -251,11 +275,13 @@ const VIEWER = [
  *
  * @param {string} row a `LIVE_ROWS` id
  * @param {string} seat
+ * @param {Record<string, {by: string, viewers: string[]}>} [rows] the table; the self-test passes one
+ *   with a WEB broadcaster, a shape no live row has yet, to prove the app-seat scope holds
  */
-export function liveNarration(row, seat) {
-  const spec = LIVE_ROWS[row];
+export function liveNarration(row, seat, rows = LIVE_ROWS) {
+  const spec = rows[row];
   if (!spec) return [];
-  if (seat === spec.by) return BROADCASTER;
+  if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : BROADCASTER;
   if (spec.viewers.includes(seat)) return VIEWER;
   return [];
 }
