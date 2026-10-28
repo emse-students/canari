@@ -253,7 +253,7 @@ Front only: no setting is added or removed, the draft and the PATCH are unchange
   demande-t-on ? / Regles de reservation / Donnees (accents in the messages). D35's five sections and
   their order stay.
 - **Each title carries the section's CURRENT answer on a line below it** (`FormSection` gained an
-  optional `summary`, used by no other screen yet; `lib/bookings/spaceSummaries.ts`, pure over the
+  optional `summary`, rendered OUTSIDE the header button, which it describes through `aria-describedby`; the heading wraps the button and the button holds only spans; `lib/bookings/spaceSummaries.ts`, pure over the
   draft, so it follows an unsaved change). "When" reads the mode (steps of N min, M at most, or fixed
   slots) and the column count from two; "who" reads audience, names, discoverability and the number
   of questions; the other three keep a fixed hint.

@@ -74,10 +74,15 @@ function open() {
   flushSync();
 }
 
+/** The line under a section's title: the paragraph after its header (a button or a row). */
+function summaryOf(sec: HTMLElement): Element | null {
+  return sec.querySelector('[id$="-summary"]');
+}
+
 /** The `<section>` whose title is `title`. */
 function section(title: string): HTMLElement {
-  const found = [...document.querySelectorAll<HTMLElement>('section')].find(
-    (s) => s.querySelector('h2')?.textContent?.trim() === title
+  const found = [...document.querySelectorAll<HTMLElement>('section')].find((s) =>
+    s.querySelector('h2')?.textContent?.trim().startsWith(title)
   );
   if (!found) throw new Error(`no section "${title}"`);
   return found;
@@ -103,11 +108,21 @@ describe('SpaceEditor - the five sections in plain words', () => {
       m.bookings_section_rules(),
       m.bookings_section_data(),
     ]) {
-      expect(section(title).querySelector('h2 + p')?.textContent?.trim()).toBeTruthy();
+      expect(summaryOf(section(title))?.textContent?.trim()).toBeTruthy();
     }
     expect(section(m.bookings_section_resources()).textContent).toContain(
       m.bookings_summary_when_step({ step: '30', max: '6' })
     );
+  });
+
+  it('keeps the summary outside the header button, which it describes', () => {
+    open();
+    const rules = section(m.bookings_section_rules());
+    const button = rules.querySelector('button[aria-expanded]')!;
+    const line = rules.querySelector('h2 ~ p, button + p')!;
+    expect(button.contains(line)).toBe(false);
+    expect(button.querySelector('div, p')).toBeNull();
+    expect(button.getAttribute('aria-describedby')).toBe(line.id);
   });
 
   it('puts the people ceiling and the after-booking information in "who", nowhere else', () => {
@@ -122,13 +137,13 @@ describe('SpaceEditor - the five sections in plain words', () => {
   it('follows an unsaved change in the line under the title', () => {
     open();
     const who = section(m.bookings_section_who());
-    expect(who.querySelector('h2 + p')?.textContent).toContain(m.bookings_summary_names_hidden());
+    expect(summaryOf(who)?.textContent).toContain(m.bookings_summary_names_hidden());
     const visible = [...who.querySelectorAll('button')].find(
       (b) => b.textContent?.trim() === m.bookings_names_names()
     )!;
     visible.click();
     flushSync();
-    expect(who.querySelector('h2 + p')?.textContent).toContain(m.bookings_summary_names_visible());
+    expect(summaryOf(who)?.textContent).toContain(m.bookings_summary_names_visible());
   });
 
   it('starts the rules and the data sections closed, the data one with its retention', () => {
