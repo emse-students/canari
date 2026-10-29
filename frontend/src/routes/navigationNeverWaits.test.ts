@@ -16,7 +16,7 @@ vi.mock('$lib/stores/user', () => ({
 }));
 vi.mock('$lib/stores/auth', () => ({ refresh: pending }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$app/paths', () => ({ resolve: (p: string) => p }));
+vi.mock('$app/paths', () => ({ resolve: (p: string) => (p.startsWith('/') ? p : `/${p}`) }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: { isLoggedIn: false, isLoginInProgress: false },
 }));

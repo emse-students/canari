@@ -1,10 +1,21 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import { diffRosterAgainstTree, reconcileDistributionGroupRoster } from './rosterReconcile';
+import {
+  diffRosterAgainstTree,
+  forgetRevokedLeafAnswers,
+  reconcileDistributionGroupRoster,
+  reconcileDistributionGroupRosterReported,
+  revokedLeafCandidates,
+} from './rosterReconcile';
+import {
+  AcceptedCommitNotMergedError,
+  CommitOutcomeUnknownError,
+} from '$lib/mls-client/commitSubmission';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { DEADLINE_MS, fetchUnderDeadline } from '$lib/utils/requestDeadline';
+import { MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * A departure must move the distribution group's epoch (WP-GRAINE-2).
@@ -23,6 +34,8 @@ vi.mock('./admissionGate', () => ({
 
 let getGroupMemberIdentities: ReturnType<typeof vi.fn>;
 let removeDepartedMembers: ReturnType<typeof vi.fn>;
+let removeMemberDevice: ReturnType<typeof vi.fn>;
+let getRevokedLeaves: ReturnType<typeof vi.fn>;
 let getLocalGroups: ReturnType<typeof vi.fn>;
 let distributionGroupFor: ReturnType<typeof vi.fn>;
 let persisted: number;
@@ -35,8 +48,11 @@ const channelService = {
 } as unknown as ChannelService;
 
 beforeEach(() => {
+  forgetRevokedLeafAnswers();
   getGroupMemberIdentities = vi.fn().mockResolvedValue(['alice:web-1', 'bob:web-1']);
   removeDepartedMembers = vi.fn().mockResolvedValue(undefined);
+  removeMemberDevice = vi.fn().mockResolvedValue(undefined);
+  getRevokedLeaves = vi.fn().mockResolvedValue([]);
   getLocalGroups = vi.fn().mockReturnValue(['dist-group']);
   distributionGroupFor = vi.fn().mockReturnValue('dist-group');
   listWorkspaceMembers.mockReset();
@@ -56,6 +72,9 @@ beforeEach(() => {
       getLocalGroups,
       getGroupMemberIdentities,
       removeDepartedMembers,
+      removeMemberDevice,
+      getRevokedLeaves,
+      getDeviceId: () => 'web-1',
       getEpoch: () => 26,
       persistCheckpoint: vi.fn().mockImplementation(async () => {
         persisted += 1;
@@ -422,6 +441,49 @@ describe('reconcileDistributionGroupRoster - one pass per scope at a time', () =
     }
   });
 
+  it('a HUNG revoked-leaves read ends on its typed deadline and releases the lane - termination', async () => {
+    // The real delivery route over a server that never answers: the one revocation read a key
+    // group has runs INSIDE the lane, so the lane's termination rests on it ending too.
+    vi.useFakeTimers();
+    try {
+      const neverAnswers = ((_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        )) as unknown as typeof fetch;
+      const delivery = new MlsDeliveryApi({
+        historyUrl: 'https://test.local',
+        getToken: async () => 'tok',
+        fetchImpl: neverAnswers,
+      });
+      getRevokedLeaves.mockImplementationOnce((groupId: string, ids: string[]) =>
+        delivery.fetchRevokedLeaves(groupId, ids)
+      );
+      const lines: string[] = [];
+
+      const hung = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getRevokedLeaves).toHaveBeenCalledTimes(1);
+      const next = reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+      await vi.advanceTimersByTimeAsync(DEADLINE_MS.read - 1);
+      expect(listWorkspaceMembers).toHaveBeenCalledTimes(1);
+
+      // The read class plus the time its few-byte body needs to leave (`deadlineFor`).
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(hung).resolves.toEqual([]);
+      expect(lines.join(' ')).toContain('RequestDeadlineError');
+      expect(lines.join(' ')).toContain('no device removed this pass');
+      expect(removeMemberDevice).not.toHaveBeenCalled();
+      // The lane was released, and the unanswered question was not remembered as an answer.
+      await expect(next).resolves.toEqual([]);
+      expect(listWorkspaceMembers).toHaveBeenCalledTimes(2);
+      expect(getRevokedLeaves).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not hold a pass on one scope behind a pass on another', async () => {
     let release: () => void = () => {};
     listWorkspaceMembers.mockImplementation(
@@ -438,5 +500,276 @@ describe('reconcileDistributionGroupRoster - one pass per scope at a time', () =
 
     release();
     await community;
+  });
+});
+
+describe('the pass report - what the actor of a removal releases on', () => {
+  // The actor releases a Remove it claimed only on a PROOF that it did not commit it: the report
+  // names who holds a leaf of the tree the pass LEFT, and is null whenever that is not known.
+  const run = () =>
+    reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), () => {});
+
+  beforeEach(() => {
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+  });
+
+  it('a pass that removed bob reports he holds no leaf', async () => {
+    await expect(run()).resolves.toEqual({ removedUserIds: ['bob'], heldUserIds: ['alice'] });
+  });
+
+  it('nothing staged (an unvouched base) reports the tree as read - bob still holds a leaf', async () => {
+    removeDepartedMembers.mockRejectedValue(
+      new UnpublishedBranchError('dist-group', 'other-epoch', 'departed-member removal')
+    );
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+  });
+
+  it('a definite refusal reports the tree read again', async () => {
+    removeDepartedMembers.mockRejectedValue(new Error('epoch rejected'));
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+  });
+
+  it('a commit with an UNKNOWN outcome reports nothing known - it may yet land', async () => {
+    const lines: string[] = [];
+    removeDepartedMembers.mockRejectedValue(
+      new CommitOutcomeUnknownError('dist-group', 26, new Error('no answer'))
+    );
+    await expect(
+      reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      )
+    ).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
+    expect(lines.join(' | ')).toContain('sent and NOT answered');
+    expect(lines.join(' | ')).not.toContain('can still read it');
+  });
+
+  it('a commit the server ACCEPTED and this device failed to merge is no refusal - it landed', async () => {
+    const lines: string[] = [];
+    removeDepartedMembers.mockRejectedValue(
+      new AcceptedCommitNotMergedError('dist-group', 26, new Error('merge failed'))
+    );
+    await expect(
+      reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      )
+    ).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
+    // The tree here is the one BEFORE the commit: read again, it would say he still holds a leaf.
+    expect(lines.join(' | ')).toContain('ACCEPTED by the server and NOT merged here');
+    expect(lines.join(' | ')).not.toContain('can still read it');
+  });
+
+  it('a roster it could not read reports the tree as read, nothing having been staged', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('502'));
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: ['alice', 'bob'] });
+  });
+
+  it('a group this device does not hold reports nothing known', async () => {
+    distributionGroupFor.mockReturnValue(null);
+    await expect(run()).resolves.toEqual({ removedUserIds: [], heldUserIds: null });
+  });
+});
+
+/**
+ * A REVOKED DEVICE OF A MEMBER WHO STAYS KEEPS ITS LEAF UNLESS THE PASS ASKS BY DEVICE (2026-10-27).
+ * The roster names people, so the user diff never sees it, and `group-rosters` never answers a key
+ * group: the pass asks the server which kept leaves are revoked and removes exactly those.
+ */
+describe('reconcileDistributionGroupRoster - revoked devices of members who stay', () => {
+  it('asks about the kept leaves only - never this device, never a stray - and removes by device', async () => {
+    getGroupMemberIdentities.mockResolvedValue([
+      'alice:web-1',
+      'alice:phone-2',
+      'bob:web-1',
+      'carol:web-1',
+    ]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+    getRevokedLeaves.mockResolvedValue(['alice:phone-2']);
+
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
+    ).resolves.toEqual(['carol']);
+
+    expect(getRevokedLeaves).toHaveBeenCalledExactlyOnceWith('dist-group', [
+      'alice:phone-2',
+      'bob:web-1',
+    ]);
+    // The departure first, then the revoked device, each its own commit.
+    expect(removeDepartedMembers).toHaveBeenCalledWith('dist-group', ['carol']);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('dist-group', ['alice:phone-2']);
+    expect(persisted).toBe(2);
+  });
+
+  it('removes a revoked device when nobody departed', async () => {
+    getRevokedLeaves.mockResolvedValue(['bob:web-1']);
+    const lines: string[] = [];
+
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) => lines.push(m))
+    ).resolves.toEqual([]);
+
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('dist-group', ['bob:web-1']);
+    expect(lines.join(' | ')).not.toContain('agrees with its roster');
+  });
+
+  it('removes no device when the revocation question was not answered, and says so', async () => {
+    getRevokedLeaves.mockRejectedValue(new Error('404'));
+    const lines: string[] = [];
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+      lines.push(m)
+    );
+
+    expect(removeMemberDevice).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('no device removed this pass');
+  });
+
+  it('removes only a named leaf the FRESH tree still holds', async () => {
+    getRevokedLeaves.mockResolvedValue(['bob:web-1']);
+    getGroupMemberIdentities
+      .mockResolvedValueOnce(['alice:web-1', 'bob:web-1'])
+      .mockResolvedValueOnce(['alice:web-1']);
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+
+    expect(removeMemberDevice).not.toHaveBeenCalled();
+  });
+
+  it.each(['no-base', 'other-epoch', 'diverged'] as const)(
+    'stages no revoked-leaf removal the published base cannot vouch for (%s), and says why',
+    async (reason) => {
+      getRevokedLeaves.mockResolvedValue(['bob:web-1']);
+      removeMemberDevice.mockRejectedValue(
+        new UnpublishedBranchError('dist-group', reason, 'revoked-leaf removal')
+      );
+      const lines: string[] = [];
+
+      await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      );
+
+      expect(persisted).toBe(0);
+      expect(lines.join(' | ')).toContain(`(${reason}) - nothing staged`);
+    }
+  );
+});
+
+describe('the revocation question is asked again only when the leaves changed', () => {
+  it('reuses the last answer for an unchanged tree, and asks again once it changed', async () => {
+    getRevokedLeaves.mockResolvedValue([]);
+    const lines: string[] = [];
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+      lines.push(m)
+    );
+    expect(getRevokedLeaves).toHaveBeenCalledTimes(1);
+    expect(lines.join(' | ')).toContain('the revocation answer of an unchanged tree reused');
+
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', 'bob:web-1', 'bob:phone-2']);
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(getRevokedLeaves).toHaveBeenCalledTimes(2);
+  });
+
+  it('never records an unanswered question as "none revoked"', async () => {
+    getRevokedLeaves.mockRejectedValueOnce(new Error('502')).mockResolvedValue(['bob:web-1']);
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+
+    expect(getRevokedLeaves).toHaveBeenCalledTimes(2);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('dist-group', ['bob:web-1']);
+  });
+});
+
+describe('revokedLeafCandidates', () => {
+  it('keeps every leaf of a kept user except this very device, user half without case', () => {
+    expect(
+      revokedLeafCandidates(
+        ['ALICE:web-1', 'alice:WEB-1', 'bob:x', 'carol:y', 'bob:x'],
+        new Set(['carol']),
+        'Alice',
+        'web-1'
+      )
+    ).toEqual({ candidates: ['alice:WEB-1', 'bob:x'], malformed: [] });
+  });
+
+  it('never asks about a legacy bare leaf, and does not count it: a known shape', () => {
+    expect(revokedLeafCandidates(['bob', 'bob:x', 'dave'], new Set(), 'alice', 'web-1')).toEqual({
+      candidates: ['bob:x'],
+      malformed: [],
+    });
+  });
+
+  it('leaves out and COUNTS a crafted credential, and still asks about every other leaf', () => {
+    const real = `${'b0b'.padEnd(64, '7')}:tauri-${'b0b'.padEnd(64, '7')}-mh9x2k1q-0z9y`;
+    expect(
+      revokedLeafCandidates(
+        [
+          real,
+          'mallory:dev 1',
+          `mallory:d${String.fromCharCode(0xe9)}v`,
+          `eve:${'d'.repeat(129)}`,
+          'x:y:z',
+          'carl:ok',
+        ],
+        new Set(),
+        'alice',
+        'web-1'
+      ).malformed
+    ).toHaveLength(4);
+    expect(
+      revokedLeafCandidates([real, 'mallory:dev 1', 'carl:ok'], new Set(), 'alice', 'web-1')
+        .candidates
+    ).toEqual([real, 'carl:ok']);
+  });
+});
+
+describe('a crafted credential in a key group', () => {
+  it('does not cost the other leaves their revocation question, and is said by count', async () => {
+    const bob = 'b0b'.padEnd(64, '7');
+    const real = `${bob}:web-${bob}-mh9x2k1q-a7c3`;
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', real, 'mallory:dev 1']);
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'alice' },
+      { userId: bob },
+      { userId: 'mallory' },
+    ]);
+    getRevokedLeaves.mockResolvedValue([real]);
+    const lines: string[] = [];
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+      lines.push(m)
+    );
+
+    expect(getRevokedLeaves).toHaveBeenCalledExactlyOnceWith('dist-group', [real]);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('dist-group', [real]);
+    expect(lines.join(' | ')).toContain('1 leaf/leaves outside the leaf-identity rule');
+    // The count only: a leaf identity names a person.
+    expect(lines.join(' | ')).not.toContain('mallory');
+  });
+
+  it('says the count once while the tree still holds it, and again when the set changes', async () => {
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', 'bob:web-1', 'mallory:dev 1']);
+    const lines: string[] = [];
+    const pass = () =>
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      );
+    const said = () => lines.filter((l) => l.includes('outside the leaf-identity rule')).length;
+
+    await pass();
+    await pass();
+    expect(said()).toBe(1);
+
+    getGroupMemberIdentities.mockResolvedValue([
+      'alice:web-1',
+      'bob:web-1',
+      'mallory:dev 1',
+      'eve:dev 2',
+    ]);
+    await pass();
+    expect(said()).toBe(2);
+    expect(lines.join(' | ')).toContain('2 leaf/leaves outside the leaf-identity rule');
   });
 });

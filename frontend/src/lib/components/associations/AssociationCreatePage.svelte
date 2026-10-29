@@ -34,8 +34,8 @@
     audienceRefusalText,
   } from '$lib/associations/audienceRefusal';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { ASSOCIATION_SLUG_EXHAUSTED, SocialApiError } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
-  import { slugify } from '$lib/utils/textFold';
 
   interface Props {
     /** What this page creates: the three directories share ONE flow and differ by what it asks. */
@@ -45,7 +45,6 @@
   let { kind }: Props = $props();
 
   let name = $state('');
-  let slug = $state('');
   let description = $state('');
   let contactEmail = $state('');
   /** Lists only. */
@@ -76,7 +75,6 @@
         backHref: '/associations',
         nameLabel: m.assoc_new_name_label(),
         namePlaceholder: m.assoc_new_name_placeholder(),
-        slugPlaceholder: 'bureau-des-eleves',
         descPlaceholder: m.assoc_new_desc_placeholder(),
         emailPlaceholder: 'contact@asso.fr',
         submit: m.assoc_new_create_btn(),
@@ -88,7 +86,6 @@
         backHref: '/lists',
         nameLabel: m.list_new_name_label(),
         namePlaceholder: m.list_new_name_placeholder(),
-        slugPlaceholder: 'liste-canari-2027',
         descPlaceholder: m.list_new_desc_placeholder(),
         emailPlaceholder: 'contact@liste.fr',
         submit: m.list_new_create_btn(),
@@ -100,7 +97,6 @@
         backHref: '/institutions',
         nameLabel: m.inst_new_name_label(),
         namePlaceholder: m.inst_new_name_placeholder(),
-        slugPlaceholder: 'maison-des-eleves-gardanne',
         descPlaceholder: m.inst_new_desc_placeholder(),
         emailPlaceholder: 'contact@emse.fr',
         submit: m.inst_new_create_btn(),
@@ -139,7 +135,7 @@
     // D20/D24: the server refuses anyone else, so a reader who cannot create one is sent back
     // rather than shown a form that can only fail.
     if (kind === 'institution' && !isGlobalAdmin()) {
-      void goto(resolve('/institutions'), { replaceState: true });
+      void goto(resolve('/institutions'), { replace: true });
       return;
     }
     if (kind !== 'institution') {
@@ -161,12 +157,8 @@
     }
   });
 
-  function onNameInput() {
-    slug = slugify(name);
-  }
-
   async function handleSubmit() {
-    if (!name.trim() || !slug.trim()) {
+    if (!name.trim()) {
       error = m.assoc_new_error_required();
       return;
     }
@@ -175,7 +167,6 @@
     try {
       const created = await createAssociation({
         name: name.trim(),
-        slug: slug.trim(),
         type: kind === 'association' ? undefined : kind,
         description: description.trim() || undefined,
         contactEmail: contactEmail.trim() || undefined,
@@ -190,12 +181,15 @@
         await finishInstitution(created);
         return;
       }
-      await goto(resolve(`${kind === 'list' ? '/lists' : '/associations'}/${created.slug}`));
+      await goto(resolve(`${kind === 'list' ? 'lists' : 'associations'}/${created.slug}`));
     } catch (err) {
       Log.d(`create.submit failed (${kind})`, err);
       const refusal = audienceRefusalCode(err);
       if (refusal === AUDIENCE_REFUSAL.CREATOR_CAMPUS_REQUIRED) {
         campusMissing = true;
+      } else if (err instanceof SocialApiError && err.code === ASSOCIATION_SLUG_EXHAUSTED) {
+        Log.d(`create.submit: no free slug for this name (${kind})`);
+        error = m.assoc_new_error_slug_exhausted();
       } else {
         error = refusal ? audienceRefusalText(refusal) : copy.failure;
       }
@@ -220,7 +214,7 @@
         showToast(m.inst_new_reach_error());
       }
     }
-    await goto(resolve(`/associations/${created.slug}/edit/members`));
+    await goto(resolve(`associations/${created.slug}/edit/members`));
   }
 </script>
 
@@ -237,18 +231,7 @@
         handleSubmit();
       }}
     >
-      <Input
-        label={copy.nameLabel}
-        bind:value={name}
-        oninput={onNameInput}
-        placeholder={copy.namePlaceholder}
-        required
-      />
-
-      <Input label="Slug (URL)" bind:value={slug} placeholder={copy.slugPlaceholder} required />
-      <p class="text-text-muted -mt-3 text-xs">
-        {m.assoc_new_slug_hint()}
-      </p>
+      <Input label={copy.nameLabel} bind:value={name} placeholder={copy.namePlaceholder} required />
 
       {#if kind === 'list'}
         <Input
@@ -359,7 +342,7 @@
 
       <button
         type="submit"
-        disabled={submitting || !name.trim() || !slug.trim() || reachIncomplete}
+        disabled={submitting || !name.trim() || reachIncomplete}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitting ? m.common_creating_label() : copy.submit}

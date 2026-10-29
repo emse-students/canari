@@ -936,7 +936,7 @@ impl MlsManager {
             // repository runs with no logger, so all of them measured a load that skipped it while
             // a device, running `tauri-plugin-log` at info, paid for it in full.
             //
-            // Criterion on OXYGEN, 5 groups, 2026-09-17: a cold load at a 1000-package pool is
+            // Criterion on the workstation, 5 groups, 2026-09-17: a cold load at a 1000-package pool is
             // 24.5 ms with a logger installed and 12.9 ms without. **HALF of a cold load was a
             // diagnostic line on the critical path of the first screen**, and that path is the one
             // the user's own cold-start target is about.
@@ -1219,7 +1219,7 @@ impl MlsManager {
         // per row; the expiry test needs the decoded lifetime and nothing more. On the ordinary
         // load - a device with a large pool and nothing to reclaim - the old order proved a
         // thousand rows to delete none of them, which measured 11.49 ms at a pool of 1000
-        // (criterion, OXYGEN, 2026-09-17) on the awaited path of the first screen.
+        // (criterion, workstation, 2026-09-17) on the awaited path of the first screen.
         //
         // The set this deletes is unchanged: expired AND proven, exactly the rows the census
         // counts as expired. What changed is that a row nothing will touch is no longer asked to

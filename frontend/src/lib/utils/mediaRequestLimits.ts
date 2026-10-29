@@ -2,9 +2,8 @@
  * THE LARGEST REQUEST BODY THE PRODUCTION HOST ACCEPTS, and the budget every upload stays under.
  *
  * MEASURED 2026-10-10 (a 13.4 MB PDF that never went up for one user, whatever his connection): the
- * school-managed CrowdSec AppSec in the HOST nginx (`/etc/nginx/conf.d/crowdsec_nginx.conf`, not
- * ours) drops ANY request body over 10 MiB - `request body exceeds limit 10485760 bytes, will drop
- * request` - and the client reads back a 403 with a `<title>CrowdSec Ban</title>` HTML page. The
+ * school-managed WAF in front of the HOST proxy (not ours) drops ANY request body over 10 MiB, and
+ * the client reads back a 403 with an HTML ban page instead of the gateway's JSON. The
  * evidence, the owed question to the host admins and the consequences are in
  * docs/wiki/infrastructure/host-waf-body-limit.md.
  *
