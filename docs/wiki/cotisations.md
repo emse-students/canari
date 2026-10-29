@@ -214,6 +214,65 @@ sibling XOR and the base tier (`variantKey: null`) are untouched.
   and classifies the failure. **social-service is never rolled back below the first release
   publishing the field**: a client that read it would create a base tier against the older server.
 
+### A new tier's key is derived from its label (server, 2026-10-26)
+
+Decided by the user: the key (`variantKey`) is a TECHNICAL id that no person types, sees or edits.
+`POST /api/associations/:id/products` accepts `deriveVariantKey: true` on a `membership` product sent
+WITHOUT a `variantKey`; `ProductsService.create` then derives the key from `name` with
+`variantKeyFromLabel` (`cotisation-tag.util.ts`): lowercase, ASCII-folded, every other run of
+characters one hyphen, a year-shaped tail dropped, `palier` for a label with no letter or digit, and
+`-2`, `-3`... until it is free among the association's tiers (the base tier's null key never
+collides). Everything after is unchanged: `deriveCotisationTag` names the tag from that key, the
+sibling XOR and the base tier (`variantKey: null`) are untouched.
+
+- **Two creates at once get two keys.** Nothing in the table makes a key unique, so the sibling read
+  and the insert run in ONE transaction under `lockAssociationTiers` EXCLUSIVE - the retag's lock
+  (`users/buyer-tier-lock.ts`: `pg_advisory_xact_lock(hashtextextended('tier:<associationId>', 0))`),
+  every read on that transaction's manager. The second create waits for the first to commit and
+  then sees its row. Everything that may call another service (payment routing) runs BEFORE the
+  lock. `tier-key-derivation.integration.spec.ts` holds it against a real PostgreSQL, and fails
+  with the lock removed. A unique index would be a migration, proposed in
+  [backlog](backlog.md#p3---post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026-10-26).
+- **The key fits the tag.** A tag is `varchar(100)`, and the dated form
+  `cotisant:<slug>-<key>-YYYY-YYYY` is the longest, so `variantKeyCap(slug)` is 100 minus that
+  form's fixed part minus room for a `-999` suffix, at most 60. A slug that leaves no room is
+  refused with a 400 rather than truncated into a tag that no longer derives.
+- **No key ends in a year.** A dated tag already ends in the academic year, so a key such as
+  `cotisation-2026-2027` would make one tier's tag read like the dated tag of a `cotisation` tier.
+  "Cotisation 2026-2027" derives `cotisation` (then `cotisation-2` if taken); a year INSIDE a label
+  ("Gala 2026 VIP") stays, and so does a single year ("Promo 2024" derives `promo-2024`).
+- **A derived key is never refused (decided 2026-10-28).** The derivation AVOIDS every shape a typed
+  key is refused for, rather than letting the label earn a refusal about a key the manager never
+  saw: it never matches `YEAR_SHAPED_VARIANT_KEY` (the one pattern `assertVariantKeyFree`'s
+  `TIER_KEY_YEAR_SHAPED` also reads - the year tail is removed again after the length cap, and a
+  suffix of at most three digits cannot form a year), and a candidate whose stem collides with
+  another association's (`stemCollidesElsewhere`, `assertCotisationStemFree`'s comparison) steps on
+  to the next suffix. Chosen over a dedicated refusal message because it stays a pure,
+  deterministic function of the label and the existing stems. The one refusal left is the
+  exhaustion of `-2` ... `-999` (409 `TIER_KEY_EXHAUSTED`), since a longer suffix would overflow the
+  tag column.
+- **A derived key never re-adopts a deleted tier's holders.** A tier deleted before the delete guard
+  can have left ACTIVE holders of its tag (the hourly orphan count). Recreating the same label would
+  give the same key, and every such holder would silently become a holder of the NEW tier (its
+  member pricing, its `cotisant-status`). So a candidate whose stem this association still has an
+  active `user_tags` row of (`heldTierTagNames`, read in the same locked transaction) is skipped
+  like a taken key: "Avec alcool" recreated over an orphan derives `avec-alcool-2`. **A TYPED key
+  (older clients) is not checked against it and can still re-adopt those holders** - that path is
+  unchanged.
+
+- **Older clients keep working**: an explicit `variantKey` is still honoured on create and update.
+  Sending both is refused (400), and so is `deriveVariantKey` on a non-membership product.
+- **The key is fixed by a label edit**: `update` changes a tier's key only when `variantKey` itself
+  is sent (`planTierRetag`, the conversion below); a rename alone leaves the key, the tag and every
+  cotisant holding it where they are. A spec holds this.
+- **The client reads a CAPABILITY before offering tier creation**: `GET
+  /api/associations/:id/cotisation-options` answers `tierKeyFromLabel: true`. The global
+  `ValidationPipe` (`whitelist: true`) STRIPS an unknown field, so an older social-service would
+  silently drop `deriveVariantKey` and create a BASE tier instead of the named one asked for. A
+  client that does not read the field therefore offers no tier creation at all - it never tries
+  and classifies the failure. **social-service is never rolled back below the first release
+  publishing the field**: a client that read it would create a base tier against the older server.
+
 **Getting rid of the base tier (WP-COT-11).** Enabling cotisation always provisions a base tier, and
 its un-suffixed tag answers `tier: null` on `cotisant-status` - which a consumer such as Le Cercle
 reads as "no forfait". A multi-tier association therefore has to get rid of it, two ways:
@@ -851,7 +910,20 @@ to a higher tier").
   to pick a tier without also being allowed to edit the boutique.
 - `POST /api/associations/:id/products/:productId/grant` -> `grantProductPurchase`: records a
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
-  `MANAGE_PRODUCTS`.
+  `MANAGE_PRODUCTS`. **With no amount given, it records what the checkout would charge that
+  beneficiary** (user, 2026-10-29): their grid cell, or the fixed price through `fixedPriceOf` - the
+  preferential `amountCentsMember` when they qualify by `fixedPriceFor`'s rule. It used to record the
+  full `amountCents` whoever the beneficiary was. **The cashier sees that amount before the sale and
+  may type another**: `GET .../products/:productId/grant-quote?userId=` answers it from
+  `cashSaleQuoteFor`, the one computation the sale itself runs (`priced` with `preferential`,
+  `typed` for a free amount, `not-sold` when the grid closes the combination), and the Achats tab
+  shows it under the amount field, which is always offered and sent as `amountCents` when filled.
+  **A free amount's bounds bind only an amount the cashier TYPES as an override**: the resolved
+  default is a price the checkout charges unchecked too, so a member price under
+  `customAmountMinCents` is recorded - and typing that very quoted amount is the default, not an
+  override. The
+  price is read before the buyer's tier lock, as the grid cell always was: a tier granted to that
+  buyer in the same instant can leave the default one tier stale, never the grant itself.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
   (`MANAGE_MEMBERS`), the name being one of the association's own tier tags, granted like the
   manual add ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
@@ -1228,6 +1300,7 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
+| GET | `/api/associations/:id/products/:productId/grant-quote?userId=` | The amount that grant records for that beneficiary when none is typed (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/purchases/:purchaseId/close` | Record how a `paid_not_granted` payment was settled, `refunded` or `granted` (grants the tier by hand); once per payment (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/webhook-failures/:deliveryId/retry` | Re-fire a failed Cercle delivery (`MANAGE_PRODUCTS`, scoped to `:id`) |
 | DELETE | `/api/associations/:id/webhook-failures/:deliveryId` | Drop a failed delivery settled by hand (`MANAGE_PRODUCTS`) |

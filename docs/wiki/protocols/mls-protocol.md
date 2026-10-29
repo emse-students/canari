@@ -892,6 +892,19 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   pins nothing. The marker is in the sealed state, so a checkpoint and a restart before the merge
   keep it, and the load-time seeding skips any group with a pending commit. Clearing an external
   join's pending commit forgets the group: there is no prior epoch to fall back to.
+- **An unmerged external join is the crate's marker, never an openmls pending commit (settled
+  2026-10-27, `src/external_join_pending_tests.rs`).** openmls 0.9's `ExternalCommitBuilder::finalize`
+  stages the commit and merges it in the same call, so the joiner's group and its stored
+  `GroupState` are `Operational` at `base + 1` from the start: `has_pending_commit` answers `false`
+  before and after a save and reload, and openmls's `clear_pending_commit` has nothing to clear (it
+  ignores an `External` pending commit too). "Held unmerged" is `pending_external_joins` alone, and it
+  does survive the sealed save and load; `merge_pending_commit_for` after the reload ends it, and the
+  two devices then exchange messages. Dropping the join (`clear_pending_commit_for` -> `forget_group`)
+  leaves the provider's storage byte-identical to before the join, the signature key and key
+  packages included, and a pre-join key package still opens a Welcome. Keeping the group after a
+  "clear" leaves a group at an epoch the real group never reached: a member's frame is refused as
+  `PastEpochApplication`, its own frames are unreadable to the member, and a retry from a fresh base
+  is refused with `GroupAlreadyHeld`. So the only way to drop an external join is to drop the group.
 - **Events.** Every NEW device a merged commit admitted - ours or a peer's, the signer read from the
   verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
   `first-sight` / `key-changed`, `addedBy`). The diff is on `(identity, key)` pairs, never on leaf
@@ -2247,7 +2260,7 @@ be undone by the route the same second. Now the accepted commit is the one write
 | Writer | Since ADM-3 |
 | --- | --- |
 | The accepted commit (`enrolAdmittedPeople` + `liftAwaitingAdmission`) | The ONLY one. Newcomers and awaiting seats, ordered against the invitation's generation, under the seat lock. |
-| `POST mls/groups/:id/members` (`addGroupMember`) | Enrols nobody but the caller, into an empty roster (the bootstrap). For anyone else it re-reads the seat under the seat lock (`writePendingSeats`, `requireAdmitted`): admitted -> writes their device rows, a no-op for the roster; absent or awaiting -> `409 MEMBER_NOT_ADMITTED`, nothing written. |
+| `POST mls/groups/:id/members` (`addGroupMember`) | Enrols nobody but the group's recorded creator (`dm_groups."createdBy"`, migration 042), into an empty roster (the bootstrap) - anyone else, and anyone at all on a group with no recorded creator, is refused `403 MEMBERSHIP_NOT_ALLOWED`; creator and roster are re-read under the seat lock taken exclusive, answering `409 MEMBER_NOT_ADMITTED`, nothing written ([chat-delivery](../services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29)). For anyone else it re-reads the seat under the seat lock (`writePendingSeats`, `requireAdmitted`): admitted -> writes their device rows, a no-op for the roster; absent or awaiting -> `409 MEMBER_NOT_ADMITTED`, nothing written. |
 | A Welcome sent apart (`sendWelcome`) | Admits nobody; refused for an awaiting seat. |
 | An inline Welcome in a commit | Admitted only if the commit's gate admits its target; otherwise the commit is refused. |
 | Link acceptance (`writePendingSeats`, `enrol`) | Writes an ASK, never an admission. After a Decline it may write a new one: a Decline is not a ban. |
@@ -2310,6 +2323,44 @@ session's first pass - the convergent pass this always relied on. The read runs 
 head deadline (`DEADLINE_MS.read`), because it runs inside the scope's serialised roster pass: a
 hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The server says a
 converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
+
+**Each identity is validated as TWO values, never as one** (`parseLeafIdentity`,
+`chat-delivery-service/src/utils/sanitize.ts`): exactly one colon, and each half under the rule that
+half is stored under (`[a-zA-Z0-9_.:@-]{1,128}`, untrimmed). Until 2026-10-28 the whole pair went
+through the generic 128-character allowlist, and a real identity is longer: the device id EMBEDS its
+user (`BaseMlsService.generateDeviceId`, `<platform>-<user>-<base36 time>-<base36 rand>`), so a
+64-hex user gives 147 characters on the web and 149 on a Tauri build. Every request was refused 400
+and the pass logged `could not ask ... no device removed this pass` - the mechanism was inert in the
+field while its specs, written with `bob:phone-1`, were green. `sanitize.leaf-identity.spec.ts` now
+builds identities in the generator's shape and reads the generator's source, so the two cannot drift
+again.
+
+**ONE RULE ON BOTH SIDES, AND A MALFORMED LEAF COSTS ONLY ITSELF** (2026-10-29). A leaf identity is
+whatever a credential in the tree says, so a single crafted credential - a space, a non-ASCII
+letter, a 200-character half - used to make the server refuse the WHOLE batch with 400, and with it
+the revocation answer about every other leaf of that key group, for every member. Now:
+
+- the client sends only what `isAddressableLeafIdentity` (`mls-client/leafIdentity.ts`) accepts, and
+  `revokedLeafCandidates` says the count it left out (`[GRAINE] ...: N leaf/leaves outside the
+  leaf-identity rule ...`, never the identities); a legacy BARE leaf names no device and is left out
+  silently, a known shape;
+- the server SKIPS an identity outside the rule and counts it (`malformed=N`, at warn, since a current
+  client never sends one), still answering the rest; a body that is not a list, or over the 1000 cap,
+  is still a 400;
+- both run every case of `libs/contracts/leaf-identity.cases.json`, and each half's pattern is
+  asserted equal to `libs/contracts/device-id.json`.
+
+The four log fields that carry a leaf identity (`[SENDER_MISMATCH] verified=`, the
+`[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`, `[COMMIT] external_leaf_foreign leaf=`) go
+through `sanitizeLeafLogValue` (`cutLeafIdentity`, `utils/log-repeat.ts`): the user id cut to 8
+characters as every other line prints a user - in the user half AND inside the device half, which
+embeds it (`web-<user>-<time36>-<rand>`) - and the rest of the device kept, since it is what tells
+two devices of one person apart. Any other run of 64+ hex characters in a device half is cut too,
+since a crafted device can carry somebody else's id. The user/device pairs those four lines print
+as two fields (`reporter=` of all three reports, `envelope=` of `[SENDER_MISMATCH]`, `sender=` of
+`external_leaf_foreign`) go through `sanitizeDevicePairLogValue`, the same masking. No full user id
+reaches these four lines (owner decision, 2026-10-29). Other lines of the service still print user
+ids their own way; this claim is about these four.
 
 **Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
 the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge

@@ -1417,6 +1417,21 @@ export class AssociationsController {
   }
 
   /**
+   * The amount a cash sale of this product to `userId` records when the cashier types none, so the
+   * cashier sees it before the sale. Requires MANAGE_PRODUCTS flag, like the sale itself.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/products/:productId/grant-quote')
+  quoteCashSale(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Query('userId', ParseUUIDPipe) userId: string
+  ) {
+    return this.productsService.quoteCashSale(id, productId, userId);
+  }
+
+  /**
    * Creates a new product in the association's boutique.
    * Requires MANAGE_PRODUCTS flag. Product is inactive until the payout account onboarding is complete.
    * `balance_topup` (Cercle) products additionally require a platform global admin (D7) -
