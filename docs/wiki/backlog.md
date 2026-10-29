@@ -405,6 +405,38 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
 - Owed: round it where it is printed, as the other two lines do.
 
+## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
+
+- On LIVE-WEB-2 (dev.dce778b), both web viewers asked for the live's last segment after the end had
+  purged it. Each got `GET /api/media/public/live/<live>/<segment> -> 404` and logged `segment 7 is
+  gone - skipped`. media-service logged the same segment as `asked for and absent`, and the manifest
+  answered `404 LIVE_NOT_FOUND` about a second later.
+- So a viewer loses the end of the live it was watching: the end's purge races the downloads that the
+  last manifest announced.
+- The rig refuses to forgive a segment 404 on purpose (`liveRefusals` in `liverows.mjs`), so
+  LIVE-WEB-2 cannot reach `PASS` until this is fixed.
+- Owed: the purge must not remove segments that a manifest has already announced before its viewers
+  could fetch them. The order should be decided by a fact, such as the viewers' last read, not by a
+  delay. Then rerun LIVE-WEB-2.
+
+## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
+
+- Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
+  devices enter its key groups by external commit, and every member's client logs this line once per
+  device at `log::error!`.
+- Reading `observe_merged_commit` (`frontend/mls-core/src/device_trust.rs`):
+  - The line fires when a device makes its first entry into a group, by its own commit, under a key
+    that another group pinned, while another device of the same user is already in the tree.
+  - In a CONVERSATION that is the uninvited entry the trust layer exists to report.
+  - In a KEY-DISTRIBUTION group, an external commit is the ordinary door for every member's device.
+    The notice layer already knows this and says nothing (`[DEVICE_NOTICE] self-admitted entry in
+    <group> - not a conversation, nothing to say`).
+  - The Rust observer does not know the group's kind, so it accuses the normal path.
+- Decision from the reading: on a key group the line is NOISE; on a conversation it is correct.
+- Owed: give the observer the group's kind where it is already known, so that it does not log the
+  key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
+  accusing. Pair the change with a test that a conversation's self-entry still logs at error.
+
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
 - Audited after the revoked-leaves 400 ([durable-rules](durable-rules.md#a-validators-bound-is-derived-from-the-generator-of-the-value-and-its-spec-uses-a-value-of-real-length)):
