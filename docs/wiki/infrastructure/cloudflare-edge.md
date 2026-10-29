@@ -143,9 +143,25 @@ network is given the IPC.
 response to add an inline or a third-party script: Bot Fight Mode / JavaScript detections, Web
 Analytics (automatic injection), Rocket Loader, Email Address Obfuscation, Zaraz, Browser Insights,
 the challenge / "Under Attack" interstitials and Automatic Platform Optimization. Under this policy
-each one is refused on the page (and Rocket Loader would break every script). Which of them are on for
-the zones in front of the web estates has NOT been read; it is a check owed before the stable, in
-the dashboard - none is fixed by widening the policy.
+each one is refused on the page (and Rocket Loader would break every script). None is fixed by
+widening the policy, nor by a hash: the injected script carries a per-request ray id and timestamp,
+so its hash changes on every response, and the edge adds it after the origin, so no nonce reaches it.
+
+**JavaScript detections ARE on for the `canari-emse.fr` zone, and refused on every dev document
+(measured 2026-10-29, `1.5.1-alpha.7`).** Every HTML response of `dev.canari-emse.fr` ends with an
+inline `(function(){function c(){...` script that would build a hidden iframe and load
+`/cdn-cgi/challenge-platform/scripts/jsd/main.js` with `window.__CF$cv$params`. Its hash is not in
+the page policy, so the browser refuses it - one `securitypolicyviolation` (`script-src-elem`,
+`inline`, at that script's line) and one console error per document load, and no iframe is ever
+built. The five app scripts of the same document all match their hashes. It has been so since the
+policy dropped `'unsafe-inline'` (#2267, 2026-10-22); the rig forgives exactly this refusal on dev
+(`DEV_EDGE_CSP_EXCEPTION`, [cross-client-testing](../cross-client-testing.md)). **Production is not
+affected**: `canari.emse.fr` is served by the host's nginx with no Cloudflare in front, its HTML
+carries no injected script, and its five inline scripts match its five hashes; the legacy apex only
+`301`s documents. The fix is the zone's setting - JavaScript detections off (Security > Bots), a
+dashboard gesture: the project token answers `10000 Authentication error` on the zone's
+`bot_management` endpoint, so no agent can read or change it. The other features above are still
+unread on that zone.
 
 **Also in the policy's wake.** pdf.js needs no eval: the 6.x line dropped its `new Function` glyph
 compiler and the `isEvalSupported` option with it (no `new Function` in `pdfjs-dist/build`), so there
