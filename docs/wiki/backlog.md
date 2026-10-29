@@ -27,6 +27,16 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Owed after the stable - raise the floor to the release carrying the bookings notices
+
+**Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
+bookings' four notification types went live on the `1.2.9` floor, and a client between `1.2.9` and
+that release draws them degraded - the neutral unknown-type row, the push's French legacy sentence,
+no `bookings` host on Android - a cost accepted on 2026-10-29
+([legacy-compatibility](legacy-compatibility.md)). **The step**: raise `minClientVersion` to that
+release on both estates (the owner's gesture), read it back from the public version endpoint, and
+delete this entry.
+
 ## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
 
 Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**

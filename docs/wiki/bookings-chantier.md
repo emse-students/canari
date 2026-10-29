@@ -369,12 +369,15 @@ sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling 
 
 ## WP-N as built - the bookings notices and the reminder (D53, 2026-10-29)
 
-**SWITCHED OFF**: `BOOKING_NOTIFICATIONS_ENABLED = false` (server,
-`booking-notifications.service.ts`) and its mirror `BOOKING_NOTIFICATIONS_LIVE` (client,
+**SWITCHED ON by the flip pull request** (built off, 2026-10-29):
+`BOOKING_NOTIFICATIONS_ENABLED = true` (server, `booking-notifications.service.ts`) and its mirror
+`BOOKING_NOTIFICATIONS_LIVE` (client,
 `lib/bookings/notified.ts`, pinned equal by `notified.contract.test.ts`). The durable rule of
 [legacy-compatibility](legacy-compatibility.md) - no new notification type before the floor covers
-#1911 - is why; the flip is a one-line pull request of its own. Off, nothing is written or sent, the
-reminder cron claims nothing, and the screens keep D13's sentences, which are then true.
+#1911 - is why the flip is a pull request of its own, merged on the `1.2.9` read-back. Off (set
+back to `false`), nothing is written or sent, the reminder cron claims nothing, and the screens keep
+D13's sentences, which are then true. The user guide and the privacy policy say the notices in the
+same pull request.
 
 - **Migration 115** (`115_booking_notifications.sql`): `booking_spaces."reminderMinutes"` (the
   space's default, 60 for every space including the existing ones, NULL = none, 5..10080 by a
