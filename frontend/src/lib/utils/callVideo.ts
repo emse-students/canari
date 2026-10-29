@@ -6,8 +6,9 @@
 import { vp8CodecPreferences } from './callVideoFrame';
 import type { CallVideoRung } from './callVideoQuality';
 
-/** Which camera of a phone: the screen side (`user`) or the back (`environment`). */
-export type CameraFacing = 'user' | 'environment';
+import { facingConstraint, type CameraFacing } from './cameraFacing';
+
+export type { CameraFacing };
 
 /**
  * The capture constraints of the call camera: 1280x720 at up to 30 frames a second, the TOP rung
@@ -23,7 +24,7 @@ export type CameraFacing = 'user' | 'environment';
  */
 export function callVideoConstraints(facing: CameraFacing, exact = false): MediaTrackConstraints {
   return {
-    facingMode: exact ? { exact: facing } : { ideal: facing },
+    facingMode: facingConstraint(facing, exact),
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 },

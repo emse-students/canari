@@ -212,7 +212,7 @@ describe('CameraScreen', () => {
     const flip = () =>
       target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_camera_switch()}"]`)!;
 
-    expect(open).toHaveBeenCalledWith('user');
+    expect(open).toHaveBeenCalledWith('user', false);
     expect(session.facing).toBe('user');
     expect(target.querySelector('video')!.className).toContain('-scale-x-100');
     expect(torch()).toBeNull();
@@ -221,7 +221,7 @@ describe('CameraScreen', () => {
     await Promise.resolve();
     await Promise.resolve();
     flushSync();
-    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(open).toHaveBeenLastCalledWith('environment', true);
     expect(target.querySelector('video')!.className).not.toContain('-scale-x-100');
     expect(torch()).not.toBeNull();
 
@@ -490,7 +490,7 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     const target = await mountLive({}, session);
     doubleTap(target);
     for (let i = 0; i < 4; i++) await Promise.resolve();
-    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(open).toHaveBeenLastCalledWith('environment', true);
     expect(session.facing).toBe('environment');
   });
 
@@ -508,7 +508,7 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     for (let i = 0; i < 4; i++) await Promise.resolve();
     flushSync();
 
-    expect(openLens).toHaveBeenCalledWith('environment');
+    expect(openLens).toHaveBeenCalledWith('environment', true);
     expect(first.lens.stop).toHaveBeenCalled();
     expect(first.mic.stop).not.toHaveBeenCalled();
     expect(session.stream!.getAudioTracks()).toEqual([first.mic]);

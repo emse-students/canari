@@ -30,15 +30,29 @@ function fakeStream(torch = false) {
 function deferredOpener() {
   const calls: {
     facing: CameraFacing;
+    switching: boolean | undefined;
     resolve: (s: MediaStream) => void;
     reject: (e: unknown) => void;
   }[] = [];
-  const open = (facing: CameraFacing) =>
-    new Promise<MediaStream>((resolve, reject) => calls.push({ facing, resolve, reject }));
+  const open = (facing: CameraFacing, switching?: boolean) =>
+    new Promise<MediaStream>((resolve, reject) =>
+      calls.push({ facing, switching, resolve, reject })
+    );
   return { open, calls };
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('CameraSession lens request', () => {
+  it('the first open is not a switch, the flip button is', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    void session.start();
+    expect(calls[0].switching).toBe(false);
+    void session.switchFacing();
+    expect(calls[1]).toMatchObject({ facing: 'environment', switching: true });
+  });
+});
 
 describe('CameraSession', () => {
   it('starts on the FRONT lens, then is live with the stream', async () => {

@@ -290,7 +290,7 @@ describe('ReelCapture', () => {
     }
     await settle();
 
-    expect(openLens).toHaveBeenCalledWith('environment');
+    expect(openLens).toHaveBeenCalledWith('environment', true);
     expect(session.facing).toBe('environment');
     expect(front.stop).toHaveBeenCalled();
     expect(mic.stop).not.toHaveBeenCalled();

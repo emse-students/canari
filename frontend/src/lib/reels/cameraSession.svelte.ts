@@ -39,7 +39,7 @@ import {
 export type CameraPhase = 'starting' | 'live' | 'error' | 'stopped';
 
 /** The opener, injectable so the session's ordering can be tested without a camera. */
-export type CameraOpener = (facing: CameraFacing) => Promise<MediaStream>;
+export type CameraOpener = (facing: CameraFacing, switching?: boolean) => Promise<MediaStream>;
 
 export class CameraSession {
   phase = $state<CameraPhase>('stopped');
@@ -96,7 +96,7 @@ export class CameraSession {
   }
 
   /** Opens `facing` (the current lens by default), releasing whatever was open first. */
-  async start(facing: CameraFacing = this.facing): Promise<void> {
+  async start(facing: CameraFacing = this.facing, switching = false): Promise<void> {
     const generation = ++this.#generation;
     console.debug(`[camera-session] start ${facing} (#${generation})`);
     this.#releaseCurrent();
@@ -105,7 +105,7 @@ export class CameraSession {
     this.phase = 'starting';
     this.fault = null;
     try {
-      const stream = await this.#open(facing);
+      const stream = await this.#open(facing, switching);
       if (generation !== this.#generation) {
         console.debug(
           `[camera-session] #${generation} came back after the session moved on - releasing it`
@@ -153,7 +153,7 @@ export class CameraSession {
   switchFacing(): Promise<void> {
     const next = otherFacing(this.facing);
     console.debug(`[camera-session] switch to ${next}`);
-    return this.start(next);
+    return this.start(next, true);
   }
 
   /**
@@ -192,7 +192,7 @@ export class CameraSession {
     this.torchOn = false;
     this.torchAvailable = false;
     try {
-      const lens = await this.#openLens(next);
+      const lens = await this.#openLens(next, true);
       if (generation !== this.#generation) {
         console.debug(`[camera-session] #${generation} lens came back after the session moved on`);
         releaseCamera(lens);

@@ -4,7 +4,8 @@
  * left held after the last release.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScreenWakeLock, type WakeLockApi } from './liveDevice';
+import { CameraAccessError } from '$lib/reels/cameraAccess';
+import { ScreenWakeLock, openLiveCamera, type WakeLockApi } from './liveDevice';
 
 class FakeSentinel {
   released = false;
@@ -45,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -125,5 +127,54 @@ describe('ScreenWakeLock', () => {
     await first;
     await lock.hold();
     expect(api.request).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The primary pointer: a finger on a phone (`coarse`), a mouse on a desktop. */
+function pointer(coarse: boolean): void {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: coarse }) });
+}
+
+/** The `facingMode` the first `getUserMedia` call asked for. */
+function askedFacing(gum: { mock: { calls: unknown[][] } }): unknown {
+  return ((gum.mock.calls[0]![0] as MediaStreamConstraints).video as MediaTrackConstraints)
+    .facingMode;
+}
+
+/** A `getUserMedia` answering like a DESKTOP webcam: no facing, so an exact one is overconstrained. */
+function desktopWebcam() {
+  return vi.fn(async (c: MediaStreamConstraints) => {
+    const fm = (c.video as MediaTrackConstraints).facingMode as { exact?: string } | undefined;
+    if (fm?.exact) throw new DOMException('x', 'OverconstrainedError');
+    return { getVideoTracks: () => [{ getSettings: () => ({}) }] };
+  });
+}
+
+describe('openLiveCamera lens constraint', () => {
+  it('DESKTOP: the first capture is IDEAL, so a webcam with no facing opens', async () => {
+    pointer(false);
+    const getUserMedia = desktopWebcam();
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    await expect(openLiveCamera('user')).resolves.toBeDefined();
+    expect(askedFacing(getUserMedia)).toEqual({ ideal: 'user' });
+  });
+
+  it('PHONE: the first capture is EXACT, as the reel camera asks it', async () => {
+    pointer(true);
+    const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    await openLiveCamera('user');
+    expect(getUserMedia.mock.calls[0][0].video.facingMode).toEqual({ exact: 'user' });
+  });
+
+  it('an explicit switch is EXACT, and a lens the device lacks is a typed unavailable', async () => {
+    pointer(false);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const getUserMedia = desktopWebcam();
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const err = await openLiveCamera('environment', true).catch((e: unknown) => e);
+    expect(askedFacing(getUserMedia)).toEqual({ exact: 'environment' });
+    expect(err).toBeInstanceOf(CameraAccessError);
+    expect((err as CameraAccessError).fault).toBe('unavailable');
   });
 });
