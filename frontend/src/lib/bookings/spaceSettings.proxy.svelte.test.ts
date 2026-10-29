@@ -43,6 +43,7 @@ function loadedSpace(): ManagedSpace {
     participantWithdrawMinMinutes: 0,
     maxPeople: null,
     retentionDays: 7,
+    reminderMinutes: 60,
   };
 }
 

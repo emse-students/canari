@@ -54,6 +54,8 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { downloadSpaceExport } from '$lib/bookings/bookingActions';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
+  import { reminderFromValue, reminderOptions } from '$lib/bookings/reminder';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -256,7 +258,10 @@
   }
 
   async function removeSpace() {
-    const confirmed = await showConfirm(m.bookings_delete_space_confirm({ name: space.name }), {
+    const question = BOOKING_NOTIFICATIONS_LIVE
+      ? m.bookings_delete_space_confirm_notified({ name: space.name })
+      : m.bookings_delete_space_confirm({ name: space.name });
+    const confirmed = await showConfirm(question, {
       danger: true,
       confirmLabel: m.common_delete_button(),
     });
@@ -597,6 +602,17 @@
     />
     <p class={CONTROL_HINT_CLASS}>{m.bookings_field_withdraw_hint()}</p>
   </div>
+  {#if BOOKING_NOTIFICATIONS_LIVE}
+    <!-- The space's default reminder (Q-R1, the mockup's "Rappel envoye avant le creneau"). -->
+    <Select
+      id="space-reminder"
+      label={m.bookings_reminder_space_label()}
+      hint={m.bookings_reminder_space_hint()}
+      value={draft.reminderMinutes}
+      options={reminderOptions(reminderFromValue(draft.reminderMinutes))}
+      onValueChange={(v) => (draft.reminderMinutes = v)}
+    />
+  {/if}
 </FormSection>
 
 <FormSection

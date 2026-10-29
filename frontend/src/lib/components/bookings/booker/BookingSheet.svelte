@@ -23,6 +23,8 @@
     visibleItems,
   } from '$lib/forms/fillAnswers';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
+  import { reminderFromValue, reminderOptions, reminderValue } from '$lib/bookings/reminder';
   import { showToast } from '$lib/stores/toast.svelte';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
@@ -76,6 +78,8 @@
   let participants = $state<Person[]>([]);
   let onBehalf = $state(false);
   let holder = $state<Person | null>(null);
+  /** The booker's own reminder (Q-R1), the space's default until they pick another. */
+  let reminder = $state(untrack(() => reminderValue(space.reminderMinutes ?? null)));
   // The sheet is mounted per opening, so the questions it starts from are its first ones.
   let selections = $state(initialSelections(untrack(() => space.items)));
   let submitting = $state(false);
@@ -128,6 +132,11 @@
         ...(participants.length ? { participantIds: participants.map((p) => p.id) } : {}),
         ...(items.length ? { answers: visibleAnswers(shown, selections) } : {}),
         ...(onBehalf && holder ? { holderId: holder.id } : {}),
+        // The booker's own delay: never for an account booked on behalf of (the server ignores
+        // it there too), and only while notices are live - off, nothing would send it.
+        ...(BOOKING_NOTIFICATIONS_LIVE && !onBehalf
+          ? { reminderMinutes: reminderFromValue(reminder) }
+          : {}),
       });
       Log.i('BOOKINGS', `booked from the sheet id=${id.slice(0, 8)} onBehalf=${onBehalf}`);
       showToast(m.bookings_sheet_done(), 'info');
@@ -261,8 +270,21 @@
             {m.bookings_sheet_people_full({ max: space.maxPeople ?? 0 })}
           </p>
         {/if}
-        <p class="text-text-muted text-xs">{m.bookings_sheet_people_note()}</p>
+        <p class="text-text-muted text-xs">
+          {BOOKING_NOTIFICATIONS_LIVE
+            ? m.bookings_sheet_people_note_notified()
+            : m.bookings_sheet_people_note()}
+        </p>
       </div>
+    {/if}
+
+    {#if BOOKING_NOTIFICATIONS_LIVE && !onBehalf}
+      <Select
+        label={m.bookings_reminder_label()}
+        value={reminder}
+        options={reminderOptions(reminderFromValue(reminder))}
+        onValueChange={(v) => (reminder = v)}
+      />
     {/if}
 
     {#if shown.length}

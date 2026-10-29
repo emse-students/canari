@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ManagedSpace } from './api';
+import { BOOKING_NOTIFICATIONS_LIVE } from './notified';
 import {
   activeRuleCount,
   draftFromSpace,
@@ -35,6 +36,7 @@ const SPACE: ManagedSpace = {
   participantWithdrawMinMinutes: 0,
   maxPeople: null,
   retentionDays: 7,
+  reminderMinutes: 60,
 };
 
 describe('the draft round trip', () => {
@@ -45,9 +47,13 @@ describe('the draft round trip', () => {
       associationId: _a,
       resources: _r,
       poster: _p,
+      reminderMinutes,
       ...settings
     } = SPACE;
-    expect(settingsFromDraft(draftFromSpace(SPACE))).toEqual(settings);
+    // The reminder default goes back only once the notices are live: off, nothing would send it.
+    expect(settingsFromDraft(draftFromSpace(SPACE))).toEqual(
+      BOOKING_NOTIFICATIONS_LIVE ? { ...settings, reminderMinutes } : settings
+    );
   });
 
   it('reads an empty field as "no limit" and trims the texts to null', () => {

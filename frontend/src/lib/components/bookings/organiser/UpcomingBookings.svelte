@@ -12,6 +12,8 @@
   import { upcomingDays } from '$lib/bookings/dashboard';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { showToast } from '$lib/stores/toast.svelte';
+  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -43,6 +45,15 @@
   /** The row whose cancel is open, and whether its request is under way. */
   let confirming = $state<string | null>(null);
   let cancelling = $state(false);
+  /** The organiser's optional word to the booking's people (Q-R3), carried by their notice only. */
+  let message = $state('');
+  const MESSAGE_MAX = 500;
+
+  /** Opens one row's cancel with an EMPTY word: a word typed for another row never travels here. */
+  function openCancel(id: string) {
+    confirming = id;
+    message = '';
+  }
   /** The instant the first page was read from: later pages continue THAT list. */
   let fromMs = 0;
 
@@ -96,10 +107,12 @@
     if (cancelling) return;
     cancelling = true;
     try {
-      await cancelBooking(booking.id);
+      const word = BOOKING_NOTIFICATIONS_LIVE ? message.trim() : '';
+      await cancelBooking(booking.id, word || undefined);
       Log.i('BOOKINGS', `dashboard cancel done booking=${booking.id.slice(0, 8)}`);
       showToast(m.bookings_cancel_done(), 'info');
       confirming = null;
+      message = '';
       // The cancel IS done: a list that cannot be read again says so, not that the cancel failed.
       if (!(await reload())) {
         Log.i('BOOKINGS', 'dashboard cancel done, the list re-read failed');
@@ -183,7 +196,7 @@
                 {#if !underWay && confirming !== booking.id}
                   <button
                     type="button"
-                    onclick={() => (confirming = booking.id)}
+                    onclick={() => openCancel(booking.id)}
                     class="border-cn-border text-red-err hover:border-red-err/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
                   >
                     <X size={12} />
@@ -193,12 +206,36 @@
               </div>
               {#if confirming === booking.id && !underWay}
                 <div class="border-cn-border mt-3 space-y-2 border-t pt-3">
-                  <p class="text-text-muted text-xs">{m.bookings_cancel_confirm_organiser()}</p>
+                  {#if BOOKING_NOTIFICATIONS_LIVE}
+                    <Textarea
+                      label={m.bookings_upcoming_cancel_message_label({
+                        name: booking.holderName ?? '',
+                      })}
+                      bind:value={message}
+                      maxlength={MESSAGE_MAX}
+                      rows={2}
+                      disabled={cancelling}
+                    />
+                    <p class="text-text-muted text-2xs -mt-1 text-right tabular-nums">
+                      {m.bookings_upcoming_cancel_message_counter({
+                        count: message.length,
+                        max: MESSAGE_MAX,
+                      })}
+                    </p>
+                    <p class="text-text-muted text-xs">
+                      {m.bookings_upcoming_cancel_notified({ name: booking.holderName ?? '' })}
+                    </p>
+                  {:else}
+                    <p class="text-text-muted text-xs">{m.bookings_cancel_confirm_organiser()}</p>
+                  {/if}
                   <div class="flex flex-wrap justify-end gap-2">
                     <button
                       type="button"
                       disabled={cancelling}
-                      onclick={() => (confirming = null)}
+                      onclick={() => {
+                        confirming = null;
+                        message = '';
+                      }}
                       class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40"
                     >
                       {m.bookings_cancel_keep()}
