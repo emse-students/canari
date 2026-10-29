@@ -94,6 +94,17 @@ describe('offeredTiers', () => {
     expect(offeredTiers([topup, rise]).map((t) => t.id)).toEqual(['rise']);
     expect(nonTierProducts([topup, rise]).map((t) => t.id)).toEqual(['t']);
   });
+
+  // Owner review of 1.5.1-alpha.7: the unpriced base tier read "Cotisation / Gratuit / Cotiser",
+  // a button the checkout refuses ("No amount provided") on every press.
+  it('offers no row or card for a product with no price at all', () => {
+    const unpriced = { amountCents: null, allowCustomAmount: false, priceMatrix: null };
+    const base = product({ id: 'base', type: 'membership', ...unpriced });
+    const other = product({ id: 'o', ...unpriced });
+    const free = product({ id: 'f', amountCents: null, allowCustomAmount: true });
+    expect(offeredTiers([base, rise]).map((t) => t.id)).toEqual(['rise']);
+    expect(nonTierProducts([other, free]).map((t) => t.id)).toEqual(['f']);
+  });
 });
 
 describe('cotisationDisabledForAssociation', () => {

@@ -4,6 +4,7 @@
     fullPriceLabel,
     gridRefuses,
     linkedTierName,
+    memberOfferLabel,
     preferentialPriceLabel,
   } from '$lib/pricing/viewerPrice';
   import { m } from '$lib/paraglide/messages';
@@ -25,6 +26,8 @@
    */
   const preferential = $derived(preferentialPriceLabel(product));
   const full = $derived(fullPriceLabel(product));
+  /** What a qualifying buyer pays, for a viewer who pays the full price (`memberOfferLabel`). */
+  const memberOffer = $derived(memberOfferLabel(product, siblings));
   /** A real figure (a fixed amount or a priced grid cell) reads big and bold; a wordy fallback
    * (free, custom, unavailable) does not, so it never looks like a price it is not. */
   const numeric = $derived(
@@ -46,6 +49,9 @@
     {#if preferential !== null}
       <span class="text-text-muted text-xs tabular-nums line-through" data-struck>{full}</span>
       <span class="text-text-muted block text-xs" data-preferential-reason>{reasonText()}</span>
+    {:else if memberOffer !== null}
+      <span class="text-text-muted block text-xs tabular-nums" data-member-offer>{memberOffer}</span
+      >
     {/if}
   {:else}
     <span class="text-text-main text-sm font-semibold">{full}</span>

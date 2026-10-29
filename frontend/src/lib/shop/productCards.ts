@@ -30,7 +30,7 @@ export function productDisplayName(p: Pick<AssociationProduct, 'name' | 'type'>)
  */
 export function offeredTiers(products: AssociationProduct[]): AssociationProduct[] {
   return products
-    .filter((p) => p.type === 'membership' && tierNotOffered(p) === null)
+    .filter((p) => p.type === 'membership' && tierNotOffered(p) === null && hasAPrice(p))
     .sort((a, b) => tierRank(a) - tierRank(b));
 }
 
@@ -40,7 +40,18 @@ function tierRank(p: AssociationProduct): number {
 
 /** The products that are not membership tiers: they keep one card each. */
 export function nonTierProducts(products: AssociationProduct[]): AssociationProduct[] {
-  return products.filter((p) => p.type !== 'membership');
+  return products.filter((p) => p.type !== 'membership' && hasAPrice(p));
+}
+
+/**
+ * False for a product with no price at all - no grid, no fixed amount, no free amount - such as the
+ * base tier every association gets unpriced when it enables cotisations. The checkout refuses it
+ * ("No amount provided", `decidePurchase`), so the shop shows no card or row whose every press
+ * fails; it read "Gratuit / Cotiser" before (owner review of 1.5.1-alpha.7). Such a cotisation is
+ * granted by hand in the Achats tab, never sold.
+ */
+export function hasAPrice(p: AssociationProduct): boolean {
+  return p.priceMatrix != null || p.amountCents !== null || p.allowCustomAmount;
 }
 
 /**

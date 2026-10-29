@@ -762,7 +762,13 @@ End-user (paying) surfaces:
   (`cotisationDisabled`), gets no purchase button, only the sentence saying why (`tierNotOffered`,
   `tierNotOfferedText`) - the checkout would refuse it with a 409. Nothing on the page decides who
   qualifies for a member price; the "for holders of" suffix names the tier the server read the tag
-  as naming (`memberPriceTierKey`, `linkedTierName`), and the tier the viewer holds
+  as naming (`memberPriceTierKey`, `linkedTierName`). A viewer who pays the full price still reads
+  what the holders of the linked tier pay ("5,00 EUR pour les détenteurs de Cotisation",
+  `memberOfferLabel`: the stored `amountCentsMember`, shown only when the server named the tier, as
+  information - never what this viewer is charged). A product with NO price at all (no grid, no
+  fixed amount, no free amount - the unpriced base tier every association gets when it enables
+  cotisations) has no row or card (`hasAPrice` in `lib/shop/productCards.ts`): the checkout refuses
+  it ("No amount provided"), and such a cotisation is granted by hand in the Achats tab. And the tier the viewer holds
   (`viewerActiveTier`) only lights the "your current tier" badge. The association page's product
   list renders the same price, suffix and refusal through the same helpers. `viewerActiveTier` is the specific tier
   `variantKey` the viewer currently holds for that association, if any (`null` for a single-tier

@@ -123,6 +123,31 @@ export function preferentialDueCents(product: AssociationProduct): number | null
 }
 
 /**
+ * The preferential price OTHER buyers get, for a viewer who pays the full price - "5,00 EUR for
+ * holders of Cotisation" - or null. Information only, never what this viewer is charged: that is
+ * `viewerDueCents`, and when it already is the preferential price (`preferentialDueCents`) the
+ * struck-through rendering says it instead. The amount is the stored `amountCentsMember` the
+ * checkout charges a qualifying buyer (`fixedPriceFor`); who qualifies stays the server's decision.
+ *
+ * A tag-linked price shows only when the server named its tier (`linkedTierName`): a link it could
+ * not read applies no preferential price server-side, so announcing one would be false. Null for a
+ * grid (it replaces the fixed pricing) or a free amount.
+ */
+export function memberOfferLabel(
+  product: AssociationProduct,
+  siblings: readonly AssociationProduct[]
+): string | null {
+  const member = product.amountCentsMember;
+  if (product.priceMatrix != null || product.amountCents === null || member == null) return null;
+  if (member <= 0 || member >= product.amountCents) return null;
+  if (preferentialDueCents(product) !== null) return null;
+  const amount = formatAmount(member, product.currency);
+  if (!product.memberPriceTag) return m.shop_member_offer_cotisants({ amount });
+  const tier = linkedTierName(product, siblings);
+  return tier === null ? null : m.shop_member_offer_tier({ amount, tier });
+}
+
+/**
  * The full (non-preferential) price label for a product: a grid's cell first and alone, else the
  * fixed `amountCents` formatted in the reader's locale, else the free-amount wording, else "free".
  * ONE implementation for the shop page and the association page, which each wrote this chain
