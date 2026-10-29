@@ -138,15 +138,17 @@ export async function ensureGroupMember(
 /**
  * What {@link writePendingSeats} did: the seats written, or why none was. `not_admitted` only for a
  * caller that asked for an admitted seat (`requireAdmitted`): the roster row awaits a member's
- * admission. `roster_taken` only for a `'creator'` enrolment: someone else is already on the roster,
- * so the caller is not the group's creator and nothing was written.
+ * admission. `roster_taken` and `not_creator` only for a `'creator'` enrolment, and nothing was
+ * written: someone else is already on the roster, or the group's recorded creator (`Group.createdBy`)
+ * is not this person - none recorded included.
  */
 export type PendingSeatsOutcome =
   | 'written'
   | 'group_gone'
   | 'not_on_roster'
   | 'not_admitted'
-  | 'roster_taken';
+  | 'roster_taken'
+  | 'not_creator';
 
 /**
  * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
@@ -163,7 +165,8 @@ export type PendingSeatsOutcome =
  *   `'awaiting_admission'` for an invite acceptance - a seat AWAITING A MEMBER'S ADMISSION, since no
  *   member chose this person, the link did (`GroupMember.awaitingAdmission`); `'creator'` for a
  *   group's creator enrolling itself into its empty roster (`MembersController.addGroupMember`),
- *   admitted - and ONLY while the roster is empty, re-read here under the seat lock taken EXCLUSIVE:
+ *   admitted - and ONLY for the group's recorded creator (`Group.createdBy`, else `not_creator`) while
+ *   the roster is empty, both re-read here under the seat lock taken EXCLUSIVE:
  *   the route's own "empty roster" read is unlocked, so two callers who both read it empty were both
  *   enrolled admitted (review of #2585). Exclusive, two creators run one after the other, and the
  *   second finds the first's committed row and gets `roster_taken`. The caller's own row does not
@@ -191,11 +194,21 @@ export async function writePendingSeats(
     else await takeSharedSeatLock(m, groupId);
     const [group] = await m.getRepository(Group).find({
       where: { id: groupId },
-      select: { id: true, deletedAt: true },
+      select: { id: true, deletedAt: true, createdBy: true },
       lock: { mode: 'pessimistic_read' },
     });
     if (!group || group.deletedAt) return 'group_gone';
     if (enrol === 'creator') {
+      // THE CREATOR ALONE, read here under the lock as the roster is: an empty roster used to be the
+      // whole test, so anyone who knew the id enrolled themselves as its first admitted member. A
+      // group with no recorded creator (written before migration 042) is enrolled into by nobody.
+      if (group.createdBy !== userId) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED not_creator group=${groupId} user=${cutUserId(userId)} ` +
+            `creator=${group.createdBy ? cutUserId(group.createdBy) : 'none'} - nothing written`
+        );
+        return 'not_creator';
+      }
       const other = await m.getRepository(GroupMember).findOne({
         where: { groupId, userId: Not(userId) },
         select: { id: true, userId: true },

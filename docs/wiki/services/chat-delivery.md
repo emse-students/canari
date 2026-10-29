@@ -763,9 +763,10 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
   `removeGroupMember` take the group's seat lock, then `dm_group_members`, then (on a removal the
   membership interval and the queued Welcomes, then) the device rows - the add, since ADM-3, only
-  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the caller, into an empty roster -
-  and "empty" is decided by a re-read under the seat lock taken EXCLUSIVE for that one case, so of two
-  callers who both read it empty one is enrolled and the other gets `409 MEMBER_NOT_ADMITTED`
+  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the group's CREATOR, into an
+  empty roster ([the creation bootstrap](#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29)) -
+  and "empty" and "creator" are decided by a re-read under the seat lock taken EXCLUSIVE for that one
+  case, so anyone else is answered `409 MEMBER_NOT_ADMITTED` with nothing written
   (`add-enrolment.integration.spec.ts`)
   ([mls-protocol](../protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)). Two transactions that take the same rows in the same
   order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
@@ -1186,6 +1187,39 @@ refusal is a server bug, not a state to keep rotating through. The MLS credentia
 `userId:deviceId`, so a new id *is* a new device: local history is gone and every group must
 re-invite it. That is the intended cost of a revocation being real.
 
+
+### The creation bootstrap admits the creator alone (migration 042, 2026-10-29)
+
+`POST mls/groups/:id/members` enrols ONE person itself: a group's creator, registering into the
+still-empty roster right after `POST mls/groups` (`groupCreation.ts` calls `registerMember` for
+itself before it creates the local MLS group, so the server names the group first). **Until
+2026-10-29 "the roster is empty and the caller adds itself" was the whole test**, so anyone who knew
+the id of a group whose roster was still empty - in the seconds between creation and the creator's
+own call, or for good on a group whose creator never made that call - enrolled themselves as its
+first ADMITTED member, with every power that seat carries (adding others, reading the roster, the
+external-join base). #2585 had closed only the race between two creators.
+
+- **The creation route records its AUTHENTICATED caller** in `dm_groups."createdBy"` (the HMAC-bound
+  `x-user-id`, never a body field). A body `createdBy` naming someone else is refused `403
+  MEMBERSHIP_NOT_ALLOWED` before any row is written - otherwise the caller enrolled another account's
+  device into a group it made.
+- **The bootstrap admits that account and nobody else.** `isCreationBootstrap` routes on it
+  (unlocked), and `writePendingSeats(..., 'creator')` re-reads `createdBy` beside the roster under the
+  seat lock taken exclusive, answering `not_creator` (the route's `409 MEMBER_NOT_ADMITTED`). A
+  stranger is refused earlier, at the route's guard: `403 MEMBERSHIP_NOT_ALLOWED`, nothing written,
+  and `[ADD_MEMBER] bootstrap REFUSED ... creator=<id|none>` at WARN.
+- **A NULL creator is bootstrapped by nobody**, never admitted: every row written before migration
+  042 (additive, nullable, no backfill, no default - nothing rewritten, nothing deleted), every
+  key-distribution group (also refused earlier by `KEY_DISTRIBUTION_GROUP`). A group that already has
+  members never takes the bootstrap, so the legacy rows it affects are the empty-roster ones alone,
+  and those have no creator anyone can name now.
+- **An account erasure anonymises it** to `[deleted]` (`ACCOUNT_ERASURE_COVERAGE`), which matches no
+  caller: the group lives on for its members, and its empty roster, if ever empty, admits nobody.
+
+Pinned by `add-enrolment.integration.spec.ts` against PostgreSQL (the stranger, the creator after
+him, the legacy row, the locked `roster_taken` and the race at the writer), and by
+`members.controller.blocks.spec.ts` / `messaging.one-active-writer.spec.ts` at the route.
+
 ## Refusal codes - one stable name per refusal a member can act on (2026-10-19)
 
 A refusal's `message` is dev-facing English and a client never shows or branches on it. What it keys
@@ -1315,7 +1349,7 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group as dismissed |
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
-| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the caller, into an empty roster |
+| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the group's recorded creator (`createdBy`), into an empty roster |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |

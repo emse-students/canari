@@ -27,6 +27,38 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P1 - The creation bootstrap admitted whoever enrolled first into an empty roster, not the creator (owner, 2026-10-29: P1 + schema) - fix in review, owed the owner's yes for migration 042
+
+**The hole.** `POST mls/groups/:id/members` enrols one person itself: a new group's creator, into its
+still-empty roster. The test was "the roster is empty and the caller adds itself", and nothing tied
+it to the account that created the group, so anyone who knew the id of a group whose roster was still
+empty became its first ADMITTED member - with every power that seat carries (adding others, reading
+the roster, the external-join base). #2585 closed only the race between two creators.
+
+**Exposure.** A group's roster is empty for the seconds between `POST mls/groups` and the creator's own
+`registerMember`, and for good on a group whose creator never made that call (the orphan of the P3
+entry on failed creations, below). A key-distribution group was already refused
+(`KEY_DISTRIBUTION_GROUP`, 2026-09-27). Reaching it takes the id, a random UUID handed only to the
+creator; how many production rows sit at an empty roster is a `count` the owner can run, not a number
+this file holds.
+
+**The design (built).** The creation route records its AUTHENTICATED caller in `dm_groups."createdBy"`
+(never a body field; a body `createdBy` naming someone else is refused 403), and the bootstrap admits
+that account alone - routed on it, re-read under the seat lock (`writePendingSeats` answers
+`not_creator`). A NULL creator - every row before 042 - is bootstrapped by nobody: refused, never
+admitted. An erasure anonymises the column to `[deleted]`. No client change: every client already
+sends its own id. Mechanism: [chat-delivery](services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29).
+
+**The migration.** `042_group_created_by.sql`: `ADD COLUMN IF NOT EXISTS "createdBy" VARCHAR(255)
+NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
+images that read the column, which is the deploy's own order.
+
+**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
+release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+seconds a deploy straddles (row written by the old image, NULL creator) is refused its bootstrap: one
+failed creation, retried by the user, and one orphan row of the P3 entry below. That entry can now be
+closed on `createdBy` (let the recorded creator end a group nobody joined) - not done here.
+
 ## Cotisation-disabled follow-ups (after the tier stack lands)
 
 Left by the review of #2584. Start after the tier stack has merged.

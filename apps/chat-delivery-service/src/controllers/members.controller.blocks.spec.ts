@@ -55,7 +55,8 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     keyPackageRepo = { find: jest.fn().mockResolvedValue([]) };
     blockQuery = jest.fn().mockResolvedValue([]);
     transaction = jest.fn().mockResolvedValue(undefined);
-    groupRepo = { findOne: jest.fn().mockResolvedValue({ id: GROUP }) };
+    // The group CALLER created (`Group.createdBy`): the one account its empty roster admits itself.
+    groupRepo = { findOne: jest.fn().mockResolvedValue({ id: GROUP, createdBy: CALLER }) };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MembersController],
@@ -164,6 +165,30 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     ).rejects.toMatchObject({ response: { error: 'group_deleted' } });
     expect(transaction).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['somebody else created', { id: GROUP, createdBy: TARGET }],
+    ['has no recorded creator (before migration 042)', { id: GROUP, createdBy: null }],
+  ])(
+    'refuses 403 an account enrolling itself into the empty roster of a group %s, and writes nothing',
+    async (_case, group) => {
+      jest.mocked(writePendingSeats).mockClear();
+      groupMemberRepo.count.mockResolvedValue(0);
+      groupMemberRepo.findOne.mockResolvedValue(null);
+      groupRepo.findOne.mockResolvedValue(group);
+
+      const err = await controller
+        .addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'MEMBERSHIP_NOT_ALLOWED',
+      });
+      expect(writePendingSeats).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     ['community', { distributionWorkspaceId: 'ws-1' }],

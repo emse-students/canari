@@ -26,7 +26,11 @@ import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { assertCallerActsOnGroup, isKeyDistributionGroup } from '../utils/group-membership';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import { cutUserId } from '../utils/log-repeat';
-import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import {
+  sanitizeIdentityValue,
+  sanitizeOptionalQueryValue,
+  sanitizeQueryValue,
+} from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
 
 /** MLS group lifecycle: create, read, rename, delete, and epoch management. */
@@ -149,12 +153,28 @@ export class GroupsController {
    * microseconds earlier by this same request and provably owns nothing - the one condition a
    * destructive action here needs. The failure is NEVER masked: the discard's own errors are logged
    * and the original refusal is what the caller receives.
+   *
+   * **THE CREATOR IS THE AUTHENTICATED CALLER, AND THE ROW RECORDS IT** (`Group.createdBy`). It is
+   * the one person `POST mls/groups/:id/members` may enrol into the still-empty roster; reading
+   * "empty" alone let anyone who knew the id become its first admitted member. A body `createdBy`
+   * naming someone else is refused 403 before anything is written: the caller would otherwise enrol
+   * another account's device into a group it made.
    */
   async createGroup(
     @Body()
-    body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string }
+    body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string },
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const traceId = this.makeTraceId('create-grp');
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id') ?? null;
+    if (caller && body.createdBy && String(body.createdBy).trim() !== caller) {
+      this.logger.warn(
+        `[CREATE_GROUP][${traceId}] REFUSED createdBy=${cutUserId(String(body.createdBy))} caller=${cutUserId(caller)} - a group is created by its caller; no group row was written`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.MEMBERSHIP_NOT_ALLOWED, 'createdBy must be the caller')
+      );
+    }
     // A group with no creator device enrols nobody - there is no membership to gate, and the
     // creator reaches it through the ordinary invitation path like any other device.
     const enrolling = Boolean(body.createdBy && body.creatorDeviceId);
@@ -191,6 +211,7 @@ export class GroupsController {
       id: groupId,
       name: body.name,
       isGroup: body.isGroup ?? true,
+      createdBy: caller,
     });
     await this.groupRepo.save(newGroup);
 

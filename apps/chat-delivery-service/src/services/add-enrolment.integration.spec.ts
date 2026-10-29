@@ -42,7 +42,11 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { MembersController } from '../controllers/members.controller';
-import { ensureGroupMember, expireUnansweredAsks } from '../utils/group-membership';
+import {
+  ensureGroupMember,
+  expireUnansweredAsks,
+  writePendingSeats,
+} from '../utils/group-membership';
 import { memberCommitFrame } from '../testing/mlsFrameFixture';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 
@@ -62,6 +66,7 @@ const dir = join(__dirname, '..', 'migrations');
 const MIGRATION_036 = readFileSync(join(dir, '036_seat_evictions.sql'), 'utf8');
 const MIGRATION_038 = readFileSync(join(dir, '038_group_member_awaiting_admission.sql'), 'utf8');
 const MIGRATION_039 = readFileSync(join(dir, '039_departure_seat_generation.sql'), 'utf8');
+const MIGRATION_042 = readFileSync(join(dir, '042_group_created_by.sql'), 'utf8');
 
 const GROUP = '00000000-0000-4000-8000-0000000000b1';
 const KEY_GROUP = '00000000-0000-4000-8000-0000000000b2';
@@ -254,6 +259,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
     // The columns as production gets them: the entities already made them, so the migration must
     // replay as a no-op on tables that have them.
     await q(MIGRATION_039);
+    await q(MIGRATION_042);
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
@@ -780,9 +786,12 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       });
       expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
 
-      // The caller, into a group whose roster is empty.
+      // The caller, into a group whose roster is empty and which it created.
       const fresh = '00000000-0000-4000-8000-0000000000b4';
-      await q(`INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 0)`, [fresh]);
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "createdBy") VALUES ($1, true, 0, $2)`,
+        [fresh, INVITEE.userId]
+      );
       try {
         await expect(
           members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId, undefined)
@@ -796,9 +805,92 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       }
     });
 
-    it('two callers who both read the roster empty: exactly one is enrolled the creator, the other answered 409', async () => {
+    it('a stranger who knows the id of a group whose roster is empty is refused 403, nothing written', async () => {
+      // The hole: an empty roster was the whole test, so anyone holding the id became its first
+      // ADMITTED member. The group was created by INVITER, who has not enrolled yet.
+      const fresh = '00000000-0000-4000-8000-0000000000b6';
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "createdBy") VALUES ($1, true, 0, $2)`,
+        [fresh, INVITER.userId]
+      );
+      try {
+        await expect(
+          refusalOf(
+            members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId, undefined)
+          )
+        ).resolves.toEqual({ status: 403, name: 'MEMBERSHIP_NOT_ALLOWED' });
+        expect(await enrolment(fresh)).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+        const [roster]: { n: string }[] = await q(
+          `SELECT COUNT(*) AS n FROM dm_group_members WHERE "groupId" = $1`,
+          [fresh]
+        );
+        expect(Number(roster.n)).toBe(0);
+
+        // ...and the real creator still enrols itself afterwards.
+        await expect(
+          members().addGroupMember(fresh, { userId: INVITER.userId }, INVITER.userId, undefined)
+        ).resolves.toEqual({ status: 'added' });
+        const seats: { userId: string; awaitingAdmission: boolean }[] = await q(
+          `SELECT "userId", "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1`,
+          [fresh]
+        );
+        expect(seats).toEqual([{ userId: INVITER.userId, awaitingAdmission: false }]);
+      } finally {
+        await q(`DELETE FROM dm_group_members WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_device_group_memberships WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_group_membership_intervals WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_groups WHERE id = $1`, [fresh]);
+      }
+    });
+
+    it('a group with no recorded creator (written before migration 042) is bootstrapped by nobody', async () => {
+      const legacy = '00000000-0000-4000-8000-0000000000b7';
+      await q(`INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 0)`, [
+        legacy,
+      ]);
+      try {
+        await expect(
+          refusalOf(
+            members().addGroupMember(legacy, { userId: INVITEE.userId }, INVITEE.userId, undefined)
+          )
+        ).resolves.toEqual({ status: 403, name: 'MEMBERSHIP_NOT_ALLOWED' });
+        // The locked writer refuses it too, whoever asks.
+        await expect(
+          writePendingSeats(ds.manager, legacy, INVITEE.userId, [INVITEE.deviceId], 'creator')
+        ).resolves.toBe('not_creator');
+        expect(await enrolment(legacy)).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+      } finally {
+        await q(`DELETE FROM dm_groups WHERE id = $1`, [legacy]);
+      }
+    });
+
+    it('the locked re-read refuses an enrolment as creator when someone else already holds the roster', async () => {
+      const fresh = '00000000-0000-4000-8000-0000000000b8';
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "createdBy") VALUES ($1, true, 0, $2)`,
+        [fresh, INVITEE.userId]
+      );
+      try {
+        await ds.transaction((m) => ensureGroupMember(m, fresh, INVITER.userId));
+        await expect(
+          writePendingSeats(ds.manager, fresh, INVITEE.userId, [INVITEE.deviceId], 'creator')
+        ).resolves.toBe('roster_taken');
+        expect(await enrolment(fresh)).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+      } finally {
+        await q(`DELETE FROM dm_group_members WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_group_membership_intervals WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_groups WHERE id = $1`, [fresh]);
+      }
+    });
+
+    it('two enrolments as creator that both read the roster empty: the creator is enrolled, the other refused under the lock', async () => {
+      // #2585's interleaving, at the writer: the route's unlocked reads now refuse a stranger before
+      // the lock, so both are sent to the locked writer directly - the re-read there is what decides.
       const fresh = '00000000-0000-4000-8000-0000000000b5';
-      await q(`INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 0)`, [fresh]);
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "createdBy") VALUES ($1, true, 0, $2)`,
+        [fresh, INVITER.userId]
+      );
       // Hold the group's seat lock from another session, so both calls pass their unlocked
       // "empty roster" reads and then queue on the lock - the interleaving the review found.
       const holder = new Client({ connectionString: URL });
@@ -808,9 +900,9 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
         await holder.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
           `seat:${fresh}`,
         ]);
-        const asCreator = (who: string) =>
-          refusalOf(members().addGroupMember(fresh, { userId: who }, who, undefined));
-        const racing = Promise.all([asCreator(INVITER.userId), asCreator(INVITEE.userId)]);
+        const asCreator = (who: { userId: string; deviceId: string }) =>
+          writePendingSeats(ds.manager, fresh, who.userId, [who.deviceId], 'creator');
+        const racing = Promise.all([asCreator(INVITER), asCreator(INVITEE)]);
         // Both are waiting on the lock: two ungranted advisory locks on this key.
         for (let waiting = 0; waiting < 2;) {
           const [row]: { n: string }[] = await q(
@@ -823,16 +915,12 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
         }
         await holder.query('COMMIT');
 
-        const answers = await racing;
-        expect(answers.filter((a) => a === null)).toHaveLength(1);
-        expect(answers.filter((a) => a !== null)).toEqual([
-          { status: 409, name: 'MEMBER_NOT_ADMITTED' },
-        ]);
-        const seats: { awaitingAdmission: boolean }[] = await q(
-          `SELECT "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1`,
+        expect(await racing).toEqual(['written', 'not_creator']);
+        const seats: { userId: string; awaitingAdmission: boolean }[] = await q(
+          `SELECT "userId", "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1`,
           [fresh]
         );
-        expect(seats).toEqual([{ awaitingAdmission: false }]);
+        expect(seats).toEqual([{ userId: INVITER.userId, awaitingAdmission: false }]);
         const [intervals]: { n: string }[] = await q(
           `SELECT COUNT(*) AS n FROM dm_group_membership_intervals WHERE "groupId" = $1`,
           [fresh]
