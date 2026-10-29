@@ -4,15 +4,18 @@ import type { Conversation } from '$lib/types';
 /**
  * The share sheet's suggestions (sharing lot S5): which conversations, in which order, and when the
  * native side is told - only on a change, cleared when the setting is off and at sign-out, and
- * never anywhere but Android.
+ * never anywhere but the phone apps - on iOS through the same two commands.
  */
 const invoke = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (cmd: string, args?: unknown) => invoke(cmd, args),
 }));
 
-let android = true;
-vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => android }));
+let platform: 'android' | 'ios' | null = 'android';
+vi.mock('$lib/utils/appVersion', () => ({
+  isAndroidTauriRuntime: () => platform === 'android',
+  isMobileTauriRuntime: () => platform !== null,
+}));
 
 const { selectShareTargets, syncShareTargets, MAX_SHARE_TARGETS } = await import('./shareTargets');
 const {
@@ -78,7 +81,7 @@ async function settle() {
 }
 
 beforeEach(() => {
-  android = true;
+  platform = 'android';
   invoke.mockReset();
   invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
   resetShareTargetsStateForTests();
@@ -250,9 +253,28 @@ describe('clearing', () => {
   });
 });
 
-describe('anywhere but Android', () => {
+describe('on iOS', () => {
+  it('publishes and clears through the same two commands, and only when the list changed', async () => {
+    platform = 'ios';
+    syncShareTargets(input([group('a', 'A', 1)]));
+    syncShareTargets(input([group('a', 'A', 1)]));
+    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
+    await settle();
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR]);
+    // The id iOS donates as the conversationIdentifier is Android's shortcut id.
+    expect(calls(PUBLISH)[0][1]).toMatchObject({ targets: [{ id: 'c:a', label: 'A' }] });
+  });
+
+  it('erases the suggestions at sign-out, and asks for no conversation shortcut it never had', async () => {
+    platform = 'ios';
+    await eraseAccountShortcuts('signed out');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR]);
+  });
+});
+
+describe('off the phone apps', () => {
   it('neither publishes nor clears', async () => {
-    android = false;
+    platform = null;
     syncShareTargets(input([group('a', 'A', 1)]));
     syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
     await clearShareTargets('signed out');

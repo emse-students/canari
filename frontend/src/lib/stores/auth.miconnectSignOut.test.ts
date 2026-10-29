@@ -180,16 +180,19 @@ describe('from sign-in to sign-out', () => {
 
     expect(fetchMock.mock.calls.map(([url]) => String(url)).join(' ')).toContain('/auth/logout');
     // The sign-out also empties the cache's `share_out/` (the decrypted file the last share out
-    // left there) and, in either mobile app, erases a share INTO Canari (`incomingShareSignOut`:
-    // the epoch first, then the claim); every OTHER native call is the one that ends MiConnect.
+    // left there), in either mobile app erases a share INTO Canari (`incomingShareSignOut`: the
+    // epoch first, then the claim) and the share sheet's suggested conversations (`clearShareTargets`,
+    // both phones since lot S5 on iOS); every OTHER native call is the one that ends MiConnect.
     const shareOut = 'plugin:gallery|discard_shared_out';
+    const suggestions = 'plugin:gallery|clear_share_targets';
     const shareIn = ['advance_share_epoch', 'read_and_clear_pending_share'];
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === shareOut)).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === suggestions)).toHaveLength(1);
     expect(
       invokeMock.mock.calls.map(([cmd]) => cmd).filter((cmd) => shareIn.includes(cmd))
     ).toEqual(shareIn);
     const ending = invokeMock.mock.calls.filter(
-      ([cmd]) => cmd !== shareOut && !shareIn.includes(cmd)
+      ([cmd]) => cmd !== shareOut && cmd !== suggestions && !shareIn.includes(cmd)
     );
     expect(ending).toHaveLength(1);
     const url = new URL((ending[0]![1] as { url: string }).url);

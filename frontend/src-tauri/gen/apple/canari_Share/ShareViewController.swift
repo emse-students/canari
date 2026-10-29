@@ -1,3 +1,4 @@
+import Intents
 import UIKit
 import UserNotifications
 import os
@@ -63,13 +64,26 @@ final class ShareViewController: UIViewController {
         guard !started else { return }
         started = true
         let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
-        log.info("share extension opened with \(items.count) item(s)")
+        let target = suggestedTarget()
+        log.info("share extension opened with \(items.count) item(s), suggestion=\(target != nil)")
         DispatchQueue.global(qos: .userInitiated).async {
-            let outcome = ShareCapture().run(items: items)
+            let outcome = ShareCapture().run(items: items, target: target)
             DispatchQueue.main.async {
                 self.show(outcome)
             }
         }
+    }
+
+    /// The conversation the member picked among the share sheet's suggestions (sharing lot S5): the
+    /// `INSendMessageIntent` the app donated (`ShareSuggestions.swift`) comes back as the
+    /// extension context's intent, and its `conversationIdentifier` is carried into the manifest as
+    /// `target` - the hint Android's `EXTRA_SHORTCUT_ID` gives. nil when the extension was picked
+    /// from the app row, or when the identifier is not of the suggestion shape (said, not used).
+    private func suggestedTarget() -> String? {
+        guard let intent = extensionContext?.intent as? INSendMessageIntent else { return nil }
+        if let target = ShareRules.suggestedTarget(intent.conversationIdentifier) { return target }
+        log.warning("a suggestion whose conversation identifier is not of the suggestion shape was ignored")
+        return nil
     }
 
     private func show(_ outcome: ShareCaptureOutcome) {

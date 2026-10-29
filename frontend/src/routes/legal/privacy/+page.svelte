@@ -673,6 +673,15 @@
             >
           </tr>
           <tr>
+            <td>Suggestions de partage (application iPhone)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés à
+              iOS pour les proposer dans son menu Partager (désactivable dans Paramètres &gt;
+              Préférences). Le système peut donc les afficher dans ses suggestions
+            </td>
+            <td>Effacés à la déconnexion et à la désactivation du réglage</td>
+          </tr>
+          <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
             <td>
               Créé par les versions de l'application antérieures à octobre 2026, qui l'envoyaient à

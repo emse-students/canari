@@ -1,7 +1,9 @@
 /**
- * The conversations Android's share sheet SUGGESTS (sharing lot S5): the shortcut id shape, and the
- * two native calls - publish (replace the whole set) and clear - with the one piece of state that
- * makes them idempotent: what the native side was last told.
+ * The conversations the phone's share sheet SUGGESTS (sharing lot S5): the shortcut id shape, and
+ * the two native calls - publish (replace the whole set) and clear - with the one piece of state
+ * that makes them idempotent: what the native side was last told. ONE path for both phones, behind
+ * the same two commands: Android publishes sharing shortcuts (`ShareTargets.kt`), iOS donates
+ * `INSendMessageIntent`s (`ShareSuggestions.swift`).
  *
  * Kept apart from `shareTargets.ts` (which chooses the conversations) because `stores/auth` calls
  * {@link clearShareTargets} at sign-out, and choosing conversations reaches modules that import
@@ -9,13 +11,16 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { galleryCommand } from '$lib/services/galleryCommands';
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isAndroidTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
 
 /** Every suggestion's shortcut id is this prefix and a conversation id. */
 export const SHARE_TARGET_PREFIX = 'c:';
 
-/** The native side refuses a longer id (`ShareTargets.kt`), and `IncomingShare.kt` ignores one. */
+/**
+ * The native side refuses a longer id (`ShareTargets.kt`, `ShareSuggestions.swift`), and the share
+ * capture ignores one (`IncomingShare.kt`, the Share Extension's `ShareRules.suggestedTarget`).
+ */
 const MAX_SHARE_TARGET_ID_LENGTH = 200;
 
 /** A conversation id as it may travel in a shortcut id and a deep link: a plain token. */
@@ -23,11 +28,14 @@ const CONVERSATION_ID = /^[A-Za-z0-9_-]+$/;
 
 /** One suggestion as the native side takes it (`publish_share_targets`). */
 export interface ShareTarget {
-  /** `c:<conversation id>` - what Android hands back as `EXTRA_SHORTCUT_ID`. */
+  /**
+   * `c:<conversation id>` - what Android hands back as `EXTRA_SHORTCUT_ID`, and iOS as the picked
+   * `INSendMessageIntent`'s `conversationIdentifier`.
+   */
   id: string;
   /** The conversation's name, as the share picker shows it. */
   label: string;
-  /** The deep link a tap from the launcher's long-press menu opens. */
+  /** The deep link a tap from Android's launcher long-press menu opens (iOS has no such menu). */
   link: string;
 }
 
@@ -77,10 +85,10 @@ function enqueue(step: () => Promise<void>): Promise<void> {
 
 /**
  * Replaces the suggested conversations with `targets`, most recent first - unless the native side
- * already holds exactly that list. Android only; a failure is said, never thrown.
+ * already holds exactly that list. Phone apps only; a failure is said, never thrown.
  */
 export function publishShareTargets(targets: ShareTarget[], reason: string): Promise<void> {
-  if (!isAndroidTauriRuntime()) return Promise.resolve();
+  if (!isMobileTauriRuntime()) return Promise.resolve();
   const key = keyOf(targets);
   return enqueue(async () => {
     if (key === lastPublished) return;
@@ -112,14 +120,14 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
  * Removes every suggested conversation - when the member turns the suggestions off, and at
  * sign-out through {@link eraseAccountShortcuts} - and RESETS the state, so the next account
  * publishes its own. Skipped when the native side is known to hold nothing, unless `force`: the
- * sign-out always asks, since only the native record knows for certain. Android only; a failure is
- * said, never thrown.
+ * sign-out always asks, since only the native record knows for certain. Phone apps only; a failure
+ * is said, never thrown.
  */
 export function clearShareTargets(
   reason: string,
   options: { force?: boolean } = {}
 ): Promise<void> {
-  if (!isAndroidTauriRuntime()) return Promise.resolve();
+  if (!isMobileTauriRuntime()) return Promise.resolve();
   return enqueue(async () => {
     if (!options.force && lastPublished === NOTHING) return;
     try {
@@ -136,12 +144,15 @@ export function clearShareTargets(
 /**
  * Everything of THIS account the system holds as shortcuts, erased at every sign-out (an account
  * switch included; user, 2026-10-22): the share suggestions, ALWAYS asked of the native side, and
- * the `chat_<group>` conversation shortcuts the message notifications publish (names and faces).
- * Queued after any publish in flight. Android only; a failure is said, never thrown.
+ * on Android the `chat_<group>` conversation shortcuts the message notifications publish (names
+ * and faces). iOS has no second set: its notification extension donates no intent and publishes no
+ * shortcut, so the suggestions' donations are all the system holds of an account there. Queued
+ * after any publish in flight. Phone apps only; a failure is said, never thrown.
  */
 export function eraseAccountShortcuts(reason: string): Promise<void> {
-  if (!isAndroidTauriRuntime()) return Promise.resolve();
-  void clearShareTargets(reason, { force: true });
+  if (!isMobileTauriRuntime()) return Promise.resolve();
+  const suggestions = clearShareTargets(reason, { force: true });
+  if (!isAndroidTauriRuntime()) return suggestions;
   return enqueue(async () => {
     try {
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));

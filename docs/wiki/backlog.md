@@ -2278,8 +2278,9 @@ Group) and its `CanariShare` profiles exist: a Share Extension writes into the A
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
-`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`).
+`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. **The iOS
+suggestions (`INSendMessageIntent`, the S5 twin) are BUILT (2026-10-27)**, owed a CI compile and the
+iPhone readings ([sharing](frontend/sharing.md#share-suggestions-ios---lot-s5)). CanaRun waits.
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 

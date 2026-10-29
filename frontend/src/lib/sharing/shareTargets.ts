@@ -1,5 +1,5 @@
 /**
- * Which conversations Android's share sheet suggests (sharing lot S5), and when they are told.
+ * Which conversations the phone's share sheet suggests (sharing lot S5), and when they are told.
  *
  * THE DESTINATIONS ARE THE PICKER'S. The suggestions are the "Envoyer a..." picker's own candidates
  * (DMs, groups, salons, named by `shareDestinationPresentation`), restricted to the ones that can
@@ -10,13 +10,14 @@
  * list is sent only when the ordered ids and names differ from what the native side was last told
  * (`shareTargetsNative.ts`), so a new message reordering the top of the list republishes and one
  * that does not, sends nothing. No debounce, no clock. Setting off -> cleared. Sign-out -> cleared
- * by `stores/auth` (`clearShareTargets`). Android only: iOS suggestions need the Share Extension
- * (lot S4). See `docs/wiki/frontend/sharing.md`.
+ * by `stores/auth` (`eraseAccountShortcuts`). Both phone apps, through the same two commands:
+ * Android sharing shortcuts, iOS `INSendMessageIntent` donations. See
+ * `docs/wiki/frontend/sharing.md`.
  */
 import { compareConversationRecency } from '$lib/utils/chat/conversations';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import type { Conversation } from '$lib/types';
 import {
   channelCommunities,
@@ -98,10 +99,10 @@ export interface ShareTargetsInput {
  * Brings the share sheet's suggestions in line with `input`: cleared when the member turned them
  * off, the current top conversations once signed in and the list is read, nothing otherwise (a
  * locked or loading session neither publishes a partial list nor erases a good one - the sign-out
- * is what erases). Android only.
+ * is what erases). Phone apps only.
  */
 export function syncShareTargets(input: ShareTargetsInput): void {
-  if (!isAndroidTauriRuntime()) return;
+  if (!isMobileTauriRuntime()) return;
   if (!input.enabled) {
     void clearShareTargets('suggestions turned off');
     return;
