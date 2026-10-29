@@ -27,6 +27,27 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
+
+Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**
+
+**The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
+else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
+AUTHENTICATED caller in canonical form (never a body field; a body `createdBy` naming another account
+is refused 403); the bootstrap routes on it and re-reads it under the seat lock (`writePendingSeats`
+answers `not_creator`). The column is internal: no route returns it. An erasure anonymises it to
+`[deleted]`. No client change. Mechanism: [chat-delivery](services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29).
+
+**The migration.** `042_group_created_by.sql`: `ADD COLUMN IF NOT EXISTS "createdBy" VARCHAR(255)
+NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
+images that read the column, which is the deploy's own order.
+
+**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
+release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+seconds a deploy straddles (row written by the old image, NULL creator) has its creation refused, and
+the user retries. The P3 entry on failed creations below can now be closed on `createdBy` (let the
+recorded creator end a group nobody joined) - not done here.
+
 ## Cotisation-disabled follow-ups (after the tier stack lands)
 
 Left by the review of #2584. Start after the tier stack has merged.

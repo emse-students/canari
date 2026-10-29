@@ -1035,6 +1035,9 @@ export class InternalController {
       manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
+      // The groups it created live on for their members; the creator id only ever let it enrol
+      // itself into an empty roster, and `[deleted]` matches no caller.
+      this.groupRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);
 
     this.logger.log(

@@ -259,7 +259,12 @@ describe('a group ends - one policy, three routes', () => {
 
       await end(doors);
 
-      expect(repos.group.update).toHaveBeenCalledTimes(1);
+      // One tombstone write. An account erasure also anonymises the `createdBy` of the groups the
+      // account made (criteria `{ createdBy }`), which is no ending and not counted here.
+      const tombstones = repos.group.update.mock.calls.filter(
+        ([criteria]: [Record<string, unknown>]) => 'id' in criteria
+      );
+      expect(tombstones).toHaveLength(1);
       expect(repos.group.update).toHaveBeenCalledWith(
         { id: In([GROUP_ID]) },
         expect.objectContaining({ deletedAt: expect.any(Date) })

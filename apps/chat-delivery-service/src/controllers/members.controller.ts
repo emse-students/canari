@@ -34,6 +34,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
 import {
+  canonicalUserId,
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
   parseLeafIdentity,
@@ -208,12 +209,16 @@ export class MembersController {
   }
 
   /**
-   * The group-creation bootstrap: `caller` registers ITSELF into a group whose roster is still empty
-   * - the creator, before anyone else exists. The one enrolment the member-add route still writes.
+   * The group-creation bootstrap: the group's CREATOR (`Group.createdBy`, the authenticated caller of
+   * `POST mls/groups`) registers ITSELF into a group whose roster is still empty, before anyone else
+   * exists. The one enrolment the member-add route still writes.
    *
-   * UNLOCKED, SO IT ONLY ROUTES: two callers can both read the roster empty. What decides is the
-   * re-read under the seat lock taken exclusive (`writePendingSeats(..., 'creator')`), which answers
-   * the later one `roster_taken`, a 409 here.
+   * The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody else; a
+   * group with no recorded creator is bootstrapped by nobody (migration 042). Compared in canonical
+   * form ({@link canonicalUserId}).
+   *
+   * UNLOCKED, SO IT ONLY ROUTES. What decides is the re-read under the seat lock taken exclusive
+   * (`writePendingSeats(..., 'creator')`), which checks the creator and the empty roster again.
    */
   private async isCreationBootstrap(
     safeGroupId: string,
@@ -221,7 +226,18 @@ export class MembersController {
     targetUserId: string
   ): Promise<boolean> {
     if (!caller || caller !== targetUserId) return false;
-    return (await this.groupMemberRepo.count({ where: { groupId: safeGroupId } })) === 0;
+    if ((await this.groupMemberRepo.count({ where: { groupId: safeGroupId } })) > 0) return false;
+    const group = await this.groupRepo.findOne({
+      where: { id: safeGroupId },
+      select: { id: true, createdBy: true },
+    });
+    if (group?.createdBy && group.createdBy === canonicalUserId(caller)) return true;
+    this.logger.warn(
+      `[ADD_MEMBER] bootstrap REFUSED group=${safeGroupId} caller=${cutUserId(caller)} ` +
+        `creator=${group?.createdBy ? cutUserId(group.createdBy) : 'none'} - an empty roster is ` +
+        `enrolled into by its creator alone; nothing written`
+    );
+    return false;
   }
 
   /**
@@ -665,13 +681,14 @@ export class MembersController {
       );
       throw new GoneException({ error: 'group_deleted', groupId: safeGroupId });
     }
-    // The "empty roster" read above is unlocked; the one that decides is the re-read under the
-    // seat lock. Someone else got there first: this caller is not the creator, and no accepted
-    // commit admitted them - the same typed 409 as any other person this route enrols nobody for.
-    if (created === 'roster_taken') {
+    // The creator and "empty roster" reads above are unlocked; the ones that decide are the re-reads
+    // under the seat lock. Someone else is on the roster, or the recorded creator is not this caller
+    // (its id erased since): no accepted commit admitted them either - the same typed 409 as any
+    // other person this route enrols nobody for.
+    if (created === 'roster_taken' || created === 'not_creator') {
       this.logger.warn(
         `[ADD_MEMBER][${traceId}] REFUSED not_admitted group=${safeGroupId} user=${cutUserId(safeUserId)} ` +
-          `reason=roster_taken - another creator enrolled first; nothing written`
+          `reason=${created} - the creator's enrolment found the roster taken or another creator; nothing written`
       );
       throw new ConflictException(
         refusalBody(
