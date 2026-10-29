@@ -142,20 +142,26 @@ export function listManagedSpaces(associationId: string | null): Promise<Managed
   return call('listManagedSpaces', `/managed${query}`);
 }
 
+/** What a creation carries besides its name and owner: any setting, and a poster already uploaded. */
+export type CreateSpaceFields = Partial<Omit<SpaceSettings, 'name'>> & { poster?: SpacePoster };
+
 /**
- * A new space with its ONE default column (D44), named after it; every other setting starts at the
- * server's default. The server writes both in one transaction, with the column's first hours when
- * `availability` is given (the creation wizard, D52), so no half-made space is ever left behind.
+ * A new space with its ONE default column (D44), named after it. The server writes both in one
+ * transaction, with the column's first hours when `availability` is given, so no half-made space
+ * is ever left behind. `fields` are the settings the creation wizard asked (D52, `wizard.ts`);
+ * every setting absent starts at the server's default.
  */
 export function createSpace(
   name: string,
   associationId: string | null,
-  availability?: { lines: StoredLine[]; exceptions: Closure[] }
+  availability?: { lines: StoredLine[]; exceptions: Closure[] },
+  fields: CreateSpaceFields = {}
 ): Promise<{ id: string; resourceId: string }> {
   return call(
     'createSpace',
     '/spaces',
     json('POST', {
+      ...fields,
       name,
       ...(associationId ? { associationId } : {}),
       ...(availability ? { availability } : {}),

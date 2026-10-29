@@ -48,6 +48,16 @@ export function minutesOf(time: string): number {
 /** The stored `HH:MM:SS` as the editor shows it. */
 const short = (time: string) => time.slice(0, 5);
 
+/**
+ * Monday..Sunday in `locale` (`fr-FR`, `en-US`), `long` or `short`, as the editors label days;
+ * 2024-01-01 was a Monday.
+ */
+export function weekdayNames(locale: string, style: 'long' | 'short'): string[] {
+  return [1, 2, 3, 4, 5, 6, 7].map((d) =>
+    new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, { weekday: style, timeZone: 'UTC' })
+  );
+}
+
 /** The next ISO weekday. */
 export const nextWeekday = (d: number): Weekday => ((d % 7) + 1) as Weekday;
 
