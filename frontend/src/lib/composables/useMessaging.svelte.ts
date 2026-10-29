@@ -10,7 +10,7 @@ import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
-import { getToken } from '$lib/stores/auth';
+import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
@@ -40,9 +40,10 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import {
+  advanceLastMessageAt,
   insertMessageOrdered,
   mergeMessagesInInputOrder,
-  messageTime,
+  tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
@@ -202,6 +203,51 @@ export function useMessaging() {
    * review, 2026-10-15: the in-app camera made staging a photo and walking away an ordinary act).
    */
   const pendingByConversation = new SvelteMap<string, import('$lib/media').PendingMediaFile[]>();
+  /**
+   * The TEXT typed in each conversation's composer, keyed by conversation id - the same rule as
+   * {@link pendingByConversation}. It was one field for every conversation, so a draft left in A
+   * (or a share staged there) sat in B's composer after a switch, and B's Send posted it there
+   * (Mi 9T, 2026-10-27).
+   */
+  const draftByConversation = new SvelteMap<string, string>();
+
+  /** The text typed in `conversationKey`'s composer ('' when none or no conversation). */
+  function draftFor(conversationKey: string | null | undefined): string {
+    return conversationKey ? (draftByConversation.get(conversationKey) ?? '') : '';
+  }
+
+  /** Replaces the text of `conversationKey`'s composer; an empty text leaves no entry. */
+  function setDraft(conversationKey: string | null | undefined, text: string): void {
+    if (!conversationKey) {
+      if (text)
+        console.warn(`[DRAFT] ${text.length} char(s) typed with no conversation open - dropped`);
+      return;
+    }
+    if (text) draftByConversation.set(conversationKey, text);
+    else draftByConversation.delete(conversationKey);
+  }
+
+  /**
+   * A writer of `conversationKey`'s draft for text that comes back LATER - an edit's saved draft, a
+   * refused send, a salon text resumed after an await. It is bound to the account signed in NOW: a
+   * sign-out in between (`signOutGeneration`) makes it drop the text, because {@link forgetAccount}
+   * has cleared the drafts and a write after it would hand the leaving account's text to the next
+   * one opening the same conversation (review of #2614, 2026-10-27).
+   */
+  function lateDraftWriter(
+    conversationKey: string | null | undefined,
+    origin: string
+  ): (text: string) => void {
+    const generation = signOutGeneration();
+    return (text) => {
+      if (signOutGeneration() !== generation) {
+        if (text)
+          console.info(`[DRAFT] ${origin}: ${text.length} char(s) dropped - signed out since`);
+        return;
+      }
+      setDraft(conversationKey, text);
+    };
+  }
 
   /** The staged files of `conversationKey`, oldest first ([] when none or no conversation). */
   function pendingMediaFilesFor(
@@ -211,18 +257,20 @@ export function useMessaging() {
   }
 
   /**
-   * THE ACCOUNT SIGNED OUT: its staged files and armed replies leave the memory. This composable is
-   * a singleton that outlives a sign-out without a page reload, and both maps are keyed by
+   * THE ACCOUNT SIGNED OUT: its staged files, armed replies and drafts leave the memory. This composable is
+   * a singleton that outlives a sign-out without a page reload, and the maps are keyed by
    * conversation ids the NEXT account may open too - a DM between the two accounts, a salon of a
    * shared community - whose composer would then show, and send, what the previous one staged.
    */
   function forgetAccount(log: (msg: string) => void): void {
     const staged = pendingByConversation.size;
     const replies = replyByConversation.size;
+    const drafts = draftByConversation.size;
     pendingByConversation.clear();
     replyByConversation.clear();
+    draftByConversation.clear();
     log(
-      `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
+      `[COMPOSER] signed out: staging of ${staged}, replies of ${replies} and drafts of ${drafts} conversation(s) forgotten`
     );
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
@@ -882,7 +930,7 @@ export function useMessaging() {
         ctx.conversations.set(normalized, {
           ...convo,
           messages: nextMessages,
-          lastMessageAt: Math.max(convo.lastMessageAt ?? 0, upgraded.timestamp.getTime()),
+          lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [upgraded]),
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
@@ -916,7 +964,9 @@ export function useMessaging() {
             type: 'message_added',
             conversationId: normalized,
             message: upgraded,
-            lastMessageAt: updatedConvo.lastMessageAt ?? upgraded.timestamp.getTime(),
+            ...(updatedConvo.lastMessageAt !== undefined
+              ? { lastMessageAt: updatedConvo.lastMessageAt }
+              : {}),
             unreadCount: updatedConvo.unreadCount ?? 0,
             ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
@@ -949,7 +999,7 @@ export function useMessaging() {
       ...convo,
       unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+      lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}`);
 
@@ -960,7 +1010,7 @@ export function useMessaging() {
         type: 'message_added',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
         unreadCount: nextUnreadCount,
         ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       });
@@ -976,7 +1026,7 @@ export function useMessaging() {
         type: 'own_message_composed',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
       });
     }
 
@@ -1062,7 +1112,7 @@ export function useMessaging() {
   /**
    * Appends multiple messages in a single reactive update and one batch IndexedDB write.
    * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
-   * cause UI jank. Updates `lastMessageAt` to the max timestamp in the batch.
+   * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
@@ -1205,14 +1255,13 @@ export function useMessaging() {
 
     const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
-    const batchMaxTs = merged.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 
     if (current) {
       ctx.conversations.set(normalized, {
         ...current,
         unreadCount: nextUnreadCount,
         messages: merged,
-        lastMessageAt: Math.max(current.lastMessageAt ?? 0, batchMaxTs),
+        lastMessageAt: advanceLastMessageAt(current.lastMessageAt, merged),
       });
     } else {
       // Same rule as the vanished-conversation return at the top: never silent. The rows are still
@@ -1303,7 +1352,7 @@ export function useMessaging() {
       type: 'messages_batch',
       conversationId: normalized,
       messages: brandNew,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
+      ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, brandNew)),
       unreadCount: nextUnreadCount,
     });
 
@@ -2400,6 +2449,11 @@ export function useMessaging() {
 
     /** The message the user is replying to IN a given conversation (null when none is pending there). */
     replyFor,
+    /** The text typed in a given conversation's composer. */
+    draftFor,
+    lateDraftWriter,
+    /** Replaces the text of a given conversation's composer. */
+    setDraft,
     /** The files staged IN a given conversation, sent by its next handleSendChat. */
     pendingMediaFilesFor,
     /** Forgets every staged file and armed reply of the account that signed out. */

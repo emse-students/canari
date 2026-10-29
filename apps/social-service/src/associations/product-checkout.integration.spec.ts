@@ -60,6 +60,13 @@ maybe('product checkout attempts against PostgreSQL', () => {
     );
     await ds.query(migration);
     await ds.query(migration);
+    // The held tier frozen at the opening (112), on the admin connection: its `SET lock_timeout`
+    // must not stay on a pool connection.
+    await admin.query(`SET search_path TO ${schema},public`);
+    await admin.query(
+      readFileSync(join(__dirname, '../migrations/112_product_checkouts_held_tier.sql'), 'utf8')
+    );
+    await admin.query('RESET lock_timeout');
 
     service = Object.assign(Object.create(ProductsService.prototype) as object, {
       logger: new Logger('ProductsService'),

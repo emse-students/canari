@@ -213,7 +213,7 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 ## 8 - GRP - group membership and invitations
 
 The first rung that moves an MLS epoch, **and the rung that proved a third device changes what a
-two-device check measures**: on the LITHIUM rig, GRP-4's evictions were committed by an undriven
+two-device check measures**: on the previous machine's rig, GRP-4's evictions were committed by an undriven
 fleet member rather than by either driven browser. That finding outlives its ledger - it is a
 statement about the system, not a verdict - and it is why the fleet has to be enumerated before this
 rung is believed.

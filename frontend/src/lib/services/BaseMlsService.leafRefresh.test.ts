@@ -147,6 +147,11 @@ describe('the commits no person asks for - staged only on the branch the server 
     );
     return {
       delivery: { fetchGroupInfo: vi.fn().mockResolvedValue(opts.base) },
+      // REAL routing: a conversation (no registered scope) reads its base from chat-delivery.
+      distributionScopeByGroup: new Map(),
+      knownDistributionGroups: new Set(),
+      groupInfoChannel: (BaseMlsService.prototype as unknown as { groupInfoChannel: unknown })
+        .groupInfoChannel,
       freshEpoch: vi.fn().mockResolvedValue(5),
       ownContextMatchesBase: vi.fn().mockResolvedValue(opts.matches ?? true),
       runCommitTransaction: run,

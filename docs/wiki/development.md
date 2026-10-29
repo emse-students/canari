@@ -236,8 +236,8 @@ from the source.
   rewrite had to respect: the id is a NAME, so a loose `__sveltekit_[a-z0-9]+` scan also matches
   unrelated globals built the same way (`__sveltekit_sw`, the service-worker env payload, which
   lives only in the server bundle — hence `build/server/` is excluded from the name scan); and
-  adapter-node never writes the name literally on the server side, it interpolates it from
-  `options.version_hash`, so the server half is checked as that value instead. Corollary: **never run an
+  adapter-node (SvelteKit 3) writes the name once on the server side, as `const global = "..."`
+  in the `respond` chunk, so the server half is checked as that constant instead. Corollary: **never run an
   Android/iOS build concurrently with anything else that builds the frontend** — `beforeBuildCommand`
   is `bun run build`, writing the very directory a parallel build is writing.
 - **A vendored plugin still ships the sample it was forked from.** `tauri-plugin-keystore` carried

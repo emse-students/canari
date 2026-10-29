@@ -46,7 +46,7 @@ writer and every door in the code, the server suites, and production COUNTS (no 
 
 | # | Path | Receipt ("Lu par") | Private count | Evidence | Verdict |
 | --- | --- | --- | --- | --- | --- |
-| 1 | reader clicks a salon, window focused | moves after the 2 s debounce | cleared | bench 10-08: one salon opened -> exactly one `read-mark`, that salon only | intended |
+| 1 | reader clicks a salon, window focused | moves after the 2 s debounce, or AT ONCE when the reader leaves the salon inside it (since 2026-10-27; only a mark the reading already decided, never one for an unread message) | cleared | bench 10-08: one salon opened -> exactly one `read-mark`, that salon only | intended |
 | 2 | message arrives in the salon being read | moves | stays 0 | receipt effect; bench 10-10 control row | intended |
 | 3 | reader walks the ten communities, opens no salon | none | unchanged | bench 10-08 (twice): 0 `read-mark`, server marks unchanged; `onSelectCommunity` clears the selection | intended |
 | 4 | community selected, a salon auto-selected | n/a | n/a | only creation (`ensureWorkspaceByName`) and invite acceptance (`openInvitedChannel`) select a salon, both gestures; every other `selectConversation` caller is a click, a notification tap or the profile/mini-panel "message" button | refuted |

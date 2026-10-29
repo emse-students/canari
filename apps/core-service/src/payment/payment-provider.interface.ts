@@ -120,10 +120,16 @@ export type CheckoutRequestStateKind =
   | 'unknown'
   | 'not-found';
 
-/** A request's classified state; `raw` is the provider's own code, for the log only. */
+/**
+ * A request's classified state; `raw` is the provider's own code, for the log only. `signature` is
+ * what the provider answered to prove the answer is its own (Lydia's `request/state` signs it when
+ * the vendor token is sent), or null when it answered none: verified by `PaymentService` when its
+ * caller asks, and NEVER logged nor returned over the wire.
+ */
 export interface CheckoutRequestState {
   state: CheckoutRequestStateKind;
   raw: string;
+  signature: string | null;
 }
 
 /**
