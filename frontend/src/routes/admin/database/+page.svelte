@@ -21,7 +21,7 @@
   let problem = $state<string | null>(null);
 
   onMount(() => {
-    if (!isGlobalAdmin()) void goto(resolve('/admin'), { replaceState: true });
+    if (!isGlobalAdmin()) void goto(resolve('/admin'), { replace: true });
   });
 
   async function open() {

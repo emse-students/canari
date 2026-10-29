@@ -740,7 +740,10 @@ deleted); it now only ANNOUNCES the edit.
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
   from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
   changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
-  runs when the conversation changes: the text went with it, the draft belonged to the one left.
+  runs when the conversation changes, and **an edit's text never stays as a draft** (2026-10-27):
+  `begin` binds a writer to the draft of the conversation it starts in (`bindDraftWriter`), and
+  `reset` gives the saved draft back through it - to the conversation the edit began in, never to
+  the one now open ([each conversation keeps its own draft](#each-conversation-keeps-its-own-draft-2026-10-27)).
   **It must run on a change of conversation ID, never of the conversation OBJECT** (2026-10-07): the parent
   replaces that object on every incoming message, and an effect reading `conversation?.id` depends on the object, so
   each arrival dropped the banner. `ChatArea` reads the id through a `$derived`, compared by value.
@@ -2360,6 +2363,30 @@ This is independent of [the notice-identity fix](#a-visible-system-notice-needs-
 which gives a notice ONE id across the three paths that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
 arrived. A correctly deduped notice could still be a "Utilisateur" bubble, and was.
 
+#### A system notice is not conversation activity (user, 2026-10-27)
+
+"X added a device" moved its conversation to the top of the list. The sidebar key is
+`conversationRecency` (`utils/chat/conversations.ts`, also read by the share targets, the mini panel
+and the persisted `updatedAt`) and it read the newest row of `messages`, notices included. It now
+skips every row for which `isSystemRow` (`messageOrder.ts`) is true - `isSystem` OR the `system`
+sender, the same fact in its two forms - and every writer of the `lastMessageAt` seed goes through
+`advanceLastMessageAt`, which ignores notices too (`addMessageToChat`, `batchAddMessages`, the FCM
+cache merge, the channel join notice). A conversation holding notices only keeps its seed, then
+`startedAt` (the server's creation instant), then 0: never the arrival time of a notice.
+
+**A CALL RECORD IS ACTIVITY (decided 2026-10-27)**: a system row carrying a `callEvent` envelope (missed,
+ended, declined) still moves the conversation, as on Messenger and WhatsApp; `isNoticeRow` is the
+predicate every consumer uses (notice = system row that is not a call record). Tab-sync events omit
+`lastMessageAt` when there is no seed (`tabSeed`) instead of writing 0. A conversation created on
+this device is seeded with its creation moment (`lastMessageAt`, group / DM / channel creation and
+the channel join), NOT `startedAt`, which stays the server's write-once fact that the sweep
+backfills. The boot stub seeded from an old `meta.updatedAt` (written while notices counted) is
+transient: the first load of messages replaces it, no migration.
+
+**The preview line is unchanged** and still shows the newest row, notice included: it is a text, not
+a position, and hiding it would show a stale sentence. Read receipts and unread counts already
+ignored notices. Not changed: native notification previews (they raise only for inbound messages).
+
 ### What ended the wait, and why there is no wait left
 
 Kept because the shape recurs, not because the code is still there. The exchange used to be gated by
@@ -3195,14 +3222,78 @@ every run. The request ordering is the proof and needs no inference: the console
 `GET /api/channels/workspaces/user/me` issued at line 196, `POST /api/channels/workspaces` (the
 creation) at 398, and `[WORKSPACE-LOAD] communities/channels loaded` at 497.
 
-The repair is a **creation tick**, not a timestamp: `creationEpoch` counts what this device has
-created, ever. It is read BEFORE the listing request goes out, stamped onto the sidebar entry the
-moment a community exists locally (`createdEpoch`) and onto `locallyCreatedChannels` for a salon, and
-both prunes spare anything stamped later than the request. The question is not "how old is this" but
-"did this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
-wrong about and nothing to tune. A community that really was deleted elsewhere is still removed, and
-both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
-can attribute.
+The repair is a **tick**, not a timestamp. It is read BEFORE the listing request goes out, and both
+prunes spare anything dated later than the request. The question is not "how old is this" but "did
+this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
+wrong about and nothing to tune. A community that really was deleted elsewhere is still removed.
+
+### A live fact heard during a listing is newer than its answer (2026-10-26)
+
+The 2026-08-20 repair dated only what this device CREATED. **Measured on dev by the cross-client rig
+(Mi 9T)**: a community joined in-session logged `[WORKSPACE-LOAD] community joined in-session -
+loading its salons` at T, its listing went out at T+0.2 s, the server created a salon at T+2.6 s and
+the phone logged `Joined channel <id>` (`onChannelMemberJoined`), the listing answered at T+6.4 s - and
+its prune deleted the salon's conversation and row, without a line. The member did not see the salon
+until a later listing. Same code on the web: only the width of the in-flight window differs.
+
+The mirror image was open too: a salon or community DELETED, LEFT or taken from this member during a
+listing was still in its answer, and the listing drew it back.
+
+**One record, `listingLedger.ts`**, holds the LAST thing learned live about each id - `present`
+(created here, or heard of on the socket) or `gone` (deleted, left, removed) - with the tick it was
+learned at. Salons are keyed by conversation id, communities by `community:<slug>`. Every live
+write goes through one of four places, and the listing's own writes go through none of them:
+
+| Live fact | Where it is dated |
+| --- | --- |
+| salon created here, heard of (`channel.member.joined`), or drawn by a community creation | `addChannelToWorkspace` (the listing draws through `upsertChannelRow`) |
+| community heard of on an event, or created here | `ensureWorkspaceForChannelEvent`, `ensureWorkspaceByName` |
+| salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`) | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`) |
+| community deleted, left, removed from | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
+
+`leaveCurrentChannel` and `deleteCurrentChannel` record the removal as soon as the server answers,
+before they await the store delete: a listing answered during that await used to set the
+conversation back. `ChatBackgroundService.svelte`'s handlers are held to these entrances by a source
+guard in the same test file.
+
+A listing then:
+
+1. **Does not draw back** a community or salon learned `gone` after its request
+   (`[WORKSPACE-LOAD] <kind> <id> not restored: ...`). This is asked again at each point
+   `loadCommunitySalons` would write next, because the purge can land while that community's salons
+   or key group are still on their way. A community removed in that window gets no conversation, no
+   channel map, no key-group join and no entry.
+2. **Gathers every store that holds a salon the answer does not name** - its conversation, its row
+   (in the communities the answer covers) and its stored page (F4) - and **decides once per salon**,
+   reading the ledger first:
+   - learned `present`: kept (`kept salon <id> (<stores>): ...`);
+   - learned `gone`, with the purge still running: finished quietly
+     (`salon <id> (<stores>) removed on this device after the listing was asked - its removal is
+     finished here`), never blamed as unheard;
+   - nothing learned: pruned, with **one `warn` per salon** -
+     `pruned salon <id> (conversation, row, stored page): not listed by the server, and neither
+     created nor heard of on this device after the listing was asked (tick N)`. This is the visible
+     end of a removal this device did not hear live, usually one made while the app was shut: one
+     line, not one per store.
+
+   Communities get the same three outcomes.
+
+The keep, decline and finish lines go to the session log (`ctx.log`), so they reach a phone's
+in-app log: `appLog.ts` does not keep `debug`. Each attempt of a retried listing reads the tick
+again, so a salon heard during the back-off is judged by the retry's answer.
+
+A community first drawn from an event under a slug the server does not use (`workspace-<id>` when
+the event named none) is folded into the listed entry by id, under the server's slug. It used to
+appear twice.
+
+The ledger keeps only the last fact, so a salon removed and then heard of again in the same window
+is drawn. All of this is pinned by an explicit order in `useChannelWorkspaces.svelte.test.ts` ("a
+live fact heard while a listing is in flight"), and the not-heard control is still pruned.
+
+**What the ledger does NOT cover** (the same race, on fields rather than existence): a rename or a
+`viewerCanWrite` change heard during a listing (`onChannelUpdated`) is overwritten by the listing's
+older row, and a role change (`workspace.role.changed`) or a cover/history change
+(`workspace.updated`) by `upsertWorkspaceFromDto`'s older DTO, until the next listing.
 
 ### The communities are loaded side by side, not one after another (2026-10-12)
 
@@ -3817,7 +3908,7 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
-A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
+A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - into the draft of the conversation the text was written in, whichever one is open by then (each conversation keeps its own draft since 2026-10-27, [below](#each-conversation-keeps-its-own-draft-2026-10-27)), and it logs. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
 
 ### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
 
@@ -3970,3 +4061,35 @@ bracket the unknown stretch between the conversation map and the pane DOM:
 (the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
 rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
 means `selectedContact` and the pane disagree.
+
+## Each conversation keeps its own draft (2026-10-27)
+
+The composer's text was ONE field of `MainChatPage` (`messageText`), cleared only when the route
+switched between `/chat` and `/communities`. A draft left in one conversation - or a share staged
+there - sat in the next conversation's composer, and that conversation's Send posted it there: read
+on the Mi 9T, where two shared links followed the reader into two other conversations. The text now
+follows the rule the staged files and the armed reply already followed:
+`useMessaging.draftByConversation`, keyed by conversation id, read through `draftFor` and written
+through `setDraft`; the page's `messageText` is a `$derived` of the open conversation's entry.
+`forgetAccount` clears it with the other two at sign-out, since the next account may open the same
+DM or salon. A refused send (`restoreFailedDraft`), a taken-back send and a share all write into
+the draft of THEIR conversation. Test: `useMessaging.draft.svelte.test.ts`.
+
+Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
+
+- **Text that comes back LATER is written through `lateDraftWriter`**, which captures
+  `signOutGeneration()` when it is made and drops the text (logged, without the content) once a
+  sign-out has begun: an edit's saved draft, a refused send and a resumed salon text. A sign-out
+  clears the drafts (`forgetAccount`) while the composer is still mounted, and the edit's reset or
+  the refused send's answer came after the clear - the next account to open the same DM or salon
+  saw, and could send, the leaving account's text. Test: `useMessaging.draft.svelte.test.ts`.
+- **The composer resets an open edit when it UNMOUNTS** (`ChatArea`'s `onDestroy`), not only when
+  the conversation id changes: the page remounts on any route change, so an edit left open there
+  left the edited message's text as the draft, with no banner, for Send to post twice. Test:
+  `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
+  derived and its late writers gated - and created BEFORE the await or callback they outlive.
+- **Two keys, one risk.** Drafts are keyed by `convs.selectedContact`, which for a DM is the map key
+  (its display name), while the edit's reset follows `conversation.id`. A DM whose map key changes
+  under an open conversation (a name resolved late, a rename) strands the draft under the old key:
+  invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
+  "vanishes" from a DM.

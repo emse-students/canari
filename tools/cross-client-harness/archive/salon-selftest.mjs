@@ -7,7 +7,7 @@
  *
  *   bun archive/salon-selftest.mjs
  */
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceClosingOwn, kickRaceCycleOwn, kickRaceNarration, kickRaceRefusals, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, salonRaceReread, salonRaceRefusals, statusesIn } from '../salonrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -107,6 +107,15 @@ ok('RM-5: a 409 kick fails - one race cannot outlast three retries', failing(kic
 ok('RM-5: a 409 kick not named fails twice', failing(kickRaceCycleOwn(1, { ...kicked, kick: 409, member: true, allowed: true, seated: true })) === 2);
 ok('RM-5: not held fails', failing(kickRaceCycleOwn(1, { ...kicked, held: false })) === 1);
 ok('RM-5: the cycle is named in every assertion', kickRaceCycleOwn(3, kicked).every((a) => a.what.startsWith('cycle 3')));
+const closed = { grantFirstCycles: 2, subjectRows: [{ deviceId: 'd1', status: 'active' }], readable: true, leaves: 3, activeDevices: 3 };
+ok('RM-5 closing: seated, read, one leaf per active device passes', allOk(kickRaceClosingOwn(closed)));
+ok('RM-5 closing: no cycle had the grant first fails', failing(kickRaceClosingOwn({ ...closed, grantFirstCycles: 0 })) === 1);
+ok('RM-5 closing: a stale leaf beside the new one fails', failing(kickRaceClosingOwn({ ...closed, leaves: 4 })) === 1);
+ok('RM-5 closing: no leaf count read fails', failing(kickRaceClosingOwn({ ...closed, leaves: null })) === 1);
+ok('RM-5 closing: a duplicated device row fails', failing(kickRaceClosingOwn({ ...closed, subjectRows: [{ deviceId: 'd1', status: 'active' }, { deviceId: 'd1', status: 'active' }] })) === 1);
+ok('RM-5 closing: a pending seat fails', failing(kickRaceClosingOwn({ ...closed, subjectRows: [{ deviceId: 'd1', status: 'pending' }] })) === 1);
+ok('RM-5 closing: unread fails', failing(kickRaceClosingOwn({ ...closed, readable: false })) === 1);
+ok('RM-5 closing: a thrown gesture fails', failing(kickRaceClosingOwn({ ...closed, error: 'x' })) === 1);
 
 // ── RM-6 ────────────────────────────────────────────────────────────────────────────────────────
 const bound = { managerPermissions: ['channel.manage'], status: 403, named: true, dist: { isPrivate: false, groupId: null, linkedGroupId: null } };
@@ -164,6 +173,34 @@ const [raceRefusal] = salonRaceRefusals(['0fb4ddf1-1111-2222-3333-444444444444']
 ok("the loser's 409 is declared on the row's access path, 409 only", raceRefusal.path.test('/api/channels/0fb4ddf1-1111-2222-3333-444444444444/access') && raceRefusal.status.join() === '409');
 ok("control: another salon's access path is not declared", !raceRefusal.path.test('/api/channels/99999999-1111-2222-3333-444444444444/access'));
 ok('control: the salon\'s other paths are not declared', !raceRefusal.path.test('/api/channels/0fb4ddf1-1111-2222-3333-444444444444/distribution-group'));
+
+// RM-5'S KICK RACE (alpha.6, 2026-10-26): verbatim from W2, ISO stamps stripped as `stripStamp` does.
+const SUBJ = '223bc34e' + 'a'.repeat(56);
+const kick = { workspaceId: 'c2886ebf-cbef-47dc-b813-5fff78e2c0ea', channelIds: ['114d3327-aa4e-4b60-b988-1530586d95e2'], groupIds: ['357b4af8-829b-4bb5-b441-fb7f92d90b4e'], subject: SUBJ };
+const kickNeedles = kickRaceNarration(kick);
+const kickSays = (level, line) => kickNeedles.some((n) => (n instanceof RegExp ? n.test(line) : n.levels.includes(level) && n.re.test(line)));
+for (const [level, line] of [
+  ['debug', '[COMMIT] 357b4af8... the gate did not record the admit of 223bc34e:web-223bc34e…-mvn2msl6-7do6 (not_entitled) - its Welcome is sent and answered as before'],
+  ['error', '[WELCOME] 357b4af8... Welcome REFUSED for 223bc34e...: the roster does not name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray sweep collects it'],
+  ['log', '[GRAINE] ADMIT 223bc34e into salon 114d3327 of c2886ebf: the Welcome to web-223bc34e…-mvn2msl6-7do6 was NOT delivered (WelcomeTargetNotMemberError: the Welcome of 357b4af8... to 223bc34e…:web-223bc34e…-mvn2msl6-7do6 was refused - the roster does not name its target) - that device holds a leaf'],
+  ['debug', '[channelSettings.addAllowedUser failed] ChannelApiError: {"code":"CHANNEL_GRANTEE_NOT_MEMBER","message":"Someone this list grants is not a member of the community.","current":{"channelId":"114d3327…","isPrivate":true}}'],
+  ['debug', '[channelSettings.accessWriteRefused reading the access again] {"channelId":"channel_114d3327…","code":"CHANNEL_GRANTEE_NOT_MEMBER"}'],
+  ['debug', '[channelSettings.accessWriteRefused grantee not a member, reloading the picker] channel_114d3327…'],
+]) ok(`kick race: ${line.slice(0, 60)}`, kickSays(level, line));
+ok('control: the gate refusing another user is not the race', !kickSays('debug', '[COMMIT] 357b4af8... the gate did not record the admit of 99999999:web-99999999…-mvn2msl6-7do6 (not_entitled) - its Welcome is sent and answered as before'));
+ok('control: another gate reason is not the race', !kickSays('debug', '[COMMIT] 357b4af8... the gate did not record the admit of 223bc34e:web-223bc34e…-mvn2msl6-7do6 (blocked) - its Welcome is sent and answered as before'));
+ok("control: another group's refused Welcome is not the race", !kickSays('error', '[WELCOME] 99999999... Welcome REFUSED for 223bc34e...: the roster does not name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray sweep collects it'));
+ok('control: the gate line at warn stays dirt', !kickSays('warning', '[COMMIT] 357b4af8... the gate did not record the admit of 223bc34e:web-223bc34e…-mvn2msl6-7do6 (not_entitled) - its Welcome is sent and answered as before'));
+ok("control: another salon's grantee refusal is not the race", !kickSays('debug', '[channelSettings.accessWriteRefused grantee not a member, reloading the picker] channel_99999999…'));
+ok('control: a leaf already held is not narrated (filed as a P3)', !kickSays('log', '[GRAINE] ADMIT 223bc34e into salon 114d3327 of c2886ebf: all 2 device(s) already hold a leaf - no commit'));
+const kr = kickRaceRefusals(kick);
+ok("the granter's 409 on the salon's access path", kr.granter.some((r) => r.path.test('/api/channels/114d3327-aa4e-4b60-b988-1530586d95e2/access') && r.status.join() === '409'));
+ok("the granter's 403 on the Welcome route", kr.granter.some((r) => r.path.test('/api/mls/welcome') && r.status.join() === '403'));
+ok("the subject's 403 on the salon's and the community's distribution group", ['/api/channels/114d3327-aa4e-4b60-b988-1530586d95e2/distribution-group', '/api/channels/workspaces/c2886ebf-cbef-47dc-b813-5fff78e2c0ea/distribution-group'].every((p) => kr.subject.some((r) => r.path.test(p) && r.status.join() === '403')));
+ok("control: another community's distribution group is not declared", !kr.subject.some((r) => r.path.test('/api/channels/workspaces/99999999-cbef-47dc-b813-5fff78e2c0ea/distribution-group')));
+ok("control: the granter's Welcome route is not the subject's", !kr.subject.some((r) => r.path.test('/api/mls/welcome')));
+ok("narration: the salon's page decoded after its entry was decided", said('[CHANNEL] page of 0fb4ddf1 decoded after its salon entry was decided'));
+ok("control: another salon's page is not the row's", !said('[CHANNEL] page of 99999999 decoded after its salon entry was decided'));
 
 if (failures) {
   console.error(`\n${failures} salon assertion(s) failed`);

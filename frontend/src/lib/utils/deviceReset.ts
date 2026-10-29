@@ -5,6 +5,7 @@ import { closeMlsDb } from '$lib/utils/hex';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { discardAppLog } from '$lib/utils/appLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -141,8 +142,10 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
 
   if (isTauriRuntime()) {
     const { invoke } = await import('@tauri-apps/api/core');
+    // The native session ends in the same hold as the sweep of its state: no manager or key of the
+    // wiped account stays in this process. `clear_app_data` ends it again natively, by construction.
     await step('the native MLS state', async () => {
-      await invoke('delete_mls_state');
+      await endNativeMlsSession('factory wipe', { sweepState: true });
     });
     // Everything Canari wrote in the Tauri app data directory: the MLS state, the message
     // database, the Graine seeds and channel keys the background push service reads, the

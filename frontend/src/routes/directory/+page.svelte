@@ -53,7 +53,7 @@
 
   onMount(async () => {
     if (!currentUserId()) {
-      await goto(resolve('/login?returnTo=/directory'), { replaceState: true });
+      await goto(resolve('/login?returnTo=/directory'), { replace: true });
       return;
     }
     try {

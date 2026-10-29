@@ -21,7 +21,7 @@ vi.mock('$app/state', () => ({
     state: {},
   },
 }));
-vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn(), replaceState: vi.fn() }));
 vi.mock('$app/paths', () => ({ base: '', resolve: (p: string) => p }));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u1' }));
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
@@ -110,6 +110,26 @@ describe('shop page', () => {
     expect(document.querySelectorAll('[data-tier-row]')).toHaveLength(1);
     expect(document.querySelector('[data-due]')?.textContent).toMatch(/15[,.]00/);
     expect(document.querySelector('[data-struck]')?.textContent).toMatch(/30[,.]00/);
+  });
+
+  it('shows no membership card at all, with its reason, once the association disables cotisations', async () => {
+    // The gap this reconciliation closed: the OLD per-page template rendered `<MembershipCard>`
+    // whenever any membership product existed, with no way to say WHY every row in it was refused.
+    state.products = [
+      product({
+        id: 'sans',
+        type: 'membership',
+        variantKey: 'sans',
+        viewerTierRelation: 'none',
+        cotisationDisabled: true,
+      }),
+    ];
+    await render();
+    expect(document.querySelectorAll('[data-membership-card]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-tier-row]')).toHaveLength(0);
+    expect(document.querySelector('[data-cotisation-disabled]')?.textContent).toBe(
+      m.shop_cotisation_disabled()
+    );
   });
 
   it('names the top-up on a paid return, without claiming the credit landed', async () => {

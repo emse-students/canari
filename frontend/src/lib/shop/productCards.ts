@@ -1,4 +1,5 @@
 import type { AssociationProduct } from '$lib/associations/api';
+import { tierNotOffered } from '$lib/pricing/viewerPrice';
 import { m } from '$lib/paraglide/messages';
 
 /** A key such as `balance_topup`: lowercase words joined by underscores, never written for a person. */
@@ -20,20 +21,16 @@ export function productDisplayName(p: Pick<AssociationProduct, 'name' | 'type'>)
 }
 
 /**
- * The cotisation tiers this viewer may still buy: only what the server marks a rise (`higher`) or
- * unranked (`none`). The tier held, a lower one, and a listing that does not say (no
- * `viewerTierRelation`, an old server) offer no action - nothing is guessed from tags or prices. Ordered base-first, then by ascending level. An empty list means there is no
- * membership card at all (the highest tier is held, or the association sells none).
+ * The cotisation tiers this viewer may still buy, as ONE card with a row per tier: a pure
+ * presentation filter over `tierNotOffered`, the server-backed decision - held, a lower tier, an
+ * unranked one, or the association's cotisations being disabled each offer NO row, and nothing
+ * here re-derives WHY. Ordered base-first, then by ascending level. An empty list (the highest
+ * tier held, or an association selling none) means there is no membership card at all - see
+ * `cotisationDisabled` for the one case that still owes a reason.
  */
 export function offeredTiers(products: AssociationProduct[]): AssociationProduct[] {
   return products
-    .filter(
-      (p) =>
-        p.type === 'membership' &&
-        // Explicit allowlist: `held`, `lower`, `unranked` (a grid or free amount stands between the
-        // two tiers, so no rank can be established) and an absent relation offer NO action.
-        (p.viewerTierRelation === 'higher' || p.viewerTierRelation === 'none')
-    )
+    .filter((p) => p.type === 'membership' && tierNotOffered(p) === null)
     .sort((a, b) => tierRank(a) - tierRank(b));
 }
 
@@ -47,34 +44,23 @@ export function nonTierProducts(products: AssociationProduct[]): AssociationProd
 }
 
 /**
- * What THIS viewer pays, as the server resolved it, in cents; null when no fixed figure exists
- * (free amount, refused grid cell). `viewerDueCents` wins; a listing that does not carry it falls
- * back to the grid's cell, then to the listed price. Nothing is computed here.
+ * True when this association's cotisations are disabled (`cotisationDisabled`, read off any of its
+ * membership products - the server sets it the same way on every one). The membership card then
+ * hides its tier rows (every one of them is refused anyway) and shows the reason instead of
+ * nothing, which otherwise reads exactly like the highest tier already being held.
  */
-export function dueCents(p: AssociationProduct): number | null {
-  if (typeof p.viewerDueCents === 'number') return p.viewerDueCents;
-  if (p.viewerPrice?.kind === 'grid') return p.viewerPrice.amountCents;
-  return p.amountCents;
-}
-
-/**
- * The full price to show struck through next to the due amount, or null when the viewer pays it
- * in full (or the product has no fixed price).
- */
-export function struckCents(p: AssociationProduct): number | null {
-  const due = dueCents(p);
-  if (due === null || p.amountCents === null || p.viewerPrice?.kind === 'grid') return null;
-  return due < p.amountCents ? p.amountCents : null;
+export function cotisationDisabledForAssociation(products: AssociationProduct[]): boolean {
+  return products.some((p) => p.type === 'membership' && p.cotisationDisabled === true);
 }
 
 /**
  * True when a tier cannot be ranked against the one the viewer holds (`unranked`) and the viewer
- * does hold a membership: the card then says why that tier has no action, in the words of the
- * server's `TIER_NOT_RANKABLE` refusal.
+ * does hold a membership: the card then says why that tier has no row, in the words of the
+ * server's `TIER_NOT_RANKABLE` refusal. A pure presentation check over `tierNotOffered`.
  */
 export function hasUnrankedTier(products: AssociationProduct[]): boolean {
   return (
-    products.some((p) => p.type === 'membership' && p.viewerTierRelation === 'unranked') &&
+    products.some((p) => p.type === 'membership' && tierNotOffered(p) === 'unranked') &&
     products.some((p) => p.viewerIsCotisant === true)
   );
 }

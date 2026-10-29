@@ -16,6 +16,8 @@
     /** Free amount chosen in the keypad, in cents; bound so the page can read it. */
     customAmountCents?: number;
     signedIn?: boolean;
+    /** The product's siblings (same association), for `ProductPrice`'s "for holders of X". */
+    siblings?: readonly AssociationProduct[];
   }
 
   let {
@@ -23,14 +25,18 @@
     accentColor = null,
     customAmountCents = $bindable(),
     signedIn = true,
+    siblings = [],
   }: Props = $props();
 
   const freeAmount = $derived(product.allowCustomAmount && product.amountCents === null);
   /**
-   * Members-only is gated only where the listing knows the viewer's standing (`viewerIsCotisant`
-   * is set by the shop listing alone); on a listing that does not say, the server decides.
+   * `viewerIsCotisant` is annotated by both listing endpoints (`listAllProducts`,
+   * `listAssociationProducts`) and is never genuinely ambiguous for a signed-in viewer there - but
+   * the type is optional, and an `undefined` MUST read as "not confirmed a member", never as "not
+   * confirmed NOT a member": `=== false` let a not-yet-annotated viewer see a live button a
+   * members-only product would refuse.
    */
-  const membersBlocked = $derived(product.membersOnly && product.viewerIsCotisant === false);
+  const membersBlocked = $derived(product.membersOnly && !product.viewerIsCotisant);
   const refused = $derived(gridRefuses(product));
 </script>
 
@@ -42,18 +48,28 @@
 >
   <div class="flex h-full flex-col gap-3 p-5" data-product-card={product.type}>
     <div class="min-w-0">
-      <p class="text-text-main text-base font-semibold">{productDisplayName(product)}</p>
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-text-main text-base font-semibold">{productDisplayName(product)}</p>
+        {#if product.membersOnly}
+          <span
+            class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+          >
+            {m.shop_members_only_badge()}
+          </span>
+        {/if}
+      </div>
       {#if product.description}
         <p class="text-text-muted mt-1 line-clamp-2 text-xs">{product.description}</p>
       {/if}
     </div>
 
     {#if !freeAmount}
-      <ProductPrice {product} />
+      <ProductPrice {product} {siblings} />
     {:else}
       <AmountPicker
         bind:valueCents={customAmountCents}
         minCents={product.customAmountMinCents}
+        maxCents={product.customAmountMaxCents}
         currency={product.currency}
       />
     {/if}

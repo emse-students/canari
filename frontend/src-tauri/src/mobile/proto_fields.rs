@@ -554,9 +554,11 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
     // CallMsg (field 7, WP-XP-5): WebRTC signaling rides the same AppMessage channel.
     // An invite (offer_sdp present) becomes a typed "call_invite" so natives can show a
     // ringing notification (or dedupe against an already-ringing call_ring push); every
-    // other payload (answer/ICE/hangup/answered) is pure signaling -> "call_control" with
+    // other payload (answer/ICE/hangup/answered/busy) is pure signaling -> "call_control" with
     // `callEnded` set on hangup/answered so natives can cancel a ring instead of showing
-    // the old generic "new message" fallback.
+    // the old generic "new message" fallback. A `busy` payload (field 11: a device answering an
+    // invite with "I am in another call") is signaling too, and ends NOTHING here: the caller's
+    // own client reacts to it, and a busy frame must never cancel a ring this device shows.
     if let Some(call_msg) = find_length_delimited_field(bytes, 7) {
         let call_id = find_length_delimited_field(&call_msg, 1)
             .and_then(|b| String::from_utf8(b).ok())
@@ -1397,5 +1399,38 @@ mod tests {
         assert_eq!(info["type"], "call_control");
         assert_eq!(info["callEnded"], true);
         assert_eq!(info["text"], "");
+    }
+
+    #[test]
+    fn call_busy_is_control_that_ends_nothing() {
+        // CallMsg { call_id=1, busy=11 }: a callee device answering an invite "I am busy".
+        let mut call = Vec::new();
+        write_string_field(&mut call, 1, "room-1");
+        write_tag(&mut call, 11, 0);
+        write_varint(&mut call, 1);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 7, &call);
+
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["type"], "call_control");
+        assert_eq!(info["callEnded"], false);
+        assert_eq!(info["text"], "");
+    }
+
+    #[test]
+    fn call_hangup_with_an_end_reason_still_ends_the_call() {
+        // CallMsg { call_id=1, hangup=5, end_reason=10 (BUSY=4) }.
+        let mut call = Vec::new();
+        write_string_field(&mut call, 1, "room-1");
+        write_tag(&mut call, 5, 0);
+        write_varint(&mut call, 1);
+        write_tag(&mut call, 10, 0);
+        write_varint(&mut call, 4);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 7, &call);
+
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["type"], "call_control");
+        assert_eq!(info["callEnded"], true);
     }
 }

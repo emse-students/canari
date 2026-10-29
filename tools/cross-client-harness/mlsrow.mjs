@@ -28,6 +28,7 @@ import { forgivingProvoked, rowGroupName } from './rowkit.mjs';
 import { ESTATE } from './site.mjs';
 import {
   PAGE_BOOT_NARRATION,
+  forgivingSocketCloses,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -86,7 +87,7 @@ export const watchersOf = (seats) => Object.fromEntries(Object.entries(seats.sea
  *   armed there (`rowkit.mjs` `forgivingProvoked`, one line each), and the devices it cut on purpose
  *   (`ignoringOfflineCut`) - and nothing wider
  */
-export async function observersOf(seats, { refusals = {}, logs = {}, provoked = {}, offline = [] } = {}) {
+export async function observersOf(seats, { refusals = {}, logs = {}, provoked = {}, offline = [], sockets = {} } = {}) {
   const out = {};
   for (const [device, s] of Object.entries(seats.seat)) {
     let rep = await report(s.w);
@@ -94,11 +95,13 @@ export async function observersOf(seats, { refusals = {}, logs = {}, provoked = 
     // narrates its boot (`PAGE_BOOT_NARRATION`). Read off the window's OWN navigations rather than
     // asked of each runner: a seat whose window saw no document replaced gets no forgiveness, so a
     // page that booted unasked is still a finding. Met on the first live FLOOR draw (2026-10-25).
+    // A route's first preload in a window with no replaced document is forgiven by `gate` itself.
     if ((rep.documentsReplaced ?? 0) > 0) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
     if (offline.includes(device)) rep = ignoringOfflineCut(rep);
     if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);
     if (refusals[device]?.length) rep = ignoringExpectedRefusal(rep, refusals[device]);
     if (logs[device]?.length) rep = ignoringExpectedLog(rep, logs[device]);
+    if (sockets[device]?.length) rep = forgivingSocketCloses(rep, sockets[device]);
     out[device] = { ...rep, cx: s.cx };
   }
   return out;

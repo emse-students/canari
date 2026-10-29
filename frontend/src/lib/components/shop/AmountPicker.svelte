@@ -16,14 +16,17 @@
   } from '$lib/shop/amountInput';
 
   interface Props {
-    /** Chosen amount in cents; `undefined` while nothing valid is chosen (empty, or below the minimum). */
+    /** Chosen amount in cents; `undefined` while nothing valid is chosen (empty, or out of bounds). */
     valueCents?: number;
-    /** The product's minimum in cents, when it has one. There is no maximum: the server validates. */
+    /** The product's minimum in cents, when it has one. */
     minCents?: number | null;
+    /** The product's maximum in cents, when it has one. The server validates either way, but a chip
+     * or a typed amount above it would be refused on every press, so it is filtered/blocked here too. */
+    maxCents?: number | null;
     currency: string;
   }
 
-  let { valueCents = $bindable(), minCents = null, currency }: Props = $props();
+  let { valueCents = $bindable(), minCents = null, maxCents = null, currency }: Props = $props();
 
   const locale = getLocale();
   const KEYS: AmountKey[] = ['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'back'];
@@ -33,12 +36,15 @@
 
   const typedCents = $derived(bufferToCents(buffer));
   const belowMin = $derived(typedCents !== undefined && minCents != null && typedCents < minCents);
+  const aboveMax = $derived(typedCents !== undefined && maxCents != null && typedCents > maxCents);
   const chips = $derived(
-    QUICK_AMOUNTS_CENTS.filter((cents) => minCents == null || cents >= minCents)
+    QUICK_AMOUNTS_CENTS.filter(
+      (cents) => (minCents == null || cents >= minCents) && (maxCents == null || cents <= maxCents)
+    )
   );
   const display = $derived(
     keypadOpen
-      ? `${formatBuffer(buffer, locale)} ${currency.toUpperCase() === 'EUR' ? '\u20ac' : currency.toUpperCase()}`
+      ? `${formatBuffer(buffer, locale)} ${currencySymbol(currency, locale)}`
       : valueCents !== undefined
         ? formatAmountCents(valueCents, currency, locale)
         : formatAmountCents(0, currency, locale)
@@ -61,9 +67,15 @@
   function press(key: AmountKey) {
     buffer = applyAmountKey(buffer, key);
     const cents = bufferToCents(buffer);
-    // Below the minimum is no amount at all: the purchase button stays disabled and the hint says why.
+    // Below the minimum or above the maximum is no amount at all: the purchase button stays
+    // disabled and the hint says why, rather than offering a press the checkout would refuse.
     if (cents !== undefined && minCents != null && cents < minCents) {
       Log.d('AmountPicker: typed amount below the minimum', { cents, minCents });
+      valueCents = undefined;
+      return;
+    }
+    if (cents !== undefined && maxCents != null && cents > maxCents) {
+      Log.d('AmountPicker: typed amount above the maximum', { cents, maxCents });
       valueCents = undefined;
       return;
     }
@@ -134,6 +146,10 @@
   {#if belowMin && minCents != null}
     <p class="text-center text-xs text-amber-700 dark:text-amber-400" role="status">
       {m.shop_amount_min_hint({ min: formatAmountCents(minCents, currency, locale) })}
+    </p>
+  {:else if aboveMax && maxCents != null}
+    <p class="text-center text-xs text-amber-700 dark:text-amber-400" role="status">
+      {m.shop_amount_max_hint({ max: formatAmountCents(maxCents, currency, locale) })}
     </p>
   {/if}
 </div>

@@ -51,6 +51,7 @@ import {
   CreateAssociationCalendarEventDto,
   CreateProductDto,
   GrantCotisantDto,
+  ClosePaidNotGrantedDto,
   GrantProductPurchaseDto,
   GrantTagDto,
   ListCotisantsQueryDto,
@@ -1168,8 +1169,9 @@ export class AssociationsController {
   }
 
   /**
-   * Manually grants a cotisation tag to a user (cash payment or admin override).
-   * Requires MANAGE_MEMBERS flag.
+   * Manually grants a cotisation tag to a user (cash payment or admin override): one of THIS
+   * association's tier tags, granted like the roster's manual add (`grantTagForAssociation`); the
+   * derived expiry applies unless one is given. Requires MANAGE_MEMBERS flag.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1183,7 +1185,7 @@ export class AssociationsController {
       userId: dto.userId,
       tagName: dto.tagName,
       grantedBy,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
     });
   }
 
@@ -1237,6 +1239,12 @@ export class AssociationsController {
    * cotisation on payment does exactly what that button does, so it cannot be a cheaper way in. The
    * tier list itself is readable by any signed-in user, because a membership tier's NAME is already
    * public on the association page.
+   *
+   * `tierKeyFromLabel` is a CAPABILITY, not a setting: this social-service derives a new tier's
+   * `variantKey` from its label (`deriveVariantKey` on create). The admin screen offers tier
+   * creation only when it reads it, because an older server strips the unknown flag and would
+   * create a BASE tier instead of the named one asked for. Always `true` from this release on; its
+   * absence is what an older server looks like.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/cotisation-options')
@@ -1252,7 +1260,11 @@ export class AssociationsController {
       AssociationPermissionFlag.MANAGE_MEMBERS,
       { isGlobalAdmin: globalAdmin === 'true' }
     );
-    return { tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })), mayGrant };
+    return {
+      tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })),
+      mayGrant,
+      tierKeyFromLabel: true as const,
+    };
   }
 
   /**
@@ -1354,6 +1366,30 @@ export class AssociationsController {
   async exportAssociationPurchases(@Param('id') id: string, @Res() res: Response) {
     const { buffer, title } = await this.productsService.exportAssociationPurchases(id);
     this.sendXlsxDownload(res, buffer, title, 'achats');
+  }
+
+  /**
+   * Closes a payment marked `paid_not_granted` by recording which outcome settled it - `refunded`
+   * or `granted` (the closing grants the tier by hand). Once per payment; the mark stays as history
+   * and the hourly report stops counting it. Requires MANAGE_PRODUCTS, like the rest of this list.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/purchases/:purchaseId/close')
+  closePaidNotGranted(
+    @Param('id') id: string,
+    @Param('purchaseId', ParseUUIDPipe) purchaseId: string,
+    @Headers('x-user-id') closedBy: string,
+    @Body() dto: ClosePaidNotGrantedDto
+  ) {
+    return this.productsService.closePaidNotGranted(
+      id,
+      purchaseId,
+      closedBy,
+      dto.outcome,
+      // Validated present for `granted` (`ClosePaidNotGrantedDto`); a refund reads no tier.
+      dto.expectDelivered ?? false
+    );
   }
 
   /** Lists buyers for a boutique product. Requires MANAGE_PRODUCTS flag. */

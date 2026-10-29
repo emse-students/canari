@@ -23,6 +23,8 @@ describe('FormsService - cotisation configuration and granting', () => {
       mayGrant?: boolean;
       /** Cotisation tiers the submitter holds, for the pricing tests. */
       heldTiers?: (string | null)[];
+      /** Fulfilment flags an earlier run already claimed: a replay finds them taken. */
+      claimed?: string[];
     } = {}
   ) {
     const formRepo: any = {
@@ -37,12 +39,16 @@ describe('FormsService - cotisation configuration and granting', () => {
       // The fulfilment flags (`claimFulfilment`): every claim is won, nothing was done before.
       update: jest.fn(() => Promise.resolve()),
       createQueryBuilder: jest.fn(() => {
+        let flag = '';
         const builder: any = {
           update: () => builder,
-          set: () => builder,
+          set: (values: Record<string, unknown>) => {
+            flag = Object.keys(values)[0] ?? '';
+            return builder;
+          },
           where: () => builder,
           andWhere: () => builder,
-          execute: () => Promise.resolve({ affected: 1 }),
+          execute: () => Promise.resolve({ affected: opts.claimed?.includes(flag) ? 0 : 1 }),
         };
         return builder;
       }),
@@ -56,7 +62,8 @@ describe('FormsService - cotisation configuration and granting', () => {
           query: jest.fn(() => Promise.resolve([])),
           findOne: jest.fn(() => submissionRepo.findOne()),
           count: jest.fn(() => Promise.resolve(1)),
-          save: jest.fn((x: unknown) => Promise.resolve(x)),
+          create: jest.fn((_entity: unknown, x: unknown) => x),
+          save: jest.fn((x: unknown) => Promise.resolve({ id: 's1', ...(x as object) })),
         })
       ),
     };
@@ -65,6 +72,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       holdsAnyCotisation: jest.fn(() => Promise.resolve(false)),
       holdsCotisationTier: jest.fn(() => Promise.resolve(false)),
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       hasActiveTag: jest.fn(() => Promise.resolve(false)),
     };
@@ -497,6 +505,62 @@ describe('FormsService - cotisation configuration and granting', () => {
       );
     });
 
+    // A replay whose grant an earlier run claimed (and whose record write failed) decides nothing
+    // about the tier itself: the record reads what the submitter holds NOW, so a refused tier is
+    // still marked, never recorded as an ordinary paid purchase.
+    it('a replay that runs no grant records paid_not_granted when the tier is not held', async () => {
+      const { service, userTagService, purchaseRecordService } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          title: 'Inscription',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: 'sans-alcool',
+        },
+        claimed: ['cotisationGrantedAt'],
+      });
+      const error = jest.spyOn(
+        (service as unknown as { logger: { error: jest.Mock } }).logger,
+        'error'
+      );
+
+      await service.markPaid('s1', 'cs_test_1');
+
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
+      expect(userTagService.holdsCotisationTier).toHaveBeenCalledWith(
+        'user1',
+        'asso1',
+        'sans-alcool'
+      );
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
+      // The read may over-mark (a concurrent run still granting), so the line asks for a check
+      // before any refund rather than asserting one is owed.
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('before refunding'));
+    });
+
+    it('CONTROL: a replay that runs no grant records paid when the tier is held', async () => {
+      const { service, userTagService, purchaseRecordService } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: 'sans-alcool',
+        },
+        claimed: ['cotisationGrantedAt'],
+      });
+      userTagService.holdsCotisationTier.mockResolvedValue(true);
+
+      await service.markPaid('s1');
+
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid' })
+      );
+    });
+
     it('grants nothing when the form does not grant a cotisation', async () => {
       const { service, userTagService } = makeService({
         submission: { ...paid },
@@ -574,6 +638,108 @@ describe('FormsService - cotisation configuration and granting', () => {
       await service.validateCashPayment('f1', 's1', 'treasurer1', false);
 
       expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
+    });
+  });
+  // A paid form that grants a tier takes money for it, so it is refused BEFORE any payment request
+  // when it is not a rise - the boutique's rule and its typed codes, not a refund owed afterwards.
+  describe('a paid answer is refused before payment when its tier is not a rise', () => {
+    const grantingForm = {
+      id: 'f1',
+      title: 'Adhesion',
+      currency: 'eur',
+      basePrice: 1500,
+      items: [],
+      allowCashPayment: true,
+      allowMultipleSubmissions: true,
+      associationId: 'asso1',
+      grantsCotisation: true,
+      cotisationVariantKey: 'sans-alcool',
+    };
+    const submitCash = (service: FormsService) =>
+      service.submit('f1', { userId: 'user1', answers: {}, paymentMethod: 'cash' } as any);
+
+    it.each([
+      ['lower', 'TIER_NOT_A_RISE'],
+      ['unranked', 'TIER_NOT_RANKABLE'],
+      // A form words "already held" its own way: it is not a product the submitter bought.
+      ['held', 'FORM_TIER_ALREADY_HELD'],
+    ])('refuses a %s tier with %s and writes nothing', async (relation, code) => {
+      const { service, userTagService, submissionRepo } = makeService({ form: grantingForm });
+      userTagService.rankCotisationTier.mockResolvedValue(relation);
+
+      await expect(submitCash(service)).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code }),
+      });
+      expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'sans-alcool',
+        []
+      );
+      expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    // A form naming a tier that no longer exists (deleted) refuses EVERYONE, a holder of nothing
+    // included, with its own code - never `TIER_NOT_RANKABLE`, which speaks of a membership held.
+    it('refuses a tier that no longer exists with FORM_TIER_NOT_SOLD, before ranking', async () => {
+      const { service, userTagService, submissionRepo } = makeService({
+        form: grantingForm,
+        tiers: [
+          {
+            variantKey: 'avec-alcool',
+            name: 'Avec alcool',
+            tagName: 'cotisant:cercle-avec-alcool',
+          },
+        ],
+      });
+
+      await expect(submitCash(service)).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'FORM_TIER_NOT_SOLD' }),
+      });
+      expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
+      expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: a tier that still exists is ranked, and a holder of nothing is taken', async () => {
+      const { service, userTagService } = makeService({
+        form: grantingForm,
+        tiers: [
+          {
+            variantKey: 'sans-alcool',
+            name: 'Sans alcool',
+            tagName: 'cotisant:cercle-sans-alcool',
+          },
+        ],
+      });
+
+      await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
+      // The catalogue is read ONCE per submit and handed to the rank.
+      expect(userTagService.listCotisationTiers).toHaveBeenCalledTimes(1);
+      expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'sans-alcool',
+        [expect.objectContaining({ variantKey: 'sans-alcool' })]
+      );
+    });
+
+    it('CONTROL: a rise is taken', async () => {
+      const { service, userTagService } = makeService({ form: grantingForm });
+      userTagService.rankCotisationTier.mockResolvedValue('higher');
+
+      await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
+    });
+
+    it('does not rank a form that grants no cotisation', async () => {
+      const { service, userTagService } = makeService({
+        form: { ...grantingForm, grantsCotisation: false },
+      });
+
+      await submitCash(service);
+
+      expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
     });
   });
 });
