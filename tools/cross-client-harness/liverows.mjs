@@ -186,7 +186,6 @@ const BROADCASTER = [
   at(D, String.raw`\[LIVE-BROADCAST\] screen for the member, recordable true`),
   at(D, String.raw`\[LIVE-BROADCAST\] rules v${N}, accepted v${N}`),
   at(D, String.raw`\[LIVE-BATTERY\] ${N} %(, charging)?`),
-  at(D, String.raw`\[LIVE-CAM\] opening user`),
   at(D, String.raw`\[LIVE-CAM\] opened user: ${N}x${N} @ ${N}`),
   at(L, String.raw`\[LIVE-BROADCAST\] starting`),
   at(L, String.raw`\[LIVE\] started ${S}`),
@@ -240,7 +239,12 @@ const BROADCASTER = [
 const PHONE_BROADCASTER = [
   at(D, String.raw`\[AvatarPresence\] ${N} of ${N} have no photo - not requested`),
   at(D, String.raw`\[NameMirror\] mirrored ${N} name\(s\), 0 removal\(s\), ${N} held`),
+  // THE LENS IS ASKED EXACT ON A PHONE (`lensIsExact`, #2574; read on LIVE-WEB-2, `1.5.1-alpha.8`).
+  at(D, String.raw`\[LIVE-CAM\] opening user \(exact\)`),
 ];
+
+/** A web broadcaster: a desktop's first capture asks the lens IDEAL, its webcam having no facing (#2574). */
+const WEB_BROADCASTER = [at(D, String.raw`\[LIVE-CAM\] opening user \(ideal\)`)];
 
 /** A native app seat (`A1` Android, `I1` iOS) - the only one that prints the NameMirror line. */
 const isAppSeat = (seat) => /^[AI]\d+$/.test(seat);
@@ -257,9 +261,15 @@ const VIEWER = [
   at(D, String.raw`\[LiveChat\] \{"op":"key","liveId":"${S}"\}`),
   at(D, String.raw`\[LiveCrypto\] \{"op":"open","index":${N},"sealedBytes":${N}\}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: no segment yet, waiting`),
-  // `join` and `stall` only: `catch-up`, `drift` and `time gap` are a viewer behind or a broadcaster
-  // re-acquiring its camera, none of them the steady path, so each stays dirt until a reading explains it.
-  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall)\) at ${F}, ${N} ms behind`),
+  // `join`, `stall` and `short` only: `catch-up`, `drift` and `time gap` are a viewer behind or a
+  // broadcaster re-acquiring its camera, none of them the steady path, so each stays dirt until a
+  // reading explains it. `short` IS the steady path since #2689: the media ahead would not outlast the
+  // longest wait for the next delivery, so the viewer re-anchors before that wait drains it - and says
+  // so when its buffer cannot hold the target yet (read on LIVE-STALL-1 and LIVE-WEB-2, `1.5.1-alpha.8`).
+  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall|short)\) at ${F}, ${N} ms behind`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: ${F} s buffered, under the ${N} ms target - no seek \(short\)`),
+  // The seat given back on leaving, so the host's cap frees now rather than at the lease (#2689).
+  at(D, String.raw`\[LIVE\] leave ${S}`),
   at(L, String.raw`\[LIVE\] viewer joined ${S} at segment ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S} -> (playing|ended)`),
   at(D, String.raw`\[LIVE\] viewer ${S} stalled at ${F} \(target ${N} ms\)`),
@@ -285,7 +295,7 @@ const VIEWER = [
 export function liveNarration(row, seat, rows = LIVE_ROWS) {
   const spec = rows[row];
   if (!spec) return [];
-  if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : BROADCASTER;
+  if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : [...BROADCASTER, ...WEB_BROADCASTER];
   if (spec.viewers.includes(seat)) return VIEWER;
   return [];
 }
