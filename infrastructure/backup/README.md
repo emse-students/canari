@@ -50,6 +50,8 @@ root), declenchee chaque jour a 03:30 :
 
 ```cron
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Obligatoire : sans valeur par defaut dans le depot. Vide = pas de copie offsite.
+BACKUP_SSH_HOST=<utilisateur-backup>@<hote-offsite>
 30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
 ```
 
@@ -82,7 +84,7 @@ journalctl -u canari-backup.service -f
 | `BACKUP_DIR` | `/home/canari/backups` | dossier local des archives |
 | `BACKUP_RETENTION_DAYS` | `14` | retention offsite |
 | `LOCAL_RETENTION_DAYS` | `7` | retention locale |
-| `BACKUP_SSH_HOST` | `<utilisateur-backup>@<hote-offsite>` | cible offsite (vide = desactive) |
+| `BACKUP_SSH_HOST` | aucune (obligatoire) | cible offsite `<utilisateur-backup>@<hote-offsite>` ; vide = desactive ; absente = la sauvegarde s'arrete |
 | `BACKUP_SSH_PATH` | `<dossier-offsite>` | dossier offsite |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
 | `MICONNECT_SSH_HOST` | vide | machine qui porte Authentik (vide = conteneur local, le cas depuis le 2026-09-24) |

@@ -98,11 +98,7 @@ function loadDenylist() {
     .filter(Boolean);
 }
 
-const PENDING_CLEANUP = new Set([
-  // Its offsite default is a live value the backup cron reads; moving it out of the tree changes
-  // where the backup goes, so it waits for the owner's decision on where that value lives instead.
-  'infrastructure/backup/backup-config.sh',
-]);
+const PENDING_CLEANUP = new Set([]);
 
 let failed = 0;
 const fail = (msg) => {
