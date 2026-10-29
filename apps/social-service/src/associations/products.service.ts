@@ -2590,7 +2590,9 @@ export class ProductsService {
       // completes the record (`completePaidWithoutRequestId`).
       const paymentIntentId = row.requestId ?? row.requestUuid;
       const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
-      let granted = true;
+      // No initial value: every branch below decides, and the compiler's definite-assignment check
+      // refuses a future branch that forgets to - a default here would silently grant it.
+      let granted: boolean;
       if (isErasedAccount(row.userId)) {
         // An erasure rewrote the buyer (`[deleted]:<id>`) while the payment was in flight: there is
         // nobody to deliver to. The money is marked for a refund, never granted to the placeholder.
