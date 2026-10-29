@@ -411,12 +411,12 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
  * boundary, never the sentence after it.
  *
  * **WHY A CODE IN A STRING AND NOT A TYPED ERROR FROM THE BOUNDARY.** Tauri can carry a serialised
- * error object, but every native command returns `Result<_, String>`, and every code `mls-core` and the
- * shell define (`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, this one) crosses as the leading
- * token of that string. Moving this one code alone to an object would give the boundary two
- * conventions and every reader two shapes to accept; the whole boundary moves at once or not at all
- * ([backlog](../../../../docs/wiki/backlog.md)). Until then the token is read here and nowhere else,
- * and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
+ * error object. The `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE` already cross that way (step 1,
+ * #2596); this code, `EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:` and
+ * `UNRECOVERABLE:` still cross as the leading token of a `Result<_, String>` and move together in a
+ * separately reviewed step 2 (81 call sites for this one). Until step 2 is merged the boundary has TWO
+ * conventions, on purpose ([backlog](../../../../docs/wiki/backlog.md)); the token is read here and
+ * nowhere else, and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
  */
 export function isMlsManagerAbsent(error: unknown): boolean {
   return /\bMLS_MANAGER_ABSENT:/.test(String(error));

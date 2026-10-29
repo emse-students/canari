@@ -2703,11 +2703,12 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
   (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
   longer land after the native session was ended.
-- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
-  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
-  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
-  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
-  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object. The
+  `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE` do (step 1, #2596); this code and the rest
+  (`EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:`, `UNRECOVERABLE:`) still cross
+  as the string's leading token, so the boundary has TWO conventions until the separately reviewed
+  step 2 is merged. The token is read in `isMlsManagerAbsent` alone and turned into a type at each
+  throw. Step 2 and its decode-order risk are a [backlog](../backlog.md) item.
 - **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the
