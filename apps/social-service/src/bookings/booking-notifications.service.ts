@@ -55,6 +55,17 @@ export function noticePlace(facts: PlaceFacts): string {
   return bookingPlace(facts.spaceName, facts.resourceName);
 }
 
+/**
+ * THE BELL ROW'S TEXT for a cancellation, a withdrawal or a booking: three lines the client splits
+ * (`frontend/src/lib/bookings/noticeText.ts` parses the same layout) - the place (empty on a space
+ * reached by its link only, Q-R5), the organiser's word (empty when none; whitespace folded so it
+ * stays one line) and the slot's START as a UTC instant. The client draws the instant in the
+ * reader's own locale, so the server composes no date sentence. The push never carries this text.
+ */
+export function noticeRowText(place: string, word: string, startsAt: Date): string {
+  return [place, word.replace(/\s+/g, ' ').trim(), startsAt.toISOString()].join('\n');
+}
+
 /** The reminder's line: the place and the start time on the space's clock, or the time alone. */
 export function reminderLine(facts: PlaceFacts, startsAt: Date, timeZone: string): string {
   const time = localTime(startsAt.getTime(), timeZone).slice(0, 5);
@@ -78,6 +89,7 @@ type PresentingSpace = Pick<BookingSpace, 'associationId' | 'discoverability'>;
 /** One booking a deleted space took with it, as read BEFORE the deletion (Q-R4). */
 export interface DeletedBookingNotice {
   bookingId: string;
+  startsAt: Date;
   /** The holder and every participant still in. */
   people: string[];
   resourceName: string;
@@ -136,7 +148,10 @@ export class BookingNotificationsService {
         ctx.booking.id,
         people,
         actorId,
-        { row: word || ctx.place, push: linkOnly ? '' : word || ctx.place },
+        {
+          row: noticeRowText(ctx.place, word, ctx.booking.startsAt),
+          push: linkOnly ? '' : word || ctx.place,
+        },
         await this.present(ctx.space, actorId, people)
       );
     });
@@ -152,7 +167,7 @@ export class BookingNotificationsService {
         ctx.booking.id,
         [ctx.booking.holderId],
         participantId,
-        { row: ctx.place, push: ctx.place },
+        { row: noticeRowText(ctx.place, '', ctx.booking.startsAt), push: ctx.place },
         {}
       );
     });
@@ -169,7 +184,7 @@ export class BookingNotificationsService {
         ctx.booking.id,
         people,
         actorId,
-        { row: ctx.place, push: ctx.place },
+        { row: noticeRowText(ctx.place, '', ctx.booking.startsAt), push: ctx.place },
         await this.present(ctx.space, actorId, people)
       );
     });
@@ -202,7 +217,7 @@ export class BookingNotificationsService {
             notice.bookingId,
             notice.people,
             actorId,
-            { row: place, push: place },
+            { row: noticeRowText(place, '', notice.startsAt), push: place },
             notice.people.includes(actorId) ? {} : presented
           );
         } catch (e) {
@@ -300,9 +315,9 @@ export class BookingNotificationsService {
 
   /**
    * One bell row and one push per recipient, the one who acted and a tombstoned account excepted.
-   * `text.row` is what the bell keeps, `text.push` what a lock screen shows: they differ only for an
-   * organiser's word on a link-only space (Q-R3 with Q-R5), and then the row is written without its
-   * push and the push sent on its own, through the same pipeline.
+   * `text.row` is what the bell keeps (place, word and slot, {@link noticeRowText}), `text.push` what
+   * a lock screen shows (the place, or the word; never the slot). They now always differ, so the row
+   * is written without its push and the push sent on its own, through the same pipeline.
    */
   private async send(
     type: BookingNoticeType,
@@ -366,17 +381,24 @@ export async function deletedBookingNotices(
   nowMs: number
 ): Promise<DeletedBookingNotice[]> {
   const rows = (await query(
-    `SELECT b.id AS "bookingId", b."holderId", r.name AS "resourceName",
+    `SELECT b.id AS "bookingId", b."startsAt", b."holderId", r.name AS "resourceName",
             COALESCE(array_agg(p."userId") FILTER (WHERE p."userId" IS NOT NULL), '{}') AS participants
        FROM bookings b
        JOIN booking_resources r ON r.id = b."resourceId"
        LEFT JOIN booking_participants p ON p."bookingId" = b.id AND p."withdrawnAt" IS NULL
       WHERE r."spaceId" = $1 AND b."cancelledAt" IS NULL AND b."startsAt" > $2
-      GROUP BY b.id, b."holderId", r.name`,
+      GROUP BY b.id, b."startsAt", b."holderId", r.name`,
     [spaceId, new Date(nowMs)]
-  )) as { bookingId: string; holderId: string; resourceName: string; participants: string[] }[];
+  )) as {
+    bookingId: string;
+    startsAt: Date;
+    holderId: string;
+    resourceName: string;
+    participants: string[];
+  }[];
   return rows.map((r) => ({
     bookingId: r.bookingId,
+    startsAt: r.startsAt,
     people: [r.holderId, ...r.participants],
     resourceName: r.resourceName,
   }));

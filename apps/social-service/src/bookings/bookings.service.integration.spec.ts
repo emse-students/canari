@@ -53,7 +53,7 @@ import { BookingFilesService } from './booking-files.service';
 import { BookingFile } from './entities/booking-file.entity';
 import type { BookingPosterMedia } from './booking-poster-media';
 import type { FormFilesService } from '../forms/form-files.service';
-import { BookingNotificationsService } from './booking-notifications.service';
+import { BookingNotificationsService, noticeRowText } from './booking-notifications.service';
 import { BookingReminderScheduler } from './booking-reminder.scheduler';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 
@@ -1971,9 +1971,16 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       told.length = 0;
       await service.cancel(id, as(ORGA), NOW, 'Salle inondee');
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
-      expect(told.every((t) => t.text === 'Salle inondee' && t.actorName === 'Club Musique')).toBe(
-        true
-      );
+      // The row names the space, quotes the word on its own line and carries the slot's start.
+      expect(
+        told.every(
+          (t) =>
+            t.text.split('\n')[0].startsWith(space.name) &&
+            t.text.split('\n').slice(1).join('\n') ===
+              noticeRowText('', 'Salle inondee', new Date(on('10:00'))).slice(1) &&
+            t.actorName === 'Club Musique'
+        )
+      ).toBe(true);
     });
 
     it("the holder's cancellation tells the participants (Q-R2), and carries no word of theirs", async () => {
@@ -2036,7 +2043,13 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           .map((t) => [t.to, t.text, t.actorName, t.actorId, t.associationId])
           .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
       ).toEqual(
-        [ALICE, BOB].map((to) => [to, 'Le cabinet est ferme', 'Canari', 'system', undefined])
+        [ALICE, BOB].map((to) => [
+          to,
+          noticeRowText('', 'Le cabinet est ferme', new Date(on('10:00'))),
+          'Canari',
+          'system',
+          undefined,
+        ])
       );
 
       // An organiser booking for someone on that space names nobody either.

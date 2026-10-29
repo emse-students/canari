@@ -18,6 +18,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import NotificationRow from './NotificationRow.svelte';
 import type { PostNotification } from '$lib/posts/api';
 import { m } from '$lib/paraglide/messages';
+import { formatNoticeSlot } from '$lib/bookings/noticeText';
 
 // `Avatar` resolves a display name on mount - stubbed so the test never reaches the network,
 // same convention `MessageReactions.test.ts` uses for the same reason.
@@ -214,6 +215,31 @@ describe('NotificationRow sentence', () => {
     const neutral = renderRow(booking('booking_added', ''));
     expect(neutral.textContent).toContain(m.notif_booking_added_text());
     expect(neutral.querySelector('.italic')).toBeNull();
+  });
+
+  // The space and the slot are named, and the organiser's word is quoted on its own line.
+  it('names the space and the slot of a booking notice, with the word apart', () => {
+    const iso = '2026-11-03T09:00:00.000Z';
+    const row = renderRow({
+      ...postRow('booking_cancelled'),
+      postId: 'b-1',
+      text: `Salle fermee\ndesole A8 test\n${iso}`,
+    });
+    const text = row.textContent ?? '';
+    expect(text).toContain(m.notif_booking_cancelled_text());
+    expect(text).toContain('Salle fermee');
+    expect(text).toContain(formatNoticeSlot(iso));
+    const quote = row.querySelector('.block.italic');
+    expect(quote?.textContent).toContain('desole A8 test');
+    expect(row.querySelector('.italic')?.textContent).toBe('Salle fermee');
+    // No word: no quote line. Link-only space (Q-R5): no space name, the slot alone.
+    const bare = renderRow({
+      ...postRow('booking_added'),
+      postId: 'b-1',
+      text: `\n\n${iso}`,
+    });
+    expect(bare.querySelector('.italic')).toBeNull();
+    expect(bare.textContent).toContain(formatNoticeSlot(iso));
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.

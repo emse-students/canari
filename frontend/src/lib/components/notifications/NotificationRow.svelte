@@ -32,6 +32,7 @@
     isKnownNotificationType,
     reportUnknownNotificationType,
   } from '$lib/posts/notificationTarget';
+  import { formatNoticeSlot, parseBookingNoticeText } from '$lib/bookings/noticeText';
   import { m } from '$lib/paraglide/messages';
   import type { ReportReason } from '$lib/moderation/reasons';
 
@@ -229,6 +230,10 @@
   };
   const isBookingReminder = $derived(notif.type === 'booking_reminder');
   const isBookingNotif = $derived(isBookingReminder || Object.hasOwn(BOOKING_TEXT, notif.type));
+  /** The place, word and slot of a cancellation / withdrawal / booking; null for an older row. */
+  const bookingNotice = $derived(
+    isBookingNotif && !isBookingReminder ? parseBookingNoticeText(notif.text) : null
+  );
 
   /**
    * A refusal carries its reason after a newline - the one thing a reader cannot reconstruct from
@@ -449,7 +454,15 @@
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isBookingNotif}
         {#if !isBookingReminder}{BOOKING_TEXT[notif.type]()}{/if}
-        {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
+        {#if bookingNotice}
+          <!-- The space, then the slot in the reader's locale; the organiser's word on its own line. -->
+          {#if bookingNotice.place}<span class="italic"
+              ><EmojiText text={bookingNotice.place} /></span
+            >&#32;&#183;&#32;{/if}{formatNoticeSlot(bookingNotice.startsAt)}
+          {#if bookingNotice.word}<span class="mt-0.5 block italic"
+              >&#8220;<EmojiText text={bookingNotice.word} />&#8221;</span
+            >{/if}
+        {:else if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if isFollowNotif}
         {notif.type === 'follow_request'
           ? m.notif_follow_request_text()
