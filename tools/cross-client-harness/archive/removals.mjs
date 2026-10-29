@@ -45,9 +45,9 @@ import { awaitCommunityRouting, awaitUserRouting, channelIdOf, channelMessages, 
 import { becomeANewDeviceAndConfirm } from '../newdevice.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
 import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, bootForgiven, removalNarration, removalOwn } from '../removalrows.mjs';
-import { exitOnRecorded, mark, record } from '../results.mjs';
+import { exitOnRecorded, keepConsoles, mark, record } from '../results.mjs';
 import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
-import { EVICTED_REJOIN_NARRATION, PAGE_BOOT_NARRATION, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
+import { EVICTED_REJOIN_NARRATION, PAGE_BOOT_NARRATION, consoleDump, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
 
 const arg = (name) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -201,7 +201,7 @@ try {
   rowIds = {
     workspaceId: v.workspaceId,
     channelIds: channels.channelIds,
-    keyGroupIds: [...channels.keyGroupIds, communityDistribution(v.workspaceId)?.groupId, ...groups.map((g) => g.groupId)].filter(Boolean),
+    keyGroupIds: [...new Set([...channels.keyGroupIds, communityDistribution(v.workspaceId)?.groupId, ...groups.map((g) => g.groupId)].filter(Boolean))],
     ownerUserId,
     subjectUserId: spec.subject === 'W2' ? userIdOf(PEER_NAME) : null,
     // The owner's OTHER devices: the ones W1 answers for history. W1's own never asks itself.
@@ -210,6 +210,8 @@ try {
     ].filter((d) => !actorDevices.includes(d)),
     messages: channelMessages(v.channelId),
   };
+  rowIds.subjectDeviceIds = spec.subject === 'W2' ? subjectDevices : [];
+  rowIds.entries =[...new Set(rowIds.keyGroupIds)].reduce((n, g) => n + (groupEpochAndRoster(g)?.devices.length ?? 0), 0);
   const origin = await evaluate(w1, TIME_ORIGIN);
 
   // THE GESTURE - one per row. Each window's event index here is what `bootForgiven` dates its
@@ -275,7 +277,10 @@ const gated = gate(verdict, {
   W1: await observed('W1', w1, wa),
   ...(wb ? { W2: await observed('W2', w2, wb, EVICTED_REJOIN_NARRATION) } : {}),
 });
-record(id, gated.verdict, { ...gated.detail, ...detail, failures });
+// THE SEATS' WHOLE CONSOLES for a row that did not PASS (`consoleDump`, as `recordObserved` keeps them):
+// a budget overrun names a count, and only the timeline says which conversations it counted.
+const consoles = gated.verdict === 'PASS' ? null : keepConsoles(id, consoleDump({ W1: { cx: w1 }, ...(w2 ? { W2: { cx: w2 } } : {}) }));
+record(id, gated.verdict, { ...gated.detail, ...detail, failures, ...(consoles ? { consoles } : {}) });
 log(`verdict: ${gated.verdict}`);
 // THE OWNER SEATS' "NOUVEL APPAREIL" NOTICE OF THE MINTED W3, dismissed after the verdict (`devicenotice.mjs`).
 // W6 drove the device panel in its own process, so it is attached here for this alone.

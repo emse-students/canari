@@ -153,6 +153,8 @@ const deviceShort = (d) => String(d).replace(/^((?:web|tauri)-[0-9a-f]{8})[0-9a-
  * @property {string|null} subjectUserId the peer account a kick or a salon revoke removes (W2), or null
  * @property {string[]} ownerDeviceIds the owner's devices other than W1's, on the row's key groups
  * @property {{id: string, clientId: string}[]} messages the salon's messages: the one the row sent
+ * @property {number} [entries] devices on the row's key groups, summed over the groups: each enters each once
+ * @property {string[]} [subjectDeviceIds] the subject's devices on the salon (W2 rows)
  */
 
 /**
@@ -168,6 +170,7 @@ function decisions(row, ids) {
     channels: ids.channelIds.length,
     salons: Math.max(1, ids.channelIds.length - 1),
     keyGroups: ids.keyGroupIds.length,
+    entries: ids.entries ?? ids.keyGroupIds.length,
     grants,
     panels: grants + revokes,
     messages: ids.messages.length,
@@ -233,7 +236,10 @@ export function pinSalonNeedles(needles, n) {
  */
 function communityNarration(row, ids) {
   const kg = anyOf(ids.keyGroupIds);
-  const k = decisions(row, ids).keyGroups;
+  // ONE ENTRY PER DEVICE PER KEY GROUP: every device of every member enters each of the row's key
+  // groups once (read on alpha.7: six owner-device entries over two groups), and each entry is one
+  // drain-end hand-off, one sort and one self-entry at most.
+  const k = decisions(row, ids).entries;
   return [
     ...pinnedSalonNarration(row, ids),
     at(D, String.raw`\[TRUST\] ${P} device event\(s\) handed to the notices \(drain end\)`, k),
@@ -305,6 +311,30 @@ function gestureNarration(row, ids) {
 }
 
 /**
+ * A history ask, as the owner seat W1 meets it when the ask names ANOTHER of the owner's devices
+ * (section 23, `frameHandler.ts`): only the devices the requester named answer, so W1 says it is not
+ * one of them. Read on alpha.7 (2026-10-29), both asks naming the owner's phone: the subject's in a
+ * kick or a salon revoke, the minted owner device's in DEVREVOKE-KEYGROUP. Scoped to that requester,
+ * the row's community and the owner's own devices; once per asking device.
+ *
+ * @param {RemovalIds} ids
+ * @param {string} requesterUserId the subject (W2 rows) or the owner (the minted W3)
+ * @param {number} askers the requester's devices that ask
+ */
+function peerAskNarration(ids, requesterUserId, askers) {
+  const ws = short(ids.workspaceId);
+  const s = short(requesterUserId);
+  const dev = oneOf((ids.ownerDeviceIds ?? []).map((d) => esc(deviceShort(d))));
+  return [
+    at(
+      D,
+      String.raw`\[GRAINE\] not answering ${s}…'s request [0-9a-f]{8}… in community ${ws}: it names ${dev}(?:,${dev})*, not this device - the requester saw it offline or outside the key group's tree`,
+      Math.max(1, askers)
+    ),
+  ];
+}
+
+/**
  * The subject W2, admitted to the row's community and salon by the actor: the Welcome of the salon's
  * key group (in `salonNarration`), the seed the actor's message rode on verified against the tree,
  * the drain re-reading the salon once for it, and the salon opened - once, holding the row's messages.
@@ -361,7 +391,13 @@ export function removalNarration(row, seat, ids) {
   const spec = REMOVAL_ROWS[row];
   if (!spec || !ids?.workspaceId) return [];
   if (seat === 'W1') {
-    return [...communityNarration(row, ids), ...senderNarration(row, ids), ...gestureNarration(row, ids), ...(spec.subject === 'W3' ? mintedDeviceNarration(ids) : [])];
+    return [
+      ...communityNarration(row, ids),
+      ...senderNarration(row, ids),
+      ...gestureNarration(row, ids),
+      ...(spec.subject === 'W2' ? peerAskNarration(ids, ids.subjectUserId, (ids.subjectDeviceIds ?? []).length) : []),
+      ...(spec.subject === 'W3' ? [...mintedDeviceNarration(ids), ...peerAskNarration(ids, ids.ownerUserId, 1)] : []),
+    ];
   }
   if (seat === 'W2' && spec.subject === 'W2') return [...communityNarration(row, ids), ...subjectNarration(row, ids)];
   return [];

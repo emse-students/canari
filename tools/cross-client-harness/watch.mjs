@@ -80,7 +80,9 @@ const BENIGN = [
   // single loudest signal Graine emits was landing in `unexplained`. A rule that claims another rule
   // covers something has to be checked against the text, not against the intent - the sibling now
   // has its own entry in NOTABLE, named.
-  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove$/,
+  // `(the revocation answer of an unchanged tree reused)`: the same answer, not recomputed for a tree
+  // that has not moved (`rosterReconcile.ts`) - still nothing to remove, and the only suffix allowed.
+  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove(?: \(the revocation answer of an unchanged tree reused\))?$/,
   // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
   // and every COMM check that creates a private salon produces it.
   /^\[GRAINE\] no base published for .+ - creating group [0-9a-f]{8}\.\.\.$/,
@@ -985,10 +987,14 @@ const NOTABLE = [
   // is, never routine. It is printed only when work is runnable, so a count of 0 is not its shape.
   /^\[QUEUE\] the commit of [0-9a-f]{8}\.\.\. released the MLS lock - draining the [1-9]\d* frame\(s\) it held back$/,
   // ...and the loan itself (`mlsPerGroupScheduler.ts`, #2471): another group's frame applied under a
-  // commit's pending answer, or its own group's put back until the commit is answered. The two
-  // designed branches only - `refused to lend` and `released while its loan was still open` are faults.
+  // commit's pending answer, or its own group's put back until the commit is answered. And the
+  // third designed branch, first read on KICK-COMMIT (`1.5.1-alpha.7`, 2026-10-29): the commit's
+  // answer lands while a frame still holds the lent lock, so the commit waits for that frame before
+  // it merges - under `guarded`, which accuses on its own if the frame never releases. The designed
+  // branches only - `refused to lend` and `released while its loan was still open` are faults.
   /^\[MLS_LOCK\] a frame of \S+ is applied while the commit of \S+ awaits its answer$/,
   /^\[MLS_LOCK\] a frame of \S+ waits for the commit of \S+ - put back, applied after it$/,
+  /^\[MLS_LOCK\] the commit of \S+ has its answer - waiting for the frame applied under its loan$/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in

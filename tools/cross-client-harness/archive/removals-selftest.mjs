@@ -161,7 +161,19 @@ ok('the echo of another message is NOT forgiven (client id, server id)', !forgiv
 ok('a view holding another count of messages than the row sent is NOT forgiven', !forgiven(K, 'W1', 'debug: [CHAT_VIEW] channel_ messages 2 (hasNewMessage=true, response=follow-bottom)') && !forgiven(S, 'W2', 'debug: [CHAT_VIEW] channel_ messages 2 (hasNewMessage=true, response=repin-entry)'));
 ok("an answer to an owner device that is not one of the row's is NOT forgiven", !forgiven(K, 'W1', ANSWERED(OWNER).replace('mvn33w3u-4b2d', 'zzzzzzzz-9999')));
 
+// THE SUBJECT'S HISTORY ASK NAMING ANOTHER OWNER DEVICE (alpha.7): W1 says it is not named.
+const NOT_NAMED = `debug: [GRAINE] not answering bbbb2222…'s request 987cb226… in community 11111111: it names tauri-aaaa1111…-mvn33w3u-4b2d, not this device - the requester saw it offline or outside the key group's tree`;
+const subjIds = { ...IDS, subjectDeviceIds: ['web-bbbb2222-a', 'web-bbbb2222-b'] };
+ok('an ask naming another owner device is forgiven on W1 in a W2 row, once per subject device', allForgiven(K, 'W1', [NOT_NAMED, NOT_NAMED], subjIds) && !allForgiven(K, 'W1', [NOT_NAMED, NOT_NAMED, NOT_NAMED], subjIds));
+ok('... naming two owner devices too', forgiven(S, 'W1', NOT_NAMED.replace('mvn33w3u-4b2d', 'mvn33w3u-4b2d,web-aaaa1111…-mvsslaf7-h7qh'), subjIds));
+ok('... NOT naming a device that is not the owner\'s, NOT from another user, NOT in another community, NOT on W2 or in DEVREVOKE', !forgiven(K, 'W1', NOT_NAMED.replace('mvn33w3u-4b2d', 'zzzzzzzz-9999'), subjIds) && !forgiven(K, 'W1', NOT_NAMED.replace('bbbb2222', 'cccc3333'), subjIds) && !forgiven(K, 'W1', NOT_NAMED.replace('community 11111111', 'community 99999999'), subjIds) && !forgiven(K, 'W2', NOT_NAMED, subjIds) && !forgiven(DV, 'W1', NOT_NAMED, devIds));
+const MINTED_ASK = NOT_NAMED.replace('bbbb2222…', 'aaaa1111…');
+ok("the minted owner device's ask naming another owner device is forgiven on W1 in DEVREVOKE, once", allForgiven(DV, 'W1', [MINTED_ASK], devIds) && !allForgiven(DV, 'W1', [MINTED_ASK, MINTED_ASK], devIds));
+ok('... NOT in a kick, where the owner asks nothing', !forgiven(K, 'W1', MINTED_ASK, subjIds));
+ok('... NOT at log', !forgiven(K, 'W1', NOT_NAMED.replace('debug:', 'log:'), subjIds));
+
 // THE BUDGETS (review, 2026-10-29): a forgiven sentence said more often than the row decides it is dirt.
+ok('one self-entry per device per key group is forgiven (entries 3), a fourth is NOT', allForgiven(K, 'W1', [SELF_ENTRY, SELF_ENTRY, SELF_ENTRY], { ...IDS, entries: 3 }) && !allForgiven(K, 'W1', [SELF_ENTRY, SELF_ENTRY, SELF_ENTRY, SELF_ENTRY], { ...IDS, entries: 3 }));
 ok('the kick said once is forgiven, said twice is NOT', allForgiven(K, 'W1', [REMOVE_COMMUNITY]) && !allForgiven(K, 'W1', [REMOVE_COMMUNITY, REMOVE_COMMUNITY]));
 ok('the one message sent twice is NOT', !allForgiven(K, 'W1', ['log: [SALON-ECHO] a677dd1a… sending', 'log: [SALON-ECHO] a677dd1a… sending']));
 const ANSWERED_WEB = ANSWERED(OWNER).replace(/tauri-(\w+)…-mvn33w3u-4b2d/, 'web-$1…-mvsslaf7-h7qh');
@@ -200,6 +212,7 @@ for (const [file, text] of [
   ['utils/graine/frameHandler.ts', 'of a salon riding another key group, ${notListed} not listed on this device`'],
   ['utils/graine/frameHandler.ts', "' - v2 endorsement verified from the tree'"],
   ['utils/graine/runtime.ts', 'salon(s) once for the seeds it brought`'],
+  ['utils/graine/frameHandler.ts', "`${frame.workspaceId.slice(0, 8)}: it names ${named.join(',')}, not this device - the requester ` +"],
   ['utils/historyOverlayStack.ts', 'a navigation closes ${stack.length} open overlay(s)`'],
 ]) ok(`${file} still writes ...${text.slice(0, 50)}`, APP(file).includes(text));
 
