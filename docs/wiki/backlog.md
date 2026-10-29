@@ -1659,28 +1659,6 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
-## P2 - addGroupMember can enrol an erased account after the final erasure pass (review of #2258, 2026-10-24)
-
-`MembersController.addGroupMember` (`POST mls/groups/:groupId/members`: a group invite, and the
-opening of a 1:1 DM) is the one admitting writer the seat lock never converted. It reads the
-target's key packages outside any transaction or lock, then writes the roster row, its membership
-interval and `pending` device rows with no seat lock and no `heldKeyPackages`. Nothing refuses an id
-whose account was erased, so any member holding a valid token can POST an erased uuid and recreate a
-roster row naming that person, even after chat-delivery's final erasure pass (no key package is
-left, so no device row; the roster row and interval are enough to name them). Pre-existing, not a
-regression of #2258, which only names it as the second known exception to "every writer that admits
-a device reads its key package under the lock" ([channel-encryption](protocols/channel-encryption.md),
-[account-erasure](account-erasure.md)). Fix direction (from the review): route it through
-`writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
-`heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
-writes and that names no one once its own window ends, or by asking core whether the account exists.
-**Narrowed by ADM-3 (2026-10-25) to the creation bootstrap:** the route now enrols nobody but a
-caller registering ITSELF into an empty roster; for anyone else it re-reads the seat under the seat
-lock through `writePendingSeats` (which reads `heldKeyPackages`) and refuses a person no commit
-admitted (`409 MEMBER_NOT_ADMITTED`). What is left: the bootstrap transaction still takes no seat
-lock and reads no key package under it - an erased account would need its own still-valid token and
-an empty group to use it ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
-
 ## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
 
 `setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
@@ -1720,12 +1698,42 @@ column they mean to write is `roleIds` itself, so they only race each other.
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
-read (by the account while a token is valid, or by a peer through `addGroupMember`) loses the
+read (by the account while a token is valid) loses the
 account's roster row to the roster delete and its device rows to the sweep's cut, but its
 `dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
 pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
-opened inside the erasure window); fix with the P2 above, or by having the sweep tombstone any DM
-whose roster the account was on.
+opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
+account was on.
+
+## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
+
+`dm_groups."isGroup" = false` is what an account erasure reads as "a 1:1 DM" and tombstones whole
+(`deleteUserData`), but nothing bounds such a conversation's roster to two people: the creation and
+the member routes do not read the flag. A conversation flagged one-to-one that holds more than two
+members would be ended for all of them by one member's erasure, instead of losing that member only.
+Owed first: one `GROUP BY` over production counting the roster of every `isGroup = false`
+conversation, then either a bound where the roster is written or the erasure deciding by the roster
+size rather than the flag ([account-erasure](account-erasure.md)).
+
+## P3 - Two Redis facts naming an erased account are outside its erasure's trace sweep (review of #2585, 2026-10-27)
+
+`eraseUserRedisTraces` removes the erased account's FIELDS of `group:parting:<g>`, but a field's
+VALUE is the user id of whoever removed that device, so a parting entry for another person's device
+still names the erased account if it was that device's remover. It ends as every parting entry
+ends, on state: consumed by the removal commit naming the device, cleared when the device is in the
+tree again, or deleted with the group. Separately, the gateway's `addressing:left:<userId>:<deviceId>`
+(the sessions that left, kept so a late refresh cannot resurrect one) is not swept; it carries a TTL,
+so it is gone one presence TTL after the last session left. Owed: either sweep both in
+`eraseUserRedisTraces` (rewriting a parting value to a neutral remover, deleting the left key) or
+record here why their bound is enough ([account-erasure](account-erasure.md)).
+
+## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
+
+A `pending_welcome_notify` frame is removed when its `requesterUserId` equals the erased id byte for
+byte, while every MLS comparison of a user id lowercases ASCII letters. It holds because a minted id
+is in practice a lowercase 64-hex subject and the same string is written everywhere; a mixed-case
+id would need the same ASCII-lowercase comparison. The sentence sits beside the mint rule in
+[account-erasure](account-erasure.md); owed only if the mint rule ever admits a mixed-case id.
 
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
@@ -2287,7 +2295,10 @@ next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreS
 waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
 `abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
-`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED`, `REJECT seat_claim_overtaken`
+(by `seat=committer|admit`, and how many in an ordinary conversation), `reason=no_key_package`
+(`ADMIT_REFUSED`, `REFUSED` and `REJECT committer_not_member`), `[INTERNAL_DELETE] ... route(s) no
+seat stands behind outlived the cuts above and were removed` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
 unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
 (the questions are asked in parallel, one round trip) measured on dev.
 

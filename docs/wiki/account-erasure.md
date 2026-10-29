@@ -258,21 +258,41 @@ on PostgreSQL with the whole erasure run between a claim and its check
 written while the erasure runs cannot outlive it either**: the account's key packages are deleted
 first, in a transaction of their own, and every writer that admits a device reads its device's key
 package `FOR SHARE` under the seat lock, so the delete waits for a writer holding one and a later
-writer finds none and writes nothing - with two known exceptions, the demotion (below) and the
-creation bootstrap of `addGroupMember` (a caller enrolling ITSELF into an empty roster), which takes
-no seat lock and reads no key package under one. Since ADM-3 (2026-10-25) that route enrols nobody
-else: for any other person it writes device rows through `writePendingSeats` under the seat lock, or
-refuses ([backlog](backlog.md), P2 "addGroupMember can enrol an erased account after the final
-erasure pass", narrowed). Every group the account's rows still name is then cut under
+writer finds none and writes nothing - with one known exception, the demotion (below), which only
+moves a row that exists. `addGroupMember` writes through `writePendingSeats` for every person, the
+creator enrolling itself into its empty roster included. Every group the account's rows still name is then cut under
 its own seat lock, its rows and its routes together, so a run that stops anywhere leaves each uncut
 group still named for the retry; an eviction after the erasure writes no row naming the account.
 **The ordering alone does not hold during the first pass**: a device of the account that reconnects
 with a token still valid republishes its key package (`register-device`), and a writer may seat it
 again. So the roster rows go once every group was cut (a registration seats a device only where its
 owner is on the roster), and the run ends with a sweep - the key packages deleted again, every group
-a device row names then cut through the same `eraseSeats`, a WARN line when it found anything. **No
-device row is deleted outside `eraseSeats`**: a row is what names its route, so a seat admitted after
-the sweep's read keeps its row beside its route, with a WARN line, for the final pass to cut. That
+a device row names then cut through the same `eraseSeats`, a WARN line when it found anything.
+**Then every route of the account no active seat stands behind goes.** The routes are FOUND off
+the routing sets themselves (`SSCAN MATCH <userId>:*` on each `group:members:<g>`,
+`findRoutesOfUser`), never off a row: a run that died after a 1:1 DM's tombstone committed and before
+that DM's Redis keys went left a route no row names, and the retry finds it all the same. Each is
+DECIDED under its group's seat lock against the account's active rows (`removeUnseatedRoutes`): a
+route with no active seat goes; a route beside one stays, so a seat admitted after the sweep's read
+stays whole for the final pass - removed alone, its route would be written back by the next send's
+reconciliation. **Every other Redis fact naming the account's devices goes too**
+(`eraseUserRedisTraces`): its members of `pending_welcome:<g>`, its fields of `group:parting:<g>`,
+its own `pending_welcome_notify:<userId>` list and every frame in another member's list naming it as
+requester, and its `user:online:<userId>:*` and `addressing:sessions:<userId>:*` keys. The user id
+is held to the user-id mint rule before anything is read (visible ASCII, no `:`), and is escaped in
+every `MATCH`, so a prefix never matches another account. Keys and frames are matched exact-case,
+which holds because a minted id is in practice a lowercase 64-hex subject written identically
+everywhere ([backlog](backlog.md#p3---the-erasure-sweep-matches-a-frames-requester-exact-case-review-of-2585-2026-10-27)).
+Two facts stay outside the sweep, each bounded: a parting VALUE naming the account as remover, and
+the gateway's TTL-bound `addressing:left:` key ([backlog](backlog.md#p3---two-redis-facts-naming-an-erased-account-are-outside-its-erasures-trace-sweep-review-of-2585-2026-10-27)).
+**The same holds for every Redis key of such a DM**, its `history:` stream included: before the
+tombstone, the DMs are named in a per-account Redis set (`erasure:dms:<userId>`), the one fact still
+naming them once the tombstone deleted their rows; every run ends by deleting the keys of every DM
+that set names, then the set itself (`purgeErasedDmKeys`). An interrupted run leaves the set for the
+retry, so no key of a tombstoned DM waits for the 90-day reaper; the set lives for one run, never
+by a timer.
+**No device row is deleted outside `eraseSeats`**: a seat admitted after the sweep's read keeps its
+row and its route, with a WARN line, for the final pass to cut together. That
 pass starts once no token can act as the account, so it meets no republish at all: it is what
 terminates the erasure, not the ordering. The one row that can follow it is a demotion's `pending`
 row, route-less and naming a device with no key package, which `cleanupStaleDevices` collects.

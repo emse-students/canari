@@ -763,7 +763,10 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
   `removeGroupMember` take the group's seat lock, then `dm_group_members`, then (on a removal the
   membership interval and the queued Welcomes, then) the device rows - the add, since ADM-3, only
-  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the caller, into an empty roster
+  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the caller, into an empty roster -
+  and "empty" is decided by a re-read under the seat lock taken EXCLUSIVE for that one case, so of two
+  callers who both read it empty one is enrolled and the other gets `409 MEMBER_NOT_ADMITTED`
+  (`add-enrolment.integration.spec.ts`)
   ([mls-protocol](../protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)). Two transactions that take the same rows in the same
   order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
   that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;

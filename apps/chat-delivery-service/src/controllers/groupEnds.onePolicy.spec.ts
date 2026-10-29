@@ -140,7 +140,13 @@ describe('a group ends - one policy, three routes', () => {
   let sweeps: number;
   /** What happened, in order, so "Redis after the commit" is a fact rather than a hope. */
   let order: string[];
-  let redis: { del: jest.Mock; srem: jest.Mock; smembers: jest.Mock };
+  let redis: {
+    del: jest.Mock;
+    srem: jest.Mock;
+    smembers: jest.Mock;
+    scan: jest.Mock;
+    sadd: jest.Mock;
+  };
   let previousSecret: string | undefined;
 
   beforeEach(async () => {
@@ -187,12 +193,19 @@ describe('a group ends - one policy, three routes', () => {
     );
 
     redis = {
-      del: jest.fn().mockImplementation(async () => {
-        order.push('redis');
+      // Only the group's own keys are the order under test; the erasure's later delete of the
+      // account's own keys (notify list, presence) is not a group's.
+      del: jest.fn().mockImplementation(async (...keys: string[]) => {
+        if (keys.some((k) => k.startsWith('history:'))) order.push('redis');
         return 1;
       }),
       srem: jest.fn().mockResolvedValue(1),
       smembers: jest.fn().mockResolvedValue([]),
+      // The erasure's route sweep walks the routing sets: none left in these cases.
+      scan: jest.fn().mockResolvedValue(['0', []]),
+      // The erasure's marker of the DMs it tombstones; read back empty here, so the run's own
+      // key deletion is the one these cases order.
+      sadd: jest.fn().mockResolvedValue(1),
     };
 
     const anyRepo = () => ({

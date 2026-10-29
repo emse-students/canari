@@ -796,6 +796,57 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       }
     });
 
+    it('two callers who both read the roster empty: exactly one is enrolled the creator, the other answered 409', async () => {
+      const fresh = '00000000-0000-4000-8000-0000000000b5';
+      await q(`INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 0)`, [fresh]);
+      // Hold the group's seat lock from another session, so both calls pass their unlocked
+      // "empty roster" reads and then queue on the lock - the interleaving the review found.
+      const holder = new Client({ connectionString: URL });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+          `seat:${fresh}`,
+        ]);
+        const asCreator = (who: string) =>
+          refusalOf(members().addGroupMember(fresh, { userId: who }, who, undefined));
+        const racing = Promise.all([asCreator(INVITER.userId), asCreator(INVITEE.userId)]);
+        // Both are waiting on the lock: two ungranted advisory locks on this key.
+        for (let waiting = 0; waiting < 2;) {
+          const [row]: { n: string }[] = await q(
+            `SELECT COUNT(*) AS n FROM pg_locks
+             WHERE locktype = 'advisory' AND NOT granted
+               AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+            [`seat:${fresh}`]
+          );
+          waiting = Number(row.n);
+        }
+        await holder.query('COMMIT');
+
+        const answers = await racing;
+        expect(answers.filter((a) => a === null)).toHaveLength(1);
+        expect(answers.filter((a) => a !== null)).toEqual([
+          { status: 409, name: 'MEMBER_NOT_ADMITTED' },
+        ]);
+        const seats: { awaitingAdmission: boolean }[] = await q(
+          `SELECT "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1`,
+          [fresh]
+        );
+        expect(seats).toEqual([{ awaitingAdmission: false }]);
+        const [intervals]: { n: string }[] = await q(
+          `SELECT COUNT(*) AS n FROM dm_group_membership_intervals WHERE "groupId" = $1`,
+          [fresh]
+        );
+        expect(Number(intervals.n)).toBe(1);
+      } finally {
+        await holder.end();
+        await q(`DELETE FROM dm_group_members WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_device_group_memberships WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_group_membership_intervals WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_groups WHERE id = $1`, [fresh]);
+      }
+    });
+
     it('refuses a declared invitation generation the group never reached', async () => {
       await ask();
       await expect(refusalOf(commitAt(1, true, GROUP, 7))).resolves.toEqual({

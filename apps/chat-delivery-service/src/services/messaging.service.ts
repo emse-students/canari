@@ -2677,15 +2677,31 @@ export class MessagingService {
           // THE COMMITTER'S SEAT, whose claim held above (`committerSeat`): written here, with the
           // advance, through the one writer of an active seat - its key package read
           // first, before any device row, the order an account erasure deletes in.
+          //
+          // AN EXTERNAL JOIN WHOSE SEAT CANNOT BE WRITTEN IS REFUSED WHOLE: its leaf enters the tree
+          // with this advance, so accepting it would leave a leaf no seat holds. A pending member's
+          // commit adds no leaf - its Add did - and stands, its seat left `pending`, as above.
           if (committerSeat) {
-            committerSeat =
-              (await this.writeClaimedSeat(
-                m,
-                committer,
-                deviceId,
-                groupId,
-                'MEMBERSHIP_ACTIVE'
-              )) === null;
+            const unwritten = await this.writeClaimedSeat(
+              m,
+              committer,
+              deviceId,
+              groupId,
+              'MEMBERSHIP_ACTIVE'
+            );
+            if (unwritten !== null && frame.external) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} kind=external reason=${unwritten} ` +
+                  `- its seat cannot be written, so its leaf is not accepted; nothing advanced`
+              );
+              throw new ForbiddenException(
+                refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+                  error: 'committer_not_member',
+                })
+              );
+            }
+            committerSeat = unwritten === null;
           }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
@@ -3655,6 +3671,41 @@ export class MessagingService {
           `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove}`
       );
       return cut;
+    });
+  }
+
+  /**
+   * An account erasure's removal of the routes `routes` of `userId` in `groupId` that NO ACTIVE SEAT
+   * of the account stands behind, re-read under the group's seat lock - the routes left by a row
+   * that is gone, a 1:1 DM's tombstone above all.
+   *
+   * A route WITH its active row is left whole, row and route, for the erasure's final pass to cut
+   * together ({@link eraseSeats}). Removing it alone would contradict the row: the next send's
+   * reconciliation finds an active, keyed device missing from the set, writes its route back
+   * (`restoreRoutes`) and accuses a writer that did nothing wrong (`MEMBERS_CACHE_REPAIRED`).
+   *
+   * @returns how many routes went, and how many were kept beside their seat.
+   */
+  async removeUnseatedRoutes(
+    groupId: string,
+    userId: string,
+    routes: readonly string[]
+  ): Promise<{ removed: number; kept: number }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const seats = await m.getRepository(DeviceGroupMembership).find({
+        where: { groupId, userId, status: 'active' as const },
+        select: { deviceId: true },
+      });
+      const seated = new Set(seats.map((s) => `${userId}:${s.deviceId}`));
+      const unseated = routes.filter((r) => !seated.has(r));
+      if (unseated.length > 0) {
+        await this.redis.srem(`group:members:${groupId}`, ...unseated);
+      }
+      this.logger.log(
+        `[INTERNAL_DELETE] routes of user=${userId.slice(0, 8)} group=${groupId} ` +
+          `removed=${unseated.length} kept=${routes.length - unseated.length} (kept beside an active seat, for the final pass)`
+      );
+      return { removed: unseated.length, kept: routes.length - unseated.length };
     });
   }
 
@@ -5196,7 +5247,16 @@ export class MessagingService {
 
     // UNCONDITIONAL, and that is the whole fusion: the row now says the device cannot decrypt this
     // group - or there is no row - so the gateway must stop routing to it and stop electing it.
-    await this.redis.srem(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+    // A failure is logged, never swallowed: the route it leaves keeps the device routable and
+    // electable, and an account erasure later meets it as a route no seat stands behind.
+    await this.redis
+      .srem(`group:members:${groupId}`, `${userId}:${deviceId}`)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `[${tag}] route NOT removed group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+            `- the device stays routable until a later removal: ${String(e)}`
+        )
+      );
 
     if ((demoted.affected ?? 0) === 0) {
       this.logger.warn(
