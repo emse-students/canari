@@ -89,3 +89,48 @@ it('a blank word is no message at all', async () => {
   buttons(m.bookings_cancel_action())[0].click();
   await vi.waitFor(() => expect(api.cancelBooking).toHaveBeenCalledWith('b', undefined));
 });
+
+it("a word typed for one row never reaches another row's people", async () => {
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const other = {
+    ...ROW,
+    id: 'c',
+    holderName: 'Bob',
+    startsAt: '2026-11-02T15:00:00Z',
+    endsAt: '2026-11-02T15:30:00Z',
+  };
+  api.upcomingSpaceBookings
+    .mockResolvedValueOnce({ items: [ROW, other], nextOffset: null })
+    .mockResolvedValueOnce({ items: [], nextOffset: null });
+  const app = mount(UpcomingBookings, {
+    target: document.body,
+    props: { space: SPACE, nowMs: NOW, onChanged: vi.fn() },
+  });
+  mounted.push(() => unmount(app, { outro: false }));
+  await vi.waitFor(() => expect(document.querySelectorAll('li').length).toBe(2));
+  buttons(m.bookings_upcoming_cancel())[0].click();
+  flushSync();
+  type('Pour Alice seulement');
+  // Row B's cancel opens while A's is open: B starts EMPTY. (B's own button: "cancel" also
+  // matches A's open confirm, so the row is named.)
+  const rowB = document.querySelectorAll('li')[1];
+  [...rowB.querySelectorAll('button')]
+    .find((x) => x.textContent?.trim() === m.bookings_upcoming_cancel())!
+    .click();
+  flushSync();
+  expect(document.querySelector('textarea')!.value).toBe('');
+  expect(document.body.textContent).toContain(m.bookings_upcoming_cancel_notified({ name: 'Bob' }));
+  buttons(m.bookings_cancel_action())[0].click();
+  await vi.waitFor(() => expect(api.cancelBooking).toHaveBeenCalledWith('c', undefined));
+});
+
+it('counts the word against its cap', async () => {
+  await openConfirm();
+  expect(document.body.textContent).toContain(
+    m.bookings_upcoming_cancel_message_counter({ count: 0, max: 500 })
+  );
+  type('Salle');
+  expect(document.body.textContent).toContain(
+    m.bookings_upcoming_cancel_message_counter({ count: 5, max: 500 })
+  );
+});

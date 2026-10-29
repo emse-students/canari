@@ -4340,6 +4340,7 @@
   "bookings_mine_notification_note": "Vous êtes prévenu d'une annulation, d'un ajout à une réservation, et avant chaque créneau ; le rappel se règle sur chaque réservation.",
   "bookings_upcoming_cancel_message_label": "Message pour {name} (facultatif)",
   "bookings_upcoming_cancel_notified": "{name} et ses participants seront prévenus.",
+  "bookings_upcoming_cancel_message_counter": "{count}/{max}",
   "bookings_upcoming_tomorrow": "Demain",
   "bookings_cancel_keep": "Garder",
   "bookings_grid_block_hint": "Glissez sur des cases libres (appui long sur mobile) pour les bloquer.",

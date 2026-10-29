@@ -48,6 +48,12 @@
   /** The organiser's optional word to the booking's people (Q-R3), carried by their notice only. */
   let message = $state('');
   const MESSAGE_MAX = 500;
+
+  /** Opens one row's cancel with an EMPTY word: a word typed for another row never travels here. */
+  function openCancel(id: string) {
+    confirming = id;
+    message = '';
+  }
   /** The instant the first page was read from: later pages continue THAT list. */
   let fromMs = 0;
 
@@ -173,7 +179,7 @@
                 {#if !underWay && confirming !== booking.id}
                   <button
                     type="button"
-                    onclick={() => (confirming = booking.id)}
+                    onclick={() => openCancel(booking.id)}
                     class="border-cn-border text-red-err hover:border-red-err/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
                   >
                     <X size={12} />
@@ -193,6 +199,12 @@
                       rows={2}
                       disabled={cancelling}
                     />
+                    <p class="text-text-muted text-2xs -mt-1 text-right tabular-nums">
+                      {m.bookings_upcoming_cancel_message_counter({
+                        count: message.length,
+                        max: MESSAGE_MAX,
+                      })}
+                    </p>
                     <p class="text-text-muted text-xs">
                       {m.bookings_upcoming_cancel_notified({ name: booking.holderName ?? '' })}
                     </p>
