@@ -10,7 +10,8 @@
  * with a retry, a `404` once the key was served read as the end); every final screen pausing; the
  * seat given back on close and never by a stale run; append failures counted on their own; a video
  * error stopping the player; the buffer policy (L-F1): a seek's own `waiting` is no stall, a paired
- * cadence raises the target, an outage never does. No sleep and no wall clock: the timer is a queue
+ * cadence raises the target, an outage never does, a stall latched while a poll awaits its segments
+ * is re-anchored on them (LIVE-STALL-1), and each delivery says what it did to the buffer. No sleep and no wall clock: the timer is a queue
  * this file runs by hand, the policy's clock a number it sets, and the other times are the
  * manifest's database times.
  */
@@ -530,6 +531,117 @@ describe('the buffer policy (L-F1)', () => {
     await tickTimer();
     expect(buffer().ranges).toEqual([[0, 12]]);
     expect(video.currentTime).toBe(7.9);
+  });
+
+  it('a stall latched WHILE the poll awaits its segments is re-anchored on them, never cleared without a seek (LIVE-STALL-1)', async () => {
+    // The segment fetch is held open by the test: the interleaving is chosen, not timed.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const plainFetch = deps.fetchSegment;
+    deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+      if (Number(name.slice(4)) >= 3) await held;
+      return plainFetch(id, name, signal);
+    });
+    const p = await joined(); // range [0, 4], seeked to 1, the first delivery at clock 0
+    clock = 2_000;
+    live.push(1); // 3
+    await tickTimer(); // the manifest answered; segment 3 is still on its way
+    expect(buffer().appends).toEqual(['init0', 'm1', 'm2']);
+    // The video runs dry while the fetch is awaited: the stall latches mid-poll.
+    video.currentTime = 4;
+    p.noteStall();
+    release();
+    await flush();
+    expect(buffer().ranges).toEqual([[0, 6]]);
+    // The stall's re-anchor, on the media that just arrived: end 6 - target 3. The old player read
+    // the latch BEFORE the fetch, saw none, did not seek (2 s behind is no drift) and cleared it.
+    expect(video.currentTime).toBe(3);
+    // And the latch was spent by that re-anchor: the next delivery, inside the target, seeks no more.
+    video.currentTime = 4.5;
+    clock = 4_000;
+    live.push(1);
+    await tickTimer();
+    expect(video.currentTime).toBe(4.5);
+  });
+
+  it('says once per delivery what it did to the buffer: the segments, the end, the playhead, the media ahead', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await joined(); // range [0, 4], seeked to 1
+    video.currentTime = 2.5;
+    clock = 2_000;
+    live.push(2); // 3, 4
+    await tickTimer();
+    const lines = debug.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('delivery of'));
+    expect(lines).toEqual([
+      `[LIVE] viewer ${LIVE}: delivery of 2 appended of 2 taken (3-4), gap 2000 ms: end 4.00 -> 8.00, at 2.50 -> 2.50, ahead 1.50 -> 5.50 s`,
+    ]);
+    // A poll that brings nothing says nothing.
+    await tickTimer();
+    expect(debug.mock.calls.filter((c) => String(c[0]).includes('delivery of'))).toHaveLength(1);
+    // A segment skipped inside the range: the line says how many were appended of how many taken.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    live.openErrors.add(5);
+    live.push(2); // 5 (does not open), 6
+    await tickTimer();
+    expect(
+      debug.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('delivery of'))[1]
+    ).toBe(
+      `[LIVE] viewer ${LIVE}: delivery of 1 appended of 2 taken (5-6), gap 0 ms: end 8.00 -> 10.00, at 2.50 -> 2.50, ahead 5.50 -> 7.50 s`
+    );
+    errors.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('a stall with nothing buffered to re-anchor on stays latched, and the next delivery that brings media spends it', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const p = await joined(); // range [0, 4]
+    buffer().ranges = []; // everything evicted: no edge to seek to
+    video.currentTime = 1.5;
+    p.noteStall(); // starved: latched
+    live.openErrors.add(3);
+    live.push(1); // 3 does not open: the poll appends nothing
+    await tickTimer();
+    const said = () => debug.mock.calls.map((c) => String(c[0]));
+    expect(said()).toContain(`[LIVE] viewer ${LIVE}: no media buffered - no seek (stall)`);
+    expect(video.currentTime).toBe(1.5);
+    // The latch was kept: the next delivery re-anchors on what it brings, as a STALL.
+    live.push(1); // 4 -> range [0, 2]
+    await tickTimer();
+    expect(video.currentTime).toBe(0); // max(start 0, end 2 - target 3)
+    const stallSeeks = () => said().filter((l) => l.includes('seek to the live edge (stall)'));
+    expect(stallSeeks()).toHaveLength(1);
+    // And that seek spent it: a delivery inside the target and its slack seeks no more.
+    video.currentTime = 1.5;
+    live.push(1); // 5 -> range [0, 4]
+    await tickTimer();
+    expect(video.currentTime).toBe(1.5);
+    expect(stallSeeks()).toHaveLength(1);
+    errors.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('a stall latched during the trim stays latched, and the NEXT delivery re-anchors on it', async () => {
+    const p = await joined();
+    buffer().ranges = [[0, 70]]; // a long live: enough behind the playhead to trim
+    video.currentTime = 68;
+    const fake = buffer();
+    const remove = fake.remove.bind(fake);
+    // The video runs dry while the trim is awaited - after this poll's seek decision.
+    fake.remove = (start: number, end: number) => {
+      p.noteStall();
+      remove(start, end);
+    };
+    live.push(1); // 3 -> range [0, 72], 4 s behind: inside the target and its slack
+    await tickTimer();
+    expect(fake.removed).toEqual([[0, 58]]);
+    expect(video.currentTime).toBe(68); // nothing seeked after the trim
+    fake.remove = remove;
+    live.push(1); // 4 -> range [0, 74], 6 s behind: still no drift, so only the latch can seek
+    await tickTimer();
+    expect(video.currentTime).toBe(71); // the stall's re-anchor: end 74 - target 3
   });
 
   it("a poll's own outage is never read as the producer's cadence", async () => {

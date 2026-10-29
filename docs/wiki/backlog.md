@@ -398,12 +398,19 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
-## P3 - The live viewer's stall line prints its target buffer unrounded (LIVE-STALL-1, `1.5.1-alpha.1`, 2026-10-27)
+## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
 
-- `livePlayer.ts` writes `stalled at <t> (target ${this.policy.targetMs} ms)` and printed
-  `target 4634.20000000298 ms`. The gap and seek lines round the same value (`Math.round`).
-- One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
-- Owed: round it where it is printed, as the other two lines do.
+- The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
+  the target is measured from the gaps already seen, so a gap longer than all of them can still run
+  the buffer dry once before the target grows.
+- The row fails a viewer on ANY stall after its first delivery gap. A producer whose gaps keep
+  growing for a while (3.6 s, then 4.7 s, then 4.75 s) can therefore fail the row while the player
+  keeps its contract exactly.
+- The mid-fetch stall defect found on `1.5.1-alpha.6` is fixed separately and is not this question;
+  this row asks only which rule the board judges by.
+- Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
+  the first gap (stricter than the contract), and align the row's definition and its judge in
+  `liverows.mjs` with that decision. Neither is changed until it is taken.
 
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
