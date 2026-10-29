@@ -1239,6 +1239,12 @@ export class AssociationsController {
    * cotisation on payment does exactly what that button does, so it cannot be a cheaper way in. The
    * tier list itself is readable by any signed-in user, because a membership tier's NAME is already
    * public on the association page.
+   *
+   * `tierKeyFromLabel` is a CAPABILITY, not a setting: this social-service derives a new tier's
+   * `variantKey` from its label (`deriveVariantKey` on create). The admin screen offers tier
+   * creation only when it reads it, because an older server strips the unknown flag and would
+   * create a BASE tier instead of the named one asked for. Always `true` from this release on; its
+   * absence is what an older server looks like.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/cotisation-options')
@@ -1254,7 +1260,11 @@ export class AssociationsController {
       AssociationPermissionFlag.MANAGE_MEMBERS,
       { isGlobalAdmin: globalAdmin === 'true' }
     );
-    return { tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })), mayGrant };
+    return {
+      tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })),
+      mayGrant,
+      tierKeyFromLabel: true as const,
+    };
   }
 
   /**

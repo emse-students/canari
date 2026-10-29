@@ -93,6 +93,24 @@ describe('MembershipCard', () => {
     const reason = document.querySelector('[data-cotisation-disabled]');
     expect(reason?.textContent).toBe(m.shop_cotisation_disabled());
   });
+
+  it('blocks a members-only tier when the viewer’s cotisant standing is not yet known', () => {
+    // `viewerIsCotisant` is optional on the type; `undefined` must read as "not confirmed a
+    // member", never as "not confirmed NOT a member" - `=== false` let an unannotated tier's
+    // button through live.
+    const blocked = product({
+      id: 'staff',
+      type: 'membership',
+      viewerTierRelation: 'higher',
+      membersOnly: true,
+      viewerIsCotisant: undefined,
+    });
+    cmp = mount(MembershipCard, { target: document.body, props: { tiers: [blocked] } });
+    flushSync();
+    const row = document.querySelector('[data-tier-row]')!;
+    expect(row.querySelector('button')?.hasAttribute('disabled')).toBe(true);
+    expect(document.body.textContent).toContain(m.shop_members_only_hint());
+  });
 });
 
 describe('ProductCard', () => {
@@ -115,5 +133,17 @@ describe('ProductCard', () => {
     expect(text).toContain(formatAmount(1500, 'eur'));
     // The base (French) locale writes a comma, never the ASCII dot a `toFixed(2)` always wrote.
     expect(text).not.toMatch(/\d\.\d{2}/);
+  });
+
+  it('blocks a members-only product when the viewer’s cotisant standing is not yet known', () => {
+    cmp = mount(ProductCard, {
+      target: document.body,
+      props: {
+        product: product({ membersOnly: true, viewerIsCotisant: undefined }),
+      },
+    });
+    flushSync();
+    expect(document.querySelector('button')?.hasAttribute('disabled')).toBe(true);
+    expect(document.body.textContent).toContain(m.shop_members_only_hint());
   });
 });

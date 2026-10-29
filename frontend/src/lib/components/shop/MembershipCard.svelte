@@ -37,6 +37,14 @@
     cotisationDisabled = false,
     signedIn = true,
   }: Props = $props();
+
+  /** Same rule as `ProductCard.svelte`'s `membersBlocked`: `offeredTiers` already excludes a tier
+   * the viewer holds or ranks below, but a tier can ALSO be reserved to existing members
+   * (`membersOnly`) independently of rank - a row `tierNotOffered` never refuses, so the button
+   * must check it itself. */
+  function membersBlocked(tier: AssociationProduct): boolean {
+    return tier.membersOnly && !tier.viewerIsCotisant;
+  }
 </script>
 
 <CardTile fallbackIcon={productFallbackIcon('membership')} {accentColor}>
@@ -61,8 +69,17 @@
               {:else if gridPriceIsProvisional(tier, signedIn)}
                 <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
               {/if}
+              {#if membersBlocked(tier)}
+                <p class="text-xs text-amber-700 dark:text-amber-400">
+                  {m.shop_members_only_hint()}
+                </p>
+              {/if}
             </div>
-            <ProductPurchaseButton product={tier} disabled={gridRefuses(tier)} class="shrink-0" />
+            <ProductPurchaseButton
+              product={tier}
+              disabled={gridRefuses(tier) || membersBlocked(tier)}
+              class="shrink-0"
+            />
           </li>
         {/each}
       </ul>

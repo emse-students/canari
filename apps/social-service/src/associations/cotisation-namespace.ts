@@ -11,6 +11,50 @@ export const TIER_TAG_NAME_TAKEN = 'TIER_TAG_NAME_TAKEN';
 const logger = new Logger('CotisationNamespace');
 
 /**
+ * Every cotisation stem of every association but `associationId` (all of them when null): each
+ * slug, and `<slug>-<variantKey>` for each named membership tier.
+ */
+async function otherAssociationStems(
+  manager: EntityManager,
+  associationId: string | null
+): Promise<string[]> {
+  const others: { slug: string; variantKey: string | null }[] = await manager.query(
+    `SELECT a.slug, p."variantKey"
+       FROM associations a
+       LEFT JOIN association_products p
+         ON p."associationId" = a.id AND p.type = 'membership' AND p."variantKey" IS NOT NULL
+      WHERE $1::uuid IS NULL OR a.id <> $1::uuid`,
+    [associationId]
+  );
+  return others.flatMap((o) => [
+    o.slug,
+    ...(o.variantKey ? [cotisationStem(o.slug, o.variantKey)] : []),
+  ]);
+}
+
+/**
+ * Reads the other associations' stems ONCE and answers, for each candidate stem, whether it
+ * collides with one (`cotisationStemsCollide`) - the comparison `assertCotisationStemFree` makes,
+ * offered as a predicate so a DERIVED tier key can step past a collision instead of being refused
+ * for a key nobody typed (`ProductsService.saveTierWithDerivedKey`). It holds no lock, for the
+ * reason `assertCotisationStemFree` gives.
+ */
+export async function stemCollidesElsewhere(
+  manager: EntityManager,
+  associationId: string
+): Promise<(stem: string) => boolean> {
+  const stems = await otherAssociationStems(manager, associationId);
+  logger.debug(
+    `[COTISATION] ${stems.length} other stem(s) read for a derived key of assoc=${associationId.slice(0, 8)}`
+  );
+  return (stem) => {
+    const clash = stems.some((other) => cotisationStemsCollide(stem, other));
+    if (clash) logger.debug(`[COTISATION] derived stem "${stem}" collides elsewhere, skipped`);
+    return clash;
+  };
+}
+
+/**
  * Whether an error is the refusal `assertCotisationStemFree` throws, read from its typed `code` -
  * so a caller that can cure the collision (a DERIVED slug walking to its next suffix) tells it apart
  * from every other 409 without reading a message.
@@ -44,17 +88,9 @@ export async function assertCotisationStemFree(
   associationId: string | null,
   stem: string
 ): Promise<void> {
-  const others: { slug: string; variantKey: string | null }[] = await manager.query(
-    `SELECT a.slug, p."variantKey"
-       FROM associations a
-       LEFT JOIN association_products p
-         ON p."associationId" = a.id AND p.type = 'membership' AND p."variantKey" IS NOT NULL
-      WHERE $1::uuid IS NULL OR a.id <> $1::uuid`,
-    [associationId]
+  const clash = (await otherAssociationStems(manager, associationId)).find((other) =>
+    cotisationStemsCollide(stem, other)
   );
-  const clash = others
-    .flatMap((o) => [o.slug, ...(o.variantKey ? [cotisationStem(o.slug, o.variantKey)] : [])])
-    .find((other) => cotisationStemsCollide(stem, other));
   logger.debug(
     `[COTISATION] stem "${stem}" for assoc=${associationId?.slice(0, 8) ?? 'new'}: ${clash ? 'collides' : 'free'}`
   );

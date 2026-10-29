@@ -473,6 +473,16 @@ export class CreateProductDto {
   @MaxLength(100)
   variantKey?: string;
 
+  /**
+   * Membership only: derive a NEW named tier's `variantKey` from `name` on the server
+   * (`variantKeyFromLabel`), unique among the association's tiers. The admin screen sends this
+   * instead of a key, which no person types any more; refused alongside an explicit `variantKey`,
+   * which older clients still send and which is still honoured.
+   */
+  @IsBoolean()
+  @IsOptional()
+  deriveVariantKey?: boolean;
+
   /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8). */
   @IsInt()
   @IsOptional()

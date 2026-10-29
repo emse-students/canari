@@ -255,6 +255,8 @@ the restored volumes already contain them. See [backup/README.md](backup/README.
 sudo -u canari crontab -e
 # Add:
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Required, no default in the repository: <user>@<offsite-host>, or empty for no offsite copy.
+BACKUP_SSH_HOST=<backup-user>@<offsite-host>
 30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
 0 4 * * * cd /home/canari/canari && ./infrastructure/backup/backup-objects.sh >> /home/canari/backups/backup-objects.log 2>&1
 # Egress ledger, one sample a minute - see egress-probe/README.md

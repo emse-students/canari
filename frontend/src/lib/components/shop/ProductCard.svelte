@@ -30,10 +30,13 @@
 
   const freeAmount = $derived(product.allowCustomAmount && product.amountCents === null);
   /**
-   * Members-only is gated only where the listing knows the viewer's standing (`viewerIsCotisant`
-   * is set by the shop listing alone); on a listing that does not say, the server decides.
+   * `viewerIsCotisant` is annotated by both listing endpoints (`listAllProducts`,
+   * `listAssociationProducts`) and is never genuinely ambiguous for a signed-in viewer there - but
+   * the type is optional, and an `undefined` MUST read as "not confirmed a member", never as "not
+   * confirmed NOT a member": `=== false` let a not-yet-annotated viewer see a live button a
+   * members-only product would refuse.
    */
-  const membersBlocked = $derived(product.membersOnly && product.viewerIsCotisant === false);
+  const membersBlocked = $derived(product.membersOnly && !product.viewerIsCotisant);
   const refused = $derived(gridRefuses(product));
 </script>
 
@@ -66,6 +69,7 @@
       <AmountPicker
         bind:valueCents={customAmountCents}
         minCents={product.customAmountMinCents}
+        maxCents={product.customAmountMaxCents}
         currency={product.currency}
       />
     {/if}

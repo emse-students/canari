@@ -585,6 +585,16 @@ are in the private operations notes until each ships: token liveness for the ser
 the access token themselves, and closing an open socket when its session ends (a separate pull
 request).
 
+## P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)
+
+A tier key derived from its label is kept unique by an association-level advisory lock around the
+sibling read and the insert ([cotisations](cotisations.md#a-new-tiers-key-is-derived-from-its-label-server-2026-10-26)).
+Nothing in the schema enforces it: an explicit key from an older client still goes through a
+read-then-insert check without that lock. Proposed for after the 1.5.0 stable, needing the user's
+yes because it is a migration: a partial unique index on `(associationId, variantKey)` for
+`membership` products (plus one for the base tier's null key), after counting the duplicates it
+would refuse.
+
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
 Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since
@@ -3776,7 +3786,7 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 The user decided that every Business is created by Canari's onboarding, never linked from outside ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)). The first production enrolments showed the screen leaves the manager with no next step: the dashboard link answers 404 when signed out, and the Lydia Pro app did not show a Business made by the Provider, even one created with the signed-in person's own phone ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). **Owed, in order:** Lydia's answer on how that Business's holder signs in to its console, and which documents an association gives; then the card rebuilt around the three steps of Lydia's activation e-mail, saying who does what; a "waiting for Lydia" state told apart from "validated", with error 5 of `request/do` as the measured signal; and the existing refuse-or-confirm item on a re-run onboarding below.
 
-**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* **One unmeasured lead, to ask Lydia before building:** `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). Never wired, never tried; test on the sandbox first.
+**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). **Tried on the sandbox and on one production Business (2026-10-27/28): refused with a signature error (444) across every signing variant attempted, both Provider-key and Business-key.** Outcomes-only findings are in [lydia-api](lydia-api.md#6-still-unknown). **The user sent an outcome-only message to the Lydia contact on 2026-10-29**, asking their engineer to check the server-side signature-verification log for one specific sandbox request. **The production sweep (wiring `addcashier` into enrolment) stays OFF until Lydia answers AND one sandbox probe passes with a working signature.**
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 
@@ -4122,3 +4132,5 @@ The group panel reads the user-level roster (`user-members`) and drops only seat
 `false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
 read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
 on production. If it is 0, delete this section; otherwise a backfill migration the user approves.
+
+- **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
