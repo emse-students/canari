@@ -273,6 +273,45 @@ each, the two fields in "who" and absent elsewhere, the line following a click, 
 sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling no longer counted).
 `paraglideMessages.test.ts` for the strings. **Not yet seen** at 390 and 1280 or at 200 % text.
 
+## WP-R7 as built - the creation wizard (D52, Q-R14, 2026-10-29)
+
+Front only: `POST spaces` already took every setting, a poster and the first hours (WP-R1), so the
+wizard is ONE call and a space is never half made.
+
+- **Offered on every creation** (Q-R14): the name typed in the tab (`EditBookingsTab`, the entity
+  tab and the personal spaces of Reservations alike) opens `SpaceWizard` with it. "Je regle tout
+  moi-meme" creates by the name alone, as before, and both land on the space's editor. "Annuler" on
+  the first step closes it with nothing written.
+- **Three steps, as the mockup** (`wizard.html`): C'est quoi ? (name, one sentence, poster);
+  Quand ? (the four templates of D49, the week painted with the same `WeekPainter`, or the one
+  dated line of "Evenement ponctuel"; how long a booking lasts: "Au choix" up to N by steps of M,
+  or "Creneaux fixes" of one length); Pour qui ? (everybody or the audience editor, names or
+  "Occupe", listed or link only).
+- **Only what the steps asked is sent** (`wizardPayload`, `lib/bookings/wizard.ts`): everything
+  else keeps the SERVER's default (no rule, answers kept 7 days). The defaults drawn are the
+  mockup's: a working week 8h-20h, up to 2 h by 30 min, everybody, names hidden, listed.
+- **Fixed slots are cut on the client** (`fixedSlotLines`): in a `slots` space each line IS a slot
+  (WP-B2), so the painted hours become one line per slot; a tail shorter than a slot is not
+  offered and no slot crosses midnight. More than `MAX_AVAILABILITY_LINES` (200) is said on the
+  step before the server would refuse it (a 24/7 week in 30-min slots is 336).
+- **The poster is uploaded when picked and claimed by the creation** (`SpacePosterField` with
+  `spaceId` null): a wizard abandoned leaves a `poster-pending` upload to the media sweep
+  (`POSTER_PENDING_TTL_MS`). "Je regle tout moi-meme" does not carry a picked poster.
+- **Factored**: the weekday names of the painter (`weekdayNames`, `availability.ts`), shared with
+  `AvailabilityEditor`.
+
+**Known cost, found building this (not fixed here):** the painter of `AvailabilityEditor` reads a
+week as merged RUNS (WP-R4), so on a `slots` space a paint ANYWHERE rewrites adjacent slots
+(14:00-14:25, 14:25-14:50) as ONE line, i.e. one long slot. Templates replace the week anyway; the
+typed lines are unaffected. The wizard makes such spaces common: what painting should mean on a
+fixed-slot space is a decision owed before the next stable that ships the wizard.
+
+**Proof.** `wizard.test.ts` (slot cutting, the problems, the payload, and the WP's proof: a wizard
+payload over the server's defaults read back through `draftFromSpace`/`settingsFromDraft` is the
+same settings) and `SpaceWizard.svelte.test.ts` (the mounted wizard: three steps, a step held with
+its sentence, ONE `createSpace` with the hours and fields, the owner passed, the skip creating
+nothing). **Not yet seen** at 390 and 1280, on a phone, or against a running API.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
