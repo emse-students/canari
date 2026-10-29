@@ -26,6 +26,8 @@ export const NOTIFICATION_CATEGORIES = [
   'events',
   /** Form openings and reminders, and a payment that landed on a full form (to its managers). */
   'forms',
+  /** Someone asks to follow the reader, or accepted the reader's request (WP-F4). */
+  'follows',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -56,6 +58,10 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // A live started by a member or an association the reader follows (WP-L7): a publication of the
   // people the reader follows, so the switch that silences their posts silences their lives too.
   social_live_started: 'posts',
+  // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
+  // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
+  social_follow_request: 'follows',
+  social_follow_accepted: 'follows',
   form_opening_soon: 'forms',
   form_open: 'forms',
   // A payment landed on a full form, told to its managers: a form matter, filed under the EXISTING

@@ -8,6 +8,9 @@
     pendingDeviceNotices,
     pendingRefusedDeviceNotices,
   } from '$lib/utils/chat/deviceNotices.svelte';
+  import { revokeNoticedDevice } from '$lib/utils/chat/deviceNoticeWiring';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
 
@@ -16,8 +19,9 @@
    *
    * - "A new device was added to your account" (user decision 2026-10-22), from a signed commit this
    *   device merged: the device's name when the account gave it one, when this device learned of it,
-   *   and a way to the device list, where a device that is not the user's is removed. It stays -
-   *   across reloads - until "Got it" or the list is opened.
+   *   a way to the device list, and "Not me", which revokes the device at once - its logins end and
+   *   its leaf leaves every conversation (`revokeNoticedDevice`). It stays - across reloads - until
+   *   "Got it", the list is opened, or the device is revoked.
    * - "One of your devices can no longer join your conversations", for a device of this account
    *   this device refused for a changed key (`refusedDevices.ts`), with the one remedy: reset it.
    *   It stays until dismissed.
@@ -26,6 +30,27 @@
   const notice = $derived(notices[0]);
   const when = $derived(notice ? exactDate(new Date(notice.at).toISOString()) : '');
   const refused = $derived(session.isLoggedIn ? pendingRefusedDeviceNotices()[0] : undefined);
+  let revoking = $state(false);
+
+  /** "Not me": confirmed, then the device is revoked; the alert leaves only if that succeeded. */
+  async function notMe(target: { key: string; deviceId: string; label?: string }) {
+    const confirmed = await showConfirm(
+      m.chat_delete_device_confirm({ name: target.label ?? target.deviceId.slice(0, 8) }),
+      { danger: true, confirmLabel: m.common_delete_button() }
+    );
+    if (!confirmed) return;
+    revoking = true;
+    try {
+      if (await revokeNoticedDevice(target.deviceId)) {
+        dismissDeviceNotice(target.key);
+        showToast(m.device_notice_not_me_done(), 'info');
+      } else {
+        showToast(m.device_notice_not_me_failed(), 'error');
+      }
+    } finally {
+      revoking = false;
+    }
+  }
 </script>
 
 {#if notice}
@@ -46,6 +71,13 @@
           href="/settings/security"
           class="font-semibold underline"
           onclick={() => dismissDeviceNotice(notice.key)}>{m.device_notice_view()}</a
+        >
+        <button
+          type="button"
+          class="font-semibold"
+          disabled={revoking}
+          data-device-notice-not-me
+          onclick={() => notMe(notice)}>{m.device_notice_not_me()}</button
         >
         <button type="button" class="font-semibold" onclick={() => dismissDeviceNotice(notice.key)}
           >{m.device_notice_dismiss()}</button

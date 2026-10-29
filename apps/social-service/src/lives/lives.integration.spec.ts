@@ -46,6 +46,7 @@ import {
 } from './live.constants';
 import type { AssociationsService } from '../associations/associations.service';
 import { ModerationService } from '../moderation/moderation.service';
+import { FollowRequestsService } from '../follows/follow-requests.service';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import type { UserModeration } from '../moderation/entities/user-moderation.entity';
 import type { Repository } from 'typeorm';
@@ -270,7 +271,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     await q(`CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255))`);
     // And the three the announcement reads (WP-L7), in the columns it reads.
     await q(
-      `CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255))`
+      `CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
+         status varchar(16) NOT NULL, id uuid NOT NULL DEFAULT gen_random_uuid())`
     );
     await q(
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
@@ -776,17 +778,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
   });
 
   describe('the push to the followers when a live goes on air (WP-L7)', () => {
-    const follow = (follower: string, followed = ALICE) =>
-      q(`INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ($1, $2)`, [
-        follower,
-        followed,
-      ]);
+    const follow = (follower: string, followed = ALICE, status = 'accepted') =>
+      q(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ($1, $2, $3)`,
+        [follower, followed, status]
+      );
 
-    it("tells the broadcaster's followers ONCE, at the first stored segment - minus a block and a removal", async () => {
+    it("tells the broadcaster's followers ONCE, at the first stored segment - minus a block, a removal and a request", async () => {
       await follow(BOB);
       await follow(CAROL);
       await follow(EVE);
       await follow(DAVE, BOB); // follows somebody else: not told
+      await follow(DAVE, ALICE, 'pending'); // only ASKED to follow Alice (WP-F1): not told
       await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [CAROL, ALICE]);
       const live = await start();
       await lives.removeViewer(ALICE, live.id, EVE);
@@ -817,6 +820,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect(await pushed()).toHaveLength(1);
       const [row] = await q(`SELECT "announcedAt" FROM lives WHERE id = $1`, [live.id]);
       expect(row.announcedAt).not.toBeNull();
+    });
+
+    it('a follower the broadcaster REMOVED is not told (WP-F3): the removal is the row the push reads', async () => {
+      await follow(BOB);
+      await follow(CAROL);
+      const requests = new FollowRequestsService({} as never, {} as never, ds, {
+        deleteByPattern: () => Promise.resolve(0),
+      } as never);
+      expect(await requests.removeFollower(ALICE, CAROL)).toEqual({ ok: true });
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect((await pushed()).map((p) => p.recipientIds)).toEqual([[BOB]]);
     });
 
     it('tells nobody about a live ended before its first segment, nor about a refused start', async () => {
@@ -1220,13 +1235,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
 
     it("counts the segments against the live's age: past the burst, 429 until the live is older", async () => {
       const live = await start();
+      const allowed = LIVE_SEGMENT_BURST - 10;
+      for (let i = 0; i < allowed; i++) await lives.ingest(ALICE, live.id, i, segment(i));
       // The live's age is read from the database clock; a start moved AHEAD of now() by SQL takes
-      // ten segments off the allowance, whatever this test's own timing.
+      // ten segments off the allowance. It is moved AFTER the ingests, right before the call it
+      // decides: moved first, the ingests themselves spent those ten seconds on a loaded runner
+      // (a full local suite, 2026-10-27) and the refusal never came.
       await q(`UPDATE lives SET "startedAt" = now() + interval '10 seconds' WHERE id = $1`, [
         live.id,
       ]);
-      const allowed = LIVE_SEGMENT_BURST - 10;
-      for (let i = 0; i < allowed; i++) await lives.ingest(ALICE, live.id, i, segment(i));
       expect(await refusal(lives.ingest(ALICE, live.id, allowed, segment(allowed)))).toEqual({
         status: HttpStatus.TOO_MANY_REQUESTS,
         code: 'LIVE_SEGMENT_TOO_FAST',

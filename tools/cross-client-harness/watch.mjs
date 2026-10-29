@@ -1574,6 +1574,18 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  // WHICH SOCKET CLOSED, by its PATH: `webSocketClosed` carries only a requestId, so a call's own
+  // signalling socket ending with the call and the gateway dropping read the same. The created event
+  // names the URL; only its pathname is kept - the call socket carries its token in the query.
+  const wsPaths = new Map();
+  for (const ev of (cx.consumed ?? []).concat(cx.events)) {
+    if (ev?.method !== 'Network.webSocketCreated') continue;
+    try {
+      wsPaths.set(ev.params.requestId, new URL(ev.params.url).pathname);
+    } catch {
+      wsPaths.set(ev.params.requestId, '?');
+    }
+  }
   /** Socket handshakes that completed in the window - informational, never gating. */
   const wsOpen = [];
   const exceptions = [];
@@ -1629,7 +1641,7 @@ export async function report(w) {
       }
       case 'Network.webSocketFrameError':
       case 'Network.webSocketClosed':
-        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
+        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}${wsPaths.has(p.requestId) ? ` path=${wsPaths.get(p.requestId)}` : ''}` });
         break;
       // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
       // close followed by a reconnection are different findings, and before this the second half was
@@ -3699,11 +3711,16 @@ export const PHONE_COLD_BOOT = [
  * of these instead: it claims only an `unexplained` line whose level is one of `levels`, never an
  * entry of `errors` or `warnings`, so a look-alike that accuses still breaks `clean`.
  *
+ * A BUDGET, when given, bounds how many lines the needle forgives in one `ignoringExpectedLog` call:
+ * the number of decisions the row makes that say the sentence. The line past it stays dirt, so a
+ * forgiven sentence said in a loop is still a finding (removal rows, review of 2026-10-29).
+ *
  * @param {string[]} levels the console levels the product writes the sentence at (`log`, `debug`, `info`)
  * @param {RegExp} re the sentence, stamp and level stripped
+ * @param {number} [max] at most this many lines forgiven; unbounded when omitted
  */
-export function atLevels(levels, re) {
-  return { levels, re, toString: () => `${levels.join('|')}: ${re}` };
+export function atLevels(levels, re, max = Infinity) {
+  return { levels, re, max, toString: () => `${levels.join('|')}${max === Infinity ? '' : ` x${max}`}: ${re}` };
 }
 
 /** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
@@ -3740,6 +3757,48 @@ export function forgivingFirstRoutePreloads(rep) {
   );
 }
 
+/** A console level as `atLevels` names it: CDP's `verbose` is a `console.debug`, `warning` a `warn`. */
+const levelName = (level) => ({ verbose: 'debug', warning: 'warn' })[level] ?? level;
+
+/**
+ * THE BUDGET OF EVERY BOUNDED `atLevels` NEEDLE, COUNTED WHERE A REPEAT IS STILL VISIBLE: the
+ * timeline. `unexplained` cannot count - `report` de-duplicates it on the text with the clock
+ * stripped, so a sentence said in a loop is ONE line there. The timeline keeps a repeat and collapses
+ * only the double surfacing of one call (within `SAME_EVENT_MS`, compared here on the sentence alone,
+ * since the two copies of a `console.debug` arrive as `debug` and `verbose`).
+ *
+ * Each needle said more often than its `max` gives back ONE dirt line naming both counts and the
+ * first copy past the budget - so `clean` breaks and the reader sees which sentence looped. A report
+ * with no timeline (a hand-built one) is counted on `unexplained`.
+ *
+ * @returns {string[]} lines for the `unexplained` bucket, `level: [said N times, budget M] sentence`
+ */
+function overBudget(rep, needles) {
+  const bounded = needles.filter((n) => n && typeof n === 'object' && !(n instanceof RegExp) && Number.isFinite(n.max));
+  if (!bounded.length) return [];
+  const said = Array.isArray(rep.timeline)
+    ? (() => {
+        const last = new Map();
+        const out = [];
+        for (const t of rep.timeline) {
+          const m = /^(\d\d:\d\d:\d\d\.\d+|\?+|\S+) \[([a-z]+)\] ([\s\S]*)$/.exec(t);
+          if (!m || m[2] === 'ws') continue;
+          const s = stripStamp(m[3]);
+          const at = Date.parse(`1970-01-01T${m[1]}Z`);
+          const prev = last.get(s);
+          if (Number.isFinite(at)) last.set(s, at);
+          if (prev !== undefined && Number.isFinite(at) && at - prev < 250) continue;
+          out.push({ level: levelName(m[2]), s });
+        }
+        return out;
+      })()
+    : rep.unexplained.map((l) => ({ level: levelName(levelOfEntry(l)), s: stripStamp(l.replace(/^[a-z]+:\s*/, '')) }));
+  return bounded.flatMap((n) => {
+    const copies = said.filter((x) => n.levels.includes(x.level) && n.re.test(x.s));
+    return copies.length > n.max ? [`${copies[n.max].level}: [said ${copies.length} times, budget ${n.max}] ${copies[n.max].s}`] : [];
+  });
+}
+
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
   // one list silently compared a different string from the others and every `^`-anchored rule in it
@@ -3764,7 +3823,7 @@ export function ignoringExpectedLog(rep, needles) {
 
   const errors = rep.errors.filter(keep('errors'));
   const warnings = rep.warnings.filter(keep('warnings'));
-  const unexplained = rep.unexplained.filter(keep('unexplained'));
+  const unexplained = [...rep.unexplained.filter(keep('unexplained')), ...overBudget(rep, needles)];
   return {
     ...rep,
     errors,
@@ -3788,6 +3847,37 @@ export function ignoringExpectedLog(rep, needles) {
       // going back to a stdout dump the run has long scrolled past.
       unmatched: needles.filter((n) => !matched.has(n)).map(String),
     },
+  };
+}
+
+/**
+ * The same report with the closes of NAMED sockets forgiven, and `clean` recomputed.
+ *
+ * A call's signalling socket (`/api/call`) opens with the call and closes when it ends: one close
+ * per call on each seat that was in it, and the close IS the hang-up. That close is expected and
+ * necessary, and nothing else's is. Matched on the socket's PATH (tagged by `report` from its
+ * `webSocketCreated`), exactly - so the chat gateway dropping during a call stays a finding, and so
+ * does a close whose socket the window never saw open (no `path=` at all).
+ *
+ * FORGIVEN, NOT DELETED: kept as `wsEventsForgiven`, out of the gate.
+ *
+ * @param {object} rep a `report` result
+ * @param {string[]} paths socket pathnames whose closes are this row's own, e.g. `['/api/call']`
+ */
+export function forgivingSocketCloses(rep, paths) {
+  const own = (t) => paths.some((p) => t.endsWith(` path=${p}`));
+  const wsEvents = rep.wsEvents.filter((t) => !own(t));
+  return {
+    ...rep,
+    wsEvents,
+    wsEventsForgiven: rep.wsEvents.filter(own),
+    clean:
+      rep.errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      wsEvents.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
   };
 }
 

@@ -27,6 +27,8 @@ import {
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  followRequestContent,
+  followAcceptedContent,
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
@@ -117,6 +119,12 @@ export class PostNotificationsService {
       // is no text to quote.
       case 'live_started':
         return liveStartedContent(actorName, icon);
+      // Follow requests (WP-F2). `actorName` is the ASKER for the first and the person who said
+      // yes for the second; neither has text to quote.
+      case 'follow_request':
+        return followRequestContent(actorName, icon);
+      case 'follow_accepted':
+        return followAcceptedContent(actorName, icon);
       // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
       // no icon - which moderator acted is not theirs to read, and the reason stays on the row.
       case 'live_cut':

@@ -44,6 +44,17 @@ export type AppVersionResponse = {
    * in. Always `true` from this release on; its absence is what an older server looks like.
    */
   oidcPkce: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S CHAT-GATEWAY, published here because this is the one capability
+   * document every client reads: `POST /api/presence` takes the asked ids in its BODY. A client
+   * sends the POST only to an estate that says so, because a gateway older than the route answers
+   * it `405` - and a stable ships both stores before production deploys, so for days a new phone
+   * build talks to the old gateway. The gateway and this service are built from ONE release tag and
+   * deployed together, which is what makes this service's word about the gateway true. Always
+   * `true` from this release on; its absence is what an older estate looks like
+   * (docs/wiki/legacy-compatibility.md, "the presence ids in a URL").
+   */
+  presencePost: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -66,6 +77,7 @@ export class VersionService {
       calls: { mode: platform.callsMode },
       lives: { mode: platform.livesMode },
       oidcPkce: true,
+      presencePost: true,
     };
   }
 }

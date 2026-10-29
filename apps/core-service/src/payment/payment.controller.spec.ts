@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import { PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
 import { PaymentController, SESSION_ID_RE } from './payment.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -231,8 +233,49 @@ describe('PaymentController.requestState', () => {
     const controller = new PaymentController({
       getCheckoutRequestState: read,
     } as unknown as PaymentService);
-    await expect(controller.requestState(body, SECRET)).rejects.toThrow('Invalid payload');
+    const refused = controller.requestState(body, SECRET);
+    await expect(refused).rejects.toThrow('Invalid payload');
+    // A 503, a state of core: the sweep acts on a 400, and this one says nothing of the request.
+    await expect(refused).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['payments switched off', 'Payments are disabled'],
+    ['Lydia not configured', 'Lydia not configured'],
+  ])('answers 503, never 400, when %s', async (_name, message) => {
+    const controller = new PaymentController({
+      getVerifiedCheckoutRequestState: jest
+        .fn()
+        .mockRejectedValue(new BadRequestException(message)),
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState(
+        { sessionId: UUID, connectAccountId: 'v', expectedAmountCents: 50 },
+        SECRET
+      )
+    ).rejects.toMatchObject({
+      status: 503,
+      response: { code: 'PAYMENT_SERVICE_NOT_READY', message },
+    });
+  });
+
+  it("keeps Lydia's typed refusal a 400 with its code: the one 400 about the request", async () => {
+    const refusal = new BadRequestException({
+      code: PAYMENT_PROVIDER_REFUSED,
+      provider: 'lydia',
+      providerCode: '2',
+      message: 'Requete introuvable',
+    });
+    const controller = new PaymentController({
+      getVerifiedCheckoutRequestState: jest.fn().mockRejectedValue(refusal),
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState(
+        { sessionId: UUID, connectAccountId: 'v', expectedAmountCents: 50 },
+        SECRET
+      )
+    ).rejects.toBe(refusal);
   });
 
   it('refuses a caller without the internal secret', async () => {
@@ -241,6 +284,42 @@ describe('PaymentController.requestState', () => {
       controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, 'wrong')
     ).rejects.toThrow('Forbidden');
   });
+
+  it('answers a VERIFIED read when the caller names the amount it expects, signature never returned', async () => {
+    const unverified = jest.fn();
+    const verified = jest
+      .fn()
+      .mockResolvedValue({ verification: 'verified', state: 'paid', raw: '1' });
+    const controller = new PaymentController({
+      getCheckoutRequestState: unverified,
+      getVerifiedCheckoutRequestState: verified,
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState(
+        { sessionId: UUID, connectAccountId: 'v', expectedAmountCents: 1250 },
+        SECRET
+      )
+    ).resolves.toEqual({ ok: true, verification: 'verified', state: 'paid', raw: '1' });
+    expect(verified).toHaveBeenCalledWith({ requestUuid: UUID }, 'v', 1250);
+    expect(unverified).not.toHaveBeenCalled();
+  });
+
+  it.each([[0], [-5], [12.5], [Number.NaN], ['1250' as unknown as number]])(
+    'refuses expectedAmountCents %p before any provider call',
+    async (expectedAmountCents) => {
+      const verified = jest.fn();
+      const controller = new PaymentController({
+        getVerifiedCheckoutRequestState: verified,
+      } as unknown as PaymentService);
+      await expect(
+        controller.requestState(
+          { sessionId: UUID, connectAccountId: 'v', expectedAmountCents },
+          SECRET
+        )
+      ).rejects.toThrow('Invalid payload');
+      expect(verified).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('PaymentController.cancelRequest', () => {
@@ -267,10 +346,17 @@ describe('PaymentController.cancelRequest', () => {
     [{}],
   ])('refuses %p before any provider call', async (body) => {
     const cancel = jest.fn();
-    await expect(makeController(cancel).cancelRequest(body, SECRET)).rejects.toThrow(
-      'Invalid payload'
-    );
+    const refused = makeController(cancel).cancelRequest(body, SECRET);
+    await expect(refused).rejects.toThrow('Invalid payload');
+    await expect(refused).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('answers 503 when payments are switched off: a cancel that was not sent is no refusal', async () => {
+    const cancel = jest.fn().mockRejectedValue(new BadRequestException('Payments are disabled'));
+    await expect(
+      makeController(cancel).cancelRequest({ requestId: '1', connectAccountId: 'v' }, SECRET)
+    ).rejects.toMatchObject({ status: 503 });
   });
 
   it('refuses a caller without the internal secret', async () => {

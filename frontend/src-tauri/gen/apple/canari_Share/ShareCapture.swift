@@ -93,6 +93,19 @@ final class ShareCapture {
 
     private let cancellation = Cancellation()
 
+    /// A WAITING SHARE IS LOCKED WITH THE DEVICE: its folder, each copy and the manifest are written
+    /// under Data Protection's `CompleteUnlessOpen` class - a CLOSED file cannot be opened while the
+    /// phone is locked, exactly as under `Complete`; the App Group's default
+    /// (`CompleteUntilFirstUserAuthentication`) left them readable on a locked phone once it had been
+    /// unlocked since boot. NOT `Complete`, because a capture outlives a lock: it runs under an
+    /// expiring activity (a long iCloud video), and under `Complete` its open copies stop writing and
+    /// no new file can be created once the phone locks - the share is lost, and with it an older one
+    /// the failed hand-over had claimed. Under `CompleteUnlessOpen` an open copy keeps writing and a
+    /// new file can be created while locked. Nothing READS them while locked: the app imports once the
+    /// phone is unlocked (`app_group_share.rs`), and the rename that moves them keeps the class, which
+    /// belongs to the file. `docs/wiki/frontend/sharing.md`, "At rest".
+    static let lockedAtRest: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.completeUnlessOpen]
+
     /// Copies the share and hands it over. BLOCKING: call it off the main thread. `target` is the
     /// suggestion the member picked (`c:<conversation id>`, already checked by
     /// `ShareRules.suggestedTarget`), written into the manifest as Android writes it.
@@ -165,7 +178,8 @@ final class ShareCapture {
         let inbox = container.appendingPathComponent(ShareCapture.inboxDir, isDirectory: true)
         let dir = inbox.appendingPathComponent(shareId, isDirectory: true)
         do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true, attributes: ShareCapture.lockedAtRest)
         } catch {
             log.error("the share directory could not be made: \(error.localizedDescription)")
             return .failed
@@ -265,7 +279,20 @@ final class ShareCapture {
         }
         // CLAIMED, NOT PEEKED AT, exactly as on Android - and an older session's share never replaces
         // a newer one's.
-        let replaced = claimPending(container)
+        let replaced: [String: Any]?
+        switch claimPending(container) {
+        case .nothing:
+            replaced = nil
+        case .read(let waiting):
+            replaced = waiting
+        case .locked:
+            // The phone locked during the capture, and the share still waiting cannot be read: which
+            // session it belongs to cannot be told, so it is KEPT (put back by `claimPending`) and
+            // this one goes, said - the app's rule for the same case (`hand_over`).
+            log.error("share dropped: the share still waiting is locked with the device and cannot be compared with it")
+            deleteDir(dir, why: "a share arriving over a locked one")
+            return .failed
+        }
         if let older = replaced, epochOf(older) > epoch {
             _ = writePending(container, older)
             deleteDir(dir, why: "share from a signed-out session (epoch \(epoch))")
@@ -428,7 +455,9 @@ final class ShareCapture {
         // The index prefix keeps two files with the same name apart on disk; the page is told the
         // name alone.
         let target = dir.appendingPathComponent("\(index)_\(name)")
-        guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+        guard FileManager.default.createFile(
+            atPath: target.path, contents: nil, attributes: ShareCapture.lockedAtRest)
+        else {
             log.warning("file \(index) refused: its copy could not be created")
             return nil
         }
@@ -481,7 +510,16 @@ final class ShareCapture {
     /// still waiting when both come from the SAME session, or handed over alone. Never across a
     /// sign-out (Android's `reportRefusals`).
     private func reportRefusals(_ container: URL, refused: Int, epoch: Int64) -> Bool {
-        let waiting = claimPending(container)
+        let waiting: [String: Any]?
+        switch claimPending(container) {
+        case .nothing:
+            waiting = nil
+        case .read(let manifest):
+            waiting = manifest
+        case .locked:
+            log.warning("\(refused) refusal(s) not reported: the share still waiting is locked with the device")
+            return false
+        }
         let waitingEpoch = waiting.map { epochOf($0) } ?? epoch
         if let newer = waiting, waitingEpoch > epoch {
             _ = writePending(container, newer)
@@ -523,36 +561,82 @@ final class ShareCapture {
         return (manifest["epoch"] as? NSNumber)?.int64Value ?? 0
     }
 
+    /// What claiming the manifest still waiting in the App Group found.
+    private enum Claimed {
+        /// None waited, or it was unreadable (said, and deleted).
+        case nothing
+        /// Its contents; the file is gone.
+        case read([String: Any])
+        /// It is locked with the device: PUT BACK under its own name, nothing deleted.
+        case locked
+    }
+
     /// Takes the manifest still waiting in the App Group, if any: renamed out of the way first, then
-    /// read and deleted. Nil when none waits, or it was unreadable (said).
-    private func claimPending(_ container: URL) -> [String: Any]? {
+    /// read and deleted - `handoff::claim_and_read`'s claim. A read Data Protection refuses
+    /// (`isLockedRead`) RENAMES THE CLAIM BACK and deletes nothing: the share waits for the unlock.
+    /// Any other read failure deletes it: an unreadable manifest never becomes readable by waiting.
+    private func claimPending(_ container: URL) -> Claimed {
         let pending = container.appendingPathComponent(ShareCapture.pendingFile).path
         let claimed = container.appendingPathComponent(ShareCapture.pendingFile + ".replacing")
-        guard rename(pending, claimed.path) == 0 else { return nil }
-        defer {
-            do {
-                try FileManager.default.removeItem(at: claimed)
-            } catch {
-                log.warning("the claimed manifest was not deleted: \(error.localizedDescription)")
+        guard rename(pending, claimed.path) == 0 else { return .nothing }
+        let data: Data
+        do {
+            data = try Data(contentsOf: claimed)
+        } catch {
+            if ShareCapture.isLockedRead(error) {
+                // RENAME_EXCL: a manifest landing at the name meanwhile is never overwritten; the
+                // claim then stays as `.replacing`, which the app's launch sweep puts back or says.
+                if renamex_np(claimed.path, pending, UInt32(RENAME_EXCL)) != 0 {
+                    log.error("the locked waiting manifest could not be put back: errno \(errno)")
+                }
+                log.info("the share still waiting is locked with the device - left in place")
+                return .locked
             }
+            let failure = error as NSError
+            log.warning("the waiting share manifest is unreadable: \(failure.domain, privacy: .public) \(failure.code)")
+            deleteClaim(claimed)
+            return .nothing
         }
-        guard let data = try? Data(contentsOf: claimed),
-              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else {
+        deleteClaim(claimed)
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             log.warning("the waiting share manifest is unreadable")
-            return nil
+            return .nothing
         }
-        return object
+        return .read(object)
+    }
+
+    private func deleteClaim(_ claimed: URL) {
+        do {
+            try FileManager.default.removeItem(at: claimed)
+        } catch {
+            log.warning("the claimed manifest was not deleted: \(error.localizedDescription)")
+        }
+    }
+
+    /// Whether a read failed only because the device is locked: Data Protection answers `EPERM`, which
+    /// Foundation wraps in a Cocoa read error (`NSFileReadNoPermissionError`) carrying it as
+    /// `NSUnderlyingErrorKey`. Classified by DOMAIN AND CODE, never by message, and only the POSIX
+    /// `EPERM` itself counts - a Cocoa permission error alone says nothing of why. The Rust side's
+    /// `handoff::is_locked_read`, with its same limit: an `EPERM` from another cause is kept too.
+    static func isLockedRead(_ error: Error) -> Bool {
+        let failure = error as NSError
+        if failure.domain == NSPOSIXErrorDomain && failure.code == Int(EPERM) {
+            return true
+        }
+        guard let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError else { return false }
+        return underlying.domain == NSPOSIXErrorDomain && underlying.code == Int(EPERM)
     }
 
     /// WRITTEN WHOLE OR NOT AT ALL: the app may import at any moment, and a rename within one
     /// directory is atomic and replaces the manifest it lands on.
     private func writePending(_ container: URL, _ payload: [String: Any]) -> Bool {
+        // `.completeFileProtectionUnlessOpen`, for the reasons `lockedAtRest` gives: the manifest
+        // holds the text, and it may be written after the phone locked.
         let target = container.appendingPathComponent(ShareCapture.pendingFile).path
         let staging = container.appendingPathComponent(ShareCapture.pendingFile + ".tmp")
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
-            try data.write(to: staging)
+            try data.write(to: staging, options: [.completeFileProtectionUnlessOpen])
         } catch {
             log.error("the share manifest could not be written: \(error.localizedDescription)")
             return false

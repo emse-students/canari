@@ -213,6 +213,16 @@ it("the send opens the post's share sheet on that reel", async () => {
   await vi.waitFor(() => expect(q('[data-share-sheet="a"]')).not.toBeNull());
 });
 
+it('a reel sent into a conversation closes the viewer, so the composer it waits in is seen', async () => {
+  // The share's landing no longer navigates, so nothing else would take the viewer off a
+  // conversation already open under it (review of #2609, 2026-10-27).
+  const { onClose } = await render(post('a'), 'alice');
+  await click('[data-reel-rail-send]');
+  await vi.waitFor(() => expect(q('[data-share-sent]')).not.toBeNull());
+  await click('[data-share-sent]');
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+});
+
 it('the comments open in a sheet over the reel, as a history entry of their own', async () => {
   await render(post('a', { comments: [comment('c1')] }), 'alice');
   const pushedBefore = vi.mocked(pushHistoryOverlay).mock.calls.length;

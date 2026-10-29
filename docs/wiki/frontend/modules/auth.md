@@ -1468,7 +1468,7 @@ What the wipe reaches, per platform, is therefore:
 
 | Store | Web | Tauri |
 | --- | --- | --- |
-| MLS state | `CanariDBMls_<userId>` (IndexedDB) | `mls.bin`, via `delete_mls_state` |
+| MLS state | `CanariDBMls_<userId>` (IndexedDB) | `mls.bin`, via `terminer_session_mls` (`sweepState`) |
 | Messages and conversations | `CanariDB_<userId>` (IndexedDB) | `*.db` in the app data dir, via `clear_app_data` |
 | WebView stores | deleted | deleted - and this is the half that was missing |
 | Response cache, `localStorage`, `sessionStorage` | deleted | deleted |

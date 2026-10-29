@@ -427,7 +427,9 @@ and still "succeeds", so there is no exception to catch and nothing in any log â
 download buttons shipped dead on mobile without a single report until someone tried one. Everything
 that saves a file goes through `utils/fileDownload.ts`, which keeps the anchor on the web and writes
 through the native save dialog on Tauri (`ACTION_CREATE_DOCUMENT` on Android, the document picker on
-iOS, the OS save panel on desktop). Two rules come with it:
+iOS, the OS save panel on desktop). The dialog is given the name's extension as a filter, because
+Android's documents provider only splits `X.mp3` into name and extension when the intent's MIME type
+matches it - without one, a second save became `X.mp3 (1)` and lost its type. Two rules come with it:
 
 - **A library that saves for you is that anchor wearing another name.** `pdf.save()` builds the
   object URL and clicks the anchor itself, so the PDF exports looked like the one family of
@@ -531,9 +533,9 @@ hand-written attacks. What still leaked after the fixes is the list below, plus 
 whose text a server or a library wrote.
 
 **A CONTENT FIELD IS ITS LENGTH, WHATEVER ITS SHAPE (Mi 9T reading of `v1.2.7-alpha.1`, 2026-10-14).**
-`text="ok"`, `text="bisous"` and `text="refuse1-a127"` reached the export: a one-word message has
+`text="ok"`, `text="coucou"` and `text="refuse1-a127"` reached the export: a one-word message has
 the shape of an enum, so the quoted-value allowlist kept it. Two causes, both fixed in
-`appLogRedact.ts`. (1) The `FIELD_RE` tail of the PRECEDING field (`contact="jolan"`) swallowed the
+`appLogRedact.ts`. (1) The `FIELD_RE` tail of the PRECEDING field (`contact="alice"`) swallowed the
 next field's name (` text=`), so `text` was never judged as a field; a tail word now stops where
 `word=` / `word:` begins. (2) A prose-keyed value is replaced by `[N chars]` (`"[N chars]"` when it
 was quoted) instead of the shape test; the list gained `contact`, `comment`, `draft`, `snippet`,
@@ -558,7 +560,7 @@ file's name. A new call site logging a name is a review finding.
 
 **A fix to the redactor protected only what was written after it (Mi 9T reading of
 `v1.2.7-alpha.2`, 2026-10-14).** The ring keeps up to 2 MiB of lines, and the export of the
-upgraded phone still carried `contact="jolan" text="bisous"` and `text="ok"` that `v1.2.7-alpha.1`
+upgraded phone still carried `contact="alice" text="coucou"` and `text="ok"` that `v1.2.7-alpha.1`
 had stored before #1839. So `readAppLog` - the ONLY reader of `CanariDBLog`; the export
 (`appLogExport.ts`, Settings > About) is its only caller, and nothing else shows, shares or copies
 the stored log - passes every line through the SAME `redactLogLine` again on the way out, the
@@ -1439,7 +1441,7 @@ one place: it has no `adb reverse`**, so it reaches the workstation by its addre
 does it - `ios.yml` dispatched with `local_url`:
 
 ```sh
-gh workflow run ios.yml --ref <branch> -f local_url=http://192.168.1.32:8081 \
+gh workflow run ios.yml --ref <branch> -f local_url=http://<LAN ip>:8081 \
   -f local_client_id="$(grep ^VITE_AUTHENTIK_CLIENT_ID= frontend/.env | cut -d= -f2-)"
 ```
 
@@ -2651,8 +2653,9 @@ sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
   push service hands the key to `nativeKeyGroupJoinClaim` / `Settle`; with no key it attempts no
   join, and `take_key_group_push_joins` leaves the ledger for a start that can read it. Its staged
   post-join state, `mls.bin.keygroup-join`, is sealed under the DEVICE key like `mls.bin`. The
-  sign-out sweep (`delete_mls_state`) removes both with `mls.bin`: the stage holds epoch secrets,
-  and the ledger's `joined` entries would otherwise be adopted by the next account's start.
+  state reset (`terminer_session_mls` with `sweepState`) removes both with `mls.bin`: the stage
+  holds epoch secrets, and the ledger's `joined` entries would otherwise be adopted by the next
+  account's start.
 
 `nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
 that no native reader opens the mirror, that the join ledger is written sealed with the key handed
@@ -3579,7 +3582,7 @@ of its kind in five days:
 
 ```json
 {"event": "/application/o/authorize/?client_id=...&redirect_uri=tauri%3A%2F%2Flocalhost%2Fauth%2Fcallback&...",
- "status": 400, "remote": "146.70.98.237",
+ "status": 400, "remote": "<reviewer-ip>",
  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"}
 ```
 

@@ -28,10 +28,24 @@ import {
   settleJoinRequest,
 } from './joinRequests.svelte';
 import { resetWelcomeSent } from './welcomeSent';
+import {
+  approveMemberDevice,
+  declineMemberDevice,
+  memberDeviceAnswer,
+  resetMemberDeviceAnswers,
+} from './memberDeviceAnswers';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
+}));
+
+// The packages below are one opaque byte; the key they carry is read through this seam - `fp-<byte>`
+// - so a test can serve a device under one key or another (`deviceTrust.keyPackage.realWasm.test.ts`
+// holds the real parser to the WASM build).
+vi.mock('$lib/mls-client/deviceTrust', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/deviceTrust')>()),
+  keyPackageFingerprintOf: vi.fn(async (keyPackage: Uint8Array) => `fp-${keyPackage[0]}`),
 }));
 
 function activeConversations(
@@ -54,7 +68,21 @@ function activeConversations(
   ]);
 }
 
-beforeEach(() => resetWelcomeSent());
+beforeEach(() => {
+  resetWelcomeSent();
+  resetMemberDeviceAnswers();
+});
+
+/**
+ * A pin for every device in `seen` - a key this device met in SOME merged commit or joined tree,
+ * another group's included. It never makes a device "seen" for an admission.
+ */
+const pinsFor = (...seen: string[]) =>
+  vi.fn(async (userId: string, deviceId: string) =>
+    seen.includes(`${userId}:${deviceId}`)
+      ? { keys: [new Uint8Array([9])], anchored: true, reaffirmations: 0 }
+      : null
+  );
 
 // ── welcome_request ──────────────────────────────────────────────────────────
 
@@ -135,7 +163,10 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     expect(mlsService.addMember).not.toHaveBeenCalled();
   });
 
-  it('asks a member about a seat still awaiting one, even when the tree holds a leaf of theirs', async () => {
+  it("never raises a person's ask for a user who already holds a leaf, whatever the seat's flag", async () => {
+    // The ask's Add re-plans the person's devices from the server's list and its Decline removes
+    // their leaves: one tap on it would act on a member nobody asked about (review of #2594).
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const onJoinApprovalRequested = vi.fn();
     const mlsService = serverVouches({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:p1', 'stranger:old']),
@@ -145,12 +176,11 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
 
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(mlsService.replaceMember).not.toHaveBeenCalled();
-    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
-      groupId: 'g-adm-leaf',
-      requesterUserId: 'stranger',
-      requesterDeviceId: 'dev-1',
-      askId: 'ask-stranger',
-    });
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the user already holds a leaf there - no person')
+    );
+    error.mockRestore();
   });
 
   it("asks nobody about a person whose seat is not an invitation link's ask", async () => {
@@ -206,14 +236,113 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     expect(said).toContain('no leaf');
   });
 
-  it('adds a new device of a user who already holds a leaf', async () => {
+  it("re-admits a device whose own leaf is in THIS group's tree (a lost state), in one commit", async () => {
+    const mlsService = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:dev-1']),
+    });
+
+    await run('g-adm-own-leaf', mlsService, 'peer');
+
+    expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pin of the device from ANOTHER group is not "seen" here - it is asked about, not added', async () => {
+    // Pins are one store for every group: a key met in another group, a key group or a device's own
+    // external entry. None of it says a member of THIS group admitted the device.
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:old-phone']),
+      pinnedSignatureKeys: pinsFor('peer:dev-1'),
+    });
+
+    await run('g-adm-pinned-elsewhere', mlsService, 'peer', { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requesterDeviceId: 'dev-1', kind: 'device' })
+    );
+  });
+
+  it('asks about a device of a member it never saw, showing its key, and adds nothing', async () => {
+    // A leaf of `peer` proves the user, not `dev-1`: its first admission is a member's gesture.
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:old-phone']),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([
+          { deviceId: 'dev-1', deviceName: 'Pixel', keyPackage: new Uint8Array([7]) },
+        ]),
+    });
+
+    await run('g-adm-unseen', mlsService, 'peer', { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
+    expect(mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
+      groupId: 'g-adm-unseen',
+      requesterUserId: 'peer',
+      requesterDeviceId: 'dev-1',
+      kind: 'device',
+      keyFingerprint: 'fp-7',
+      deviceLabel: 'Pixel',
+    });
+  });
+
+  it("asks about the account's OWN unseen device the same way", async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:p1']),
+    });
+
+    await run('g-adm-own-unseen', mlsService, 'me', { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requesterUserId: 'me', kind: 'device' })
+    );
+  });
+
+  it('adds an unseen device once this member approved it under the key it is served with', async () => {
+    const approved = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:old-phone']),
+    });
+    approveMemberDevice('peer', 'dev-1', 'fp-7');
+    await run('g-adm-approved', approved, 'peer');
+    expect(approved.addMember).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an approved device served under ANOTHER key, withdraws the approval and asks anew', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const mlsService = serverVouches({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:old-phone']),
     });
+    // Approved under key `fp-3`; the server now serves a package carrying `fp-7`.
+    approveMemberDevice('peer', 'dev-1', 'fp-3');
 
-    await run('g-adm-new-device', mlsService, 'peer');
+    await run('g-adm-swapped-key', mlsService, 'peer');
 
-    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(memberDeviceAnswer('g-adm-swapped-key', 'peer', 'dev-1')).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('not the approved fp-3'));
+    error.mockRestore();
+  });
+
+  it('never asks again about a device it declined in that conversation - and still asks in another', async () => {
+    declineMemberDevice('g-adm-declined', 'peer', 'dev-1');
+    const onJoinApprovalRequested = vi.fn();
+    const declined = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:old-phone']),
+    });
+    await run('g-adm-declined', declined, 'peer', { onJoinApprovalRequested });
+    expect(declined.addMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+
+    await run('g-adm-elsewhere', declined, 'peer', { onJoinApprovalRequested });
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: 'g-adm-elsewhere', kind: 'device' })
+    );
   });
 
   it('does not let a leaf of ANOTHER user with the same device id answer for the requester', async () => {
@@ -385,9 +514,112 @@ describe('processPendingInvitations - a new user is never added automatically', 
     expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
   });
 
-  it('adds a pending device of a user who already holds a leaf', async () => {
+  it('a pending device of a member pinned from ANOTHER group is asked about, never added', async () => {
+    const onJoinApprovalRequested = vi.fn();
     const mlsService = makeMls({
       ...pendingFor('peer', 'new-phone', false),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
+      pinnedSignatureKeys: pinsFor('peer:new-phone'),
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requesterDeviceId: 'new-phone', kind: 'device' })
+    );
+  });
+
+  it('asks about a pending device of a member it never saw - no Add, no Welcome, ONE package read per session', async () => {
+    // A pending row (not an ask) names a device id this device never saw: the member's leaf proves
+    // the user, not this device.
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = makeMls({
+      ...pendingFor('peer', 'never-seen', false),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested });
+    await sweep(mlsService, { onJoinApprovalRequested });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(mlsService.registerMember).not.toHaveBeenCalled();
+    // The key the ask shows is read once and kept: a sweep spends no package per pass.
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
+      groupId: 'g1',
+      requesterUserId: 'peer',
+      requesterDeviceId: 'never-seen',
+      kind: 'device',
+      keyFingerprint: 'fp-1',
+    });
+    // The row is the server's and stays: the member's answer, or the next sweep, settles it.
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+  });
+
+  it('asks about an unseen device in a 1:1 conversation too - the answer touches no seat', async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = makeMls({
+      ...pendingFor('peer', 'never-seen', false),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
+    });
+
+    await sweep(mlsService, {
+      onJoinApprovalRequested,
+      conversations: activeConversations('g1', 'direct'),
+    });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'device' })
+    );
+  });
+
+  it('two unseen devices of one member are asked about one by one, each under its own key', async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = makeMls({
+      getPendingInvitations: vi.fn().mockResolvedValue([
+        { id: 'i1', userId: 'peer', deviceId: 'phone', groupId: 'g1', status: 'pending' },
+        { id: 'i2', userId: 'peer', deviceId: 'laptop', groupId: 'g1', status: 'pending' },
+      ]),
+      fetchUserDevices: vi.fn().mockResolvedValue([
+        { deviceId: 'phone', keyPackage: new Uint8Array([1]) },
+        { deviceId: 'laptop', keyPackage: new Uint8Array([3]) },
+      ]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested });
+
+    expect(
+      onJoinApprovalRequested.mock.calls.map(([r]) => [r.requesterDeviceId, r.keyFingerprint])
+    ).toEqual([
+      ['phone', 'fp-1'],
+      ['laptop', 'fp-3'],
+    ]);
+
+    // One approval admits that one device; the other is still asked about.
+    approveMemberDevice('peer', 'phone', 'fp-1');
+    onJoinApprovalRequested.mockClear();
+    await sweep(mlsService, { onJoinApprovalRequested });
+    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.addMember).toHaveBeenCalledWith(
+      'g1',
+      expect.objectContaining({ deviceId: 'phone' }),
+      ['peer:phone']
+    );
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requesterDeviceId: 'laptop', kind: 'device' })
+    );
+  });
+
+  it('adds an unseen device once this member approved it', async () => {
+    approveMemberDevice('peer', 'never-seen', 'fp-1');
+    const mlsService = makeMls({
+      ...pendingFor('peer', 'never-seen', false),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
     });
 
@@ -395,12 +627,13 @@ describe('processPendingInvitations - a new user is never added automatically', 
 
     expect(mlsService.addMember).toHaveBeenCalledWith(
       'g1',
-      expect.objectContaining({ userId: 'peer', deviceId: 'new-phone' }),
-      ['peer:new-phone']
+      expect.objectContaining({ userId: 'peer', deviceId: 'never-seen' }),
+      ['peer:never-seen']
     );
   });
 
-  it('a seat still awaiting a member asks a member, even when the tree holds a leaf of theirs', async () => {
+  it("a seat flagged as an ask for a user who holds a leaf raises no person's ask and adds nothing", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const onJoinApprovalRequested = vi.fn();
     const mlsService = makeMls({
       ...pendingFor('peer', 'new-phone'),
@@ -410,11 +643,41 @@ describe('processPendingInvitations - a new user is never added automatically', 
     await sweep(mlsService, { onJoinApprovalRequested });
 
     expect(mlsService.addMember).not.toHaveBeenCalled();
-    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
-      groupId: 'g1',
-      requesterUserId: 'peer',
-      requesterDeviceId: 'new-phone',
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('flagged as a join ask'));
+    error.mockRestore();
+  });
+
+  it("accuses the flagged seat once a session, and raises the person's ask once the leaf is gone", async () => {
+    // A removed member's leaf can outlive the removal until it is collected: every sweep meets the
+    // seat again, which is expected and said once. The verdict is read off the tree on every pass, so
+    // the ask a member owes the person comes back the moment the leaf is no longer there.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onJoinApprovalRequested = vi.fn();
+    const log = vi.fn();
+    const identities = vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']);
+    const mlsService = makeMls({
+      ...pendingFor('peer', 'new-phone'),
+      getGroupMemberIdentities: identities,
     });
+
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+
+    expect(
+      error.mock.calls.filter(([m]) => String(m).includes('flagged as a join ask'))
+    ).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('already reported this session'));
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+
+    identities.mockResolvedValue(['self:self-device']);
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requesterUserId: 'peer', requesterDeviceId: 'new-phone' })
+    );
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it('refuses on a tree it cannot read, and keeps the row for the next sweep', async () => {
@@ -446,6 +709,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
         ),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
     });
+    approveMemberDevice('peer', 'new-phone', 'fp-1');
 
     await sweep(mlsService);
 

@@ -335,7 +335,14 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
     mockedAxios.post.mockResolvedValue({ data: { state: raw } });
     await expect(
       makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc')
-    ).resolves.toEqual({ state, raw: raw === undefined ? '' : String(raw) });
+    ).resolves.toEqual({ state, raw: raw === undefined ? '' : String(raw), signature: null });
+  });
+
+  it('carries the signature Lydia answered, for PaymentService to verify', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { state: '1', signature: 'a'.repeat(32) } });
+    await expect(
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc')
+    ).resolves.toEqual({ state: 'paid', raw: '1', signature: 'a'.repeat(32) });
   });
 
   // The pair measured on the sandbox 2026-10-15 to find the request too: order_ref + vendor_token.
@@ -343,7 +350,7 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
     mockedAxios.post.mockResolvedValue({ data: { state: '0' } });
     await expect(
       makeProvider().getCheckoutRequestState({ orderRef: 'product:p:c' }, 'vendor-token-abc')
-    ).resolves.toEqual({ state: 'open', raw: '0' });
+    ).resolves.toEqual({ state: 'open', raw: '0', signature: null });
     const sent = new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string);
     expect(Object.fromEntries(sent)).toEqual({
       order_ref: 'product:p:c',
@@ -355,7 +362,7 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
     mockedAxios.post.mockResolvedValue({ data: { error: '2', message: 'Requete introuvable' } });
     await expect(
       makeProvider().getCheckoutRequestState({ orderRef: 'product:p:c' }, 'vendor-token-abc')
-    ).resolves.toEqual({ state: 'not-found', raw: 'error 2' });
+    ).resolves.toEqual({ state: 'not-found', raw: 'error 2', signature: null });
   });
 
   it('keeps error 2 a REFUSAL for a uuid, which Canari got from Lydia itself', async () => {

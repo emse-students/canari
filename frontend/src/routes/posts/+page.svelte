@@ -297,21 +297,40 @@
     const search = params.get('search') === '1';
     if (!compose && !search) return;
 
-    if (compose) showCreateModal = true;
-    if (search) {
-      searchOpen = true;
-      // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
-      queueMicrotask(() => searchInput?.focus());
-    }
-
-    const u = new URL(page.url);
+    const u = new URL(page.url.href);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
-    void goto(resolve(internalPath(feedPath(u))), {
-      replaceState: true,
-      noScroll: true,
-      keepFocus: true,
-    });
+    // THE STRIP FIRST, THE COMMAND ONCE IT HAS LANDED. The strip is a navigation, and the root
+    // layout closes every open overlay before one (`drainHistoryOverlayStack`). SvelteKit 2 kept
+    // the arriving navigation open through two ticks after its commit, and skipped every hook
+    // while it was, so a strip fired by the arriving page ran no drain. SvelteKit 3 ends it as soon
+    // as the page has settled, so the strip runs the hooks, and a modal opened in this same tick
+    // was closed as it opened (Mi 9T, 2026-10-28). The command acts once the strip has landed.
+    // That a replace would also overwrite an overlay's own history entry is the second reason.
+    const perform = () => {
+      if (compose) showCreateModal = true;
+      if (search) {
+        searchOpen = true;
+        // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
+        queueMicrotask(() => searchInput?.focus());
+      }
+    };
+    // Whether the strip landed is read off the page, never off the error: kit rejects an overtaken
+    // navigation with an untyped `Error`, and the feed still on screen is the fact that decides.
+    const landed = () => page.url.pathname === u.pathname;
+    void goto(resolve(internalPath(feedPath(u))), { replace: true, reset: false }).then(
+      () => {
+        if (landed()) perform();
+        else Log.i('POSTS', 'feed command dropped: the strip was overtaken by another navigation');
+      },
+      (e: unknown) => {
+        if (!landed()) {
+          Log.i('POSTS', `feed command dropped: the strip was overtaken (${String(e)})`);
+          return;
+        }
+        console.error(`[POSTS] feed command not performed: its strip failed: ${String(e)}`);
+      }
+    );
   });
 
   /**
@@ -591,13 +610,13 @@
 
   /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
   function showFeed(feed: PostFeed) {
-    const u = new URL(page.url);
+    const u = new URL(page.url.href);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
     // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
     u.searchParams.delete('kind');
-    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
+    void goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
   }
 
   async function refreshPosts() {

@@ -9,6 +9,7 @@
     CalendarCheck,
     CalendarX,
     UserCheck,
+    UserPlus,
     UserX,
     CalendarCog,
     Newspaper,
@@ -203,6 +204,13 @@
    * actor is the platform; `text` holds the admin's note on a refusal, shown after the sentence.
    */
   const PROFILE_TYPES = ['profile_correction_applied', 'profile_correction_refused'] as const;
+  /**
+   * A FOLLOW REQUEST AND ITS ACCEPTANCE (WP-F4), named for the same reason: left to the `{:else}`
+   * they would read "a commente". The actor is a PERSON either way - the one asking, or the one who
+   * said yes - and there is no text: the sentence is the whole notice.
+   */
+  const FOLLOW_TYPES = ['follow_request', 'follow_accepted'] as const;
+  const isFollowNotif = $derived((FOLLOW_TYPES as readonly string[]).includes(notif.type));
   const isProfileNotif = $derived((PROFILE_TYPES as readonly string[]).includes(notif.type));
 
   /**
@@ -239,13 +247,15 @@
                     ? 'bg-sky-600 text-white'
                     : isPostNotif || isRepostNotif || isPersonalRepostNotif
                       ? 'bg-indigo-500 text-white'
-                      : notif.type === 'profile_correction_refused'
-                        ? 'bg-red-500 text-white'
-                        : isUnknownNotif
-                          ? 'bg-gray-500 text-white'
-                          : isLiveModerationNotif
-                            ? 'bg-red-500 text-white'
-                            : 'bg-green-600 text-white'
+                      : isFollowNotif
+                        ? 'bg-amber-500 text-cn-ink'
+                        : notif.type === 'profile_correction_refused'
+                          ? 'bg-red-500 text-white'
+                          : isUnknownNotif
+                            ? 'bg-gray-500 text-white'
+                            : isLiveModerationNotif
+                              ? 'bg-red-500 text-white'
+                              : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -314,6 +324,10 @@
         <UserCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'profile_correction_refused'}
         <UserX size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'follow_request'}
+        <UserPlus size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'follow_accepted'}
+        <UserCheck size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif || isPersonalRepostNotif}
@@ -406,6 +420,10 @@
             ? m.notif_repost_personal_accepted_text()
             : m.notif_repost_personal_refused_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isFollowNotif}
+        {notif.type === 'follow_request'
+          ? m.notif_follow_request_text()
+          : m.notif_follow_accepted_text()}
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>

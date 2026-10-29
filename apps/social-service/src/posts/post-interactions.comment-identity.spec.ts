@@ -167,7 +167,6 @@ describe('PostsController.addComment - the right to speak for an association', (
       interactions as never,
       {} as never,
       associations as never,
-      {} as never,
       { isUserMuted: () => Promise.resolve(false) } as never
     );
     return { ctl, interactions };

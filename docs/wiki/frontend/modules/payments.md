@@ -313,9 +313,10 @@ signatures redacted). One request, `request_id 12115506`, created with `order_re
 
 - **The answer carries no amount**, so `confirm-payment` trusts that the request it reads is the
   one the row stored at issue time (its own uuid, never the client's) and that its amount is the
-  one `request/do` was sent. **Its `signature` is not verified**: the scheme is undocumented for
-  this call, and the answer is read server to server over TLS from Lydia's own host, which is
-  what makes it trustworthy here - not the signature.
+  one `request/do` was sent. **Its `signature` is not verified on this path**: the answer is read
+  server to server over TLS from Lydia's own host. (Since 2026-10-27 Lydia's documentation is read:
+  the signature covers the amount and the id read, not the state, and the reconciliation sweep
+  verifies it - [lydia-api](../../lydia-api.md#requeststate---read-a-request).)
 
 **State 1 (paid) and state 5 (declined by the payer) were measured on dev, sandbox, on
 2026-10-21**: `1` is a paid request, `5` a payer's decline, which sends NO callback and ends on
@@ -730,7 +731,13 @@ that wrote it dispatches the top-up - eight racing completions against a real Po
 once (the control without `IS NULL` wrote it eight times). The tag's `manualGrant` says how the
 purchase was PAID (cash or online), never inferred from a missing id.
 
-**Who triggers it.** The payer's return: the shop page polls
+**Who triggers it.** The reconciliation sweep, for an attempt still `open` once its request has
+ended, on a VERIFIED answer only ([lydia-api](../../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for):
+`applyRequestState`, the one mapping the return and the callback use) - an attempt whose read gave
+a FINAL answer it cannot act on (a mismatch, unsigned, no usable key, a refusal on the allowlist) is
+closed `expired` (`expireUnprovenCheckout`), which only a later callback still records over; one Lydia
+says is still open is cancelled there first; no answer, a fault of core, a refusal not known final or a
+failed write leaves it open for the next tick. The payer's return: the shop page polls
 `POST /api/associations/:id/products/:productId/checkouts/:checkoutId/confirm` while the attempt
 is open (at most 10 reads, 3 s apart, throttled per user and attempt like the form's
 `confirm-payment`) and says paid / still waiting / declined / not completed through Paraglide
@@ -756,3 +763,30 @@ read `not-found` and closed, a payment for it is still recorded by its callback 
 row, at ERROR). A crash between a top-up's commit and its Cercle dispatch loses the dispatch with no
 line ([backlog](../../backlog.md#p2---a-crash-between-a-top-ups-purchase-commit-and-its-cercle-dispatch-loses-the-top-up-silently-review-of-2218-2026-10-21)).
 Concurrent attempts of DIFFERENT buyers can still oversell `maxPurchasesTotal`, as before this lot.
+
+## A form answer sends one order_ref per request (2026-10-27)
+
+**What broke.** The boutique's defect above, on forms: a paid answer's retry (after a declined,
+cancelled or expired request) REUSES its live pending row (`FormsService.submit`), and every request
+of that row carried the same order_ref `form:<submissionId>`, which Lydia refuses on the second
+`request/do` (error 3, measured 2026-10-21, [lydia-api](../../lydia-api.md#requestdo---ask-a-payer-for-money)).
+
+**The fix needs no migration.** `formOrderRef` (social-service `forms/form-order-ref.ts`) sends
+`form:<submissionId>:<8 hex digits>`, 50 characters (`FORM_ORDER_REF_MAX_LENGTH`, pinned by a test),
+32 random bits per request. Lydia documents no maximum length, so the string is kept short and well
+inside the 109 characters measured accepted ([lydia-api](../../lydia-api.md#requestdo---ask-a-payer-for-money));
+the submission id keeps it unique across answers, and the attempt part only has to differ between the
+few requests of one answer. The attempt part is NOT
+stored, because nothing reads a form request by its order_ref: every read, cancel and settle goes
+through the row's own stored ids (`paymentRequestId`, `stripeSessionId`), unlike a boutique attempt
+whose issuing call may never have answered them. Core's `parseLydiaOrderRef` returns only the
+submission for both this grammar and the legacy `form:<submissionId>` (requests open at the deploy
+still call back with it), so a callback about an OLD request names the same row and is decided as
+before: a cancel for a request the row no longer names is `other-request`, a confirm reads the row's
+CURRENT request and accuses at ERROR the request it does not name. `markPaid` stays the one writer
+of `paid`. Proven on PostgreSQL by `form-order-ref.integration.spec.ts`.
+
+**Not measured at Lydia:** a sandbox run on 2026-10-27 could not reach the order_ref check - a fresh
+sandbox Business answers error 5 first ([lydia-api](../../lydia-api.md#requestdo---ask-a-payer-for-money)) -
+so the 50-character form order_ref and the second request of one submission are owed a run with a
+validated sandbox Business.

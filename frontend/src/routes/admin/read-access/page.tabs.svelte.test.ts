@@ -22,7 +22,7 @@ vi.mock('$lib/stores/user', () => ({
   isGlobalAdmin: () => roles.global,
   isAssociationSuperAdmin: () => roles.superAdmin,
 }));
-vi.mock('$app/navigation', () => ({ goto, replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto }));
 vi.mock('$app/state', () => ({
   page: { url: new URL('https://canari.test/admin/read-access'), state: {} },
 }));

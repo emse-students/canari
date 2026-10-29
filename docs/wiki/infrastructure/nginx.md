@@ -22,7 +22,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | Public route | Upstream | Auth | Notes |
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token from `canari_ws_token` cookie |
-| `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis) |
+| `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis): `POST` with the ids in the body, `client_max_body_size 128k`; the legacy `GET ?users=` for installed clients ([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
 | `/api/admin/presence` | `chat-gateway:3000` | yes | Admin view of connected devices |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
@@ -194,7 +194,7 @@ Two details that are the whole point:
   deep it worked**, `./` being the root there, which is why `/chat` and `/posts` hid it for the whole
   life of the feature. Measured both directions on the local estate with `frontend-ssr` stopped:
   `/_app/immutable/chunks/<hash>.js` answers `200 application/javascript`, `/auth/_app/...` answers
-  `200 text/html`. `svelte.config.js` now sets `paths: { relative: !buildsForWeb }` - the polarity
+  `200 text/html`. `kit.config.js` now sets `paths: { relative: !buildsForWeb }` - the polarity
   follows the adapter, like everything else in that file. **A degraded path is verified on a route
   with more than one segment, or it is not verified.**
 
@@ -339,10 +339,98 @@ beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-reda
 The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redacted`, 2026-10-16)
 and of the GIF relay (`/api/mls/gifs/media?query-redacted`, 2026-10-18, its own rule first): a
 search, or which GIF a reader loaded, beside their address is what those routes keep from KLIPY.
+And of the legacy presence read (`/api/presence?query-redacted`, 2026-10-28): its query named every
+user a member watches. Current clients send those ids in a POST body, which no access log records
+([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).
 
-**Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
-(`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the
-host's, to be checked by the user ([estate-migration](estate-migration.md)).
+### URLs that carry a capability (2026-10-28)
+
+Referrer policy and access-log redaction were tightened for the pages and routes whose URL carries a
+capability. The table is what the container's own config does:
+
+| URL | Request line in the log | `Referrer-Policy` on the page |
+| --- | --- | --- |
+| `/f/<id>/receipt?receipt=` | `/f/<id>/receipt?query-redacted` | `no-referrer` (every `/f/` page) |
+| `/c/join/<token>`, `/g/join/<token>` | `/c/join/redacted`, `/g/join/redacted` (the whole segment, any alphabet; a query, if any, becomes `?query-redacted`) | `strict-origin` |
+| `/auth/callback?code=&state=`, `/auth/callback/?...` | `/auth/callback?query-redacted` (slash kept) | `strict-origin` |
+| `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
+| `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
+| a query naming a join path anywhere, plain, percent-encoded or encoded twice (`/login?returnTo=%2Fc%2Fjoin%2F<token>`, `%252F...`), on any route including the invite API routes | `<path>?query-redacted`, so a second invite in it goes too | `strict-origin` on `/login` (any query) |
+| a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
+
+How it is built, in `Dockerfile.frontend`:
+
+- **Two chained maps for the request line.** `$route_redacted_request_uri` holds the route rules;
+  `$logged_request_uri` runs the query rules on ITS output. A map applies one rule, so one map could
+  not redact both an invite path and a `token=`, or a join path quoted in the query, on the same
+  line. The join-in-query rule is in the second map for that reason: an invite API route keeps its
+  query in the first map, and the second still drops it when it names a join path. The query map
+  redacts the whole query whenever the key appears twice or in any spelling other than one literal `token=`: a regex
+  rewrites one occurrence, and the services decode the key before reading it. A query with ONE
+  literal `token=` keeps everything except the value, so the `/api/ws` line keeps `userId` and
+  `deviceId`.
+- **The referer field goes through `$logged_http_referer`.** A referer that names a join token, a
+  receipt or callback query, or any `token` key is logged as `<origin>/redacted`. Every other referer
+  is unchanged, and a request without one still logs `"-"`: nginx writes `"-"` for an absent header
+  but writes `""` for a map's empty value (measured), so the map gives `""` the stock `"-"`.
+- **Every rule is written to be linear in its input.** A request line or a Referer is chosen by the
+  client and can be as long as the header buffer (8 kB by default). A rule whose two repetitions can
+  take the same characters backtracks quadratically, and two did:
+  - The first referer map had an optional origin group (`[^/?#]*`) followed by a wildcard, so a long
+    host with no delimiter was re-split against the wildcard at every length: ~100 ms per 8 kB line.
+  - The join-page rules had a token (`[^/?]+`) followed by a tail (`[^?]*`): 48 ms on an 8 kB token,
+    and the `match limit exceeded` error on the bare form.
+
+  With PCRE's JIT off by default, the match limit makes nginx write an alert and log the field as
+  `"-"`. Now the origin group must end at a delimiter (a lookahead), a join tail must start with
+  `/`, and each repetition in the query map can stop only at `&`.
+- **What proves it, and with which engine.** The gate runs every rule on 16 000-character inputs
+  shaped against the rules, with a 25 ms budget. That measures the JavaScript engine, a proxy for
+  nginx's PCRE: each old form takes ~200-250 ms there and fails, the new ones take well under 1 ms.
+  PCRE was checked separately by hand (2026-10-28), with `pcre2test` from Alpine 3.20's `pcre2-tools`
+  and no JIT, on the same shapes at 8 000 characters: every new rule took 1.4 ms or less. On the built
+  image, an 8 kB adversarial Referer is answered in 5 ms, logged whole, and leaves no alert.
+- **The referrer policy is the existing `$capability_referrer_policy` map** (until 2026-10-28 called
+  `$public_form_referrer_policy`), sent by `@ssr` and `@app_shell`. It is keyed on `$request_uri`, so
+  the degraded shell gets it too. `/login` is covered because a join page sends a signed-out reader
+  there with the invite in `returnTo`. Measured on the built image: the join, callback and login pages
+  answer `strict-origin`, the receipt page `no-referrer`, and `/chat` and `/logins` answer none.
+- **`strict-origin` for the 2026-10-28 pages, not `no-referrer`, and the trade-off.** The app never
+  reloads its document, so a policy set by one of these pages lasts for the rest of the tab. The Fetch
+  standard ("append a request Origin header") makes a non-GET request under `no-referrer` carry
+  `Origin: null`. Every NestJS service logs that as a refused CORS origin (`cors-origins.ts`), and the
+  auth logs record `origin=null`. `strict-origin` sends only the origin as Referer, so no path or
+  token leaves, and it keeps the real `Origin`. The cost is the referer PATH in this log for the rest
+  of a tab that passed through one of these pages: requests made later in that tab log only their
+  origin. Measured in Chrome 156 against the built image (HTTP loopback): a same-origin POST from
+  `/login` carried `Origin: http://127.0.0.1:18080` and `Referer: http://127.0.0.1:18080/`. A POST from
+  the `no-referrer` receipt page ALSO carried the real `Origin` and an empty Referer. So Chromium does
+  not apply the `null` rule there. WebKit (the iOS app and Safari) and Firefox were not measured, and
+  neither was HTTPS. The receipt page keeps the `no-referrer` it shipped with.
+- **The pages also carry the same policy as a `<meta name="referrer">`** (`strict-origin` on the two
+  join pages, the callback and login, `no-referrer` on the receipt page). The Tauri app has no nginx, a
+  dev server sends no header, and a client-side navigation onto one of these pages gets no response
+  header, so the `<meta>` covers all three. In Tauri every API call is cross-origin to the public host,
+  so the default policy already sent only an origin there.
+- `%` is spelled `%%` in the Dockerfile because the config is written by `printf`; the gate reads it
+  back as one.
+
+Gates: `.github/scripts/tests/access-log-redaction.test.mjs` runs all three maps, in order, against a
+case that must be redacted and a near-miss that must stay readable for every rule. Removing any single
+rule fails it. The same test asserts the log line field for field, and runs the linear-time budget
+above. `static-headers.test.mjs` does the same for the policy map, and
+`frontend/src/routes/capabilityReferrer.test.ts` pins the `<meta>` and its value in the five pages.
+The built image passes `nginx -t`. Run with real requests, its access log held none of the secrets
+sent.
+
+**What this config does NOT govern.** It controls the container's OWN access log and the response
+headers it sends, and nothing else:
+
+- The host-level nginx on the Portail-etu host (`sites-available/canari*.conf`), the Cloudflare edge
+  log and any log the school keeps see the same URL. Their formats belong to the host, and the user
+  has to check them ([estate-migration](estate-migration.md)). That is why the presence ids moved
+  into a body rather than only out of this log: a client still on the legacy GET writes its long
+  query line to those logs until it updates.
 
 ## The origin compresses the assets a cold start is made of (2026-10-09)
 

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { saveObjectUrlAs } from './fileDownload';
+import { fileExtension, saveDialogFilters, saveObjectUrlAs } from './fileDownload';
 
 const save = vi.fn();
 const writeFile = vi.fn();
@@ -52,7 +52,10 @@ describe('saveObjectUrlAs', () => {
 
     await expect(saveObjectUrlAs('blob:x', 'rapport.pdf')).resolves.toBe(true);
 
-    expect(save).toHaveBeenCalledWith({ defaultPath: 'rapport.pdf' });
+    expect(save).toHaveBeenCalledWith({
+      defaultPath: 'rapport.pdf',
+      filters: [{ name: 'pdf', extensions: ['pdf'] }],
+    });
     expect(writeFile).toHaveBeenCalledOnce();
     const [target, written] = writeFile.mock.calls[0];
     expect(target).toBe('content://downloads/rapport.pdf');
@@ -65,5 +68,28 @@ describe('saveObjectUrlAs', () => {
 
     await expect(saveObjectUrlAs('blob:x', 'rapport.pdf')).resolves.toBe(false);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('fileExtension / saveDialogFilters', () => {
+  // The reported file: its second save came out as "... .mp3 (1)" because the dialog carried no
+  // type matching the extension.
+  const hymne = 'Hymne \u00e0 la Nouvelle \u00c9cole.mp3';
+
+  it('reads the extension of the reported file', () => {
+    expect(fileExtension(hymne)).toBe('mp3');
+    expect(saveDialogFilters(hymne)).toEqual([{ name: 'mp3', extensions: ['mp3'] }]);
+  });
+
+  it('takes the last extension of a multi-dot name, an existing counter included', () => {
+    expect(fileExtension('a.tar.gz')).toBe('gz');
+    expect(fileExtension('photo (1).jpg')).toBe('jpg');
+  });
+
+  it('gives no filter to a name without an extension', () => {
+    for (const name of ['Makefile', '.bashrc', 'name.', '']) {
+      expect(fileExtension(name)).toBeNull();
+      expect(saveDialogFilters(name)).toEqual([]);
+    }
   });
 });

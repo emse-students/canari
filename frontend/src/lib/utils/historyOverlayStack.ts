@@ -345,6 +345,8 @@ export function releaseHistoryOverlay(close: () => void): void {
  * known as "the first back gesture lands on the previous page".
  */
 export function drainHistoryOverlayStack(): void {
+  if (stack.length > 0)
+    Log.d('historyOverlay', `a navigation closes ${stack.length} open overlay(s)`);
   while (stack.length > 0) {
     stack.pop()?.close('navigation');
   }

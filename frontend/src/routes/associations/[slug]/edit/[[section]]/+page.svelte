@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -261,7 +262,7 @@
     if (loading || !asso || !editSection || !mayEnterArea) return;
     if (!mayOpenEditSection(editSection, rights)) {
       console.warn('[associations/edit] section refused, back to the hub', editSection);
-      void goto(resolve(editSectionHref(slug)), { replaceState: true });
+      void goto(resolve(internalPath(editSectionHref(slug))), { replace: true });
     }
   });
 
@@ -298,7 +299,7 @@
       superAdminOf = (await getMyBdeReach()).manageAsso;
       const canEdit = isGlobalAdmin() || isSuperAdminUser || (!!mine && mine.isAdmin);
       if (!canEdit) {
-        await goto(resolve(`/associations/${encodeURIComponent(slug)}`));
+        await goto(resolve(`associations/${encodeURIComponent(slug)}`));
         return;
       }
     } catch (err) {
@@ -310,11 +311,7 @@
 </script>
 
 <PageContainer width="tool">
-  <PageHeader
-    title={editSection ? sectionLabel(editSection) : words.editTitle()}
-    subtitle={asso ? `@${asso.slug}` : undefined}
-    {crumbs}
-  />
+  <PageHeader title={editSection ? sectionLabel(editSection) : words.editTitle()} {crumbs} />
 
   <div class="space-y-6">
     {#if loading}
@@ -428,7 +425,7 @@
           {asso}
           {onlinePaymentsReady}
           {canManagePayoutAccount}
-          onGoToPayments={() => goto(resolve(editSectionHref(slug, 'payments')))}
+          onGoToPayments={() => goto(resolve(internalPath(editSectionHref(slug, 'payments'))))}
         />
       {/if}
 

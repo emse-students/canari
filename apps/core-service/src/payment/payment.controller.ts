@@ -11,6 +11,7 @@ import {
   HttpException,
   Logger,
   Req,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ import axios from 'axios';
 import { internalSocialRequestConfig, internalPaymentAccountUrl } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
 import { describeHttpError } from '../common/http-error-log';
+import { PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
@@ -332,6 +334,38 @@ export class PaymentController {
   }
 
   /**
+   * The two routes social-service reads a request's FATE from (`request-state`, `cancel-request`):
+   * a 400 from them must mean "Lydia refused THIS request" and nothing else, because the
+   * reconciliation sweep acts on it. So the only 400 that leaves is Lydia's typed refusal
+   * (`PAYMENT_PROVIDER_REFUSED`, with its `providerCode`). Every other 400 is a state of CORE -
+   * payments switched off by an admin (an in-flight payment must stay readable), Lydia not
+   * configured, a payload this route will not read - and answers 503
+   * (`PAYMENT_SERVICE_NOT_READY`): the caller retries, it never closes a row on it.
+   */
+  private async aboutTheRequest<T>(route: string, call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (err: unknown) {
+      if (!(err instanceof BadRequestException)) throw err;
+      const body = err.getResponse();
+      if (
+        body &&
+        typeof body === 'object' &&
+        (body as { code?: unknown }).code === PAYMENT_PROVIDER_REFUSED
+      ) {
+        throw err;
+      }
+      this.logger.warn(
+        `${route}: ${err.message} - answered 503, a state of core and not a word about the request`
+      );
+      throw new ServiceUnavailableException({
+        code: 'PAYMENT_SERVICE_NOT_READY',
+        message: err.message,
+      });
+    }
+  }
+
+  /**
    * Makes a payment request no longer payable at the provider. SERVER-TO-SERVER ONLY, like
    * `create-checkout-session`: social-service calls it when a retry replaces the request a pending
    * answer was waiting on, BEFORE issuing the new one. `requestId` is the provider's own id (Lydia's
@@ -347,6 +381,11 @@ export class PaymentController {
     @Headers('x-internal-secret') secret?: string
   ) {
     assertInternalSecret(secret);
+    return this.aboutTheRequest('cancel-request', () => this.cancelNamedRequest(body));
+  }
+
+  /** `cancel-request` past its secret check: see `aboutTheRequest` for what a 400 still means. */
+  private async cancelNamedRequest(body: { requestId?: string; connectAccountId?: string }) {
     if (
       typeof body?.requestId !== 'string' ||
       !/^\d{1,32}$/.test(body.requestId) ||
@@ -374,14 +413,36 @@ export class PaymentController {
    * uuid (a timeout, a crash mid-issue) by the order_ref Canari sent it with - only Canari's own
    * product grammar (`parseLydiaOrderRef`), never a free string - and may answer `not-found`: no
    * request carries it. Exactly one of the two is accepted.
+   *
+   * `expectedAmountCents` (a whole number of cents) asks for the answer to be VERIFIED: the
+   * signature Lydia returns is checked with the Business key over that amount and the id read
+   * (`PaymentService.getVerifiedCheckoutRequestState`), and the answer carries `verification`
+   * (`verified | mismatch | unsigned | no-key`; with `no-key`, no state - Lydia was not asked).
+   * The signature itself is never returned. Without it the route answers as before, unverified.
    */
   @Post('request-state')
   @HttpCode(200)
   async requestState(
-    @Body() body: { sessionId?: string; orderRef?: string; connectAccountId?: string },
+    @Body()
+    body: {
+      sessionId?: string;
+      orderRef?: string;
+      connectAccountId?: string;
+      expectedAmountCents?: number;
+    },
     @Headers('x-internal-secret') secret?: string
   ) {
     assertInternalSecret(secret);
+    return this.aboutTheRequest('request-state', () => this.readNamedRequest(body));
+  }
+
+  /** `request-state` past its secret check: see `aboutTheRequest` for what a 400 still means. */
+  private async readNamedRequest(body: {
+    sessionId?: string;
+    orderRef?: string;
+    connectAccountId?: string;
+    expectedAmountCents?: number;
+  }) {
     const bySession =
       typeof body?.sessionId === 'string' &&
       SESSION_ID_RE.test(body.sessionId) &&
@@ -398,8 +459,26 @@ export class PaymentController {
       this.logger.warn('request-state refused: invalid payload');
       throw new BadRequestException('Invalid payload');
     }
+    const expected = body.expectedAmountCents;
+    if (expected !== undefined && (!Number.isSafeInteger(expected) || expected <= 0)) {
+      this.logger.warn('request-state refused: invalid expectedAmountCents');
+      throw new BadRequestException('Invalid payload');
+    }
+    const lookup = bySession
+      ? { requestUuid: body.sessionId as string }
+      : { orderRef: body.orderRef as string };
+    if (expected !== undefined) {
+      return {
+        ok: true,
+        ...(await this.paymentService.getVerifiedCheckoutRequestState(
+          lookup,
+          body.connectAccountId,
+          expected
+        )),
+      };
+    }
     const { state, raw } = await this.paymentService.getCheckoutRequestState(
-      bySession ? { requestUuid: body.sessionId as string } : { orderRef: body.orderRef as string },
+      lookup,
       body.connectAccountId
     );
     return { ok: true, state, raw };

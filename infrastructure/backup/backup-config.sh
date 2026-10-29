@@ -31,7 +31,10 @@ MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER-miconnect-postgresql-1}"
 MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-}"
 
 # The offsite copy over SSH/rsync (the offsite LAN server). Empty to disable.
-BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
+# NO DEFAULT, BY DESIGN: the host is a private address and this repository is public. The production
+# crontab sets it (infrastructure/.env is read AFTER this file, so it cannot); an UNSET value stops the script rather than silently
+# dropping the offsite copy, and an EMPTY one is the explicit "no offsite" decision.
+: "${BACKUP_SSH_HOST?BACKUP_SSH_HOST is not set: export <user>@<host> of the offsite server, or an empty value to disable the offsite copy}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 
 # The restic repository of the media blobs. Its password is deliberately NOT in

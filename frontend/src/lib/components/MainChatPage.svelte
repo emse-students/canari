@@ -34,6 +34,7 @@
   import {
     flushSalonReadMarks,
     forgetDmReadMark,
+    owedDmReadMarks,
     recordDmReadMark,
     recordSalonReadMark,
   } from '$lib/utils/chat/salonReadMarkQueue';
@@ -291,7 +292,9 @@
   // every route, and holds the target until it is displayed. A second copy here selected the
   // target and released it early, which is what let the landing be lost.
 
-  let messageText = $state('');
+  // The open conversation's draft - each conversation keeps its own (`messaging.draftFor`), so a
+  // text left in one never sits in the next one's composer.
+  const messageText = $derived(messaging.draftFor(convs.selectedContact));
 
   /** Message pending forwarding (opens ForwardMessageModal when non-null). */
   let forwardingMessage = $state<ChatMessage | null>(null);
@@ -644,6 +647,7 @@
     const userId = session.userId;
     if (!contact || !userId || !isChannelConversationId(contact)) return;
     void untrack(async () => {
+      const restore = messaging.lateDraftWriter(contact, 'resumed salon text');
       const orphans = await messaging.resumeUnsentSends(msgCtx(), contact);
       if (orphans.length > 0 && convs.selectedContact !== contact) {
         // The member left the salon while the owner check ran: the texts belong to ITS composer,
@@ -653,7 +657,7 @@
         return;
       }
       for (const o of orphans) {
-        messageText = restoreFailedDraft(messageText, o.text);
+        restore(restoreFailedDraft(messaging.draftFor(contact), o.text));
         log(
           `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
         );
@@ -697,14 +701,22 @@
   /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
   const readMarks = createReadMarkDebounce(2000);
 
-  /** Delivers every owed salon read mark; a refusal keeps it owed (see `salonReadMarkQueue.ts`). */
-  function flushOwedSalonMarks(): Promise<number> {
-    return flushSalonReadMarks(session.userId, (id, at, serverAt) =>
+  /** Delivers `userId`'s owed salon read marks; a refusal keeps it owed (`salonReadMarkQueue.ts`). */
+  function flushOwedSalonMarks(userId: string): Promise<number> {
+    return flushSalonReadMarks(userId, (id, at, serverAt) =>
       channelService.advanceReadMark(id, at, serverAt)
     );
   }
 
   $effect(() => {
+    // LEAVING INSIDE THE WINDOW DELIVERS THE MARK, AND IT IS DETECTED HERE, FIRST, BEFORE ANY RETURN.
+    // The left conversation's own callback runs: a DM's hands its mark to the outbox, a salon's
+    // delivers the owed queue AND the banner signal for the account's other devices. This was the
+    // effect's teardown until 2026-10-27, and a teardown reads `selectedContact` as it was BEFORE the
+    // change, so the leave was never seen and the next conversation's note joined the old window.
+    // `readMarkDebounce.leave.svelte.test.ts` pins that this call stays the effect's first statement.
+    const selectedNow = convs.selectedContact;
+    untrack(() => readMarks.follow(selectedNow));
     if (!convs.selectedContact || !session.isLoggedIn) return;
     // THE THIRD TERM IS THE ONLY ONE A PHONE ANSWERS HONESTLY. `hasFocus()` and `visibilityState`
     // are both permanently true in a backgrounded Tauri WebView (measured on device 2026-09-05:
@@ -725,6 +737,10 @@
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
+    // The account that READ, captured with the reading: the window can be delivered after a
+    // sign-out or an account switch (`readMarks.follow(null)` delivers it at once), and its marks
+    // belong to the ledger of the account that decided them.
+    const reader = session.userId;
 
     // Mark it read here and now, on this device, for good: the optimistic update goes into the
     // conversation AND onto disk. It used to be a bare in-memory `conversations.set`, so a reload
@@ -766,65 +782,63 @@
           newestServerAt = Math.max(newestServerAt, msg.serverTimestamp);
         }
       }
-      recordSalonReadMark(session.userId, currentContact, target, newestServerAt || undefined);
+      recordSalonReadMark(reader, currentContact, target, newestServerAt || undefined);
     } else {
       // A DM'S MARK IS OWED FROM HERE TOO, to the outbox: a process killed inside the debounce used to
       // take it along, after the local mark had moved, so nothing sent it again and the peer kept the
       // conversation unread for good. The next outbox registration drains it (`flushOwedDmReadMarks`).
-      recordDmReadMark(session.userId, currentContact, target);
+      recordDmReadMark(reader, currentContact, target);
     }
 
-    readMarks.note(target, (toSend) => {
-      untrack(() => {
-        if (channelReceipt) {
-          // The mark was recorded durably when it was decided; this only delivers it.
-          void flushOwedSalonMarks();
-          // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
-          // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
-          // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
-          // other devices to drop its banner. The marker is shared with the arrival path: a message
-          // already signalled is not signalled twice.
-          // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
-          // own sends, and signalling those would be a self-push after every message written.
-          const readUpTo = newestForeignMessageAt(
-            convs.conversations.get(currentContact)?.messages ?? [],
-            session.userId
-          );
-          if (claimChannelReadSignal(currentContact, readUpTo)) {
-            void channelService.markChannelRead(currentContact);
+    readMarks.note(
+      target,
+      (toSend) => {
+        untrack(() => {
+          if (channelReceipt) {
+            // The mark was recorded durably when it was decided; this only delivers it.
+            void flushOwedSalonMarks(reader);
+            // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
+            // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
+            // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
+            // other devices to drop its banner. The marker is shared with the arrival path: a message
+            // already signalled is not signalled twice.
+            // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
+            // own sends, and signalling those would be a self-push after every message written.
+            // Capped at `toSend`: a message that landed after the reading was decided (in the
+            // flush of a leave) was never read and keeps its banner.
+            const readUpTo = newestForeignMessageAt(
+              convs.conversations.get(currentContact)?.messages ?? [],
+              reader,
+              toSend
+            );
+            if (claimChannelReadSignal(currentContact, readUpTo)) {
+              void channelService.markChannelRead(currentContact);
+            }
+            return;
           }
-          return;
-        }
-        // The mark was recorded durably when it was decided; this hands every owed one to the
-        // outbox, which is durable from there. One the outbox cannot take stays owed and is logged.
-        if (!convs.conversations.get(currentContact)) {
-          console.warn(
-            `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
-              ' between the debounce arming and its expiry, so the receipt is never sent'
-          );
-          forgetDmReadMark(session.userId, currentContact);
-        }
-        void flushOwedDmReadMarks(session.userId);
-      });
-    });
-
-    // Only end the window when the user navigates to a different conversation.
-    // Same-conversation re-runs (e.g. from the optimistic update above) must
-    // not cancel the pending window - that was the root cause of receipts never firing.
-    return () => {
-      if (convs.selectedContact !== currentContact) {
-        // LEAVING INSIDE THE WINDOW MUST NOT COST THE MARK. A salon's is already owed durably, so
-        // the owed queue delivers it. A DM's used to be ZEROED here after the local mark had moved,
-        // so nothing ever sent it again and the peer saw the conversation unread for good: it is
-        // delivered now instead.
-        if (channelReceipt) {
-          void flushOwedSalonMarks();
-          readMarks.cancel();
-        } else {
-          readMarks.flush();
-        }
-      }
-    };
+          // The mark was recorded durably when it was decided; this hands every owed one to the
+          // outbox, which is durable from there. One the outbox cannot take stays owed and is logged.
+          // A conversation gone from the store whose mark is STILL owed lost its receipt by accident:
+          // that is the drop worth a warning. One the user left or deleted had its mark forgotten on
+          // purpose before it was retired (`retireConversation`'s caller, GRP-6), so it says nothing.
+          if (
+            !convs.conversations.get(currentContact) &&
+            currentContact in owedDmReadMarks(reader)
+          ) {
+            console.warn(
+              `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
+                ' between the debounce arming and its expiry, so the receipt is never sent'
+            );
+            forgetDmReadMark(reader, currentContact);
+          }
+          void flushOwedDmReadMarks(reader);
+        });
+      },
+      currentContact
+    );
+    // Same-conversation re-runs (e.g. from the optimistic update above) must not end the pending
+    // window - that was the root cause of receipts never firing - and `readMarks.follow` ends it
+    // only when the selection names another conversation.
   });
 
   // ─── Refused control actions: the account's list, and the Retry that runs them ────
@@ -942,7 +956,6 @@
       channels.selectedChannelConversationId = '';
       convs.closeSidePanel();
       convs.sendError = '';
-      messageText = '';
     });
   });
 
@@ -1085,22 +1098,20 @@
   }
 
   /**
-   * Sends the current messageText, then clears the input - and GIVES THE TEXT BACK if the send was
-   * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The restore
-   * only happens in the conversation the text was written in; the error banner stays.
+   * Sends the open conversation's draft, then clears it - and GIVES THE TEXT BACK if the send was
+   * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The text goes
+   * back to the draft of the conversation it was written in, whichever one is open by then; the
+   * error banner stays.
    */
   function handleSendChat() {
-    const text = messageText;
     const contact = convs.selectedContact;
+    const text = messaging.draftFor(contact);
+    const restore = messaging.lateDraftWriter(contact, 'refused send');
     sendText(text, () => {
-      if (convs.selectedContact !== contact) {
-        log(`[SEND] draft not restored: the conversation changed (${text.length} chars dropped)`);
-        return;
-      }
-      messageText = restoreFailedDraft(messageText, text);
-      log(`[SEND] refused: draft restored to the composer (${text.length} chars)`);
+      restore(restoreFailedDraft(messaging.draftFor(contact), text));
+      log(`[SEND] refused: draft restored to its conversation (${text.length} chars)`);
     });
-    messageText = '';
+    messaging.setDraft(contact, '');
   }
 
   /** Forwards selected files to the messaging composable for upload. */
@@ -1164,7 +1175,9 @@
       log(
         `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
       );
-      if (share.text) messageText = restoreFailedDraft(messageText, share.text);
+      if (share.text) {
+        messaging.setDraft(selected, restoreFailedDraft(messaging.draftFor(selected), share.text));
+      }
       if (share.files.length === 0) return;
       // The copies are read HERE, once a destination is on screen, and not when the share arrived -
       // one at a time, each staged before the next is read, under the composer's own ceiling.
@@ -1561,7 +1574,9 @@
           {messageText}
           isChannel={isSelectedChannel ?? false}
           imageMediaId={activeConversation?.imageMediaId ?? null}
-          onMessageChange={(value) => (messageText = value)}
+          onMessageChange={(value) => messaging.setDraft(convs.selectedContact, value)}
+          bindDraftWriter={() =>
+            messaging.lateDraftWriter(convs.selectedContact, 'draft an edit replaced')}
           onSend={handleSendChat}
           onTyping={handleTyping}
           onSendGif={handleSendGif}
@@ -1609,7 +1624,10 @@
           onDiscardSend={(msgId) => messaging.discardSend(msgCtx(), msgId)}
           onTakeBackSend={(msgId) => {
             const text = messaging.takeBackSend(msgCtx(), msgId);
-            if (text !== null) messageText = restoreFailedDraft(messageText, text);
+            if (text !== null) {
+              const contact = convs.selectedContact;
+              messaging.setDraft(contact, restoreFailedDraft(messaging.draftFor(contact), text));
+            }
           }}
           onDelete={isSelectedChannel
             ? (msgId) =>

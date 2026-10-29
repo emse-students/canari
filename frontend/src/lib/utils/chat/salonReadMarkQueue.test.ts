@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergeReadWatermarks, watermarkAfterReading, watermarkFor } from './readState';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import {
+  ReadMarkTargetGoneError,
   flushSalonReadMarks,
+  forgetSalonReadMark,
   owedSalonReadMarks,
   recordSalonReadMark,
   salonMarksAfterLoad,
@@ -28,6 +31,50 @@ describe('salonReadMarkQueue', () => {
     // "reload": the owed mark is read back from storage
     expect(await flushSalonReadMarks('u1', send)).toBe(1);
     expect(owedSalonReadMarks('u1')).toEqual({});
+  });
+
+  it('a salon the server says no longer exists is DROPPED, said once, and never posted again', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    recordSalonReadMark('u1', 'channel_gone', 100);
+    recordSalonReadMark('u1', 'channel_a', 50);
+    const send = vi.fn(async (id: string) => {
+      if (id === 'channel_gone') throw new ReadMarkTargetGoneError(id);
+      return 50;
+    });
+
+    expect(await flushSalonReadMarks('u1', send)).toBe(1);
+    expect(owedSalonReadMarks('u1')).toEqual({});
+    expect(info.mock.calls.flat().join(' ')).toContain(
+      'salon mark 100 for channel_gone dropped - the server answered that it no longer exists'
+    );
+    expect(console.warn).not.toHaveBeenCalled();
+
+    send.mockClear();
+    expect(await flushSalonReadMarks('u1', send)).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('a transport failure or any other refusal keeps the mark owed', async () => {
+    recordSalonReadMark('u1', 'channel_a', 100);
+    recordSalonReadMark('u1', 'channel_b', 100);
+    const send = vi.fn(async (id: string) => {
+      if (id === 'channel_a') throw new TypeError('Failed to fetch');
+      throw new ApiRefusalError(404, null, 'an edge page (404)');
+    });
+
+    expect(await flushSalonReadMarks('u1', send)).toBe(0);
+    expect(owedSalonReadMarks('u1')).toEqual({
+      channel_a: { at: 100 },
+      channel_b: { at: 100 },
+    });
+  });
+
+  it('forgets the owed mark of a salon this device was told is deleted', () => {
+    recordSalonReadMark('u1', 'channel_gone', 100);
+    recordSalonReadMark('u1', 'channel_a', 50);
+    forgetSalonReadMark('u1', 'channel_gone');
+    expect(owedSalonReadMarks('u1')).toEqual({ channel_a: { at: 50 } });
   });
 
   it('a mark raised while the call was in flight stays owed', async () => {

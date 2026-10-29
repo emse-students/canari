@@ -18,7 +18,7 @@ let batch: GroupRosterBatch;
 let getGroupMemberIdentities: ReturnType<typeof vi.fn>;
 let getGroupRosters: ReturnType<typeof vi.fn>;
 let getGroupUserMembers: ReturnType<typeof vi.fn>;
-let removeMember: ReturnType<typeof vi.fn>;
+let removeDepartedMembers: ReturnType<typeof vi.fn>;
 let removeMemberDevice: ReturnType<typeof vi.fn>;
 let getLocalGroups: ReturnType<typeof vi.fn>;
 let calls: string[];
@@ -31,7 +31,7 @@ const mls = () =>
     getGroupMemberIdentities,
     getGroupRosters,
     getGroupUserMembers,
-    removeMember,
+    removeDepartedMembers,
     removeMemberDevice,
     getLocalGroups,
     getDeviceId: () => 'web-1',
@@ -67,7 +67,7 @@ beforeEach(() => {
     calls.push(`roster:${g}`);
     return [{ userId: 'alice' }, { userId: 'bob' }];
   });
-  removeMember = vi.fn().mockResolvedValue(undefined);
+  removeDepartedMembers = vi.fn().mockResolvedValue(undefined);
   removeMemberDevice = vi.fn().mockResolvedValue(undefined);
   getLocalGroups = vi.fn().mockReturnValue(['g1', 'g2', 'g3']);
 });
@@ -89,7 +89,7 @@ describe('removeStrayLeaves', () => {
     expect(getGroupUserMembers).toHaveBeenCalledExactlyOnceWith('g1');
     // ONE commit covers every device of every stray, so a departure costs one epoch whatever the
     // fleet behind it - both of bob's leaves go in the same breath.
-    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['bob']);
+    expect(removeDepartedMembers).toHaveBeenCalledExactlyOnceWith('g1', ['bob']);
     expect(lines.join(' | ')).toContain('1 member(s) left but still hold a leaf');
   });
 
@@ -105,7 +105,7 @@ describe('removeStrayLeaves', () => {
     // The order that keeps it sound: a roster read before a tree would name a leaf that joined in
     // between as a stray.
     expect(calls).toEqual(['tree:g1', 'tree:g2', 'tree:g3', 'rosters:g1,g2,g3']);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 
   it('decides nothing for a group the batch did not answer - an older server, a failed chunk', async () => {
@@ -116,7 +116,7 @@ describe('removeStrayLeaves', () => {
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(getGroupUserMembers).not.toHaveBeenCalled();
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(lines.join(' | ')).toContain('1 not answered (nobody removed in them)');
   });
 
@@ -127,7 +127,7 @@ describe('removeStrayLeaves', () => {
     getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(lines.join(' | ')).toContain('back in the roster');
   });
 
@@ -137,14 +137,14 @@ describe('removeStrayLeaves', () => {
     batch = answered({}, ['g1']);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(getGroupUserMembers).not.toHaveBeenCalled();
     expect(lines.join(' | ')).toContain('roster refused');
   });
 
   it('commits nothing when the tree already agrees with the roster', async () => {
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 
   it('reads nothing at all when this device holds none of the groups', async () => {
@@ -164,7 +164,7 @@ describe('removeStrayLeaves', () => {
     getGroupUserMembers.mockRejectedValue(new Error('502'));
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(lines.join(' | ')).toContain('could not confirm the tree against its roster');
   });
 
@@ -175,7 +175,7 @@ describe('removeStrayLeaves', () => {
     getGroupUserMembers.mockResolvedValue([]);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
-    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['bob']);
+    expect(removeDepartedMembers).toHaveBeenCalledExactlyOnceWith('g1', ['bob']);
   });
 
   it('names only strays still in the tree when it commits', async () => {
@@ -188,7 +188,7 @@ describe('removeStrayLeaves', () => {
       .mockResolvedValueOnce(['alice:web-1']);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(lines.join(' | ')).toContain('removed by another member');
   });
 
@@ -196,7 +196,7 @@ describe('removeStrayLeaves', () => {
     // Until the commit lands, everyone named still holds key material for the conversation.
     batch = answered({ g1: ['alice'] });
     getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
-    removeMember.mockRejectedValue(new Error('epoch_mismatch'));
+    removeDepartedMembers.mockRejectedValue(new Error('epoch_mismatch'));
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(lines.join(' | ')).toContain('their leaves stay');
@@ -206,7 +206,7 @@ describe('removeStrayLeaves', () => {
     trees.g1 = ['alice:web-1', 'bob:web-1'];
     batch = answered({ g1: ['alice'] });
     getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
-    removeMember.mockImplementation(async () => {
+    removeDepartedMembers.mockImplementation(async () => {
       trees.g1 = ['alice:web-1'];
       throw new Error('epoch_mismatch');
     });
@@ -216,6 +216,27 @@ describe('removeStrayLeaves', () => {
     expect(said).not.toContain('their leaves stay');
     expect(said).toContain('already gone from the tree');
   });
+
+  // A COMMIT THE DIFF DECIDED IS STAGED ONLY ON THE PUBLISHED BRANCH, like the revoked-leaf removal:
+  // a forked device must not be the one that removes anybody. Each reason is a NON-refusal - nothing
+  // was staged - and is said as such, never as "their leaves stay".
+  it.each(['no-base', 'other-epoch', 'diverged'] as const)(
+    'removes no departed member from a state the published base cannot vouch for (%s), and says why',
+    async (reason) => {
+      batch = answered({ g1: ['alice'] });
+      getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
+      removeDepartedMembers.mockRejectedValue(
+        new UnpublishedBranchError('g1', reason, 'departed-member removal')
+      );
+
+      expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+      const said = lines.join(' | ');
+      expect(said).toContain(
+        `1 departed member(s) NOT removed: the published base cannot vouch for this device's state (${reason}) - nothing staged`
+      );
+      expect(said).not.toContain('their leaves stay');
+    }
+  );
 });
 
 /**
@@ -234,7 +255,7 @@ describe('removeStrayLeaves - awaiting seats', () => {
     ]);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
-    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['joe']);
+    expect(removeDepartedMembers).toHaveBeenCalledExactlyOnceWith('g1', ['joe']);
   });
 
   it('keeps the leaf when the fresh read finds the seat admitted meanwhile', async () => {
@@ -244,7 +265,7 @@ describe('removeStrayLeaves - awaiting seats', () => {
     getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'joe' }]);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
   });
 });
 
@@ -265,7 +286,7 @@ describe('removeStrayLeaves - revoked devices', () => {
     expect(calls).toEqual(['tree:g1', 'rosters:g1', 'tree:g1', 'rosters:g1']);
     expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('g1', ['bob:phone-1']);
     // bob is still a member: his other device keeps its leaf, and nobody is removed by user.
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(removeDepartedMembers).not.toHaveBeenCalled();
     expect(lines.join(' | ')).toContain('revoked');
   });
 
@@ -354,7 +375,7 @@ describe('removeStrayLeaves - revoked devices', () => {
     getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
-    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['carol']);
+    expect(removeDepartedMembers).toHaveBeenCalledExactlyOnceWith('g1', ['carol']);
     expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('g1', ['bob:phone-1']);
   });
 });

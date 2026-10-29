@@ -24,7 +24,7 @@ use support::{build_decrypt_fixture, build_persistence_fixture};
 /// every stored key package bundle. A bench run without a logger therefore measures a load that
 /// skips them, while a phone - which installs `tauri-plugin-log` at info - pays for both.
 ///
-/// Measured on OXYGEN at a 1000-package pool: **8.2 ms with no logger, 14.9 ms with one**. A bench
+/// Measured on the workstation at a 1000-package pool: **8.2 ms with no logger, 14.9 ms with one**. A bench
 /// blind to 45 % of the thing it measures would have reported this path as cheap, which is exactly
 /// what the first version of these benches did.
 ///

@@ -54,6 +54,16 @@ export const LYDIA_HTTP_NOT_A_REFUSAL: ReadonlySet<number> = new Set([408, 409, 
 export const LYDIA_MIN_AMOUNT_CENTS = 50;
 export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 
+/**
+ * An amount in cents as Canari writes it to Lydia: euros with two decimals, `1250` -> `"12.50"`.
+ * The ONE formatting, shared by `request/do` (the `amount` field) and the verification of a
+ * `request/state` signature (`lydia-state-verification.ts`), which covers the amount the request
+ * was issued for - so the string the signature is recomputed over is the string that was sent.
+ */
+export function lydiaAmountString(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
+
 /** `request/cancel`'s answer for a request already cancelled or expired (sandbox, 2026-10-15). */
 const LYDIA_CANCEL_ALREADY_SETTLED = '2';
 
@@ -270,7 +280,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     const description = params.lineItems.map((i) => i.productName).join(', ');
 
     const fields: Record<string, string> = {
-      amount: (totalCents / 100).toFixed(2),
+      amount: lydiaAmountString(totalCents),
       currency,
       type: recipientType,
       recipient,
@@ -366,7 +376,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     }
     const byOrderRef = 'orderRef' in lookup;
     const named = byOrderRef ? lookup.orderRef : lookup.requestUuid;
-    const data = await this.postForm<{ state?: string | number }>(
+    const data = await this.postForm<{ state?: string | number; signature?: unknown }>(
       '/api/request/state',
       byOrderRef
         ? { order_ref: lookup.orderRef, vendor_token: connectAccountId }
@@ -375,7 +385,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     );
     if (byOrderRef && String(data.error ?? '0') === LYDIA_STATE_NOT_FOUND) {
       this.logger.log(`Lydia holds no request with order_ref ${named}`);
-      return { state: 'not-found', raw: `error ${LYDIA_STATE_NOT_FOUND}` };
+      return { state: 'not-found', raw: `error ${LYDIA_STATE_NOT_FOUND}`, signature: null };
     }
     const raw = data.state === undefined || data.state === null ? '' : String(data.state);
     // `Object.hasOwn`: a code such as "constructor" must not read the prototype as a state.
@@ -387,7 +397,10 @@ export class LydiaPaymentProvider implements PaymentProvider {
     } else {
       this.logger.debug(`Lydia request ${named} is ${state} (code ${raw})`);
     }
-    return { state, raw };
+    // Kept as received, never logged (`postForm` redacts it): `PaymentService` verifies it when
+    // its caller asks, with the Business key, over the amount and the id this read named.
+    const signature = typeof data.signature === 'string' && data.signature ? data.signature : null;
+    return { state, raw, signature };
   }
 
   /**

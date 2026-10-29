@@ -60,8 +60,8 @@ const stage = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed
 /**
  * The tap goes through `phone.tapNotification`, which lives in the repository.
  *
- * IT USED TO SHELL OUT TO `a1.py`, A FILE THAT WAS NEVER IN GIT. That script belonged to the LITHIUM
- * rig and was not carried into OXYGEN, so this row had been failing on a missing interpreter script
+ * IT USED TO SHELL OUT TO `a1.py`, A FILE THAT WAS NEVER IN GIT. That script belonged to the previous
+ * machine's rig and was not carried over, so this row had been failing on a missing interpreter script
  * since the reconstitution - and reporting it as `no shade row contains <marker>`, which accuses the
  * PRODUCT. Four rows (7, 7b, 7c, 7d) were unrunnable and none of them said so.
  *

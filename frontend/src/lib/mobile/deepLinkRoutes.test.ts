@@ -44,6 +44,10 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://calendar')).toBe(
       notificationHref({ type: 'event_validated', postId: 'a1' })
     );
+    // WP-F4: a follow request's push and its in-app row land on the same inbox.
+    expect(route('fr.emse.canari://follow-requests')).toBe(
+      notificationHref({ type: 'follow_request', postId: 'asker-1' })
+    );
     // D38b: the push of a request to the author and its in-app row land on the same inbox.
     expect(route('fr.emse.canari://republication-requests')).toBe(
       notificationHref({ type: 'repost_personal_requested', postId: 'p1' })

@@ -246,6 +246,27 @@ export class CommitOutcomeUnknownError extends TransportFailureError {
 }
 
 /**
+ * THE SERVER ACCEPTED the commit of `groupId` staged on `baseEpoch`, and merging it HERE then
+ * failed. The commit LANDED - the members have it - whatever this device's state says, so a caller
+ * must never read this as a refusal: the tree this device still holds is the one before the commit.
+ * The original failure is the `cause`, and its text stays in the message.
+ */
+export class AcceptedCommitNotMergedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly baseEpoch: number,
+    cause: unknown
+  ) {
+    super(
+      `the commit of ${groupId.slice(0, 8)}... staged on epoch ${baseEpoch} was ACCEPTED by the server ` +
+        `and its local merge failed: ${String(cause)}`,
+      { cause }
+    );
+    this.name = 'AcceptedCommitNotMergedError';
+  }
+}
+
+/**
  * NOTHING WAS STAGED: `groupId` still holds an EARLIER commit whose outcome is unknown, and no commit
  * is built on top of one (`runCommitTransaction`). A {@link CommitOutcomeUnknownError} for every
  * caller that only needs "retry when the server answers"; its own type for the one that must tell a

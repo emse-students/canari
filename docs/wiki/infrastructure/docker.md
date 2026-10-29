@@ -319,7 +319,7 @@ make local-frontend    # BUILD_WEB=1 build + assert the shape + rebuild BOTH fro
 ```
 
 **A bare `bun run build` produces the wrong artefact and the failure is a SUCCESS.**
-`svelte.config.js` picks adapter-**static** unless `BUILD_WEB` is set - deliberately, so a Tauri
+`kit.config.js` picks adapter-**static** unless `BUILD_WEB` is set - deliberately, so a Tauri
 build is what you get by default. Both of the estate's frontend images want the other shape:
 `Dockerfile.frontend-ssr` does `COPY frontend/build ./` and runs `node index.js`, and
 `Dockerfile.frontend` (nginx) copies `frontend/build/client` and `build/prerendered`. A static build

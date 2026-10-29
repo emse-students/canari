@@ -254,6 +254,36 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   box's black shows instead. The composer's paused preview keeps no poster: one would hide the
   first frame `#t=0.1` decodes.
 
+## The header's Publish and search are commands, stripped BEFORE they act (2026-10-28)
+
+The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or
+`/posts?search=1`. The feed strips the parameter with a `goto(..., { replace: true })`, so no
+history entry carries it, and only then opens the composer or the search field.
+
+The order is the whole fix. The strip is a navigation, and the root layout's `beforeNavigate`
+closes every open overlay first (`drainHistoryOverlayStack`). Kit 2 kept the arriving navigation
+open through `await commit_promise; await tick(); await tick();`, and `_before_navigate` skips every
+callback while one is open, so a strip fired by the arriving page ran no hook and drained nothing.
+Kit 3 ends the navigation as soon as the page has settled (`finish_navigation`), so the strip runs
+the hooks. Since #2613 a composer opened in the same tick was therefore closed as it opened. A
+replace issued while an overlay's own history entry is under the pointer would also overwrite that
+entry: a second reason to strip first.
+
+Whether the strip landed is read off the page, never off the error. Kit rejects an overtaken
+navigation with an untyped `Error('navigation aborted')`. A strip overtaken by another navigation
+drops the command with an info line, and only a strip that failed on the feed itself is logged as
+an error.
+
+On the Mi 9T the sequence was read over CDP: the overlay pushed at 130 ms, the dialog mounted at
+134, unmounted at 164 with no popstate, and the router's replace at 180, which also overwrote the
+overlay's own history entry. No Live chip could be reached, so LIVE-WEB-2 and LIVE-STALL-1 could
+not run. The search field is not an overlay and was never closed.
+
+`page.feedCommand.svelte.test.ts` mounts the route with a `goto` double in kit 3's order (a
+microtask, the drain, the new URL). It fails on the old order. It cannot see the real router or
+the WebView's history: the phone reading is what proves the router keeps that order. The drain now
+logs how many overlays a navigation closes, which was silent.
+
 ## Key components
 
 | Component | Role |
@@ -1827,7 +1857,7 @@ key would fail to open on every later read.
 was measured on the desktop: a bench page (scratch, not committed) replaying exactly the read
 `loadStoredFeed` makes - a fresh IndexedDB connection, one `get`, AES-256-GCM decryption, `JSON.parse`
 and the rights strip - on a synthetic page shaped like a real one (a 600-character body, five
-comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on OXYGEN, 7 reads,
+comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on the workstation, 7 reads,
 median (max):
 
 | page | sealed size | CPU 1x | CPU 6x |

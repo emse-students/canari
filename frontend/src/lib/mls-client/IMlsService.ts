@@ -129,6 +129,12 @@ export type ExternalJoinOutcome =
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
   /**
+   * NOT ATTEMPTED (`asAFurtherDevice: 'ask'`): the served tree holds a leaf of this device's user
+   * and none of its own, so the commit would bring in a FURTHER DEVICE OF A MEMBER - an entry every
+   * member says as one nobody made. Its door is a member's Add; the caller asks for it.
+   */
+  | { joined: false; reason: 'further_device' }
+  /**
    * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
    * Nothing is claimed about membership; nothing else this account commits is accepted for
    * `retryAfterMs`, so a sweep stops there rather than ask group after group.
@@ -394,6 +400,37 @@ export class SavedStateOfAnotherAccountError extends Error {
  */
 export function isKeystoreKeyUnavailable(error: unknown): boolean {
   return String(error).includes('KEYSTORE_KEY_UNAVAILABLE');
+}
+
+/**
+ * True when a native MLS command refused because no manager is installed in this process - never
+ * initialised, or ended by `endNativeMlsSession` (a sign-out, an account switch, a failed install, a
+ * state reset). Reads the `MLS_MANAGER_ABSENT` code of `state.rs`, the contract that crosses the Tauri
+ * boundary, never the sentence after it.
+ *
+ * **WHY A CODE IN A STRING AND NOT A TYPED ERROR FROM THE BOUNDARY.** Tauri can carry a serialised
+ * error object, but every native command returns `Result<_, String>`, and every code `mls-core` and the
+ * shell define (`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, this one) crosses as the leading
+ * token of that string. Moving this one code alone to an object would give the boundary two
+ * conventions and every reader two shapes to accept; the whole boundary moves at once or not at all
+ * ([backlog](../../../../docs/wiki/backlog.md)). Until then the token is read here and nowhere else,
+ * and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
+ */
+export function isMlsManagerAbsent(error: unknown): boolean {
+  return /\bMLS_MANAGER_ABSENT:/.test(String(error));
+}
+
+/**
+ * Thrown by {@link IMlsService.reloadStateFromDisk} when a resume finds no native MLS session under a
+ * signed-in session. The loss is already reported (`reportMlsSessionLost`, which ends the session on
+ * this device and reopens it at the PIN gate); the type tells the resume sequence to stop rather than
+ * run its later steps on a session that is ending.
+ */
+export class MlsSessionVacantError extends Error {
+  constructor(cause: unknown) {
+    super('no native MLS session is installed under the signed-in session', { cause });
+    this.name = 'MlsSessionVacantError';
+  }
 }
 
 /**
@@ -700,7 +737,8 @@ export interface IMlsService {
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance
    * `mls.bin`; without reloading on resume the warm in-memory state is stale and its next save
    * would clobber that advance (lost-update -> SecretReuse). No-op where there is no background
-   * engine (web/desktop).
+   * engine (web/desktop). Rejects with {@link MlsSessionVacantError} - and only with it - when no
+   * native session is installed any more; every other failure is logged and resolved.
    */
   reloadStateFromDisk(): Promise<void>;
   /**
@@ -810,7 +848,17 @@ export interface IMlsService {
    * and once at registration for what the state already holds - or removes it with `null`. The
    * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
    */
-  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void;
+  /**
+   * Hands every device event already merged to the consumer and resolves once it has decided them,
+   * after any hand-over still running. A history answer awaits it before reading who is withheld
+   * (`historyWithheld.ts`): the drain's own hand-over is not awaited by anything, so an answer
+   * scheduled in the same drain as an entry would otherwise read the record before it exists.
+   *
+   * @returns whether the events were decided: `false` when no consumer is registered, the take
+   * failed, or the consumer failed or could not decide them - and an answer then refuses.
+   */
+  settleDeviceEvents(why: string): Promise<boolean>;
   /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
@@ -1087,7 +1135,18 @@ export interface IMlsService {
    * peer Welcome (self-service recovery). The outcome is a TYPE, not a boolean: see
    * {@link ExternalJoinOutcome} for why each refusal has to reach its caller distinguishable.
    */
-  externalJoin(groupId: string): Promise<ExternalJoinOutcome>;
+  externalJoin(
+    groupId: string,
+    opts?: {
+      /**
+       * `ask` for a CONVERSATION: a join that would bring this device in as a further device of a
+       * member is not built ({@link ExternalJoinOutcome} `further_device`), decided on the tree of
+       * the very GroupInfo each attempt fetches. A key group, which every member enters this way,
+       * leaves it unset.
+       */
+      asAFurtherDevice?: 'ask';
+    }
+  ): Promise<ExternalJoinOutcome>;
   /**
    * Declares `groupId` to be the Graine key-distribution group of `scope`, so every later decision
    * that differs for it is taken from a registered fact rather than rediscovered.
@@ -1321,6 +1380,13 @@ export interface IMlsService {
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
   getLocalGroups(): string[];
+
+  /**
+   * Whether {@link getLocalGroups} is known to describe the loaded state: an unfilled cache (a
+   * listing that failed or was skipped, a client not created yet) says nothing about what is held,
+   * so nothing may be decided from a group's absence while this is false.
+   */
+  heldGroupsKnown(): boolean;
   /**
    * Whether this device is still a member of the group.
    *
@@ -1364,6 +1430,12 @@ export interface IMlsService {
    */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /**
+   * Removes every leaf of the given users in one commit that a roster DIFF decided rather than a
+   * person (the stray sweep, the key-group roster pass): staged only when this device's context is
+   * the base the server publishes, else it throws `UnpublishedBranchError` having staged nothing.
+   */
+  removeDepartedMembers(groupId: string, userIds: string[]): Promise<void>;
+  /**
    * Every leaf identity (`userId:deviceId`) in the group's MLS ratchet tree, read locally.
    *
    * THE TREE IS THE ONLY AUTHORITY ON WHO CAN READ A GROUP. {@link getGroupMembers} answers who
@@ -1400,6 +1472,11 @@ export interface IMlsService {
    * against that leaf, so no new key has to be distributed or trusted.
    */
   signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
+  /**
+   * This device's own credential signature key, public half - the key its leaves and KeyPackages
+   * carry, and the one a member is shown when asked to add it. Throws before the engine is ready.
+   */
+  ownSignatureKey(): Promise<Uint8Array>;
   /**
    * Hands over the fork findings mls-core recorded since the last call, and forgets them
    * (`mls-core/src/fork_check.rs`): frames whose signed epoch fingerprint was not this device's at
@@ -1444,6 +1521,12 @@ export interface IMlsService {
    * a group it did not answer is absent from both sets, and nothing is decided for it.
    */
   getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch>;
+  /**
+   * Which of `identities` (leaves of `groupId`'s tree, `userId:deviceId`) belong to a revoked device
+   * (`POST /api/mls/groups/:groupId/revoked-leaves`) - the revocation read a KEY group has. Throws
+   * when the server did not answer; only an identity sent can come back.
+   */
+  getRevokedLeaves(groupId: string, identities: string[]): Promise<string[]>;
   /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<UserGroupRow[]>;
   /** Fetches server metadata for one group (name, soft-delete tombstone). */

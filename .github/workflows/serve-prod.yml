@@ -297,7 +297,7 @@ jobs:
 
       # MICONNECT'S CONFIGURATION IS THE BLUEPRINTS IN THIS TREE, applied on every stable release.
       # The runner lives on the host MiConnect runs on, so it reaches the worker container directly;
-      # the blueprints travel on stdin, so nothing is copied into /srv/miconnect. ONE transaction:
+      # the blueprints travel on stdin, so nothing is copied into the MiConnect directory. ONE transaction:
       # a blueprint that fails leaves MiConnect exactly as it was, and fails this job - so
       # `prod-released` below does not move. Re-applying every release is also what reverts an edit
       # made by hand in the admin UI. The pre-release ran the same thing as a dry run first.

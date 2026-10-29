@@ -66,11 +66,70 @@ interface CoreAnswer {
  * Whether a failed call to core-service was ANSWERED with a 4xx - a refusal about this request, so
  * nothing was issued - rather than lost (no response, a timeout, a 5xx), after which a request may
  * exist at the provider all the same. A status code is an answer; a transport failure is not.
+ * Serves `create-checkout-session` only, where ANY 4xx means nothing was issued; reading or
+ * cancelling an issued request needs to tell Lydia's refusal from core's own state, so those go
+ * through `classifyCoreCallFailure` instead.
  */
 export function coreRefusedRequest(err: unknown): boolean {
   if (err instanceof HttpException) return false;
   const status = (err as CoreAnswer | null)?.response?.status;
   return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/** Lydia error codes measured FINAL for one call: a refusal closes an attempt only from here. */
+export interface LydiaRefusalsFinal {
+  /** For a `request/state` read. */
+  readonly read: ReadonlySet<string>;
+  /** For a `request/cancel`. */
+  readonly cancel: ReadonlySet<string>;
+}
+
+/**
+ * The ALLOWLIST of Lydia refusal codes that let the reconciliation sweep CLOSE an attempt: any other
+ * refusal is retried and accused, because the sweep is the only automatic path for a PAID request
+ * whose callback was lost, and an attempt it closes is never read again. BOTH ARE EMPTY:
+ * - read: error `2` ("Requete introuvable") was measured on a uuid Lydia NEVER issued (2026-10-15);
+ *   the sweep reads uuids Lydia DID issue, and what error 2 means for one issued then purged,
+ *   archived or moved between environments is unmeasured - a PAID request answered that way would
+ *   be closed for good.
+ * - cancel: no cancel refusal is measured (error 2 on a cancel is "already processed", read apart).
+ * A code joins only after a dev-sandbox measurement on an ISSUED request shows it final (owed:
+ * docs/wiki/lydia-api.md section 7). The services hold this as `refusalsFinal`, which the tests
+ * replace with a test-only code to exercise the mechanism.
+ */
+export const LYDIA_REFUSALS_FINAL: LydiaRefusalsFinal = { read: new Set(), cancel: new Set() };
+
+/**
+ * What a failed call to core-service's `request-state` or `cancel-request` was, for the caller that
+ * must decide whether to act on it - ONE classifier for the read and the cancel.
+ * - `refused`: Lydia's typed refusal (a 400 with `PAYMENT_PROVIDER_REFUSED` and its
+ *   `providerCode`) - about THIS request; final only if its code is allowlisted.
+ * - `core-fault`: core answered, but about ITSELF or this service - a 401/403 (the internal
+ *   secret), its 503 `PAYMENT_SERVICE_NOT_READY` (payments switched off, Lydia not configured, a
+ *   payload it would not read), any other 4xx it should not send here. Retried, and accused.
+ * - `no-answer`: no response, a timeout, a 5xx, a 408/429: retried.
+ */
+export type CoreCallFailure =
+  | { kind: 'refused'; providerCode: string }
+  | { kind: 'core-fault'; status: number }
+  | { kind: 'no-answer' };
+
+/** Classifies a failed call to core's request-state / cancel-request (see `CoreCallFailure`). */
+export function classifyCoreCallFailure(err: unknown): CoreCallFailure {
+  const answer = (err as CoreAnswer | null)?.response;
+  const status = typeof answer?.status === 'number' ? answer.status : null;
+  if (status === null || status === 408 || status === 429) return { kind: 'no-answer' };
+  const body =
+    answer?.data && typeof answer.data === 'object'
+      ? (answer.data as { code?: unknown; providerCode?: unknown })
+      : {};
+  if (status === 400 && body.code === PAYMENT_PROVIDER_REFUSED) {
+    const code =
+      typeof body.providerCode === 'string' && body.providerCode ? body.providerCode : '';
+    return { kind: 'refused', providerCode: code };
+  }
+  if (status >= 500 && body.code !== 'PAYMENT_SERVICE_NOT_READY') return { kind: 'no-answer' };
+  return { kind: 'core-fault', status };
 }
 
 /**

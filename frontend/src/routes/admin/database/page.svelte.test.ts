@@ -66,7 +66,7 @@ describe('admin/database page', () => {
   it('sends anyone else back to /admin', async () => {
     admin.value = false;
     await render();
-    expect(goto).toHaveBeenCalledWith('/admin', { replaceState: true });
+    expect(goto).toHaveBeenCalledWith('/admin', { replace: true });
   });
 
   it('opens Adminer on a click', async () => {

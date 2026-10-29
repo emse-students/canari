@@ -31,8 +31,11 @@ pub struct AppState {
     /// HS256 secret used to validate the `canari_ws_token` JWT on upgrade.
     pub jwt_secret: String,
     /// Who may see whose presence: asked of chat-delivery and social-service on every
-    /// `GET /api/presence` (WP-PRESENCE).
+    /// `POST /api/presence` and its legacy `GET` (WP-PRESENCE).
     pub presence_audience: PresenceAudience,
+    /// How many legacy `GET /api/presence` calls this process still serves, reported once per
+    /// window - the measurement that decides the route's removal.
+    pub legacy_presence_gets: crate::presence::LegacyGetTally,
 }
 
 impl AppState {
@@ -51,6 +54,7 @@ impl AppState {
             instance_id: uuid::Uuid::new_v4().to_string(),
             jwt_secret,
             presence_audience,
+            legacy_presence_gets: crate::presence::LegacyGetTally::new(std::time::Instant::now()),
         }
     }
 

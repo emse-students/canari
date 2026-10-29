@@ -95,7 +95,7 @@ secrets, and ignores `expires` on a non-expiring token, which authentik rewrites
 - **The default objects**: they are authentik's own blueprints' business, and ours `!Find` them.
 
 **The CAS client secret IS in them**, as `!Env MICONNECT_CAS_CONSUMER_SECRET`, because authentik
-refuses to create an OAuth source without one. It lives in `/srv/miconnect/.env`, and `compose.yml`
+refuses to create an OAuth source without one. It lives in `<miconnect-dir>/.env`, and `compose.yml`
 declares it with `:?`, so a `.env` that lacks it fails the start instead of blanking the secret.
 
 **An edit made in the admin UI is reverted by the next stable release.** Every release re-applies
@@ -666,7 +666,7 @@ printed in full (the rollback):**
   file. Other fresh boots reached 31 of 31 `successful`, so it is a race at boot.
 - **`AUTHENTIK_LOG_LEVEL` was `debug`** in `compose.yml`: 63 % of the lines, and user e-mail addresses
   written into the log. The file now says `info` (the access log, `authentik.asgi`, is emitted at
-  info). **Applied the same day**: the file copied to `/srv/miconnect/` (the previous one kept as
+  info). **Applied the same day**: the file copied to `<miconnect-dir>/` (the previous one kept as
 `compose.yml.bak-2026-09-29`), `docker compose up -d`, both containers read back `info`, the
 `/authorize` probe answered `302` to `miconnect-auth` and no warning or error followed.
 - **Some CAS returns reach MiConnect with no code and no state (measured 2026-09-29, OPEN, a request

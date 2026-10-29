@@ -297,6 +297,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { readApiJson } from '$lib/utils/apiJson';
 import { Log } from '$lib/utils/Log';
+import { ReadMarkTargetGoneError } from '$lib/utils/chat/salonReadMarkQueue';
 
 /**
  * A refusal answered by the channels API.
@@ -312,6 +313,9 @@ import { Log } from '$lib/utils/Log';
  * (social-service migration 090's tombstone): nothing is left to send or to offer again.
  */
 export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
+
+/** The 404 code a salon read mark gets when the salon no longer exists (deleted while it was owed). */
+export const CHANNEL_NOT_FOUND = 'CHANNEL_NOT_FOUND';
 
 export class ChannelApiError extends ApiRefusalError {
   constructor(status: number, code: string | null, message: string) {
@@ -334,6 +338,11 @@ function readErrorCode(body: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The `?actorDevice=` of a removal request, or nothing when no committing device is named. */
+function actorDeviceQuery(actorDeviceId?: string): string {
+  return actorDeviceId ? `?actorDevice=${encodeURIComponent(actorDeviceId)}` : '';
 }
 
 export class ChannelService {
@@ -657,13 +666,39 @@ export class ChannelService {
     return res.json();
   }
 
-  async kickFromWorkspace(workspaceId: string, targetUserId: string) {
+  /**
+   * @param actorDeviceId this device, when it will commit the key-group Remove itself
+   *   (`committingDeviceId`); the receivers then leave it to this device instead of electing one.
+   */
+  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorDeviceId?: string) {
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(targetUserId)}`,
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(targetUserId)}${actorDeviceQuery(actorDeviceId)}`,
       { method: 'DELETE' }
     );
     await this.handleError(res);
     return res.json();
+  }
+
+  /**
+   * Releases the key-group Remove of `userId` this device claimed in `scope` and knows it did not
+   * commit (`commitRemoval.ts`): the scope's remaining members elect a committer on the event the
+   * server publishes. Throws on any answer but a 2xx - the caller logs it.
+   */
+  async releaseRemoval(
+    scope: DistributionScope,
+    userId: string,
+    releasingDeviceId: string
+  ): Promise<void> {
+    const path =
+      scope.kind === 'workspace'
+        ? `workspaces/${encodeURIComponent(scope.workspaceId)}/members/${encodeURIComponent(userId)}/removal-released`
+        : `${this.normalizeChannelId(scope.channelId)}/members/${encodeURIComponent(userId)}/removal-released`;
+    // The releasing device: receivers re-decide only where they deferred to THAT device's leaf.
+    const query = `?actorDevice=${encodeURIComponent(releasingDeviceId)}`;
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${path}${query}`, {
+      method: 'POST',
+    });
+    await this.handleError(res);
   }
 
   async renameChannel(channelId: string, newName: string) {
@@ -720,13 +755,15 @@ export class ChannelService {
   }
 
   /** Takes one member off a private salon; answers the salon's access as the removal left it. */
+  /** @param actorDeviceId as {@link kickFromWorkspace}'s. */
   async removeMemberFromChannel(
     channelId: string,
-    userId: string
+    userId: string,
+    actorDeviceId?: string
   ): Promise<ChannelAccessState & { success: boolean }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/members/${encodeURIComponent(userId)}`,
+      `${this.baseUrl}/api/channels/${cid}/members/${encodeURIComponent(userId)}${actorDeviceQuery(actorDeviceId)}`,
       {
         method: 'DELETE',
       }
@@ -882,7 +919,8 @@ export class ChannelService {
    * read message's timestamp, which for a salon message IS its server `createdAt`). The server
    * bounds it, stores it and tells the salon's readers with `channel.read`.
    *
-   * Throws on a refusal - the caller owns the one line a lost receipt leaves.
+   * Throws on a refusal - the caller owns the one line a lost receipt leaves - and
+   * `ReadMarkTargetGoneError` when the server answered that the salon no longer exists.
    *
    * @returns the stored instant, or `null` when the server already held as much.
    */
@@ -892,7 +930,16 @@ export class ChannelService {
       method: 'POST',
       body: JSON.stringify({ at, ...(serverAt ? { serverAt } : {}) }),
     });
-    await this.handleError(res);
+    try {
+      await this.handleError(res);
+    } catch (e) {
+      // Classified HERE, at the throw, from the status and the server's code: the owed queue drops
+      // the mark on this answer and keeps it on every other one.
+      if (e instanceof ChannelApiError && e.status === 404 && e.code === CHANNEL_NOT_FOUND) {
+        throw new ReadMarkTargetGoneError(channelId);
+      }
+      throw e;
+    }
     const body = (await res.json()) as { at: number | null };
     Log.d('CHANNEL_READ', `mark ${cid.slice(0, 8)} asked=${at} stored=${body.at}`);
     return body.at;

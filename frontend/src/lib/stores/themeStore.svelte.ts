@@ -153,8 +153,12 @@ export const themeStore = {
     return () => {
       if (heldNativeTheme !== theme) return;
       heldNativeTheme = null;
-      console.debug('[theme] native bars released');
-      postThemeToNative(isDark ? 'dark' : 'light');
+      // The theme the DOM carries, not `isDark`: this runs from an effect teardown, where a
+      // `$state` read returns its value from BEFORE the current flush - a theme switched in the
+      // same flush as the camera closing would hand the bars the old one.
+      const applied = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+      console.debug(`[theme] native bars released to ${applied}`);
+      postThemeToNative(applied);
     };
   },
 };

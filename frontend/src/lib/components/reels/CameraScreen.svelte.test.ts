@@ -74,7 +74,7 @@ describe('CameraScreen close', () => {
     (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
 
     expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/dashboard'), {
-      replaceState: true,
+      replace: true,
     });
   });
 
@@ -86,7 +86,7 @@ describe('CameraScreen close', () => {
     (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
 
     expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/posts'), {
-      replaceState: true,
+      replace: true,
     });
   });
 });
@@ -293,6 +293,93 @@ describe('CameraScreen', () => {
     const { target } = await render(() => Promise.resolve(stream(false)));
     const video = target.querySelector('video')!;
     expect(video.muted).toBe(true);
+  });
+});
+
+describe('CameraScreen - deferOpen (the gallery picker, Mi 9T 2026-10-28)', () => {
+  async function renderWith(props: { paused: boolean; deferOpen: boolean; onreopen?: () => void }) {
+    const open = vi.fn(() => Promise.resolve(stream(false)));
+    const session = new CameraSession(open);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(mount(CameraScreen, { target, props: Object.assign(props, { session }) }));
+    const settle = async () => {
+      flushSync();
+      await Promise.resolve();
+      await Promise.resolve();
+      flushSync();
+    };
+    await settle();
+    return { target, open, settle };
+  }
+
+  it('a pause lifted while the open is deferred opens nothing; the deferral lifted opens it', async () => {
+    const props = $state({ paused: true, deferOpen: true });
+    const { target, open, settle } = await renderWith(props);
+    expect(open).not.toHaveBeenCalled();
+
+    props.paused = false;
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-camera-phase="stopped"]')).not.toBeNull();
+
+    props.deferOpen = false;
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('a deferral nothing ends offers the member a tap that asks for the camera, only on screen', async () => {
+    // A picker that never answers (no `cancel` event, a native dismissal never settled) leaves the
+    // deferral set: the stand-in must not say "opening" for ever.
+    const onreopen = vi.fn();
+    const props = $state({ paused: false, deferOpen: true, onreopen });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    const { target, open, settle } = await renderWith(props);
+    expect(target.querySelector('[data-camera-reopen]')).toBeNull();
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+    const reopen = target.querySelector<HTMLButtonElement>('[data-camera-reopen]')!;
+    expect(reopen.textContent?.trim()).toBe(m.reels_camera_reopen());
+    expect(target.textContent).not.toContain(m.reels_camera_starting());
+    expect(open).not.toHaveBeenCalled();
+
+    reopen.click();
+    expect(onreopen).toHaveBeenCalledTimes(1);
+    props.deferOpen = false;
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-camera-reopen]')).toBeNull();
+  });
+
+  it('no reopen is offered over a LIVE camera, a pause, or with no owner to lift the deferral', async () => {
+    const live = $state({ paused: false, deferOpen: false, onreopen: vi.fn() });
+    const first = await renderWith(live);
+    live.deferOpen = true;
+    await first.settle();
+    expect(first.target.querySelector('[data-camera-reopen]')).toBeNull();
+
+    const pausedProps = $state({ paused: true, deferOpen: true, onreopen: vi.fn() });
+    const second = await renderWith(pausedProps);
+    expect(second.target.querySelector('[data-camera-reopen]')).toBeNull();
+
+    const ownerless = $state({ paused: false, deferOpen: true });
+    const third = await renderWith(ownerless);
+    expect(third.target.querySelector('[data-camera-reopen]')).toBeNull();
+  });
+
+  it('a deferral never closes a LIVE camera (a picker that does not hide the page)', async () => {
+    const props = $state({ paused: false, deferOpen: false });
+    const { target, open, settle } = await renderWith(props);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+
+    props.deferOpen = true;
+    await settle();
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });
 

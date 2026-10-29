@@ -36,6 +36,7 @@ import {
   mintedKeyPackageVettedNarration,
   admissionJoinerNarration,
   admissionMemberNarration,
+  atLevels,
   bigRowNarration,
   REVOKED_SIGN_OUT_NARRATION,
   revokedLogoutOnce,
@@ -1509,6 +1510,26 @@ const FORGIVE_CASES = [
     OWNER_DEVICE_NOTICE_NARRATION,
     { clean: false, unmatched: 3 },
   ],
+  // A BUDGETED NEEDLE forgives as many lines as the decisions it stands for, and the next one is dirt:
+  // a sentence said in a loop is a finding even when each copy reads as narration.
+  [
+    'a budgeted needle forgives up to its budget',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 2)],
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'a budgeted needle said once more than its budget leaves that line dirt',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1)],
+    { clean: false, unmatched: 0 },
+  ],
   [
     "a contact's device notice, forgiven at its levels",
     [
@@ -1953,6 +1974,23 @@ for (const [what, lines, needles, want] of FORGIVE_CASES) {
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);
+}
+// ONE CALL SURFACED TWICE (the same millisecond - `timelineOf`'s own rule) is one decision against a
+// budget of one; the same sentence a second later is two.
+{
+  const line = '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device';
+  const needle = atLevels(['debug'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1);
+  const ev = (at) => ({ method: 'Runtime.consoleAPICalled', params: { type: 'debug', timestamp: at, args: [{ value: line }] } });
+  const t0 = 1_786_710_000_000;
+  const once = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0)] }, label: 'selftest' }), [needle]);
+  const twice = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0 + 1000)] }, label: 'selftest' }), [needle]);
+  for (const [what, ok] of [
+    ['a budget counts the double surfacing of one call once', once.clean],
+    ['a budget counts the same sentence a second later twice', !twice.clean && twice.unexplained.some((l) => l.includes('[said 2 times, budget 1]'))],
+  ]) {
+    if (!ok) failures++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
+  }
 }
 /**
  * A PATH RULE MUST FORGIVE THE SAME REQUEST WHATEVER ESTATE IT WAS MADE AGAINST.

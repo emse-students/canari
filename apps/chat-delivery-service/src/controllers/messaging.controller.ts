@@ -24,7 +24,12 @@ import {
   clientSendRefusal,
   ValidateCommitBody,
 } from '../services/messaging.service';
-import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
+import {
+  sanitizeDevicePairLogValue,
+  sanitizeEpoch,
+  sanitizeLeafLogValue,
+  sanitizeLogValue,
+} from '../utils/sanitize';
 
 /**
  * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
@@ -45,7 +50,13 @@ export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 export const MAX_REMEMBERED_UNINVITED_ENTRIES = 5000;
 
 /** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
-const UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning', 'direct-peer'];
+const UNINVITED_ENTRY_KINDS: readonly string[] = [
+  'new-person',
+  'returning',
+  'direct-peer',
+  // A never-seen device of a member that entered a conversation by its own commit (2026-10-27).
+  'unvouched-device',
+];
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
@@ -219,11 +230,11 @@ export class MessagingController {
     }
   ): { recorded: true } {
     this.logger.warn(
-      `[SENDER_MISMATCH] reporter=${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)} ` +
+      `[SENDER_MISMATCH] reporter=${sanitizeDevicePairLogValue(authUserId, reporterDeviceId)} ` +
         `group=${sanitizeLogValue(body.groupId)} path=${sanitizeLogValue(body.path)} ` +
         `kind=${sanitizeLogValue(body.kind)} ` +
-        `envelope=${sanitizeLogValue(body.envelopeUserId)}:${sanitizeLogValue(body.envelopeDeviceId, 'none')} ` +
-        `verified=${sanitizeLogValue(body.verifiedIdentity, 'unreadable')}`
+        `envelope=${sanitizeDevicePairLogValue(body.envelopeUserId, body.envelopeDeviceId, 'none')} ` +
+        `verified=${sanitizeLeafLogValue(body.verifiedIdentity, 'unreadable')}`
     );
     return { recorded: true };
   }
@@ -263,7 +274,7 @@ export class MessagingController {
       kind?: unknown;
     }
   ): Promise<{ recorded: true }> {
-    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const reporter = sanitizeDevicePairLogValue(authUserId, reporterDeviceId);
     const groupId = typeof body.groupId === 'string' ? body.groupId : '';
     if (
       !groupId ||
@@ -284,7 +295,7 @@ export class MessagingController {
         ? String(body.epoch)
         : body.epoch
     );
-    const entrant = sanitizeLogValue(body.entrant);
+    const entrant = sanitizeLeafLogValue(body.entrant);
     const group = sanitizeLogValue(groupId);
     const kind =
       body.kind === undefined || body.kind === null
@@ -343,7 +354,7 @@ export class MessagingController {
       proven?: unknown;
     }
   ): Promise<{ recorded: true }> {
-    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const reporter = sanitizeDevicePairLogValue(authUserId, reporterDeviceId);
     const groupId = typeof body.groupId === 'string' ? body.groupId : '';
     if (
       !groupId ||
@@ -368,7 +379,7 @@ export class MessagingController {
     const proven = typeof body.proven === 'boolean' ? String(body.proven) : 'invalid';
     const line =
       `[INTEGRITY] kind=${kind} reporter=${reporter} group=${sanitizeLogValue(groupId)} ` +
-      `epoch=${epoch} claimedPeer=${sanitizeLogValue(body.peer)} proven=${proven} ` +
+      `epoch=${epoch} claimedPeer=${sanitizeLeafLogValue(body.peer)} proven=${proven} ` +
       `detail=${sanitizeLogValue(body.detail)}`;
     if (body.proven === false) this.logger.warn(line);
     else this.logger.error(line);

@@ -14,6 +14,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { Throttle } from '@nestjs/throttler';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { ChannelService } from './channel.service';
 import {
   type AcceptWorkspaceInviteDto,
@@ -41,6 +43,13 @@ import {
 import { type SetRolePermissionDto } from './dto/channel-permission.dto';
 import { LiveGraineSessionsDto } from './dto/live-graine-sessions.dto';
 import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
+
+/**
+ * Releases one user may announce per minute. A release is one per key group a removal touched and
+ * its actor could not commit - a community kick releases the community's and each private salon's -
+ * so an honest burst is a handful; the bound keeps a loop from fanning events out to every member.
+ */
+export const REMOVAL_RELEASES_PER_MINUTE = 60;
 
 /** Manages workspace and channel resources including membership and messages. */
 @Controller('channels')
@@ -392,12 +401,37 @@ export class ChannelsController {
   removeMemberFromChannel(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
   ) {
+    // `actorDevice`: the actor's device that commits the key-group Remove (`committingDevice`).
     return this.service.removeMemberFromChannel(
       channelId,
       userId.trim().toLowerCase(),
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      actorDevice
+    );
+  }
+
+  /**
+   * The actor of a private-salon revoke RELEASES the key-group Remove it claimed and could not
+   * commit (`releaseRemoval`): the salon's remaining members elect a committer on this event only.
+   * Throttled per user ({@link REMOVAL_RELEASES_PER_MINUTE}).
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: REMOVAL_RELEASES_PER_MINUTE, ttl: 60_000 } })
+  @Post(':channelId/members/:userId/removal-released')
+  releaseChannelRemoval(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
+  ) {
+    return this.service.releaseChannelRemoval(
+      channelId,
+      userId.trim().toLowerCase(),
+      xUserId.trim().toLowerCase(),
+      actorDevice
     );
   }
 
@@ -459,12 +493,36 @@ export class ChannelsController {
   kickFromWorkspace(
     @Headers('x-user-id') xUserId: string,
     @Param('workspaceId') workspaceId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
   ) {
     return this.service.kickFromWorkspace(
       workspaceId,
       userId.trim().toLowerCase(),
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      actorDevice
+    );
+  }
+
+  /**
+   * The actor of a community kick RELEASES the key-group Remove it claimed and could not commit
+   * (`releaseRemoval`): the community's remaining members elect a committer on this event only.
+   * Throttled per user ({@link REMOVAL_RELEASES_PER_MINUTE}).
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: REMOVAL_RELEASES_PER_MINUTE, ttl: 60_000 } })
+  @Post('workspaces/:workspaceId/members/:userId/removal-released')
+  releaseWorkspaceRemoval(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
+  ) {
+    return this.service.releaseWorkspaceRemoval(
+      workspaceId,
+      userId.trim().toLowerCase(),
+      xUserId.trim().toLowerCase(),
+      actorDevice
     );
   }
 

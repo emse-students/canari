@@ -306,13 +306,54 @@ export function mkCallInvite(
   };
 }
 
-/** Builds an MLS call hangup message. */
-export function mkCallHangup(callId: string, deviceId?: string): canari.AppMessage.$Properties {
+/**
+ * Why a call ended WITHOUT having been answered, as a type. The side that ends the call knows
+ * which of these it is and says so on the wire; no reader infers it from a message or a clock.
+ * Absent means an ordinary end after pickup.
+ */
+export type CallEndReason = 'cancelled' | 'declined' | 'not-answered' | 'busy';
+
+const END_REASON_TO_WIRE: Record<CallEndReason, canari.CallEndReason> = {
+  cancelled: canari.CallEndReason.CALL_END_REASON_CANCELLED,
+  declined: canari.CallEndReason.CALL_END_REASON_DECLINED,
+  'not-answered': canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED,
+  busy: canari.CallEndReason.CALL_END_REASON_BUSY,
+};
+
+/** The reason a hangup carries, or undefined for an unspecified one (an ordinary end, or an old build). */
+export function callEndReasonFromWire(wire: number | null | undefined): CallEndReason | undefined {
+  for (const [reason, value] of Object.entries(END_REASON_TO_WIRE)) {
+    if (value === wire) return reason as CallEndReason;
+  }
+  return undefined;
+}
+
+/** Builds an MLS call hangup message; `reason` is set when the call ended unanswered. */
+export function mkCallHangup(
+  callId: string,
+  deviceId?: string,
+  reason?: CallEndReason
+): canari.AppMessage.$Properties {
   return {
     call: {
       callId,
       deviceId: deviceId ?? '',
       hangup: true,
+      ...(reason ? { endReason: END_REASON_TO_WIRE[reason] } : {}),
+    },
+  };
+}
+
+/**
+ * Builds the typed BUSY answer to an invite: this device is in another call. The caller's device
+ * ends its ring on it, so the caller learns at once instead of ringing out the server's window.
+ */
+export function mkCallBusy(callId: string, deviceId: string): canari.AppMessage.$Properties {
+  return {
+    call: {
+      callId,
+      deviceId,
+      busy: true,
     },
   };
 }

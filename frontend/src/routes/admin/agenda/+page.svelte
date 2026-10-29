@@ -46,7 +46,7 @@
     try {
       const res = await listPendingCalendarEvents();
       if (!res.canValidate) {
-        void goto(resolve('/dashboard'), { replaceState: true });
+        void goto(resolve('/dashboard'), { replace: true });
         return;
       }
       events = res.events;

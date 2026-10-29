@@ -1,5 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
@@ -372,21 +372,20 @@ export interface UpdatePostPayload {
 }
 
 /**
- * One call to social-service, refused as an `ApiRefusalError` carrying the status. Exported as
- * `socialRequest` for the generic proposals (`$lib/proposals/api`), which live in the same service
- * and need the same refusal type rather than a second copy of this function.
+ * One call to social-service, refused as an `ApiRefusalError` carrying the status AND the server's
+ * `code` (`refusalFromResponse`, the one reader). Exported as `socialRequest` for the generic
+ * proposals (`$lib/proposals/api`) and the follows (`$lib/follows/api`), which live in the same
+ * service and need the same refusal type rather than a second copy of this function.
+ *
+ * The code used to be dropped here (`null`, whatever the body said), so a screen mapping a social
+ * refusal by its code - `PROPOSAL_SENDER_GONE`, `FOLLOW_BLOCKED` - could never see it.
  */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await apiFetch(`${socialUrl()}${path}`, init as any);
 
   if (!res.ok) {
-    const details = await res.text();
-    // A typed refusal: a screen reads the status (`refusalStatus`), never this sentence.
-    throw new ApiRefusalError(
-      res.status,
-      null,
-      `post-service ${res.status}: ${details || res.statusText}`
-    );
+    // A typed refusal: a screen reads the status and the code, never this sentence.
+    throw await refusalFromResponse(res, `post-service ${path.split('?')[0]}`);
   }
   return (await res.json()) as T;
 }
@@ -662,26 +661,6 @@ export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {
 /** Marks notifications about one post as read. */
 export async function markPostNotificationsReadForPost(postId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/posts/${postId}/notifications/read`, { method: 'POST' });
-}
-
-// ── User follows ──────────────────────────────────────────────────────────────
-
-export async function followUser(userId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/posts/users/${encodeURIComponent(userId)}/follow`, {
-    method: 'POST',
-  });
-}
-
-export async function unfollowUser(userId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/posts/users/${encodeURIComponent(userId)}/follow`, {
-    method: 'DELETE',
-  });
-}
-
-export async function getUserFollowStatus(userId: string): Promise<{ following: boolean }> {
-  return request<{ following: boolean }>(
-    `/api/posts/users/${encodeURIComponent(userId)}/follow-status`
-  );
 }
 
 // ── Form reminders ────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -134,7 +135,7 @@
     if (loading || !list || !editSection || !mayEnterArea) return;
     if (!mayOpenEditSection(editSection, rights)) {
       console.warn('[lists/edit] section refused, back to the hub', editSection);
-      void goto(resolve(editSectionHref(slug, null, '/lists')), { replaceState: true });
+      void goto(resolve(internalPath(editSectionHref(slug, null, '/lists'))), { replace: true });
     }
   });
 
@@ -148,8 +149,8 @@
       const a = await getAssociationBySlug(slug);
       // A regular association is managed from the association edit page.
       if (a.type !== 'list') {
-        await goto(resolve(`/associations/${encodeURIComponent(slug)}/edit`), {
-          replaceState: true,
+        await goto(resolve(`associations/${encodeURIComponent(slug)}/edit`), {
+          replace: true,
         });
         return;
       }
@@ -168,7 +169,7 @@
       const mine = members.find((m) => m.userId === currentUserId());
       const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
       if (!canEdit) {
-        await goto(resolve(`/lists/${encodeURIComponent(slug)}`));
+        await goto(resolve(`lists/${encodeURIComponent(slug)}`));
         return;
       }
     } catch {
@@ -182,9 +183,7 @@
 <PageContainer>
   <PageHeader
     title={editSection ? sectionLabel(editSection) : m.list_edit_page_title()}
-    subtitle={list
-      ? `@${list.slug}${list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}`
-      : undefined}
+    subtitle={list?.promo ? m.list_campaigns_heading({ year: list.promo }) : undefined}
     {crumbs}
   />
 

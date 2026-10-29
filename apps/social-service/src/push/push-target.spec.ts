@@ -61,6 +61,12 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     expect(socialDeepLink({ type: 'social', target: 'chat/x' })).toBe('fr.emse.canari://posts');
   });
 
+  it('a follow request opens the request inbox, even though it carries the asker as postId', () => {
+    expect(socialDeepLink({ type: 'social', postId: 'asker-1', target: 'follow-requests' })).toBe(
+      'fr.emse.canari://follow-requests'
+    );
+  });
+
   it('a notice with no page of its own opens the notifications list, even when it carries a postId', () => {
     // A cut live's notice carries the live's id as `postId`: a post link would open nothing.
     expect(socialDeepLink({ type: 'social', postId: 'live-1', target: 'notifications' })).toBe(

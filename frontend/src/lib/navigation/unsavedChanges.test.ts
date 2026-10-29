@@ -9,7 +9,7 @@ vi.mock('$app/navigation', () => ({
   beforeNavigate: (cb: (nav: Nav) => void) => hooks.push(cb),
   goto: (href: string) => goto(href),
 }));
-vi.mock('$app/paths', () => ({ base: '', resolve: (p: string) => p }));
+vi.mock('$app/paths', () => ({ resolve: (p: string) => (p.startsWith('/') ? p : `/${p}`) }));
 vi.mock('$lib/stores/confirm.svelte', () => ({
   showConfirm: (message: string, opts?: unknown) => confirm(message, opts),
 }));

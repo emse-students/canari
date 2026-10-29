@@ -198,7 +198,7 @@ export async function attemptReconnectImpl(
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');
-      void goto(resolve('/login'), { replaceState: true });
+      void goto(resolve('/login'), { replace: true });
       return;
     }
     if (err instanceof IdentitySplitError) {

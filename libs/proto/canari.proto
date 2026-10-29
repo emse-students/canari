@@ -106,6 +106,19 @@ message AuthorProof {
 
 // ── WebRTC Signaling ─────────────────────────────────────────────────────
 
+/**
+ * Why a call ended WITHOUT having been answered, on a hangup. UNSPECIFIED is an ordinary end after
+ * pickup, and also every hangup of a build from before this field. The reader never infers it from
+ * timing: the side that ends the call KNOWS and says so.
+ */
+enum CallEndReason {
+  CALL_END_REASON_UNSPECIFIED  = 0;
+  CALL_END_REASON_CANCELLED    = 1; // the caller hung up while it rang
+  CALL_END_REASON_DECLINED     = 2; // the callee refused the ring
+  CALL_END_REASON_NOT_ANSWERED = 3; // the ring window closed with nobody answering
+  CALL_END_REASON_BUSY         = 4; // the callee was in another call (ends the caller's ring)
+}
+
 message CallMsg {
   string call_id = 1; // Unique for the call session
   bool   has_video = 6; // Whether the caller intends to send video
@@ -117,6 +130,8 @@ message CallMsg {
    * compares its clock with the other's; the server's own deadline decides a late answer (410).
    */
   uint32 ring_timeout_ms = 9;
+  /** On a hangup only: why an unanswered call ended. */
+  CallEndReason end_reason = 10;
 
   oneof payload {
     string offer_sdp     = 2; // SDP offer json string
@@ -124,6 +139,7 @@ message CallMsg {
     string ice_candidate = 4; // ICE candidate json string
     bool   hangup        = 5; // End call
     bool   answered      = 7; // Picked up on another device of the same user
+    bool   busy          = 11; // Callee: "I am in another call" - answers an invite, ends the caller's ring
   }
 }
 

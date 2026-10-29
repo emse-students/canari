@@ -189,6 +189,12 @@ compute_live_enabled() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf 'true'; else printf 'false'; fi
 }
 
+# The Lydia reconciliation sweep (docs/wiki/lydia-api.md section 7): ON on dev, OFF on production
+# until the amount format Lydia signs in a request/state answer is measured on a sandbox Business.
+compute_lydia_reconcile_enabled() {
+  if [ "$ENVIRONMENT" = "dev" ]; then printf 'true'; else printf 'false'; fi
+}
+
 # ── Minimum lengths ───────────────────────────────────────────────────────────
 # A value can be PRESENT and still unusable: social-service refuses to sign anything with an
 # AGENDA_SIGNING_KEY shorter than 32 characters and answers 503 at runtime, which the deploy's
@@ -266,6 +272,7 @@ while IFS=$'\t' read -r key prod dev source note; do
     GARAGE_API_HOST_PORT) value="$(compute_garage_api_host_port)" ;;
     GARAGE_ADMIN_HOST_PORT) value="$(compute_garage_admin_host_port)" ;;
     LIVE_ENABLED) value="$(compute_live_enabled)" ;;
+    LYDIA_RECONCILE_ENABLED) value="$(compute_lydia_reconcile_enabled)" ;;
     *)
       printf 'render-env: %s is marked computed and nothing computes it\n' "$key" >&2
       exit 2

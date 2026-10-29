@@ -2,6 +2,13 @@
   import { untrack } from 'svelte';
   import { MoonStar, Plus, Save, TriangleAlert, X } from '@lucide/svelte';
   import {
+    applyTemplate,
+    paintRows,
+    weekRunsOf,
+    type PaintMode,
+    type TemplateKey,
+  } from '$lib/bookings/availabilityPaint';
+  import {
     closureProblem,
     crossesMidnight,
     fromStoredLines,
@@ -18,6 +25,7 @@
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import StrandedBookings from './StrandedBookings.svelte';
+  import WeekPainter from './WeekPainter.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
@@ -26,11 +34,14 @@
   import { Log } from '$lib/utils/Log';
 
   /**
-   * One resource's availability (D11): weekly and dated ranges, and closures. A range is edited as
-   * the organiser thinks of it - "Friday 22:00 to 02:00" is ONE range - and written as the stored
-   * lines by `toStoredLines` (WP-B2: a window crossing midnight is two lines). Saved on its own: the
-   * server replaces the whole availability, and refuses a change that strands a coming booking
-   * (D29), naming them: they are listed under the button, each with its cancel.
+   * One resource's availability (D11, D49): a template to start from, the typical week PAINTED
+   * (`WeekPainter`), the same week as lines to read and to type exact times in, the dated ranges of
+   * a one-off event, and closures. A range is edited as the organiser thinks of it - "Friday 22:00
+   * to 02:00" is ONE range - and written as the stored lines by `toStoredLines` (WP-B2: a window
+   * crossing midnight is two lines). The painter, the templates and the lines all edit the SAME
+   * `rows`, so they can never disagree. Saved on its own: the server replaces the whole
+   * availability, and refuses a change that strands a coming booking (D29), naming them: they are
+   * listed under the button, each with its cancel.
    */
   interface Props {
     spaceId: string;
@@ -95,10 +106,54 @@
       label: name.charAt(0).toUpperCase() + name.slice(1),
     }))
   );
-  const kindOptions = $derived([
-    { value: 'weekly', label: m.bookings_avail_weekly() },
-    { value: 'dated', label: m.bookings_avail_dated() },
-  ]);
+  const shortDayNames = $derived(
+    [1, 2, 3, 4, 5, 6, 7].map((d) =>
+      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
+        weekday: 'short',
+        timeZone: 'UTC',
+      })
+    )
+  );
+  /** The week as the painter draws it, always read from the lines. */
+  const week = $derived(weekRunsOf(rows));
+
+  const TEMPLATES: { key: TemplateKey; name: () => string; sub: () => string }[] = [
+    {
+      key: 'always',
+      name: () => m.bookings_avail_tpl_always(),
+      sub: () => m.bookings_avail_tpl_always_sub(),
+    },
+    {
+      key: 'weekdays',
+      name: () => m.bookings_avail_tpl_weekdays(),
+      sub: () => m.bookings_avail_tpl_weekdays_sub(),
+    },
+    {
+      key: 'event',
+      name: () => m.bookings_avail_tpl_event(),
+      sub: () => m.bookings_avail_tpl_event_sub(),
+    },
+    {
+      key: 'empty',
+      name: () => m.bookings_avail_tpl_empty(),
+      sub: () => m.bookings_avail_tpl_empty_sub(),
+    },
+  ];
+
+  /** A template replaces the week (the dated lines stay) - still a draft until it is saved. */
+  function useTemplate(key: TemplateKey) {
+    Log.d('BOOKINGS', `availability template=${key} resource=${resourceId}`);
+    rows = applyTemplate(rows, key);
+    touch();
+  }
+
+  function paint(dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) {
+    const next = paintRows(rows, dayA, dayB, slotA, slotB, mode);
+    if (next === rows) return;
+    Log.d('BOOKINGS', `availability paint days=${dayA}-${dayB} slots=${slotA}-${slotB} ${mode}`);
+    rows = [...next];
+    touch();
+  }
 
   const timeOptions = (asEnd: boolean, current: string) =>
     timeChoices(step, asEnd, current).map((t) => ({ value: t, label: t }));
@@ -142,22 +197,18 @@
     error = '';
   }
 
-  function setKind(i: number, kind: string) {
-    const row = rows[i];
-    rows[i] =
-      kind === 'dated'
-        ? { kind: 'dated', date: '', start: row.start, end: row.end }
-        : { kind: 'weekly', weekday: 1, start: row.start, end: row.end };
-    touch();
-  }
-
   function addLine() {
-    const last = rows.at(-1);
+    const last = rows.filter((r) => r.kind === 'weekly').at(-1);
     rows.push(
-      last?.kind === 'weekly'
+      last
         ? { ...last, weekday: ((last.weekday % 7) + 1) as Weekday }
         : { kind: 'weekly', weekday: 1, start: '09:00', end: '18:00' }
     );
+    touch();
+  }
+
+  function addDate() {
+    rows.push({ kind: 'dated', date: '', start: '14:00', end: '18:00' });
     touch();
   }
 
@@ -185,105 +236,74 @@
 <div class="space-y-4">
   <h4 class="text-text-main text-sm font-bold">{m.bookings_avail_title()}</h4>
 
-  {#if rows.length === 0}
-    <p class="text-text-muted text-sm">{m.bookings_avail_empty()}</p>
-  {/if}
+  <div class="space-y-2">
+    <p class="text-text-main text-sm font-semibold">{m.bookings_avail_templates_title()}</p>
+    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {#each TEMPLATES as tpl (tpl.key)}
+        <button
+          type="button"
+          data-template={tpl.key}
+          onclick={() => useTemplate(tpl.key)}
+          class="border-cn-border bg-cn-surface hover:border-cn-yellow/40 flex min-h-11 flex-col items-start rounded-xl border px-3 py-2 text-left transition-colors"
+        >
+          <span class="text-text-main text-sm font-bold">{tpl.name()}</span>
+          <span class="text-text-muted text-xs">{tpl.sub()}</span>
+        </button>
+      {/each}
+    </div>
+  </div>
 
-  <ul class="space-y-3">
-    {#each rows as row, i (i)}
-      <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border p-3">
-        <div class="flex items-start gap-2">
-          <div class="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
-              id="avail-{resourceId}-{i}-kind"
-              label={m.bookings_avail_kind()}
-              value={row.kind}
-              options={kindOptions}
-              onValueChange={(v) => setKind(i, v)}
-            />
-            {#if row.kind === 'weekly'}
-              <Select
-                id="avail-{resourceId}-{i}-day"
-                label={m.bookings_avail_day()}
-                value={String(row.weekday)}
-                options={weekdayOptions}
-                onValueChange={(v) => {
-                  rows[i] = { ...row, weekday: Number(v) as Weekday };
-                  touch();
-                }}
-              />
-            {:else}
-              <div>
-                <span class={CONTROL_LABEL_CLASS}>{m.bookings_avail_date()}</span>
-                <DateTimeField
-                  density="default"
-                  id="avail-{resourceId}-{i}-date"
-                  dateOnly
-                  label={m.bookings_avail_date()}
-                  value={row.date}
-                  invalid={lineProblems[i] === 'date'}
-                  onValueChange={(v) => {
-                    rows[i] = { ...row, date: v };
-                    touch();
-                  }}
-                />
-              </div>
-            {/if}
-          </div>
-          <button
-            type="button"
-            class="ui-icon-button text-text-muted hover:text-red-err mt-7 shrink-0 rounded-full"
-            aria-label={m.bookings_avail_remove_aria()}
-            onclick={() => {
-              rows.splice(i, 1);
-              touch();
-            }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div class="grid grid-cols-2 gap-3">
-          <Select
-            id="avail-{resourceId}-{i}-start"
-            label={m.bookings_avail_start()}
-            value={row.start}
-            options={timeOptions(false, row.start)}
-            onValueChange={(v) => {
-              rows[i] = { ...row, start: v };
-              touch();
-            }}
-          />
-          <Select
-            id="avail-{resourceId}-{i}-end"
-            label={m.bookings_avail_end()}
-            value={row.end}
-            options={timeOptions(true, row.end)}
-            onValueChange={(v) => {
-              rows[i] = { ...row, end: v };
-              touch();
-            }}
-          />
-        </div>
-        {#if lineProblems[i]}
-          <p class="text-red-err text-xs" role="alert">{problemText(lineProblems[i])}</p>
-        {:else if crossesMidnight(row)}
-          <p class="text-text-muted flex items-center gap-1.5 text-xs">
-            <MoonStar size={13} />
-            {m.bookings_avail_next_day()}
-          </p>
+  <div class="space-y-2">
+    <p class="text-text-main text-sm font-semibold">{m.bookings_avail_week_title()}</p>
+    <WeekPainter {week} dayNames={weekdayNames} {shortDayNames} onPaint={paint} />
+  </div>
+
+  <div class="space-y-3">
+    <div>
+      <p class="text-text-main text-sm font-semibold">{m.bookings_avail_clear_title()}</p>
+      <p class="text-text-muted text-xs">{m.bookings_avail_clear_hint()}</p>
+    </div>
+    {#if rows.length === 0}
+      <p class="text-text-muted text-sm">{m.bookings_avail_empty()}</p>
+    {/if}
+    <ul class="space-y-3">
+      {#each rows as row, i (i)}
+        {#if row.kind === 'weekly'}
+          {@render lineRow(row, i)}
         {/if}
-      </li>
-    {/each}
-  </ul>
+      {/each}
+    </ul>
+    <button
+      type="button"
+      onclick={addLine}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+    >
+      <Plus size={14} />
+      {m.bookings_avail_add_line()}
+    </button>
+  </div>
 
-  <button
-    type="button"
-    onclick={addLine}
-    class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
-  >
-    <Plus size={14} />
-    {m.bookings_avail_add_line()}
-  </button>
+  <div class="space-y-3">
+    <div>
+      <p class="text-text-main text-sm font-semibold">{m.bookings_avail_dates_title()}</p>
+      <p class="text-text-muted text-xs">{m.bookings_avail_dates_hint()}</p>
+    </div>
+    <ul class="space-y-3">
+      {#each rows as row, i (i)}
+        {#if row.kind === 'dated'}
+          {@render lineRow(row, i)}
+        {/if}
+      {/each}
+    </ul>
+    <button
+      type="button"
+      onclick={addDate}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+    >
+      <Plus size={14} />
+      {m.bookings_avail_add_date()}
+    </button>
+  </div>
 
   {#if wholeDays.length}
     <p
@@ -400,3 +420,81 @@
     </button>
   </div>
 </div>
+
+{#snippet lineRow(row: EditorLine, i: number)}
+  <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border p-3">
+    <div class="flex items-start gap-2">
+      <div class="min-w-0 flex-1">
+        {#if row.kind === 'weekly'}
+          <Select
+            id="avail-{resourceId}-{i}-day"
+            label={m.bookings_avail_day()}
+            value={String(row.weekday)}
+            options={weekdayOptions}
+            onValueChange={(v) => {
+              rows[i] = { ...row, weekday: Number(v) as Weekday };
+              touch();
+            }}
+          />
+        {:else}
+          <div>
+            <span class={CONTROL_LABEL_CLASS}>{m.bookings_avail_date()}</span>
+            <DateTimeField
+              density="default"
+              id="avail-{resourceId}-{i}-date"
+              dateOnly
+              label={m.bookings_avail_date()}
+              value={row.date}
+              invalid={lineProblems[i] === 'date'}
+              onValueChange={(v) => {
+                rows[i] = { ...row, date: v };
+                touch();
+              }}
+            />
+          </div>
+        {/if}
+      </div>
+      <button
+        type="button"
+        class="ui-icon-button text-text-muted hover:text-red-err mt-7 shrink-0 rounded-full"
+        aria-label={m.bookings_avail_remove_aria()}
+        onclick={() => {
+          rows.splice(i, 1);
+          touch();
+        }}
+      >
+        <X size={18} />
+      </button>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <Select
+        id="avail-{resourceId}-{i}-start"
+        label={m.bookings_avail_start()}
+        value={row.start}
+        options={timeOptions(false, row.start)}
+        onValueChange={(v) => {
+          rows[i] = { ...row, start: v };
+          touch();
+        }}
+      />
+      <Select
+        id="avail-{resourceId}-{i}-end"
+        label={m.bookings_avail_end()}
+        value={row.end}
+        options={timeOptions(true, row.end)}
+        onValueChange={(v) => {
+          rows[i] = { ...row, end: v };
+          touch();
+        }}
+      />
+    </div>
+    {#if lineProblems[i]}
+      <p class="text-red-err text-xs" role="alert">{problemText(lineProblems[i])}</p>
+    {:else if crossesMidnight(row)}
+      <p class="text-text-muted flex items-center gap-1.5 text-xs">
+        <MoonStar size={13} />
+        {m.bookings_avail_next_day()}
+      </p>
+    {/if}
+  </li>
+{/snippet}

@@ -59,7 +59,7 @@
   onMount(() => {
     if (!isGlobalAdmin()) {
       console.error('[ADMIN][CERCLE] non-global-admin blocked client-side, redirecting');
-      void goto(resolve('/admin'), { replaceState: true });
+      void goto(resolve('/admin'), { replace: true });
       return;
     }
     ready = true;

@@ -590,6 +590,9 @@ export async function requestReAdd(
       // The account is seated. The list carries this device's seat too when the server has one, read
       // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no
       // seat there, this device's door is its own, as an `active` row's.
+      // NO SEAT FOR THIS DEVICE AT ALL, ON EITHER READ, goes on to the join below like any other:
+      // whether it is a further device of a member is read off the tree its commit would be built
+      // on (`asAFurtherDevice`), never off the server's rows.
       const listed = seat.row.deviceMembership;
       if (listed) {
         deps.log(
@@ -731,7 +734,11 @@ export async function requestReAdd(
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
   let outcome: ExternalJoinOutcome;
   try {
-    outcome = await deps.mlsService.externalJoin(groupId);
+    // A FURTHER DEVICE OF A MEMBER (2026-10-27) - the tree holds a leaf of its user and none of its
+    // own - is not let in by its own commit: the join answers `further_device` and the device asks
+    // a member below, whose device shows it and its key. Read off the very GroupInfo the commit
+    // would be built on, so an honest device never makes the entry members say as nobody's.
+    outcome = await deps.mlsService.externalJoin(groupId, { asAFurtherDevice: 'ask' });
   } catch (e) {
     // A STATUS CODE IS AN ANSWER. The server holds no membership row for us, so there is no base to
     // join and no point asking a member to re-add us - the group's own roster is what refused. This
@@ -927,6 +934,15 @@ export async function requestReAdd(
     return;
   }
 
+  // A FURTHER DEVICE OF A MEMBER: its door is a member's Add, asked for here.
+  if (outcome.reason === 'further_device') {
+    await askAMemberToReAddUs(
+      groupId,
+      deps,
+      "a further device of a member - a member's Add, not this device's own join"
+    );
+    return;
+  }
   // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
   // fine and nobody needs to re-add us, so asking a member for a Welcome would mutate the tree to
   // work around a wait. The watchdog's next pass joins again once the wait has passed.
@@ -1047,6 +1063,17 @@ function classifyOwnSeat(
         `[READD] ${groupId.slice(0, 8)}... invitation-link seat awaiting a member's admission - ` +
           `a member is asked, no self-service join`
       );
+    }
+    if (reading === 'unhonoured-seat' && admittedAt === null) {
+      // NO COMMIT ADMITTED THIS SEAT SINCE IT WAS LAST WRITTEN - which is NOT "never admitted": the
+      // server clears `admittedAtEpoch` on every transition, the demotions included (a kick, the
+      // stale-device sweep), so a device coming back and one never admitted read the same. Not an
+      // anomaly, and not a door by itself: the join decides it on the tree of the GroupInfo it is
+      // built on, the one every member's verdict reads (`asAFurtherDevice`).
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... pending seat no commit admitted since it was written - the join's tree decides whose door it is`
+      );
+      return 'unhonoured-seat';
     }
     if (reading === 'unhonoured-seat') {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in

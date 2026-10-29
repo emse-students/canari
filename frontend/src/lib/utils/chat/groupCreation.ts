@@ -285,6 +285,10 @@ export async function createNewGroup(
           contactName: groupDisplayName,
           displayName: groupDisplayName, // preserve original casing for display
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     selectConversation(conversationKey);
@@ -1240,6 +1244,10 @@ export async function startNewConversation(
           displayName: contact,
           directPeerId: contact,
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     maybeSelect(conversationKey);

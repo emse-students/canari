@@ -85,6 +85,7 @@ function mountArea(count: number) {
       conversation: conversationOf(count),
       messageText: '',
       onMessageChange: () => {},
+      bindDraftWriter: () => () => {},
       onSend: () => {},
       onInviteMembers: () => {},
     },

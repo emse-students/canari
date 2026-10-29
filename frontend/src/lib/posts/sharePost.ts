@@ -27,17 +27,21 @@ export function postShareUrl(postId: string): string {
  * another app takes (`incomingShare`, `landShareOn`). The member writes a word if they like and
  * sends with Send; nothing is sent from here. In the conversation the link draws the in-app card
  * (`LinkPreviewCard`), which each reader fetches under their OWN session.
+ *
+ * True when the landing was published - what lets a surface drawn over the conversations (the reel
+ * viewer) step aside for it; false when the link was not offered.
  */
-export function sendPostLinkInApp(postId: string, conversationId: string): void {
+export function sendPostLinkInApp(postId: string, conversationId: string): boolean {
   Log.i(
     'sharePost',
     `sending the link of ${postId.slice(0, 8)} into ${conversationId.slice(0, 16)}`
   );
   if (!incomingShare.offerTo(postShareUrl(postId), conversationId)) {
     Log.i('sharePost', `the link of ${postId.slice(0, 8)} was not offered`);
-    return;
+    return false;
   }
   landShareOn(conversationId);
+  return true;
 }
 
 /**

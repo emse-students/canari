@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client';
+import type { NativeMlsSessionEnd } from '$lib/utils/nativeMlsSession';
 
 /**
  * The session's MLS client, and the one rule for letting go of it at a sign-out.
@@ -27,20 +28,40 @@ export interface MlsHolder {
   reset(only?: IMlsService): void;
   /**
    * Lets go of the current client now and destroys it once `finalWrite` settles. `finalWrite` must
-   * never reject: it is the teardown's flush, which reports its own failure.
+   * never reject: it is the teardown's flush, which reports its own failure. `why` names the end in
+   * the native log: a sign-out unless the session was lost (`endLostSessionImpl`).
    */
-  retire(finalWrite: Promise<void>): Promise<void>;
+  retire(finalWrite: Promise<void>, why?: 'sign-out' | 'lost session'): Promise<void>;
   /** Settles once every retired client's final write has landed and the client is destroyed. */
   whenRetired(): Promise<void>;
   /** True while a retired client's final write is still in flight. */
   isRetiring(): boolean;
 }
 
-/** Builds the holder over `create`, the platform's client factory. */
-export function createMlsHolder(create: () => IMlsService): MlsHolder {
+/**
+ * Builds the holder over `create`, the platform's client factory, and `endNative`, which ends what the
+ * platform holds natively for the client let go of (`endNativeMlsSession`).
+ *
+ * **THE NATIVE SESSION ENDS WITH THE CLIENT, AND IN THE CHAIN A LOGIN WAITS ON.** The native manager is
+ * process-wide, so destroying the TypeScript client left account A's manager and key installed into
+ * account B's sign-in. Both exits end it: a retirement after the final write and the destroy (the write
+ * needs the manager), a reset at once - and both inside {@link MlsHolder.whenRetired}, so the next login
+ * opens its state only once the previous one's native session is gone. A reset scoped to a client that
+ * is no longer current ends nothing: the native session is the next sign-in's by then.
+ */
+export function createMlsHolder(
+  create: () => IMlsService,
+  endNative: (reason: NativeMlsSessionEnd) => Promise<void>
+): MlsHolder {
   let current: IMlsService | null = null;
   let retirement: Promise<void> = Promise.resolve();
   let pending = 0;
+
+  /** Ends the native session for `reason`, never rejecting: a login awaits the chain it joins. */
+  const endNativeLogged = (reason: NativeMlsSessionEnd) =>
+    endNative(reason).catch((e) =>
+      console.error(`[MLS] ending the native MLS session (${reason}) failed: ${e}`)
+    );
 
   return {
     ensure() {
@@ -51,8 +72,10 @@ export function createMlsHolder(create: () => IMlsService): MlsHolder {
       if (only && current !== only) return;
       current?.destroy?.();
       current = null;
+      const ended = endNativeLogged(only ? 'stopped login' : 'client reset');
+      retirement = Promise.all([retirement, ended]).then(() => undefined);
     },
-    retire(finalWrite) {
+    retire(finalWrite, why = 'sign-out') {
       const leaving = current;
       current = null;
       pending += 1;
@@ -63,6 +86,8 @@ export function createMlsHolder(create: () => IMlsService): MlsHolder {
         .catch((e) => console.error(`[LOGOUT] retired MLS client's final write failed: ${e}`))
         .then(() => leaving?.destroy?.())
         .catch((e) => console.error(`[LOGOUT] destroying the retired MLS client failed: ${e}`))
+        // AFTER the final write (it checkpoints through the manager this removes).
+        .then(() => endNativeLogged(why))
         .finally(() => {
           pending -= 1;
         });

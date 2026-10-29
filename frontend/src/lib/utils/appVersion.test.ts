@@ -83,6 +83,7 @@ describe('parseServerVersionInfo', () => {
       callsMode: 'off',
       livesMode: 'off',
       oidcPkce: false,
+      presencePost: false,
     });
   });
 
@@ -90,6 +91,20 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo({ version: '1.2.3', oidcPkce: true })?.oidcPkce).toBe(true);
     expect(parseServerVersionInfo({ version: '1.2.3' })?.oidcPkce).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', oidcPkce: 'true' })?.oidcPkce).toBe(false);
+  });
+
+  it('reads the presence POST capability, and an absent or non-true field as none', () => {
+    expect(parseServerVersionInfo({ version: '1.2.3', presencePost: true })?.presencePost).toBe(
+      true
+    );
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.presencePost).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', presencePost: 1 })?.presencePost).toBe(false);
+  });
+
+  it('stores the presence POST capability in the shape it is read back with', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', presencePost: true });
+    expect(info).not.toBeNull();
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.presencePost).toBe(true);
   });
 
   it.each(['off', 'audio', 'audio_video'] as const)('reads the calls kill switch %s', (mode) => {
@@ -161,6 +176,7 @@ describe('buildAppVersionCheckResult', () => {
       callsMode: 'audio',
       livesMode: 'on',
       oidcPkce: true,
+      presencePost: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -178,6 +194,7 @@ describe('buildAppVersionCheckResult', () => {
       callsMode: 'off',
       livesMode: 'off',
       oidcPkce: false,
+      presencePost: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -192,6 +209,10 @@ describe('buildAppVersionCheckResult', () => {
 
   it('offers no PKCE before any server has answered', () => {
     expect(buildAppVersionCheckResult(null).oidcPkce).toBe(false);
+  });
+
+  it('claims no presence POST before any server has answered', () => {
+    expect(buildAppVersionCheckResult(null).presencePost).toBe(false);
   });
 });
 
@@ -235,6 +256,7 @@ describe('fetchServerAppVersionReliable', () => {
       callsMode: 'off',
       livesMode: 'off',
       oidcPkce: false,
+      presencePost: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

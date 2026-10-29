@@ -9,7 +9,7 @@
  * starts. So every inline classic script of a built page is hashed HERE and looked up in the page's
  * own policy.
  *
- * TWO FORMS, decided by the same variable as `svelte.config.js`:
+ * TWO FORMS, decided by the same variable as `kit.config.js`:
  *  - WEB (`BUILD_WEB`): `build/prerendered/app-shell.html` - the shell nginx serves when the SSR
  *    server is down, rendered from the same template as every server-rendered page - must carry the
  *    `<meta http-equiv="content-security-policy">` SvelteKit writes, with no `'unsafe-inline'` or
