@@ -28,7 +28,7 @@
 <LegalDocument
   title={m.legal_cgu_title()}
   subtitle={m.legal_cgu_subtitle()}
-  updated="18/10/2026"
+  updated="29/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -36,7 +36,7 @@
     <h2>1. Définitions</h2>
     <p>Pour la bonne compréhension des présentes conditions :</p>
     <dl class="legal-terms">
-      {#each [['Le Service', "L'application Canari (mobile Android et iOS, bureau Windows/macOS/Linux, web) et ses serveurs."], ["L'Éditeur", "L'association étudiante Rootz, affiliée à l'École des Mines de Saint-Étienne."], ["L'Utilisateur", "Toute personne disposant d'un compte MiConnect valide lié à l'École des Mines de Saint-Étienne (EMSE)."], ['MLS', 'Messaging Layer Security (RFC 9420) - protocole de chiffrement de bout en bout utilisé pour les messages privés.'], ['Association', 'Groupe ou organisation étudiante créé au sein de la plateforme.'], ['Contenu', 'Tout texte, image, fichier ou média publié ou envoyé via le Service par un Utilisateur.']] as [terme, def], i (i)}
+      {#each [['Le Service', "L'application Canari (mobile Android et iOS, bureau Windows/macOS/Linux, web) et ses serveurs."], ["L'Éditeur", "L'association étudiante Rootz, affiliée à l'École des Mines de Saint-Étienne."], ["L'Utilisateur", "Toute personne disposant d'un compte MiConnect valide lié à l'École des Mines de Saint-Étienne (EMSE)."], ['MLS', 'Messaging Layer Security (RFC 9420) - protocole de chiffrement de bout en bout utilisé pour les messages privés.'], ['Association', 'Groupe ou organisation étudiante créé au sein de la plateforme.'], ['Contenu', 'Tout texte, image, fichier ou média publié ou envoyé via le Service par un Utilisateur.'], ['Direct', "Vidéo diffusée en temps réel par un Utilisateur via le Service, avec son chat et ses réactions (« live » dans l'application)."]] as [terme, def], i (i)}
         <div>
           <dt>{terme}</dt>
           <dd>{def}</dd>
@@ -202,10 +202,96 @@
       plateforme.
     </p>
 
+    <h3 id="directs">Directs (quand la fonction est ouverte)</h3>
+    <p>
+      Tout Utilisateur peut lancer un direct en son nom ; le lancer au nom d'une association demande
+      le droit de publier en son nom. Un direct est visible des mêmes membres qu'une publication du
+      même auteur : ceux qui partagent un espace avec vous ou, au nom d'une association, ceux
+      qu'elle atteint. Vos abonnés (ou ceux de l'association) qui peuvent le voir reçoivent une
+      notification quand il commence. L'Éditeur peut fermer la fonction à tout moment, pour tout le
+      Service.
+    </p>
+    <dl class="legal-terms">
+      <div>
+        <dt>Règles</dt>
+        <dd>
+          Les règles de la section 5 s'appliquent à l'image, au son et au chat d'un direct comme à
+          une publication, et celles de la section 7 sans exception. Vous acceptez les règles de la
+          section 5 avant votre premier direct. En direct, il est en outre interdit de filmer une
+          personne qui n'a pas accepté d'y apparaître.
+        </dd>
+      </div>
+      <div>
+        <dt>Responsabilité</dt>
+        <dd>
+          Vous êtes seul responsable de ce que vous diffusez, y compris au nom d'une association.
+          Chaque auteur d'un message du chat est responsable de son message.
+        </dd>
+      </div>
+      <div>
+        <dt>Pas d'enregistrement</dt>
+        <dd>
+          Canari n'enregistre pas les directs et n'en propose aucune rediffusion : la vidéo et le
+          chat sont supprimés à la fin du direct, dans les conditions de la
+          <a href="/legal/privacy#retention">{m.legal_privacy_link()} §6</a>. Rien n'empêche
+          toutefois un spectateur de filmer son écran.
+        </dd>
+      </div>
+      <div>
+        <dt>Limites</dt>
+        <dd>
+          Un direct dure une heure au plus et s'arrête après 60 secondes sans image reçue. Vous ne
+          pouvez avoir qu'un direct ouvert à la fois, et en lancer six par heure au plus. Le nombre
+          de spectateurs simultanés est limité : au-delà, l'accès est refusé.
+        </dd>
+      </div>
+      <div>
+        <dt>Vos outils</dt>
+        <dd>
+          Vous pouvez retirer un spectateur de votre direct et masquer un message du chat. Vous et
+          les spectateurs voyez combien de personnes regardent, jamais qui. Un blocage, dans un sens
+          ou dans l'autre, empêche de voir le direct de l'autre.
+        </dd>
+      </div>
+      <div>
+        <dt>Signalement</dt>
+        <dd>
+          Tout spectateur peut signaler un direct, ou un message de son chat, depuis le direct.
+          Signaler un message transmet son texte à la modération, qui le conserve jusqu'au
+          traitement du signalement. La modération s'efforce d'examiner un signalement de direct
+          dans les 24 heures, samedi et dimanche non comptés.
+        </dd>
+      </div>
+      <div>
+        <dt>Coupure</dt>
+        <dd>
+          Un modérateur peut couper un direct en cours, ou sanctionner un direct qui vient de se
+          terminer ; un direct coupé prend fin pour tous. Vous êtes prévenu avec le motif (spam,
+          harcèlement, contenu inapproprié, autre), sauf pour une première coupure d'un direct déjà
+          terminé. Un direct n'est jamais coupé automatiquement, quel que soit le nombre de
+          signalements.
+        </dd>
+      </div>
+      <div>
+        <dt>Sanctions</dt>
+        <dd>
+          Une coupure reste inscrite 90 jours. La première vaut avertissement. La deuxième dans ce
+          délai, et chacune des suivantes, <strong
+            >suspend votre droit de lancer un direct pendant 30 jours à compter de la coupure</strong
+          >. À partir de la troisième, la modération peut aussi vous
+          <strong>retirer ce droit</strong>
+          jusqu'à ce qu'elle vous le rende. Une coupure d'un direct diffusé au nom d'une association compte
+          pour vous. Ces mesures ne concernent que les directs ; les mesures de la section 5 restent possibles,
+          et un compte restreint (muté) ne peut ni lancer un direct, ni écrire ni réagir dans un chat.
+        </dd>
+      </div>
+    </dl>
+
     <h3>Recours</h3>
     <p>
-      Toute décision de modération (suppression de contenu, restriction de compte) peut faire
-      l'objet d'un recours par e-mail à
+      Toute décision de modération (suppression de contenu, restriction de compte, coupure d'un
+      direct, suspension ou retrait du droit de lancer un direct) peut faire l'objet d'un recours
+      par e-mail à
       <a href="mailto:bureau@rootz-emse.fr">bureau@rootz-emse.fr</a>
       en précisant l'objet du litige. L'association Rootz s'engage à examiner les recours dans un délai
       raisonnable et à motiver sa réponse.

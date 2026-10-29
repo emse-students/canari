@@ -1,6 +1,6 @@
 # Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, the WP-L1 bench measured 2026-10-19, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19)
 
-> **Turning lives on in production** - the gates, the order, the viewer-cap ladder and the HELD privacy wording: [live-production](live-production.md) (2026-10-21), the only copy.
+> **Turning lives on in production** - the gates, the order, the viewer-cap ladder and the owner's points on the lives terms and privacy text: [live-production](live-production.md) (2026-10-21), the only copy.
 >
 > **Note 2026-10-19:** lives now come BEFORE the calls revival ([decisions](#decisions-of-2026-10-19)). **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
