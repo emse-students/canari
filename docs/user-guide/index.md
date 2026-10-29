@@ -11,7 +11,7 @@
 | Secretaire, tresorier ou president d'une association | [Guide responsable d'association](responsable-association.md) |
 | Organisateur d'un evenement ouvert a des personnes sans compte (inscription payante) | [Formulaires publics](formulaires-publics.md) |
 | Responsable qui doit donner des droits a ses membres | [Les permissions d'une association](permissions-association.md) |
-| Membre qui réserve une salle ou un rendez-vous, ou organisateur d'un espace de réservation (colonnes, semaine à peindre, règles) | [Réservations](reservations.md) |
+| Membre qui reserve une salle ou un rendez-vous, ou organisateur d'un espace de reservation (colonnes, semaine a peindre, regles) | [Reservations](reservations.md) |
 | Curieux de savoir comment vos messages sont protégés (PIN, nouvel appareil, historique) | [Comprendre le chiffrement de vos messages](chiffrement-et-historique.md) |
 | Administrateur de la plateforme Canari | [Guide administrateur](administrateur.md) |
 | Mainteneur du projet (deploiement, releases, environnement dev) | [Workflow de developpement](workflow-developpement.md) |
