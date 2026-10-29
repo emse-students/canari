@@ -246,7 +246,7 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     const close = vi.fn();
     pushHistoryOverlay(close);
     releaseHistoryOverlay(close);
-    // `goto(..., { replaceState: true })` from the ghost: the drain runs, the router replaces it.
+    // `goto(..., { replace: true })` from the ghost: the drain runs, the router replaces it.
     drainHistoryOverlayStack();
     history.replaceState({ sveltekit: 2 }, '');
 

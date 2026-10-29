@@ -17,6 +17,7 @@
     withdrawWithConfirm,
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
+  import { bookingPlace } from '$lib/bookings/columns';
   import { answerText } from '$lib/forms/answerText';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
@@ -193,7 +194,7 @@
       {#if booking?.mine && coming}
         <span class="inline-flex items-center gap-1">
           <AddEventToCalendarButton
-            event={bookingCalendarEvent(booking, `${space.name} - ${resource.name}`)}
+            event={bookingCalendarEvent(booking, bookingPlace(space.name, resource.name))}
             resolveIcsUrl={() => bookingIcsUrl(booking.id)}
           />
           <span class="text-text-muted text-xs">{m.calendar_add_title()}</span>

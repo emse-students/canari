@@ -104,16 +104,12 @@
 
   function applyFilterToUrl() {
     if (filterAssociationId.trim()) {
-      void goto(
-        resolve(`/calendar?association=${encodeURIComponent(filterAssociationId.trim())}`),
-        {
-          replaceState: true,
-          keepFocus: true,
-          noScroll: true,
-        }
-      );
+      void goto(resolve(`calendar?association=${encodeURIComponent(filterAssociationId.trim())}`), {
+        replace: true,
+        reset: false,
+      });
     } else {
-      void goto(resolve('/calendar'), { replaceState: true, keepFocus: true, noScroll: true });
+      void goto(resolve('/calendar'), { replace: true, reset: false });
     }
   }
 

@@ -360,17 +360,17 @@ count.
   segment after a short backoff (it is still in the manifest window), and never fans out parallel
   retries - a burst of retries is exactly what the limit counts.
 
-**The connection budget, and why nothing is raised.** The host proxy is the DSI's: about 1 500
-concurrent connections across EVERY site on the host (`worker_connections 768`, two per proxied
+**The connection budget, and why nothing is raised.** The host proxy is the DSI's: a host-wide
+proxy connection budget set by the DSI and shared by EVERY site on the host (two per proxied
 connection; [realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md) section 5),
-and raising it is their file and their decision. A seated viewer holds at most four: its app
+and raising it is their file and their decision. Canari keeps its share under a quarter of it. A seated viewer holds at most four: its app
 connection (HTTP/2, the API calls ride it too), its WebSocket and that socket's upstream leg (both
 held by every signed-in member already), and one segment fetch in flight (short: the host buffers it).
-**24 x 4 = 96, under a fifteenth of the budget** - the cap is set by bandwidth long before
+**24 x 4 = 96, well inside that quarter** - the cap is set by bandwidth long before
 connections. Our own nginx keeps the image default (`worker_connections` is not set in
 `Dockerfile.frontend`), and the edge's 4 096 is untouched, as are its `pid /var/run/nginx.pid` and
 `listen 80`, which its healthcheck reads (#2099). `live-segments-route.test.mjs` fails if the cap
-times four ever passes a quarter of 1 500.
+times four ever passes a quarter of the budget.
 
 **WAF.** The host runs CrowdSec inside its nginx. Up to 24 viewers behind one campus address
 polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that

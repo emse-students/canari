@@ -20,6 +20,8 @@ export function guardUnsavedChanges(
   let released = false;
   beforeNavigate((nav) => {
     if (released || !isDirty()) return;
+    // A shallow navigation stays on the page (a tab, a query), so it leaves nothing unsaved behind.
+    if (nav.shallow && nav.type === 'goto') return;
     if (nav.type === 'leave') {
       Log.d('NAV', 'unsaved changes: the browser asks before the tab closes');
       nav.cancel();
