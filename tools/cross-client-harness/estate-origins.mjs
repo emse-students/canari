@@ -97,3 +97,31 @@ export function estateVerdict(contacted, site, aliases = []) {
   if (strangers.length) return { ok: false, estates, strangers, reason: 'strangers' };
   return { ok: true, estates, strangers, reason: 'ok' };
 }
+
+/**
+ * Whether the ANDROID APP's own bundle is built against `site`, from the rig's record of that build
+ * (`apkbuild.mjs`, joined on the `builtAt` the app serves in `/_app/version.json`).
+ *
+ * WHY THE APP IS NOT JUDGED BY WHAT IT FETCHED. Its API calls go through Tauri's `plugin-http`, over
+ * IPC, so the WebView's resource timeline never names the estate: after a reload A1 listed 250
+ * entries, every one `http://tauri.localhost`, fifty seconds after its PIN (2026-10-27). The timeline
+ * named the estate only when a page happened to load a picture from it, so `pin.mjs` passed on the
+ * feed and refused on an empty `/chat` - a preflight `FAIL` followed by `ok ... unlocked`. The build
+ * record is the fact that does not depend on what the page shows: `a1apk.mjs` grepped that bundle for
+ * the estate, and for production, before it was installed.
+ *
+ * NULL IS A REFUSAL: an APK no build of this rig recorded has a bundle nobody checked.
+ *
+ * @param {{origin?: string, bundleOk?: boolean} | null} record the build record of the running app
+ * @param {string} site the estate the rig reports on
+ * @returns {{ ok: boolean, reason: 'ok'|'unrecorded'|'other-estate'|'bundle-unchecked', origin: string|null }}
+ */
+export function appBundleVerdict(record, site) {
+  if (!record) return { ok: false, reason: 'unrecorded', origin: null };
+  if (record.origin !== site) return { ok: false, reason: 'other-estate', origin: record.origin ?? null };
+  if (record.bundleOk !== true) return { ok: false, reason: 'bundle-unchecked', origin: record.origin };
+  return { ok: true, reason: 'ok', origin: record.origin };
+}
+
+/** The page origin of the Android app's WebView: its bundle, not its traffic, says which estate it is on. */
+export const ANDROID_APP_ORIGIN = 'http://tauri.localhost';
