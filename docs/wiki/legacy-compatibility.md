@@ -156,6 +156,22 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
 
+### No date yet - an explicit slug sent on association creation, by a client older than the derived slug
+
+**Site:** the `explicitSlug` branch of `AssociationsService.create`
+(`apps/social-service/src/associations/associations.service.ts`) and the optional
+`CreateAssociationDto.slug`.
+**What it humours:** since the slug became derived by the server (2026-10-26,
+[associations](frontend/modules/associations.md#the-slug-is-a-technical-id-derived-by-the-server-never-shown-typed-or-edited-user-2026-10-26)),
+the app sends none. An APK or IPA older than that release EMBEDS the old form, which still sends the
+slug its creator typed; the branch validates it (pattern, reserved route words) and refuses it `400`
+when taken, as before, so those builds keep creating.
+**The cost while it stands:** any API caller - not only an old build - may still choose its slug.
+That squatting is NOT new (every client could before), and it ends with the branch.
+**Removal condition:** `minClientVersion` covers the release carrying the derived slug on BOTH stores,
+so no supported client still sends one. Then make the DTO refuse `slug` (or drop it) and delete the
+branch and its tests; the derived path is then the only one.
+
 ### No date yet - a member client older than the admission rule still adds a new person automatically
 
 **Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
@@ -313,6 +329,33 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
+
+### No date yet - the presence ids in a URL
+
+**Two halves, two conditions** ([chat-gateway](services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).
+Since 2026-10-28 the presence read is `POST /api/presence` with the ids in the body; until then it was
+`GET /api/presence?users=<id>,...`, which wrote every watched id into every proxy's access log.
+
+**Server half - site:** `get_presence` and `LegacyGetTally` in `apps/chat-gateway/src/presence.rs`,
+the `get(...)` on the `/api/presence` route in `main.rs`, and the `/api/presence?query-redacted` rule
+of the access-log map (`Dockerfile.frontend`, `access-log-redaction.test.mjs`). **What it humours:**
+every install built before the POST client, which keeps calling the GET until it updates - a store
+build is not reached by a deploy. **Removal condition:** a CLIENT FLOOR AND A MEASUREMENT -
+`minClientVersion` at or above the first stable carrying the POST client, on both estates with both
+stores serving it, AND the gateway's `[presence] legacy GET /api/presence served ...` line absent from
+production for a week (the tally writes nothing for a window nobody called in, so silence is the
+zero). Then delete `get_presence`, `PresenceQuery`, the tally and its `AppState` field, the map rule
+and its test cases; a GET is then answered 405 by axum.
+
+**Client half - site:** `fetchPresence`'s `legacyGet` arm and `legacyRouteAnnounced` in
+`frontend/src/lib/stores/presenceStore.ts`, `serverPresencePost()` in `appVersionCheck.svelte.ts`,
+the `presencePost` field in `appVersion.ts` and in core-service's `version.service.ts`. **What it
+humours:** an estate whose gateway predates the POST - production for the days between a stable's
+store release and its deploy, and any estate rolled back below it. The client reads the capability
+before asking, so it never learns the route by a 405. **Removal condition:** a SERVER VERSION, not a
+client floor - every estate's gateway serves the POST (dev and production both deployed past this
+change, no rollback below it planned). Then the client always POSTs and the capability field goes from
+both sides; a client that no longer reads it is unaffected by a server that still sends it.
 
 ### No date yet - `registerMember` after an accepted Add, for a server older than 2026-10-25
 
@@ -565,6 +608,21 @@ this entry deliberately has no date: a date would be a guess about a platform no
 **Cost of keeping it:** one header read and one cookie read per refresh. The hazard is not cost, it
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
+
+### No date yet - the two paid-form tier codes of #2667, on an embedded build that predates them
+
+**Site:** `providerRefusalMessage` in `frontend/src/lib/associations/paymentRefusal.ts`, read by the
+paid form page (`frontend/src/routes/forms/[id]/+page.svelte`); the codes come from `formTierRefusal`
+(`apps/social-service/src/associations/tier-pricing.ts`).
+**What an older build shows:** the APK and the IPA EMBED the frontend, so a build older than the
+release carrying #2667 does not know `FORM_TIER_NOT_SOLD` (a form granting a tier whose product was
+deleted) or `FORM_TIER_ALREADY_HELD` (a submitter already holding the form's tier): `providerRefusalMessage`
+answers null and the form page shows the server's English `message` instead of the fr/en sentence.
+The refusal itself holds on every build - no money is taken; only the wording differs. Before #2667
+those builds got the shop's codes (`TIER_NOT_RANKABLE`, `PRODUCT_ALREADY_PURCHASED`) and their sentences.
+**Removal condition:** none, nothing on the server humours old builds; the line is right everywhere
+once `minClientVersion` covers the release carrying #2667 (both stores serving it). Do not map the
+codes back to the old ones to cover the gap: those sentences were the wrong ones.
 
 ### Removed 2026-10-22 - the pre-MLS send path; the `content` column and its read arm wait for a migration
 

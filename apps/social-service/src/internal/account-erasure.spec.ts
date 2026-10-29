@@ -6,6 +6,7 @@ import {
 } from './account-erasure';
 import { InternalController } from './internal.controller';
 import {
+  ERASURE_TIER_ORDER,
   ERASED_PINS_SQL,
   ERASURE_ASSOCIATION_LOCK_SQL,
   ERASURE_PROPOSAL_STATEMENTS,
@@ -282,5 +283,25 @@ describe('InternalController.deleteUserData', () => {
     const { controller, postRepo } = make({ workspacesFail: true });
     await expect(controller.deleteUserData('erased', SECRET)).rejects.toThrow(/incomplete/);
     expect(postRepo.manager.transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('the erasure order against the tier paths', () => {
+  const at = (label: string) => ERASURE_ROW_STATEMENTS.findIndex((st) => st.label === label);
+
+  // A settlement locks its checkout row, inserts its purchase record, writes a tag; a closing locks
+  // its record, writes a tag. The erasure must take them in THAT order: records before checkouts
+  // would miss a record still uncommitted and leave it the real id; tags first would deadlock.
+  it('rewrites product_checkouts, then purchase_records, then deletes user_tags - in that order', () => {
+    const positions = ERASURE_TIER_ORDER.map(at);
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect([...positions].sort((x, y) => x - y)).toEqual(positions);
+    expect(ERASURE_TIER_ORDER).toEqual(['product_checkouts', 'purchase_records', 'user_tags']);
+  });
+
+  it('names every table it orders exactly once', () => {
+    for (const label of ERASURE_TIER_ORDER) {
+      expect(ERASURE_ROW_STATEMENTS.filter((st) => st.label === label)).toHaveLength(1);
+    }
   });
 });

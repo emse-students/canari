@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import type {
   IMlsService,
   GroupMeta,
@@ -15,6 +16,7 @@ import {
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
+  isMlsManagerAbsent,
   resolveMlsPublicUrls,
 } from '$lib/mls-client';
 import {
@@ -3291,7 +3293,22 @@ export abstract class BaseMlsService implements IMlsService {
         } catch (refused) {
           // The caller of this round logs and carries on (`syncConnectionAfterWsOpen`), so ending
           // the document is HERE or nowhere: the client in memory is the fresh, unrecorded one.
-          if (refused instanceof MlsStateWriteRefusedError) this.endDocumentAfterRefusedRotation();
+          if (refused instanceof MlsStateWriteRefusedError) {
+            this.endDocumentAfterRefusedRotation();
+          } else {
+            // ANY OTHER FAILURE ENDS THE LIVE SESSION ON THIS DEVICE TOO, into the PIN gate. The
+            // rotation moved this client's device id before its load, while the id on disk is still
+            // the old one (it is recorded only after the rotation's checkpoint): the client in memory
+            // describes an identity nothing recorded. Restoring the old one in place would re-open a
+            // state behind the session's back; the unlock reopens it as the disk holds it. The cause
+            // is named for what it is - a native slot found EMPTY is said so only when the native
+            // side answered that (on Tauri; web has no native slot), never assumed from a failure.
+            reportMlsSessionLost(
+              isMlsManagerAbsent(refused)
+                ? 'identity rotation found no native session'
+                : 'identity rotation failed'
+            );
+          }
           throw refused;
         }
         console.warn(
@@ -4113,6 +4130,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
     return this.delivery.fetchGroupRosters(groupIds);
+  }
+
+  async getRevokedLeaves(groupId: string, identities: string[]): Promise<string[]> {
+    return this.delivery.fetchRevokedLeaves(groupId, identities);
   }
 
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {

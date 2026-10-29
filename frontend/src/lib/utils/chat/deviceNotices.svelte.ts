@@ -23,8 +23,10 @@ import {
   bindHistoryWithheld,
   historyWithheldEntries,
   isWithheldDevice,
+  adoptHistoryRecords,
   adoptHistorySeals,
   historySealedGroups,
+  historyWithheldWritten,
   inheritsWithholding,
   sealHistoryIn,
   noteDeviceAddedByAMember,
@@ -263,12 +265,15 @@ function readStored(userId: string): Stored {
 }
 
 function writeStored(userId: string): void {
-  // SEALS ARE MERGED, NEVER OVERWRITTEN: another tab (or `sealInAccount` for an account this tab
-  // does not hold) may have sealed a conversation in the stored copy since it was read. A seal is
-  // never lifted, so the union is the truth - and this tab adopts it too.
+  // SEALS AND RECORDS ARE MERGED, NEVER OVERWRITTEN: another tab (or `sealInAccount` for an account
+  // this tab does not hold) may have sealed a conversation or withheld a device in the stored copy
+  // since it was read. A seal is never lifted, so the union is the truth; a record is withdrawn only
+  // by what this tab decided (`adoptHistoryRecords`). This tab adopts both.
+  const elsewhere = readStoredHistory(userId);
   const sealedHere = new Set(historySealedGroups());
-  const sealedElsewhere = readStoredSeals(userId).filter((g) => !sealedHere.has(g));
+  const sealedElsewhere = elsewhere.sealed.filter((g) => !sealedHere.has(g));
   if (sealedElsewhere.length > 0) adoptHistorySeals(sealedElsewhere);
+  adoptHistoryRecords(elsewhere.withheld);
   const stored: Stored = {
     pending: [...pending.values()],
     announced,
@@ -282,20 +287,30 @@ function writeStored(userId: string): void {
   };
   try {
     localStorage.setItem(ACCOUNT_KEY.deviceNotices(userId), JSON.stringify(stored));
+    historyWithheldWritten();
   } catch (e) {
     // Shown for this session; only its survival across a reload is lost.
     console.error(`[DEVICE_NOTICE] notices not persisted, a reload will forget them: ${String(e)}`);
   }
 }
 
-/** The seals in `userId`'s stored copy as it is now ({@link writeStored}). */
-function readStoredSeals(userId: string): string[] {
+/** The seals and withheld records in `userId`'s stored copy as it is now ({@link writeStored}). */
+function readStoredHistory(userId: string): { sealed: string[]; withheld: WithheldDevice[] } {
   try {
     const raw = localStorage.getItem(ACCOUNT_KEY.deviceNotices(userId));
-    return raw ? strings((JSON.parse(raw) as Partial<Stored>).historySealed) : [];
+    if (!raw) return { sealed: [], withheld: [] };
+    const parsed = JSON.parse(raw) as Partial<Stored>;
+    return {
+      sealed: strings(parsed.historySealed),
+      withheld: Array.isArray(parsed.historyWithheld)
+        ? parsed.historyWithheld.filter(isWithheldDevice)
+        : [],
+    };
   } catch (e) {
-    console.error(`[HISTORY_WITHHELD] stored seals unreadable, none merged: ${String(e)}`);
-    return [];
+    console.error(
+      `[HISTORY_WITHHELD] stored history record unreadable, nothing merged: ${String(e)}`
+    );
+    return { sealed: [], withheld: [] };
   }
 }
 

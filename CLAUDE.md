@@ -34,7 +34,7 @@
 | What Google Play sees that no gate here does | [tools/play-vitals/README.md](tools/play-vitals/README.md) |
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |
-| Private operations notes (access routes, hosts) | outside the repo, local only: `F:Programmationcanari-private-docs` (never commit) |
+| Private operations notes (access routes, hosts) | outside the repo, local only: `../../canari-private-docs`, relative to the repository (never commit) |
 | Store texts and screenshots, refreshed without personal data | [docs/wiki/store-listings.md](docs/wiki/store-listings.md) |
 | The second estate: isolation, the prod copy, the declared version gap | [dev-environment.md](docs/wiki/infrastructure/dev-environment.md) |
 | The move onto the Portail-etu host, then onto `emse.fr`: the phases, the decisions, the traps | [estate-migration.md](docs/wiki/infrastructure/estate-migration.md) |
@@ -49,7 +49,7 @@
 
 ## **AGENT DIRECTIVES**
 
-- **THIS REPOSITORY IS PUBLIC: no private address, host or account map, no unfixed weakness, no incident detail naming people or accounts, no real person or user id.** Those go to the private folder; docs that guard code keep the generic lesson. `.github/scripts/tests/docs-private-guard.test.mjs` fails `make test-ci-scripts` on a private IP or an ssh alias in a tracked markdown file.
+- **THIS REPOSITORY IS PUBLIC: no private address, host or account map, no unfixed weakness, no incident detail naming people or accounts, no real person or user id.** Those go to the private folder; docs that guard code keep the generic lesson. `.github/scripts/tests/docs-private-guard.test.mjs` fails `make test-ci-scripts` on a private IP, an ssh alias, a workstation path or a hypervisor guest id in a tracked markdown, env template, shell script or ts/mjs comment; infrastructure names come from an out-of-repo denylist (`DOCS_PRIVATE_DENYLIST_FILE`).
 - NO BLIND GREP: never run generic grep or find across the project. Check SESSION STATE first, or ask for exact paths.
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
@@ -71,7 +71,7 @@
 - CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17). Reasoning, measurements and what was refuted go on the wiki page it points at. A long entry is not a thorough one, it is one nobody reads - and that records nothing.
 - ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
-- **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The one standing exception and the installed set are in the private operations notes (WHERE THINGS LIVE); the rule is in [durable-rules](docs/wiki/durable-rules.md).
+- **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The installed set is in the private operations notes (WHERE THINGS LIVE); the rule is in [durable-rules](docs/wiki/durable-rules.md).
 - PROD ACCESS: production, dev and the identity provider run on one shared host reached over SSH. **The aliases, the box map, the shell wiring and the database and identity-provider access routes are in the private operations notes** (WHERE THINGS LIVE) and nowhere in this repository. Either Bash or PowerShell reaches it, but **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost), so a binary pipe goes through Bash.
 
 ## **THE DEVELOPMENT CYCLE - THE COMMANDS, IN ORDER**

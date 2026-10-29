@@ -13,8 +13,12 @@ import {
   noPinOpensState,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  isMlsManagerAbsent,
+  MlsSessionVacantError,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
@@ -655,7 +659,7 @@ export class TauriMlsService extends BaseMlsService {
    *
    * THE NATIVE TWIN OF `WebMlsService.logKeyPackageCensus`, and the reason it exists is that it used
    * to have no twin at all: native printed the census from inside `load_or_create`, which is on the
-   * awaited path of `initialiser_mls` - in front of the first screen. Measured on OXYGEN
+   * awaited path of `initialiser_mls` - in front of the first screen. Measured on the workstation
    * 2026-09-17, 5 groups, 1000-package pool: a cold load costs 24.5 ms with the diagnostic and
    * 12.9 ms without it. The web call site's own docblock already said a thousand deserialised
    * bundles do not belong in front of the connected badge; native was doing exactly that.
@@ -1060,6 +1064,15 @@ export class TauriMlsService extends BaseMlsService {
         console.log(`[MLS][Tauri] Resume reload not applied (${outcome}) - live state kept.`);
       }
     } catch (e) {
+      if (isMlsManagerAbsent(e)) {
+        // NO NATIVE SESSION UNDER A RESUMING ONE: a teardown ran (a sign-out, a failed install or
+        // rotation) and a resume reload never installs a manager. Carrying on would leave a session
+        // on screen whose every MLS command fails, so it is reported - the shell ends it on this
+        // device and reopens it at the PIN gate (`mlsSessionLoss.ts` says why that and not a re-init
+        // or a sign-out) - and the resume sequence is told to stop.
+        reportMlsSessionLost('resume found no native session');
+        throw new MlsSessionVacantError(e);
+      }
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
       // advance, so this must be loud even though it does not abort the resume.
       console.error('[MLS][Tauri] reloadStateFromDisk failed:', e);
@@ -1135,18 +1148,32 @@ export class TauriMlsService extends BaseMlsService {
     // is the two callers that genuinely hold bytes the native side could not have read - the
     // pre-v0.11.0 migration retry and a probe of a candidate key - and they are one-off flows.
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', {
-      userId: this.userId,
-      deviceId: this.deviceId,
-      deviceKeyB64,
-      encryptedState,
-      opts: {
-        legacyPin: legacyPin ?? null,
-        biometricPrompt: keystoreUnlockPrompt(),
-        stateOnDisk: stateOnDisk === true,
-        unattendedKeyRead: unattendedKeyRead === true,
-      },
-    });
+    try {
+      await invoke('initialiser_mls', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        deviceKeyB64,
+        encryptedState,
+        opts: {
+          legacyPin: legacyPin ?? null,
+          biometricPrompt: keystoreUnlockPrompt(),
+          stateOnDisk: stateOnDisk === true,
+          unattendedKeyRead: unattendedKeyRead === true,
+        },
+      });
+    } catch (e) {
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
+      // (by construction, on every exit that did not install); this is the same end through the one
+      // helper every path uses, so the previous account's manager and key cannot be left installed
+      // whatever the native side did. The install's own error is the one that propagates.
+      await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
+        (teardown: unknown) =>
+          console.error(
+            `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
+          )
+      );
+      throw e;
+    }
   }
 
   /**

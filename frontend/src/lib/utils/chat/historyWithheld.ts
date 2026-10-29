@@ -76,6 +76,30 @@ let sealed = new Set<string>();
 let persist: (() => void) | null = null;
 /** Whether the bound being full was said this session - once, not at every record. */
 let fullReported = false;
+/**
+ * The records this session removed ON PURPOSE - a lift, a replacement under a new key, the trim, the
+ * departed bound - by {@link recordKey}, and not yet written: the stored copy still holding one of
+ * them predates the removal, so a merge ({@link adoptHistoryRecords}) does not bring it back. Once
+ * the removal is written ({@link historyWithheldWritten}), a record that re-appears in storage is a
+ * newer fact from another tab and is adopted.
+ */
+let withdrawn = new Set<string>();
+
+/** One record's identity across tabs: conversation, device and the key it entered with. */
+function recordKey(e: WithheldDevice): string {
+  return `${e.groupId}\n${e.identity}\n${e.fingerprint}`;
+}
+
+/** Removes `gone` from the records, remembered as withdrawn ({@link withdrawn}). */
+function withdraw(gone: (e: WithheldDevice) => boolean): number {
+  const before = withheld.length;
+  withheld = withheld.filter((e) => {
+    if (!gone(e)) return true;
+    withdrawn.add(recordKey(e));
+    return false;
+  });
+  return before - withheld.length;
+}
 
 function matches(entry: WithheldDevice, groupId: string, identity: string): boolean {
   return entry.groupId === groupId && sameDeviceIdentity(entry.identity, identity);
@@ -105,7 +129,7 @@ async function trimToBound(leafStillIn: LeafStillIn): Promise<void> {
     gone.add(entry);
     excess--;
   }
-  withheld = withheld.filter((e) => !gone.has(e));
+  withdraw((e) => gone.has(e));
   if (gone.size > 0) {
     console.log(
       `[HISTORY_WITHHELD] ${gone.size} record(s) of conversations no longer held dropped at the bound`
@@ -132,10 +156,10 @@ export async function withholdHistoryFrom(
     return;
   }
   if (withheld.some((e) => matches(e, groupId, canonical) && e.fingerprint === fingerprint)) return;
-  withheld = [
-    ...withheld.filter((e) => !matches(e, groupId, canonical)),
-    { groupId, identity: canonical, fingerprint },
-  ];
+  // The same device under another key: that record is replaced, not kept beside this one.
+  withdraw((e) => matches(e, groupId, canonical));
+  withheld = [...withheld, { groupId, identity: canonical, fingerprint }];
+  withdrawn.delete(recordKey({ groupId, identity: canonical, fingerprint }));
   console.warn(
     `[HISTORY_WITHHELD] no history is answered to ${canonical} in ${groupId.slice(0, 8)}... until a member vouches for it`
   );
@@ -155,7 +179,7 @@ export async function withholdHistoryFrom(
         `[HISTORY_WITHHELD] more than ${MAX_WITHHELD_PER_GROUP} withheld devices left ${groupId.slice(0, 8)}... - the conversation is sealed, no history is answered there to anyone`
       );
     }
-    withheld = withheld.filter((e) => !departed.has(e));
+    withdraw((e) => departed.has(e));
     console.warn(
       `[HISTORY_WITHHELD] ${departed.size} departed record(s) of sealed ${groupId.slice(0, 8)}... dropped`
     );
@@ -184,9 +208,7 @@ async function countIn(
 }
 
 function lift(groupId: string, identity: string, why: string): void {
-  const before = withheld.length;
-  withheld = withheld.filter((e) => !matches(e, groupId, identity));
-  if (withheld.length === before) return;
+  if (withdraw((e) => matches(e, groupId, identity)) === 0) return;
   console.log(`[HISTORY_WITHHELD] ${identity} in ${groupId.slice(0, 8)}... answered again: ${why}`);
   persist?.();
 }
@@ -228,6 +250,34 @@ export function adoptHistorySeals(groupIds: readonly string[]): void {
   if (added.length === 0) return;
   sealed = new Set([...sealed, ...added]);
   console.warn(`[HISTORY_WITHHELD] ${added.length} seal(s) written elsewhere adopted`);
+}
+
+/**
+ * Adds the records another tab wrote to the stored copy since this one read it, with no write of its
+ * own - the caller is writing already. A record this session withdrew is not brought back; one
+ * another tab withdrew comes back from this tab's memory - a merge errs towards withholding.
+ */
+export function adoptHistoryRecords(stored: readonly WithheldDevice[]): void {
+  let adopted = 0;
+  for (const e of stored) {
+    const key = recordKey(e);
+    if (withdrawn.has(key) || withheld.some((h) => recordKey(h) === key)) continue;
+    // ONE RECORD PER DEVICE: the same device under another key here was replaced in another tab -
+    // the stored one is the newer fact, and two would let an approval of either leave the other.
+    withheld = [...withheld.filter((h) => !matches(h, e.groupId, e.identity)), e];
+    adopted++;
+  }
+  if (adopted > 0) {
+    console.log(`[HISTORY_WITHHELD] ${adopted} record(s) written by another tab adopted`);
+  }
+}
+
+/**
+ * Says the records as they stand were written to the stored copy: the removals of this session are
+ * in it now, so what re-appears there later is another tab's newer fact ({@link withdrawn}).
+ */
+export function historyWithheldWritten(): void {
+  withdrawn = new Set();
 }
 
 /**
@@ -339,6 +389,7 @@ export function bindHistoryWithheld(
   sealedGroups: readonly string[] = []
 ): void {
   withheld = [...entries];
+  withdrawn = new Set();
   sealed = new Set(sealedGroups);
   persist = onChange;
   fullReported = false;

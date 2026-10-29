@@ -69,7 +69,7 @@ run() {
   (
     [ -n "$1" ] && export LOCAL_RETENTION_DAYS="$1"
     [ -n "$2" ] && export BACKUP_RETENTION_DAYS="$2"
-    export SSH_LOG="$TMP/ssh.log" PATH="$TMP/bin:$PATH" TMPDIR="$TMP"
+    export BACKUP_SSH_HOST=offsite-stub SSH_LOG="$TMP/ssh.log" PATH="$TMP/bin:$PATH" TMPDIR="$TMP"
     bash "$TMP/repo/infrastructure/backup/backup.sh" >"$TMP/run.log" 2>&1
   ) || { cat "$TMP/run.log"; return 1; }
 }

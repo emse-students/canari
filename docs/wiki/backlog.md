@@ -27,6 +27,62 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Cotisation-disabled follow-ups (after the tier stack lands)
+
+Left by the review of #2584. Start after the tier stack has merged.
+
+- **P2 - a paid form that grants a cotisation still takes money after its association disables
+  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
+  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
+  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
+  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
+  record is written), but the grant is still retried as if it could succeed. Fix it like the
+  product path: refuse opening the payment of a granting form while the association has no
+  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
+- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
+  membership product with a cotisation mode but no stored tag opens a checkout, then ends
+  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
+  operator, privately.
+- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
+  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
+  never one whose tier is no longer a rise when the sweep settles it.
+- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
+  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
+- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
+  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
+  local fresh-database run only - CI never shows it. Make the spec create what it reads.
+- **P3 - retagging a tier leaves the forms that grant the old key behind.** Changing a tier's key
+  does not update the `cotisationVariantKey` of the forms granting the old one: those forms then
+  refuse every new answer (the tier ranks `unranked`) and an answer already in flight ends
+  `paid_not_granted`. Either carry the new key to those forms in the retag's transaction, or refuse
+  the retag while a form still names the old key; the hourly `[PAID_NOT_GRANTED]` line is what
+  names a payment it already caught.
+
+## Display follow-ups to the shop pricing (after the tier stack lands)
+
+Left by the review of #2544. Start after the tier stack (#2544 and its followers) has merged.
+
+- **P3 - two docs claim the settlement's rule for a form grant.** `rankTier`'s and
+  `RankedGrantOutcome`'s comments in `user-tag.service.ts` say a form grant is ranked like a
+  settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
+- **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
+  message (fr, en).
+- **P3 - a cash sale's default price is computed outside `lockBuyerTiers`, one tier stale at worst.**
+  `grantProductPurchase`'s `cashSaleQuoteFor` reads the beneficiary's tiers (`tierFactsOf`, or the
+  grid's `listHeldCotisationTiers`) before `fulfillProductPurchase` takes the buyer's lock, so a tier granted
+  or revoked in the same instant can leave the recorded default one tier off; the tag and the record
+  stay correct, and a cashier is present. Compute the default inside the locked transaction, both
+  branches ([cotisations](cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
+
+## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more - decided by the user on 2026-10-29
+
+A form that grants a cotisation tier and charges for more than the tier (an event, a meal) applies
+the shop's rise rule to the whole answer: a holder of that tier or a dearer one is refused before
+any payment, `409 FORM_TIER_ALREADY_HELD` or the shop's codes
+([cotisations](cotisations.md#rising-to-a-higher-tier)). **The user confirmed on 2026-10-29 that the
+refusal stays exactly as the review of #2597 built it - no change.** The alternatives that were
+open (sell the rest and skip the grant, split the payment from the grant) are not to be built.
+
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
 **Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
@@ -256,6 +312,11 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
+
+A production count of legacy tier tags without a consistent issuer is owed to the operator after
+the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
+
 ## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix MERGED (#2647), read `PASS`, not shipped
 
 On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
@@ -343,6 +404,33 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
     correct.
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
+
+## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
+
+- The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
+  the target is measured from the gaps already seen, so a gap longer than all of them can still run
+  the buffer dry once before the target grows.
+- The row fails a viewer on ANY stall after its first delivery gap. A producer whose gaps keep
+  growing for a while (3.6 s, then 4.7 s, then 4.75 s) can therefore fail the row while the player
+  keeps its contract exactly.
+- The mid-fetch stall defect found on `1.5.1-alpha.6` is fixed separately and is not this question;
+  this row asks only which rule the board judges by.
+- Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
+  the first gap (stricter than the contract), and align the row's definition and its judge in
+  `liverows.mjs` with that decision. Neither is changed until it is taken.
+
+## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
+
+- Audited after the revoked-leaves 400 ([durable-rules](durable-rules.md#a-validators-bound-is-derived-from-the-generator-of-the-value-and-its-spec-uses-a-value-of-real-length)):
+  every other `sanitizeQueryValue` field in chat-delivery fits its generator today (UUIDs, 64-hex
+  user ids, device ids of at most ~87 characters).
+- The latent gap: a user id is minted under "visible ASCII, no ':'" with NO length bound
+  (`core-service/src/users/user-id.ts`), the device id EMBEDS it, and the services refuse a user id
+  over 128 or outside `[a-zA-Z0-9_.:@-]`, and a device id outside social-service's
+  `[A-Za-z0-9_-]{1,128}`. A user id of more than ~40 characters, or holding `.` or `@`, mints a
+  device that some route refuses. Holds today only because the provider's ids are 64-hex.
+- Owed: one shared shape for the user id and the device id, asserted by the minting side and every
+  validator, rather than four regexes that agree by accident.
 
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -510,6 +598,16 @@ Two follow-ups of [sessions](sessions.md#an-access-token-is-only-as-alive-as-its
 are in the private operations notes until each ships: token liveness for the services that verify
 the access token themselves, and closing an open socket when its session ends (a separate pull
 request).
+
+## P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)
+
+A tier key derived from its label is kept unique by an association-level advisory lock around the
+sibling read and the insert ([cotisations](cotisations.md#a-new-tiers-key-is-derived-from-its-label-server-2026-10-26)).
+Nothing in the schema enforces it: an explicit key from an older client still goes through a
+read-then-insert check without that lock. Proposed for after the 1.5.0 stable, needing the user's
+yes because it is a migration: a partial unique index on `(associationId, variantKey)` for
+`membership` products (plus one for the base tier's null key), after counting the duplicates it
+would refuse.
 
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
@@ -1289,6 +1387,10 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
   device events taken from an account's state while it is being unbound seal their conversations in
   that account's record, for good, by the same rule - the option above would lift those as well;
+- **two tabs of one account merge their records and err towards withholding**: a tab that loaded
+  before another tab lifted a device can write that device back, and after a restart it is withheld
+  again until a member's approval lifts it once more - a cost in availability only, never an answer
+  to a device that should not have one;
 - **the departed bound costs detection**: past it, a conversation is sealed and the records of its
   departed withheld devices dropped, so one of them that later comes back by itself is no longer
   known as withheld there - what it then adds gets no line. History stays closed (the seal); only
@@ -1570,13 +1672,19 @@ key groups, and they are NOT the same question:
   old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
   caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
   re-measured with it.
-- **The revoked device's leaf.** The roster collector (`reconcileDistributionGroupRoster`) does not
-  read the `revoked` answer, so a revoked device's leaf stays in every key group it was in and can
-  read every seed distributed there until the group is re-created. The server now refuses its
-  COMMITS (`validateCommit`, `DEVICE_REVOKED`) and its routing is purged, so it receives nothing new
-  through the delivery service - what is left is the cryptographic half. Owed: the same allowlist
-  there, staged on the published branch like the conversation one; a removal IS a departure, so it
-  rotates, as it should.
+- **The revoked device's leaf - BUILT 2026-10-27, not shipped.** The key-group roster pass now asks
+  `POST mls/groups/:groupId/revoked-leaves` which of the leaves it keeps belong to a revoked device
+  and removes exactly those by device, staged on the published branch
+  ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+  Owed: its run on dev, and the row that revokes a device of a community member and reads the key
+  group's tree afterwards. **Its first dev run found every request refused 400** (the identity ran
+  through the generic 128 bound, which every real identity exceeds) - fixed 2026-10-28, owed that
+  run again on the fix
+  ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)). It runs on every community load; the revoking device itself does not
+  trigger a pass (not built). **Its scope is limited by the
+  binding** (a key group's device rows); widening it is a schema change, approved 2026-10-27 and
+  BUILT as its own draft pull request (`dm_revoked_device_groups`, chat-delivery migration 041,
+  written by the revocation's purge), reaching production only with the user's yes at the stable.
 
 ## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
 
@@ -1955,7 +2063,13 @@ visible. The unpark runs inside the WebView's mutex grant, so nothing waits for 
    the app, and a lost update of the sent log.
 2. **The teardown and the job fence.** Manager, device key and register are reset in one hold, and
    every background job is fenced by the generation it started under. Closes state resurrected by a
-   background job after sign-out.
+   background job after sign-out. **The one-hold teardown of the manager and the key is BUILT
+   (2026-10-27, `end_native_session`, [mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27));
+   the generation is what is left.** The native slot has no session generation today: a command issued
+   by a destroyed client A that lands after B's `initialiser_mls` acts on B's manager, since the slot
+   says only `Some` or `None`, never whose. Only the TypeScript side fences it (the holder retires A's
+   client before B's login opens anything). The fence: a generation the install stamps and every
+   command carries, refused typed on a mismatch.
 3. **The register.** The register itself; a native park that writes nothing when nothing changed;
    an unpark that holds no command lock across a decrypt; one native visibility event for the page;
    on Android, the socket paused while hidden; frames in flight tracked in both directions; a pending
@@ -1990,6 +2104,26 @@ docblock, which still calls the join's commit staged.
 
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
+
+## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
+
+Every Tauri command returns `Result<_, String>`, and every code the TypeScript side reads
+(`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, `MLS_MANAGER_ABSENT`) crosses as the string's
+leading token, read by one predicate each (`isKeystoreKeyUnavailable`, `classifyStateLoadFailure`,
+`isMlsManagerAbsent`). Tauri can serialise an error object instead: one `{ code, message }` type for
+every command, decoded into typed errors at the one `invoke` boundary. All codes move in one pull
+request, never one at a time (two conventions would give every reader two shapes)
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
+
+A device identity rotation that fails on every attempt (a disk that refuses every checkpoint, say)
+makes a loop: PIN gate -> unlock -> the key-package round is answered "revoked" -> the rotation fails
+-> the session is lost -> PIN gate. Each lap costs the member one PIN entry and is logged at ERROR
+(`reportMlsSessionLost`); nothing is revoked or erased, so the loop is visible and harmless but not
+broken. Owed: a durable count of consecutive failed rotations for this install that, past a bound,
+stops the unlock with its own typed outcome instead of another lap
+([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -2517,6 +2651,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask a co-tenant of the shared host whether a leftover runner workspace may go** - somebody else's archive; nothing runs from it | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **decide whether the host-update report gets a runner key on the old VMs** (your own; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **confirm whether to decommission the two older project-team VMs** (out of scope and unused) | 1 decision | [estate-migration](infrastructure/estate-migration.md#two-older-project-team-virtual-machines-are-out-of-scope-decided-2026-10-18) |
+| **turn off JavaScript detections on the `canari-emse.fr` zone** (Security > Bots): its injected inline script is refused by the page policy on every dev document, one console error per load; production is not behind Cloudflare. Done when a dev document's console holds no CSP refusal, and the rig's `DEV_EDGE_CSP_EXCEPTION` can go | 1 dashboard toggle | [cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22) |
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
 | **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
@@ -2994,7 +3129,7 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
+**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
 ### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
 
@@ -3246,7 +3381,7 @@ can discriminate, and the lines are to be EXPLAINED where they are read, never s
 
 ### P3 - ONE MAINTENANCE PASS IS ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED
 
-`prune_expired_key_packages` costs **10.08 ms** at a 1000-bundle pool (criterion, OXYGEN; 88 % is
+`prune_expired_key_packages` costs **10.08 ms** at a 1000-bundle pool (criterion, workstation; 88 % is
 `serde_json` decoding, [cold-start](frontend/cold-start.md)) inside `load_or_create`, in front of the
 first screen - NATIVE ONLY. It is maintenance (what it deletes must be deleted and nothing else deletes
 it), so moving it needs a TRIGGER, and a clock is forbidden. **The blocking condition**: name a durable
@@ -3801,22 +3936,13 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 The user decided that every Business is created by Canari's onboarding, never linked from outside ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)). The first production enrolments showed the screen leaves the manager with no next step: the dashboard link answers 404 when signed out, and the Lydia Pro app did not show a Business made by the Provider, even one created with the signed-in person's own phone ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). **Owed, in order:** Lydia's answer on how that Business's holder signs in to its console, and which documents an association gives; then the card rebuilt around the three steps of Lydia's activation e-mail, saying who does what; a "waiting for Lydia" state told apart from "validated", with error 5 of `request/do` as the measured signal; and the existing refuse-or-confirm item on a re-run onboarding below.
 
-**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* **One unmeasured lead, to ask Lydia before building:** `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). Never wired, never tried; test on the sandbox first.
+**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). **Tried on the sandbox and on one production Business (2026-10-27/28): refused with a signature error (444) across every signing variant attempted, both Provider-key and Business-key.** Outcomes-only findings are in [lydia-api](lydia-api.md#6-still-unknown). **The user sent an outcome-only message to the Lydia contact on 2026-10-29**, asking their engineer to check the server-side signature-verification log for one specific sandbox request. **The production sweep (wiring `addcashier` into enrolment) stays OFF until Lydia answers AND one sandbox probe passes with a working signature.**
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 
 **State:** the first real top-up of the Cercle through Canari worked end to end (Lydia state `1`, purchase recorded paid once, delivery to the Cercle `delivered` on attempt 1, balance moved by the amount paid). The screens around it are what is left. **Decided:** (1) a member already holding the highest tier sees NO membership card (the profile page already says they are a member); (2) membership is ONE card with the tiers inside it; (3) a member of a lower tier is offered the rise, and pays the COMPLEMENT, not the full price - **owed first: read what the code does for tiers today** and measure it, since the user does not know; (4) a top-up is chosen with quick amounts plus "other amount" on an in-app keypad - no native `<input type="number">` (browser spinner on desktop, system keyboard on mobile) anywhere in a shop view; (5) no maximum top-up; (6) after a paid Lydia payment the payer returns to the shop with a banner ("+5 EUR credited", "membership active"), and when the Cercle cannot be reached the banner says the payment was received and the credit follows (the retry ladder already exists); (7) no Cercle balance on the card for now (it needs a route on the Cercle's host, which is not ours); (8) the WHOLE shop is in scope (`/shop`, the association page, `ProductPurchaseButton`), with the app's own tokens and the payment apps (Revolut, Lydia, Wero) as the visual reference; product names shown to people are never the technical ones (`balance_topup`), prices follow the locale (`15,00 EUR`). The Lydia card page itself is Lydia's and cannot be changed.
 
 **Measured and decided the same day (user, 2026-10-26).** (a) The audit (`resolvePurchase`, `grantPurchaseTag`) found that a tier holder pays the FULL price of a sibling tier unless the admin sets the existing preferential price (`memberPriceTag` + `amountCentsMember`), that buying a LOWER tier silently replaced a higher one, and that `variantLevel` (tier order) was NULL for both Cercle tiers. The Cercle admin then set the preferential price by hand (Alcool 30 EUR, 15 EUR for holders of Cotisation): **the complement is the admin's preferential price, nothing is computed automatically**; the server refuses a tier priced lower than or equal to the held one (typed code) and exposes per product `viewerTierRelation` and `viewerDueCents` so the client never recomputes money. (b) **The admin screen "Prix de la cotisation" is unclear** (the preferential-price fields, the tier identifier, the tier order) and the WHOLE Achats tab is in scope for a rework: a rise is described by a fill-in sentence ("a holder of X who moves to Y pays [15] EUR instead of 30 EUR") with a preview of what the member sees, and the order of the tiers is visible. (c) **A TECHNICAL ID IS NEVER SHOWN, NEVER TYPED AND NEVER EDITED BY A PERSON** - a real name is shown instead (the tier's `variantKey`, shown and editable today, is derived from the label at creation and fixed afterwards); the same rule found the id in the title of an association's page and a field to set it at creation of an association, list or institution, which serve no one. **Owed:** the sweep of every screen for a technical id shown or typed (the association page title and the creation form first), then the Achats rework.
-
-### Decision owed to the user - a tier rise ranked on what the checkout decided, and the way a "paid but not granted" payment is closed (proposal, 2026-10-26)
-
-**State accepted until the user decides:** a tier paid for but not granted (a rise that stopped being a rise between the checkout opening and its settlement) is saved with status `paid_not_granted` on `purchase_records` (a `varchar(30)` with no check, so no migration), shown as "Not granted" in the association's purchases list and export, and reported at ERROR by an hourly report. **Two things are NOT built because each needs a migration, and a migration needs the user's yes:**
-
-1. **Rank on what the checkout decided.** Settlement still ranks against the prices at settlement time, so an admin who changes a tier's price between the opening and the settlement can make a payment end unranked. The held tier must be frozen on the checkout row at its opening: a new nullable column on `product_checkouts`, and the same migration widens the `status` check of that table if a new state is needed. Settlement then reads the frozen value and never a price an admin can edit.
-2. **Closing a marked payment.** Nothing clears `paid_not_granted` once the money was refunded or the tier granted by hand. Proposal: an admin action in the purchases list that records WHICH of the two happened (refunded or granted), writes a durable row (who, when from the server's own insert, which outcome) and leaves the mark as history; the hourly report then counts only the marked payments with no closing row. No clock decides anything: a marked payment stays reported until a person records its outcome.
-
-**Owed:** the user's yes on the column, and on the closing action; then one pull request with its migration and a real-PostgreSQL test of both.
 
 ### P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)
 
@@ -3871,6 +3997,8 @@ Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's 
 ### P3 - a read mark for a salon that no longer exists is retried forever
 
 Seen on most rows of the `1.5.0-alpha.1` replay (2026-10-27): every load on W1 and W2 posts `POST /api/channels/<id>/read-mark` for a deleted salon, gets `404`, and `salonReadMarkQueue.ts` logs `[READ] salon mark ... not delivered - kept, and asked again at the next load`. A `404` there is an ANSWER - the salon is gone - and never a reason to retry: the mark must be dropped on that status (typed by status, never by message) and the drop logged once. Today it is dirt on nearly every row; a fix-after-stable item, not something to narrate.
+
+**FIXED AT THE SOURCE 2026-10-29, owed its reading.** The read-mark route now answers `404 CHANNEL_NOT_FOUND`, `ChannelService.advanceReadMark` turns exactly that into `ReadMarkTargetGoneError`, and the flush drops the mark with one `[READ] salon mark ... dropped - the server answered that it no longer exists` (an unnamed 404, a 403 or a transport failure stay owed); a `channel.deleted` frame forgets the owed mark before any POST ([offline-and-weak-network](frontend/offline-and-weak-network.md)). **Owed:** a pre-release carrying it on dev, then KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP re-run - the FIRST run still posts the old mark once (one 404 and the drop line), every later run none. Delete this row then. Not done: a `403` (a member no longer allowed into the salon) still keeps its mark owed; not seen in any log.
 
 ### P3 - an admin who never joined a private salon is not told when it is created or deleted
 
@@ -3927,10 +4055,6 @@ MiGallery's offsite backup copy still lands on the old VM. **DECIDED 2026-10-18:
 ### P2 - A DEPLOY NO LONGER ERASES THE LOGS, BUT NO ARCHIVE HAS BEEN SEEN YET (merged 2026-10-08)
 
 **Owed after the next deploy of each estate:** one `.log.gz` per container in `~/deploy-log-archive/<project>/` and `max-size` on a recreated container ([logging](infrastructure/logging.md)). Authentik's hand-run stack is bounded only when next recreated and is not archived.
-
-### P3 - docker-prune is built for the Portail-etu host but not installed there
-
-**Pruned by hand 2026-10-14, 80 % -> 67 %** (unused images and build cache; three empty orphan volumes removed with the user's go). The cron is still not installed. Measured 2026-10-10: the host's disk was filling at a rate that crosses the threshold within days. **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
@@ -3991,7 +4115,6 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 
 - **Standing release authority.** The lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release has been read on a phone and nothing blocks, informing the user each time. It replaces the 2026-10-01 rule (the stable only on the user's explicit go). Still asked first: a direct production change (a hand edit on the host, a production setting such as `minClientVersion`), a data migration or backfill, any deletion of data. Rule: [durable-rules](durable-rules.md#release-and-ci---cicd).
 - **`minClientVersion` is `1.2.7` on production AND dev since 2026-10-17** (the user's gesture; it was `1.0.3` from 2026-10-11): Graine G2-5's refusal of an arriving v1 seed is unblocked ([Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28)), and the `1.2.1` key-group epoch floor is met.
-- **Docker prune on the shared host: authorised above 75 % disk, images and build cache ONLY, never a volume.** This overrides the no-install-without-DSI-agreement rule for that one case and no other ([the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there)).
 - **No native camera access, anywhere.** The new-post composer and the chat each get ONE "Ouvrir la camera" entry that opens the in-app CanaReel camera; the gallery picker stays. This replaces the chat's `capture` inputs ([chat](frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). The media's retention class follows its DESTINATION: a post takes the post class, a published reel `reel` (30 days), a chat send `chat-reel` (30 days, [reels-in-chat](frontend/modules/reels-in-chat.md#91-decided---the-ui-target-is-snapchat-user-2026-10-09)). Not built.
 - **CanaReels in chats is a chantier, RC-0 to RC-11, and RC-0 (the measurement, no code) comes first** ([reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
 - **The Pixel 6a is the user's personal phone: observation only.** No install, reset, sign-in or driving by an agent; a reading on it is the user's own look ([device-verification](device-verification.md)). The bench is the Mi 9T and the iPhone 12.

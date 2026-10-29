@@ -57,6 +57,27 @@ describe('MessagingController - POST mls/sender-mismatch', () => {
     );
   });
 
+  it('prints no full user id in any field, and keeps the two devices apart', () => {
+    const alice = 'a1'.repeat(32);
+    const bob = 'b2'.repeat(32);
+    controller.reportSenderMismatch(alice, `web-${alice}-mh9x2k1q-a7c3`, {
+      groupId: 'g-1234',
+      path: 'live',
+      kind: 'user',
+      envelopeUserId: bob,
+      envelopeDeviceId: `tauri-${bob}-mh9x2k1q-0z9y`,
+      verifiedIdentity: `${bob}:tauri-${bob}-mh9x2k1r-1111`,
+    });
+
+    const line = warn.mock.calls[0][0] as string;
+    expect(line).not.toContain(alice);
+    expect(line).not.toContain(bob);
+    expect(line).toContain('reporter=a1a1a1a1:web-a1a1a1a1-mh9x2k1q-a7c3');
+    expect(line).toContain('envelope=b2b2b2b2:tauri-b2b2b2b2-mh9x2k1q-0z9y');
+    // The claimed and the verified device of one person still print differently.
+    expect(line).toContain('verified=b2b2b2b2:tauri-b2b2b2b2-mh9x2k1r-1111');
+  });
+
   it('names an unreadable credential and an absent envelope device, rather than printing blanks', () => {
     controller.reportSenderMismatch('alice', 'web-alice-1', {
       groupId: 'g-1234',

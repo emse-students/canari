@@ -185,6 +185,94 @@ the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every 
 plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
 next paragraph says.
 
+## WP-R3 as built - the poster as a thumbnail (D45, 2026-10-27)
+
+Front only. `GET spaces` already returned `poster`; the Reservations list was `SectionHub` rows,
+which carry no image, so the spaces now have their own list, `SpaceList.svelte` (a real link per row,
+the same look, a 48 px box leading it).
+
+- **`SpacePoster` gained `thumb`.** The same component decrypts the banner and the thumbnail (one
+  decryption path, one blob cache); `thumb` makes it a small square and defers its work until the
+  box is NEAR the viewport (`nearViewport`, once - the picture stays once drawn). A list of twenty
+  spaces therefore decrypts what is on screen and what is just below it, never twenty posters on
+  arrival. A failed one is an icon with no sentence in a thumbnail's room.
+- **A space with no poster keeps the calendar glyph in the same box**, so names line up. The line
+  under the name is who runs it, then the column count FROM TWO (a single column says nothing, D44 -
+  as the entity tab's list since WP-R1).
+- **Not done**: the entity tab's own list of spaces is a different list (the organiser's) and is
+  untouched.
+
+**Proof.** `SpaceList.thumb.svelte.test.ts`: three posters, nothing downloaded on mount, one
+downloaded when its row nears the viewport and it is the right one; the decrypted picture is drawn
+in its row; a space with no poster fetches nothing and keeps a glyph. Control: without the
+`nearViewport` gate, the first test fails (three downloads on mount). **Not yet seen** on a phone.
+
+## WP-R4 as built - the painted week (D49, 2026-10-27)
+
+Front only: the painter writes the same `PUT resources/:id/availability`, the stored lines are
+unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint (`WeekPainter`),
+"En clair" (the weekly lines, to read and to type exact times in), the dated lines apart, closures.
+
+- **One model: the editor's `rows`.** The painter, the templates and the typed lines all edit the
+  same `rows`, so they cannot disagree and the save, the dirty flag, the 24/7 warning and the D29
+  refusal (`StrandedBookings`, each booking with its cancel) are untouched. The painter reads
+  `weekRunsOf(rows)` and writes `paintRows(...)`.
+- **RUNS, not cells** (`lib/bookings/availabilityPaint.ts`, pure): per weekday, the merged open
+  `[start, end)` minutes. A gesture is 30 min (Q-R11) but an edge typed at 18:45 stays 18:45 when
+  something else is painted; only the part a rectangle covers changes. A run is written back through
+  `fromStoredLines`, so Friday 22:00-24:00 plus Saturday 00:00-02:00 is ONE line again; the days are
+  written Monday last because Monday's morning is Sunday night's tail.
+- **One gesture, no brush**: pressing a closed cell opens the rectangle, pressing an open one closes
+  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); the keyboard and
+  screen readers use the typed lines, and each day column is named with its hours.
+- **A line the editor refuses** (a start equal to its end) is not drawn as a run and is never
+  normalised by a paint or a template: it stays in the typed lines, flagged, until fixed. The
+  painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
+  its height is clamped (30 to 40 rem). **The keyboard's route is the typed lines below**, said in
+  the hint under the painter.
+- **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
+  Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
+  Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
+  without a confirmation: nothing is saved until the button, and leaving warns.
+- **Dated lines have their own list** and the per-line "type" select is gone (a line is weekly or
+  dated by the list it sits in). Not built: hiding the week under the event template, as the mockup
+  draws - the painted week stays visible.
+
+**Proof.** `availabilityPaint.test.ts` (round trips incl. a night and a Sunday night, merge, split,
+off-grain edges kept, to 24:00, the same rows back when nothing changes, mode from the pressed cell,
+templates, dated lines kept) and `AvailabilityEditor.painter.svelte.test.ts` (templates, a drag over
+days, a close splitting a run, a night as two stored halves, one cell, dated lines kept) on the real
+editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
+readings owed.
+
+## WP-R6 as built - the settings in plain words (D51, Q-R13, 2026-10-27)
+
+Front only: no setting is added or removed, the draft and the PATCH are unchanged.
+
+- **Titles, as Q-R13 drew them**: L'essentiel / Quand peut-on reserver ? / Qui peut reserver, et que
+  demande-t-on ? / Regles de reservation / Donnees (accents in the messages). D35's five sections and
+  their order stay.
+- **Each title carries the section's CURRENT answer on a line below it** (`FormSection` gained an
+  optional `summary`, rendered OUTSIDE the header button, which it describes through `aria-describedby`; the heading wraps the button and the button holds only spans; `lib/bookings/spaceSummaries.ts`, pure over the
+  draft, so it follows an unsaved change). "When" reads the mode (steps of N min, M at most, or fixed
+  slots) and the column count from two; "who" reads audience, names, discoverability and the number
+  of questions; the other three keep a fixed hint.
+- **Two fields moved to "who"** (Q-R13): the people ceiling (from the collapsed rules) and the
+  after-booking information (from "General"). The collapsed rules' badge stopped counting the ceiling
+  (`activeRuleCount`), since it is always in view now. The data section gained a badge with the
+  retention (`7 j`), the rules badge is unchanged.
+- **Not done**: the questions stay their own card (`FormQuestionsSection`, shared with forms) right
+  after "who" instead of being merged into it, so the title "...et que demande-t-on ?" sits over the
+  audience block and the card follows it; the numbered tiles of the mockup are not drawn; the radio
+  "choice" cards of the mockup are the existing segmented controls and toggle. The wording of
+  options other than titles is untouched.
+
+**Proof.** `spaceSummaries.test.ts` (each line, an unsaved change, fixed slots and columns, a
+half-typed step), `SpaceEditor.sections.svelte.test.ts` (the mounted editor: titles, a line under
+each, the two fields in "who" and absent elsewhere, the line following a click, the two last
+sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling no longer counted).
+`paraglideMessages.test.ts` for the strings. **Not yet seen** at 390 and 1280 or at 200 % text.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to

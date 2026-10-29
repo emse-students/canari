@@ -2293,9 +2293,71 @@ whose whole identity is in that list, by device (`removeMemberDevice`), after th
 fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
 candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
 so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
-`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
-collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
-question from the refresh's cost ([backlog](../backlog.md)).
+`[STRAY] ... NOT removed` and nothing is staged).
+
+**Key groups too, since 2026-10-27.** `group-rosters` never answers a key group (its roster is
+social-service's), so the key-group roster pass (`reconcileDistributionGroupRoster`) asks its own
+question: `POST mls/groups/:groupId/revoked-leaves` with the leaves the user diff KEEPS (never this
+device's, never a departing user's), answered only to an admitted member of the group, only about
+identities whose user is BOUND TO THAT GROUP (a device row or a seat in it - anybody else's pair is
+answered "not revoked"), throttled per user, the user half without case. It removes the named
+leaves the FRESH tree still holds by device (`removeMemberDevice`, same published-branch check,
+its base read from the scope), after the departures. An unanswered question removes no device that
+pass and says so - never read as "none revoked". **The question is asked again only when the leaves
+asked about changed** since the last answered pass on that group in this session; otherwise that
+answer is reused. A device revoked while a tree stands still is therefore seen at the next
+session's first pass - the convergent pass this always relied on. The read runs under the `read`
+head deadline (`DEADLINE_MS.read`), because it runs inside the scope's serialised roster pass: a
+hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The server says a
+converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
+
+**Each identity is validated as TWO values, never as one** (`parseLeafIdentity`,
+`chat-delivery-service/src/utils/sanitize.ts`): exactly one colon, and each half under the rule that
+half is stored under (`[a-zA-Z0-9_.:@-]{1,128}`, untrimmed). Until 2026-10-28 the whole pair went
+through the generic 128-character allowlist, and a real identity is longer: the device id EMBEDS its
+user (`BaseMlsService.generateDeviceId`, `<platform>-<user>-<base36 time>-<base36 rand>`), so a
+64-hex user gives 147 characters on the web and 149 on a Tauri build. Every request was refused 400
+and the pass logged `could not ask ... no device removed this pass` - the mechanism was inert in the
+field while its specs, written with `bob:phone-1`, were green. `sanitize.leaf-identity.spec.ts` now
+builds identities in the generator's shape and reads the generator's source, so the two cannot drift
+again.
+
+**ONE RULE ON BOTH SIDES, AND A MALFORMED LEAF COSTS ONLY ITSELF** (2026-10-29). A leaf identity is
+whatever a credential in the tree says, so a single crafted credential - a space, a non-ASCII
+letter, a 200-character half - used to make the server refuse the WHOLE batch with 400, and with it
+the revocation answer about every other leaf of that key group, for every member. Now:
+
+- the client sends only what `isAddressableLeafIdentity` (`mls-client/leafIdentity.ts`) accepts, and
+  `revokedLeafCandidates` says the count it left out (`[GRAINE] ...: N leaf/leaves outside the
+  leaf-identity rule ...`, never the identities); a legacy BARE leaf names no device and is left out
+  silently, a known shape;
+- the server SKIPS an identity outside the rule and counts it (`malformed=N`, at warn, since a current
+  client never sends one), still answering the rest; a body that is not a list, or over the 1000 cap,
+  is still a 400;
+- both run every case of `libs/contracts/leaf-identity.cases.json`, and each half's pattern is
+  asserted equal to `libs/contracts/device-id.json`.
+
+The four log fields that carry a leaf identity (`[SENDER_MISMATCH] verified=`, the
+`[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`, `[COMMIT] external_leaf_foreign leaf=`) go
+through `sanitizeLeafLogValue` (`cutLeafIdentity`, `utils/log-repeat.ts`): the user id cut to 8
+characters as every other line prints a user - in the user half AND inside the device half, which
+embeds it (`web-<user>-<time36>-<rand>`) - and the rest of the device kept, since it is what tells
+two devices of one person apart. Any other run of 64+ hex characters in a device half is cut too,
+since a crafted device can carry somebody else's id. The user/device pairs those four lines print
+as two fields (`reporter=` of all three reports, `envelope=` of `[SENDER_MISMATCH]`, `sender=` of
+`external_leaf_foreign`) go through `sanitizeDevicePairLogValue`, the same masking. No full user id
+reaches these four lines (owner decision, 2026-10-29). Other lines of the service still print user
+ids their own way; this claim is about these four.
+
+**Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
+the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge
+deletes** (2026-10-27): the device deletion (`DELETE mls/devices/...`, the one purge that revokes)
+writes one `dm_revoked_device_groups` row per KEY group the device held, `(groupId, userId,
+deviceId)`, in the transaction that deletes its device rows, and the question binds that exact
+device through it. Not a status on the device row, which every routing and admission path reads. A
+row ends with the group (`GROUP_OWNED_TABLES`) and with the account's erasure - never on a commit's
+declared `removes`, which the server cannot prove. A row that outlives its leaf answers only about a
+leaf no tree holds.
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
 commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
@@ -2558,12 +2620,80 @@ once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 
 | `IDENTITY_MISMATCH` | `mismatch` | rotates, as before | none |
 
 **On a phone, an owner record comes first.** `mls.bin` is one file per install, so `initialiser_mls`
-writes `mls.owner` (the account id) each time a state OPENS, and `delete_mls_state` removes both. When
-a load fails and the record names ANOTHER account, `TauriMlsService._initImpl` throws
-`SavedStateOfAnotherAccountError` before any branch above runs - nothing re-sealed, rotated or
-written - and the gate (`device_holds_other_account`) withholds the reset that would delete that
-account's state. No record is absence of proof and changes nothing. The browser keeps one state per
-account and has no record.
+writes `mls.owner` (the account id) each time a state OPENS, and a state reset
+(`terminer_session_mls` with `sweepState`) removes both. When a load fails and the record names
+ANOTHER account, `TauriMlsService._initImpl` throws `SavedStateOfAnotherAccountError` before any
+branch above runs - nothing re-sealed, rotated or written - and the gate
+(`device_holds_other_account`) withholds the reset that would delete that account's state. No record
+is absence of proof and changes nothing. The browser keeps one state per account and has no record.
+
+#### The native manager does not outlive its account (2026-10-27)
+
+On a phone the manager is process-wide (`AppState.mls_manager`, with its cached at-rest key
+`device_key`), and a sign-out is an in-app navigation, not a restart. Until 2026-10-27 the slot was
+only ever written `Some`: account A's manager and key stayed installed into account B's session, and a
+FAILED `initialiser_mls` of B left them in place. The guarantee now:
+
+- **One teardown, one hold.** `end_native_session` (`concurrency.rs`) takes
+  `foreground_checkpoint_lock`, then the manager mutex (the device-key mutex inside it), then
+  `mls_bin_write_lock`, and under that one hold empties the slot, clears the key, clears the
+  warm-process mark (`live_manager_in_process`) and - for a reset - sweeps `mls.bin` and every file
+  built from it (`remove_mls_state_held`). Poisoned locks are taken anyway: a teardown that refused
+  would leave the previous manager installed. The manager is dropped after the locks are released, and
+  nothing under the hold calls into the JVM or the WebView.
+- **One command, one helper.** `terminer_session_mls { reason, sweepState }` is the command, and
+  `endNativeMlsSession` (`lib/utils/nativeMlsSession.ts`) the only caller: the MLS holder's retirement
+  (sign-out, account switch - after the final checkpoint, since it needs the manager) and reset (a
+  stopped or failed login, a revoked device), both inside `whenRetired`, which the next login awaits;
+  a failed `initialiser_mls`; `removeMlsState` and the factory wipe (with the sweep). `clear_app_data`
+  also ends it natively before it wipes. A sign-out keeps `mls.bin` for the account's next sign-in.
+- **A failed install leaves the slot empty by construction.** `initialiser_mls` creates an install
+  guard before its first fallible step; every exit that does not reach the install (an `Err`, a panic)
+  runs the teardown when the guard drops.
+- **An absent manager is a typed refusal.** Every MLS command reads the slot through
+  `live_manager` / `live_manager_mut` (`state.rs`) and answers `MLS_MANAGER_ABSENT`, read on the
+  TypeScript side by `isMlsManagerAbsent` - never the sentence. A command waiting on the manager mutex
+  during a teardown gets that code once it is released; it never acts on the previous manager and never
+  waits for a new one. A resume reload into an empty slot is refused the same way: it refreshes a live
+  manager and never installs one.
+- **A LOST MLS SESSION ENDS THE LIVE SESSION ON THIS DEVICE AND REOPENS IT AT THE PIN GATE - it
+  never signs out.** Two paths meet it: a resume whose reload answers `MLS_MANAGER_ABSENT`
+  (`MlsSessionVacantError`, which stops the resume sequence), and a failed `rotateDeviceIdentity`
+  during a live session - reported as an empty slot only when the native side answered
+  `MLS_MANAGER_ABSENT`, as a failed rotation otherwise (a full disk; web has no native slot). Both
+  call `reportMlsSessionLost` (`lib/mls-client/mlsSessionLoss.ts`, at ERROR); the shell answers with
+  `reopenAtPinGate`: `endLostSessionImpl` stops the socket, the timers and the conversations, retires
+  the client WITHOUT a final checkpoint (it no longer describes what is installed) and ends the native
+  session (`lost session`), then the PIN gate opens for the same account. A login or a recovery in
+  flight is STOPPED by it, as by a sign-out: its abort carries `'lost session'`, its next stage check
+  throws `LoginStoppedBySignOutError` (`by: 'lost session'`), and the client retires on its end, which
+  the gate's next login awaits - so a rotation failing in a login's connection sync no longer lets that
+  login run on into group discovery. NOT `clearAuth`: a lost MLS
+  session is a local fact, not a 401/403, and a sign-out would revoke the server session and the
+  identity provider's, clear the restore key, the push registration and the shares - and an offline
+  user could not sign back in. NOT a re-initialisation either: re-installing in place would choose an
+  identity and a key on the user's behalf - the stored device id is still the old one after a failed
+  rotation - where the unlock reopens the disk state through every gate it has.
+- **A sign-out with no live session still retires the holder's client.** The PIN gate's recovery
+  opens the state with the old PIN before its PIN change; when the change fails, the gate's exit finds
+  no session, and the opened manager and key are ended through the same retirement.
+- **A recovery in flight is tracked as a login is** (`loginInFlightSettled`, `loginInFlightAbort`): a
+  sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
+  (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
+  longer land after the native session was ended.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
+  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
+  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
+  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
+  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
+- **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
+  device's exit) logs at DEBUG.
+- **Open: the slot has no session generation** - a command of a destroyed client landing after the
+  next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+
+The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
+which the holder drops with its account, and the WASM module itself holds no manager or key.
 
 #### v2 - the browser seals with WebCrypto, every platform reads it (2026-10-12)
 

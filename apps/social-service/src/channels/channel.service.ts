@@ -5561,7 +5561,12 @@ export class ChannelService implements OnApplicationBootstrap {
         ? Math.max(at, serverAt as number)
         : at;
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
+    if (!channel) {
+      // NAMED, so the client can drop the mark it owes on this answer and only this one: a client
+      // keeps a mark durably until the server takes it, and a salon deleted while one was owed was
+      // asked again at every load, for ever (`salonReadMarkQueue.ts`).
+      throw new NotFoundException({ code: 'CHANNEL_NOT_FOUND', message: 'Channel not found' });
+    }
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
