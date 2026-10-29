@@ -94,10 +94,18 @@ export function linkedTierName(
   product: AssociationProduct,
   siblings: readonly AssociationProduct[]
 ): string | null {
+  return linkedTier(product, siblings)?.name ?? null;
+}
+
+/** The sibling tier product `linkedTierName` names, or null (same rules). */
+function linkedTier(
+  product: AssociationProduct,
+  siblings: readonly AssociationProduct[]
+): AssociationProduct | null {
   if (!product.memberPriceTag || product.memberPriceTierKey === undefined) return null;
   return (
-    siblings.find((s) => s.type === 'membership' && s.variantKey === product.memberPriceTierKey)
-      ?.name ?? null
+    siblings.find((s) => s.type === 'membership' && s.variantKey === product.memberPriceTierKey) ??
+    null
   );
 }
 
@@ -130,8 +138,9 @@ export function preferentialDueCents(product: AssociationProduct): number | null
  * checkout charges a qualifying buyer (`fixedPriceFor`); who qualifies stays the server's decision.
  *
  * A tag-linked price shows only when the server named its tier (`linkedTierName`): a link it could
- * not read applies no preferential price server-side, so announcing one would be false. Null for a
- * grid (it replaces the fixed pricing) or a free amount.
+ * not read applies no preferential price server-side, so announcing one would be false; and only when
+ * that tier has a single price, since an unrankable one is refused every rise. Null for a grid (it
+ * replaces the fixed pricing) or a free amount.
  */
 export function memberOfferLabel(
   product: AssociationProduct,
@@ -143,8 +152,12 @@ export function memberOfferLabel(
   if (preferentialDueCents(product) !== null) return null;
   const amount = formatAmount(member, product.currency);
   if (!product.memberPriceTag) return m.shop_member_offer_cotisants({ amount });
-  const tier = linkedTierName(product, siblings);
-  return tier === null ? null : m.shop_member_offer_tier({ amount, tier });
+  const tier = linkedTier(product, siblings);
+  // A linked tier with no single price (unpriced, or gridded) cannot be ranked (`hasFixedPrice` in
+  // social-service `tier-pricing.ts`): its holders are refused every rise as `unranked`, so nobody
+  // can ever pay this member price and announcing it would be false.
+  if (tier === null || tier.priceMatrix != null || tier.amountCents === null) return null;
+  return m.shop_member_offer_tier({ amount, tier: tier.name });
 }
 
 /**

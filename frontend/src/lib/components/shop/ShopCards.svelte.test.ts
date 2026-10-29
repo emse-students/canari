@@ -111,6 +111,36 @@ describe('MembershipCard', () => {
     expect(row.querySelector('button')?.hasAttribute('disabled')).toBe(true);
     expect(document.body.textContent).toContain(m.shop_members_only_hint());
   });
+
+  // Opus review of #2546: a free-amount tier row had no picker, so its button stayed disabled.
+  it('gives a free-amount tier row a picker capped at the max, and buys at the chosen amount', () => {
+    const free = product({
+      id: 'soutien',
+      name: 'Soutien',
+      type: 'membership',
+      amountCents: null,
+      allowCustomAmount: true,
+      customAmountMinCents: null,
+      customAmountMaxCents: 1000,
+      viewerTierRelation: 'none',
+    });
+    cmp = mount(MembershipCard, { target: document.body, props: { tiers: [free] } });
+    flushSync();
+    const row = document.querySelector('[data-tier-row]')!;
+    const buy = () =>
+      [...row.querySelectorAll('button')].find(
+        (b) => b.textContent?.trim() === m.shop_product_type_membership()
+      )!;
+    expect(buy().hasAttribute('disabled')).toBe(true);
+    const chips = [...row.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].filter(
+      (b) => b.textContent?.trim() !== m.shop_amount_other()
+    );
+    // 5 and 10 EUR fit under the 10 EUR maximum; 20 and 50 do not.
+    expect(chips).toHaveLength(2);
+    chips[0].click();
+    flushSync();
+    expect(buy().hasAttribute('disabled')).toBe(false);
+  });
 });
 
 describe('ProductCard', () => {

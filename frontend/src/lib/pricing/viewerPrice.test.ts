@@ -104,7 +104,7 @@ describe('preferentialDueCents', () => {
 });
 
 describe('memberOfferLabel', () => {
-  const base = tier({ id: 'prod-base', variantKey: null, name: 'Cotisation', amountCents: 0 });
+  const base = tier({ id: 'prod-base', variantKey: null, name: 'Cotisation', amountCents: 300 });
   const etudiant = (overrides: Partial<AssociationProduct> = {}) =>
     tier({
       id: 'prod-etu',
@@ -123,6 +123,21 @@ describe('memberOfferLabel', () => {
     expect(memberOfferLabel(etudiant({ memberPriceTierKey: 'cercle' }), siblings)).toBe(
       m.shop_member_offer_tier({ amount: formatAmount(500, 'eur'), tier: 'Cotisation' })
     );
+  });
+
+  // Opus review of #2546: an unpriced (or gridded) base tier cannot be ranked, so its holders are
+  // refused every rise as `unranked` and nobody can pay the member price linked to it.
+  it('says nothing when the linked tier has no single price', () => {
+    const linked = etudiant({ memberPriceTierKey: 'cercle' });
+    const unpriced = [{ ...siblings[0], amountCents: null } as AssociationProduct];
+    const gridded = [
+      {
+        ...siblings[0],
+        priceMatrix: {} as AssociationProduct['priceMatrix'],
+      } as AssociationProduct,
+    ];
+    expect(memberOfferLabel(linked, unpriced)).toBeNull();
+    expect(memberOfferLabel(linked, gridded)).toBeNull();
   });
 
   it('words a price with no linked tier as the cotisant price', () => {

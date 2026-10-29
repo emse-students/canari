@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AssociationProduct } from '$lib/associations/api';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import AmountPicker from '$lib/components/shop/AmountPicker.svelte';
   import ProductPrice from '$lib/components/shop/ProductPrice.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
   import { gridPriceIsProvisional, gridRefuses } from '$lib/pricing/viewerPrice';
@@ -45,6 +46,14 @@
   function membersBlocked(tier: AssociationProduct): boolean {
     return tier.membersOnly && !tier.viewerIsCotisant;
   }
+
+  /** A tier sold at a free amount (no fixed price) is bought at the amount its row's picker holds. */
+  function freeAmount(tier: AssociationProduct): boolean {
+    return tier.allowCustomAmount && tier.amountCents === null;
+  }
+
+  /** The amount chosen in each free-amount tier row, by product id, in cents. */
+  let customAmounts = $state<Record<string, number | undefined>>({});
 </script>
 
 <CardTile fallbackIcon={productFallbackIcon('membership')} {accentColor}>
@@ -55,31 +64,41 @@
     {:else}
       <ul class="divide-cn-border divide-y">
         {#each tiers as tier (tier.id)}
-          <li
-            class="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-            data-tier-row
-          >
-            <div class="min-w-0">
-              <p class="text-text-main truncate text-sm font-medium">{productDisplayName(tier)}</p>
-              <ProductPrice product={tier} size="row" siblings={allProducts} />
-              {#if gridRefuses(tier)}
-                <p class="text-xs text-amber-700 dark:text-amber-400">
-                  {m.shop_price_unavailable_hint()}
+          <li class="flex flex-col gap-3 py-3 first:pt-0 last:pb-0" data-tier-row>
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-text-main truncate text-sm font-medium">
+                  {productDisplayName(tier)}
                 </p>
-              {:else if gridPriceIsProvisional(tier, signedIn)}
-                <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
-              {/if}
-              {#if membersBlocked(tier)}
-                <p class="text-xs text-amber-700 dark:text-amber-400">
-                  {m.shop_members_only_hint()}
-                </p>
-              {/if}
+                <ProductPrice product={tier} size="row" siblings={allProducts} />
+                {#if gridRefuses(tier)}
+                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                    {m.shop_price_unavailable_hint()}
+                  </p>
+                {:else if gridPriceIsProvisional(tier, signedIn)}
+                  <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
+                {/if}
+                {#if membersBlocked(tier)}
+                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                    {m.shop_members_only_hint()}
+                  </p>
+                {/if}
+              </div>
+              <ProductPurchaseButton
+                product={tier}
+                customAmountCents={freeAmount(tier) ? customAmounts[tier.id] : undefined}
+                disabled={gridRefuses(tier) || membersBlocked(tier)}
+                class="shrink-0"
+              />
             </div>
-            <ProductPurchaseButton
-              product={tier}
-              disabled={gridRefuses(tier) || membersBlocked(tier)}
-              class="shrink-0"
-            />
+            {#if freeAmount(tier)}
+              <AmountPicker
+                bind:valueCents={customAmounts[tier.id]}
+                minCents={tier.customAmountMinCents}
+                maxCents={tier.customAmountMaxCents}
+                currency={tier.currency}
+              />
+            {/if}
           </li>
         {/each}
       </ul>
