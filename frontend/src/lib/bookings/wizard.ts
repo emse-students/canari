@@ -10,6 +10,7 @@
  * Pure, so the payload, the problems and the fixed-slot cutting are table tests.
  */
 import type { AudienceCondition } from '$lib/forms/api';
+import { m } from '$lib/paraglide/messages';
 import type {
   CreateSpaceFields,
   Discoverability,
@@ -34,6 +35,22 @@ export const STEP_CHOICES = [15, 30, 60] as const;
 export const MAX_DURATION_CHOICES = [30, 60, 90, 120, 180, 240, 360, 480] as const;
 /** How long one fixed slot lasts. */
 export const SLOT_LENGTH_CHOICES = [15, 20, 25, 30, 45, 60, 90, 120] as const;
+/** The slot length a new fixed-slot space starts with, in the wizard and on a mode switch. */
+export const DEFAULT_SLOT_MINUTES = 30;
+
+/** A duration in the reader's words: "30 min", "2 h", "1 h 30". */
+export function durationLabel(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (h === 0) return m.bookings_wizard_minutes({ minutes: rest });
+  return rest === 0
+    ? m.bookings_wizard_hours({ hours: h })
+    : m.bookings_wizard_hours_minutes({ hours: h, minutes: rest });
+}
+
+/** Durations as the options of a `Select`: the minutes on the wire, the words on screen. */
+export const durationChoices = (values: readonly number[]) =>
+  values.map((v) => ({ value: String(v), label: durationLabel(v) }));
 
 /** What the three steps bind. */
 export interface WizardDraft {
@@ -71,7 +88,7 @@ export function newWizardDraft(name: string): WizardDraft {
     slotMode: 'step',
     stepMinutes: 30,
     maxMinutes: 120,
-    slotMinutes: 30,
+    slotMinutes: DEFAULT_SLOT_MINUTES,
     restricted: false,
     audience: {},
     nameVisibility: 'occupied',
@@ -141,9 +158,11 @@ export function wizardPayload(
       ...(draft.poster ? { poster: draft.poster } : {}),
       slotMode: draft.slotMode,
       // A slots space carries no step: the server clears both, and the draft never sends them.
+      // It carries its slot length instead (migration 116), the one the lines were cut with, so
+      // the painter opens slots of it even once the week is emptied.
       ...(step
         ? { stepMinutes: draft.stepMinutes, maxSteps: draft.maxMinutes / draft.stepMinutes }
-        : {}),
+        : { slotMinutes: draft.slotMinutes }),
       audience: draft.restricted ? draft.audience : null,
       nameVisibility: draft.nameVisibility,
       discoverability: draft.discoverability,

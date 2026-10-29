@@ -36,6 +36,14 @@ export const MAX_AVAILABILITY_EXCEPTIONS = 100;
 export const MAX_PERSONAL_SPACES = 20;
 export const MAX_RESOURCES_PER_SPACE = 60;
 
+/**
+ * The length of one fixed slot a 'slots' space may store (migration 116): the creation wizard's
+ * choices span it (`SLOT_LENGTH_CHOICES`, 15 to 120 minutes), and the CHECK
+ * `booking_spaces_slot_minutes` holds the same pair.
+ */
+export const SLOT_MINUTES_MIN = 15;
+export const SLOT_MINUTES_MAX = 120;
+
 /** A wall time `HH:MM` or `HH:MM:SS`, `24:00` included (the end of a day). */
 export const WALL_TIME = /^(([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?|24:00(:00)?)$/;
 /** A calendar date's shape; whether it EXISTS is checked by `isCalendarDate`. */
@@ -125,6 +133,18 @@ export class SpaceSettingsDto {
   @Min(1)
   @Max(96)
   maxSteps?: number | null;
+
+  /**
+   * How long one fixed slot lasts, on a 'slots' space only (a step space carrying one is refused
+   * `slot-shape`); null = not stored, the painter infers it from the lines. Absent on a switch to
+   * 'step' = cleared by the service.
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(SLOT_MINUTES_MIN)
+  @Max(SLOT_MINUTES_MAX)
+  slotMinutes?: number | null;
 
   @IsOptional()
   @IsIn(['names', 'occupied'])

@@ -47,7 +47,7 @@
   let counters = $state<WeekCounters | null>(null);
   let exporting = $state(false);
   let exportError = $state('');
-  let upcoming = $state<{ reload: () => Promise<void> } | null>(null);
+  let upcoming = $state<{ reload: () => Promise<boolean> } | null>(null);
   let week = $state<{ reread: () => Promise<void> } | null>(null);
 
   const oneColumn = $derived(space ? columnsHidden(space.name, space.resources) : false);

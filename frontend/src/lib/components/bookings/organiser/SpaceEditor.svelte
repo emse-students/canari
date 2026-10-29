@@ -30,7 +30,9 @@
     updateSpace,
     type ManagedResource,
     type ManagedSpace,
+    type SlotMode,
   } from '$lib/bookings/api';
+  import { DEFAULT_SLOT_MINUTES, durationChoices, SLOT_LENGTH_CHOICES } from '$lib/bookings/wizard';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import { columnsHidden } from '$lib/bookings/columns';
@@ -120,6 +122,38 @@
   const zones = $derived(timeZoneChoices(draft.timeZone));
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
+  /** The slot length a painted slot opens: the SAVED one too, null when none is stored. */
+  const savedSlotMinutes = $derived(space.slotMode === 'slots' ? space.slotMinutes : null);
+  /**
+   * The slot lengths offered: the wizard's. A slots space created before the length was stored
+   * (migration 116) is offered "read from the slots" too, which keeps it unstored.
+   */
+  const slotLengthOptions = $derived([
+    ...(space.slotMode === 'slots' && space.slotMinutes === null
+      ? [{ value: '', label: m.bookings_slot_length_inferred() }]
+      : []),
+    ...durationChoices(SLOT_LENGTH_CHOICES),
+  ]);
+
+  /**
+   * The mode switch. Turning a SAVED step space into fixed slots chooses a slot length at once
+   * (the wizard's default, changed in the field below), so the switch stores one; going back to the
+   * saved mode restores the saved length, so a switch undone leaves nothing unsaved.
+   */
+  function selectMode(mode: SlotMode) {
+    Log.d('BOOKINGS', `space mode=${mode} saved=${space.slotMode}`);
+    draft.slotMode = mode;
+    if (mode === 'slots') {
+      draft.slotMinutes =
+        space.slotMode === 'step'
+          ? String(DEFAULT_SLOT_MINUTES)
+          : space.slotMinutes === null
+            ? ''
+            : String(space.slotMinutes);
+    } else if (space.slotMode === 'step') {
+      draft.slotMinutes = '';
+    }
+  }
 
   function problemOf(field: NumberField | 'name'): string | undefined {
     const p = problems[field];
@@ -295,12 +329,22 @@
         { key: 'slots', label: m.bookings_mode_slots() },
       ]}
       value={draft.slotMode}
-      onSelect={(k) => (draft.slotMode = k)}
+      onSelect={selectMode}
     />
     <p class={CONTROL_HINT_CLASS}>
       {draft.slotMode === 'step' ? m.bookings_mode_step_hint() : m.bookings_mode_slots_hint()}
     </p>
   </div>
+  {#if draft.slotMode === 'slots'}
+    <Select
+      id="space-slot-length"
+      label={m.bookings_wizard_slot_length()}
+      hint={m.bookings_slot_length_hint()}
+      value={draft.slotMinutes}
+      options={slotLengthOptions}
+      onValueChange={(v) => (draft.slotMinutes = v)}
+    />
+  {/if}
   {#if draft.slotMode === 'step'}
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Input
@@ -379,6 +423,7 @@
         timeZone={space.timeZone}
         stepMinutes={savedStep}
         fixedSlots={space.slotMode === 'slots'}
+        slotMinutes={savedSlotMinutes}
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
         onDirty={(d) => (dirtyResources[resource.id] = d)}

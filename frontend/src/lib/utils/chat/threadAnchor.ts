@@ -102,6 +102,36 @@ export function isPinnedToBottom(metrics: ThreadScrollMetrics): boolean {
   return metrics.scrollHeight - (metrics.scrollTop + metrics.clientHeight) < THREAD_BOTTOM_SLACK_PX;
 }
 
+/** What a change of the soft keyboard may do to the thread (`keyboardChangeResponse`). */
+export interface KeyboardChange {
+  wasOpen: boolean;
+  isOpen: boolean;
+  /** The composer's text field holds focus - BEFORE this change too, since a rise fires no focus. */
+  composerFocused: boolean;
+  /** Whether the reader was at the live end BEFORE the change. */
+  isNearBottom: boolean;
+}
+
+/**
+ * WHETHER A KEYBOARD RISING OR FALLING TAKES THE THREAD TO ITS LAST MESSAGE.
+ *
+ * **A KEYBOARD RISING FOR THE COMPOSER IS THE COMPOSER BEING TAKEN UP, whether or not a focus event
+ * came with it.** Focusing the field already goes to the end (`ChatArea`), from any distance. But an
+ * Android WebView keeps the field FOCUSED when the keyboard is put away (Back, Gboard's arrow), so the
+ * next tap on it raises the keyboard with no focus event at all - and this used to follow only a
+ * reader within {@link THREAD_BOTTOM_SLACK_PX} of the bottom. A reader a little higher kept their
+ * `scrollTop`, the pane lost the keyboard's height at its bottom edge, and the last messages ended
+ * behind the keyboard (Mi 9T, 1.5.1-alpha.7, 2026-10-29: 138 px from the bottom before the rise,
+ * 483 after; the owner's report on 1.5.0). So the rise answers like the focus does.
+ *
+ * A keyboard FALLING moves only a reader at the bottom - one reading history is left where they are.
+ */
+export function keyboardChangeResponse(change: KeyboardChange): 'follow-bottom' | 'stay' {
+  if (!change.wasOpen && change.isOpen && change.composerFocused) return 'follow-bottom';
+  if (change.wasOpen && !change.isOpen && change.isNearBottom) return 'follow-bottom';
+  return 'stay';
+}
+
 /**
  * WHAT A NEW MESSAGE MAY DO TO THE READER'S POSITION.
  *

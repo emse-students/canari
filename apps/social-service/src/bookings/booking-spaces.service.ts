@@ -25,6 +25,8 @@ import { mayManageSpace, type Actor } from './bookings.service';
 import {
   MAX_PERSONAL_SPACES,
   MAX_RESOURCES_PER_SPACE,
+  SLOT_MINUTES_MAX,
+  SLOT_MINUTES_MIN,
   type AvailabilityDto,
   type CreateResourceDto,
   type CreateSpaceDto,
@@ -54,6 +56,7 @@ export const SPACE_SETTING_KEYS = [
   'slotMode',
   'stepMinutes',
   'maxSteps',
+  'slotMinutes',
   'nameVisibility',
   'discoverability',
   'audience',
@@ -234,6 +237,19 @@ export class BookingSpacesService {
         ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps ?? 0) >= 1
         : next.stepMinutes === null && next.maxSteps === null;
     if (!stepShape) throw new BadRequestException({ code: 'step-shape' });
+    // The mirror (`booking_spaces_slot_minutes`): a slot length only on a slots space, in range.
+    const slotShape =
+      next.slotMinutes === null ||
+      (next.slotMode === 'slots' &&
+        Number.isInteger(next.slotMinutes) &&
+        next.slotMinutes >= SLOT_MINUTES_MIN &&
+        next.slotMinutes <= SLOT_MINUTES_MAX);
+    if (!slotShape) {
+      this.logger.debug(
+        `[BOOKINGS] slot-shape refused mode=${next.slotMode} slotMinutes=${next.slotMinutes}`
+      );
+      throw new BadRequestException({ code: 'slot-shape' });
+    }
     if ((next.maxMinutesPerPeriod === null) !== (next.quotaPeriod === null)) {
       throw new BadRequestException({ code: 'quota-pair' });
     }
@@ -283,6 +299,9 @@ export class BookingSpacesService {
       space.stepMinutes = null;
       space.maxSteps = null;
     }
+    // And a step space no slot length: a switch to 'step' that does not name one clears it. One the
+    // body DOES name on a step space is refused (`slot-shape`), never dropped in silence.
+    if (space.slotMode === 'step' && dto.slotMinutes === undefined) space.slotMinutes = null;
   }
 
   /**
@@ -298,7 +317,13 @@ export class BookingSpacesService {
     if (!(await mayManageSpace(this.associations, owner, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
-    const space = this.spaces.create({ ...owner, slotMode: 'step', stepMinutes: 30, maxSteps: 4 });
+    const space = this.spaces.create({
+      ...owner,
+      slotMode: 'step',
+      stepMinutes: 30,
+      maxSteps: 4,
+      slotMinutes: null,
+    });
     this.applySettings(space, dto);
     await this.assertSettingsValid(space);
     // Parsed before the transaction, so a malformed line refuses the creation as a 400 and nothing

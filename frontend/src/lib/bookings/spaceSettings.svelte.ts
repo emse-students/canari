@@ -55,6 +55,12 @@ export interface SettingsDraft extends Record<NumberField, string> {
   timeZone: string;
   privateInfo: string;
   slotMode: SlotMode;
+  /**
+   * A 'slots' space's slot length in minutes, chosen from the wizard's list (so never out of
+   * range); `''` = not stored (a space created before migration 116), whose painter reads it
+   * from the lines. Not sent on a step space.
+   */
+  slotMinutes: string;
   nameVisibility: NameVisibility;
   discoverability: Discoverability;
   audience: AudienceCondition | null;
@@ -91,6 +97,7 @@ export function draftFromSpace(space: ManagedSpace): SettingsDraft {
     timeZone: space.timeZone,
     privateInfo: space.privateInfo ?? '',
     slotMode: space.slotMode,
+    slotMinutes: text(space.slotMinutes),
     nameVisibility: space.nameVisibility,
     discoverability: space.discoverability,
     audience: $state.snapshot(space.audience ?? null),
@@ -156,6 +163,8 @@ export function settingsFromDraft(
     slotMode: draft.slotMode,
     stepMinutes: step ? num('stepMinutes') : null,
     maxSteps: step ? num('maxSteps') : null,
+    // The mirror: a step space stores no slot length, so a switch to step clears it.
+    slotMinutes: step || draft.slotMinutes === '' ? null : Number(draft.slotMinutes),
     nameVisibility: draft.nameVisibility,
     discoverability: draft.discoverability,
     audience: draft.audience,
