@@ -3711,11 +3711,16 @@ export const PHONE_COLD_BOOT = [
  * of these instead: it claims only an `unexplained` line whose level is one of `levels`, never an
  * entry of `errors` or `warnings`, so a look-alike that accuses still breaks `clean`.
  *
+ * A BUDGET, when given, bounds how many lines the needle forgives in one `ignoringExpectedLog` call:
+ * the number of decisions the row makes that say the sentence. The line past it stays dirt, so a
+ * forgiven sentence said in a loop is still a finding (removal rows, review of 2026-10-29).
+ *
  * @param {string[]} levels the console levels the product writes the sentence at (`log`, `debug`, `info`)
  * @param {RegExp} re the sentence, stamp and level stripped
+ * @param {number} [max] at most this many lines forgiven; unbounded when omitted
  */
-export function atLevels(levels, re) {
-  return { levels, re, toString: () => `${levels.join('|')}: ${re}` };
+export function atLevels(levels, re, max = Infinity) {
+  return { levels, re, max, toString: () => `${levels.join('|')}${max === Infinity ? '' : ` x${max}`}: ${re}` };
 }
 
 /** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
@@ -3752,6 +3757,48 @@ export function forgivingFirstRoutePreloads(rep) {
   );
 }
 
+/** A console level as `atLevels` names it: CDP's `verbose` is a `console.debug`, `warning` a `warn`. */
+const levelName = (level) => ({ verbose: 'debug', warning: 'warn' })[level] ?? level;
+
+/**
+ * THE BUDGET OF EVERY BOUNDED `atLevels` NEEDLE, COUNTED WHERE A REPEAT IS STILL VISIBLE: the
+ * timeline. `unexplained` cannot count - `report` de-duplicates it on the text with the clock
+ * stripped, so a sentence said in a loop is ONE line there. The timeline keeps a repeat and collapses
+ * only the double surfacing of one call (within `SAME_EVENT_MS`, compared here on the sentence alone,
+ * since the two copies of a `console.debug` arrive as `debug` and `verbose`).
+ *
+ * Each needle said more often than its `max` gives back ONE dirt line naming both counts and the
+ * first copy past the budget - so `clean` breaks and the reader sees which sentence looped. A report
+ * with no timeline (a hand-built one) is counted on `unexplained`.
+ *
+ * @returns {string[]} lines for the `unexplained` bucket, `level: [said N times, budget M] sentence`
+ */
+function overBudget(rep, needles) {
+  const bounded = needles.filter((n) => n && typeof n === 'object' && !(n instanceof RegExp) && Number.isFinite(n.max));
+  if (!bounded.length) return [];
+  const said = Array.isArray(rep.timeline)
+    ? (() => {
+        const last = new Map();
+        const out = [];
+        for (const t of rep.timeline) {
+          const m = /^(\d\d:\d\d:\d\d\.\d+|\?+|\S+) \[([a-z]+)\] ([\s\S]*)$/.exec(t);
+          if (!m || m[2] === 'ws') continue;
+          const s = stripStamp(m[3]);
+          const at = Date.parse(`1970-01-01T${m[1]}Z`);
+          const prev = last.get(s);
+          if (Number.isFinite(at)) last.set(s, at);
+          if (prev !== undefined && Number.isFinite(at) && at - prev < 250) continue;
+          out.push({ level: levelName(m[2]), s });
+        }
+        return out;
+      })()
+    : rep.unexplained.map((l) => ({ level: levelName(levelOfEntry(l)), s: stripStamp(l.replace(/^[a-z]+:\s*/, '')) }));
+  return bounded.flatMap((n) => {
+    const copies = said.filter((x) => n.levels.includes(x.level) && n.re.test(x.s));
+    return copies.length > n.max ? [`${copies[n.max].level}: [said ${copies.length} times, budget ${n.max}] ${copies[n.max].s}`] : [];
+  });
+}
+
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
   // one list silently compared a different string from the others and every `^`-anchored rule in it
@@ -3776,7 +3823,7 @@ export function ignoringExpectedLog(rep, needles) {
 
   const errors = rep.errors.filter(keep('errors'));
   const warnings = rep.warnings.filter(keep('warnings'));
-  const unexplained = rep.unexplained.filter(keep('unexplained'));
+  const unexplained = [...rep.unexplained.filter(keep('unexplained')), ...overBudget(rep, needles)];
   return {
     ...rep,
     errors,
