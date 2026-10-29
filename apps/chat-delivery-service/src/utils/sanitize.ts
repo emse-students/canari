@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { cutLeafIdentity, cutUserId } from './log-repeat';
 
 /** Allowlist regex for generic query/path values: alphanumerics plus `_`, `.`, `:`, `@`, `-`, up to 128 chars. */
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
@@ -25,6 +26,10 @@ export interface LeafIdentity {
  * is stored under, which is all the allowlist was for (no whitespace, no newline, no quote reaches a
  * log line or a query parameter); the pair's own bound is therefore 128 + 1 + 128.
  * `sanitize.leaf-identity.spec.ts` ties this to the generator's shape so the two cannot drift again.
+ *
+ * **THE CLIENT APPLIES THE SAME RULE BEFORE IT SENDS** (`isAddressableLeafIdentity`,
+ * `frontend/src/lib/mls-client/leafIdentity.ts`): both sides run every case of
+ * `libs/contracts/leaf-identity.cases.json`.
  */
 export function parseLeafIdentity(value: unknown): LeafIdentity | null {
   if (typeof value !== 'string') return null;
@@ -37,17 +42,62 @@ export function parseLeafIdentity(value: unknown): LeafIdentity | null {
 }
 
 /**
- * {@link parseLeafIdentity} for a value the request DEPENDS on: a 400 naming `fieldName` and what a
- * leaf identity is, on anything else.
+ * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value by
+ * {@link cutLeafIdentity}: the user id cut wherever it appears, the device half's embedded copy
+ * included, and the rest of the device kept - it is what tells two devices of one person apart. A
+ * bare user id (a field that may name only the user)
+ * is cut the same way. Anything else reads as {@link sanitizeLogValue} reads it: `invalid`, or
+ * `absent` when nothing was sent - never a refusal.
+ *
+ * A real identity is longer than the 128 bound, so these fields printed `invalid` until 2026-10-28
+ * - the evidence each report exists to carry - and then printed the whole user id.
  */
-export function sanitizeLeafIdentity(value: unknown, fieldName: string): LeafIdentity {
-  const leaf = parseLeafIdentity(value);
-  if (leaf === null) {
+export function sanitizeLeafLogValue(value: unknown, absent = 'unstated'): string {
+  if (typeof value === 'string') {
+    const leaf = parseLeafIdentity(value.trim());
+    if (leaf !== null) return cutLeafIdentity(leaf.userId, leaf.deviceId);
+  }
+  const plain = sanitizeLogValue(value, absent);
+  return plain === absent || plain === 'invalid' ? plain : cutUserId(plain);
+}
+
+/**
+ * A user and a device sent as TWO fields (a reporter's headers, an envelope's sender), printed as
+ * one `user:device` log value the way {@link sanitizeLeafLogValue} prints a leaf: each half through
+ * {@link sanitizeLogValue} first (so a forged newline is still `invalid`), then no full user id left
+ * in either ({@link cutLeafIdentity}). `absentDevice` names a device the caller did not send.
+ */
+export function sanitizeDevicePairLogValue(
+  userId: unknown,
+  deviceId: unknown,
+  absentDevice = 'unstated'
+): string {
+  return cutLeafIdentity(sanitizeLogValue(userId), sanitizeLogValue(deviceId, absentDevice));
+}
+
+/**
+ * The rule a user id is minted under (core-service `src/users/user-id.ts`, the one rule): non-empty
+ * visible ASCII (U+0021 to U+007E) with no ':'. Not a UUID - the id is the identity provider's
+ * subject - so a route that acts on an account by its id holds it to this rule instead.
+ *
+ * NO LENGTH CAP, because the mint rule has none: a cap here stricter than the rule would refuse an
+ * id core-service holds, and the erasure core-service retries would be a 400 for ever. The length
+ * bound is `users.id`'s own `varchar(255)`, which no id that exists can exceed.
+ */
+const MINTABLE_USER_ID_REGEX = /^[\x21-\x39\x3b-\x7e]+$/;
+
+/**
+ * `value` as a user id that obeys the mint rule ({@link MINTABLE_USER_ID_REGEX}), or a 400. WHY: an
+ * account erasure matches Redis keys and members on `<userId>:`, and an id with a ':' would match
+ * another account's prefix.
+ */
+export function sanitizeAccountUserId(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !MINTABLE_USER_ID_REGEX.test(value)) {
     throw new BadRequestException(
-      `${fieldName} must be userId:deviceId - one ':' between two non-empty values of [a-zA-Z0-9_.@-], at most 128 characters each`
+      `${fieldName} must be non-empty visible ASCII with no ':' (the user id rule)`
     );
   }
-  return leaf;
+  return value;
 }
 
 /**
@@ -138,18 +188,15 @@ export function isUnresolvedIdentity(value: string): boolean {
  * {@link SAFE_QUERY_VALUE_REGEX} - which is also what stops a caller writing newlines into a log and
  * forging lines in it.
  *
- * A LEAF IDENTITY (`userId:deviceId`, {@link parseLeafIdentity}) is printed too: three reports carry
- * one (`verifiedIdentity`, `entrant`, `peer`), a real one is longer than the 128 bound, and until
- * 2026-10-28 every one of them printed `invalid` - the evidence each report exists to carry.
+ * A field that carries a leaf identity uses {@link sanitizeLeafLogValue} instead: a real one is
+ * longer than the 128 bound.
  */
 export function sanitizeLogValue(value: unknown, absent = 'unstated'): string {
   if (value === undefined || value === null || value === '') return absent;
   if (typeof value !== 'string') return 'invalid';
   const trimmed = value.trim();
   if (!trimmed) return absent;
-  return SAFE_QUERY_VALUE_REGEX.test(trimmed) || parseLeafIdentity(trimmed) !== null
-    ? trimmed
-    : 'invalid';
+  return SAFE_QUERY_VALUE_REGEX.test(trimmed) ? trimmed : 'invalid';
 }
 
 /**
@@ -202,6 +249,15 @@ export function assertCallerOwnsUserId(
   if (caller !== targetUserId) {
     throw new ForbiddenException(message);
   }
+}
+
+/**
+ * The one form two account ids are compared in: trimmed and lower-cased, the form
+ * `HeaderAuthGuard` verifies the `x-user-id` HMAC against. Comparing a body field with the raw
+ * header instead would let the same account fail, or match, on case alone.
+ */
+export function canonicalUserId(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /** Validates that `value` is a non-empty string of at most 256 characters suitable for display. */

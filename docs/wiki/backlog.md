@@ -27,6 +27,27 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
+
+Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**
+
+**The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
+else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
+AUTHENTICATED caller in canonical form (never a body field; a body `createdBy` naming another account
+is refused 403); the bootstrap routes on it and re-reads it under the seat lock (`writePendingSeats`
+answers `not_creator`). The column is internal: no route returns it. An erasure anonymises it to
+`[deleted]`. No client change. Mechanism: [chat-delivery](services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29).
+
+**The migration.** `042_group_created_by.sql`: `ADD COLUMN IF NOT EXISTS "createdBy" VARCHAR(255)
+NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
+images that read the column, which is the deploy's own order.
+
+**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
+release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+seconds a deploy straddles (row written by the old image, NULL creator) has its creation refused, and
+the user retries. The P3 entry on failed creations below can now be closed on `createdBy` (let the
+recorded creator end a group nobody joined) - not done here.
+
 ## Cotisation-disabled follow-ups (after the tier stack lands)
 
 Left by the review of #2584. Start after the tier stack has merged.
@@ -67,17 +88,21 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
   settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
 - **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
   message (fr, en).
-- **Decision owed to the user - the cash sale's amount.** `grantProductPurchase` records the full
-  `amountCents` by default even when the beneficiary qualifies for the preferential price: decide
-  whether the cash path records the preferential amount.
+- **P3 - a cash sale's default price is computed outside `lockBuyerTiers`, one tier stale at worst.**
+  `grantProductPurchase`'s `cashSaleQuoteFor` reads the beneficiary's tiers (`tierFactsOf`, or the
+  grid's `listHeldCotisationTiers`) before `fulfillProductPurchase` takes the buyer's lock, so a tier granted
+  or revoked in the same instant can leave the recorded default one tier off; the tag and the record
+  stay correct, and a cashier is present. Compute the default inside the locked transaction, both
+  branches ([cotisations](cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
 
-## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more (decision owed, 2026-10-28)
+## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more - decided by the user on 2026-10-29
 
 A form that grants a cotisation tier and charges for more than the tier (an event, a meal) applies
 the shop's rise rule to the whole answer: a holder of that tier or a dearer one is refused before
-any payment ([cotisations](cotisations.md#rising-to-a-higher-tier)). Kept that way by the review of
-#2597 rather than splitting the payment from the grant. Owed: the user's confirmation, or the rule a
-form should follow instead (sell the rest and skip the grant, or a form without the grant).
+any payment, `409 FORM_TIER_ALREADY_HELD` or the shop's codes
+([cotisations](cotisations.md#rising-to-a-higher-tier)). **The user confirmed on 2026-10-29 that the
+refusal stays exactly as the review of #2597 built it - no change.** The alternatives that were
+open (sell the rest and skip the grant, split the payment from the grant) are not to be built.
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
@@ -398,12 +423,152 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
-## P3 - The live viewer's stall line prints its target buffer unrounded (LIVE-STALL-1, `1.5.1-alpha.1`, 2026-10-27)
+## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
 
-- `livePlayer.ts` writes `stalled at <t> (target ${this.policy.targetMs} ms)` and printed
-  `target 4634.20000000298 ms`. The gap and seek lines round the same value (`Math.round`).
-- One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
-- Owed: round it where it is printed, as the other two lines do.
+- The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
+  the target is measured from the gaps already seen, so a gap longer than all of them can still run
+  the buffer dry once before the target grows.
+- The row fails a viewer on ANY stall after its first delivery gap. A producer whose gaps keep
+  growing for a while (3.6 s, then 4.7 s, then 4.75 s) can therefore fail the row while the player
+  keeps its contract exactly.
+- The mid-fetch stall defect found on `1.5.1-alpha.6` is fixed separately and is not this question;
+  this row asks only which rule the board judges by.
+- Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
+  the first gap (stricter than the contract), and align the row's definition and its judge in
+  `liverows.mjs` with that decision. Neither is changed until it is taken.
+- **The first reading with #2679** (`1.5.1-alpha.7`, dev.a062d13, 2026-10-29: `FAIL`, nothing
+  forgiven). The figures come from the new `delivery of N appended of M taken` line, in
+  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T11-27-53-820Z-W4.log`:
+  - W4 took 20 deliveries, 11 of two segments. Gaps were 1.2-4.4 s, and the target buffer rose 3663,
+    3790, 4118, 4223, then 4383 ms, once at each new longest gap.
+  - "Ahead" fell to 0.53-1.10 s before each two-segment delivery and rose to about 4-5 s after it.
+  - ONE stall, at 31.55 s with the target at 4118 ms: the next gap was 4223 ms, longer than the
+    3.99 s ahead after the delivery before it. The following delivery then seeked to the live edge.
+  - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
+    zero-after-first-gap rule. That is this decision.
+  - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
+
+## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
+
+- On LIVE-WEB-2 (dev.dce778b), both web viewers asked for the live's last segment after the end had
+  purged it. Each got `GET /api/media/public/live/<live>/<segment> -> 404` and logged `segment 7 is
+  gone - skipped`. media-service logged the same segment as `asked for and absent`, and the manifest
+  answered `404 LIVE_NOT_FOUND` about a second later.
+- So a viewer loses the end of the live it was watching: the end's purge races the downloads that the
+  last manifest announced.
+- The rig refuses to forgive a segment 404 on purpose (`liveRefusals` in `liverows.mjs`), so
+  LIVE-WEB-2 cannot reach `PASS` until this is fixed.
+- Owed: the purge must not remove segments that a manifest has already announced before its viewers
+  could fetch them. The order should be decided by a fact, such as the viewers' last read, not by a
+  delay. Then rerun LIVE-WEB-2.
+- **Still there on `1.5.1-alpha.7`** (dev.a062d13, LIVE-WEB-2 `FAIL`, 2026-10-29; consoles
+  `STATE_DIR/logs/consoles/LIVE-WEB-2-2026-10-29T11-32-29-348Z-W2.log` and `-W4.log`):
+  - W2 got the segment 404 and logged `delivery of 1 appended of 2 taken (5-6)`. It stalled at 9.75 s
+    and then met the manifest's `404 LIVE_NOT_FOUND`.
+  - W4 never received segments 5 and 6: `3 segments behind - jumping from 4 to 7`. It then took a
+    delivery whose buffer did not cover the play position (`ahead 0.16 -> 0.16 s`). It stalled at
+    9.84 s and again at 14.94 s, without ever naming a delivery gap. That is the row's failed
+    assertion: "stalled 2 time(s) and never named a delivery gap".
+  - All of it falls in the last 2 s before the end, so both viewers lost the end of the live to the
+    purge.
+
+## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
+
+- Read on dev.a062d13 (2026-10-29): neither line appeared in two runs each of KICK-COMMIT,
+  SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
+- On every RMC run (dev.dce778b), each member device logs these lines whenever it reads a fresh
+  community:
+  - `[GRAINE] <device> holds nothing of community <ws> - recorded; N device(s) of <user> still to
+    answer`, once per answering device;
+  - `[GRAINE] absorbed 0/0 seed(s) (0 already held) from <user> in community <ws> - salon(s) none`.
+- Both say the same empty answer again on every read. The rig deliberately leaves them as dirt
+  (`salonNarration` in `salonrows.mjs`: "said once per READ rather than per decision ... fixed at the
+  source"), so no row that creates a community can reach `PASS` while they print.
+- Owed: log the empty answer once per decision (the first time a community's history is found to be
+  empty, or the final verdict over every device), and keep the per-device detail out of the info level.
+  Then rerun KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
+## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
+
+- Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
+  devices enter its key groups by external commit, and every member's client logs this line once per
+  device at `log::error!`.
+- Reading `observe_merged_commit` (`frontend/mls-core/src/device_trust.rs`):
+  - The line fires when a device makes its first entry into a group, by its own commit, under a key
+    that another group pinned, while another device of the same user is already in the tree.
+  - In a CONVERSATION that is the uninvited entry the trust layer exists to report.
+  - In a KEY-DISTRIBUTION group, an external commit is the ordinary door for every member's device.
+    The notice layer already knows this and says nothing (`[DEVICE_NOTICE] self-admitted entry in
+    <group> - not a conversation, nothing to say`).
+  - The Rust observer does not know the group's kind, so it accuses the normal path.
+- Decision from the reading: on a key group the line is NOISE; on a conversation it is correct.
+- Owed: give the observer the group's kind where it is already known, so that it does not log the
+  key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
+  accusing. Pair the change with a test that a conversation's self-entry still logs at error.
+
+## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29)
+
+- The handler logs the redelivery and drops it as idempotent. There are two spellings in
+  `setupMessageHandler.ts`: the conversation one (`[WELCOME] <group>… already held - redelivered
+  Welcome ignored (idempotent)`, already met in the cold-start item further down) and the key-group
+  one (`[WELCOME] key group <group>... already held - redelivered Welcome ignored (idempotent)`).
+- Read on the peer seat (W2) on dev.a062d13:
+  - KICK-COMMIT, runs 3 and 4 (11:53:56, 11:58:00);
+  - SALON-REVOKE-COMMIT, run 2 (12:05:12).
+- The drop is safe, but the delivery is not: a Welcome the device already applied came back, so
+  something upstream either sends it twice or does not see the first one consumed. The lead decided
+  (2026-10-29) that it stays dirt in the rig, under the same rule as the salon rows, and is not
+  forgiven.
+- Owed: name what re-sends a consumed Welcome (a server redelivery whose acknowledgement was lost,
+  or a second mint for the same device), and remove the second send there. The idempotent drop stays
+  as the witness.
+
+## P2 - A minted device's history asks are answered with a second WELCOME_REQ pass 15 s after the first (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
+
+- On the owner seat (W1), console `STATE_DIR/logs/consoles/DEVREVOKE-KEYGROUP-2026-10-29T11-18-04-803Z-W1.log`:
+  - 12:15:15-17: a `WELCOME_REQ` and a `JOIN_REQUEST` for each of the 6 conversations of the new
+    device;
+  - 12:15:30-34: a second `WELCOME_REQ` for the same 6 conversations: same device, same key, no
+    `JOIN_REQUEST`. That makes 12 lines for 6 conversations.
+- Nothing between the two passes changed the device or its key. This is one decision said twice,
+  the per-read class. The lead decided (2026-10-29) that it is a product defect: no budget in the
+  rig.
+- Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
+  same device), and make the request depend on a durable "already asked for this device and key",
+  not on the read.
+
+## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
+
+- On the owner seat (W1), same console as the item above. Two lines repeat together at 12:14:44,
+  12:15:15 and 12:15:28, each time the minted device asks again:
+  - `withholding 1 seed(s) ... 1 of a salon riding another key group, 0 not listed`;
+  - `not answering <requester>'s history ask ... withheld for their salon's roster`.
+- The withholding is correct. Saying it again on every ask, when the roster has not changed, is a
+  decision said three times. The lead decided (2026-10-29) that it is a product defect of the
+  per-read class: no budget in the rig.
+- Owed: say the withholding once per roster state (keyed on what it was decided on), and answer a
+  repeat of the same ask with that one decision.
+
+## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
+
+- Run 1 on dev.a062d13, the peer seat (W2). The console was not kept, because that run predates the
+  rig's kept consoles; these are the run's notable lines from the ledger, with ids replaced:
+
+  ```
+  [12:02:20.450] [RUST::INFO] forget_group: <kg>…, min_epoch=0
+  [12:02:20.451] [MLS] dropped local state for <kg>... (the server refused the external commit, minEpoch=0)
+  [12:02:20.451] [MLS] externalJoin REFUSED for <kg>... (base 0, reason epoch_mismatch, group at 1) - attempt 1/3
+  [12:02:21.045] [GRAINE] could not join the distribution group of community <ws> (refused)
+  ```
+
+- The attempt says "1/3", but no attempt 2 is logged before the give-up 0.6 s later. Either the
+  bounded retry did not run, or it ran without a line, which leaves the give-up unexplained.
+- A refused join on the community's key group leaves the device out of its seed distribution.
+- Related: the two-devices race in the P3 "Two devices of one account joining a community at once"
+  ends in the same give-up line, after three logged attempts.
+- Owed: read which path gave up after one attempt, and log every attempt or the reason the retry
+  stopped. Then rerun SALON-REVOKE-COMMIT with consoles kept.
 
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
@@ -486,6 +651,12 @@ Questions:
 
 The reclaim wait counts against the commit's lock-hold budget (`mayStartCommitRequest`). On a slow
 device or a large bundle, this wait could turn a commit's outcome into "unknown".
+
+**Seen again on `1.5.1-alpha.7`** (dev.a062d13, KICK-COMMIT, 2026-10-29): the owner seat (W1) logged
+`[MLS_LOCK] the commit of cc3dc2a7… has its answer - waiting for the frame applied under its loan`
+at 11:58:00. It is the kick's own commit, so it is not tied to a minted device. The cause is still
+unread. Until it is read, the line stays dirt in the removal rows: it is not added to the rig's
+classifier.
 
 ## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -1509,28 +1680,6 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
-## P2 - addGroupMember can enrol an erased account after the final erasure pass (review of #2258, 2026-10-24)
-
-`MembersController.addGroupMember` (`POST mls/groups/:groupId/members`: a group invite, and the
-opening of a 1:1 DM) is the one admitting writer the seat lock never converted. It reads the
-target's key packages outside any transaction or lock, then writes the roster row, its membership
-interval and `pending` device rows with no seat lock and no `heldKeyPackages`. Nothing refuses an id
-whose account was erased, so any member holding a valid token can POST an erased uuid and recreate a
-roster row naming that person, even after chat-delivery's final erasure pass (no key package is
-left, so no device row; the roster row and interval are enough to name them). Pre-existing, not a
-regression of #2258, which only names it as the second known exception to "every writer that admits
-a device reads its key package under the lock" ([channel-encryption](protocols/channel-encryption.md),
-[account-erasure](account-erasure.md)). Fix direction (from the review): route it through
-`writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
-`heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
-writes and that names no one once its own window ends, or by asking core whether the account exists.
-**Narrowed by ADM-3 (2026-10-25) to the creation bootstrap:** the route now enrols nobody but a
-caller registering ITSELF into an empty roster; for anyone else it re-reads the seat under the seat
-lock through `writePendingSeats` (which reads `heldKeyPackages`) and refuses a person no commit
-admitted (`409 MEMBER_NOT_ADMITTED`). What is left: the bootstrap transaction still takes no seat
-lock and reads no key package under it - an erased account would need its own still-valid token and
-an empty group to use it ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
-
 ## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
 
 `setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
@@ -1570,12 +1719,42 @@ column they mean to write is `roleIds` itself, so they only race each other.
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
-read (by the account while a token is valid, or by a peer through `addGroupMember`) loses the
+read (by the account while a token is valid) loses the
 account's roster row to the roster delete and its device rows to the sweep's cut, but its
 `dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
 pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
-opened inside the erasure window); fix with the P2 above, or by having the sweep tombstone any DM
-whose roster the account was on.
+opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
+account was on.
+
+## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
+
+`dm_groups."isGroup" = false` is what an account erasure reads as "a 1:1 DM" and tombstones whole
+(`deleteUserData`), but nothing bounds such a conversation's roster to two people: the creation and
+the member routes do not read the flag. A conversation flagged one-to-one that holds more than two
+members would be ended for all of them by one member's erasure, instead of losing that member only.
+Owed first: one `GROUP BY` over production counting the roster of every `isGroup = false`
+conversation, then either a bound where the roster is written or the erasure deciding by the roster
+size rather than the flag ([account-erasure](account-erasure.md)).
+
+## P3 - Two Redis facts naming an erased account are outside its erasure's trace sweep (review of #2585, 2026-10-27)
+
+`eraseUserRedisTraces` removes the erased account's FIELDS of `group:parting:<g>`, but a field's
+VALUE is the user id of whoever removed that device, so a parting entry for another person's device
+still names the erased account if it was that device's remover. It ends as every parting entry
+ends, on state: consumed by the removal commit naming the device, cleared when the device is in the
+tree again, or deleted with the group. Separately, the gateway's `addressing:left:<userId>:<deviceId>`
+(the sessions that left, kept so a late refresh cannot resurrect one) is not swept; it carries a TTL,
+so it is gone one presence TTL after the last session left. Owed: either sweep both in
+`eraseUserRedisTraces` (rewriting a parting value to a neutral remover, deleting the left key) or
+record here why their bound is enough ([account-erasure](account-erasure.md)).
+
+## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
+
+A `pending_welcome_notify` frame is removed when its `requesterUserId` equals the erased id byte for
+byte, while every MLS comparison of a user id lowercases ASCII letters. It holds because a minted id
+is in practice a lowercase 64-hex subject and the same string is written everywhere; a mixed-case
+id would need the same ASCII-lowercase comparison. The sentence sits beside the mint rule in
+[account-erasure](account-erasure.md); owed only if the mint rule ever admits a mixed-case id.
 
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
@@ -2137,7 +2316,10 @@ next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreS
 waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
 `abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
-`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED`, `REJECT seat_claim_overtaken`
+(by `seat=committer|admit`, and how many in an ordinary conversation), `reason=no_key_package`
+(`ADMIT_REFUSED`, `REFUSED` and `REJECT committer_not_member`), `[INTERNAL_DELETE] ... route(s) no
+seat stands behind outlived the cuts above and were removed` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
 unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
 (the questions are asked in parallel, one round trip) measured on dev.
 
@@ -2485,8 +2667,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **decide whether a cash sale of a tier records the preferential amount** when the beneficiary qualifies (today the full price by default) | decision | [the entry](#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands) |
-| **confirm the rule for a paid form that grants a tier AND charges for more**: kept refused for a holder of an equal or dearer tier (review of #2597, 2026-10-28) | decision | [the entry](#a-paid-form-that-grants-a-tier-is-refused-to-a-holder-of-an-equal-or-dearer-tier-even-when-it-sells-more-decision-owed-2026-10-28) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
@@ -2502,6 +2682,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask a co-tenant of the shared host whether a leftover runner workspace may go** - somebody else's archive; nothing runs from it | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **decide whether the host-update report gets a runner key on the old VMs** (your own; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **confirm whether to decommission the two older project-team VMs** (out of scope and unused) | 1 decision | [estate-migration](infrastructure/estate-migration.md#two-older-project-team-virtual-machines-are-out-of-scope-decided-2026-10-18) |
+| **turn off JavaScript detections on the `canari-emse.fr` zone** (Security > Bots): its injected inline script is refused by the page policy on every dev document, one console error per load; production is not behind Cloudflare. Done when a dev document's console holds no CSP refusal, and the rig's `DEV_EDGE_CSP_EXCEPTION` can go | 1 dashboard toggle | [cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22) |
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
 | **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
@@ -3847,6 +4028,12 @@ Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's 
 ### P3 - a read mark for a salon that no longer exists is retried forever
 
 Seen on most rows of the `1.5.0-alpha.1` replay (2026-10-27): every load on W1 and W2 posts `POST /api/channels/<id>/read-mark` for a deleted salon, gets `404`, and `salonReadMarkQueue.ts` logs `[READ] salon mark ... not delivered - kept, and asked again at the next load`. A `404` there is an ANSWER - the salon is gone - and never a reason to retry: the mark must be dropped on that status (typed by status, never by message) and the drop logged once. Today it is dirt on nearly every row; a fix-after-stable item, not something to narrate.
+
+**FIXED AT THE SOURCE 2026-10-29, owed its reading.** The read-mark route now answers `404 CHANNEL_NOT_FOUND`, `ChannelService.advanceReadMark` turns exactly that into `ReadMarkTargetGoneError`, and the flush drops the mark with one `[READ] salon mark ... dropped - the server answered that it no longer exists` (an unnamed 404, a 403 or a transport failure stay owed); a `channel.deleted` frame forgets the owed mark before any POST ([offline-and-weak-network](frontend/offline-and-weak-network.md)). **Owed:** a pre-release carrying it on dev, then KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP re-run - the FIRST run still posts the old mark once (one 404 and the drop line), every later run none. Delete this row then. Not done: a `403` (a member no longer allowed into the salon) still keeps its mark owed; not seen in any log.
+
+### P2 - a group joined by Welcome, opened while another conversation was showing, renders an empty transcript
+
+Found by TOK-3 and reproduced by OFF-2 on `1.5.0-alpha.2` (2026-10-27): W2 is added to a group by W1's commit while W2 shows another conversation (its DM with W4). The Welcome is processed, both following messages are decrypted and added (`[ADD_MSG] Batch into "<group>": 1 added, 0 upgraded, selected=true`), and the rig then opens the group. Its pane carries the right heading and the composer, and **no message at all** for 20 s: `renderedParagraphs: 0`, the last marker visible only in the sidebar preview. A reload renders both. With W2 parked on that DM before the row, OFF-2 missed both times (16:31Z and the run after it); in the three runs where W2 was last on a deleted group instead, it rendered. Evidence: the rig ledger, OFF-2 at `2026-10-27T16:31:47Z` (pane outline in the miss line), its screenshot under `STATE_DIR/logs/shots/`, and W2's console beside it. **Owed:** the cause in the client's selected-conversation state across a Welcome; then OFF-2 and TOK-3 replayed with W2 parked on another conversation.
 
 ### P3 - an admin who never joined a private salon is not told when it is created or deleted
 

@@ -14,7 +14,9 @@ import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
 import { declineBiometricOffer } from './chat.mjs';
 import { networkInterfaces } from 'node:os';
-import { estateVerdict, localAliases } from './estate-origins.mjs';
+import { ANDROID_APP_ORIGIN, appBundleVerdict, estateVerdict, localAliases } from './estate-origins.mjs';
+import { apkBuildProvenance } from './apkbuild.mjs';
+import { parseBuildStamp } from './buildstamp.mjs';
 import { GATE_EXPR, KEYPAD_EXPR } from './gate-probe.mjs';
 import { PORTS } from './names.mjs';
 import { SITE } from './site.mjs';
@@ -174,6 +176,25 @@ async function assertLocalEstate(cx) {
   // campaign puts on every wait: enough to show it works, and long enough that a client still silent
   // afterwards is not one whose estate can be established.
   const aliases = localAliases(SITE, networkInterfaces());
+  // THE ANDROID APP IS JUDGED BY ITS BUNDLE (`appBundleVerdict`): its API traffic never reaches the
+  // timeline, so silence there is no evidence either way. What the timeline DOES show still counts:
+  // a production picture beside a dev bundle is a stranger, refused as on the web.
+  if ((await evaluate(cx, 'location.origin')) === ANDROID_APP_ORIGIN) {
+    const raw = await evaluate(cx, `fetch('/_app/version.json').then(function (r) { return r.text(); })`);
+    const { builtAt } = parseBuildStamp(JSON.parse(String(raw))?.version, "the app's own /_app/version.json");
+    const bundle = appBundleVerdict(apkBuildProvenance(builtAt), SITE);
+    const seen = estateVerdict(await read(), SITE, aliases);
+    console.log(`[pin] app bundle built ${builtAt}: ${bundle.reason}${bundle.origin ? ` (${bundle.origin})` : ''}; timeline ${seen.estates.join(' ') || '(no estate, as expected over plugin-http)'}`);
+    if (bundle.ok && seen.strangers.length === 0) return;
+    console.error(
+      !bundle.ok
+        ? `[pin] THIS APP'S BUNDLE IS NOT KNOWN TO BE BUILT AGAINST ${SITE} (${bundle.reason}${bundle.origin ? `: ${bundle.origin}` : ''}). ` +
+            `Rebuild and reinstall it (bun a1apk.mjs) - only a build this rig recorded has a checked bundle`
+        : `[pin] THIS APP LOADED FROM ANOTHER ESTATE (${seen.strangers.join(' ')}) beside its ${SITE} bundle`,
+    );
+    cx.close();
+    process.exit(1);
+  }
   let verdict = estateVerdict(await read(), SITE, aliases);
   for (const deadline = Date.now() + 10_000; verdict.reason === 'silent' && Date.now() < deadline; ) {
     await new Promise((r) => setTimeout(r, 400));

@@ -653,7 +653,11 @@ window with a durable row and a lock:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
   roster write and its eviction record in one transaction), the commit's advance (its admits), an
   account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
-  that transaction, so an accepted commit never leaves a leaf without its seat),
+  that transaction; an external join whose seat cannot be written - a departure in progress, a
+  revoked device, no key package - is refused whole with `NOT_A_MEMBER`, so an accepted external
+  commit never leaves a leaf without its seat; a pending member's commit adds no leaf, since its Add
+  did, and stands with its seat left `pending`, logged `committer seat NOT written` or
+  `REFUSED ... reason=`),
   `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
   registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
   roster re-read under it).
@@ -710,15 +714,13 @@ window with a durable row and a lock:
   the admit is dropped and the commit accepted, since the leaf belongs to an account that is going or
   a device revoked while the Add was in flight, and the accept names it in `refusedAdmits` so the
   committer owes and sends it no Welcome - [mls-protocol](mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)),
-  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
-  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
-  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
-  key package - and removes the route itself. And the creation bootstrap of `addGroupMember` (a
-  caller enrolling ITSELF into an empty roster), which writes the roster row and `pending` seats
-  with no seat lock. Since ADM-3 (2026-10-25) the route enrols nobody else: another person's device
-  rows go through `writePendingSeats` under the seat lock, or the route refuses
-  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
-  pass", narrowed). An account erasure deletes the account's key packages FIRST, in a
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats` - which `addGroupMember` uses for
+  every write, the creator enrolling itself into its empty roster included (`enrol: 'creator'`, the
+  recorded creator alone since migration 042).
+  **One known exception.** The demotion (`deactivateDeviceMembership`, the stale-device cron among
+  its callers), deliberately: it only moves a row that exists to `pending`, without that read - the
+  cron demotes precisely a device with no recent key package - and removes the route itself. An
+  account erasure deletes the account's key packages FIRST, in a
   transaction of its own, so a writer either holds one and the delete waits for it - its row is
   then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
   group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
@@ -727,9 +729,13 @@ window with a durable row and a lock:
   package (`register-device`), and a token issued before the deletion is honoured for up to an
   hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
   device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
-  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
-  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
-  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`, then
+  every route of the account FOUND off the routing sets by its prefix (`findRoutesOfUser`, never off
+  a row) and removed under that group's seat lock when no active seat of the account stands behind
+  it (`removeUnseatedRoutes`) - a 1:1 DM whose tombstone committed before a crash is named by no
+  row, and its route goes all the same. **No device row is deleted outside `eraseSeats`**: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS - a route removed
+  alone would be written back by the next send's reconciliation (`MEMBERS_CACHE_REPAIRED`) - which core starts
   once every token expired, so no republish can follow it - termination is that pass's, never the
   ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
   `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`
@@ -2477,7 +2483,11 @@ repaired**. A bundle travels on the community's distribution group, so every mem
 answer to ANY member's request, and announcing held seeds re-read the salon's history on every online
 member per answer: 18 refetches of one salon in three minutes on a client that had asked for nothing
 (production web console, 2026-10-12, `v1.2.4`). A shortfall that is not
-`already held` is a refusal, which warns or errors on its own line.
+`already held` is a refusal, which warns or errors on its own line. **A bundle that carried no
+seed says no `absorbed` line at all** (2026-10-29): an "I hold nothing" answer or a pure decline
+reaches every member of the key group, so `absorbed 0/0 ... salon(s) none` was one line per member
+per answer to somebody else's ask - a read, not a decision. What such a bundle decides is said where
+it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
 
 **Found by COMM-8**, which asserts that a member granted access to a salon is SEEN to receive its
 seed. That assertion could not hold on any wording, because the only line it could match belongs to
@@ -4250,7 +4260,21 @@ account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, 
 
 - **One launch walks the roster one member at a time**: one roster read and one sealed send per
   member, once per epoch. Once every device the request named has answered (or, when it named none,
-  every tree device of the member), the next member is asked at once, from the answer itself. A
+  every tree device of the member), the next member is asked at once, from the answer itself, and
+  THAT decision is the one line said: `<member> holds nothing of community <ws> on <devices> at
+  distribution epoch N - recorded, every device of <member> on the key group has answered`, naming
+  every device that answered this request. It stops at the member: whether anybody is left is known
+  only after the next roster read, so the walk's own next line says it (`asked <next member>`, `is
+  final at distribution epoch N`, or why it waits). A device answering while a sibling is still to
+  answer moves only the durable record and says nothing (until 2026-10-29 it said `... - recorded; N
+  device(s) still to answer`, one line per device per ask, which the cross-client rig reads as
+  dirt). An ask that ends BEFORE its decision - replaced by a new ask, or dropped with its
+  community - says what it gathered once (`closeHistoryRequest`): `the history ask of community
+  <ws> to <member> ended before its decision (<why>): <devices> recorded as holding nothing at
+  distribution epoch N, <devices> still owed`; one that gathered nothing ends in silence. **Limit:
+  the in-flight ask is in memory**, so one cut short by a restart says nothing of its partial
+  answers; they stay in the durable record, and the next start's `asked <member> (<devices>)` names
+  only the devices not yet recorded. A
   device recorded already never moves the walk again, so a repeated answer cannot loop it.
 - The election skips a member whose devices are all recorded (`exhausted`), and for now a member
   whose ONLINE devices are all recorded (`spent`) - only the unrecorded online devices are named.
@@ -4320,7 +4344,7 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 (per-device keying, a repeated answer is not new, version replacement, malformed records), `proto_fields.rs`
 (`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
 reading - a cold start with every other member online, then a second start: the first shows one
-`holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
+`<member> holds nothing ... on <devices> at distribution epoch N - recorded, ...` per member (each followed by `asked <next member>`) and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
 
 ## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)

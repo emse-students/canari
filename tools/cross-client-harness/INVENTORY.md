@@ -18,12 +18,13 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-113 scripts.
+116 scripts.
 
 | script | what it is |
 |---|---|
 | `a1apk.mjs` | BUILD THE A1 APK AGAINST THE ESTATE `SITE` NAMES (LOCAL OR DEV), INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
 | `a1plan.mjs` | WHAT AN A1 APK BUILD MUST BE FOR THE ESTATE `SITE` NAMES - the decisions of `a1apk.mjs`, pure. |
+| `a1tester.mjs` | RECORDS THE PROVENANCE OF A PLAY TESTER BUILD ON A1, so `pin.mjs` can accept it as a dev build. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
 | `admitrows.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..10 - their table, the waiting seat's route table, |
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
@@ -64,6 +65,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `gaprows.mjs` | THE GAP ROWS OF THE 1.4.1 CAMPAIGN - frames that arrive ahead of their commits, frames delivered |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
+| `grantpanel.mjs` | THE SALON ACCESS PANEL'S OWN "ADD" BUTTON, FOUND FROM ITS SEARCH FIELD - a page-side snippet. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
 | `handrows.mjs` | THE ROWS ONLY A PERSON CAN PLAY, AND HOW THEIR WORD IS WRITTEN - `archive/handrow.mjs`'s pure half. |
 | `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
@@ -127,6 +129,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
 | `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
 | `sweep.mjs` | THE GRAPHICAL PASS, ON A CLIENT THAT IS ACTUALLY RENDERING - every route, one instrument. |
+| `testerbuild.mjs` | WHETHER THE APP A PHONE GOT FROM THE PLAY TESTER PROGRAMME IS THE PRE-RELEASE IT CLAIMS TO BE, AND |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
 | `unread-communities.mjs` | THE TEN-COMMUNITY UNREAD SCENARIO - what a reader's badges, read marks and receipts do while the |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
@@ -255,7 +258,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-67 scripts.
+69 scripts.
 
 | script | what it is |
 |---|---|
@@ -286,6 +289,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/gap-selftest.mjs` | THE GAP ROWS' PULL REWRITES AND JUDGEMENTS, PINNED (`gaprows.mjs`). |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
+| `archive/grantpanel-selftest.mjs` | THE GRANT CLICKS THE PANEL'S OWN "ADD", NEVER A JOIN-REQUEST BANNER'S (`grantpanel.mjs`). |
 | `archive/handrow-selftest.mjs` | THE HAND ROWS' RECORDING, PINNED (`handrows.mjs`). |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
 | `archive/idpform-selftest.mjs` | The rig's sign-in reads the MiConnect terms page as a stage it answers, not as a stall. |
@@ -322,6 +326,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/ssh-selftest.mjs` | WHICH `ssh` FAILURES ARE RETRIED, PINNED (`ssh.mjs` `transportFailure`): the transport's own (255, |
 | `archive/staleness-selftest.mjs` | A ROW MEASURED ON A BUNDLE THE ESTATE NO LONGER SERVES IS ABSENT, NOT FAILING. |
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
+| `archive/testerbuild-selftest.mjs` | THE PLAY TESTER BUILD'S PROVENANCE, PINNED (`testerbuild.mjs`). |
 | `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
 | `archive/verdict-selftest.mjs` | ONE VOCABULARY, READ BY THE RECORDER AND BY THE RECONCILER, OR BY NEITHER. |
@@ -384,4 +389,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-323 scripts in total.
+328 scripts in total.

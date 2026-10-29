@@ -818,7 +818,20 @@ to a higher tier").
   to pick a tier without also being allowed to edit the boutique.
 - `POST /api/associations/:id/products/:productId/grant` -> `grantProductPurchase`: records a
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
-  `MANAGE_PRODUCTS`.
+  `MANAGE_PRODUCTS`. **With no amount given, it records what the checkout would charge that
+  beneficiary** (user, 2026-10-29): their grid cell, or the fixed price through `fixedPriceOf` - the
+  preferential `amountCentsMember` when they qualify by `fixedPriceFor`'s rule. It used to record the
+  full `amountCents` whoever the beneficiary was. **The cashier sees that amount before the sale and
+  may type another**: `GET .../products/:productId/grant-quote?userId=` answers it from
+  `cashSaleQuoteFor`, the one computation the sale itself runs (`priced` with `preferential`,
+  `typed` for a free amount, `not-sold` when the grid closes the combination), and the Achats tab
+  shows it under the amount field, which is always offered and sent as `amountCents` when filled.
+  **A free amount's bounds bind only an amount the cashier TYPES as an override**: the resolved
+  default is a price the checkout charges unchecked too, so a member price under
+  `customAmountMinCents` is recorded - and typing that very quoted amount is the default, not an
+  override. The
+  price is read before the buyer's tier lock, as the grid cell always was: a tier granted to that
+  buyer in the same instant can leave the default one tier stale, never the grant itself.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
   (`MANAGE_MEMBERS`), the name being one of the association's own tier tags, granted like the
   manual add ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
@@ -1195,6 +1208,7 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
+| GET | `/api/associations/:id/products/:productId/grant-quote?userId=` | The amount that grant records for that beneficiary when none is typed (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/purchases/:purchaseId/close` | Record how a `paid_not_granted` payment was settled, `refunded` or `granted` (grants the tier by hand); once per payment (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/webhook-failures/:deliveryId/retry` | Re-fire a failed Cercle delivery (`MANAGE_PRODUCTS`, scoped to `:id`) |
 | DELETE | `/api/associations/:id/webhook-failures/:deliveryId` | Drop a failed delivery settled by hand (`MANAGE_PRODUCTS`) |
