@@ -210,6 +210,10 @@ export class MembersController {
   /**
    * The group-creation bootstrap: `caller` registers ITSELF into a group whose roster is still empty
    * - the creator, before anyone else exists. The one enrolment the member-add route still writes.
+   *
+   * UNLOCKED, SO IT ONLY ROUTES: two callers can both read the roster empty. What decides is the
+   * re-read under the seat lock taken exclusive (`writePendingSeats(..., 'creator')`), which answers
+   * the later one `roster_taken`, a 409 here.
    */
   private async isCreationBootstrap(
     safeGroupId: string,
@@ -660,6 +664,21 @@ export class MembersController {
         `[ADD_MEMBER][${traceId}] REFUSED group_gone group=${safeGroupId} - the creator's group ended before its enrolment`
       );
       throw new GoneException({ error: 'group_deleted', groupId: safeGroupId });
+    }
+    // The "empty roster" read above is unlocked; the one that decides is the re-read under the
+    // seat lock. Someone else got there first: this caller is not the creator, and no accepted
+    // commit admitted them - the same typed 409 as any other person this route enrols nobody for.
+    if (created === 'roster_taken') {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] REFUSED not_admitted group=${safeGroupId} user=${cutUserId(safeUserId)} ` +
+          `reason=roster_taken - another creator enrolled first; nothing written`
+      );
+      throw new ConflictException(
+        refusalBody(
+          RefusalCode.MEMBER_NOT_ADMITTED,
+          'No accepted commit admitted this person; this route enrols nobody.'
+        )
+      );
     }
 
     // NB: NOT added to group:members Redis here - devices enter the routing

@@ -135,6 +135,47 @@ describe('MembersController - lock order of an add and a removal', () => {
     expect(add.statements.some((s) => s.sql.startsWith('INSERT'))).toBe(false);
   });
 
+  describe("a creator's enrolment into a roster read empty", () => {
+    /** The unlocked reads say "empty roster, caller holds no seat": the creation bootstrap. */
+    async function creatorOn(answer: (stmt: RecordedStatement) => unknown) {
+      const add = await controllerOn(answer);
+      const repos = add.controller as unknown as {
+        groupMemberRepo: { findOne: jest.Mock; count: jest.Mock };
+      };
+      repos.groupMemberRepo.findOne.mockResolvedValue(null);
+      repos.groupMemberRepo.count.mockResolvedValue(0);
+      return add;
+    }
+
+    it('re-reads the roster under the seat lock taken EXCLUSIVE, and enrols when nobody else is there', async () => {
+      const add = await creatorOn((stmt) =>
+        tableOf(stmt.sql) === 'dm_group_members' && stmt.sql.startsWith('SELECT')
+          ? []
+          : answerAsAdmitted(stmt)
+      );
+      await expect(
+        add.controller.addGroupMember('g-1', { userId: 'bob' }, 'bob', undefined)
+      ).resolves.toEqual({ status: 'added' });
+      const lock = add.statements.find((s) => s.sql.includes('pg_advisory_xact_lock'));
+      expect(lock?.sql).not.toContain('_shared');
+      expect(
+        add.statements.some(
+          (s) => tableOf(s.sql) === 'dm_group_members' && s.sql.startsWith('INSERT')
+        )
+      ).toBe(true);
+    });
+
+    it('answers the 409 MEMBER_NOT_ADMITTED and writes nothing when someone enrolled first', async () => {
+      // The re-read under the lock finds another person's row (`answerAsAdmitted` names bob's seat
+      // with userId 'bob'; the caller here is 'carol').
+      const add = await creatorOn(answerAsAdmitted);
+      await expect(
+        add.controller.addGroupMember('g-1', { userId: 'carol' }, 'carol', undefined)
+      ).rejects.toMatchObject({ status: 409, response: { code: 'MEMBER_NOT_ADMITTED' } });
+      expect(add.statements.some((s) => s.sql.startsWith('INSERT'))).toBe(false);
+    });
+  });
+
   it('the removal takes the queued Welcomes inside the transaction that ends the membership', async () => {
     const remove = await controllerOn();
     await remove.controller.removeGroupMember('g-1', 'bob', 'bob', undefined);

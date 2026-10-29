@@ -79,8 +79,12 @@ export function sanitizeDevicePairLogValue(
  * The rule a user id is minted under (core-service `src/users/user-id.ts`, the one rule): non-empty
  * visible ASCII (U+0021 to U+007E) with no ':'. Not a UUID - the id is the identity provider's
  * subject - so a route that acts on an account by its id holds it to this rule instead.
+ *
+ * NO LENGTH CAP, because the mint rule has none: a cap here stricter than the rule would refuse an
+ * id core-service holds, and the erasure core-service retries would be a 400 for ever. The length
+ * bound is `users.id`'s own `varchar(255)`, which no id that exists can exceed.
  */
-const MINTABLE_USER_ID_REGEX = /^[\x21-\x39\x3b-\x7e]{1,255}$/;
+const MINTABLE_USER_ID_REGEX = /^[\x21-\x39\x3b-\x7e]+$/;
 
 /**
  * `value` as a user id that obeys the mint rule ({@link MINTABLE_USER_ID_REGEX}), or a 400. WHY: an
