@@ -131,6 +131,9 @@
       get seeking() {
         return el.seeking;
       },
+      get readyState() {
+        return el.readyState;
+      },
       async play() {
         try {
           await el.play();
