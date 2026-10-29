@@ -3,7 +3,11 @@ import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/di
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { canonicalIdentity, canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import {
+  canonicalUserId,
+  isAddressableLeafIdentity,
+  userIdOfLeaf,
+} from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
@@ -247,12 +251,20 @@ async function reconcileOnce(
 
   // THE ROSTER NAMES PEOPLE; A REVOKED DEVICE OF ONE WHO STAYS IS INVISIBLE TO IT. Asked of the
   // leaves the user diff keeps, this device's own excluded - see {@link revokedLeafCandidates}.
-  const candidates = revokedLeafCandidates(
+  const { candidates, malformed } = revokedLeafCandidates(
     tree,
     new Set(diff.strayUserIds),
     userId,
     mlsService.getDeviceId()
   );
+  if (malformedChanged(userId, groupId, malformed)) {
+    // Never sent: the server would only skip them. A leaf no registered device can carry is a
+    // crafted or corrupt credential - the count only, a leaf identity names a person. Said when that
+    // set changes, not on every pass over a tree that still holds it.
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: ${malformed.length} leaf/leaves outside the leaf-identity rule left out of the revocation question - no registered device carries such a credential`
+    );
+  }
   let revokedLeaves: string[];
   let reused = false;
   try {
@@ -432,11 +444,28 @@ async function askRevokedLeaves(
 }
 
 /**
- * Forgets every remembered revoked-leaf answer: on sign-out (the next account asks for itself), and
- * for a test, which shares the module.
+ * The malformed leaves last SAID per account and key group, as one key - so the line naming their
+ * count is said when that set changes, not on every roster pass over a tree that still holds them.
+ * Session memory only, like {@link revokedLeafAnswers}.
+ */
+const saidMalformed = new Map<string, string>();
+
+/** Whether `malformed` differs from what was last said for this group - and records it if so. */
+function malformedChanged(userId: string, groupId: string, malformed: string[]): boolean {
+  const key = `${canonicalUserId(userId)}|${groupId}`;
+  const said = [...malformed].sort().join('\n');
+  if ((saidMalformed.get(key) ?? '') === said) return false;
+  saidMalformed.set(key, said);
+  return malformed.length > 0;
+}
+
+/**
+ * Forgets every remembered revoked-leaf answer and malformed-leaf line: on sign-out (the next account
+ * asks for itself), and for a test, which shares the module.
  */
 export function forgetRevokedLeafAnswers(): void {
   revokedLeafAnswers.clear();
+  saidMalformed.clear();
 }
 
 /**
@@ -446,27 +475,33 @@ export function forgetRevokedLeafAnswers(): void {
  *
  * The user half is compared without case, the device half exact - the canonical identity Rust binds.
  *
- * ONLY DEVICE IDENTITIES (`user:device`, {@link canonicalIdentity}): a legacy BARE leaf names no
- * device, so no revocation can name it - and the server refuses the WHOLE request over one identity
- * that is not `userId:deviceId`, so sending it would cost every other leaf its answer.
+ * ONLY IDENTITIES THE SERVER WILL ANSWER ABOUT ({@link isAddressableLeafIdentity}, the rule both
+ * sides share through `libs/contracts/leaf-identity.cases.json`). A legacy BARE leaf names no
+ * device, so no revocation can name it, and is left out silently - it is a known shape
+ * (docs/wiki/legacy-compatibility.md). Any OTHER leaf outside the rule is a credential no
+ * registered device carries, and is left out and COUNTED in `malformed`, for the caller to say.
  */
 export function revokedLeafCandidates(
   leafIdentities: string[],
   strayUserIds: Set<string>,
   selfUserId: string,
   selfDeviceId: string
-): string[] {
+): { candidates: string[]; malformed: string[] } {
   const self = canonicalUserId(selfUserId);
-  return [
-    ...new Set(
-      leafIdentities.filter((identity) => {
-        if (canonicalIdentity(identity) === null) return false;
-        const user = userIdOfLeaf(identity);
-        if (!user || strayUserIds.has(user)) return false;
-        return !(user === self && identity.slice(identity.indexOf(':') + 1) === selfDeviceId);
-      })
-    ),
-  ];
+  const malformed = new Set<string>();
+  const candidates = new Set<string>();
+  for (const identity of leafIdentities) {
+    if (!identity.includes(':')) continue;
+    if (!isAddressableLeafIdentity(identity)) {
+      malformed.add(identity);
+      continue;
+    }
+    const user = userIdOfLeaf(identity);
+    if (!user || strayUserIds.has(user)) continue;
+    if (user === self && identity.slice(identity.indexOf(':') + 1) === selfDeviceId) continue;
+    candidates.add(identity);
+  }
+  return { candidates: [...candidates], malformed: [...malformed] };
 }
 
 /**
