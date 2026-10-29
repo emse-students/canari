@@ -374,6 +374,14 @@ reminder cron claims nothing, and the screens keep D13's sentences, which are th
   settings category, and the three native tables carry the four keys.
 - **Preset delays** offered by the screens: 15 min, 1 h, 24 h ("la veille"), none. The mockup's
   "la veille a 18:00" is a wall-clock time, not a delay, and is not built: 24 h before stands in.
+- **The screens** (all behind `BOOKING_NOTIFICATIONS_LIVE`, so off they are exactly D13's): the
+  space's default reminder in its settings (`SpaceEditor`, sent only when live), the booker's own
+  in the booking sheet (never when booking on behalf of), each person's own on their booking card
+  (`MyBookingCard`, holder or participant still in, reverted on a refusal); the organiser's
+  optional word in the dashboard's in-place cancel (`UpcomingBookings`, trimmed, a blank word is
+  no message, capped at the server's 500); and every "nobody is told" sentence swapped for the one
+  saying who is (delete space, organiser cancel, booking for someone, stranded bookings, the
+  booker's notes). Presets and their labels: `lib/bookings/reminder.ts`.
 
 ## WP-R7 as built - the creation wizard (D52, Q-R14, 2026-10-29)
 

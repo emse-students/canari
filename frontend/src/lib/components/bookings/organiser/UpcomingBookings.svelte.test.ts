@@ -127,7 +127,8 @@ it('a cancel in place re-reads the list and tells the page', async () => {
   flushSync();
   buttons(m.bookings_cancel_action())[0].click();
   await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
-  expect(api.cancelBooking).toHaveBeenCalledWith('b');
+  // No word typed: no message travels (Q-R3).
+  expect(api.cancelBooking).toHaveBeenCalledWith('b', undefined);
   expect(api.upcomingSpaceBookings).toHaveBeenCalledTimes(2);
   await tick();
   expect(document.body.textContent).toContain(m.bookings_upcoming_empty());

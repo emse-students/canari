@@ -47,6 +47,8 @@ export interface SpaceSettings {
   participantWithdrawMinMinutes: number;
   maxPeople: number | null;
   retentionDays: number;
+  /** The default reminder delay of the space's people, in minutes; null = none (WP-N, Q-R1). */
+  reminderMinutes: number | null;
 }
 
 /** A resource as the editor reads it, with its whole availability. */
@@ -301,9 +303,24 @@ export function upcomingSpaceBookings(
   );
 }
 
-/** The holder or the organiser cancels a coming booking (D5); nobody is notified in v1 (D13). */
-export function cancelBooking(bookingId: string): Promise<unknown> {
-  return call('cancelBooking', `/${encodeURIComponent(bookingId)}/cancel`, { method: 'POST' });
+/**
+ * The holder or the organiser cancels a coming booking (D5). `message` is the organiser's optional
+ * word to its people (Q-R3), carried by their notice alone - sent only while notices are live.
+ */
+export function cancelBooking(bookingId: string, message?: string): Promise<unknown> {
+  const path = `/${encodeURIComponent(bookingId)}/cancel`;
+  return message
+    ? call('cancelBooking', path, json('POST', { message }))
+    : call('cancelBooking', path, { method: 'POST' });
+}
+
+/** Sets THE READER's own reminder delay on a booking they are one of the people of (Q-R1). */
+export function setBookingReminder(bookingId: string, minutes: number | null): Promise<unknown> {
+  return call(
+    'setBookingReminder',
+    `/${encodeURIComponent(bookingId)}/reminder`,
+    json('PATCH', { minutes })
+  );
 }
 
 /** Replaces the resource's WHOLE availability (D11); refused over coming bookings (D29). */
@@ -363,6 +380,8 @@ export interface BookerSpace {
   maxPeople: number | null;
   /** Days a FILE answer's file is kept after the END of its slot (D8, D41), said under the picker. */
   retentionDays: number;
+  /** The space's default reminder delay, the booker's own unless they pick another (Q-R1). */
+  reminderMinutes: number | null;
   poster: SpacePoster | null;
   /** The reader manages the space: they book on behalf, block, cancel any coming booking. */
   canManage: boolean;
@@ -407,6 +426,8 @@ export interface MyBooking extends BookingView {
   resource: { id: string; name: string };
   /** The "after booking" texts (D32): only for a live booking the reader is one of the people of. */
   privateInfo: { spacePrivateInfo: string | null; resourcePrivateInfo: string | null } | null;
+  /** THE READER's own reminder delay on it, in minutes; null = none (WP-N, Q-R1). */
+  reminderMinutes: number | null;
 }
 
 /** What a booking request carries (D4, D7, D20); instants are ISO with their zone. */
@@ -418,6 +439,8 @@ export interface BookingRequest {
   answers?: Record<string, unknown>;
   /** Booking ON BEHALF of this account: the organiser only. */
   holderId?: string;
+  /** The booker's own reminder delay (Q-R1); absent = the space's default, null = none. */
+  reminderMinutes?: number | null;
 }
 
 /** "Indisponible" over a range of a resource (D10, D20). */

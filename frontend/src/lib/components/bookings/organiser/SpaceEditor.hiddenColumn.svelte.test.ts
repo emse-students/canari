@@ -65,6 +65,7 @@ const SPACE: ManagedSpace = {
   participantWithdrawMinMinutes: 0,
   maxPeople: null,
   retentionDays: 7,
+  reminderMinutes: 60,
 };
 
 const mounted: ReturnType<typeof mount>[] = [];
