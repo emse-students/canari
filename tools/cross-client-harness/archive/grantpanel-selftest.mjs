@@ -12,7 +12,7 @@
  * `button`, `p` and the mark, `parentElement`, `innerText`, `textContent`, `disabled` and the
  * attribute calls - so a snippet that grows past that fails here, loudly.
  */
-import { GRANT_ADD_MARK, markGrantAddJs } from '../grantpanel.mjs';
+import { GRANT_ADD_MARK, awaitGrantAdd, markGrantAddJs } from '../grantpanel.mjs';
 import { caption } from '../messages.mjs';
 
 let failures = 0;
@@ -72,14 +72,6 @@ function doc(root) {
 }
 
 const run = (document) => new Function('document', `return ${JS};`)(document);
-const throwsNamed = (f, name) => {
-  try {
-    f();
-    return false;
-  } catch (e) {
-    return String(e?.message).startsWith(name);
-  }
-};
 
 /** The banner and the panel, side by side under `body`; `panelButton` false drops the panel's button. */
 function page({ panelButton = true, disabled = false, staleOnBanner = false, field = true } = {}) {
@@ -103,16 +95,16 @@ function page({ panelButton = true, disabled = false, staleOnBanner = false, fie
 {
   const p = page();
   ok(
-    'an enabled panel button is marked and answered true',
-    run(p.document) === true && GRANT_ADD_MARK in p.add.attrs
+    'an enabled panel button is marked and answered enabled',
+    run(p.document) === 'enabled' && GRANT_ADD_MARK in p.add.attrs
   );
   ok('the banner beside it is never marked', !(GRANT_ADD_MARK in p.banner.attrs));
 }
 {
   const p = page({ disabled: true });
   ok(
-    'a disabled panel button is marked and answered false (waited on, not clicked)',
-    run(p.document) === false && GRANT_ADD_MARK in p.add.attrs
+    'a disabled panel button is marked and answered disabled (waited on, not clicked)',
+    run(p.document) === 'disabled' && GRANT_ADD_MARK in p.add.attrs
   );
 }
 {
@@ -126,26 +118,80 @@ function page({ panelButton = true, disabled = false, staleOnBanner = false, fie
 {
   const p = page({ panelButton: false });
   ok(
-    'a panel with no add button THROWS, named, beside a banner with one',
-    throwsNamed(() => run(p.document), 'grant-panel-no-add-button')
+    'a panel with no add button answers grant-panel-no-add-button beside a banner with one',
+    run(p.document) === 'grant-panel-no-add-button'
   );
   ok('...and the banner is NOT marked', !(GRANT_ADD_MARK in p.banner.attrs));
 }
 {
   const p = page({ field: false });
   ok(
-    'no search field THROWS, named',
-    throwsNamed(() => run(p.document), 'grant-panel-no-field')
+    'no search field answers grant-panel-no-field, it does not throw (a re-render is transient)',
+    run(p.document) === 'grant-panel-no-field'
   );
+  ok('...and the banner is NOT marked', !(GRANT_ADD_MARK in p.banner.attrs));
 }
 {
   const input = h('input', { placeholder: PLACEHOLDER });
   const banner = h('button', {}, ADD);
   const d = doc(h('body', {}, h('div', {}, banner), h('div', {}, input)));
   ok(
-    'a field outside the section never climbs to the banner: it THROWS, named',
-    throwsNamed(() => run(d), 'grant-panel-no-section') && !(GRANT_ADD_MARK in banner.attrs)
+    'a field outside the section never climbs to the banner: grant-panel-no-section',
+    run(d) === 'grant-panel-no-section' && !(GRANT_ADD_MARK in banner.attrs)
   );
+}
+
+// ── awaitGrantAdd: polls through a transient absence, names the last state when it stops ──────────
+const noSleep = async () => {};
+const reads = (seq) => {
+  let i = 0;
+  return async () => seq[Math.min(i++, seq.length - 1)];
+};
+const rejects = async (p, re) => {
+  try {
+    await p;
+    return false;
+  } catch (e) {
+    return re.test(String(e?.message));
+  }
+};
+ok(
+  'a field absent for two polls, then enabled: resolves',
+  await awaitGrantAdd(
+    reads(['grant-panel-no-field', 'grant-panel-no-field', 'disabled', 'enabled']),
+    1000,
+    noSleep
+  ).then(
+    () => true,
+    () => false
+  )
+);
+ok(
+  'a section that never offers the button: rejects NAMING it',
+  await rejects(
+    awaitGrantAdd(reads(['grant-panel-no-add-button']), 30, noSleep),
+    /^grant-panel-no-add-button: after 30 ms/
+  )
+);
+ok(
+  'a field that never comes back: rejects naming grant-panel-no-field',
+  await rejects(
+    awaitGrantAdd(reads(['grant-panel-no-field']), 30, noSleep),
+    /^grant-panel-no-field:/
+  )
+);
+ok(
+  'a button that never enables: rejects naming grant-panel-add-disabled',
+  await rejects(awaitGrantAdd(reads(['disabled']), 30, noSleep), /^grant-panel-add-disabled:/)
+);
+ok(
+  'an answer outside the states is refused at once',
+  await rejects(awaitGrantAdd(reads([true]), 1000, noSleep), /snippet answered true/)
+);
+{
+  let n = 0;
+  await awaitGrantAdd(async () => (n++, 'enabled'), 0, noSleep);
+  ok('a zero timeout still reads once', n === 1);
 }
 
 if (failures) {
