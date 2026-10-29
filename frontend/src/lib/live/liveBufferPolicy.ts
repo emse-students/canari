@@ -54,14 +54,50 @@ export interface LiveTimeRanges {
 /**
  * What a `waiting` of the `<video>` means, decided once from facts the engine holds:
  * - `seeking`: the engine is completing a seek (`video.seeking`) - its own wait, NOT a stall;
+ * - `held`: the range holding the playhead has `ahead` seconds of media past it - nothing is missing,
+ *   the engine's decoder or renderer fell behind and resumes on its own (LIVE-STALL-1,
+ *   `1.5.1-alpha.8`: W4 waited at 55.56 with 58.19 buffered in one range and played on to 55.74
+ *   before any seek). Seeking forward would skip media for a wait no seek shortens; whether it DID
+ *   resume is read at the next delivery, from the playhead;
  * - `time-gap`: media is buffered past a hole ahead (a camera re-acquired, its timestamps moved
  *   forward) - no engine plays across it, so the player seeks to `to`;
  * - `starved`: nothing playable ahead - the next delivery came later than the buffer lasted.
  */
-export type LiveWait = { kind: 'seeking' } | { kind: 'time-gap'; to: number } | { kind: 'starved' };
+export type LiveWait =
+  | { kind: 'seeking' }
+  | { kind: 'held'; ahead: number }
+  | { kind: 'time-gap'; to: number }
+  | { kind: 'starved' };
 
-/** How much media must lie ahead, in seconds, before a wait at a range's end is read as a hole. */
+/**
+ * How much media must lie ahead, in seconds, before a wait is read as something other than a dry
+ * buffer: a hole to cross, or the engine's own wait inside a range.
+ */
 const GAP_AHEAD_S = 0.5;
+
+/**
+ * How many seconds can play from `position` before the video waits: the rest of the range holding
+ * it, or 0 when it sits in no range (a hole, or before the first media).
+ */
+export function mediaAheadS(position: number, ranges: LiveTimeRanges | null): number {
+  if (!ranges) return 0;
+  for (let i = 0; i < ranges.length; i++) {
+    if (position >= ranges.start(i) && position < ranges.end(i)) return ranges.end(i) - position;
+  }
+  return 0;
+}
+
+/**
+ * The buffered ranges for a log line, two decimals each: `[0.00-4.00 34.00-36.00]`, `[]` with
+ * nothing buffered. A hole ahead of the playhead is visible here and nowhere else.
+ */
+export function formatLiveRanges(ranges: LiveTimeRanges | null): string {
+  const spans: string[] = [];
+  for (let i = 0; i < (ranges?.length ?? 0); i++) {
+    spans.push(`${ranges!.start(i).toFixed(2)}-${ranges!.end(i).toFixed(2)}`);
+  }
+  return `[${spans.join(' ')}]`;
+}
 
 /** Classifies a `waiting` - see {@link LiveWait}. */
 export function classifyLiveWait(
@@ -70,6 +106,8 @@ export function classifyLiveWait(
   ranges: LiveTimeRanges | null
 ): LiveWait {
   if (seeking) return { kind: 'seeking' };
+  const ahead = mediaAheadS(position, ranges);
+  if (ahead > GAP_AHEAD_S) return { kind: 'held', ahead };
   if (ranges && ranges.length > 0) {
     const last = ranges.length - 1;
     const start = ranges.start(last);
