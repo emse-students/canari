@@ -129,12 +129,13 @@
           Canari ne montre leur liste, ni à vous ni à la modération. Les messages du chat sont
           chiffrés avec la même clé ; leur auteur est connu du serveur et son nom est affiché aux
           autres spectateurs. Les réactions (cœur, rire, bravo, feu, poussin) ne sont pas chiffrées
-          : le serveur les compte. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant
-          votre premier direct, vous acceptez les règles de publication : la version acceptée et sa
-          date sont conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de
-          vos démarrages pendant une heure. Les journaux techniques notent les débuts et fins de
-          direct, les coupures et les retraits de spectateurs, avec le début de l'identifiant du
-          compte concerné.
+          : le serveur enregistre qui réagit et compte les réactions. Un direct n'est pas enregistré
+          et n'a pas de rediffusion. Avant votre premier direct, vous acceptez les règles de
+          publication : la version acceptée et sa date sont conservées. Pour limiter les abus, le
+          serveur garde aussi l'heure de chacun de vos démarrages pendant une heure. Les journaux
+          techniques notent les débuts et fins de direct, les coupures et les retraits de
+          spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
+          requête, le serveur web journalise l'adresse IP de chaque lecture.
         </dd>
       </div>
       <div>
@@ -254,13 +255,16 @@
           signé, pour la modération ; c'est un texte que le serveur ne lisait pas avant le
           signalement. Une coupure par la modération est enregistrée (le direct, la personne qui
           diffusait, l'association, le modérateur, le motif, une note éventuelle de la modération
-          qui ne vous est pas montrée, les heures), et vous en êtes prévenu sans que le nom du
-          modérateur soit indiqué. Une deuxième coupure en 90 jours suspend automatiquement le droit
-          de lancer un direct pendant 30 jours ; chaque coupure est décidée par une personne, jamais
-          par un nombre de signalements. Un retrait du droit de diffuser est enregistré de la même
-          façon. Un blocage, dans un sens ou dans l'autre, empêche de voir le direct de l'autre et
-          masque ses messages et réactions dans un chat, mais il ne retire personne du nombre de
-          spectateurs.
+          qui ne vous est pas montrée, les heures) ; une coupure peut viser un direct en cours ou un
+          direct qui vient de se terminer, et celle d'un direct diffusé au nom d'une association
+          compte pour la personne qui diffusait. Vous en êtes prévenu sans que le nom du modérateur
+          soit indiqué, sauf pour une première coupure d'un direct déjà terminé, qui n'est pas
+          notifiée. Toute coupure à partir de la deuxième en 90 jours suspend automatiquement le
+          droit de lancer un direct pendant 30 jours à compter de la coupure ; chaque coupure est
+          décidée par une personne, jamais par un nombre de signalements. Un retrait du droit de
+          diffuser est enregistré de la même façon. Un blocage, dans un sens ou dans l'autre,
+          empêche de voir le direct de l'autre et masque ses messages et réactions dans un chat,
+          mais il ne retire personne du nombre de spectateurs.
         </dd>
       </div>
       <div>
@@ -551,15 +555,15 @@
             <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
           </tr>
           <tr>
-            <td> Direct : vidéo chiffrée, chat, réactions, spectateurs retirés</td>
+            <td>Direct : vidéo chiffrée, chat, réactions, spectateurs retirés</td>
             <td>
               Supprimés à la fin du direct (par vous, après 60 secondes sans vidéo, au bout d'une
               heure, par une coupure de la modération ou à la suppression de votre compte). Après
-              une coupure ou la suppression du compte, la vidéo est supprimée aussitôt ; à une autre
-              fin, elle l'est une fois que les derniers spectateurs ont fini de la recevoir, en
-              principe dans la minute. Une suppression qui échoue est reprise toutes les 30
-              secondes. Un segment mis en cache par notre serveur web ou par l'appareil d'un
-              spectateur : deux minutes au plus après sa dernière lecture
+              une coupure, la vidéo est supprimée aussitôt ; après la suppression du compte, dans
+              les 30 secondes ; à une autre fin, elle l'est une fois que les derniers spectateurs
+              ont fini de la recevoir, en principe dans la minute. Une suppression qui échoue est
+              reprise toutes les 30 secondes. Un segment mis en cache par notre serveur web ou par
+              l'appareil d'un spectateur : deux minutes au plus après sa dernière lecture
             </td>
           </tr>
           <tr>

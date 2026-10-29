@@ -121,11 +121,11 @@ the heading "quand la fonction est ouverte", as calls did. Every claim was read 
   (15 days' in-app notice) is his call.
 - **Rules that are new, and his to keep or strike**: "filmer une personne qui n'a pas accepté d'y
   apparaître" is forbidden in a live; each chat author is responsible for their message; the
-  24-working-hour commitment to examine a live report is now PUBLIC (it was the store notes'). The
-  first-live rules sheet shows section 5 only and `LIVE_RULES_VERSION` was NOT raised: if the new
-  paragraph is meant to be what a broadcaster accepts, raise it (server only) so everyone accepts
-  again.
-- **Art. 22**: the suspension at the 2nd cut is applied by a rule; every cut is a person's. Section 2
+  24-hour target for a live report (weekends not counted) is now PUBLIC, worded as an effort
+  ("s'efforce"), not a commitment. The first-live rules sheet shows section 5 only, and the terms say
+  exactly that ("Vous acceptez les règles de la section 5 avant votre premier direct");
+  `LIVE_RULES_VERSION` is NOT raised (review of #2698).
+- **Art. 22**: the suspension at every cut from the 2nd within 90 days is applied by a rule; every cut is a person's. Section 2
   of the policy says so plainly (section 3 keeps its "aucune décision automatisée" sentence) - whether that is enough is a
   legal reading, not a code one.
 - **"pourrait les déchiffrer"**: the text says the server holds the key (sealed at rest under a

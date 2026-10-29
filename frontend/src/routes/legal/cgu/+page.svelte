@@ -216,9 +216,9 @@
         <dt>Règles</dt>
         <dd>
           Les règles de la section 5 s'appliquent à l'image, au son et au chat d'un direct comme à
-          une publication, et celles de la section 7 sans exception. Vous les acceptez avant votre
-          premier direct, et de nouveau quand elles changent. En direct, il est en outre interdit de
-          filmer une personne qui n'a pas accepté d'y apparaître.
+          une publication, et celles de la section 7 sans exception. Vous acceptez les règles de la
+          section 5 avant votre premier direct. En direct, il est en outre interdit de filmer une
+          personne qui n'a pas accepté d'y apparaître.
         </dd>
       </div>
       <div>
@@ -258,26 +258,31 @@
         <dd>
           Tout spectateur peut signaler un direct, ou un message de son chat, depuis le direct.
           Signaler un message transmet son texte à la modération, qui le conserve jusqu'au
-          traitement du signalement. La modération s'engage à examiner un signalement de direct dans
-          les 24 heures ouvrées (du lundi au vendredi).
+          traitement du signalement. La modération s'efforce d'examiner un signalement de direct
+          dans les 24 heures, samedi et dimanche non comptés.
         </dd>
       </div>
       <div>
         <dt>Coupure</dt>
         <dd>
-          Un modérateur peut couper un direct en cours ; il prend fin pour tous, et vous êtes
-          prévenu avec le motif (spam, harcèlement, contenu inapproprié, autre). Un direct n'est
-          jamais coupé automatiquement, quel que soit le nombre de signalements.
+          Un modérateur peut couper un direct en cours, ou sanctionner un direct qui vient de se
+          terminer ; un direct coupé prend fin pour tous. Vous êtes prévenu avec le motif (spam,
+          harcèlement, contenu inapproprié, autre), sauf pour une première coupure d'un direct déjà
+          terminé. Un direct n'est jamais coupé automatiquement, quel que soit le nombre de
+          signalements.
         </dd>
       </div>
       <div>
         <dt>Sanctions</dt>
         <dd>
           Une coupure reste inscrite 90 jours. La première vaut avertissement. La deuxième dans ce
-          délai <strong>suspend votre droit de lancer un direct pendant 30 jours</strong>. À partir
-          de la troisième, la modération peut vous <strong>retirer ce droit</strong> jusqu'à ce qu'elle
-          vous le rende. Ces mesures ne concernent que les directs ; les mesures de la section 5 restent
-          possibles, et un compte restreint (muté) ne peut ni lancer un direct ni écrire dans un chat.
+          délai, et chacune des suivantes, <strong
+            >suspend votre droit de lancer un direct pendant 30 jours à compter de la coupure</strong
+          >. À partir de la troisième, la modération peut aussi vous
+          <strong>retirer ce droit</strong>
+          jusqu'à ce qu'elle vous le rende. Une coupure d'un direct diffusé au nom d'une association compte
+          pour vous. Ces mesures ne concernent que les directs ; les mesures de la section 5 restent possibles,
+          et un compte restreint (muté) ne peut ni lancer un direct, ni écrire ni réagir dans un chat.
         </dd>
       </div>
     </dl>
