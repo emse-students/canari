@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHASES, devicesFor } from '../checks.mjs';
-import { COMMIT_ROUNDS, REMOVAL_ROWS, removalNarration, removalOwn } from '../removalrows.mjs';
+import { COMMIT_ROUNDS, REMOVAL_ROWS, bootForgiven, pinSalonNeedles, removalNarration, removalOwn } from '../removalrows.mjs';
 import { ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
@@ -69,9 +69,18 @@ const IDS = {
   keyGroupIds: ['44444444-0000-4000-8000-000000000004', '55555555-0000-4000-8000-000000000005'],
   ownerUserId: OWNER,
   subjectUserId: SUBJ,
+  ownerDeviceIds: [`tauri-${OWNER}-mvn33w3u-4b2d`, `web-${OWNER}-mvsslaf7-h7qh`],
+  messages: [{ id: '858b036a-0000-4000-8000-000000000006', clientId: 'a677dd1a-0000-4000-8000-000000000007' }],
 };
 const rep = (lines) => ({ errors: [], warnings: [], unexplained: lines, badHttp: [], exceptions: [], severe: [], wsEvents: [] });
-const forgiven = (row, seat, line, ids = IDS) => ignoringExpectedLog(rep([line]), removalNarration(row, seat, ids)).unexplained.length === 0;
+/** Every line forgiven, together - so a repeat is counted against its budget. */
+const allForgiven = (row, seat, lines, ids = IDS) => ignoringExpectedLog(rep(lines), removalNarration(row, seat, ids)).unexplained.length === 0;
+const forgiven = (row, seat, line, ids = IDS) => allForgiven(row, seat, [line], ids);
+/** The sentence as an ERROR or a WARNING - the buckets a bare needle would also have emptied. */
+const forgivenAs = (bucket, row, seat, line) => {
+  const r = { ...rep([]), [bucket]: [line.replace(/^[a-z]+:\s*/, '')] };
+  return ignoringExpectedLog(r, removalNarration(row, seat, IDS))[bucket].length === 0;
+};
 const K = 'KICK-COMMIT';
 const S = 'SALON-REVOKE-COMMIT';
 const DV = 'DEVREVOKE-KEYGROUP';
@@ -125,6 +134,50 @@ ok("... NOT for another account's device", !forgiven(DV, 'W1', WELCOME_REQ(SUBJ)
 ok('... a user-level join ask (no device) is NOT', !forgiven(DV, 'W1', JOIN_REQ(OWNER).replace('an unseen device web-aaaa1111... of ', ''), devIds));
 ok('... a withholding in another community is NOT', !forgiven(DV, 'W1', WITHHOLD.replace('community 11111111', 'community 99999999'), devIds));
 ok('... seeds that do not open with this key (the warn branch) are NOT', !forgiven(DV, 'W1', 'warn: [GRAINE] not answering aaaa1111…\'s history ask in community 11111111: 2 seed row(s) held and 1 do not open with this device\'s key - not "I hold nothing"', devIds));
+
+// THE LEVELS (review, 2026-10-29): `salonNarration`'s needles are bare regexes there, which
+// `ignoringExpectedLog` also applies to the errors and warnings buckets. Pinned here, they are not.
+const TRUST = (n) => `debug: [TRUST] ${n} device event(s) handed to the notices (drain end)`;
+const OVERLAY = (n) => `debug: [historyOverlay] a navigation closes ${n} open overlay(s)`;
+const KEY_DIST = 'log: [WELCOME] 44444444... is a KEY-DISTRIBUTION group (server row) - installing it as a seed carrier';
+ok("salonNarration's lines are forgiven at their own level", forgiven(K, 'W1', JOINED) && forgiven(K, 'W2', KEY_DIST) && forgiven(S, 'W2', 'log: Removed from channel 33333333…'));
+ok('... NOT as an error or a warning', [JOINED, KEY_DIST, 'log: Removed from channel 33333333…'].every((l) => !forgivenAs('errors', S, 'W2', l) && !forgivenAs('warnings', S, 'W2', l)));
+ok('... NOT at warn in the unexplained bucket', !forgiven(K, 'W1', JOINED.replace('log:', 'warn:')) && !forgiven(K, 'W2', KEY_DIST.replace('log:', 'warning:')));
+let unpinned = null;
+try {
+  pinSalonNeedles([/^\[NEW\] a sentence salonNarration gained$/], { channels: 2, salons: 1, keyGroups: 2, grants: 1, panels: 1, messages: 1 });
+} catch (e) {
+  unpinned = String(e?.message ?? e);
+}
+ok('a salonNarration needle with no level and budget here THROWS rather than pass unpinned', !!unpinned && unpinned.includes('a sentence salonNarration gained'));
+ok("a route's first preload is left to the gate's once-per-pathname rule", !forgiven(K, 'W1', 'debug: [RoutePreload] {"pathname":"/chat","first":true}'));
+ok('[TRUST] with events is forgiven; with none, or at log, it is NOT', forgiven(K, 'W1', TRUST(1)) && !forgiven(K, 'W1', TRUST(0)) && !forgiven(K, 'W1', TRUST(1).replace('debug:', 'log:')));
+ok('the debug lines are pinned to debug: the sort, the self-entry, the overlay and the seed at log or info are NOT', [SORT(0), SELF_ENTRY].every((l) => !forgiven(K, 'W1', l.replace('debug:', 'log:'))) && !forgiven(S, 'W1', OVERLAY(1).replace('debug:', 'info:')) && !forgiven(S, 'W2', SEED.replace('debug:', 'log:')));
+ok('the zero counts stay dirt: 0 overlays, 0 entries forgotten', forgiven(S, 'W1', OVERLAY(1)) && !forgiven(S, 'W1', OVERLAY(0)) && !forgiven(K, 'W1', 'debug: [SALON-UNSENT] 0 entr(y/ies) forgotten: the server holds them'));
+ok('... 0 seeds withheld, 0 seeds not answered', !forgiven(DV, 'W1', WITHHOLD.replace('withholding 1', 'withholding 0'), devIds) && !forgiven(DV, 'W1', NOT_ANSWERING.replace(': 1 seed(s)', ': 0 seed(s)'), devIds));
+
+// THE ROW'S OWN IDS (review, 2026-10-29): the message the row sent, the owner's own devices.
+ok('the echo of another message is NOT forgiven (client id, server id)', !forgiven(K, 'W1', 'log: [SALON-ECHO] 99999999… sending') && !forgiven(K, 'W1', 'log: [SALON-ECHO] a677dd1a… settled as 99999999…') && !forgiven(K, 'W1', REPEAT(0).replace('a677dd1a', '99999999')));
+ok('a view holding another count of messages than the row sent is NOT forgiven', !forgiven(K, 'W1', 'debug: [CHAT_VIEW] channel_ messages 2 (hasNewMessage=true, response=follow-bottom)') && !forgiven(S, 'W2', 'debug: [CHAT_VIEW] channel_ messages 2 (hasNewMessage=true, response=repin-entry)'));
+ok("an answer to an owner device that is not one of the row's is NOT forgiven", !forgiven(K, 'W1', ANSWERED(OWNER).replace('mvn33w3u-4b2d', 'zzzzzzzz-9999')));
+
+// THE BUDGETS (review, 2026-10-29): a forgiven sentence said more often than the row decides it is dirt.
+ok('the kick said once is forgiven, said twice is NOT', allForgiven(K, 'W1', [REMOVE_COMMUNITY]) && !allForgiven(K, 'W1', [REMOVE_COMMUNITY, REMOVE_COMMUNITY]));
+ok('the one message sent twice is NOT', !allForgiven(K, 'W1', ['log: [SALON-ECHO] a677dd1a… sending', 'log: [SALON-ECHO] a677dd1a… sending']));
+const ANSWERED_WEB = ANSWERED(OWNER).replace(/tauri-(\w+)…-mvn33w3u-4b2d/, 'web-$1…-mvsslaf7-h7qh');
+ok('each owner device answered once is forgiven; the same device answered twice is NOT', allForgiven(K, 'W1', [ANSWERED(OWNER), ANSWERED_WEB]) && !allForgiven(K, 'W1', [ANSWERED(OWNER), ANSWERED(OWNER)]));
+ok('the departure from the salon looping is NOT', !allForgiven(S, 'W1', [DEPARTURE, DEPARTURE]));
+ok('the minted device asking twice is NOT', !allForgiven(DV, 'W1', [WELCOME_REQ(OWNER), WELCOME_REQ(OWNER)], devIds));
+ok('a grant narrated in a row that grants nothing is NOT (budget 0)', !forgiven(DV, 'W1', 'log: [GRAINE] ADMIT salon grantee bbbb2222 to 22222222 (community 11111111)', devIds) && forgiven(K, 'W1', 'log: [GRAINE] ADMIT salon grantee bbbb2222 to 22222222 (community 11111111)'));
+
+// THE BOOT NARRATION (review, 2026-10-29): only the document the row replaced on purpose - W2 opening
+// the invite link, before the gesture - and never more than that one.
+ok('W2 subject, one replacement before the gesture: forgiven', bootForgiven(K, 'W2', [5], 10) && bootForgiven(S, 'W2', [5], 10));
+ok('... two replacements (a reload loop): NOT', !bootForgiven(K, 'W2', [5, 7], 10));
+ok('... a replacement at or after the gesture (the gesture made it reload): NOT', !bootForgiven(K, 'W2', [12], 10) && !bootForgiven(K, 'W2', [10], 10));
+ok('W1 opens no document: any replacement is NOT', !bootForgiven(K, 'W1', [3], 10) && !bootForgiven(DV, 'W1', [3], 10));
+ok('no replacement, nothing to forgive; W2 outside its row, NOT', !bootForgiven(K, 'W2', [], 10) && !bootForgiven(DV, 'W2', [3], 10));
+ok('a gesture never reached leaves the bound on the count alone', bootForgiven(K, 'W2', [5], Infinity) && !bootForgiven(K, 'W2', [5, 6], Infinity));
 
 // WHAT IS FIXED AT THE PRODUCT, NEVER FORGIVEN HERE.
 ok('"holds nothing" and "absorbed 0/0" stay dirt on every seat (said once per READ)', ['info: [GRAINE] aaaa1111…:web-aaaa1111…-mvqwynse-s2ai holds nothing of community 11111111 - recorded; 2 device(s) of aaaa1111… still to answer', 'debug: [GRAINE] absorbed 0/0 seed(s) (0 already held) from bbbb2222… in community 11111111 - salon(s) none'].every((l) => !forgiven(K, 'W1', l) && !forgiven(K, 'W2', l)));
