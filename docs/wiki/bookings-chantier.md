@@ -245,6 +245,52 @@ days, a close splitting a run, a night as two stored halves, one cell, dated lin
 editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
 readings owed.
 
+## WP-R5 as built - the organiser's dashboard (D50, 2026-10-29)
+
+A new page, `routes/bookings/spaces/[spaceId]/manage`, reached from the booker's page (the icon that
+led to the editor) and from the entity tab's list ("Tableau de bord"). Its actions: the booker's
+page, the export, the settings (the editor). A reader who does not manage the space reads one
+sentence and nothing else; the server refuses every organiser read anyway.
+
+- **THE SERVER: `GET spaces/:id/bookings` GAINED `from`** (an instant with `Z` or an offset, else
+  400 `from`, `parseFrom`). With it the list is the LIVE bookings (never cancelled) that END after
+  that instant - the one under way first - by start, paged as before. Without it the list is the
+  whole history, unchanged (D29's `ids` and the export still read that). Before, the coming ones
+  sat behind every past booking of the space.
+- **"A venir"** (`UpcomingBookings.svelte`): the first page (50) from the device's now, then "Voir
+  plus" continuing the SAME list (the same `from`, a row never listed twice if a cancel shifted the
+  pages). Each row: when (the space's zone), its column when columns are shown (D44), the holder,
+  "pour son compte" (D20), the participants; the one under way is marked and has no cancel (D5).
+  The cancel is the existing organiser gesture (`cancelWithConfirm`), so its confirmation still
+  says what it says until WP-N changes it.
+- **"Planning"** is `SpaceWeek.svelte` in `block` mode. **`SpaceWeek` is the booker page's week
+  EXTRACTED** (column selector, week bar or day strip, grid, the three sheets, the read guard), so
+  the two pages draw one implementation; the booker's page keeps only its load, poster, link and
+  QR code. In block mode a tap on a free unit opens "Indisponible", and **a drag draws a RED range**
+  (`SpaceGrid` `blockMode`): as long as a block may be (`BLOCK_LENGTH_CHOICES`) instead of a
+  booking's step ceiling, in slots mode too, and still stopped by `dragRange` at the first unit that
+  is not free - so it never crosses a booking; a stale grid still meets `bookings-inside-block`,
+  whose named bookings the sheet lists with their cancel. `BlockSheet` gained `initialCount`, the
+  length the drag drew. A taken unit opens the existing detail: who, answers, cancel.
+- **The counters (Q-R16)** come from the SAME week read as the grid, every column
+  (`lib/bookings/dashboard.ts`, pure): distinct bookings, hours taken of hours offered (overlapping
+  fixed slots each count whole: it is what was offered), distinct blocks; a unit belongs to the
+  day it starts on, as on the grid.
+- **"Ajouter une colonne" (D44)** is a card while the space has its one hidden column; it leads to
+  the editor, where a column is named (the naming lives there since WP-R1). Both tabs stay mounted,
+  so the counters follow the week and a cancel in one re-reads the other.
+- **The export** is one function now (`downloadSpaceExport`), shared by the editor and the dashboard.
+
+**Proof.** `bookings.service.integration.spec.ts` "lists only the LIVE bookings still to come from
+`from`" (an ended, an under way, a cancelled and two coming bookings: only the under way and the
+coming, paged; the whole history without `from`; a booker refused); `bookings.controller.spec.ts`
+(`from` without a zone refused before any query); `SpaceGrid.drag.svelte.test.ts` "block mode"
+(past the booking ceiling, in slots mode, stopped by a unit that is not free);
+`UpcomingBookings.svelte.test.ts` (read from now, under way without cancel, cancel re-reads and
+tells the page, "show more" from the same instant without duplicates); `dashboard.test.ts`; the
+booker page's `page.weekRead` test, unchanged, passes on the extracted week. **Not yet seen** at
+390 / 1280 or on a phone: the red drag under a finger is the reading owed.
+
 ## WP-R6 as built - the settings in plain words (D51, Q-R13, 2026-10-27)
 
 Front only: no setting is added or removed, the draft and the PATCH are unchanged.
@@ -563,7 +609,7 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `GET mine` | anyone: at most 200, newest first - their bookings as holder or participant (withdrawn ones marked), and every booking of a resource LINKED to them (`linked: true`, D10); private texts of the LIVE ones they are one of the people of (D32) | - |
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
-| `GET spaces/:id/bookings?offset&limit&ids` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`); `ids` (comma-separated, at most 200) narrows it to the bookings a D29 refusal named, an id of another space not answered | `not-manager`, `offset`, `ids` |
+| `GET spaces/:id/bookings?offset&limit&ids&from` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`); `ids` (comma-separated, at most 200) narrows it to the bookings a D29 refusal named, an id of another space not answered; `from` (an instant, WP-R5) to the live bookings ending after it | `not-manager`, `offset`, `ids`, `from` |
 | `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
