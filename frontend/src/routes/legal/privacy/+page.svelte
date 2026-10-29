@@ -112,6 +112,33 @@
         </dd>
       </div>
       <div>
+        <dt>Directs (quand la fonction est ouverte)</dt>
+        <dd>
+          Quand vous lancez un direct, la vidéo est découpée sur votre appareil en courts segments,
+          chiffrés avant l'envoi avec une clé propre au direct. Notre serveur conserve cette clé
+          (chiffrée dans la base de données par un secret du serveur) et la remet aux membres
+          autorisés à regarder : <strong>ce n'est donc pas un chiffrement de bout en bout</strong>.
+          Le stockage des fichiers et le cache de notre serveur web ne détiennent que des segments
+          chiffrés ; notre serveur, qui détient la clé, pourrait les déchiffrer, mais il ne
+          déchiffre un contenu de direct que pour vérifier un message du chat signalé (voir «
+          Signalements, blocages et modération »). Le serveur connaît en clair : qui diffuse et au
+          nom de quelle association, les heures de début et de fin du direct et la raison de sa fin,
+          la taille de chaque segment, les membres que vous retirez du direct, et, pour chaque
+          spectateur, le fait qu'il regarde (son compte et l'heure de sa dernière lecture). Le
+          nombre de spectateurs est affiché à vous et à ceux qui regardent ; aucune fonction de
+          Canari ne montre leur liste, ni à vous ni à la modération. Les messages du chat sont
+          chiffrés avec la même clé ; leur auteur est connu du serveur et son nom est affiché aux
+          autres spectateurs. Les réactions (cœur, rire, bravo, feu, poussin) ne sont pas chiffrées
+          : le serveur enregistre qui réagit et compte les réactions. Un direct n'est pas enregistré
+          et n'a pas de rediffusion. Avant votre premier direct, vous acceptez les règles de
+          publication : la version acceptée et sa date sont conservées. Pour limiter les abus, le
+          serveur garde aussi l'heure de chacun de vos démarrages pendant une heure. Les journaux
+          techniques notent les débuts et fins de direct, les coupures et les retraits de
+          spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
+          requête, le serveur web journalise l'adresse IP de chaque lecture.
+        </dd>
+      </div>
+      <div>
         <dt>Abonnements et demandes d'abonnement</dt>
         <dd>
           Pour suivre une personne, vous lui envoyez une demande : elle reçoit une notification à
@@ -231,7 +258,21 @@
         <dt>Signalements, blocages et modération</dt>
         <dd>
           Les signalements que vous faites ou qui vous concernent, les personnes que vous bloquez,
-          et les éventuelles mesures de modération.
+          et les éventuelles mesures de modération. Pour un direct : signaler un message du chat
+          transmet son texte, que le serveur vérifie contre le message chiffré avant de le garder,
+          signé, pour la modération ; c'est un texte que le serveur ne lisait pas avant le
+          signalement. Une coupure par la modération est enregistrée (le direct, la personne qui
+          diffusait, l'association, le modérateur, le motif, une note éventuelle de la modération
+          qui ne vous est pas montrée, les heures) ; une coupure peut viser un direct en cours ou un
+          direct qui vient de se terminer, et celle d'un direct diffusé au nom d'une association
+          compte pour la personne qui diffusait. Vous en êtes prévenu sans que le nom du modérateur
+          soit indiqué, sauf pour une première coupure d'un direct déjà terminé, qui n'est pas
+          notifiée. Toute coupure à partir de la deuxième en 90 jours suspend automatiquement le
+          droit de lancer un direct pendant 30 jours à compter de la coupure ; chaque coupure est
+          décidée par une personne, jamais par un nombre de signalements. Un retrait du droit de
+          diffuser est enregistré de la même façon. Un blocage, dans un sens ou dans l'autre,
+          empêche de voir le direct de l'autre et masque ses messages et réactions dans un chat,
+          mais il ne retire personne du nombre de spectateurs.
         </dd>
       </div>
       <div>
@@ -291,6 +332,14 @@
             <td>Exécution du service (6.1.b)</td>
           </tr>
           <tr>
+            <td>Directs, chat et réactions</td>
+            <td
+              >Diffuser un direct aux membres autorisés et prévenir vos abonnés ; conserver votre
+              acceptation des règles du direct, condition pour en lancer un</td
+            >
+            <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
             <td>Appels audio</td>
             <td>Établir un appel chiffré entre deux membres d'une conversation</td>
             <td>Exécution du service (6.1.b)</td>
@@ -320,7 +369,7 @@
           </tr>
           <tr>
             <td>Signalements, blocages, modération</td>
-            <td>Faire respecter les conditions d'utilisation</td>
+            <td>Faire respecter les conditions d'utilisation, y compris pendant les directs</td>
             <td>Intérêt légitime (6.1.f) : la sécurité de la communauté</td>
           </tr>
           <tr>
@@ -371,7 +420,11 @@
           le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
           (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
           et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
-          lisible ; le contenu des messages privés n'y figure jamais en clair.
+          lisible ; le contenu des messages privés n'y figure jamais en clair. Quand une personne ou une
+          association que vous suivez lance un direct, la notification contient en clair son nom et des
+          identifiants techniques (le direct, l'association, l'image affichée), sans autre texte ; un
+          avis de coupure, de suspension ou de retrait du droit de diffuser est une phrase fixe, sans
+          nom.
         </p>
       </li>
       <li>
@@ -510,6 +563,51 @@
             <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
           </tr>
           <tr>
+            <td>Direct : vidéo chiffrée, chat, réactions, spectateurs retirés</td>
+            <td>
+              Supprimés à la fin du direct (par vous, après 60 secondes sans vidéo, au bout d'une
+              heure, par une coupure de la modération ou à la suppression de votre compte). Après
+              une coupure, la vidéo est supprimée aussitôt ; après la suppression du compte, dans
+              les 30 secondes ; à une autre fin, elle l'est une fois que les derniers spectateurs
+              ont fini de la recevoir, en principe dans la minute. Une suppression qui échoue est
+              reprise toutes les 30 secondes. Un segment mis en cache par notre serveur web ou par
+              l'appareil d'un spectateur : deux minutes au plus après sa dernière lecture
+            </td>
+          </tr>
+          <tr>
+            <td>Place de spectateur (votre compte, l'heure de votre dernière lecture)</td>
+            <td>
+              Effacée quand vous quittez le direct, 30 secondes au plus après votre dernière
+              lecture, et à la fin du direct
+            </td>
+          </tr>
+          <tr>
+            <td>Heure de chaque démarrage d'un direct</td>
+            <td>Une heure</td>
+          </tr>
+          <tr>
+            <td>Message du chat d'un direct signalé</td>
+            <td>
+              Jusqu'au traitement du signalement, 90 jours au plus, y compris si son auteur supprime
+              son compte entre-temps (le message est alors détaché du compte)
+            </td>
+          </tr>
+          <tr>
+            <td>Coupure d'un direct par la modération</td>
+            <td
+              >90 jours ; elle compte pendant ce délai dans les sanctions des conditions
+              d'utilisation</td
+            >
+          </tr>
+          <tr>
+            <td>Retrait du droit de lancer un direct</td>
+            <td>Jusqu'à ce que la modération le lève, ou jusqu'à la suppression du compte</td>
+          </tr>
+          <tr>
+            <td>Acceptation des règles du direct</td>
+            <td>Tant que le compte existe</td>
+          </tr>
+          <tr>
             <td>Abonnements et demandes d'abonnement</td>
             <td>
               Une demande : jusqu'à sa réponse (un refus la supprime), son retrait, un blocage (elle
@@ -615,7 +713,10 @@
         quotidiennes, hebdomadaires et mensuelles : un fichier supprimé peut y subsister
         <strong>jusqu'à 6 mois</strong>. La plupart des fichiers sont chiffrés sur votre appareil
         avant l'envoi ; les fichiers déposés dans un formulaire et les logos des associations ne le
-        sont pas. Une sauvegarde n'est relue que pour restaurer le service.
+        sont pas. Un direct en cours au moment d'une sauvegarde nocturne peut y laisser ses lignes
+        de base de données (dont le chat chiffré et la clé du direct, elle-même chiffrée par un
+        secret du serveur qui n'est pas dans la base) et des segments chiffrés, pour les durées
+        ci-dessus. Une sauvegarde n'est relue que pour restaurer le service.
       </p>
     </div>
   </section>
@@ -734,7 +835,8 @@
         <dd>
           Les messages, les fichiers et les réactions des conversations sont chiffrés sur votre
           appareil. Le serveur ne détient aucune clé permettant de les lire. Il en va de même du son
-          des appels audio, chiffré entre les deux appareils.
+          des appels audio, chiffré entre les deux appareils. Les directs, eux, ne sont pas chiffrés
+          de bout en bout (section 2).
         </dd>
       </div>
       <div>
@@ -798,11 +900,14 @@
         réservations passées, qui gardent le nom affiché jusqu'à leur suppression à un an. Vos
         espaces de réservation personnels sont supprimés avec tout ce qu'ils contiennent, y compris
         les réservations à venir d'autres personnes, qui n'en sont pas prévenues ; l'affiche d'un
-        espace d'association est conservée, elle appartient à l'association. Certaines données ne
-        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
-        commentaires et réactions sur les publications d'autres membres et l'historique des
-        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
-        l'effacement par e-mail dès maintenant.
+        espace d'association est conservée, elle appartient à l'association. Un direct que vous
+        diffusez s'arrête et ses données sont supprimées ; vos messages et réactions dans les
+        directs, vos coupures, votre retrait éventuel et votre acceptation des règles du direct sont
+        effacés, sauf un message signalé, gardé détaché de votre compte jusqu'au traitement du
+        signalement (90 jours au plus). Certaines données ne sont pas encore atteintes par cette
+        suppression, notamment vos réponses aux formulaires, vos commentaires et réactions sur les
+        publications d'autres membres et l'historique des modifications de votre profil : leur
+        intégration est en cours, et vous pouvez en demander l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section
