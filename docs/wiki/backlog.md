@@ -27,6 +27,27 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
+
+Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**
+
+**The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
+else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
+AUTHENTICATED caller in canonical form (never a body field; a body `createdBy` naming another account
+is refused 403); the bootstrap routes on it and re-reads it under the seat lock (`writePendingSeats`
+answers `not_creator`). The column is internal: no route returns it. An erasure anonymises it to
+`[deleted]`. No client change. Mechanism: [chat-delivery](services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29).
+
+**The migration.** `042_group_created_by.sql`: `ADD COLUMN IF NOT EXISTS "createdBy" VARCHAR(255)
+NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
+images that read the column, which is the deploy's own order.
+
+**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
+release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+seconds a deploy straddles (row written by the old image, NULL creator) has its creation refused, and
+the user retries. The P3 entry on failed creations below can now be closed on `createdBy` (let the
+recorded creator end a group nobody joined) - not done here.
+
 ## Cotisation-disabled follow-ups (after the tier stack lands)
 
 Left by the review of #2584. Start after the tier stack has merged.
@@ -2932,13 +2953,13 @@ From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#
 
 *"Pour la prochaine mise a jour"*: the user held 1.2.8 until both shipped, and they did. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
-## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, the floor is owed)
+## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, production floor `1.2.9` since 2026-10-29)
 
-The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): wait for the release carrying PR #1911 to be served by both stores, then raise `minClientVersion` to it. Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
+The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): **MET on production 2026-10-29** (floor raised to `1.2.9`, both stores serve `1.5.0`). **Owed follow-up: dev's `MIN_CLIENT_VERSION` seed and live row still read `1.2.7` and must follow production** ([dev-environment](infrastructure/dev-environment.md)). Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
 
-## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; the floor is owed)
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; production floor raised to `1.2.9` on 2026-10-29)
 
-**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **DONE ON PRODUCTION 2026-10-29 (owner's decision; dev still owed): the step was to raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
 Built (#1878): server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
 
@@ -3757,7 +3778,7 @@ undated, and those are placed by their client clock with a one-hour margin
 [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add)).
 **OWED TO THE USER - `minClientVersion`:** the withholding runs on the ANSWERING device, so an answerer
 on an older build still sends the window unfiltered; the guarantee is complete only once
-`minClientVersion` (1.2.7 today) reaches the build that ships it. Raising it is the user's call, not
+`minClientVersion` (`1.2.9` on production since 2026-10-29) reaches the build that ships it. Raising it is the user's call, not
 an agent's. **And a known abuse, accepted with the decision:** a member can remove and re-add someone
 to open an artificial window, making that span unrestorable to every new device while the person
 stays; nothing tells it from a real removal.

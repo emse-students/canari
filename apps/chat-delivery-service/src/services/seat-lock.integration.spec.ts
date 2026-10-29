@@ -1182,6 +1182,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     });
 
     it("a group's creator enrolling itself gets its roster row, admitted, and no device row", async () => {
+      // The creator the creation route recorded (`Group.createdBy`): nobody else may enrol so.
+      await q(`UPDATE dm_groups SET "createdBy" = $2 WHERE id = $1`, [GROUP, GONE.userId]);
       await expect(
         writePendingSeats(ds.manager, GROUP, GONE.userId, [GONE.deviceId], 'creator')
       ).resolves.toBe('written');

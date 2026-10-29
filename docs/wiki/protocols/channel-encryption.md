@@ -715,7 +715,8 @@ window with a durable row and a lock:
   a device revoked while the Add was in flight, and the accept names it in `refusedAdmits` so the
   committer owes and sends it no Welcome - [mls-protocol](mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)),
   both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats` - which `addGroupMember` uses for
-  every write, the creator enrolling itself into its empty roster included (`enrol: 'creator'`).
+  every write, the creator enrolling itself into its empty roster included (`enrol: 'creator'`, the
+  recorded creator alone since migration 042).
   **One known exception.** The demotion (`deactivateDeviceMembership`, the stale-device cron among
   its callers), deliberately: it only moves a row that exists to `pending`, without that read - the
   cron demotes precisely a device with no recent key package - and removes the route itself. An
