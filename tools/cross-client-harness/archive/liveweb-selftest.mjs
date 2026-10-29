@@ -38,7 +38,10 @@ const failsOn = (viewer, st, re) => stallFacts(viewer, st).some(([o, why]) => !o
 console.log('the spellings, against the source');
 const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../frontend/src/lib/live/livePlayer.ts'), 'utf8');
 for (const t of [
-  '`[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${this.policy.targetMs} ms)`',
+  '`[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${Math.round(this.policy.targetMs)} ms)`',
+  '`[LIVE] viewer ${this.liveId}: delivery of ${count} segment(s) (${range}), gap ${d.gapMs === null ? \'-\' : Math.round(d.gapMs)} ms: ` +',
+  '`end ${fmtS(seen.end)} -> ${fmtS(now.end)}, at ${fmtS(seen.at)} -> ${fmtS(now.at)}, ` +',
+  '`ahead ${fmtS(seen.ahead)} -> ${fmtS(now.ahead)} s`',
   '`[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`',
   '`[LIVE] viewer ${this.liveId}: a delivery gap of ${Math.round(d.gapMs ?? 0)} ms - target buffer now ${Math.round(d.targetMs)} ms`',
   '`[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`',
@@ -137,6 +140,9 @@ ok('a seal is forgiven on the broadcaster, NOT on a viewer', forgiven('LIVE-WEB-
 ok('a viewer join, stall and gap are forgiven on a viewer', forgiven('LIVE-STALL-1', 'W2', VJOIN) && forgiven('LIVE-STALL-1', 'W4', VSTALL) && forgiven('LIVE-STALL-1', 'W2', VGAP));
 ok('... NOT on the broadcaster', !forgiven('LIVE-STALL-1', 'A1', VJOIN) && !forgiven('LIVE-STALL-1', 'A1', VSTALL));
 ok('a join seek and a stall seek are forgiven on a viewer, the wait while seeking too', forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK}`) && forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK.replace('(stall)', '(join)')}`) && forgiven('LIVE-STALL-1', 'W2', `debug: ${WAITING}`));
+const DELIVERY = (gap) => `debug: [LIVE] viewer ${S}: delivery of 2 segment(s) (3-4), gap ${gap} ms: end 4.00 -> 8.00, at 2.50 -> 2.50, ahead 1.50 -> 5.50 s`;
+ok('a delivery line is forgiven on a viewer, measured gap or not, NOT on the broadcaster', forgiven('LIVE-STALL-1', 'W2', DELIVERY('2000')) && forgiven('LIVE-STALL-1', 'W4', DELIVERY('-')) && !forgiven('LIVE-STALL-1', 'A1', DELIVERY('2000')));
+ok('... and a delivery line with nothing buffered before it stays dirt', !forgiven('LIVE-STALL-1', 'W2', DELIVERY('2000').replace('end 4.00', 'end -')));
 ok('a catch-up, drift or time-gap seek stays dirt - not the steady path', ['catch-up', 'drift', 'time gap'].every((why) => !forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK.replace('(stall)', `(${why})`)}`)));
 ok('a viewer jumping segments behind stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S}: 3 segments behind - jumping from 4 to 7`));
 ok('a viewer reconnecting stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S} -> reconnecting (network)`));
