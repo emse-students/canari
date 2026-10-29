@@ -68,7 +68,7 @@
 </script>
 
 <div
-  class="m-3 flex items-center gap-2 rounded-xl px-4 py-2 text-sm {center
+  class="m-3 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-xl px-4 py-2 text-sm {center
     ? 'justify-center text-center'
     : 'justify-between'} {SURFACE[variant]} {extra}"
   role={tone}
@@ -76,7 +76,8 @@
   aria-busy={busy ? 'true' : undefined}
 >
   {#if action}
-    <div class="flex min-w-0 items-center gap-2">{@render children()}</div>
+    <!-- basis + grow: the label keeps a readable column and takes the full row once the actions wrap below it -->
+    <div class="flex min-w-0 flex-1 basis-56 items-center gap-2">{@render children()}</div>
     {@render action()}
   {:else}
     {@render children()}
