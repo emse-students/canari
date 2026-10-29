@@ -1,3 +1,3 @@
 ### Fixed - a cash sale records the preferential price when its beneficiary qualifies
 
-With no amount typed, `grantProductPurchase` records the price the checkout would charge that beneficiary, the member price included, instead of the full price; a typed amount still wins ([cotisations](docs/wiki/cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
+The Achats tab now shows the amount a cash sale will record, the member price when the beneficiary qualifies, and the cashier may type another; a free amount's bounds bind only a typed amount ([cotisations](docs/wiki/cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).

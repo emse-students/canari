@@ -1704,6 +1704,82 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect.anything()
       );
     });
+
+    describe('the bounds of a free amount bind only an amount the cashier TYPES', () => {
+      /** The review's repro: a member price below the free amount's minimum. */
+      const boundedSetUp = () => {
+        const made = setUp(true);
+        made.productRepo.findOne.mockResolvedValue(
+          product({
+            amountCents: 1000,
+            amountCentsMember: 300,
+            memberPriceTag: 'cotisant:cercle-sans-alcool',
+            allowCustomAmount: true,
+            customAmountMinCents: 500,
+          })
+        );
+        return made;
+      };
+
+      it('records the preferential default under the minimum, as the checkout charges it', async () => {
+        const { service, purchaseRecordService } = boundedSetUp();
+        await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+        expect(purchaseRecordService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ amountCents: 300 }),
+          expect.anything()
+        );
+      });
+
+      it('CONTROL: still refuses a TYPED amount under the minimum', async () => {
+        const { service, purchaseRecordService } = boundedSetUp();
+        jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+        const err = await service
+          .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 300 })
+          .catch((e: unknown) => e);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'AMOUNT_OUT_OF_RANGE',
+        });
+        expect(purchaseRecordService.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('the quote the cashier sees is what the sale records', () => {
+      it('quotes the preferential price to a beneficiary who qualifies', async () => {
+        const { service } = setUp(true);
+        await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+          kind: 'priced',
+          amountCents: 300,
+          preferential: true,
+        });
+      });
+
+      it('quotes the full price to one who does not', async () => {
+        const { service } = setUp(false);
+        await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+          kind: 'priced',
+          amountCents: 1000,
+          preferential: false,
+        });
+      });
+
+      it('quotes `typed` for a free-amount product, which has no default', async () => {
+        const { service, productRepo } = setUp(true);
+        productRepo.findOne.mockResolvedValue(
+          product({ amountCents: null, allowCustomAmount: true })
+        );
+        await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+          kind: 'typed',
+        });
+      });
+
+      it('answers 404 for a top-up, which has no cash sale', async () => {
+        const { service, productRepo } = setUp(true);
+        productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));
+        await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).rejects.toThrow(
+          NotFoundException
+        );
+      });
+    });
   });
 
   describe('webhook secret exposure and failed-delivery cleanup', () => {

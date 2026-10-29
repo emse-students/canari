@@ -510,6 +510,17 @@ const FIXED_PRICE: ViewerPrice = { kind: 'fixed', amountCents: null, dependsOnPr
 export type SafeProduct = AssociationProduct & { webhookConfigured: boolean };
 
 /**
+ * What a cash sale records when the cashier types no amount (`cashSaleQuoteFor`): `priced` (the
+ * grid cell or the fixed price, `preferential` when it is the member price), `typed` (a free-amount
+ * product: there is no default, an amount must be typed), or `not-sold` (the grid closes this
+ * beneficiary's combination: the sale is refused unless an amount is typed).
+ */
+export type CashSaleQuote =
+  | { kind: 'priced'; amountCents: number; preferential: boolean }
+  | { kind: 'typed' }
+  | { kind: 'not-sold' };
+
+/**
  * A failed Cercle delivery as the admin dashboard sees it: the row, plus who and what it is about.
  *
  * Dates are ISO strings rather than `Date`, so the shape is the same on both sides of the wire.
@@ -3469,49 +3480,23 @@ export class ProductsService {
 
     let amountCents: number;
     if (dto.amountCents != null) {
+      // A TYPED amount is what the bounds of a free-amount product bind - never the default resolved
+      // below, which is a price the checkout charges with no bounds check either.
+      if (product.allowCustomAmount) {
+        this.assertWithinCustomBounds(product, associationId, dto.amountCents, 'cash grant amount');
+      }
       amountCents = dto.amountCents;
-    } else if (product.priceMatrix) {
-      // The beneficiary is known, so their cell is known: falling back to `amountCents` here would
-      // record a cash sale at a price the grid never quoted, and `amountCents` may not even be set.
-      const cell = this.resolveGridPrice(
-        product.priceMatrix,
-        await this.userTagService.listHeldCotisationTiers(dto.userId, associationId),
-        await this.pricingFacts.profileFor(
-          dto.userId,
-          dimensionsNeedProfile(product.priceMatrix.dimensions)
-        )
-      );
-      if (cell === null) {
+    } else {
+      const quote = await this.cashSaleQuoteFor(product, dto.userId);
+      if (quote.kind === 'not-sold') {
         throw new BadRequestException(
           'The pricing grid does not sell this product to that person, so there is no amount to record.'
         );
       }
-      amountCents = cell;
-    } else if (product.amountCents != null) {
-      // The beneficiary is known, so the price the checkout would charge them is known: a cash sale
-      // records the preferential amount when they qualify for it, by the same rule (`fixedPriceOf`).
-      // The cashier overrides it by passing `amountCents` (user, 2026-10-29).
-      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-      if (!asso) throw new NotFoundException('Association not found');
-      const price = this.fixedPriceOf(
-        product,
-        product.amountCents,
-        await this.tierFactsOf(asso, dto.userId)
-      );
-      amountCents = price.amountCents;
-      if (price.preferential) {
-        this.logger.debug(
-          `[SHOP] manual grant at the member price: product=${productId.slice(0, 8)} user=${dto.userId.slice(0, 8)} amount=${amountCents}`
-        );
+      if (quote.kind === 'typed') {
+        throw new BadRequestException('amountCents is required for this product');
       }
-    } else {
-      throw new BadRequestException('amountCents is required for this product');
-    }
-
-    // Whenever the product takes a free amount - as the checkout does - so a max set with no min
-    // still binds the grant.
-    if (product.allowCustomAmount) {
-      this.assertWithinCustomBounds(product, associationId, amountCents, 'cash grant amount');
+      amountCents = quote.amountCents;
     }
 
     this.logger.log(
@@ -3528,6 +3513,71 @@ export class ProductsService {
     });
     const [enriched] = await this.enrichPurchaseRecords([record]);
     return enriched;
+  }
+
+  /**
+   * The amount a cash sale of `productId` to `userId` records when the cashier types none - what
+   * the cashier's screen shows before the sale, from the same `cashSaleQuoteFor` the sale itself
+   * calls, so the two cannot disagree. 404 for a product of another association or a top-up (no
+   * cash sale of one exists).
+   */
+  async quoteCashSale(
+    associationId: string,
+    productId: string,
+    userId: string
+  ): Promise<CashSaleQuote> {
+    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
+    if (!product || product.type === 'balance_topup') {
+      throw new NotFoundException('Product not found');
+    }
+    const quote = await this.cashSaleQuoteFor(product, userId);
+    this.logger.debug(
+      `[SHOP] cash sale quoted: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} kind=${quote.kind}`
+    );
+    return quote;
+  }
+
+  /**
+   * What the checkout would charge this beneficiary, which a cash sale records by default (user,
+   * 2026-10-29): their grid cell (`not-sold` when the grid closes their combination), else the fixed
+   * price through `fixedPriceOf` - the preferential one when they qualify - else `typed`, a
+   * free-amount product the cashier must type an amount for. Read before the buyer's tier lock, as
+   * the backlog's P3 says: one tier stale at worst, never the grant itself.
+   */
+  private async cashSaleQuoteFor(
+    product: AssociationProduct,
+    userId: string
+  ): Promise<CashSaleQuote> {
+    const associationId = product.associationId;
+    if (product.priceMatrix) {
+      // A grid replaces the fixed pricing: falling back to `amountCents` here would record a price
+      // the grid never quoted, and `amountCents` may not even be set.
+      const cell = this.resolveGridPrice(
+        product.priceMatrix,
+        await this.userTagService.listHeldCotisationTiers(userId, associationId),
+        await this.pricingFacts.profileFor(
+          userId,
+          dimensionsNeedProfile(product.priceMatrix.dimensions)
+        )
+      );
+      return cell === null
+        ? { kind: 'not-sold' }
+        : { kind: 'priced', amountCents: cell, preferential: false };
+    }
+    if (product.amountCents == null) return { kind: 'typed' };
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) throw new NotFoundException('Association not found');
+    const price = this.fixedPriceOf(
+      product,
+      product.amountCents,
+      await this.tierFactsOf(asso, userId)
+    );
+    if (price.preferential) {
+      this.logger.debug(
+        `[SHOP] cash sale at the member price: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${price.amountCents}`
+      );
+    }
+    return { kind: 'priced', ...price };
   }
 
   /**

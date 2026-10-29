@@ -4,11 +4,13 @@
     listAssociationProductsForManage,
     listAssociationPurchases,
     grantProductPurchase,
+    quoteCashSale,
     closePaidNotGranted,
     SocialApiError,
     type Association,
     type AssociationProduct,
     type AssociationPurchase,
+    type CashSaleQuote,
     type PurchaseClosingOutcome,
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
@@ -40,6 +42,13 @@
   let grantProductId = $state('');
   let grantAmountEuros = $state<number | ''>('');
   let grantingProduct = $state(false);
+  /**
+   * What the sale records if no amount is typed, quoted by the server for the chosen pair (the
+   * preferential price when the beneficiary qualifies). Null until both are chosen and answered.
+   */
+  let grantQuote = $state<CashSaleQuote | null>(null);
+  /** Only the latest pair's answer is shown: an earlier one landing late is dropped. */
+  let quoteSeq = 0;
   /** The purchase whose outcome is being recorded, so its two buttons cannot be clicked twice. */
   let closingId = $state<string | null>(null);
 
@@ -51,8 +60,11 @@
    */
   const grantableProducts = $derived(products.filter((p) => p.type !== 'balance_topup'));
   const grantSelectedProduct = $derived(grantableProducts.find((p) => p.id === grantProductId));
+  /** No default to record: a free amount, or a grid that does not sell to this beneficiary. */
   const grantNeedsAmount = $derived(
-    grantSelectedProduct != null && grantSelectedProduct.amountCents == null
+    grantQuote != null
+      ? grantQuote.kind !== 'priced'
+      : grantSelectedProduct != null && grantSelectedProduct.amountCents == null
   );
   const filteredPurchases = $derived(
     purchaseFilterProductId
@@ -68,6 +80,28 @@
   );
 
   onMount(loadPurchases);
+
+  $effect(() => {
+    const userId = grantUserId.trim();
+    const productId = grantProductId;
+    grantQuote = null;
+    if (!userId || !productId) return;
+    void loadQuote(userId, productId);
+  });
+
+  /** Asks the server what a cash sale of `productId` to `userId` records by default. */
+  async function loadQuote(userId: string, productId: string) {
+    const seq = ++quoteSeq;
+    Log.d('ASSO', `quoting a cash sale of product ${productId.slice(0, 8)}`);
+    try {
+      const quote = await quoteCashSale(asso.id, productId, userId);
+      if (seq !== quoteSeq) return;
+      grantQuote = quote;
+    } catch (e) {
+      // The amount field stays open, so the cashier can still type what was paid.
+      console.error(`[ASSO] quoting a cash sale of product ${productId.slice(0, 8)} failed:`, e);
+    }
+  }
 
   async function loadPurchases() {
     purchasesLoading = true;
@@ -166,7 +200,8 @@
     try {
       await grantProductPurchase(asso.id, grantProductId, {
         userId: grantUserId.trim(),
-        ...(grantNeedsAmount && grantAmountEuros !== ''
+        // A typed amount is always sent: it is how the cashier overrides the quoted default.
+        ...(grantAmountEuros !== ''
           ? { amountCents: Math.round(Number(grantAmountEuros) * 100) }
           : {}),
       });
@@ -253,7 +288,7 @@
           density="compact"
         />
       </div>
-      {#if grantNeedsAmount}
+      {#if grantSelectedProduct}
         <div>
           <label for="grant-amount" class="text-text-muted mb-1 block text-xs font-semibold"
             >{m.asso_achats_grant_amount_label()}</label
@@ -264,13 +299,26 @@
             min="0"
             step="0.01"
             bind:value={grantAmountEuros}
-            placeholder="0.00"
+            placeholder={grantQuote?.kind === 'priced'
+              ? (grantQuote.amountCents / 100).toFixed(2)
+              : '0.00'}
             class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm"
-            required
+            required={grantNeedsAmount}
           />
         </div>
       {/if}
     </div>
+    {#if grantQuote?.kind === 'priced'}
+      <p class="text-text-main text-xs font-semibold" data-testid="grant-quote">
+        {grantQuote.preferential
+          ? m.asso_achats_grant_quote_preferential({ amount: formatAmount(grantQuote.amountCents) })
+          : m.asso_achats_grant_quote({ amount: formatAmount(grantQuote.amountCents) })}
+      </p>
+    {:else if grantQuote?.kind === 'not-sold'}
+      <p class="text-text-muted text-xs" data-testid="grant-quote">
+        {m.asso_achats_grant_quote_not_sold()}
+      </p>
+    {/if}
     <p class="text-text-muted text-xs">
       {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
         {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
