@@ -464,6 +464,22 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   trace replayed in `liveBufferPolicy.test.ts` stalls once under the old rule and never under the
   new. The row's zero-after-first-gap rule stands. Owed: LIVE-STALL-1 rerun on the pre-release that
   carries it, then delete this entry.
+- **The rerun on `1.5.1-alpha.8` (#2689) still FAILS, and the stall now has a different shape**
+  (dev.7a83364, 2026-10-29; console
+  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T22-23-33-788Z-W4.log`).
+  - W4 had 23 deliveries. Its targets were 4011, then 6023, then 6025 ms. It re-anchored by itself
+    and never ran short.
+  - It stalled ONCE, at 55.56 s, at 23:23:04.085. The delivery before (23:23:00.541) had left it at
+    52.03 s with the buffer ending at 58.19 s, so 6.17 s were ahead. At the stall, 2.6 s of
+    buffered media were still ahead of the play position.
+  - So this is not a buffer running dry over a gap: the player stopped with media in hand. The next
+    delivery's stall seek is what resumed it.
+  - W2 took 0 stalls and 2 seeks. Its targets reached 6015 ms, and it held one short re-anchor
+    (`5.98 s buffered, under the 6015 ms target - no seek`).
+  - The row's failure: "W4 stalled 1 time(s) and seeked 1 time(s) after its first delivery gap".
+- Owed: read why a viewer with 2.6 s buffered reports `waiting` - a hole in the buffered ranges or
+  a decoder wait at a fragment boundary, for example. The delivery line records only the buffer's
+  end, not its ranges. Then rerun LIVE-STALL-1.
 
 ## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
 
@@ -498,6 +514,11 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   the target. Its 14.94 s wait was the last segment playing out before the `404` arrived; with
   5-7 kept and the 4 s anchor it should not recur, which the rerun must show. No migration, no
   production data action.
+- **The rerun is a clean `PASS` on `1.5.1-alpha.8`** (#2689; dev.7a83364, 2026-10-29). The rig read
+  the new lines through #2703.
+  - There was no segment 404, and both viewers saw the end.
+  - social-service logged `[LIVE_GC] <live> kept: 2 viewer(s) still seated` before it purged.
+  - Delete this entry when a stable ships #2689.
 
 ## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
 
