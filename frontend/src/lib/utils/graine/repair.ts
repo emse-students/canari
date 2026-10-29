@@ -205,6 +205,11 @@ const historyRequest = new Map<
     answerer: string;
     pending: Set<string> | null;
     unanswered: Set<string> | null;
+    /**
+     * The devices recorded as holding nothing for THIS request, in the order they answered. Said
+     * once, on the line of the decision they lead to (the next member asked), never one line each.
+     */
+    heldNothing: string[];
     groupId: string;
     /** The distribution epoch the request was sealed at, `null` when the group was not ridable. */
     epoch: number | null;
@@ -1263,6 +1268,7 @@ export async function requestCommunityHistory(
     answerer: answerer.toLowerCase(),
     pending: answererDevices.length > 0 ? new Set(answererDevices) : null,
     unanswered: heldView.unansweredOnTree(answerer),
+    heldNothing: [],
     groupId,
     epoch,
   });
@@ -1400,20 +1406,20 @@ export function noteHistoryHeldNothing(
     );
     return;
   }
+  inFlight.heldNothing.push(answererDevice);
   const memberDone = inFlight.unanswered !== null && inFlight.unanswered.size === 0;
   const namedDone = inFlight.pending !== null && inFlight.pending.size === 0;
-  if (!memberDone && !namedDone) {
-    console.info(
-      `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
-        `recorded; ${inFlight.pending?.size ?? inFlight.unanswered?.size ?? 'every other'} device(s) ` +
-        `of ${answerer} still to answer`
-    );
-    return;
-  }
+  // ONE LINE PER DECISION, NOT PER ANSWER (2026-10-29). A device's "nothing" while others of the
+  // member are still to answer moves nothing but the durable record, and said one line each it was a
+  // line per device per ask - three for one member of three tabs, read as dirt by every cross-client
+  // row. The devices are named on the line below, which is the decision they lead to; a member whose
+  // remaining devices never answer is still visible, because the next ask names only the devices
+  // not yet recorded (`asked <member> (<devices>)`).
+  if (!memberDone && !namedDone) return;
   historyRequest.delete(workspaceId);
   console.info(
-    `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} at ` +
-      `distribution epoch ${inFlight.epoch} - recorded, ` +
+    `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} on ` +
+      `${describeNamedDevices(inFlight.heldNothing)} at distribution epoch ${inFlight.epoch} - recorded, ` +
       (memberDone
         ? `every device of ${answerer} on the key group has answered`
         : `${inFlight.unanswered?.size ?? 'an unknown number of'} device(s) of ${answerer} on the key group are offline and still unasked`) +

@@ -687,6 +687,33 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     expect(sentAsk(1).answerer).toBe('carol');
   });
 
+  it('says ONE line per decision: a device answering while a sibling is still to answer is silent, and the decision names both', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1', 'carol:web-carol'];
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const heldNothingLines = () =>
+      info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('holds nothing'));
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    await settle();
+    expect(heldNothingLines()).toEqual([]);
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
+    await settle();
+    expect(heldNothingLines()).toEqual([
+      expect.stringContaining(
+        'bob holds nothing of community ws-1 on web-bob,bob-phone at distribution epoch 7 - recorded, every device of bob on the key group has answered - asking the next member'
+      ),
+    ]);
+    info.mockRestore();
+  });
+
   it('a member whose online phone said "nothing" is NOT answered while a laptop of theirs on the tree is offline - asked when it is online', async () => {
     // bob's laptop is a leaf of the key group and offline: presence names only the phone.
     treeLeaves = ['bob:web-bob', 'bob:bob-laptop', 'alice:device-1', 'carol:web-carol'];

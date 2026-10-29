@@ -2477,7 +2477,11 @@ repaired**. A bundle travels on the community's distribution group, so every mem
 answer to ANY member's request, and announcing held seeds re-read the salon's history on every online
 member per answer: 18 refetches of one salon in three minutes on a client that had asked for nothing
 (production web console, 2026-10-12, `v1.2.4`). A shortfall that is not
-`already held` is a refusal, which warns or errors on its own line.
+`already held` is a refusal, which warns or errors on its own line. **A bundle that carried no
+seed says no `absorbed` line at all** (2026-10-29): an "I hold nothing" answer or a pure decline
+reaches every member of the key group, so `absorbed 0/0 ... salon(s) none` was one line per member
+per answer to somebody else's ask - a read, not a decision. What such a bundle decides is said where
+it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
 
 **Found by COMM-8**, which asserts that a member granted access to a salon is SEEN to receive its
 seed. That assertion could not hold on any wording, because the only line it could match belongs to
@@ -4250,7 +4254,13 @@ account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, 
 
 - **One launch walks the roster one member at a time**: one roster read and one sealed send per
   member, once per epoch. Once every device the request named has answered (or, when it named none,
-  every tree device of the member), the next member is asked at once, from the answer itself. A
+  every tree device of the member), the next member is asked at once, from the answer itself, and
+  THAT decision is the one line said: `<member> holds nothing of community <ws> on <devices> at
+  distribution epoch N - recorded, ... - asking the next member`, naming every device that answered
+  this request. A device answering while a sibling is still to answer moves only the durable record
+  and says nothing (until 2026-10-29 it said `... - recorded; N device(s) still to answer`, one line
+  per device per ask, which the cross-client rig reads as dirt); a member whose last device never
+  answers stays visible, because the next ask names only its unrecorded devices. A
   device recorded already never moves the walk again, so a repeated answer cannot loop it.
 - The election skips a member whose devices are all recorded (`exhausted`), and for now a member
   whose ONLINE devices are all recorded (`spent`) - only the unrecorded online devices are named.
@@ -4320,7 +4330,7 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 (per-device keying, a repeated answer is not new, version replacement, malformed records), `proto_fields.rs`
 (`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
 reading - a cold start with every other member online, then a second start: the first shows one
-`holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
+`<member> holds nothing ... on <devices> at distribution epoch N - recorded, ... asking the next member` per member and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
 
 ## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)
