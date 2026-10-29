@@ -24,7 +24,12 @@ import {
   clientSendRefusal,
   ValidateCommitBody,
 } from '../services/messaging.service';
-import { sanitizeEpoch, sanitizeLeafLogValue, sanitizeLogValue } from '../utils/sanitize';
+import {
+  sanitizeDevicePairLogValue,
+  sanitizeEpoch,
+  sanitizeLeafLogValue,
+  sanitizeLogValue,
+} from '../utils/sanitize';
 
 /**
  * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
@@ -225,10 +230,10 @@ export class MessagingController {
     }
   ): { recorded: true } {
     this.logger.warn(
-      `[SENDER_MISMATCH] reporter=${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)} ` +
+      `[SENDER_MISMATCH] reporter=${sanitizeDevicePairLogValue(authUserId, reporterDeviceId)} ` +
         `group=${sanitizeLogValue(body.groupId)} path=${sanitizeLogValue(body.path)} ` +
         `kind=${sanitizeLogValue(body.kind)} ` +
-        `envelope=${sanitizeLogValue(body.envelopeUserId)}:${sanitizeLogValue(body.envelopeDeviceId, 'none')} ` +
+        `envelope=${sanitizeDevicePairLogValue(body.envelopeUserId, body.envelopeDeviceId, 'none')} ` +
         `verified=${sanitizeLeafLogValue(body.verifiedIdentity, 'unreadable')}`
     );
     return { recorded: true };
@@ -269,7 +274,7 @@ export class MessagingController {
       kind?: unknown;
     }
   ): Promise<{ recorded: true }> {
-    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const reporter = sanitizeDevicePairLogValue(authUserId, reporterDeviceId);
     const groupId = typeof body.groupId === 'string' ? body.groupId : '';
     if (
       !groupId ||
@@ -349,7 +354,7 @@ export class MessagingController {
       proven?: unknown;
     }
   ): Promise<{ recorded: true }> {
-    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const reporter = sanitizeDevicePairLogValue(authUserId, reporterDeviceId);
     const groupId = typeof body.groupId === 'string' ? body.groupId : '';
     if (
       !groupId ||

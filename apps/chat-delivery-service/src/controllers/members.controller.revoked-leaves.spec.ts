@@ -133,7 +133,7 @@ describe('MembersController.getRevokedLeaves', () => {
       'bob:tauri:x',
       'bob',
       'mallory:dev 1',
-      'mallory:dév',
+      `mallory:d${String.fromCharCode(0xe9)}v`,
       `eve:${'d'.repeat(129)}`,
       '',
       42,

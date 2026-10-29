@@ -62,6 +62,20 @@ export function sanitizeLeafLogValue(value: unknown, absent = 'unstated'): strin
 }
 
 /**
+ * A user and a device sent as TWO fields (a reporter's headers, an envelope's sender), printed as
+ * one `user:device` log value the way {@link sanitizeLeafLogValue} prints a leaf: each half through
+ * {@link sanitizeLogValue} first (so a forged newline is still `invalid`), then no full user id left
+ * in either ({@link cutLeafIdentity}). `absentDevice` names a device the caller did not send.
+ */
+export function sanitizeDevicePairLogValue(
+  userId: unknown,
+  deviceId: unknown,
+  absentDevice = 'unstated'
+): string {
+  return cutLeafIdentity(sanitizeLogValue(userId), sanitizeLogValue(deviceId, absentDevice));
+}
+
+/**
  * Validates that `value` is a non-empty string matching the safe query allowlist.
  * Throws `BadRequestException` with a descriptive message referencing `fieldName` on failure.
  */

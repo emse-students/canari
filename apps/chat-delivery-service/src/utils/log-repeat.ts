@@ -47,17 +47,32 @@ export const cutUserId = (id: string | null | undefined): string => String(id ??
 /** See {@link cutUserId}. */
 export const cutDeviceId = (id: string | null | undefined): string => String(id ?? '').slice(0, 12);
 
+/** A run of 64 or more hex characters: the shape of a user id, wherever it sits. */
+const HEX_USER_ID_RUN = /[0-9a-f]{64,}/gi;
+
 /**
- * A leaf identity `userId:deviceId` for a log line: the user id cut ({@link cutUserId}) WHEREVER it
- * appears - as the user half, and inside the device half, which embeds it
- * (`<platform>-<userId>-<time36>-<rand>`, `BaseMlsService.generateDeviceId`) - and the rest of the
- * device kept, so two devices of one person still print differently. {@link cutDeviceId} would
- * keep only `web-<8 of the user>`, the same for every web device of that person. The embedded copy
- * is matched without case: the user half is compared that way everywhere else.
+ * A device id for a log line, with no user id left in it: `userId`'s own copy cut
+ * ({@link cutUserId}) wherever it appears - the device embeds it
+ * (`<platform>-<userId>-<time36>-<rand>`, `BaseMlsService.generateDeviceId`) - matched without case
+ * as the user half is compared everywhere else, and ANY other run of 64+ hex characters cut too,
+ * since a crafted device can carry somebody else's id (`web-<victim>-x-y`). The rest of the device
+ * is kept: it is what tells two devices of one person apart, which {@link cutDeviceId} (12
+ * characters, `web-<8 of the user>`) cannot.
+ */
+export function maskUserIdsInDevice(userId: string, deviceId: string): string {
+  let device = deviceId;
+  if (cutUserId(userId) !== userId) {
+    const embedded = new RegExp(userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    device = device.replace(embedded, cutUserId(userId));
+  }
+  return device.replace(HEX_USER_ID_RUN, (run) => cutUserId(run));
+}
+
+/**
+ * A leaf identity `userId:deviceId` for a log line: the user half cut ({@link cutUserId}) and the
+ * device half through {@link maskUserIdsInDevice}, so no full user id is printed and two devices
+ * of one person still print differently.
  */
 export function cutLeafIdentity(userId: string, deviceId: string): string {
-  const user = cutUserId(userId);
-  if (user === userId) return `${userId}:${deviceId}`;
-  const embedded = new RegExp(userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-  return `${user}:${deviceId.replace(embedded, user)}`;
+  return `${cutUserId(userId)}:${maskUserIdsInDevice(userId, deviceId)}`;
 }

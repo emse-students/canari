@@ -1,4 +1,10 @@
-import { RepeatCounter, cutDeviceId, cutLeafIdentity, cutUserId } from './log-repeat';
+import {
+  RepeatCounter,
+  cutDeviceId,
+  cutLeafIdentity,
+  cutUserId,
+  maskUserIdsInDevice,
+} from './log-repeat';
 
 describe('RepeatCounter - a rate said once, then by its powers of ten', () => {
   it('prints the first occurrence, then the 10th and 100th, and nothing between', () => {
@@ -44,6 +50,15 @@ describe('cutLeafIdentity', () => {
     expect(one).toBe('a3f1c9e0:web-a3f1c9e0-mh9x2k1q-a7c3');
     expect(one).not.toBe(two);
     expect(`${one} ${two}`).not.toContain(user);
+  });
+
+  it("cuts ANY 64-hex run in the device half - a crafted device carrying another person's id", () => {
+    const victim = 'b0b0b0b0c1c1c1c1'.repeat(4);
+    const printed = cutLeafIdentity('a', `web-${victim}-x-y`);
+    expect(printed).toBe('a:web-b0b0b0b0-x-y');
+    expect(printed).not.toContain(victim);
+    // Upper case and a longer run are a user id's shape too.
+    expect(maskUserIdsInDevice('a', `web-${victim.toUpperCase()}ff-1`)).toBe('web-B0B0B0B0-1');
   });
 
   it('treats a user id as text, never as a pattern', () => {

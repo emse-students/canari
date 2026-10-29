@@ -257,11 +257,12 @@ async function reconcileOnce(
     userId,
     mlsService.getDeviceId()
   );
-  if (malformed > 0) {
+  if (malformedChanged(userId, groupId, malformed)) {
     // Never sent: the server would only skip them. A leaf no registered device can carry is a
-    // crafted or corrupt credential - the count only, a leaf identity names a person.
+    // crafted or corrupt credential - the count only, a leaf identity names a person. Said when that
+    // set changes, not on every pass over a tree that still holds it.
     log(
-      `[GRAINE] ${scopeLabel(scope)}: ${malformed} leaf/leaves outside the leaf-identity rule left out of the revocation question - no registered device carries such a credential`
+      `[GRAINE] ${scopeLabel(scope)}: ${malformed.length} leaf/leaves outside the leaf-identity rule left out of the revocation question - no registered device carries such a credential`
     );
   }
   let revokedLeaves: string[];
@@ -443,11 +444,28 @@ async function askRevokedLeaves(
 }
 
 /**
- * Forgets every remembered revoked-leaf answer: on sign-out (the next account asks for itself), and
- * for a test, which shares the module.
+ * The malformed leaves last SAID per account and key group, as one key - so the line naming their
+ * count is said when that set changes, not on every roster pass over a tree that still holds them.
+ * Session memory only, like {@link revokedLeafAnswers}.
+ */
+const saidMalformed = new Map<string, string>();
+
+/** Whether `malformed` differs from what was last said for this group - and records it if so. */
+function malformedChanged(userId: string, groupId: string, malformed: string[]): boolean {
+  const key = `${canonicalUserId(userId)}|${groupId}`;
+  const said = [...malformed].sort().join('\n');
+  if ((saidMalformed.get(key) ?? '') === said) return false;
+  saidMalformed.set(key, said);
+  return malformed.length > 0;
+}
+
+/**
+ * Forgets every remembered revoked-leaf answer and malformed-leaf line: on sign-out (the next account
+ * asks for itself), and for a test, which shares the module.
  */
 export function forgetRevokedLeafAnswers(): void {
   revokedLeafAnswers.clear();
+  saidMalformed.clear();
 }
 
 /**
@@ -468,7 +486,7 @@ export function revokedLeafCandidates(
   strayUserIds: Set<string>,
   selfUserId: string,
   selfDeviceId: string
-): { candidates: string[]; malformed: number } {
+): { candidates: string[]; malformed: string[] } {
   const self = canonicalUserId(selfUserId);
   const malformed = new Set<string>();
   const candidates = new Set<string>();
@@ -483,7 +501,7 @@ export function revokedLeafCandidates(
     if (user === self && identity.slice(identity.indexOf(':') + 1) === selfDeviceId) continue;
     candidates.add(identity);
   }
-  return { candidates: [...candidates], malformed: malformed.size };
+  return { candidates: [...candidates], malformed: [...malformed] };
 }
 
 /**

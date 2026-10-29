@@ -11,6 +11,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
   parseLeafIdentity,
+  sanitizeDevicePairLogValue,
   sanitizeLeafLogValue,
   sanitizeLogValue,
   SAFE_QUERY_VALUE_REGEX,
@@ -77,7 +78,7 @@ describe('parseLeafIdentity - near misses, one rule each', () => {
     ['a quote in the device half', `${USER}:web-'1`],
     ['a slash in the user half', `a/b:${device}`],
     ['leading whitespace', ` ${USER}:${device}`],
-    ['a non-ASCII letter', `${USER}:web-é`],
+    ['a non-ASCII letter', `${USER}:web-${String.fromCharCode(0xe9)}`],
   ])('refuses %s', (_rule, value) => {
     expect(parseLeafIdentity(value)).toBeNull();
   });
@@ -135,6 +136,24 @@ describe('sanitizeLeafLogValue - a leaf identity is evidence, its user id cut ev
     expect(sanitizeLeafLogValue(`${'a'.repeat(129)}:${'b'.repeat(10)}`)).toBe('invalid');
     expect(sanitizeLeafLogValue(undefined, 'unreadable')).toBe('unreadable');
     expect(sanitizeLeafLogValue(42)).toBe('invalid');
+  });
+
+  it('prints a user and a device sent as two fields the same way, and refuses a forged half', () => {
+    const device = deviceIdLike('tauri', USER, 1_761_600_000_000);
+    expect(sanitizeDevicePairLogValue(USER, device)).toBe(
+      `${cut}:${deviceIdLike('tauri', cut, 1_761_600_000_000)}`
+    );
+    expect(sanitizeDevicePairLogValue(USER, null, 'none')).toBe(`${cut}:none`);
+    expect(sanitizeDevicePairLogValue(`${USER}\n[SEND] forged`, device)).toBe(
+      `invalid:${deviceIdLike('tauri', cut, 1_761_600_000_000)}`
+    );
+  });
+
+  it("masks a victim's 64-hex id carried in a crafted device half", () => {
+    const victim = 'b0b0b0b0c1c1c1c1'.repeat(4);
+    const printed = sanitizeLeafLogValue(`${USER}:web-${victim}-x-y`);
+    expect(printed).toBe(`${cut}:web-b0b0b0b0-x-y`);
+    expect(printed).not.toContain(victim);
   });
 
   it('leaves the generic log value as it was: a real identity is not one', () => {

@@ -2342,7 +2342,12 @@ The four log fields that carry a leaf identity (`[SENDER_MISMATCH] verified=`, t
 through `sanitizeLeafLogValue` (`cutLeafIdentity`, `utils/log-repeat.ts`): the user id cut to 8
 characters as every other line prints a user - in the user half AND inside the device half, which
 embeds it (`web-<user>-<time36>-<rand>`) - and the rest of the device kept, since it is what tells
-two devices of one person apart. No full user id reaches these lines (owner decision, 2026-10-29).
+two devices of one person apart. Any other run of 64+ hex characters in a device half is cut too,
+since a crafted device can carry somebody else's id. The user/device pairs those four lines print
+as two fields (`reporter=` of all three reports, `envelope=` of `[SENDER_MISMATCH]`, `sender=` of
+`external_leaf_foreign`) go through `sanitizeDevicePairLogValue`, the same masking. No full user id
+reaches these four lines (owner decision, 2026-10-29). Other lines of the service still print user
+ids their own way; this claim is about these four.
 
 **Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
 the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge
