@@ -191,4 +191,19 @@ describe('AvailabilityEditor - a fixed-slot space (owner, 2026-10-29)', () => {
     drag(1, 28, 1, 28);
     expect(times(await saved())).toEqual(['1 14:00-14:50', '2 14:00-14:30']);
   });
+
+  it('says so under the painter when the cap stops a paint, instead of a refused save', async () => {
+    const at = (min: number) =>
+      `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    // 199 one-slot lines: Monday..Thursday, 50 slots of 25 min each, minus one.
+    const lines = [];
+    for (let i = 0; lines.length < 199; i++) {
+      const start = (i % 50) * 25;
+      lines.push(slot(Math.floor(i / 50) + 1, at(start), at(start + 25)));
+    }
+    await open(lines, true);
+    drag(6, 0, 6, 47); // the whole Sunday
+    expect(document.body.textContent).toContain('au-delà des 200');
+    expect((await saved()).length).toBe(200);
+  });
 });

@@ -262,18 +262,82 @@ The creation wizard (WP-R7) makes such spaces common, which is how it was found.
 - **Open**: new slots of `slotLengthOf` (the week's most common slot length, ties to the shorter;
   the 30-min grain when there is none), one for each start inside the rectangle, never past 24:00,
   skipping any that would overlap a slot already there. A tap on a closed cell opens one slot; with
-  25-min slots a 30-min cell holds two starts, so it opens two.
+  25-min slots a 30-min cell holds two starts, so it opens two. A slot crossing midnight is ONE
+  slot: drawn on both days, closed whole from either.
+- **THE SLOT LENGTH IS STORED NOWHERE** (review of #2691): the wizard's "Creneaux fixes" length
+  only shapes the lines it cuts (`fixedSlotLines`, WP-R7); no column or setting holds it, so the
+  lines are the only evidence and an emptied week falls back to the grain. **The smallest honest
+  place, if the owner wants it kept**: a nullable `slotMinutes` on `booking_spaces`, set only in a
+  `slots` space (a CHECK mirroring the step pair), written by the wizard and the mode switch, and
+  read by the painter before `slotLengthOf` - one migration, one DTO field. Not built: a schema
+  change for a fallback is the owner's call.
+- **The cap** (`MAX_AVAILABILITY_LINES`, 200, the server's DTO, now in `availability.ts` and shared
+  with the wizard): an open stops at it and counts what it could not open (`refused`); the painter
+  says so in the wizard's sentence (`bookings_avail_lines_cap`), so a drag over a week of 25-min
+  slots no longer ends in a save the server refuses whole.
 - **Untouched**: dated lines, lines with a problem, the templates (they still replace the week with
   runs: on a fixed-slot space "Jours ouvres 8h-20h" is one 12 h slot a day, as before), the typed
   lines. The hint under the painter says what a press does there.
 
 **Proof.** `availabilityPaint.test.ts` (slots read apart where the step reading merges them; the
 length; a close removes only the touched slots, whole; an open lays whole slots and skips the
-overlaps; a tap; the same rows when nothing changes; dated lines kept) and
+overlaps; a tap; the same rows when nothing changes; dated lines kept; an empty week; a slot
+spanning midnight; the cap and its count; the saved lines round-tripped) and
 `AvailabilityEditor.painter.svelte.test.ts` (mounted: a press closes one slot alone; a paint
-elsewhere leaves touching slots three lines and three drawn runs; a step space still merges).
+elsewhere leaves touching slots three lines and three drawn runs; a step space still merges; a
+paint at the cap says so and saves 200 lines).
 Control: with the step painting on a fixed-slot space, the "touching slots separate" test fails.
 **Not yet seen** on a phone.
+
+## WP-R5 as built - the organiser's dashboard (D50, 2026-10-29)
+
+A new page, `routes/bookings/spaces/[spaceId]/manage`, reached from the booker's page (the icon that
+led to the editor) and from the entity tab's list ("Tableau de bord"). Its actions: the booker's
+page, the export, the settings (the editor). A reader who does not manage the space reads one
+sentence and nothing else; the server refuses every organiser read anyway.
+
+- **THE SERVER: `GET spaces/:id/bookings` GAINED `from`** (an instant with `Z` or an offset, else
+  400 `from`, `parseFrom`). With it the list is the LIVE bookings (never cancelled) that END after
+  that instant - the one under way first - by start, paged as before. Without it the list is the
+  whole history, unchanged (D29's `ids` and the export still read that). Before, the coming ones
+  sat behind every past booking of the space.
+- **"A venir"** (`UpcomingBookings.svelte`): the first page (50) from the device's now, then "Voir
+  plus" continuing the SAME list (the same `from`, a row never listed twice if a cancel shifted the
+  pages). Grouped as the mockup (#2579, `dashboard.html`) draws it: under the day each booking
+  starts on in the space's zone - "Aujourd'hui", "Demain", then the date (`upcomingDays`; one under
+  way since yesterday reads under today). Each row: the times, its column when columns are shown
+  (D44), the holder, "pour son compte" (D20), the participants; the one under way is marked and has
+  no cancel (D5). **The cancel opens IN ITS ROW** ("Garder" / "Annuler la réservation"), no dialog
+  over the list; its sentence is the D13 one until WP-N adds the optional message and replaces it.
+- **The layout**: from `lg` the week and "A venir" sit side by side (the mockup's desktop); below
+  it a segmented control shows one at a time. The counters are one line of pills.
+- **"Planning"** is `SpaceWeek.svelte` in `block` mode. **`SpaceWeek` is the booker page's week
+  EXTRACTED** (column selector, week bar or day strip, grid, the three sheets, the read guard), so
+  the two pages draw one implementation; the booker's page keeps only its load, poster, link and
+  QR code. In block mode a tap on a free unit opens "Indisponible", and **a drag draws a RED range**
+  (`SpaceGrid` `blockMode`): as long as a block may be (`BLOCK_LENGTH_CHOICES`) instead of a
+  booking's step ceiling, in slots mode too, and still stopped by `dragRange` at the first unit that
+  is not free - so it never crosses a booking; a stale grid still meets `bookings-inside-block`,
+  whose named bookings the sheet lists with their cancel. `BlockSheet` gained `initialCount`, the
+  length the drag drew. A taken unit opens the existing detail: who, answers, cancel.
+- **The counters (Q-R16)** come from the SAME week read as the grid, every column
+  (`lib/bookings/dashboard.ts`, pure): distinct bookings, hours taken of hours offered (overlapping
+  fixed slots each count whole: it is what was offered), distinct blocks; a unit belongs to the
+  day it starts on, as on the grid.
+- **"Ajouter une colonne" (D44)** is a card while the space has its one hidden column; it leads to
+  the editor, where a column is named (the naming lives there since WP-R1). Both tabs stay mounted,
+  so the counters follow the week and a cancel in one re-reads the other.
+- **The export** is one function now (`downloadSpaceExport`), shared by the editor and the dashboard.
+
+**Proof.** `bookings.service.integration.spec.ts` "lists only the LIVE bookings still to come from
+`from`" (an ended, an under way, a cancelled and two coming bookings: only the under way and the
+coming, paged; the whole history without `from`; a booker refused); `bookings.controller.spec.ts`
+(`from` without a zone refused before any query); `SpaceGrid.drag.svelte.test.ts` "block mode"
+(past the booking ceiling, in slots mode, stopped by a unit that is not free);
+`UpcomingBookings.svelte.test.ts` (read from now, under way without cancel, cancel re-reads and
+tells the page, "show more" from the same instant without duplicates); `dashboard.test.ts`; the
+booker page's `page.weekRead` test, unchanged, passes on the extracted week. **Not yet seen** at
+390 / 1280 or on a phone: the red drag under a finger is the reading owed.
 
 ## WP-R6 as built - the settings in plain words (D51, Q-R13, 2026-10-27)
 
@@ -302,6 +366,50 @@ half-typed step), `SpaceEditor.sections.svelte.test.ts` (the mounted editor: tit
 each, the two fields in "who" and absent elsewhere, the line following a click, the two last
 sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling no longer counted).
 `paraglideMessages.test.ts` for the strings. **Not yet seen** at 390 and 1280 or at 200 % text.
+
+## WP-R7 as built - the creation wizard (D52, Q-R14, 2026-10-29)
+
+Front only: `POST spaces` already took every setting, a poster and the first hours (WP-R1), so the
+wizard is ONE call and a space is never half made.
+
+- **Offered on every creation** (Q-R14): the name typed in the tab (`EditBookingsTab`, the entity
+  tab and the personal spaces of Reservations alike) opens `SpaceWizard` with it. "Je regle tout
+  moi-meme" creates by the name alone, as before, and both land on the space's editor. "Annuler" on
+  the first step closes it with nothing written.
+- **Three steps, as the mockup** (`wizard.html`): C'est quoi ? (name, one sentence, poster);
+  Quand ? (the four templates of D49, the week painted with the same `WeekPainter`, or the one
+  dated line of "Evenement ponctuel"; how long a booking lasts: "Au choix" up to N by steps of M,
+  or "Creneaux fixes" of one length); Pour qui ? (everybody or the audience editor, names or
+  "Occupe", listed or link only).
+- **Only what the steps asked is sent** (`wizardPayload`, `lib/bookings/wizard.ts`): everything
+  else keeps the SERVER's default (no rule, answers kept 7 days). The defaults drawn are the
+  mockup's: a working week 8h-20h, up to 2 h by 30 min, everybody, names hidden, listed.
+- **Fixed slots are cut on the client** (`fixedSlotLines`): in a `slots` space each line IS a slot
+  (WP-B2), so the painted hours become one line per slot; a tail shorter than a slot is not
+  offered and no slot crosses midnight. More than `MAX_AVAILABILITY_LINES` (200) is said on the
+  step before the server would refuse it (a 24/7 week in 30-min slots is 336).
+- **The poster is uploaded when picked and claimed by the creation** (`SpacePosterField` with
+  `spaceId` null): a wizard abandoned leaves a `poster-pending` upload to the media sweep
+  (`POSTER_PENDING_TTL_MS`). "Je regle tout moi-meme" does not carry a picked poster. **While the
+  upload runs, "Suivant" and the creation are held** (`onBusy`, review of #2687): otherwise a fast
+  organiser created the space before the reference came back, and the poster was silently lost.
+- **The focus moves to the new step's heading** on "Suivant" and "Retour", so a screen reader
+  follows the step change.
+- **Factored**: the weekday names of the painter (`weekdayNames`, `availability.ts`), shared with
+  `AvailabilityEditor`.
+
+**Found building this, decided by the owner on 2026-10-29:** the WP-R4 painter read every week as
+merged runs, so on a `slots` space a paint rewrote touching slots as ONE long slot - and the wizard
+makes such spaces common. Decision: painting a fixed-slot space opens or closes WHOLE slots, one by
+one, and never merges them. Built apart from the wizard, in #2691 ("Painting a fixed-slot space").
+
+**Proof.** `wizard.test.ts` (slot cutting, the problems, the payload, and the WP's proof: a wizard
+payload over the server's defaults read back through `draftFromSpace`/`settingsFromDraft` is the
+same settings) and `SpaceWizard.svelte.test.ts` (the mounted wizard: three steps, a step held with
+its sentence, ONE `createSpace` with the hours and fields, the owner passed, the steps held during a
+poster upload and the poster then carried - control: without `onBusy` that test fails -, the dated
+line of "Evenement ponctuel" held until dated then sent, the focus on each step's heading, the skip
+creating nothing). **Not yet seen** at 390 and 1280, on a phone, or against a running API.
 
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
@@ -593,7 +701,7 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `GET mine` | anyone: at most 200, newest first - their bookings as holder or participant (withdrawn ones marked), and every booking of a resource LINKED to them (`linked: true`, D10); private texts of the LIVE ones they are one of the people of (D32) | - |
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
-| `GET spaces/:id/bookings?offset&limit&ids` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`); `ids` (comma-separated, at most 200) narrows it to the bookings a D29 refusal named, an id of another space not answered | `not-manager`, `offset`, `ids` |
+| `GET spaces/:id/bookings?offset&limit&ids&from` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`); `ids` (comma-separated, at most 200) narrows it to the bookings a D29 refusal named, an id of another space not answered; `from` (an instant, WP-R5) to the live bookings ending after it | `not-manager`, `offset`, `ids`, `from` |
 | `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |

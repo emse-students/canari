@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { toStoredLines, wholeDaysInARow, type EditorLine } from './availability';
+import {
+  fromStoredLines,
+  MAX_AVAILABILITY_LINES,
+  toStoredLines,
+  wholeDaysInARow,
+  type EditorLine,
+} from './availability';
 import {
   applyTemplate,
   formatRuns,
@@ -220,13 +226,13 @@ describe('fixed slots (owner, 2026-10-29): whole slots, never merged', () => {
 
   it('closes only the slots the rectangle touches, whole', () => {
     // Row 29 (14:30-15:00) touches the second slot and the third.
-    expect(stored(paintSlotRows(ALUMNI, 0, 0, 29, 29, 'close'))).toEqual(['1 14:00-14:25']);
+    expect(stored(paintSlotRows(ALUMNI, 0, 0, 29, 29, 'close').rows)).toEqual(['1 14:00-14:25']);
     // Row 28 (14:00-14:30) touches the first two.
-    expect(stored(paintSlotRows(ALUMNI, 0, 0, 28, 28, 'close'))).toEqual(['1 14:50-15:15']);
+    expect(stored(paintSlotRows(ALUMNI, 0, 0, 28, 28, 'close').rows)).toEqual(['1 14:50-15:15']);
   });
 
   it('opens whole slots of the length, skipping those that would overlap', () => {
-    const next = paintSlotRows(ALUMNI, 0, 1, 28, 31, 'open'); // Mon..Tue 14:00-16:00
+    const next = paintSlotRows(ALUMNI, 0, 1, 28, 31, 'open').rows; // Mon..Tue 14:00-16:00
     expect(stored(next)).toEqual([
       '1 14:00-14:25',
       '1 14:25-14:50',
@@ -244,18 +250,86 @@ describe('fixed slots (owner, 2026-10-29): whole slots, never merged', () => {
   });
 
   it('a tap opens one whole slot, even longer than the cell', () => {
-    expect(stored(paintSlotRows([weekly(1, '09:00', '10:00')], 2, 2, 20, 20, 'open'))).toEqual([
-      '1 09:00-10:00',
-      '3 10:00-11:00',
-    ]);
+    expect(stored(paintSlotRows([weekly(1, '09:00', '10:00')], 2, 2, 20, 20, 'open').rows)).toEqual(
+      ['1 09:00-10:00', '3 10:00-11:00']
+    );
   });
 
   it('returns the same rows when nothing changes, and leaves dated lines alone', () => {
     const rows = [...ALUMNI, dated('2026-11-03', '14:00', '15:00')];
-    expect(paintSlotRows(rows, 3, 3, 28, 28, 'close')).toBe(rows);
-    expect(paintSlotRows(rows, 0, 0, 28, 28, 'open')).toBe(rows);
+    expect(paintSlotRows(rows, 3, 3, 28, 28, 'close').rows).toBe(rows);
+    expect(paintSlotRows(rows, 0, 0, 28, 28, 'open').rows).toBe(rows);
     expect(
-      paintSlotRows(rows, 0, 6, 0, 47, 'close').filter((r) => r.kind === 'dated')
+      paintSlotRows(rows, 0, 6, 0, 47, 'close').rows.filter((r) => r.kind === 'dated')
     ).toHaveLength(1);
   });
+
+  it('an empty week opens slots of the 30-min grain: no slot length is stored anywhere', () => {
+    // A fixed-slot space keeps its slot length only in its lines (the wizard cuts them, no field
+    // holds it), so a week emptied of slots has none to read.
+    expect(stored(paintSlotRows([], 0, 0, 20, 21, 'open').rows)).toEqual([
+      '1 10:00-10:30',
+      '1 10:30-11:00',
+    ]);
+  });
+
+  it('a slot spanning midnight is ONE slot: drawn on both days, closed whole from either', () => {
+    const night = [weekly(5, '23:30', '00:30')];
+    const week = weekSlotsOf(night);
+    expect(week[4]).toEqual([[1410, 1440]]);
+    expect(week[5]).toEqual([[0, 30]]);
+    expect(slotLengthOf(night)).toBe(60);
+    // Saturday 00:00 closes the whole night slot, Friday's half included.
+    expect(paintSlotRows(night, 5, 5, 0, 0, 'close').rows).toEqual([]);
+    // An hour opened over Friday 23:00 would overlap its evening half: nothing opens.
+    expect(paintSlotRows(night, 4, 4, 46, 47, 'open').rows).toBe(night);
+  });
+
+  it('stops an open at the line cap and counts what it could not open', () => {
+    // 199 slots of 25 min already: one more fits, the rest of the drag is refused.
+    const full: EditorLine[] = [];
+    for (let i = 0; full.length < MAX_AVAILABILITY_LINES - 1; i++) {
+      const day = Math.floor(i / 50);
+      const start = (i % 50) * 25;
+      full.push(weekly(day + 1, timeOf(start), timeOf(start + 25)));
+    }
+    const painted = paintSlotRows(full, 6, 6, 0, 47, 'open'); // Sunday, the whole day
+    expect(toStoredLines(painted.rows)).toHaveLength(MAX_AVAILABILITY_LINES);
+    expect(painted.refused).toBe(Math.floor(1440 / 25) - 1);
+    // At the cap, an open adds nothing and the rows are the same.
+    const again = paintSlotRows(painted.rows, 6, 6, 0, 47, 'open');
+    expect(again.rows).toBe(painted.rows);
+    expect(again.refused).toBeGreaterThan(0);
+  });
+
+  it('round-trips the saved lines: read, painted, saved, read again', () => {
+    const saved = [
+      { weekday: 1, onDate: null, startTime: '14:00:00', endTime: '14:25:00' },
+      { weekday: 1, onDate: null, startTime: '14:25:00', endTime: '14:50:00' },
+      { weekday: 5, onDate: null, startTime: '23:30:00', endTime: '24:00:00' },
+      { weekday: 6, onDate: null, startTime: '00:00:00', endTime: '00:30:00' },
+    ];
+    const rows = fromStoredLines(saved);
+    // Nothing painted: the very lines the server holds go back.
+    expect(toStoredLines(rows)).toEqual(
+      saved.map((l) => ({
+        ...l,
+        startTime: l.startTime.slice(0, 5),
+        endTime: l.endTime.slice(0, 5),
+      }))
+    );
+    // A paint adds its slot and keeps every saved line as it was, none merged.
+    const after = toStoredLines(paintSlotRows(rows, 1, 1, 28, 28, 'open').rows);
+    expect(after).toHaveLength(saved.length + 2);
+    expect(after.slice(0, 4).map((l) => `${l.weekday} ${l.startTime}-${l.endTime}`)).toEqual([
+      '1 14:00-14:25',
+      '1 14:25-14:50',
+      '5 23:30-24:00',
+      '6 00:00-00:30',
+    ]);
+  });
 });
+
+function timeOf(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}

@@ -23,7 +23,7 @@ import { contentDisposition } from '../common/content-disposition';
 import { FORM_FILE_MAX_BYTES, type UploadedFormFile } from '../forms/form-files.service';
 import { parseBookingExportLabels } from './booking-export';
 import { BookingsService, SPACE_BOOKINGS_PAGE, type Actor } from './bookings.service';
-import { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
+import { CreateBlockDto, CreateBookingDto, ZONED_INSTANT } from './dto/booking.dto';
 
 /** The caller nginx authenticated. */
 export const actorOf = (userId: string, globalAdmin: string | undefined): Actor => ({
@@ -44,6 +44,18 @@ export function parseIds(raw: string | undefined): string[] | undefined {
     throw new BadRequestException({ code: 'ids' });
   }
   return [...new Set(ids)];
+}
+
+/**
+ * The `from` filter of the organiser list (WP-R5): absent is the whole history; present, an
+ * instant that names its zone (`Z` or an offset - without one `Date.parse` would read it in the
+ * SERVER's zone), or a 400 `from`.
+ */
+export function parseFrom(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const ms = ZONED_INSTANT.test(raw) ? Date.parse(raw) : NaN;
+  if (Number.isNaN(ms)) throw new BadRequestException({ code: 'from' });
+  return ms;
 }
 
 /**
@@ -102,7 +114,8 @@ export class BookingsController {
 
   /**
    * Every booking of the space, answers included: the organiser's list. `ids` (comma-separated,
-   * at most one page) narrows it to the bookings a D29 refusal named.
+   * at most one page) narrows it to the bookings a D29 refusal named; `from` (an instant) to the
+   * live ones ending after it - the dashboard's "coming" list (WP-R5).
    */
   @Get('spaces/:spaceId/bookings')
   spaceBookings(
@@ -111,10 +124,18 @@ export class BookingsController {
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @Query('limit', new DefaultValuePipe(SPACE_BOOKINGS_PAGE), ParseIntPipe) limit: number,
     @Query('ids') ids?: string,
+    @Query('from') from?: string,
     @Headers('x-global-admin') ga?: string
   ) {
     if (offset < 0) throw new BadRequestException({ code: 'offset' });
-    return this.service.spaceBookings(spaceId, actorOf(userId, ga), offset, limit, parseIds(ids));
+    return this.service.spaceBookings(
+      spaceId,
+      actorOf(userId, ga),
+      offset,
+      limit,
+      parseIds(ids),
+      parseFrom(from)
+    );
   }
 
   /** Books a range; an organiser may book on behalf of an account. */

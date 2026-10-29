@@ -16,9 +16,11 @@
     crossesMidnight,
     fromStoredLines,
     lineProblem,
+    MAX_AVAILABILITY_LINES,
     timeChoices,
     toStoredLines,
     wholeDaysInARow,
+    weekdayNames as weekdayNamesIn,
     type Closure,
     type EditorLine,
     type StoredLine,
@@ -100,29 +102,15 @@
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
   const step = $derived(stepMinutes && 60 % stepMinutes === 0 ? stepMinutes : 15);
 
-  /** Monday..Sunday in the reader's language, capitalised as a choice; 2024-01-01 was a Monday. */
-  const weekdayNames = $derived(
-    [1, 2, 3, 4, 5, 6, 7].map((d) =>
-      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
-        weekday: 'long',
-        timeZone: 'UTC',
-      })
-    )
-  );
+  /** Monday..Sunday in the reader's language, capitalised as a choice. */
+  const weekdayNames = $derived(weekdayNamesIn(locale, 'long'));
   const weekdayOptions = $derived(
     weekdayNames.map((name, i) => ({
       value: String(i + 1),
       label: name.charAt(0).toUpperCase() + name.slice(1),
     }))
   );
-  const shortDayNames = $derived(
-    [1, 2, 3, 4, 5, 6, 7].map((d) =>
-      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
-        weekday: 'short',
-        timeZone: 'UTC',
-      })
-    )
-  );
+  const shortDayNames = $derived(weekdayNamesIn(locale, 'short'));
   /** The week as the painter draws it, always read from the lines: slots apart, hours merged. */
   const week = $derived(fixedSlots ? weekSlotsOf(rows) : weekRunsOf(rows));
   /** What a painted cell opens on a fixed-slot space, said under the painter. */
@@ -158,8 +146,26 @@
     touch();
   }
 
+  /**
+   * The slots a paint could not open, the column being at the server's line cap, and how many it
+   * would have held: said under the painter until the next paint, rather than refused at the save.
+   */
+  let capNotice = $state<{ count: number } | null>(null);
+
   function paint(dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) {
-    const next = (fixedSlots ? paintSlotRows : paintRows)(rows, dayA, dayB, slotA, slotB, mode);
+    let next: readonly EditorLine[];
+    capNotice = null;
+    if (fixedSlots) {
+      const painted = paintSlotRows(rows, dayA, dayB, slotA, slotB, mode);
+      next = painted.rows;
+      if (painted.refused > 0) {
+        const count = toStoredLines(next).length + painted.refused;
+        Log.i('BOOKINGS', `availability paint capped: ${painted.refused} slot(s) not opened`);
+        capNotice = { count };
+      }
+    } else {
+      next = paintRows(rows, dayA, dayB, slotA, slotB, mode);
+    }
     if (next === rows) return;
     Log.d(
       'BOOKINGS',
@@ -278,6 +284,11 @@
         ? undefined
         : m.bookings_avail_paint_slots_hint({ minutes: slotLength })}
     />
+    {#if capNotice}
+      <p class="text-red-err text-xs font-medium" role="alert">
+        {m.bookings_avail_lines_cap({ count: capNotice.count, max: MAX_AVAILABILITY_LINES })}
+      </p>
+    {/if}
   </div>
 
   <div class="space-y-3">

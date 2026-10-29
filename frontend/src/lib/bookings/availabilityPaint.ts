@@ -17,6 +17,7 @@
 import {
   fromStoredLines,
   lineProblem,
+  MAX_AVAILABILITY_LINES,
   minutesOf,
   toStoredLines,
   type EditorLine,
@@ -225,12 +226,20 @@ export function slotLengthOf(rows: readonly EditorLine[]): number {
   return best;
 }
 
+/** A paint on a fixed-slot space: the rows after it, and what the line cap kept it from opening. */
+export interface SlotPaint {
+  rows: readonly EditorLine[];
+  /** How many slots the rectangle asked for were NOT opened, the availability being at its cap. */
+  refused: number;
+}
+
 /**
  * The rows after a rectangle is painted on a FIXED-SLOT space. `close` removes every slot the
  * rectangle touches, whole; `open` lays new slots of `slotLengthOf` from the rectangle's first row,
  * one for each start inside it, skipping any that would overlap a slot already there - so a tap
- * opens one whole slot. Dated lines and lines with a problem are never touched. THE SAME `rows`
- * come back when nothing changed, as `paintRows` does.
+ * opens one whole slot. An open stops at {@link MAX_AVAILABILITY_LINES} stored lines and says so
+ * (`refused`), since the server would refuse the whole save past it. Dated lines and lines with a
+ * problem are never touched. THE SAME `rows` come back when nothing changed, as `paintRows` does.
  */
 export function paintSlotRows(
   rows: readonly EditorLine[],
@@ -239,7 +248,7 @@ export function paintSlotRows(
   slotA: number,
   slotB: number,
   mode: PaintMode
-): readonly EditorLine[] {
+): SlotPaint {
   const [d0, d1] = [Math.min(dayA, dayB), Math.max(dayA, dayB)];
   const from = Math.max(0, Math.min(slotA, slotB)) * GRAIN_MIN;
   const to = Math.min(DAY_MIN, (Math.max(slotA, slotB) + 1) * GRAIN_MIN);
@@ -247,15 +256,23 @@ export function paintSlotRows(
     day >= d0 && day <= d1 && start < to && end > from;
   if (mode === 'close') {
     const kept = rows.filter((r) => !slotPieces(r).some(([d, s, e]) => touches(d, s, e)));
-    return kept.length === rows.length ? rows : kept;
+    return { rows: kept.length === rows.length ? rows : kept, refused: 0 };
   }
   const length = slotLengthOf(rows);
   const taken = weekSlotsOf(rows);
+  // A new slot never crosses midnight, so it is ONE stored line.
+  let budget = MAX_AVAILABILITY_LINES - toStoredLines(rows).length;
+  let refused = 0;
   const added: EditorLine[] = [];
   for (let day = d0; day <= d1; day++) {
     for (let start = from; start < to && start + length <= DAY_MIN; start += length) {
       const end = start + length;
       if (taken[day].some(([s, e]) => s < end && e > start)) continue;
+      if (budget <= 0) {
+        refused += 1;
+        continue;
+      }
+      budget -= 1;
       added.push({
         kind: 'weekly',
         weekday: (day + 1) as Weekday,
@@ -264,5 +281,5 @@ export function paintSlotRows(
       });
     }
   }
-  return added.length ? [...rows, ...added] : rows;
+  return { rows: added.length ? [...rows, ...added] : rows, refused };
 }

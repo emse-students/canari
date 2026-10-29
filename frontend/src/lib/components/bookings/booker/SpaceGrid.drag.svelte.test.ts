@@ -39,7 +39,7 @@ const mounted: (() => void)[] = [];
 const onPick = vi.fn();
 
 /** Mounts one day of `units` and returns its cells in time order. */
-async function open(units: SlotUnit[], space = spaceOf(4)) {
+async function open(units: SlotUnit[], space = spaceOf(4), blockMode = false) {
   const app = mount(SpaceGrid, {
     target: document.body,
     props: {
@@ -47,6 +47,7 @@ async function open(units: SlotUnit[], space = spaceOf(4)) {
       resource,
       layout: weekLayout(units, ['2026-11-02'], space, START),
       mode: 'day',
+      blockMode,
       nowMs: START,
       onPick,
     },
@@ -196,5 +197,38 @@ describe('SpaceGrid - drag a range', () => {
     pointer('pointermove', cells[2], 'mouse', 20, 2);
     pointer('pointerup', cells[2], 'mouse', 20, 2);
     expect(onPick).not.toHaveBeenCalled();
+  });
+});
+
+describe('SpaceGrid - block mode, the organiser dashboard (WP-R5, D50)', () => {
+  it('drags past what one booking may cover, up to a block, in red', async () => {
+    const units = free(8);
+    const cells = await open(units, spaceOf(2), true);
+    pointer('pointerdown', cells[1], 'mouse', 0, 1);
+    pointer('pointermove', cells[1], 'mouse', 0, 1);
+    pointer('pointermove', cells[6], 'mouse', 20, 6);
+    expect(cells[6].className).toContain('border-red-err');
+    pointer('pointerup', cells[6], 'mouse', 20, 6);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 6);
+  });
+
+  it('drags in a space of whole slots too', async () => {
+    const units = free(4);
+    const cells = await open(units, spaceOf(4, 'slots'), true);
+    pointer('pointerdown', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[2], 'mouse', 20, 2);
+    pointer('pointerup', cells[2], 'mouse', 20, 2);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[0], 3);
+  });
+
+  it('stops at a unit that is not free, so a block drag never crosses a booking', async () => {
+    const units = [unit(0), unit(1), unit(2, 'blocked'), unit(3)];
+    const cells = await open(units, spaceOf(4), true);
+    pointer('pointerdown', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[3], 'mouse', 20, 3);
+    pointer('pointerup', cells[3], 'mouse', 20, 3);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[0], 2);
   });
 });
