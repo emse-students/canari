@@ -691,12 +691,85 @@ describe('revokedLeafCandidates', () => {
         'Alice',
         'web-1'
       )
-    ).toEqual(['alice:WEB-1', 'bob:x']);
+    ).toEqual({ candidates: ['alice:WEB-1', 'bob:x'], malformed: [] });
   });
 
-  it('never asks about a legacy bare leaf, which names no device and would refuse the whole request', () => {
-    expect(revokedLeafCandidates(['bob', 'bob:x', 'dave'], new Set(), 'alice', 'web-1')).toEqual([
-      'bob:x',
+  it('never asks about a legacy bare leaf, and does not count it: a known shape', () => {
+    expect(revokedLeafCandidates(['bob', 'bob:x', 'dave'], new Set(), 'alice', 'web-1')).toEqual({
+      candidates: ['bob:x'],
+      malformed: [],
+    });
+  });
+
+  it('leaves out and COUNTS a crafted credential, and still asks about every other leaf', () => {
+    const real = `${'b0b'.padEnd(64, '7')}:tauri-${'b0b'.padEnd(64, '7')}-mh9x2k1q-0z9y`;
+    expect(
+      revokedLeafCandidates(
+        [
+          real,
+          'mallory:dev 1',
+          `mallory:d${String.fromCharCode(0xe9)}v`,
+          `eve:${'d'.repeat(129)}`,
+          'x:y:z',
+          'carl:ok',
+        ],
+        new Set(),
+        'alice',
+        'web-1'
+      ).malformed
+    ).toHaveLength(4);
+    expect(
+      revokedLeafCandidates([real, 'mallory:dev 1', 'carl:ok'], new Set(), 'alice', 'web-1')
+        .candidates
+    ).toEqual([real, 'carl:ok']);
+  });
+});
+
+describe('a crafted credential in a key group', () => {
+  it('does not cost the other leaves their revocation question, and is said by count', async () => {
+    const bob = 'b0b'.padEnd(64, '7');
+    const real = `${bob}:web-${bob}-mh9x2k1q-a7c3`;
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', real, 'mallory:dev 1']);
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'alice' },
+      { userId: bob },
+      { userId: 'mallory' },
     ]);
+    getRevokedLeaves.mockResolvedValue([real]);
+    const lines: string[] = [];
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+      lines.push(m)
+    );
+
+    expect(getRevokedLeaves).toHaveBeenCalledExactlyOnceWith('dist-group', [real]);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('dist-group', [real]);
+    expect(lines.join(' | ')).toContain('1 leaf/leaves outside the leaf-identity rule');
+    // The count only: a leaf identity names a person.
+    expect(lines.join(' | ')).not.toContain('mallory');
+  });
+
+  it('says the count once while the tree still holds it, and again when the set changes', async () => {
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', 'bob:web-1', 'mallory:dev 1']);
+    const lines: string[] = [];
+    const pass = () =>
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+        lines.push(m)
+      );
+    const said = () => lines.filter((l) => l.includes('outside the leaf-identity rule')).length;
+
+    await pass();
+    await pass();
+    expect(said()).toBe(1);
+
+    getGroupMemberIdentities.mockResolvedValue([
+      'alice:web-1',
+      'bob:web-1',
+      'mallory:dev 1',
+      'eve:dev 2',
+    ]);
+    await pass();
+    expect(said()).toBe(2);
+    expect(lines.join(' | ')).toContain('2 leaf/leaves outside the leaf-identity rule');
   });
 });

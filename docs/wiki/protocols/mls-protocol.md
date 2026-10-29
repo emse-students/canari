@@ -2311,7 +2311,7 @@ head deadline (`DEADLINE_MS.read`), because it runs inside the scope's serialise
 hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The server says a
 converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
 
-**Each identity is validated as TWO values, never as one** (`sanitizeLeafIdentity`,
+**Each identity is validated as TWO values, never as one** (`parseLeafIdentity`,
 `chat-delivery-service/src/utils/sanitize.ts`): exactly one colon, and each half under the rule that
 half is stored under (`[a-zA-Z0-9_.:@-]{1,128}`, untrimmed). Until 2026-10-28 the whole pair went
 through the generic 128-character allowlist, and a real identity is longer: the device id EMBEDS its
@@ -2320,11 +2320,34 @@ user (`BaseMlsService.generateDeviceId`, `<platform>-<user>-<base36 time>-<base3
 and the pass logged `could not ask ... no device removed this pass` - the mechanism was inert in the
 field while its specs, written with `bob:phone-1`, were green. `sanitize.leaf-identity.spec.ts` now
 builds identities in the generator's shape and reads the generator's source, so the two cannot drift
-again. One malformed identity still refuses the whole request, so the client sends device identities
-only: a legacy BARE leaf names no device and is never a candidate (`revokedLeafCandidates`). The
-three reports that carry a leaf identity in a log field (`[SENDER_MISMATCH] verified=`,
-`[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`) printed `invalid` for the same reason;
-`sanitizeLogValue` reads a leaf identity too.
+again.
+
+**ONE RULE ON BOTH SIDES, AND A MALFORMED LEAF COSTS ONLY ITSELF** (2026-10-29). A leaf identity is
+whatever a credential in the tree says, so a single crafted credential - a space, a non-ASCII
+letter, a 200-character half - used to make the server refuse the WHOLE batch with 400, and with it
+the revocation answer about every other leaf of that key group, for every member. Now:
+
+- the client sends only what `isAddressableLeafIdentity` (`mls-client/leafIdentity.ts`) accepts, and
+  `revokedLeafCandidates` says the count it left out (`[GRAINE] ...: N leaf/leaves outside the
+  leaf-identity rule ...`, never the identities); a legacy BARE leaf names no device and is left out
+  silently, a known shape;
+- the server SKIPS an identity outside the rule and counts it (`malformed=N`, at warn, since a current
+  client never sends one), still answering the rest; a body that is not a list, or over the 1000 cap,
+  is still a 400;
+- both run every case of `libs/contracts/leaf-identity.cases.json`, and each half's pattern is
+  asserted equal to `libs/contracts/device-id.json`.
+
+The four log fields that carry a leaf identity (`[SENDER_MISMATCH] verified=`, the
+`[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`, `[COMMIT] external_leaf_foreign leaf=`) go
+through `sanitizeLeafLogValue` (`cutLeafIdentity`, `utils/log-repeat.ts`): the user id cut to 8
+characters as every other line prints a user - in the user half AND inside the device half, which
+embeds it (`web-<user>-<time36>-<rand>`) - and the rest of the device kept, since it is what tells
+two devices of one person apart. Any other run of 64+ hex characters in a device half is cut too,
+since a crafted device can carry somebody else's id. The user/device pairs those four lines print
+as two fields (`reporter=` of all three reports, `envelope=` of `[SENDER_MISMATCH]`, `sender=` of
+`external_leaf_foreign`) go through `sanitizeDevicePairLogValue`, the same masking. No full user id
+reaches these four lines (owner decision, 2026-10-29). Other lines of the service still print user
+ids their own way; this claim is about these four.
 
 **Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
 the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge

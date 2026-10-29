@@ -36,7 +36,7 @@ import { Throttle } from '@nestjs/throttler';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
-  sanitizeLeafIdentity,
+  parseLeafIdentity,
   assertCallerOwnsUserId,
   type LeafIdentity,
 } from '../utils/sanitize';
@@ -885,7 +885,9 @@ export class MembersController {
    * (`activeRevocationWhere`), and the route is throttled per user
    * ({@link REVOKED_LEAVES_LIMIT_PER_MINUTE}). The user half is
    * compared without case, the device half exact - the canonical identity Rust binds - and each
-   * identity is answered AS SENT, so the client matches its own leaf string.
+   * identity is answered AS SENT, so the client matches its own leaf string. An identity that is not
+   * a leaf identity (`libs/contracts/leaf-identity.cases.json`) is skipped and counted, never a
+   * refusal of the batch; a body that is not a list, or over the cap, is still a 400.
    */
   @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Throttle({ default: { limit: REVOKED_LEAVES_LIMIT_PER_MINUTE, ttl: 60_000 } })
@@ -915,11 +917,16 @@ export class MembersController {
     );
 
     // `userId:deviceId`, exactly one colon, each half under its own rule - never the generic 128
-    // bound on the whole, which every real identity exceeds ({@link sanitizeLeafIdentity}).
+    // bound on the whole, which every real identity exceeds ({@link parseLeafIdentity}). A MALFORMED
+    // ONE IS SKIPPED, NEVER A REFUSAL OF THE BATCH: a leaf identity is whatever a credential in the
+    // tree says, so one crafted credential would otherwise block the answer about every other leaf
+    // of the group, for every member. Counted in the line below, never printed.
     const leaves = new Map<string, LeafIdentity>();
+    let malformed = 0;
     for (const value of requested) {
-      const leaf = sanitizeLeafIdentity(value, 'identity');
-      leaves.set(leaf.identity, leaf);
+      const leaf = parseLeafIdentity(value);
+      if (leaf === null) malformed++;
+      else leaves.set(leaf.identity, leaf);
     }
     const pairs = [...leaves.values()].map(({ identity, userId, deviceId }) => ({
       identity,
@@ -927,7 +934,20 @@ export class MembersController {
       user: userId.toLowerCase(),
       device: deviceId,
     }));
-    if (pairs.length === 0) return { revoked: [] };
+    // A current client filters what this skips (`isAddressableLeafIdentity`), so a skipped one
+    // accuses a credential or an old client - said at warn, with the count alone.
+    const say = (line: string, converged: boolean): void => {
+      if (malformed > 0)
+        this.logger.warn(`${line} malformed=${malformed} - skipped, never answered`);
+      else if (converged) this.logger.debug(line);
+      else this.logger.log(line);
+    };
+    if (pairs.length === 0) {
+      if (malformed > 0) {
+        say(`[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=0`, true);
+      }
+      return { revoked: [] };
+    }
 
     // The user half both as sent and lowercased: the column holds whichever casing was written.
     const asked = [...new Set(pairs.flatMap((p) => [p.user, p.sentUser]))];
@@ -957,8 +977,9 @@ export class MembersController {
     if (inGroup.length === 0) {
       // Not converged: no leaf asked about is bound to this group, so nothing here can be answered -
       // said at log level.
-      this.logger.log(
-        `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${pairs.length} revoked=0`
+      say(
+        `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${pairs.length} revoked=0`,
+        false
       );
       return { revoked: [] };
     }
@@ -977,8 +998,7 @@ export class MembersController {
     // what a reader needs, and stays at log level.
     const outside = pairs.length - inGroup.length;
     const line = `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${outside} revoked=${revoked.length}`;
-    if (revoked.length === 0 && outside === 0) this.logger.debug(line);
-    else this.logger.log(line);
+    say(line, revoked.length === 0 && outside === 0);
     return { revoked };
   }
 

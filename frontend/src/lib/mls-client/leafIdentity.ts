@@ -97,6 +97,31 @@ export function userIdOfLeaf(identity: string): string {
   return canonicalUserOf(identity) ?? '';
 }
 
+/**
+ * One half of a leaf identity the delivery service will answer about: the shape every route there
+ * accepts for a user id or a device id (`libs/contracts/device-id.json`), untrimmed.
+ */
+export const ADDRESSABLE_HALF = /^[a-zA-Z0-9_.:@-]{1,128}$/;
+
+/**
+ * Whether the delivery service will answer about `identity` - exactly one colon between two halves
+ * of {@link ADDRESSABLE_HALF}. The client twin of chat-delivery-service's `parseLeafIdentity`: both
+ * run every case of `libs/contracts/leaf-identity.cases.json`.
+ *
+ * STRICTER THAN {@link canonicalIdentity}, which reads any one-colon identity - a credential in a
+ * tree can carry a space, a non-ASCII letter or a 200-character half, and none of those is a device
+ * the server ever registered. Checked BEFORE a leaf is sent, so a question is never built to be
+ * refused (the server skips such an identity; it used to refuse the whole batch over one).
+ */
+export function isAddressableLeafIdentity(identity: string): boolean {
+  const colon = identity.indexOf(':');
+  if (colon === -1 || colon !== identity.lastIndexOf(':')) return false;
+  return (
+    ADDRESSABLE_HALF.test(identity.slice(0, colon)) &&
+    ADDRESSABLE_HALF.test(identity.slice(colon + 1))
+  );
+}
+
 /** The device id half of a leaf identity, or `''` when it carries none or is refused. */
 export function deviceIdOfLeaf(identity: string): string {
   if (isMalformed(identity)) return '';

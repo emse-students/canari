@@ -113,23 +113,56 @@ describe('MembersController.getRevokedLeaves', () => {
     expect(revoked.find).not.toHaveBeenCalled();
   });
 
-  it('refuses a body that is not a list, an identity of another shape, and more than the cap', async () => {
+  it('refuses a body that is not a list, or more than the cap', async () => {
     await expect(controller.getRevokedLeaves('kg-1', {}, 'alice')).rejects.toBeInstanceOf(
       BadRequestException
     );
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: ['bob:tauri:x'] }, 'alice')
-    ).rejects.toBeInstanceOf(BadRequestException);
-    // ONE malformed identity refuses the whole request - which is why the client sends only device
-    // identities (`revokedLeafCandidates` drops a legacy bare leaf).
-    await expect(
-      controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1', 'bob'] }, 'alice')
+      controller.getRevokedLeaves('kg-1', { identities: 'bob:phone-1' }, 'alice')
     ).rejects.toBeInstanceOf(BadRequestException);
     const tooMany = Array.from({ length: REVOKED_LEAVES_MAX_IDENTITIES + 1 }, (_, i) => `u:${i}`);
     await expect(
       controller.getRevokedLeaves('kg-1', { identities: tooMany }, 'alice')
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(revoked.find).not.toHaveBeenCalled();
+  });
+
+  it('SKIPS a crafted credential instead of refusing the batch - the other leaves are still answered', async () => {
+    const warn = jest.spyOn(controller['logger'], 'warn');
+    const crafted = [
+      'bob:tauri:x',
+      'bob',
+      'mallory:dev 1',
+      `mallory:d${String.fromCharCode(0xe9)}v`,
+      `eve:${'d'.repeat(129)}`,
+      '',
+      42,
+      null,
+    ];
+
+    const got = await controller.getRevokedLeaves(
+      'kg-1',
+      { identities: [...crafted, 'BOB:phone-1', 'alice:web-1'] },
+      'alice'
+    );
+
+    expect(got).toEqual({ revoked: ['BOB:phone-1'] });
+    // Said at warn, by count only - no identity in the line.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('asked=2 outside=0 revoked=1'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('malformed=8'));
+    expect(warn.mock.calls.flat().join(' ')).not.toMatch(/mallory|eve:|dddd/);
+  });
+
+  it('says a batch of malformed identities alone, and reads nothing', async () => {
+    const warn = jest.spyOn(controller['logger'], 'warn');
+
+    await expect(
+      controller.getRevokedLeaves('kg-1', { identities: ['x:y:z'] }, 'alice')
+    ).resolves.toEqual({ revoked: [] });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('asked=0 malformed=1'));
+    expect(revoked.find).not.toHaveBeenCalled();
+    expect(devices.find).not.toHaveBeenCalled();
   });
 
   it('says a converged answer at debug, and a revoked or unbound leaf at log level', async () => {

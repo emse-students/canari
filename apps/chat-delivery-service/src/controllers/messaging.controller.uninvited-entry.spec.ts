@@ -67,6 +67,27 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     );
   });
 
+  it('prints no full user id for the reporter or the entrant, each device kept apart', async () => {
+    const alice = 'a1'.repeat(32);
+    const mallory = 'c3'.repeat(32);
+
+    await controller.reportUninvitedEntry(alice, `web-${alice}-mh9x2k1q-a7c3`, {
+      groupId: 'g-1234',
+      entrant: `${mallory}:web-${mallory}-mh9x2k1q-0z9y`,
+      epoch: 7,
+      keyFingerprint: '00ff11ee',
+      kind: 'new-person',
+    });
+
+    const line = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(line).not.toContain(alice);
+    expect(line).not.toContain(mallory);
+    expect(line).toContain(
+      'reporter=a1a1a1a1:web-a1a1a1a1-mh9x2k1q-a7c3 group=g-1234 ' +
+        'entrant=c3c3c3c3:web-c3c3c3c3-mh9x2k1q-0z9y'
+    );
+  });
+
   it('counts a member coming back and a 1:1 peer apart from a new person, from an allowlist', async () => {
     const report = (entrant: string, epoch: number, kind?: unknown) =>
       controller.reportUninvitedEntry('alice', 'web-alice-1', {
