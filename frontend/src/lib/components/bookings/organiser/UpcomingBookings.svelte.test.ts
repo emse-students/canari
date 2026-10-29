@@ -13,6 +13,8 @@ import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
 const api = vi.hoisted(() => ({
   upcomingSpaceBookings: vi.fn(),
   cancelBooking: vi.fn(async () => ({ ok: true })),
+  // `describeBookingRefusal` tells a typed refusal by this class; a plain Error is not one.
+  BookingsApiError: class BookingsApiError extends Error {},
 }));
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock('$lib/bookings/api', () => api);
@@ -84,6 +86,39 @@ it('reads from now, marks the one under way and offers it no cancel', async () =
   expect(items[0].querySelector('button')).toBeNull();
   expect(items[1].textContent).toContain(m.bookings_upcoming_people({ names: 'Bob' }));
   expect(buttons(m.bookings_upcoming_cancel())).toHaveLength(1);
+});
+
+it('shows a spinner during the first read, never the empty sentence', async () => {
+  let answer: (v: unknown) => void = () => {};
+  api.upcomingSpaceBookings.mockReturnValueOnce(new Promise((r) => (answer = r)));
+  const app = mount(UpcomingBookings, {
+    target: document.body,
+    props: { space: SPACE, nowMs: NOW, onChanged },
+  });
+  mounted.push(() => unmount(app, { outro: false }));
+  flushSync();
+  expect(document.querySelector('[role="status"]')).not.toBeNull();
+  expect(document.body.textContent).not.toContain(m.bookings_upcoming_empty());
+  answer({ items: [], nextOffset: null });
+  await vi.waitFor(() => expect(document.body.textContent).toContain(m.bookings_upcoming_empty()));
+  expect(document.querySelector('[role="status"]')).toBeNull();
+});
+
+it('a cancel done whose list re-read fails says the cancel was done', async () => {
+  api.upcomingSpaceBookings
+    .mockResolvedValueOnce({
+      items: [row('b', '2026-11-02T13:00:00Z', '2026-11-02T13:30:00Z')],
+      nextOffset: null,
+    })
+    .mockRejectedValueOnce(new Error('offline'));
+  await open();
+  buttons(m.bookings_upcoming_cancel())[0].click();
+  flushSync();
+  buttons(m.bookings_cancel_action())[0].click();
+  await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+    m.bookings_upcoming_refresh_failed_after_cancel()
+  );
 });
 
 it('a cancel opens in its row: "Garder" closes it and cancels nothing', async () => {

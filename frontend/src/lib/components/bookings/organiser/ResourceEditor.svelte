@@ -30,6 +30,8 @@
     stepMinutes: number | null;
     /** The space's SAVED mode is fixed slots: its painter opens and closes whole slots. */
     fixedSlots: boolean;
+    /** The space's SAVED slot length (migration 116); null when not stored. */
+    slotMinutes: number | null;
     onChanged: (resource: ManagedResource) => void;
     onDeleted: (resourceId: string) => void;
     /** Whether the fields or the availability hold changes not saved, for the leave warning. */
@@ -44,6 +46,7 @@
     timeZone,
     stepMinutes,
     fixedSlots,
+    slotMinutes,
     onChanged,
     onDeleted,
     onDirty,
@@ -233,6 +236,7 @@
       exceptions={resource.exceptions}
       {stepMinutes}
       {fixedSlots}
+      {slotMinutes}
       onSaved={(lines, exceptions) => onChanged({ ...resource, lines, exceptions })}
       onDirty={(d) => (availabilityDirty = d)}
     />

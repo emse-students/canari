@@ -3,6 +3,7 @@ import {
   chatViewCountLine,
   firstRowBelow,
   isPinnedToBottom,
+  keyboardChangeResponse,
   respondToNewMessage,
   shouldFollowThreadBottom,
   THREAD_BOTTOM_SLACK_PX,
@@ -253,5 +254,65 @@ describe('chatViewCountLine', () => {
     expect(chatViewCountLine('abcdef0123456789', 4, 2, null)).toBe(
       'abcdef01 messages 2 (hasNewMessage=false, response=n/a)'
     );
+  });
+});
+
+describe('keyboardChangeResponse', () => {
+  it('a keyboard rising for a focused composer goes to the end, wherever the reader was', () => {
+    // The Android case: the field stayed focused after Back, the reader was 138 px up (> the slack),
+    // and the next tap raised the keyboard with no focus event - the last messages went under it.
+    for (const isNearBottom of [true, false]) {
+      expect(
+        keyboardChangeResponse({
+          wasOpen: false,
+          isOpen: true,
+          composerFocused: true,
+          isNearBottom,
+        })
+      ).toBe('follow-bottom');
+    }
+  });
+
+  it('a keyboard rising for another field moves nothing', () => {
+    expect(
+      keyboardChangeResponse({
+        wasOpen: false,
+        isOpen: true,
+        composerFocused: false,
+        isNearBottom: true,
+      })
+    ).toBe('stay');
+  });
+
+  it('a keyboard falling follows only a reader at the bottom', () => {
+    expect(
+      keyboardChangeResponse({
+        wasOpen: true,
+        isOpen: false,
+        composerFocused: true,
+        isNearBottom: true,
+      })
+    ).toBe('follow-bottom');
+    expect(
+      keyboardChangeResponse({
+        wasOpen: true,
+        isOpen: false,
+        composerFocused: true,
+        isNearBottom: false,
+      })
+    ).toBe('stay');
+  });
+
+  it('no change of the keyboard is no response', () => {
+    for (const isOpen of [true, false]) {
+      expect(
+        keyboardChangeResponse({
+          wasOpen: isOpen,
+          isOpen,
+          composerFocused: true,
+          isNearBottom: true,
+        })
+      ).toBe('stay');
+    }
   });
 });
