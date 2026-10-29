@@ -14,6 +14,928 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-27
+
+### Added - account restore on a new Android phone (WP-RESTORE-1)
+
+A session registers a restore key that Android keeps in the Google backup; a new phone restored from it reopens that session with no sign-in, and the old phone is signed out, its push registration ended with its session. Required by Google Play from April 2027 ([account-restore](docs/wiki/account-restore.md)).
+
+### Fixed - an Add that loses a commit race is rebuilt, or the member is told
+
+An invitation, a 1:1 creation and the pending-invitation sweep rebuild an Add refused `concurrent_commit` or `epoch_mismatch` once the race proved progress - re-checking before each pass that the commit which won did not remove the person, and filtering devices only on a tree confirmed current - and an invitation that added nobody now says why on screen ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-commit-that-loses-a-race-is-rebuilt-on-proven-progress-or-surfaced-2026-10-25)).
+
+### Fixed - a Decline holds against an Add decided before it, on every path
+
+The accepted commit is now the one writer of a new person: the member-add route enrols nobody but the
+caller, into an empty roster, a Welcome sent apart admits nobody, the gate orders a departure against
+the seat generation the inviting member read, and a commit naming anyone it may not admit is refused
+whole (`accepted: false`, `admit_refused`) and rebuilt without them ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
+
+### Fixed - an Add whose answer was lost no longer leaves its invitee off the conversation
+
+The server now enrols the people an Add admits in the same transaction that accepts the commit, so an Add settled by a later resubmission or sent from the offline outbox enrols its invitee like any other, and a Welcome the roster refuses is no longer re-sent at every connection. At the commit gate it never enrols someone who left, was removed or was declined after the Add was built (migration 039); an Add answered directly is still re-enrolled by the client's own enrolment call until that call goes ([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)).
+
+### Changed - the admin "Gestion des admins" entry is now "Utilisateurs"
+
+The page also edits a person's profile, so its name, summary and subtitle say both things ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Security - production Adminer pinned to the newest image (Adminer 6.1.2, PHP 8.4.27)
+
+The previous pin (#2283) was merged but never deployed, so production still ran PHP 8.4.26. The digest is now the one published on 2026-10-22, still PHP 8.4.27, the newest PHP line the image ships. See [databases](docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02).
+
+### Security - production Adminer moved to PHP 8.4.27
+
+The pinned digest ran PHP 8.4.26, flagged vulnerable (upload progress) by the host's scanner; the new digest carries 8.4.27. See [databases](docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02).
+
+### Security - production Adminer runs with `session.upload_progress.enabled = Off`
+
+Requested by the host's IT department; Adminer does not use the feature. PHP stays patched by moving the image digest, not by the host's updates. See [databases](docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02).
+
+### Changed - a new person joins a group only through a member
+
+A device whose user is not yet in the group is no longer added automatically: a member is asked to add or decline them, and a group link only asks; an entry no member made is written in the conversation and reported ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
+### Documented - `v1.4.0-alpha.4` read on the Mi 9T (sideloaded)
+
+Version, feed, comments sheet and a CanaReel shot, published and played on dev, with no native crash; DM and group were read, salon and push were notable. See [the reading](docs/wiki/device-readings-v1.4.0-alpha.4.md).
+
+### Security - the Alumni SAML source stays disabled until its verification certificate exists
+
+MiConnect's Alumni SAML source ships disabled in the blueprint until the identity provider's verification certificate is imported and attached as its verification key pair, and the blueprint suite now gates it: no SAML source may be enabled without a verification key pair, and none may run an unsigned, weakly-signed (SHA-1/MD5) or IdP-initiated configuration. See [authentik](docs/wiki/infrastructure/authentik.md#the-alumni-saml-source-what-to-hand-the-idp-and-what-is-still-missing-2026-10-22).
+
+### Changed - "Anonyme" is the name, the real author a small line; "Republie par" beside the time
+
+An anonymous post or comment reads "Anonyme" for everyone, and its author small under it only for the reader the server names it to (the author, a moderator, an admin); "Republie par X" moved onto the time's line, on cards and reels alike ([posts](docs/wiki/frontend/modules/posts.md#who-wrote-it-anonyme-big-the-real-author-small-2026-10-24)).
+
+### Fixed - a revoked device no longer erases its owner's arrival in a group conversation
+
+The enrolment copies an earlier device admission onto the membership interval (migration 033, with a backfill), so a late-enrolled member's next device keeps its history; `for` is decided against the caller's current interval ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+
+### Changed - association image URLs are checked against an allowlist
+
+The service accepts only an https URL or an uploaded media reference for an association logo (migration `106` aligns stored rows), and the export sheets escape every value they interpolate ([associations](docs/wiki/frontend/modules/associations.md)).
+
+### Fixed - a post an association republishes appears in the Associations and Suivis feeds
+
+A member's post republished by an association (the BDE) is now ONE card in Associations, and in Suivis for its followers, "Republie par X", placed at the republication; it used to reach only "Tout" ([posts](docs/wiki/frontend/modules/posts.md#feed-tabs)).
+
+### Security - the MiConnect compose names authentik 2026.8.5
+
+The reference stack moves from 2026.8.0 to the current patch release, which carries upstream's
+security fixes; CI proves the blueprints on it. See [authentik](infrastructure/authentik/README.md).
+
+### Documented - more decisions of the 2026-10-22 autonomy window
+
+Migrations 033-035, 036, 106 and 108 may ride the next stable, store listings are redone with fictional accounts, the phone at-rest key keeps its built design, the live key is encrypted at rest, and the iPhone call alert is generic until a native ring exists ([backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-22---a-48-hour-autonomy-window-and-what-it-covers)).
+
+### Documentation - backlog entries for five merged changes say so
+
+Backlog entries for the group notification levels, the unknown notification type, the group DM remove, the gesture zone and Dynamic Type now say they are merged and what is still owed ([backlog](docs/wiki/backlog.md)).
+
+### Changed - the nightly archive is kept 7 days on the host, 14 offsite
+
+`LOCAL_RETENTION_DAYS` (7) now drives the local purge and `BACKUP_RETENTION_DAYS` (14) the offsite one, after the shared host's disk reached 92 %; the archive's growth to ~700 MB is traced to one group's undelivered queue ([backup](docs/wiki/infrastructure/backup.md#retention)).
+
+### Fixed - an accepted background Welcome reaches the device even when the app opens during the round trip
+
+The Android background Welcome now stages its Add in `mls.bin` with its submission record, and the foreground settles any stage the background could not, so nothing waits on the network ([chat-delivery](docs/wiki/services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
+
+### Fixed - a shut Android phone answering a re-add from an old epoch no longer forks itself
+
+The background Welcome is now staged and installed only once the server accepts its commit, the route answers a typed `201 accepted` or `409 rejected`, its Welcome is stored in the same transaction as the epoch advance, and a stale refusal is not repeated from the same state ([chat-delivery](docs/wiki/services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
+
+### Documented - a killed phone answers a background Welcome from a stale epoch
+
+Read on the Mi 9T: the server refuses the Welcome (`epoch_mismatch`) yet answers 201, so the phone logs success. Not fixed here; see [backlog](docs/wiki/backlog.md#p2---a-killed-phone-answers-a-background-welcome-from-a-stale-epoch-and-the-route-reports-it-as-sent-read-on-the-mi-9t-2026-10-22).
+
+### Security - the dependency audits and the image scan answer the advisories of 2026-10-23
+
+The four NestJS services override body-parser 2.4.0, multer 2.5.0 and fast-uri 3.1.9 (GHSA-27r3-jxmh-p828, GHSA-q7qp-rjg7-q26m, GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr). The frontend ignores two low SvelteKit advisories fixed only in kit 3, until that chantier (#2154). `frontend-ssr` is back on Node 24 (Node 25 is out of support), the 30 image-scan allowlist entries that authentik 2026.8.5 fixed are deleted, and brotli-libs 1.2.0-r1 (CVE-2026-111497) is allowlisted until upstream rebuilds the four Alpine images. See [cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23).
+
+### Changed - a refused block lists the bookings in its way
+
+When a block is refused over coming bookings, the organiser sees them listed, each with its cancel, and saves again from the sheet ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Calls - one call screen look: the other person's blurred photo behind a big name, "Calling..." when you dial, and the dialler's green and red buttons
+
+The in-app incoming, outgoing and in-call screens now share one Messenger-style layout on web, Android and iPhone. See [calls](docs/wiki/frontend/modules/calls.md#one-call-screen-on-every-platform-2026-10-23).
+
+### Changed - call video goes up to 720p/30 and drops on its own when the link or the CPU cannot follow
+
+The camera sender moves on a five-rung ladder (720p30 at 2.5 Mb/s down to 180p15 at 200 kb/s), decided by
+counts of `getStats()` evidence. Dev builds only, like calls
+([calls](docs/wiki/frontend/modules/calls.md#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop)).
+
+### Changed - in-app 1:1 audio calls are compiled into every build, held shut in production by the server switch
+
+`CALLS_COMPILED` is on with the iOS `audio` mode, the Android microphone service and the microphone purpose string naming calls; the native ring, video and `calls_mode` (`off` at deploy) do not move. An iPhone without a VoIP token now gets a generic "Appel entrant" alert with no caller or conversation name. See [calls](docs/wiki/frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21).
+
+### Added - the camera zooms by sliding the held shutter and flips its lens on a double tap, during a take too
+
+Hardware zoom where the lens offers one, the same gesture as a digital zoom elsewhere, and a flip that keeps the take and its sound ([reels](docs/wiki/frontend/modules/reels.md#zoom-and-a-lens-flip-during-a-take-user-2026-10-22)).
+
+### Documentation - the 1.4.1 campaign on dev is planned
+
+The MLS core matrix that blocks the `1.4.1` stable, the rig gaps a dev run needs first, and the verdict on the stale campaign pages ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Security - `ctutils` 0.4.4 in the MLS crates (RUSTSEC-2026-0385)
+
+The transitive constant-time helper under `digest` moves from 0.4.3 to 0.4.4 in the WASM and native
+MLS lockfiles, clearing the new advisory that turned `cargo audit` red. See [cicd](docs/wiki/cicd.md).
+
+### Security - three retired `cargo audit` ignores deleted from the Tauri app
+
+`quick-xml` now resolves to a fixed version and `rkyv` has left the lockfile, so their three
+advisory ids no longer silence anything and would only hide a return. See [cicd](docs/wiki/cicd.md).
+
+### Fixed - opening a conversation no longer renders every loaded message once
+
+The first render was the whole thread, cut to the 20-row entry frame in the same flush; it is now the entry frame ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Security - every container image an estate runs is scanned
+
+A Trivy scan of the runtime bases and third-party images gates `CI passed`, with a self-retiring allowlist; the postgres 18 digest and nginx 1.31.8 it found fixable move with it ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - the Android call-bridge test escapes every regex metacharacter
+
+A test built a pattern escaping only parentheses, which CodeQL reported as incomplete sanitisation
+and which kept the nightly alerts report red. See [cicd](docs/wiki/cicd.md).
+
+### Fixed - a commit answered 401 renews the token and is sent again, instead of ending the Add
+
+MLS delivery requests now follow the 401 rule of first-party calls: renew, send the same bytes once more within the request's deadline. A renewed token refused again is a failed request, never a logout ([sessions](docs/wiki/sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
+
+### Fixed - a resubmitted commit the server already accepted is no longer refused as an epoch conflict
+
+The commit gate checks its log for these bytes from this device before every epoch or seat refusal, not only at the strict gate. Before, a key-group Add or a resubmission that overlapped its own first request was refused, and the client dropped a commit the group had applied ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a commit waiting for its answer no longer holds every other conversation's messages
+
+While one group's commit request waited on the network (up to ~1 min), messages in every other conversation were neither decrypted nor acknowledged, and their push duplicated. The commit now lends the MLS lock to those frames while it waits ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)).
+
+### Changed - seat claims and departures are serialised under one lock, and `POST /mls/commit` is rate-limited per user
+
+Every write that creates, routes, queues to or evicts a key-group seat now shares one per-group lock, a commit an eviction overtook is refused whole and rebuilt by the client, and every key-group departure records its outcome (chat-delivery migration 036, social migration 108) ([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+
+### Fixed - a community's "from arrival" history: a member's new device gets its past, and reopening the past reaches members already in
+
+Under `joined` - the community's setting or an unproven admission - a history ask is answered floored at the member's arrival instead of refused, through one chokepoint that calls the admission gate; the receiver re-floors every bundle, and a switch back to `shared` asks the past again ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22)).
+
+### Changed - a salon's history page verifies its signatures in one engine call
+
+Opening a salon made one native signature check per row (200 bridge crossings for a page); it now makes one, with the same per-row verdicts and refusals ([community-open-budget](docs/wiki/frontend/community-open-budget.md#f7s-second-half-one-engine-call-for-a-pages-signatures-built-2026-10-22)).
+
+### Added - a member hands a community's past only to a newcomer whose admission it can verify
+
+A member's add and an invite link now carry a signed admission; a newcomer without one joins and reads from their arrival on, and a re-issued link gives them the rest ([channel-encryption section 25](docs/wiki/protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
+
+### Fixed - a platform config, moderation, report or role history write updates columns, never saves the row it read
+
+Two administrators editing different platform settings keep both; a tag grant and a mute are one `INSERT ... ON CONFLICT`; a report review and a role history edit update their own columns, `404`/`409` on a row gone or changed ([social-service](docs/wiki/services/social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)).
+
+### Security - a stricter Content-Security-Policy on the web and in the native apps
+
+Scripts run only from the app itself or by hash: no `'unsafe-inline'` or `'unsafe-eval'`, the web page's policy now written by SvelteKit and the native WebView given one at last ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
+
+### Documented - the user's decisions of 2026-10-23
+
+Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stable are recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-23---bookings-redesign-sharing-reels-calls-payments-miconnect-release) and [bookings-chantier](docs/wiki/bookings-chantier.md#redesign-decided-2026-10-23).
+
+### Documented - the user's decisions on the open pull requests of 2026-10-23
+
+Ten decisions (which pull requests ship in the next stable, which merge as is, the housekeeping and the CI split) are recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-23---the-night-of-the-open-pull-requests).
+
+### Fixed - a declined joiner no longer gets the conversation back as a removed one
+
+The joiner's recovery marker now goes with the declined row, and a pass that finds no seat for the account ends without a placeholder or an external join ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
+### Changed - Dependabot watches the Android Gradle builds and the identity provider's compose file
+
+Two Gradle directories and `infrastructure/authentik` join `.github/dependabot.yml`; the dependency ceiling refuses Gradle updates to the Android app, which no pull-request job builds, and judges the identity provider's PostgreSQL against its own major ([cicd](docs/wiki/cicd.md#native-and-identity-provider-manifests-2026-10-23)).
+
+### Fixed - three designed outcomes no longer log as faults
+
+A revoked device's pending fetch ends with one info line instead of an error claiming the backlog stays queued, a revoked device signs out once instead of twice, and a Decline that wins the race against an Add is an info line instead of a warning. See [sessions](docs/wiki/sessions.md).
+
+### Changed - a key-group frame's sending device is checked against its MLS credential
+
+A device can no longer answer in a sibling's name on a community key group. Production's pre-stable evidence is indirect (zero device mismatches on the live path, same envelope field); `[SENDER_MISMATCH] path=distribution` is read on dev after the alpha and on production after the stable ([channel-encryption](docs/wiki/protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)).
+
+### Changed - the campaign board is the 1.4.1 matrix, and the board up to 1.4.0 is archived
+
+The board now holds the 61 rows of the 1.4.1 plan's section 4.2; the previous one is kept verbatim as a non-gating archive ([board](docs/wiki/cross-client-testing.md), [archive](docs/wiki/cross-client-testing-archive-1-4-0.md)).
+
+### Added - the 1.4.1 campaign's blocking rows, inventoried row by row
+
+How each row is run and recorded, the rig atom covering it, what is missing and who must be present, with ten table-driven runners proposed; the plan's Q3 premise (a Redis key) is corrected ([runners](docs/wiki/cross-client-campaign-1-4-1-runners.md)).
+
+### Changed - the campaign board says the iPhone reads no rows, and its legend table renders again
+
+The board notes that I1 runs `1.4.1-alpha.4` from TestFlight, signed out, so every `+I1` row stays pending; a stray line #2394 left inside the state legend is removed ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Changed - dev is open by decision, and the 1.4.1 campaign's questions are settled
+
+Dev has no Access gate on purpose and the rig needs no service token; CC-4, DUP-3 and the tester notice are decided, and the campaign runs with the shared-payload writer OFF, so GAP-4 is not played ([campaign](docs/wiki/cross-client-campaign-1-4-1.md#6-open-questions)).
+
+### Fixed - a double tap on a busy phone no longer reads as two single taps
+
+A post's like and a message's heart now measure the gap between taps by when they happened, not when they were handled ([posts](docs/wiki/frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)).
+
+### Changed - DUP-2 is PASS-DIRTY on a product race: a joiner gets the next commit before its late Welcome
+
+DUP-2 on `1.4.1-alpha.4` held every assertion. But the joiner of an Add whose answer was lost received the next commit before its Welcome, asked for a re-Add it did not need, and then re-read a frame live delivery had already read ([backlog](docs/wiki/backlog.md)).
+
+### Changed - backlog: one failed Add is reported three times, and a harness gate flake stays open
+
+TOK-2 on `1.4.1-alpha.4` showed three lines for one failed Add, filed as P3 noise. An unreproduced `make test-harness` failure is written down on the board and in the [backlog](docs/wiki/backlog.md) so it does not vanish.
+
+### Changed - the feed's tabs come back as soon as you scroll up
+
+The Associations / Suivi / Tous row hides while you read down and reappears on the first scroll up, instead of only at the top of the page ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Changed: a video in the feed shows its whole frame
+
+A portrait clip, an ordinary post's or a CanaReel's, is no longer cropped or forced to 9:16: it keeps its own ratio under the height ceiling, with a blurred copy of its first frame on the sides. See [posts](docs/wiki/frontend/modules/posts.md).
+
+### Fixed - a follower browser tab no longer sends commits its leader tab cannot follow
+
+Only the leader tab commits, joins or creates a group, and the member is told to act from the main tab. A commit whose checkpoint stored nothing is cleared; one whose checkpoint may have landed is kept for a settle ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Changed - forms: the header no longer repeats the price
+
+The "À partir de" badge is gone; the footer's total states the price, with the pricing that applied (user, 2026-10-23; [forms](docs/wiki/frontend/modules/forms.md)).
+
+### Changed - docs: Lydia enrolment goes through Canari only, the first production payment, and two single-answer form decisions
+
+The production measurements of 2026-10-23 and the enrolment rule are in [lydia-api](docs/wiki/lydia-api.md) and [payments](docs/wiki/frontend/modules/payments.md); the form decisions in [forms](docs/wiki/frontend/modules/forms.md).
+
+### Fixed - the gateway socket now follows a device identity rotated during login
+
+A login that re-enrolled a lost state kept its socket under the abandoned device id, so the new device got no realtime frames until the next reconnect; the rotation now reopens the socket under the new id, a pause fences that reopen, and the old id is retired only once no socket of this document carries it ([auth](docs/wiki/frontend/modules/auth.md#the-device-id-is-not-final-when-the-handshake-starts-fixed-2026-10-25)).
+
+### Fixed - the GIF picker no longer shifts, loads in order, and a comment GIF shows its progress
+
+Thumbnails are lighter and download six at a time instead of all at once (no more blank tiles from a saturated relay), the grid keeps its width, reopening is instant, and a GIF attached to a comment arrives in its small rendition with a progress bar, a clear error and a retry. See [chat](docs/wiki/frontend/modules/chat.md#the-gif-picker-loads-in-a-controlled-way-and-a-comment-gif-says-what-it-is-doing-2026-10-22).
+
+### Fixed - Graine answers carry only the seeds of salons the asker may read
+
+The history bundle and the seed repair answer keep only the salons whose key group the request arrived on, and a receiver keeps a new seed only for a salon its key group carries - the native mirror leaves a relayed seed for an unread salon to the app ([channel-encryption](docs/wiki/protocols/channel-encryption.md#an-answer-carries-only-the-seeds-of-the-salons-its-key-group-may-read-2026-10-22)).
+
+### Changed - a Graine seed answer is bounded in bytes and sent in pages
+
+An answer over 255 KiB (three to one pending-queue page, the binding hop, MLS framing measured) now goes as several complete bundles under one request id; a history answer missing a page is asked for once more at the next start, and a key-material push over the inline budget is carried by reference at debug instead of warned about. A reader that predates pages absorbs each one as an ordinary bundle ([channel-encryption](docs/wiki/protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth)).
+
+### Security - client-side bounds on server-provided retention
+
+The Graine seed sweep never uses a window shorter than the product's 365 days, whatever the server answers, and says so at `error` when the answer is below it ([channel-encryption](docs/wiki/protocols/channel-encryption.md#8-retention-one-window-and-the-seeds-derived-from-it---shipped-2026-08-19)).
+
+### Changed - a community seed now outlives a new device, never a removal or a new member
+
+A key group's clean run is kept in the MLS state by `mls-core`, ended by any Remove and by a new user; a sender re-distributes its session across a new device of a present user instead of minting one. The server checks that an external commit's new leaf names the caller's own device. See [graine-removal-tracker](docs/wiki/protocols/graine-removal-tracker.md).
+
+### Fixed - leaving or deleting a group no longer leaves a frame of it queued for the server to refuse
+
+The exit sends what the group still has queued before its server step, withdraws only what cannot go (logged by kind), and refuses any later frame for it, even after an app kill mid-leave; a lost leave or delete notice is now logged ([chat](docs/wiki/frontend/modules/chat.md#an-exit-takes-the-groups-queue-with-it-before-its-server-step-grp-6-2026-10-22)).
+
+### Changed - a group history answer goes to the device that asked
+
+A history answer in a group conversation, the inviter's push included, is now addressed to the asking device and filtered on that reader's own windows ([history-answer-addressing](docs/wiki/protocols/history-answer-addressing.md)).
+
+### Fixed - the group panel lists everyone an Add admitted
+
+It read the active devices, which an invitee's own client activates later, so a bulk Add could leave one invitee unlisted and unremovable; it now reads the group's roster ([chat](docs/wiki/frontend/modules/chat.md#every-member-list-reads-by-family-name-and-a-row-never-moves-because-its-name-arrived-2026-10-05)).
+
+### Security - the group routes enforce membership
+
+Renaming a group, changing its photo, deleting it, taking its add lock and ending a device's membership now require the caller to be a member of that group ([chat-delivery](docs/wiki/services/chat-delivery.md#group-management)).
+
+### Changed - on phones, the local key is held by secure hardware and backups have their own recovery code
+
+The phone apps re-key their local data once under a random key held by the device's secure hardware, the PIN checked by the server; backups are sealed under one recovery code per device, and a phone that re-keyed existing data asks for a new backup ([auth](docs/wiki/frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)).
+
+### Changed - restored history carries each message's original author signature
+
+Private conversations now sign every message with the sender's device key, and a history bundle relays that signature: a restored message, edit, deletion or reaction is taken from its author's signature, and a message whose signature is missing or does not verify is shown with a small "unverified" marker; an unsigned edit, deletion or reaction is dropped until its author updates. Frames also carry a signed epoch fingerprint, so a forked conversation is logged and recorded ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22), [mls-protocol](docs/wiki/protocols/mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22)).
+
+### Added - the daily host report watches the root disk
+
+The `hosts` job now prints the production host's root filesystem with our consumers (backups, Docker, runner leftovers) and turns red at 85 %; the hand cleanup of 2026-10-24 and what is safe to delete are written down ([host-updates](docs/wiki/infrastructure/host-updates.md#the-root-disk)).
+
+### Fixed - the nightly image scan was red on a curl advisory no upstream image fixes yet
+
+`CVE-2026-92392` (curl 8.22.0) is in the four Alpine images production runs and none has a patched
+build, so it is allowlisted by package and version and retires itself when the pins move ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - the image scan's two new advisories are allowlisted, and a purl-scoped entry retires on its own package
+
+npm's bundled `undici` in `node:24-alpine` and Debian's `libbrotli1` in authentik 2026.8.5 have no newer upstream image; each entry is scoped and retires itself, now per package rather than per id ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Changed - the iPhone app needs iOS 16
+
+The app's script policy compiles the encryption engine under a rule WebKit learned in iOS 16, so iOS 15 is no longer supported ([mobile](docs/wiki/frontend/mobile.md#ios-project)).
+
+### Documented - the iPhone PIN unlock answers; the earlier "hang" was a stale WDA tap rectangle
+
+Read on the iPhone and on dev web: the unlock works, and a keypad with its `0` key clipped behind the fixed button (red banner, small screen) is a P3. See [backlog](docs/wiki/backlog.md#the-encryption-pin-unlock-on-the-iphone-read-2026-10-22-it-answers---the-hang-was-the-rigs-tap-and-one-p3-is-left).
+
+### Fixed - a link ask reaches every online member at once, and a declined joiner's row goes
+
+The ask and its outcome (admitted, declined, expired or withdrawn) are announced by the server to every online admitted member whose client routes them, and settled by the ask's identity, so a member sees another's answer without a refresh and a late read never brings a settled ask back; a conversation the joiner was never admitted to no longer reads as an established channel and leaves the sidebar once declined ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
+### Fixed - a sweep never puts back an older ask, and a retiring server finishes its expiry announcements
+
+A pending-invitation sweep no longer replaces a person's newer ask announced while it read, and a replica retired during the expiry cron finishes its announcements before it exits ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-delivery](docs/wiki/services/chat-delivery.md)).
+
+### Added - a new person's request to join is a card in the conversation
+
+When someone follows a group's invitation link, the request now appears at the end of that group's thread, with Add and Decline for any member ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
+### Fixed - a joiner whose Welcome is on its way waits for it, and a frame read twice is no longer called damaged
+
+A device that a member's commit reached before its Welcome no longer asks every member to re-add it, and the re-fetch after the Welcome reports a frame it already read as a duplicate, not as damage ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-joiner-whose-first-frame-beats-its-welcome-waits-for-it-dup-2-2026-10-25)).
+
+### Fixed - an invitation kept across a lost connection is re-planned, or the member is told
+
+An Add whose answer was lost and which then did not land is made again at the new epoch under the same premises (never re-adding a person removed, declined or departed meanwhile), and the member is told whenever it does not complete ([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-invitation-whose-kept-commit-did-not-land-is-re-planned-or-the-member-is-told-2026-10-25)).
+
+The add lock now carries a token per acquisition, so a late release never frees a live lock (the Android background service's included), and a refusal states when the lock ends. This server half ships with the stable.
+
+### Fixed - a community key group no longer gets a conversation row, nor a roster 403 at boot
+
+A key group's Welcome is no longer announced to the conversation layer nor, with its server row unreadable, taken for a conversation; discovery reads a group's kind before asking its roster ([channel-encryption](docs/wiki/protocols/channel-encryption.md#a-key-groups-welcome-wrote-a-conversation-row-and-discovery-asked-its-roster---fixed-2026-10-25)).
+
+### Changed - a key-group frame can be stored once, not once per seat (readers now, writer later)
+
+Migration 034 and the readers of a shared key-group payload ship now; the writer stays off behind `QUEUED_PAYLOAD_SHARED_WRITES=false` and is turned on in a later release, so no rollback can land on an image that would serve a shared record as an empty frame ([chat-delivery](docs/wiki/services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+
+### Added - a shut Android phone joins a salon's key group from the push
+
+A salon push for a key group the phone holds no seat in now joins it through the same server gate,
+so the next push is readable; iOS joins at the next foreground ([channel-encryption section 26](docs/wiki/protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)).
+
+### Changed - the key group's 109 orphan devices are revoked in production (2026-10-24)
+
+Devices with neither a session nor a push token held 184 457 undeliverable queued rows, most of the nightly archive; they went through the revoke path, one at a time ([audit](docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#third-pass---2026-10-24-the-key-groups-orphan-devices)).
+
+### Changed - backlog: a device's one-time KeyPackage pool is topped up only when it connects
+
+Measured on the `1.4.1-alpha.4` replay: a device that stays connected, or never connects, drains to the static last-resort package; filed as a P2 for after the stable ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a community can no longer be left with members and no admin by concurrent writes
+
+Departures, role changes, role edits and admissions now decide under the community removal lock,
+in one lock order
+([social-service](docs/wiki/services/social-service.md#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18)).
+
+### Fixed - an unclean exit after a commit no longer makes the next send refresh the leaf again
+
+The leaf-refresh ledger now names the leaf each entry dates, so an entry the browser lost after the merge reached disk is read as a former leaf and costs no commit ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh)).
+
+### Fixed - a leaf-refresh decision no longer overwrites the entry of an own commit that merged while it ran
+
+The observation is written only for the leaf still in the state, and an active group whose tree holds no leaf of this device is reported once per epoch as a defect instead of passing for an inactive one ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh)).
+
+### Android - the left-edge back gesture is excluded on every tab, not only the feed
+
+A swipe to the previous section started in the left 30 px is no longer taken by the system as Back on the feed, communities, chats and dashboard; result unverified until read on a phone. See [mobile](docs/wiki/frontend/mobile.md#the-left-edge-back-gesture-is-excluded-over-every-tab-root-with-a-section-to-its-left-2026-10-21-widened-2026-10-24).
+
+### Fix - a reported live chat line: staff preview only when verified, a removed viewer bounded to what they saw
+
+The staff preview of a reported chat line is shown only when its integrity is verified; a viewer removed from a live may still report the live and any line written before the removal, never one after it; a repeated content mismatch warns once. Wording of the chat seal's scope corrected. See [lives](docs/wiki/services/lives.md#a-reported-chat-line-wp-l8b).
+
+### Fixed - a salon heard of while the communities were being listed no longer vanishes
+
+A salon announced live during a community listing was deleted by that listing's clean-up, and one removed live came back; both are now dated against the listing, and every prune is logged per id ([chat](docs/wiki/frontend/modules/chat.md#a-live-fact-heard-during-a-listing-is-newer-than-its-answer-2026-10-26)).
+
+### Changed - a live's key is stored encrypted at rest
+
+Social-service now keeps each live's key sealed under the new required secret `LIVE_KEY_ENCRYPTION_SECRET` (migration 110); the live sweep seals rows written before it ([lives](docs/wiki/services/lives.md#the-live-key-at-rest)).
+
+### Docs - lives: no visible audience ceiling, the design
+
+What bounds a live's audience (the host uplink, 24 viewers), the five ways to lift the visible cap, Cloudflare's terms read (R2 rather than a cache rule), the staged path and the owner's decisions ([live-scaling](docs/wiki/frontend/modules/live-scaling.md)).
+
+### Added - the live feasibility bench (WP-L1), measured through the dev ingest
+
+Both bench phones broadcast and watched a live through the lives ingest on dev: about 6-7 s glass-to-glass with 2 s segments, 0 append errors on either engine, and one 720p tier recommended ([live](docs/wiki/frontend/modules/live.md#wp-l1---measured-2026-10-19)). The throwaway rig is `tools/live-bench/`.
+
+### Fixed - two log lines that said nothing now speak only when something changed
+
+The Graine history answer no longer logs `sending 0 of 0` / `answered ... holds nothing` for an empty community, and the key-group entitlement line is logged when the verdict changes (with the cause of a flip to false), not on every read ([durable-rules](docs/wiki/durable-rules.md)).
+
+### Fixed - production names its Lydia environment explicitly, and accepts only `production`
+
+Production's `.env` inherited the template's `LYDIA_ENV=homologation`, so its Provider pair addressed Lydia's sandbox; `LYDIA_ENV` is now a `required` production secret and the render accepts only `production` there, a local copy of production gets the sandbox and no Provider token, and rolling back to a release before this one needs a manual recreate ([payments](docs/wiki/frontend/modules/payments.md#which-payment-provider-is-live)).
+
+### Changed - docs: what to read on the production core after the stable that carries the Lydia production pair
+
+An eight-line checklist (the startup log names the Lydia base URL, no token printed) and the honest limit: no validated Business exists yet, so the stable cannot prove a payment ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a write to a row read earlier updates its columns and never re-inserts or reverts it
+
+Notification levels, role changes (now conditioned on what was judged, `409 MEMBER_CHANGED_MEANWHILE`),
+an erasure's successor promotion, association role changes and two community settings write one
+column-scoped `UPDATE`; 0 rows refuses the call
+([social-service](docs/wiki/services/social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)).
+
+### Security - MiConnect's password sign-in and enrolment flows are guarded
+
+A password sign-in is stopped after repeated failures and for admin accounts, and asks for a second factor that exists; enrolment starts only from a source ([authentik](docs/wiki/infrastructure/authentik.md#signing-in-without-the-cas-2026-10-23)).
+
+### Security - a KeyPackage is checked against the device it was fetched for; device keys are pinned on first sight
+
+A device whose saved state is provably gone re-enrols as a new device, and its old id is retired once. A device whose leaf is still in the tree is re-added in one commit (Remove and Add together), never for a package that cannot be bound to it, a refusal no retry can lift is remembered rather than re-fetched, the pinned keys and the users seen leaving each tree are exposed for verifiers, and every new device admitted by a signed commit is recorded for the new-device notices the user decided on 2026-10-22. See [mls-protocol](docs/wiki/protocols/mls-protocol.md#device-binding).
+
+### Added - periodic key refresh for post-compromise security; revoked devices are removed from conversations
+
+Each device refreshes its own leaf in a conversation at its next send once 7 days have passed since its last commit there, its first refresh spread over the week by a fixed per-device-and-group offset, only on the branch the server publishes (a fork found there goes to the recovery ladder) and never during a call; the stray-leaf collector removes the leaf of a device the server names as revoked, and the commit gate refuses a revoked device's commits. A commit whose submission gets no answer is resubmitted byte for byte, and the commit gate answers an already-accepted one as a duplicate, so its outcome is decided by the server rather than guessed ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh)).
+
+### Fixed - the web MLS workers load again, so a reload keeps its device
+
+In `1.4.1-alpha.2` the three MLS web workers imported SvelteKit's page runtime through a byte utility and died at load, so the web client stored no MLS state and became a new device on every reload; a test now bundles and loads every worker in a worker scope ([mls-wasm](docs/wiki/frontend/mls-wasm.md#a-worker-loads-in-a-worker-scope)).
+
+### Changed - native caches sealed at rest and excluded from backups
+
+Native caches are sealed at rest and excluded from backups. Native log lines carry no content ([mobile](docs/wiki/frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+
+### Fixed - no iOS log line carries an error's text or a shared file's name
+
+`NSLog` lines say an error's domain and code instead of its `localizedDescription`, the picked-file commands log a share id instead of a path, and a waiting iOS share is kept out of backups with its text capped at 1 MiB ([mobile](docs/wiki/frontend/mobile.md#what-a-native-log-line-may-carry-2026-10-22), [sharing](docs/wiki/frontend/sharing.md#share-in-ios---the-path)).
+
+### Added - the iPhone's native ring (PushKit and CallKit) designed and built behind its switch, still off
+
+A VoIP ring now carries ids and the server's answer deadline but no name, is sent only while the ring is live, and goes only to a device whose build has the native ring; the phone names the caller from its own copy. `CALLS_NATIVE_RING_COMPILED` and `voip` do not move. See [calls](docs/wiki/frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
+
+### Fixed - a login that failed no longer leaves a gateway socket alive after the sign-out
+
+Destroying an MLS client now releases its socket and fences any open still in flight, and a login failing after it went live lowers its session flag and clears the reconnect it armed, so a failed login can no longer keep the device online as an account that has signed out ([auth](docs/wiki/frontend/modules/auth.md#a-destroyed-client-keeps-no-socket-and-none-lands-on-it-later-2026-10-25)).
+
+### Security - a new device on your account is announced
+
+The owner is alerted in the app and, from the phone's background engine, by a local notification; a contact's new device is a discreet line in every shared DM or group, never in a community. An old device seen here for the first time (a fresh install, a heal) announces nothing: the server's first sight of its key decides. A device of your own that peers refuse is told to you with its remedy. See [mls-protocol](docs/wiki/protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
+
+### Fixed - no Welcome to a device the commit gate did not admit
+
+An accepted commit now names the admits it dropped (`refusedAdmits`), so a member adding a device revoked mid-Add sends it no Welcome and stops asking about it for the rest of the sweep; a Welcome refused `WELCOME_TARGET_UNKNOWN` is typed and no longer owed ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)).
+
+### Fixed - two noisy lines of the 1.4.1 dev campaign, each explained at its source
+
+A sign-in no longer reads as a profile change (and no longer writes an `UPDATE`) because `jsonb` hands the cursus keys back in its own order; the feed-audience read no longer logs a line per feed load ([backlog](docs/wiki/backlog.md)).
+
+### Security - core-service redeems a MiConnect code with its PKCE verifier
+
+core-service forwards a client's `code_verifier` to MiConnect and says so in `/api/version` (`oidcPkce`), so the client half can ship after it; it ships first and is never rolled back below this release ([legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---an-oidc-callback-with-no-pkce-verifier)).
+
+### Security - the MiConnect sign-in carries PKCE
+
+The client sends an S256 challenge, when `/api/version` says core-service can redeem it, and redeems its code with the matching verifier, kept in `sessionStorage` on the web; a callback that lands in another tab says so instead of failing on the server ([auth](docs/wiki/frontend/modules/auth.md#login-flow)).
+
+### Fixed - main's frontend suite is green again: the chat-reel outbox test answers sends with an author proof
+
+#2117's test fake answered `sendMessage` without the `authorProof` that #2276 made every send return, so the sent reel's row was never cleared and ten tests failed on `main`. The fake is now typed as `SentFrame`, so the compiler catches the next drift. See [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md).
+
+### Changed - backlog: the outbox sends into a group whose commit outcome it already knows is unknown
+
+DUP-5 on `1.4.1-alpha.4` showed three send attempts failing on `CommitOutcomeUnknownError` while the client already held that state; filed as a P3 ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - an accepted Add's Welcome is no longer lost to a reload before its send
+
+Every accepted Add is now merged owing its Welcome in the MLS state, the Welcome send consumes it, and the server stores a re-sent copy once, so the invitee no longer has to let itself in (DUP-7) ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a device's own frame from a past epoch is an own echo, not a lost message
+
+A frame this device sent, delivered back to it after the group moved on, was counted as a loss and started a reconcile; the envelope now identifies it before MLS is asked, and it is acknowledged with one line ([mls-protocol](docs/wiki/protocols/mls-protocol.md#our-own-frame-from-a-past-epoch-was-called-a-loss-2026-10-25)).
+
+### Fixed - a poll-vote response is now shaped per reader like every other post response
+
+The answer to a vote now goes through the same per-reader shaping as reading the post
+([posts](docs/wiki/frontend/modules/posts.md#an-anonymous-poll-stores-a-tally-and-no-voters-2026-09-30)).
+
+### Changed - on a phone, a post's comments open in the same drawer as CanaReels', without the quoted post on top
+
+One `CommentsDrawer` for both, rising over the interface; the post reminder above the thread is gone. See [posts](docs/wiki/frontend/modules/posts.md#the-thread-on-a-phone-is-the-canareels-drawer-with-nothing-quoted-above-it-user-2026-10-23-phones-only).
+
+### Changed - privacy policy: what an audio call shows to whom (draft, takes effect early)
+
+The `/legal/privacy` calls paragraphs, push row, retention row and Cloudflare STUN/TURN paragraph, matching register row C21 ([register-of-processing](docs/wiki/compliance/register-of-processing.md)).
+
+### Fixed - no production fallback for the push service, and the production names stay in one module
+
+The root layout started push registration with `historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN`, a dead fallback that could only ever have sent a dev or local build to production; it now passes the delivery base URL alone. `siteOrigin` and `publicAppOrigin` share one `canonicalPublicAppOrigin`, so no module but `publicAppUrl.ts` reads the production constants (`publicAppUrl.test.ts`).
+
+### Changed - a push registration is bound to the session that made it
+
+Ending a session now deletes exactly the push registration that session wrote, recorded in the same transaction as the session's deletion and retried until chat-delivery confirms it ([sessions](docs/wiki/sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+
+### Fixed - a sign-out ends the device's push registration
+
+The device deletes its push token and push material at every sign-out, and the server ends the device's push registration when it ends the session - each side on its own ([sessions](docs/wiki/sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+
+### Fixed - a relayed Graine seed reaches the sealed native mirror again
+
+The native push path read the mirror as plain text to decide whether a relayed seed's salon was already read, which failed once the mirror was sealed, so no relayed seed was mirrored. It now opens the mirror with its key; see [channel-encryption](docs/wiki/protocols/channel-encryption.md).
+
+### Changed - the v1.3.1-alpha.5 push reading: in-app notifications pass, the FCM banner is owed on production
+
+On both bench phones, the notification raised inside the app, its tap and the message seen on return all pass. Dev
+has no Firebase secret, so the background banner, the reaction and the reel text changed by #2112 cannot be read
+there. That code is unit-tested and no shipped client sends a reel message yet ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Added - a CanaReel filmed in a chat survives a kill and a weak link (RC-5, behind the writer switch, off)
+
+The raw take is queued at once, prepared in the outbox and uploaded through media-service's resumable sessions, so a relaunch resumes it and sends only the parts the server lacks ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)).
+
+### Added - the chat reel writer behind an OFF switch (RC-4)
+
+The chat camera can film, declare and upload a CanaReel as `chat-reel`; `CHAT_REEL_WRITER_ENABLED` is `false`, so no member sees it ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#13-what-the-writer-wiring-rc-4-built-and-what-it-did-not-2026-10-18)).
+
+### Changed - small, consistent motion: the reel comments sheet slides up while the reel shrinks into a card, a new comment pops in, rail buttons press
+
+One motion scale (three durations, one easing, transform and opacity only, reduced motion honoured by the one global rule). See [design-reference](docs/wiki/frontend/design-reference.md#motion-three-durations-one-easing-one-reduced-motion-rule-2026-10-23).
+
+### CanaReels - a minimal player: one thin line, a tap to pause, download and sound in the rail
+
+The timecode and the control row are gone, the progress line sits on the bottom edge above the vignette, and the status bar and close button are legible. See [reels](docs/wiki/frontend/modules/reels.md#the-minimal-player-and-the-rail-tools-user-2026-10-23).
+
+### Added - a long press on a CanaReel's heart opens the full set of reactions
+
+A drawer unfolds upward from the heart with the same eight reactions as the feed; a short tap still gives or takes back the heart ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Changed - a salon access edit and a private salon creation face the removal bound
+
+Making a salon private, rewriting its access list or creating it private is refused when someone it hides holds more than the actor, checked again under the community removal lock ([social-service](docs/wiki/services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24)).
+
+### Removed - the local copy of production data
+
+Production data is never copied to a workstation (owner decision, 2026-10-24): the fetch and restore scripts under `infrastructure/local/` and `make dump-prod` are gone, and local work uses the fictional seed ([dev-environment](docs/wiki/infrastructure/dev-environment.md)).
+
+### Fixed - a member Remove that loses the commit race is rebuilt, or the person who asked is told
+
+A refused Remove is staged again on the epoch that beat it, and a removal recorded but not committed now says so on screen instead of in a log line ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md)).
+
+### Security - a revoked device can no longer register a new device; the refusal says why
+
+An access token now dies with its session at the verifier, revoking a device ends that device's sessions, and a banned device id is refused with a code naming who banned it, so a device its owner revoked signs out and is wiped rather than enrolling again ([sessions](docs/wiki/sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25), [chat-delivery](docs/wiki/services/chat-delivery.md)).
+
+### Security - a device its owner revokes is reset, whether the frame or the dead session tells it first
+
+A refresh refused because an owner's device revocation ended the session now says so (`DEVICE_REVOKED_BY_OWNER`), and the device answers it with the one revocation reset instead of a sign-out that kept its stores; a Welcome to a revoked device is a typed 404, not a 500 ([sessions](docs/wiki/sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)).
+
+### Added - the 1.4.1 admission runner
+
+`archive/admit.mjs` plays ADM-1..8 - a group link followed, its ask answered by Add, Decline or both at once, the waiting seat refused every member route, and the `v1.4.0` APK as joiner, member and outsider (`archive/grouplink.mjs`) ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 large-group runner
+
+`archive/big.mjs` plays BIG-1..3 on every seat - one bulk Add read on every device with each phone's checkpoint time, a thirty-message burst across two commits, and a community removal then a newcomer with one Graine seed per event; W7 and W8 are new seats ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 CC rows (concurrent commits) have a runner
+
+`archive/cc.mjs` plays CC-1..4 by holding each seat's commit before the server and releasing them together, judged on the gate's own `[COMMIT]` lines; CC-4 arms the leaf refresh on the device, and CC-5 waits for a fifth account ([harness](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 device runner
+
+`archive/devrows.mjs` plays DEV-1..4, DEV-6, DEV-7 and DUP-7 - a new device of the owner seated, revoked online and offline, two enrolling at once, the background Welcome on A1, and a Welcome delivered once across a lost answer and a reload; W6 is a second scratch seat ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 FLOOR rows have a runner, and the campaign fixtures add each group's members in one bulk Add
+
+`archive/floor.mjs` plays FLOOR-1..3 on a shared row kernel (`mlsrow.mjs`, `rowkit.mjs`); FLOOR-2 now mints its own group instead of re-observing the `campaign-g4` fixture ([campaign plan](docs/wiki/cross-client-campaign-1-4-1.md#floor---re-proved-on-dev-in-the-same-session-before-anything-else-tier-a), [harness](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 GAP runner
+
+`archive/gap.mjs` plays GAP-1..3 by rewriting the pending pull a cut seat drains on its return (`fault.mjs` `rewrite` and `rewrite-url`), and records GAP-4 `SKIPPED` ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - a recorder for the rows only a person can play
+
+`archive/handrow.mjs` records LIFE-5, CALL-12 and CALL-13 from a person's observation: the client side is written `unobservable`, never `clean`, and the server window from the lead's start demotes a PASS it finds dirty ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 kill runner
+
+`archive/kill.mjs` plays KILL-1..5 and RM-3 - a tab, a browser or the app killed with a commit held on a chosen side of the server, then revived and judged on the server (`archive/reopen.mjs`) ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 offline runner
+
+`archive/offline.mjs` plays OFF-3, OFF-5, NET-1..3 and RM-8 - a seat away while others move on, its radios gone, a slow link (`net.mjs` `degrade`), a flapping socket, a captive portal and a departure offline ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 salon runner
+
+`archive/salon.mjs` plays RM-4..6 - two admins rewriting one salon's access list at once, a community kick racing a private-salon grant five times, and a `channel.manage`-only member refused a removal beyond its role - each in a community of its own ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the 1.4.1 settlement runner (DUP, OFF-1/-2, TOK)
+
+`archive/settle.mjs` plays DUP-1..6, OFF-1/-2 and TOK-1..3 against a commit whose answer is lost, refused, late or cut, judged on the gate's log in order and forgiving exactly the failures its own faults provoke ([README](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the test rig builds the phone's debug APK for the dev estate, and an old client from a tag
+
+`a1apk.mjs` plans the build from the estate: dev gets no `adb reverse`, no local-estate overlay and dev's identity provider; the whole bundle must name no production origin outside the link module's own chunk, `--no-build` installs only an APK whose hash a passing build recorded, and `--accept-dead-production-literal` admits an old ref's dead push fallback for ADM-5..7 alone ([harness README](tools/cross-client-harness/README.md#the-target-the-local-estate-or-dev-and-production-is-refused)).
+
+### Fixed - the A1 preflight checks the notification grant and stamps class-B rows, and OFF-5/KILL-3/KILL-4 are BLOCKED-ON-RIG
+
+The preflight now refuses A1 when POST_NOTIFICATIONS is not granted. A row that names A1 is preflighted with A1, so it stamps `a1Build`, and web rows no longer inherit the phone binding. `closeOverlays` closes any side panel. OFF-5, KILL-3 and KILL-4 are refused because the Tauri apps send API calls through `tauri-plugin-http`, where CDP cannot hold them. OFF-3 judges the Add's intent as either re-issued or abandoned with a notice ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - the test rig reads two Add narration lines as narration
+
+The server's `ENROLLED by commit` line (#2419) is notable, and the adder's own `[NOTICE] memberAdded` debug line (#2412) is forgiven where a row created the group; both had made FLOOR-2's first alpha.4 PASS read dirty (`srvlog.mjs`, `watch.mjs` `GROUP_CREATION_NARRATION`).
+
+### Changed - the rig reads #2426's add-lock lines, and tells an owed release from a slow Add
+
+A refused acquire in its `retryAfterMs=<n>` shape is routine like the `ttl=` one; a `[RELEASE_LOCK] ... released=false ... owed=true` (a revived page releasing its dead predecessor's expired lock) is expected, while the unflagged `released=false` stays notable as a slow Add, and malformed flags stay unexplained. The member-panel backlog item is re-graded P2 on its second sighting ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a bulk Add no longer reads as dirt on its own row
+
+The adder's member-list lines matched a one-member Add only, and the admitted device's two 1.4.x decision lines were unclassified, so FLOOR-2 read `PASS-DIRTY` on its own subject ([harness](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - the rig destroys on dev only what the campaign created
+
+A per-estate ledger records every fixture, group, salon, community and device the rig creates, and every destructive gesture checks it first; `cleanup.mjs` on dev takes `--only <ids> --expect N`. `campaign-fixtures.mjs` builds the 1.4.1 fixtures through the product ([harness README](tools/cross-client-harness/README.md#what-a-row-may-destroy-on-dev-the-campaign-ledger-r5)).
+
+### Fixed - CC-1 is judged at the add lock, and CC-4 settles its refresh before the invariant
+
+Two concurrent bulk Adds meet the add lock, not the commit gate: CC-1 names the loser from the server's `[ADD_LOCK]` lines and records INCONCLUSIVE when nothing contended; CC-4 sends its own retry trigger and waits for the second epoch, so the invariant no longer reads mid-flight ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - the salon rows reach their premise, and cleanup knows their communities
+
+The salon runner now:
+- waits for the member row it acts on;
+- closes the community panel it opened;
+- mints lower-case salon names.
+
+`cleanup.mjs` reads its community allowlist from `debris.mjs`, which now names the salon runner's `RM<n>-` communities. Both lists are pinned with controls ([cross-client-testing](docs/wiki/cross-client-testing.md), [backlog](docs/wiki/backlog.md)).
+
+### Changed - the DEV rows name their device-notice and fresh-device narration, level by level
+
+`watch.mjs` gains `atLevels` needles, which forgive a line only at the level the product logs it, and four lists the DEV rows name - the owner's and a contact's device notice, a minted device's first session, a revoked device's sign-out; each is pinned with its error, warning and odd-variant controls in `classify-selftest.mjs`. The two lines left dirty are filed in the [backlog](docs/wiki/backlog.md).
+
+### Fixed - a row the dev estate was redeployed under is VACUOUS, not failing
+
+On dev the rig voids a row whose window saw dev's build change, a pre-release run (read by tag), a dev container restart or a seed reset, and a dev window it could not read is VACUOUS rather than PASS; the local estate keeps its restart check ([harness README](tools/cross-client-harness/README.md#the-files)).
+
+### Fixed - DEV-1 counts the device line in the open conversation, and only on the contact
+
+DEV-1 counted "a ajouté un appareil" across the whole page and expected it on the owner too. The owner is told by the account notice and gets no line. A contact gets the line in every conversation it shares with the owner, so its sidebar previews read eight. The line is now counted in the open pane: once on W2, none on W1 ([campaign](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+`purge-devices.mjs` and the PIN row now open `/settings/security`. `/settings` has been a hub since #1699, so every DEV revoke exited 1 before reaching the panel.
+
+### Added - DEV-3 records a revoked seat's re-enrolment as its own debris
+
+When the revoked seat comes back under a fresh device id of the same account, read from that seat's own storage, the row now records the id in the campaign ledger so the device purge may remove it. No other device is recorded. A new assertion fails the row on such a re-enrolment, pinned with its controls in `devrows-selftest.mjs` ([README](tools/cross-client-harness/README.md)).
+
+### Changed - DUP-2's intervening commit is a Remove, because a second Add is refused at the add lock
+
+W1's held Add keeps the group's add lock, so the planned intervening Add was refused ('Add-lock busy') and DUP-2 could not be played; W4 now Removes W5 beside the held Add, and an intervening Add during a held resubmission is CC-1's case ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Changed - DUP-7 plays an Add that really happens, and names its unmet premise
+
+On 1.4.1 an owner's new device seats itself by external join, so W1's Add of W3 never ran. DUP-7 now has W1 invite W4, the third account, through the product's invite path, with the commit's answer lost and the Welcome held, and W4 must receive ONE Welcome. A commit that never fires is reported as an unmet premise, not as FAIL. Pinned in `devrows-selftest.mjs` ([board](docs/wiki/cross-client-testing.md)).
+
+### Changed - a row that does not PASS keeps every client's whole console
+
+A FAIL used to record only lines a classifier picked out, and nothing for a clean client, so DUP-6 on `1.4.1-alpha.4` could not show where its side message waited. A non-PASS row now writes each observed client's console to the rig's state directory and names the files in its record ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Added - the test rig can make a request land and its answer vanish
+
+`fault.mjs` pauses requests at the response stage over CDP `Fetch` to lose, replace, delay or hold the server's answer, the case commit settlement exists for ([harness README](tools/cross-client-harness/README.md)).
+
+### Fixed - a fault disarmed right after a rewrite fired no longer loses the rewrite, and the fixes' new lines are classified
+
+`disarm` now waits for in-flight `rewrite` answers before `Fetch.disable`; GAP-2's capture had been cut by it and recorded INVALID. The `[QUEUE] … re-fetching` rules name all five triggers and every `UnackedReason`. The abandoned-Add, commit-race and Remove lines of #2414/#2416 are NOTABLE by anchored rules, and GAP-2 now asserts #2421's own-echo line exactly once instead of only the absence of a loss ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - the test rig refuses a `--file` no phase declares
+
+`run.mjs --file` now refuses a path (`archive/floor.mjs`) and a script in no phase, where it used to print a note and preflight W1 and W2 alone. A chain run of fourteen 1.4.1 rows went that way and FLOOR-2 recorded VACUOUS on an unpreflighted seat (`fileRefusal` in `tools/cross-client-harness/checks.mjs`).
+
+### Fixed - GAP-2 counts the queue's repeat of an injected frame as its classification
+
+A replayed row this device already took in is stopped at the queue (`arrived twice`) before the MLS layer could call it a duplicate, and that line names no group; GAP-2 now matches it by the injected id ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - ADM rows wait for the group link where the panel puts it
+
+`mintGroupLink` waited for the link in `innerHTML`, but the panel holds it in an input's `value` property, which `innerHTML` never shows. ADM-1 timed out on a panel that already showed the link. It now waits on the input it reads ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - the test rig reads two hourly server reports as reports
+
+The commit-rate rule expected a `,` where the server writes `;` and had matched no real line since it was written, and the TURN meter's hourly reading was never classified, so any report landing in a row's window made it read dirty (CC-3 on alpha.4); both are notable now, and a busy group or a reached TURN budget stays a finding (`tools/cross-client-harness/srvlog.mjs`).
+
+### Fixed - invariant 3 compared message positions read from two different lists
+
+The positions of the post-event messages were read one marker at a time, across a redraw of the list; they are now read in one snapshot once every marker has arrived, and an out-of-order failure names the rows ([README](tools/cross-client-harness/README.md)).
+
+### Added - one invariant probe after every MLS row of the campaign rig
+
+`invariant.mjs` checks the five invariants every MLS row asserts (one tree, no stage left, a message delivered once, no forbidden line, roster and tree agreeing) and names what it can only approximate ([harness](tools/cross-client-harness/README.md#invariantmjs---the-five-things-every-mls-row-asserts-besides-its-own-question-r8), section 4.0 of the 1.4.1 campaign plan).
+
+### Fixed - the invariant's reload pass judged a group its own reload was still moving
+
+A reloaded client may commit at its connection (the stray-leaf sweep), so the second pass now waits until the server and every member agree on two rounds in a row; a group that never settles makes the row INCONCLUSIVE rather than judged. RM-8 names the exit replay and the lost `memberLeft` notice (a backlog P3) as its own expected lines ([backlog](docs/wiki/backlog.md)).
+
+### Changed - a KILL row's browser kill checks the profile's storage on both sides
+
+A whole-browser kill can leave a Chrome profile without its quota database, and the revived page then has no storage and can only show its gate. The rig now asserts the quota database before the kill and probes the revived page's storage before the PIN, so that loss is a rig ERROR naming itself, not a product LOCKED ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a tab kill quit the whole browser
+
+Closing a window's last tab quits Chrome, so the KILL rows' tab kill took the browser with it and the revival found no port; a blank tab now keeps the browser alive and the revival closes it, then waits for the revived sidebar to list the group before opening it ([README](tools/cross-client-harness/README.md)).
+
+### Changed - KILL-1's own burst in the hourly commit rate is its row's line, and the TURN limits read is reported
+
+KILL-1 on `1.4.1-alpha.4` kills W1 around its commit twenty times in one group, so the hourly commit-rate report in its window names that one group; it is now expected in KILL-1 alone, and two busy groups stay a finding. The TURN meter's dataset-limits read joins its two sibling readings as NOTABLE ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Added - the rig can launch the W4 and W5 browser seats
+
+`launch.mjs` starts the third and fourth accounts' profiles that `campaign-fixtures.mjs` seats them on, and `names.example.mjs` names the two seats ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Fixed - the hourly live-report age report landed as unexplained server dirt
+
+Its start, an empty queue and a queue inside the commitment are routine; the overdue line stays an error ([README](tools/cross-client-harness/README.md)).
+
+### Fixed - NET-3 opens its captive portal only once the commit is held, so the commit is what meets it
+
+The portal had answered the Add's own pre-checks first, so no commit was ever made. Now the commit is held, then the portal opens and answers the held commit with its page. `fault.mjs` gains a rule-level `when` gate and `answerHeld` ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - OFF-3 waits for the cut member's add lock to leave the server before the second member's Add
+
+W1 is cut while holding `mls:addlock:<group>`, so W2's Add 15 s later was cancelled at the lock and the row recorded INVALID. The row now waits for the key to be gone on the server, which is a fact and not a guessed TTL ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Changed - OFF-3 forgives W1's owed add-lock release and W2's own Add narration
+
+OFF-3 on `1.4.1-alpha.4` held every assertion and read two seats' expected lines as dirt: W1's release of the add lock it was cut holding, sent on return, and W2's narration of the Add it makes. Both are now the row's narration, scoped to its group; an unanswered release stays dirt ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Changed - an outbox entry waiting out its backoff is reported, not unexplained
+
+DUP-5 on `1.4.1-alpha.4` read the outbox's `skipped, backing off` line as dirt. It is the sibling of the `transient failure` line before it, so it is now NOTABLE: reported, and never routine ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Fixed - the rig's presence check asks about the signed-in account's device
+
+`archive/presence.mjs` took the first `mls_device_id_*` entry in a profile, which can belong to another account once signed in there, and reported a connected seat `OFFLINE`; it now reads the entry of `canari_saved_user`. The preflight's missing-venue refusal names the estate and `campaign-fixtures.mjs --build` instead of production ([harness](tools/cross-client-harness/README.md#running-it)).
+
+The R5 fixtures now seat the third and fourth accounts in the venue too (`venueMembers`), which the same preflight requires of every account a run drives.
+
+### Fixed - a CC race forgives the Add narration to the racer that made the Add
+
+The Add narration was forgiven to W1 alone, so a racer other than W1 that Adds read its own Add as dirt, and CC-1's W2 lock loser was not forgiven the block question it asks before the lock refuses it (alpha.4). Forgiveness is now per gesture, and the lock loser is never forgiven a commit line (`raceForgiveness` in `tools/cross-client-harness/ccrows.mjs`).
+
+### Fixed - a commit race no longer holds a commit past the product's own deadline
+
+`raceCommits` waited 45 s for every racer's commit while the client aborts a commit POST after 30 s and resubmits it, so CC-1's winner was measured against that deadline instead of the race; the hold is now 20 s, asserted under `requestDeadline.ts`'s `write` deadline (`RACE_HOLD_MS` in `tools/cross-client-harness/ccrows.mjs`).
+
+### Fixed - a CC racer that Removes is forgiven its own Remove narration
+
+CC-2 on alpha.4 passed its assertions and read dirty on W1's own Remove lines; a racer whose gesture is a Remove is now forgiven `[REMOVE_MEMBER] ... removed from the group` when it ended `committed` or `already-out`, and its `[NOTICE] memberRemoved` line at `debug` only (`REMOVE_NARRATION` in `tools/cross-client-harness/watch.mjs`).
+
+### Fixed - the "frames refused for lack of a row" lines stay unexplained unless a row provokes them
+
+The generic epoch rule claimed the new #2414/#2416 lines in every row. They are now tested before it as row-scoped narration (`REFUSED_FOR_LACK_OF_ROW_NARRATION`), so a CC row with no refused frame queued shows them as dirt ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - the test rig knows the dev estate and refuses production outright
+
+`estate.mjs` routed every estate that was not local to production's containers; it now accepts the local estate or dev (found by its `canari-dev` compose label) and refuses any other `SITE` before a line runs ([harness README](tools/cross-client-harness/README.md#the-target-the-local-estate-or-dev-and-production-is-refused)).
+
+### Fixed - the rig's page guard kills, reports and judges where it should
+
+A refused restored tab kills its browser, the phone's unrelated Chrome tabs no longer stop a sign-in, a refusal is reported as one, an APK passed by an acceptance installs only with the flag again, and the dev restart witness sees stopped containers ([harness README](tools/cross-client-harness/README.md#the-target-the-local-estate-or-dev-and-production-is-refused)).
+
+### Changed - RM-3 asserts the member panel before it clicks
+
+The removal is a click on the subject's row, so RM-3 now waits for W1's panel to offer every invitee of the setup's bulk Add, and is INVALID with the panel's text when it does not (the stale-panel P2, #2433) ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - RM-4 races the request the panel really sends, and RM-4b is the revoke race
+
+RM-4 held an access PATCH for a revoke the panel sends as `DELETE /members/:userId`. RM-4 now races two grants, and RM-4b races two revokes. Finding this exposed a P2: a rewrite from a stale access panel silently cuts whoever was granted since ([campaign](docs/wiki/cross-client-campaign-1-4-1.md), [backlog](docs/wiki/services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
+
+### Changed - RM-8 names W1's connection sweep of the leaver as narration
+
+The leaver's leaf is collected at W1's next connection by design, so RM-8 expects that one `[STRAY]` line on W1, with controls; a backlog P3 and a P2 are filed from the portal probes ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a one-row run judges its server window as that row
+
+`run.mjs` read every pass's server window with no row, so DUP-1 run alone counted its own `DUPLICATE` commit answer as out of row and exited 1 under a PASS verdict (alpha.4); a pass that recorded exactly one row is now judged as that row, and a multi-row pass stays strict (`windowRow` in `tools/cross-client-harness/srvlog.mjs`).
+
+### Added - the rig's server window judges the 1.4.1 lines by the row that provokes them
+
+A `[COMMIT] DUPLICATE`, an `awaiting_admission` refusal, a background Welcome or a removal-bound refusal is expected in its own campaign row and dirt in every other; `bun logs.mjs --server` reads the estate again ([harness README](tools/cross-client-harness/README.md)).
+
+### Changed - a settle row forgives the owed Welcome its kept Add delivers
+
+A kept Add merged late delivers the Welcome it owes (#2452), and DUP-4 read that line as dirt; settle rows now forgive it for their own group only, and the `NOT delivered` error stays dirt ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Fixed - a SETTLE subject that never lists is judged FAIL by the roster, not thrown on by the invariant
+
+Eight SETTLE rows on 1.4.1-alpha.3 recorded ERROR or INVALID because the invariant threw opening a conversation the subject never listed; the subject now leaves the invariant's members, and the admission gate's not-drained decision line reads NOTABLE ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - a removal's PARTING commit and an addressed history send read as server narration
+
+`[COMMIT] PARTING`, `[SEND] ADDRESSED` and `ADDRESSED_CONVERSATION` are NOTABLE, not unexplained; they made the first CC-3 draw on 1.4.1-alpha.3 dirty ([cross-client-testing](docs/wiki/cross-client-testing.md)).
+
+### Fixed - TOK-1 and TOK-2 judge the client's token renewal positively, and TOK-2 expects a cleared stage
+
+TOK-1 now asserts one 401, one renewal, one resend and one 200 on the commit POST. TOK-2 asserts that the failed renewal clears the stage and fails the gesture, so it is no longer kept as unknown (#2420). The `[AUTH]` lines are narration on these two rows only ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Changed - TOK-1 reads the commit gate's 201 after a token renewal as the success
+
+TOK-1 on `1.4.1-alpha.4` failed because its needle wanted `200`, while the commit gate answers `201` when it accepts; the line was also left unexplained. The needle now takes 201 or 200 (a duplicate) and nothing else ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Changed - TOK-2 reads the failed Add from the app, not from the click
+
+TOK-2 on `1.4.1-alpha.4` failed on "the gesture failed (it reported success)": the add helper returns once the invite button is pressed and cannot see the outcome. The row now reads W1's own `an invitation added nobody (failed)` line, and forgives the failed Add's narration on TOK-2 alone ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)).
+
+### Fixed - the row kernel accepts the server's user id shape
+
+`mlsrow.mjs` `displayNameOf` refused every user id because it tested for a uuid, and the server keys an account by a 64-hex digest - every 1.4.1 FLOOR draw died before acting ([harness](tools/cross-client-harness/README.md#the-141-row-runners---mlsrowmjs-rowkitmjs-one-table-per-group)).
+
+### Added - one named environment exception for the dev edge's injected script
+
+The dev zone's Cloudflare detections inject an inline script our CSP refuses on every page, which made every dev row `PASS-DIRTY`; `watch.mjs` `DEV_EDGE_CSP_EXCEPTION` forgives exactly that refusal, on dev only, and every verdict that used it names it ([board](docs/wiki/cross-client-testing.md)).
+
+### Fixed - cargo audit green again: crypto-bigint 0.5.5 is a reasoned ignore, and Rust ignores now retire themselves
+
+RUSTSEC-2026-0387 has no fix reachable by a lockfile change, so each Rust tree states its reachability in `.cargo/audit.toml`; a new step fails on an ignore nothing reports, and the dead RUSTSEC-2026-0381 entry is deleted ([cicd](docs/wiki/cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
+### Fixed - a salon settings panel left open no longer cuts off whoever was granted since
+
+Every access write now names the revision it edited (migration 111); a stale one is refused and the panel reloads the list and says so, and an older client's list can grant but never drop ([social-service](docs/wiki/services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
+
+### Fixed - a salon grant racing a kick no longer leaves the kicked member on the allowlist
+
+An access-list rewrite now checks, under the community removal lock, that everyone it adds is still a member, and refuses `409 CHANNEL_GRANTEE_NOT_MEMBER` otherwise ([social-service](docs/wiki/services/social-service.md#every-writer-that-adds-to-an-allowlist-asks-membership-under-a-lock-a-kick-also-takes-2026-10-25)).
+
+### Fixed - a salon created while members are online keeps its casing
+
+`onChannelMemberJoined` no longer lower-cases the salon name: `BIG3-xyz-salon` shows as the server sent it,
+not `big3-xyz-salon`, until a reload. See `ChatBackgroundService.svelte`.
+
+### Fixed - seat writes check membership
+
+A demotion only updates the seat it read and never creates one; in a key-distribution group, a report of `active` and a first commit from a `pending` seat are accepted only once social-service answers that the owner is entitled ([state machine](docs/wiki/protocols/mls-graine-state-machine.md#seat-writes-check-membership-2026-10-25)).
+
+### Fixed - a message sent under a captive portal is no longer lost
+
+A `200` that is not the API's JSON (a portal's login page) is now no answer: the message stays pending and goes once the portal ends, and the commit, ACK and Welcome paths read it the same way ([chat](docs/wiki/frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)).
+
+### Fixed - a reload after a commit no longer re-uses generations its peers already consumed
+
+The send ledger counts each frame against the epoch it was sealed at, and a burn owed to an epoch the restored state has not reached is spent, once and before any send, when the group gets there; no checkpoint declares that ratchet durable before then ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)).
+
+### Changed - a share into Canari is erased at sign-out
+
+A share still waiting - in the page, as an undrained manifest, or mid-staging - is deleted when the
+member signs out, so it never lands in the next account. See [sharing](docs/wiki/frontend/sharing.md).
+
+### Added - Canari in the iPhone share sheet
+
+A Share Extension copies what another app shares into the App Group, and Canari carries it into the same "Envoyer a..." path as Android; signed iOS builds now require the `APPLE_PROVISIONING_PROFILE_SHARE` secret ([sharing](docs/wiki/frontend/sharing.md#share-in-ios---the-path)).
+
+### Added - a post's and a reel's share sheet: send into a conversation, copy the link, the system sheet
+
+"Partager" on a post, on the post page and the reel rail's send open an Instagram-like sheet; a tap on a conversation opens it with the post's link in the composer, and a shared reel's card opens the reels viewer ([sharing S6](docs/wiki/frontend/sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
+
+### Added - Android's share sheet suggests your recent Canari conversations
+
+Picking one opens "Envoyer a..." with that conversation preselected; a setting turns them off, and every sign-out erases them, with the conversation shortcuts the message notifications leave ([sharing](docs/wiki/frontend/sharing.md#share-suggestions-android---lot-s5)).
+
+### Security - the SSR image moves from Node 25 to the patched Node 24 line
+
+`Dockerfile.frontend-ssr` ran `node:25-alpine`, a line outside the October 2026 Brotli decoder fix (CVE-2026-111497, "node2shell"); it now runs `node:24-alpine` like the rest of `infrastructure/local` ([why the SSR is still on Node](infrastructure/local/Dockerfile.frontend-ssr)).
+
+### Changed - the store texts promise no payment, shop or ticketing while payments are disabled
+
+The fr and en listing drafts drop the shop and ticketing bullet, "adhesions" and "rappels", and `store/listings` now refuses payment words; the shot list for fresh bench-phone screenshots is on [store-listings](docs/wiki/store-listings.md#8-the-redo-of-the-whole-listing-decided-by-the-user-2026-10-22-texts-and-screenshots).
+
+### Fixed - the member who adds, removes, renames or changes a group's photo now sees its own notice
+
+That device writes the notice under the id every member's device uses, so it is no longer relayed back to it and marked unverified ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)).
+
+### Changed - the frontend tests run under `node`, and only the 391 files that need a DOM ask for happy-dom
+
+Each declares it on its first line (`// @vitest-environment happy-dom`), seeded from `--environment=node` runs; `src/test/environment.test.ts` fails a DOM test that forgot it and a pragma anywhere but line 1. Same cases, same pass set; no speed claim yet ([test-suite-reform](docs/wiki/test-suite-reform.md#wp-t4-m---node-environment-by-default-happy-dom-only-where-a-test-needs-a-dom)).
+
+### Fixed - the conversation header no longer scrolls off-screen in a busy group
+
+The "seen by" screen-reader label escaped the transcript and gave the desktop thread panel scrollable overflow; the label is now contained and the panel clips instead of hiding ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - the source-tree test gates no longer time out under the full suite
+
+They read the tree once per file, outside test bodies, and the walker no longer `stat`s every entry ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Changed - a user id is visible ASCII (no whitespace) with no ':' from the moment it is made
+
+The sign-in callback and the administrator's account creation share one validator, so every comparison of a user id agrees on every id that can exist ([profiles-and-access](docs/wiki/profiles-and-access.md#four-facts-the-plan-is-shaped-by)).
+
+### Fixed - a user write updates its columns and never saves the row it read
+
+The notepad, the notepad key, the profile, the admin flag, the sign-in's claims, an admin profile
+edit, a tag renewal and an unmute write one column-scoped `UPDATE`; 0 rows means the row is gone and
+the call is refused. Removing the admin flag ends the person's sessions, nobody writes their own
+flag, and an administrator's user creation never overwrites an existing account
+([core-service](docs/wiki/services/core-service.md#a-user-write-updates-columns-never-saves-the-row-it-read-2026-10-25)).
+
+### Fixed - a web MLS state WebCrypto cannot read right now is re-read, never rotated
+
+A WebCrypto refusal of a framed v2 state is no longer called altered: the state is re-read and kept, and `mls-core` alone gives the verdict, as a typed code. The v2 writer stays off until the production and web rollback floors reach this release ([mls-protocol](docs/wiki/protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)).
+
+### Security - the WebSocket services accept only an access token
+
+chat-gateway and call-service now check the token's kind at the upgrade, as core-service does on its own routes ([chat-gateway](docs/wiki/services/chat-gateway.md#websocket-authentication)).
+
 ## [1.4.0] - 2026-10-22
 
 ### Documented - `v1.4.0-alpha.1`: the gestures read on the Mi 9T, the iPhone updated but blocked at its PIN
@@ -1396,7 +2318,7 @@ Sign-out now resets the announcement store, whose reset had no caller: the next 
 
 ### Fixed - an exported log no longer carries messages an older build stored in clear
 
-The in-app log was redacted only when a line was written, so lines stored before #1839 (`text="bisous"`) left the device as they were; every stored line now passes the same, now idempotent, redaction again when it is read for export (in batches that yield to the main thread), and the `[SEND]` lines JSON-quote the text so a typed `"` no longer lets the rest of a message through ([mobile](docs/wiki/frontend/mobile.md#redacted-at-write-and-at-read)).
+The in-app log was redacted only when a line was written, so lines stored before #1839 (`text="coucou"`) left the device as they were; every stored line now passes the same, now idempotent, redaction again when it is read for export (in batches that yield to the main thread), and the `[SEND]` lines JSON-quote the text so a typed `"` no longer lets the rest of a message through ([mobile](docs/wiki/frontend/mobile.md#redacted-at-write-and-at-read)).
 
 ### Fixed - comments no longer claim `attachConsole()` sends the JS console to logcat
 
@@ -2005,7 +2927,7 @@ In-app tones (message, mention, send, read) and the Android notification channel
 
 ### Docs - the staff-reads-campus-posts question is closed, and the host disk figure corrected
 
-The user chose option 1 (nothing by default, a named read grant per person, [profiles-and-access](docs/wiki/profiles-and-access.md)); the Portail-etu host measures 60 % used, and the docker-prune is a standing authorisation at 80 % ([backlog](docs/wiki/backlog.md)).
+The user chose option 1 (nothing by default, a named read grant per person, [profiles-and-access](docs/wiki/profiles-and-access.md)); the Portail-etu host measures 60 % used; a docker-prune script was built, and nothing is installed on the shared host without the DSI's written agreement ([durable-rules](docs/wiki/durable-rules.md)).
 
 ### Added - a design page for refreshing the store listings with fictional demo data
 
@@ -3996,8 +4918,8 @@ Those apps keep links in their own browser, so the page now shows an "Ouvrir" ba
 
 ### Fixed - a PDF export breaks its lines where the browser did, not where jsPDF would
 
-The vector text layer re-wrapped every run in jsPDF's own metrics, which printed "Lounes
-BRIAND--R / AVIDAT" mid-word and set a name on one line where the preview used two. Each wrapped
+The vector text layer re-wrapped every run in jsPDF's own metrics, which printed "Lilian
+VERNAY--M / AZOYER" mid-word and set a name on one line where the preview used two. Each wrapped
 run is now measured line by line in the DOM and drawn at its own baseline, on all three exports
 (carte, agenda, trombinoscope) ([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-pdf-breaks-its-lines-where-the-browser-did)).
 
@@ -4468,11 +5390,10 @@ publication, inoffensive sur un reseau prive et exposee aux co-locataires sur l'
 
 ### Changed - la question des certificats ne bloque plus, et la demande DSI est ecrite
 
-Les deux certificats que l'ecole sert deja portent UN SEUL nom chacun, emis par GEANT TCS pour ~6,5
-mois : un certificat par nom, aucun ACME, donc rien ici ne peut renouveler. `canari.emse.fr` est
-vivant, sert le Portail Etudiant ICM depuis une AUTRE machine que portail-etu.emse.fr, et son
-certificat a ete reemis le 22/09 - la reaffectation demandee prend un nom a un site qui tourne. La
-demande DSI est desormais ecrite mot pour mot, la question du certificat en moins.
+Les certificats que l'ecole sert deja portent UN SEUL nom chacun et ne sont pas renouveles par ACME,
+donc rien ici ne peut les renouveler. `canari.emse.fr` etait deja attribue a un autre site - la
+reaffectation demandee prend un nom a un site qui tourne. La demande DSI est desormais ecrite mot
+pour mot, la question du certificat en moins.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - la reconciliation ne sonde plus un groupe ou l'appareil n'a pas de feuille
@@ -4764,7 +5685,7 @@ dans `initializeConnection.ts` consigne la reponse la ou la question se pose
 
 ### Security - un plan de migration decrivait comment atteindre une machine qu'on ne possede pas
 
-Leon a demande pourquoi un login etait ecrit en dur dans le plan de migration. Il y avait plus que
+Un contributeur a demande pourquoi un login etait ecrit en dur dans le plan de migration. Il y avait plus que
 ca : le compte utilise sur l'hote partage de la DSI, un second compte a cote, lequel des deux
 detenait `docker`, les fichiers de cles d'un poste et le second facteur qui en avait ete retire -
 une carte d'acces vers la machine d'un tiers, dans un depot PUBLIC. Le scan de secrets ne pouvait
@@ -5883,7 +6804,7 @@ generale de l'association plutot que l'evenement precis.
 La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
 decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
 compte, pas le temps.
-[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-workstation-2026-09-18).
 
 ### Added - l'estimation de versement suit desormais le bareme du prestataire actif, Stripe ou Lydia
 
@@ -6092,7 +7013,7 @@ deux presentations dessiner.
 
 ### Changed - le recensement des key packages quittait le premier ecran natif, ou il coutait la moitie d'un chargement a froid
 
-Le banc ajoute la veille dit ceci, sur OXYGEN, 5 groupes, release, 20 echantillons : un chargement a
+Le banc ajoute la veille dit ceci, sur le poste de travail, 5 groupes, release, 20 echantillons : un chargement a
 froid coute **24,5 ms avec un logger installe et 12,9 ms sans**, a un pool de 1000 key packages.
 L'ecart n'est pas du bruit, c'est l'argument d'une ligne de log. `log::info!` se compile en
 `if niveau_actif { ... }` : sans logger, ses arguments ne sont jamais evalues, et l'un d'eux est
@@ -6114,7 +7035,7 @@ RETOURNE la ligne au lieu de la journaliser, pour que l'endroit qui decide ou va
 l'appelant, comme du cote wasm. La ligne de COMPOSITION reste dans le chargement : 0,209 ms au meme
 pool, mesuree dans la meme serie.
 
-**Ce que cela ne regle pas** : les 1644 ms de `mls-load-state` relevees sur un Mi 9T. OXYGEN n'est
+**Ce que cela ne regle pas** : les 1644 ms de `mls-load-state` relevees sur un Mi 9T. Le poste de travail n'est
 pas un Mi 9T et son pool est une fixture ; ce qui est etabli c'est la forme, et la moitie environ de
 ce chargement etait du travail qu'il n'avait pas besoin de faire. **Il en reste une moitie** :
 `prune_expired_key_packages`, 11,49 ms au meme pool, tourne toujours sur le chemin attendu. Elle
@@ -6124,7 +7045,7 @@ declencheur, et ce depot interdit qu'un declencheur soit une horloge.
 ### Changed - la purge des key packages ne fait plus prouver mille lignes pour en supprimer zero, et la mesure a refute l'hypothese qui l'argumentait
 
 `prune_expired_key_packages` tourne sur le chemin attendu de chaque demarrage a froid et coutait
-**11,39 ms a un pool de 1000** (criterion, OXYGEN, 5 groupes, release). Elle partageait une passe
+**11,39 ms a un pool de 1000** (criterion, poste de travail, 5 groupes, release). Elle partageait une passe
 avec le recensement, qui PROUVE chaque ligne - un `hash_ref` recalcule sur le key package plus une
 serialisation, par bundle - alors que le test d'expiration n'a besoin que de la duree de vie decodee.
 Sur un appareil qui n'a rien a recuperer, c'est-a-dire le cas ordinaire, mille preuves etaient prises
@@ -6196,7 +7117,7 @@ son `hash_ref` et fait une recherche de sous-chaine sur sa cle. Un appareil inst
 aveugle. Les bancs installent maintenant un logger qui jette tout, et font tourner chaque chargement
 DEUX fois - l'ecart est un nombre dans la sortie, plus une affirmation dans un commentaire.
 
-Criterion, 20 echantillons, OXYGEN, 5 groupes, release :
+Criterion, 20 echantillons, poste de travail, 5 groupes, release :
 
 | pool de key packages | chargement, logger a INFO | chargement, logger OFF | ce que coutent les deux lignes |
 | --- | --- | --- | --- |
@@ -6210,7 +7131,7 @@ froid a ce pool, c'est donc environ 1 ms de decodage, 11,5 ms de purge et 11,6 m
 personne n'a lu. Les trois sont en O(pool) et aucun n'est necessaire avant le premier ecran.
 
 **Ce que cela ne regle pas, et c'est dit ici pour que personne ne le cite autrement** : cela
-n'explique pas les 1644 ms. OXYGEN n'est pas un Mi 9T et son pool est une fixture. Ce qui est etabli,
+n'explique pas les 1644 ms. Le poste de travail n'est pas un Mi 9T et son pool est une fixture. Ce qui est etabli,
 c'est la FORME - le cout est lineaire en un pool que rien ne recupere, et la moitie environ est du
 travail que le chargement n'a pas besoin de faire - et un premier nombre reproductible que n'importe
 qui peut refaire tourner.

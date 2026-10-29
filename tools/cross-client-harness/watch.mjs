@@ -18,7 +18,12 @@ import {
   originOfConsoleEvent,
   originOfUrl,
 } from './consoleorigin.mjs';
-import { configuredEstate, describe as describeDeploy, estateWindow, readEstateBuild } from './deploy.mjs';
+import {
+  configuredEstate,
+  describe as describeDeploy,
+  estateWindow,
+  readEstateBuild,
+} from './deploy.mjs';
 import { DEV_SITE } from './estate-target.mjs';
 import { fromWebKit, isWebKitAgent } from './webkit-console.mjs';
 
@@ -80,7 +85,9 @@ const BENIGN = [
   // single loudest signal Graine emits was landing in `unexplained`. A rule that claims another rule
   // covers something has to be checked against the text, not against the intent - the sibling now
   // has its own entry in NOTABLE, named.
-  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove$/,
+  // `(the revocation answer of an unchanged tree reused)`: the same answer, not recomputed for a tree
+  // that has not moved (`rosterReconcile.ts`) - still nothing to remove, and the only suffix allowed.
+  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove(?: \(the revocation answer of an unchanged tree reused\))?$/,
   // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
   // and every COMM check that creates a private salon produces it.
   /^\[GRAINE\] no base published for .+ - creating group [0-9a-f]{8}\.\.\.$/,
@@ -285,7 +292,17 @@ const BENIGN = [
   // spared instead of deleting them in silence. It is EXPECTED here specifically - COMM-12 builds
   // two communities back to back, which is the race - and its absence proves nothing either way,
   // since a run where no listing happened to be in flight is a run with nothing to spare.
-  /^\[WORKSPACE-LOAD\] kept \d+ (community\(ies\)|salon\(s\)) created after this listing was requested/,
+  // Since 2026-10-26 it is one session-log line per salon or community (naming the stores that held
+  // it), and it covers one HEARD OF live during the listing too. Its two siblings are the same ledger
+  // reading a removal made live in that window: the listing declining to draw it back, and the prune
+  // finishing a removal whose purge was still running. The PRUNE of what nothing heard is said at
+  // `warn`, once per salon, and stays dirt: it is the visible end of a removal this client missed.
+  // One more line of the same fix: a community first drawn from an event under a slug the server
+  // does not use, folded into the listed one.
+  /^\[WORKSPACE-LOAD\] kept (salon|community) \S+ \([a-z ,]+\): not listed by the server, but created or heard of on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ not restored: listed by the server, but removed on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ \([a-z ,]+\) removed on this device after the listing was asked - its removal is finished here \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] community \S+, drawn from an event, is \S+ on the server - one entry, under the server's id$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
@@ -977,6 +994,8 @@ const NOTABLE = [
   // ...and the loan itself (`mlsPerGroupScheduler.ts`, #2471): another group's frame applied under a
   // commit's pending answer, or its own group's put back until the commit is answered. The two
   // designed branches only - `refused to lend` and `released while its loan was still open` are faults.
+  // `the commit of X has its answer - waiting for the frame applied under its loan` is NOT here: it
+  // is the open backlog P3 (DEV-6) whose cause is unread, so it stays dirt until it is read.
   /^\[MLS_LOCK\] a frame of \S+ is applied while the commit of \S+ awaits its answer$/,
   /^\[MLS_LOCK\] a frame of \S+ waits for the commit of \S+ - put back, applied after it$/,
   /decrypt(ion)? (error|failed)/i,
@@ -1347,7 +1366,9 @@ export async function watch(cx, label) {
   // `Console.messageAdded`, translated at the read by `fromWebKit`. Asked of the PAGE, not of a port
   // or a device name, because the page is what knows which engine it runs on.
   const ua = await evaluate(cx, 'navigator.userAgent').catch((err) => {
-    console.log(`[watch] ${label}: user agent unreadable (${String(err?.message ?? err).slice(0, 120)}) - attaching as Chromium`);
+    console.log(
+      `[watch] ${label}: user agent unreadable (${String(err?.message ?? err).slice(0, 120)}) - attaching as Chromium`
+    );
     return '';
   });
   await cx.send(isWebKitAgent(ua) ? 'Console.enable' : 'Log.enable');
@@ -1373,7 +1394,8 @@ export async function watch(cx, label) {
   // network events the report classifies. DECIDED BY THE CONFIGURED ESTATE, NOT THE PAGE'S ORIGIN
   // (R4 review): a native client's page is a Tauri scheme, and it stands on dev all the same.
   // The local estate is asked about restarts instead.
-  const estateBuild = configuredEstate()?.estate === 'dev' ? await readEstateBuild(DEV_SITE) : undefined;
+  const estateBuild =
+    configuredEstate()?.estate === 'dev' ? await readEstateBuild(DEV_SITE) : undefined;
   return { cx, label, since, home, estateBuild };
 }
 
@@ -1408,7 +1430,10 @@ export function consoleLines(cx) {
 export function consoleDump(observers) {
   const out = {};
   for (const [label, o] of Object.entries(observers ?? {}))
-    if (o?.cx) out[label] = consoleEntries(o.cx).map((e) => `${e.level} ${e.text}`).join('\n');
+    if (o?.cx)
+      out[label] = consoleEntries(o.cx)
+        .map((e) => `${e.level} ${e.text}`)
+        .join('\n');
   return out;
 }
 
@@ -1420,15 +1445,24 @@ export function consoleDump(observers) {
  * @returns {{text: string, level: string}[]}
  */
 export function consoleEntries(cx) {
-  return (cx.consumed ?? []).concat(cx.events)
+  return (cx.consumed ?? [])
+    .concat(cx.events)
     .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
       e.method === 'Log.entryAdded'
         ? { text: String(e.params.entry.text ?? '').slice(0, 260), level: e.params.entry.level }
         : {
-            text: e.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 260),
-            level: e.params.type === 'warning' ? 'warning' : e.params.type === 'error' ? 'error' : 'info',
+            text: e.params.args
+              .map((a) => a.value ?? a.description ?? '')
+              .join(' ')
+              .slice(0, 260),
+            level:
+              e.params.type === 'warning'
+                ? 'warning'
+                : e.params.type === 'error'
+                  ? 'error'
+                  : 'info',
           }
     );
 }
@@ -1452,7 +1486,9 @@ export function consoleEntries(cx) {
 export async function awaitLine(cx, needle, timeoutMs = 15000, alsoMatch = null) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const hit = consoleLines(cx).find((l) => l.includes(needle) || (alsoMatch !== null && alsoMatch(l)));
+    const hit = consoleLines(cx).find(
+      (l) => l.includes(needle) || (alsoMatch !== null && alsoMatch(l))
+    );
     if (hit) return hit;
     if (Date.now() > deadline) return null;
     await new Promise((r) => setTimeout(r, 500));
@@ -1482,7 +1518,8 @@ export const DEV_EDGE_CSP_EXCEPTION = {
   reason:
     "Cloudflare's JS detections inject an inline /cdn-cgi/challenge-platform/ script on the dev zone; " +
     'the enforced script-src refuses it, once per document (owner toggle pending)',
-  sentence: /^Executing inline script violates the following Content Security Policy directive 'script-src /,
+  sentence:
+    /^Executing inline script violates the following Content Security Policy directive 'script-src /,
   marker: '/cdn-cgi/challenge-platform/',
 };
 
@@ -1512,15 +1549,22 @@ export function devEdgeCspDecision(errors, documentsReplaced, page) {
     }
   };
   const candidates = errors.filter(
-    (l) => l.source === 'security' && DEV_EDGE_CSP_EXCEPTION.sentence.test(l.text) && l.cspBlockedHash && onDev(l.url)
+    (l) =>
+      l.source === 'security' &&
+      DEV_EDGE_CSP_EXCEPTION.sentence.test(l.text) &&
+      l.cspBlockedHash &&
+      onDev(l.url)
   );
   if (candidates.length === 0) return { kept: errors, forgiven: [], refused: null };
   const none = (why) => ({ kept: errors, forgiven: [], refused: why });
   if (!page) return none('the current document could not be read');
-  if (page.injected !== 1) return none(`the current document carries ${page.injected} injected scripts, not 1`);
+  if (page.injected !== 1)
+    return none(`the current document carries ${page.injected} injected scripts, not 1`);
   const forgiven = candidates.filter((l) => !page.appHashes.includes(l.cspBlockedHash));
-  if (new Set(forgiven.map((l) => l.cspBlockedHash)).size !== forgiven.length) return none('one blocked hash refused twice');
-  if (forgiven.length > documentsReplaced + 1) return none(`${forgiven.length} refusals for ${documentsReplaced + 1} documents`);
+  if (new Set(forgiven.map((l) => l.cspBlockedHash)).size !== forgiven.length)
+    return none('one blocked hash refused twice');
+  if (forgiven.length > documentsReplaced + 1)
+    return none(`${forgiven.length} refusals for ${documentsReplaced + 1} documents`);
   return { kept: errors.filter((l) => !forgiven.includes(l)), forgiven, refused: null };
 }
 
@@ -1544,13 +1588,21 @@ async function devEdgeCspException(cx, errors, documentsReplaced) {
     page = JSON.parse(await evaluate(cx, INLINE_SCRIPTS));
   } catch (e) {
     // A blind probe forgives NOTHING: the refusals stay dirt, and this line says why.
-    console.log(`[watch] ${DEV_EDGE_CSP_EXCEPTION.name}: the page could not be read - ${String(e?.message ?? e)}`);
+    console.log(
+      `[watch] ${DEV_EDGE_CSP_EXCEPTION.name}: the page could not be read - ${String(e?.message ?? e)}`
+    );
   }
   const d = devEdgeCspDecision(errors, documentsReplaced, page);
   if (d.refused) console.log(`[watch] ${DEV_EDGE_CSP_EXCEPTION.name} NOT applied: ${d.refused}`);
   return {
     kept: d.kept,
-    record: d.forgiven.length ? { name: DEV_EDGE_CSP_EXCEPTION.name, reason: DEV_EDGE_CSP_EXCEPTION.reason, forgiven: d.forgiven.length } : null,
+    record: d.forgiven.length
+      ? {
+          name: DEV_EDGE_CSP_EXCEPTION.name,
+          reason: DEV_EDGE_CSP_EXCEPTION.reason,
+          forgiven: d.forgiven.length,
+        }
+      : null,
   };
 }
 
@@ -1564,6 +1616,18 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  // WHICH SOCKET CLOSED, by its PATH: `webSocketClosed` carries only a requestId, so a call's own
+  // signalling socket ending with the call and the gateway dropping read the same. The created event
+  // names the URL; only its pathname is kept - the call socket carries its token in the query.
+  const wsPaths = new Map();
+  for (const ev of (cx.consumed ?? []).concat(cx.events)) {
+    if (ev?.method !== 'Network.webSocketCreated') continue;
+    try {
+      wsPaths.set(ev.params.requestId, new URL(ev.params.url).pathname);
+    } catch {
+      wsPaths.set(ev.params.requestId, '?');
+    }
+  }
   /** Socket handshakes that completed in the window - informational, never gating. */
   const wsOpen = [];
   const exceptions = [];
@@ -1619,7 +1683,10 @@ export async function report(w) {
       }
       case 'Network.webSocketFrameError':
       case 'Network.webSocketClosed':
-        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
+        ws.push({
+          mono: p.timestamp,
+          text: `${e.method} ${JSON.stringify(p).slice(0, 140)}${wsPaths.has(p.requestId) ? ` path=${wsPaths.get(p.requestId)}` : ''}`,
+        });
         break;
       // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
       // close followed by a reconnection are different findings, and before this the second half was
@@ -1628,7 +1695,10 @@ export async function report(w) {
       // an undated open cannot be placed against the close it answers. Never part of `clean`: a
       // socket opening is the healthy half, and the gate already judges the close.
       case 'Network.webSocketHandshakeResponseReceived':
-        wsOpen.push({ mono: p.timestamp, text: `${e.method} status=${p.response?.status ?? '?'} ${p.requestId}` });
+        wsOpen.push({
+          mono: p.timestamp,
+          text: `${e.method} status=${p.response?.status ?? '?'} ${p.requestId}`,
+        });
         break;
       case 'Runtime.exceptionThrown': {
         // WHERE IT WAS THROWN IS PART OF THE REPORT. `description` carries a stack only when the
@@ -1644,13 +1714,19 @@ export async function report(w) {
           : d.url
             ? `${d.url}:${(d.lineNumber ?? 0) + 1}:${(d.columnNumber ?? 0) + 1}`
             : 'no script frame - evaluated into the page from outside it';
-        exceptions.push(
-          `${String(d.exception?.description || d.text).slice(0, 300)} [${where}]`
-        );
+        exceptions.push(`${String(d.exception?.description || d.text).slice(0, 300)} [${where}]`);
         break;
       }
       case 'Runtime.consoleAPICalled':
-        console_.push({ at: p.timestamp, level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300), origin: originOfConsoleEvent(e, ctxOrigins) });
+        console_.push({
+          at: p.timestamp,
+          level: p.type,
+          text: p.args
+            .map((a) => a.value ?? a.description ?? '')
+            .join(' ')
+            .slice(0, 300),
+          origin: originOfConsoleEvent(e, ctxOrigins),
+        });
         break;
       case 'Log.entryAdded':
         // Keep `url`: a browser "Failed to load resource" line names the status but not the
@@ -1665,7 +1741,16 @@ export async function report(w) {
         // four `[RUST::WARN] Past-epoch application frame` lines came back wearing
         // `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`; the `???` was the tell, because
         // there was no request to name. Only `source === 'network'` is about a resource.
-        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source, origin: originOfConsoleEvent(e, ctxOrigins), ...cspBlockedHashOf(p.entry) });
+        console_.push({
+          at: p.entry.timestamp,
+          level: p.entry.level,
+          text: p.entry.text.slice(0, 300),
+          url: p.entry.url,
+          requestId: p.entry.networkRequestId,
+          source: p.entry.source,
+          origin: originOfConsoleEvent(e, ctxOrigins),
+          ...cspBlockedHashOf(p.entry),
+        });
         break;
     }
   }
@@ -1791,7 +1876,11 @@ export async function report(w) {
    */
   const t = (l) => strip(l.text);
   const warnings = lines.filter((l) => l.level === 'warning' || l.level === 'warn');
-  const notable = lines.filter((l) => !REFUSED_FOR_LACK_OF_ROW_NARRATION.some((r) => r.test(t(l))) && NOTABLE.some((r) => r.test(t(l))));
+  const notable = lines.filter(
+    (l) =>
+      !REFUSED_FOR_LACK_OF_ROW_NARRATION.some((r) => r.test(t(l))) &&
+      NOTABLE.some((r) => r.test(t(l)))
+  );
   const classified = lines.filter(
     (l) => DECRYPT_CLASSIFIED.some((r) => r.test(t(l))) && !SEVERE_BUT_EXPECTED.test(t(l))
   );
@@ -1803,7 +1892,9 @@ export async function report(w) {
         // classifier is shown to be running, or the gate would go quiet on the one case it is for.
         (classified.length === 0 && RAW_DECRYPT_FAILURE.test(t(l))))
   );
-  const stateChanges = lines.filter((l) => STATE_CHANGE.some((r) => r.test(t(l))) && !notable.includes(l));
+  const stateChanges = lines.filter(
+    (l) => STATE_CHANGE.some((r) => r.test(t(l))) && !notable.includes(l)
+  );
   const unexplained = lines.filter(
     (l) =>
       !BENIGN.some((r) => r.test(t(l))) &&
@@ -1819,7 +1910,12 @@ export async function report(w) {
   const devEdge = await devEdgeCspException(cx, errors, documentsReplaced);
   errors = devEdge.kept;
 
-  const http = [...reqs.values()].filter((r) => !/\.(js|css|woff2?|png|svg|jpg|jpeg|ico|webp)(\?|$)/.test(r.url) && !r.url.startsWith('data:') && !r.url.startsWith('blob:'));
+  const http = [...reqs.values()].filter(
+    (r) =>
+      !/\.(js|css|woff2?|png|svg|jpg|jpeg|ico|webp)(\?|$)/.test(r.url) &&
+      !r.url.startsWith('data:') &&
+      !r.url.startsWith('blob:')
+  );
   // A STATUS IS AN ANSWER, AND A REQUEST THAT GOT ONE IS JUDGED ON IT - which is what the comment
   // below has always claimed and what this line did not do: `r.failed ||` short-circuited before the
   // status was ever consulted, so a response that ARRIVED and whose body load was then cancelled was
@@ -1830,9 +1926,7 @@ export async function report(w) {
   // A transport failure (`r.failed`, no status) on a benign path is Chrome's ORB refusing the 404
   // body it was handed; anything carrying a status is judged on that status, so a 502 from the same
   // endpoint goes to `badHttp` where a path-only rule used to swallow it.
-  const badHttp = failing.filter(
-    (r) => !isBenignFailure(new URL(r.url).pathname, r.status ?? 404)
-  );
+  const badHttp = failing.filter((r) => !isBenignFailure(new URL(r.url).pathname, r.status ?? 404));
   const knownBadHttp = failing.filter((r) => !badHttp.includes(r));
 
   // A NAVIGATION'S OWN SOCKET TEARDOWN IS FORGIVEN HERE, NOT AT THE CALL SITE. See
@@ -1895,7 +1989,9 @@ export async function report(w) {
     httpCount: http.length,
     consoleCount: lines.length,
     // OUT OF THE GATE, NOT OUT OF THE RECORD: foreign-origin lines, counted per origin.
-    ...(foreignLines.length ? { foreignConsole: { count: foreignLines.length, origins: foreignOrigins } } : {}),
+    ...(foreignLines.length
+      ? { foreignConsole: { count: foreignLines.length, origins: foreignOrigins } }
+      : {}),
     // EVERY line and every socket event, in one sequence, each DATED. See {@link timelineOf}.
     //
     // BUILT FROM `console_`, NOT FROM `lines` - the de-duplicated copy. The dedup exists so a line
@@ -1905,7 +2001,10 @@ export async function report(w) {
     // offline` fired a second time ten seconds after the first, and the classifier had thrown the
     // second one away as a duplicate of the first. A repeat is not noise - it is often the entire
     // finding.
-    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), [...ws, ...wsOpen]),
+    timeline: timelineOf(
+      console_.map((l) => ({ ...l, text: renderLine(l) })),
+      [...ws, ...wsOpen]
+    ),
   });
 }
 
@@ -2279,15 +2378,42 @@ export const FRESH_CLIENT_NARRATION = [
  * @param {string} group the row's group id
  * @param {{admitted?: boolean, declined?: boolean}} [ends] the endings the row plays
  */
-export function admissionMemberNarration(group, { admitted = false, declined = false, addRefused = false } = {}) {
+export function admissionMemberNarration(
+  group,
+  { admitted = false, declined = false, addRefused = false } = {}
+) {
   const g = groupPrefixRe(group);
   return [
-    atLevels(['log', 'info'], new RegExp(String.raw`^\[(JOIN_ASK|WELCOME_REQ)\] \S+ has no leaf in ${g} - a new person is not added automatically, a member's approval is asked$`)),
-    atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] \S+ asks to join ${g} - a member's answer is awaited$`)),
-    ...(admitted ? [atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] \S+ admitted in ${g}( - the ask leaves this screen)?$`))] : []),
+    atLevels(
+      ['log', 'info'],
+      new RegExp(
+        String.raw`^\[(JOIN_ASK|WELCOME_REQ)\] \S+ has no leaf in ${g} - a new person is not added automatically, a member's approval is asked$`
+      )
+    ),
+    atLevels(
+      ['log', 'info'],
+      new RegExp(
+        String.raw`^\[JOIN_REQUEST\] \S+ asks to join ${g} - a member's answer is awaited$`
+      )
+    ),
+    ...(admitted
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[JOIN_REQUEST\] \S+ admitted in ${g}( - the ask leaves this screen)?$`
+            )
+          ),
+        ]
+      : []),
     ...(declined
       ? [
-          atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] \S+ declined in ${g}( - the ask leaves this screen)?$`)),
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[JOIN_REQUEST\] \S+ declined in ${g}( - the ask leaves this screen)?$`
+            )
+          ),
           // The one line that names no group: the Decline given on THIS screen. Kept to the declining rows.
           atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ declined - their seat is withdrawn$/),
         ]
@@ -2298,14 +2424,37 @@ export function admissionMemberNarration(group, { admitted = false, declined = f
     // `removed-meanwhile` reasons: any other reason is a different outcome and stays dirt.
     ...(addRefused
       ? [
-          atLevels(['log', 'info'], new RegExp(String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`)),
-          atLevels(['log', 'info'], /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/),
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`
+            )
+          ),
+          atLevels(
+            ['log', 'info'],
+            /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/
+          ),
           // The same refusal as the member's console line (a Decline won the race and a seat generation was
           // carried): per group, at info only - at warn it is the client-side read failure and stays dirt.
-          atLevels(['info'], new RegExp(String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`)),
+          atLevels(
+            ['info'],
+            new RegExp(
+              String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`
+            )
+          ),
           // ...and the approver's Add stopped because the ask was settled first (another member declined, or the asker withdrew).
-          atLevels(['info'], new RegExp(String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`)),
-          atLevels(['log', 'info'], new RegExp(String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`)),
+          atLevels(
+            ['info'],
+            new RegExp(
+              String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`
+            )
+          ),
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`
+            )
+          ),
         ]
       : []),
   ];
@@ -2324,9 +2473,28 @@ export function admissionJoinerNarration(group, { admitted = false, declined = f
   const g = groupPrefixRe(group);
   return [
     atLevels(['log', 'info'], new RegExp(String.raw`^\[DISCOVERY\] Placeholder ${g} created\.$`)),
-    atLevels(['log', 'info'], new RegExp(String.raw`^\[DISCOVERY\] "${g}" awaits a member admission$`)),
-    ...(admitted ? [atLevels(['log', 'info'], new RegExp(String.raw`^\[DISCOVERY\] "${g}" no longer awaits a member$`))] : []),
-    ...(declined ? [atLevels(['log', 'info'], new RegExp(String.raw`^\[DISCOVERY\] never-admitted "${g}" is no longer listed - the ask was declined or expired - removing$`))] : []),
+    atLevels(
+      ['log', 'info'],
+      new RegExp(String.raw`^\[DISCOVERY\] "${g}" awaits a member admission$`)
+    ),
+    ...(admitted
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(String.raw`^\[DISCOVERY\] "${g}" no longer awaits a member$`)
+          ),
+        ]
+      : []),
+    ...(declined
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[DISCOVERY\] never-admitted "${g}" is no longer listed - the ask was declined or expired - removing$`
+            )
+          ),
+        ]
+      : []),
   ];
 }
 
@@ -2339,16 +2507,45 @@ const groupPrefixRe = (group) => String.raw`${String(group).slice(0, 8)}(?:\u202
  * rerun, 2026-10-25). Only RM-6's manager is given it (`archive/salon.mjs`).
  */
 export const PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION = [
-  atLevels(['debug'], /\[channelSettings\.handleTogglePrivacy failed\] ChannelApiError: \{"code":"REMOVAL_EXCEEDS_ACTOR",/),
+  atLevels(
+    ['debug'],
+    /\[channelSettings\.handleTogglePrivacy failed\] ChannelApiError: \{"code":"REMOVAL_EXCEEDS_ACTOR",/
+  ),
 ];
 
 /**
- * WHAT A MINTED DEVICE SAYS WHEN A SIBLING IS MINTED BESIDE IT - DEV-4 mints W3 and W6 at once, so
- * each is the owner's "other device" for the other: it vets the sibling's KeyPackage, and tells the
- * owner-alert once at first sight ({@link OWNER_DEVICE_NOTICE_NARRATION}, which the caller adds).
- * Read on DEV-4 of `1.4.1-alpha.4` (2026-10-25), on W6.
+ * WHAT ONE OF THE OWNER'S DEVICES SAYS WHEN IT VETS A DEVICE THE ROW MINTED: `[TRUST] KeyPackage for
+ * <owner>:<device> vetted: pinned`, at `debug`, for exactly the `deviceIds` given.
+ *
+ * Two readers, one line. The OWNER (W1) vets every device a DEV row mints for it - read on DEV-2 of
+ * `1.4.1-alpha.6` (2026-10-26) - and a MINTED seat vets its sibling when a row mints two (DEV-4 of
+ * `1.4.1-alpha.4`, on W6). The caller passes the minted ids the seat may vet: its own id never, and
+ * nothing else.
+ *
+ * SCOPED TO THE DEVICE, NOT THE TAG (coordinator, 2026-10-26). The client prints the user id's first
+ * eight characters and the device id as the log redactor leaves it (`web-<8 hex>…-<tail>`), so the
+ * needle is built from the minted id itself: a vetting of another device, of another user's device,
+ * or any outcome but `pinned` stays dirt. Throws on an id of another shape rather than forgive by tag.
+ *
+ * @param {string[]} deviceIds the minted device ids this seat may vet, as `mintdevice.mjs` printed them
  */
-export const SIBLING_MINT_NARRATION = [atLevels(['debug'], /^\[TRUST\] KeyPackage for \S+ vetted: pinned$/)];
+export function mintedKeyPackageVettedNarration(deviceIds) {
+  return deviceIds.map((id) => {
+    // `<kind>-<user id>-<two-part tail>`; the user id is the account's hex id, whatever its length.
+    const m = /^(web|tauri)-([0-9a-f]{8})([0-9a-f-]+)-([0-9a-z]+-[0-9a-z]+)$/.exec(String(id));
+    if (!m)
+      throw new Error(
+        `mintedKeyPackageVettedNarration: a minted device id of an unexpected shape (${String(id).slice(0, 14)}...)`
+      );
+    const [, kind, user8, rest, tail] = m;
+    return atLevels(
+      ['debug'],
+      new RegExp(
+        String.raw`^\[TRUST\] KeyPackage for ${user8}:${kind}-${user8}(?:…|\.\.\.|${rest})-${tail} vetted: pinned$`
+      )
+    );
+  });
+}
 
 /**
  * WHAT THE OWNER'S OTHER DEVICES SAY WHEN ONE MORE OF THEIRS ENROLS - the DEV rows' subject, on W1.
@@ -2406,13 +2603,19 @@ export const CONTACT_DEVICE_NOTICE_NARRATION = [
  */
 export const FRESH_DEVICE_SESSION_NARRATION = [
   atLevels(['log'], /^\[A\] ws-$/),
-  atLevels(['log'], /^\[platform\] PIN prompt declined - refresh credential already proven dead\.$/),
+  atLevels(
+    ['log'],
+    /^\[platform\] PIN prompt declined - refresh credential already proven dead\.$/
+  ),
   atLevels(['debug'], /^\[LOGIN\] Attempt starting, checking client version\.$/),
   atLevels(['log'], /^\[A\] callback pkce=verifier challenged=yes$/),
   atLevels(['debug'], /^\[LIVE\] list$/),
   atLevels(['debug'], /^\[LIVE\] feed card: \d+ open live\(s\)$/),
   atLevels(['debug'], /^\[progressive-mount\] all \d+ mounted$/),
-  atLevels(['debug'], /^\[POSTS\] first page not stored - the device key is not in hand for this account$/),
+  atLevels(
+    ['debug'],
+    /^\[POSTS\] first page not stored - the device key is not in hand for this account$/
+  ),
   atLevels(['log'], /^\[PIN\] Asking the salt while the keypad is up\.$/),
   atLevels(['log'], /^\[PIN\] Keypad shown \(open\) - the unlock is owed to the member$/),
   atLevels(['log'], /^\[PIN\] Salt asked while the keypad was up\.$/),
@@ -2423,15 +2626,24 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
     ['log'],
     /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \(absent, a round is running\): the commit gate refuses an activation without one$/
   ),
-  atLevels(['log'], /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/),
+  atLevels(
+    ['log'],
+    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/
+  ),
   atLevels(['log'], /^\[DISCOVERY\] Placeholder [0-9a-f]{8}… created\.$/),
   // EVERY SEED OFFERED, ABSORBED, by the backreference: `2/3` is a loss in the same sentence.
   atLevels(
     ['debug'],
     /^\[GRAINE\] absorbed (\d+)\/\1 seed\(s\) \(0 already held; endorsements verified: \d+ from the tree, \d+ from the server's published keys\) from [0-9a-f]{8}… in community [0-9a-f]{8} - salon\(s\) (?:none|[0-9a-f]{8}(?:, [0-9a-f]{8})*)$/
   ),
-  atLevels(['debug'], /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/),
-  atLevels(['log'], /^\[PENDING\] (?:web|tauri)-[0-9a-f]{8}…-[0-9a-z]+-[0-9a-z]+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/),
+  atLevels(
+    ['debug'],
+    /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/
+  ),
+  atLevels(
+    ['log'],
+    /^\[PENDING\] (?:web|tauri)-[0-9a-f]{8}…-[0-9a-z]+-[0-9a-z]+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/
+  ),
 ];
 
 /**
@@ -2443,8 +2655,14 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
  */
 export const FRESH_DEVICE_RESTORE_NARRATION = [
   // A hidden page's batch of rows that are not arrivals (the mint's own tab is in the background).
-  atLevels(['log', 'info'], /^\[NOTIF\] Batch into "[0-9a-f]{8}…" added \d+ while hidden, none of them an inbound message - nothing to raise\.$/),
-  atLevels(['log', 'info'], /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/),
+  atLevels(
+    ['log', 'info'],
+    /^\[NOTIF\] Batch into "[0-9a-f]{8}…" added \d+ while hidden, none of them an inbound message - nothing to raise\.$/
+  ),
+  atLevels(
+    ['log', 'info'],
+    /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/
+  ),
 ];
 
 /**
@@ -2460,23 +2678,47 @@ export const FRESH_DEVICE_RESTORE_NARRATION = [
 export const REVOKED_SIGN_OUT_NARRATION = [
   atLevels(['debug'], /^\[TRUST\] device-event consumer removed$/),
   atLevels(['debug'], /^\[outboxBlob\.clear\]$/),
-  atLevels(['info'], /^\[Push\] endPushRegistration noop \(no push registration on this platform\)$/),
+  atLevels(
+    ['info'],
+    /^\[Push\] endPushRegistration noop \(no push registration on this platform\)$/
+  ),
   atLevels(['info'], /^\[RESTORE\] generation \d+ retired \(running=false, queued asks=0\)$/),
-  atLevels(['log'], /^\[MEDIA\] signed out: staging of \d+ and replies of \d+ conversation\(s\) forgotten$/),
+  atLevels(
+    ['log'],
+    /^\[MEDIA\] signed out: staging of \d+ and replies of \d+ conversation\(s\) forgotten$/
+  ),
   atLevels(['log'], /^\[OUTBOX\] signed out: \d+ control refusal\(s\) unbound from memory$/),
   atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] \d+ saved community list\(s\) erased$/),
   atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] signed out: \d+ community\(ies\) forgotten$/),
   // The MLS client torn down and its socket released (alpha.5 DEV-2): the revocation's own teardown.
-  atLevels(['log', 'info'], /^\[WS\] MLS client destroyed - its socket is released and no open may follow$/),
-  atLevels(['log', 'info'], /^\[WS\] Paused - disconnect sent, socket released until the next foreground\.$/),
+  atLevels(
+    ['log', 'info'],
+    /^\[WS\] MLS client destroyed - its socket is released and no open may follow$/
+  ),
+  atLevels(
+    ['log', 'info'],
+    /^\[WS\] Paused - disconnect sent, socket released until the next foreground\.$/
+  ),
   // The pending fetch ended by this device's own revocation (the server deleted the backlog): a designed end.
-  atLevels(['info'], /^\[PENDING\] Pending fetch ended after \d+ message\(s\): this device was revoked by its owner, nothing remains to drain$/),
+  atLevels(
+    ['info'],
+    /^\[PENDING\] Pending fetch ended after \d+ message\(s\): this device was revoked by its owner, nothing remains to drain$/
+  ),
   // The session-expired handler was told the reset already signed out: it redirects and signs out no more.
-  atLevels(['log', 'info'], /^\[AUTH\] Session expired - the revoked-device reset already signed out; redirecting to \S+\.$/),
+  atLevels(
+    ['log', 'info'],
+    /^\[AUTH\] Session expired - the revoked-device reset already signed out; redirecting to \S+\.$/
+  ),
   // Its requests refused once the session ended, the renewal latched dead, the purge that needs the
   // server's list skipped (alpha.5 DEV-2/3/6).
-  atLevels(['log', 'info'], /^\[AUTH\] 401 on GET \/api\/\S+ - renewing the token and sending the same request once more$/),
-  atLevels(['log', 'info'], /^\[A\] refresh\u2717latched \(cookie already proven dead by this device revocation - not asking again\)$/),
+  atLevels(
+    ['log', 'info'],
+    /^\[AUTH\] 401 on GET \/api\/\S+ - renewing the token and sending the same request once more$/
+  ),
+  atLevels(
+    ['log', 'info'],
+    /^\[A\] refresh\u2717latched \(cookie already proven dead by this device revocation - not asking again\)$/
+  ),
   atLevels(['log', 'info'], /^\[SYNC\] WASM purge skipped - the server list could not be fetched$/),
 ];
 
@@ -2486,9 +2728,18 @@ export const REVOKED_SIGN_OUT_NARRATION = [
  * Given to the revoked seat only, beside `MINT_REFUSALS`.
  */
 export const REVOKED_REFUSALS = [
-  { path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/key-package$/, status: [404] },
-  { path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/revoked$/, status: [401] },
-  { path: /^\/api\/mls\/messages\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+(\?|$)/, status: [401] },
+  {
+    path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/key-package$/,
+    status: [404],
+  },
+  {
+    path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/revoked$/,
+    status: [401],
+  },
+  {
+    path: /^\/api\/mls\/messages\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+(\?|$)/,
+    status: [401],
+  },
   { path: /^\/api\/channels\/unread-counts$/, status: [401] },
 ];
 
@@ -2501,7 +2752,10 @@ export const REVOKED_REFUSALS = [
  */
 export function revokedLogoutOnce(readLines) {
   const re = /^\[A\] logout✓\d+ \d+ms$/;
-  return atLevels(['log', 'info'], { test: (s) => re.test(s) && signOutCount(readLines()) === 1, toString: () => String(re) + ' (counted once)' });
+  return atLevels(['log', 'info'], {
+    test: (s) => re.test(s) && signOutCount(readLines()) === 1,
+    toString: () => String(re) + ' (counted once)',
+  });
 }
 
 /** How many sign-outs a console holds: `[A] logout✓<status>` AND `[A] logout✗` (refused or lost), the sign-outs the app sent. */
@@ -2607,7 +2861,10 @@ export const ADD_BLOCK_QUESTION_NARRATION = /^\[blocks\.isBlockedWith\]/;
 export const GROUP_CREATION_NARRATION = [
   ADD_BLOCK_QUESTION_NARRATION,
   /^\[SYNC\] bulk\.addedDeviceIds: /,
-  atLevels(['debug'], /^\[NOTICE\] memberAdded written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/),
+  atLevels(
+    ['debug'],
+    /^\[NOTICE\] memberAdded written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/
+  ),
 ];
 
 /**
@@ -2621,8 +2878,14 @@ export const GROUP_CREATION_NARRATION = [
  * remover's own line (#2412), at `debug` only, like its Add twin above.
  */
 export const REMOVE_NARRATION = [
-  atLevels(['log'], /^\[REMOVE_MEMBER\] [0-9a-f]{8} removed from the group \((?:committed|already-out)\)$/),
-  atLevels(['debug'], /^\[NOTICE\] memberRemoved written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/),
+  atLevels(
+    ['log'],
+    /^\[REMOVE_MEMBER\] [0-9a-f]{8} removed from the group \((?:committed|already-out)\)$/
+  ),
+  atLevels(
+    ['debug'],
+    /^\[NOTICE\] memberRemoved written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/
+  ),
 ];
 
 /**
@@ -2638,7 +2901,12 @@ export const REMOVE_NARRATION = [
  * new group arrives - ALL of them present (`N of N`); one missing stays dirt. A browser seat draws
  * none of these, so on one they are a finding. The same words at warn or error are never forgiven.
  */
-export const BIG_ANY_SEAT_NARRATION = [atLevels(['debug'], /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/)];
+export const BIG_ANY_SEAT_NARRATION = [
+  atLevels(
+    ['debug'],
+    /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/
+  ),
+];
 
 /** The phone's own lines in a BIG row - see `BIG_ANY_SEAT_NARRATION`. */
 export const BIG_A1_NARRATION = [
@@ -2647,7 +2915,8 @@ export const BIG_A1_NARRATION = [
 ];
 
 /** The BIG-row narration a seat is given: every seat the bulk-ingest line, A1 its own lines too. */
-export const bigRowNarration = (device) => (device === 'A1' ? [...BIG_ANY_SEAT_NARRATION, ...BIG_A1_NARRATION] : [...BIG_ANY_SEAT_NARRATION]);
+export const bigRowNarration = (device) =>
+  device === 'A1' ? [...BIG_ANY_SEAT_NARRATION, ...BIG_A1_NARRATION] : [...BIG_ANY_SEAT_NARRATION];
 
 /**
  * AN ADD CANCELLED BECAUSE ANOTHER DEVICE HOLDS THE GROUP'S ADD LOCK (`groupCreation.ts`,
@@ -2701,7 +2970,6 @@ export const PEER_DELETED_NARRATION = /Group deleted by .+ - conversation marked
 export const DELIVERY_CROSSING_NARRATION = [
   /^\[QUEUE\] delivery .* arrived twice - (?!THE SERVER PUBLISHED)/,
 ];
-
 
 /**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
@@ -2984,7 +3252,10 @@ export function logcatReport(lines, label = 'A1') {
     // `decryptProtoWithCommits` is the same success reached AFTER the catch-up applied the commits
     // the phone missed - NOTIF-2 was the first row to print it (2026-09-27), as its two siblings
     // below already spell both names.
-    ['fcm-decrypt', /^(tryDecrypt|decryptProto|decryptProtoWithCommits): (MLS state loaded|success)/],
+    [
+      'fcm-decrypt',
+      /^(tryDecrypt|decryptProto|decryptProtoWithCommits): (MLS state loaded|success)/,
+    ],
     // ── the channel-push path, which had no rule at all until 2026-09-21 ────────────────────────
     // Seven lines of it were NOTIF-18's whole native dirt, and not one of them belongs to that row:
     // any push for a salon message raises them, so they are named here rather than forgiven per-row.
@@ -2998,40 +3269,70 @@ export function logcatReport(lines, label = 'A1') {
     // site, so the old rule stopped matching in exactly the case worth catching. `missing=` is
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
-    ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    [
+      'fcm-channel-generic',
+      /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/,
+    ],
     // What that generic banner leaves out: the author and the mention the server named, which only an
     // open proves. Explained, because the blind banner it rides on is already `notable` on its own.
-    ['fcm-channel-blind-no-author', /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/],
+    [
+      'fcm-channel-blind-no-author',
+      /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/,
+    ],
     // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
-    ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
-    ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
+    [
+      'fcm-channel-blind-reported',
+      /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/,
+    ],
+    [
+      'fcm-channel-redraw',
+      /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/,
+    ],
     // No title and no body since 2026-10-22: a release log line carries no content (nativeLogContent.test.ts).
-    ['fcm-channel-notify', /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/],
+    [
+      'fcm-channel-notify',
+      /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/,
+    ],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
     // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
     // alternation, which would let a failed message decrypt pass as a seed.
     // BOTH READERS, since the catch-up keeps key material too (channel-encryption section 18): the
     // prefix names which one - the direct decrypt, or the one run after applying missing commits.
-    ['fcm-graine-material', /^(decryptProto|decryptProtoWithCommits): graine key material, \d+ seed\(s\)$/],
+    [
+      'fcm-graine-material',
+      /^(decryptProto|decryptProtoWithCommits): graine key material, \d+ seed\(s\)$/,
+    ],
     // A COMMIT APPLIED, NOTHING TO DRAW - `parseNativeDecrypt` on `control-frame`, which Rust returns
     // only AFTER the frame was processed. Every roster change pushes one to each device, and NOTIF-19
     // makes one on purpose. The frame that could NOT be decrypted is another line and stays out.
-    ['fcm-control-frame', /^(decryptProto|decryptProtoWithCommits): control frame applied - state advanced, nothing to render$/],
+    [
+      'fcm-control-frame',
+      /^(decryptProto|decryptProtoWithCommits): control frame applied - state advanced, nothing to render$/,
+    ],
     ['fcm-silent-nothing', /^Silent push group=[0-9a-f]+ shows nothing - nothing to render in it$/],
     // THE PROMISED REDRAW KEPT: the seed a held banner waited on landed, and the banner is redrawn.
-    ['fcm-channel-drain', /^drainPendingChannelFrames: \d+ banner\(s\) waiting on this key material -> redrawing$/],
+    [
+      'fcm-channel-drain',
+      /^drainPendingChannelFrames: \d+ banner\(s\) waiting on this key material -> redrawing$/,
+    ],
     ['fcm-graine-absorb', /^absorbGraineSeeds: stored \d+ seed\(s\) group=[0-9a-f]+$/],
     // WHERE THE SEED CAME FROM (channel-encryption section 19): the mirror, or the frame the message
     // carried. Both are the primary path now. What is NOT here, deliberately: `openSeedFrame: no
     // frame on this push` (a sender older than section 19 - on this rig every client is current, so
     // it is a regression), the ABSENT and UNKNOWN localities, a frame that yielded no key material,
     // and a frame holding no seed for its own message. Each is a defect upstream on a current rig.
-    ['fcm-seed-source', /^handleChannelMessage: seed source=(mirror|frame) channel=\S+ session=\S+ index=\d+$/],
+    [
+      'fcm-seed-source',
+      /^handleChannelMessage: seed source=(mirror|frame) channel=\S+ session=\S+ index=\d+$/,
+    ],
     // The frame sealed one commit ahead of a key group this phone holds - the join that rotated the
     // session happened while it was shut, which is NOTIF-20's own shape. The catch-up is the answer.
-    ['fcm-seed-frame-catchup', /^openSeedFrame: seed frame refused group=[0-9a-f]+ locality=LOCAL -> commit catch-up$/],
+    [
+      'fcm-seed-frame-catchup',
+      /^openSeedFrame: seed frame refused group=[0-9a-f]+ locality=LOCAL -> commit catch-up$/,
+    ],
     // THE BACKGROUND WELCOME (channel-encryption section 20, NOTIF-21 2026-09-28): a killed phone
     // added to a group joins it from the push - the route, the join, and the seat promoted. Plus
     // the two re-queues that put a frame behind its own group's Welcome on the one push lane
@@ -3040,12 +3341,21 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-welcome-route', /^isWelcome=true -> groupId=\S+ qId=\S+ - background join$/],
     ['fcm-welcome-joined', /^processReceivedWelcomeBackground: \S+ group joined group=\S+$/],
     ['fcm-membership-active', /^markMembershipActive: HTTP 20[01] group=\S+$/],
-    ['fcm-requeue-behind-welcome', /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/],
-    ['fcm-channel-requeue-behind-welcome', /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/],
+    [
+      'fcm-requeue-behind-welcome',
+      /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/,
+    ],
+    [
+      'fcm-channel-requeue-behind-welcome',
+      /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/,
+    ],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
     // A re-draw of an announced message that is a new post (a held salon mention moving channel once
     // its seed lands, or a blind banner swiped away first) is reposted silent - see `RepostAlert`.
-    ['fcm-repost-silent', /^showMessageNotification: a re-draw is a new post -> reposted silent \(groupId=\S+ channel=\S+ existing=(true|false)\)$/],
+    [
+      'fcm-repost-silent',
+      /^showMessageNotification: a re-draw is a new post -> reposted silent \(groupId=\S+ channel=\S+ existing=(true|false)\)$/,
+    ],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
     // FROM SELF means another device of this account read the conversation, so this device's
@@ -3075,7 +3385,10 @@ export function logcatReport(lines, label = 'A1') {
     ],
     ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
     // The Kotlin half of the handoff named above, at the moment it accepts the work.
-    ['ws-notif-accept', /^notifyMessageFromWebSocket: queued groupId=[0-9a-f]+ mentionsMe=(true|false) sentAt=\d+$/],
+    [
+      'ws-notif-accept',
+      /^notifyMessageFromWebSocket: queued groupId=[0-9a-f]+ mentionsMe=(true|false) sentAt=\d+$/,
+    ],
     // THE REACTION ARM, WHICH LEFT NOTIF-15 `PASS-DIRTY` OVER ITS OWN SUCCESS PATH - the same way
     // NOTIF-4 landed there in 2026-08-22 for the cancelling half of the line above. This is the
     // handler stating, at DEBUG, that it recognised a reaction push and is about to draw it; the
@@ -3095,7 +3408,10 @@ export function logcatReport(lines, label = 'A1') {
     // fetch that failed, an empty token, an unwritable `fcm_token.txt` and an absent
     // `push_context.json` each name a real loss and must keep surfacing.
     ['boot-receiver', /^onReceive: android\.intent\.action\.[A-Z_]+ -> push token re-registration/],
-    ['boot-token', /^reRegisterToken: (token (unchanged|ROTATED)|context\/secret absent -> backend refresh deferred)/],
+    [
+      'boot-token',
+      /^reRegisterToken: (token (unchanged|ROTATED)|context\/secret absent -> backend refresh deferred)/,
+    ],
     ['boot-outbox', /^drainPendingOutbox: (outbox empty|done, \d+ message\(s\) still queued)/],
     // 2xx ONLY. The site logs whatever the backend answered, so a rule over `HTTP \d+` would explain
     // away a 500 as readily as a 201 - and this is the call that keeps the push token addressable.
@@ -3105,7 +3421,10 @@ export function logcatReport(lines, label = 'A1') {
     // sees it, because a dozing phone is exactly what defers work to it. The failure branches of
     // the same file - max retries, missing `push_context.json`, absent `mls.bin`, a lock never
     // acquired - are `W`/`E` and stay unexplained.
-    ['worker-run', /^doWork: (starting \(attempt \d+\)|app in foreground -> MLS handled by the foreground|MLS state=\d+ bytes|background cleanup completed)/],
+    [
+      'worker-run',
+      /^doWork: (starting \(attempt \d+\)|app in foreground -> MLS handled by the foreground|MLS state=\d+ bytes|background cleanup completed)/,
+    ],
     ['worker-wrapper', /^(Starting work for fr\.emse\.canari\.|Worker result SUCCESS for Work \[)/],
     ['worker-done', /^\[mines_app_lib\] Background Worker completed successfully$/],
     // ── the background decrypt's DIAGNOSTIC LADDER, named so it is reported rather than silent ───
@@ -3117,7 +3436,10 @@ export function logcatReport(lines, label = 'A1') {
     // worker, message delivered exactly once.
     ['fcm-decrypt-refused', /^tryDecrypt refused group=[0-9a-f]+ locality=[A-Z]+$/],
     ['fcm-locality', /^groupLocality: epoch=-?\d+ group=[0-9a-f]+$/],
-    ['fcm-catchup', /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/],
+    [
+      'fcm-catchup',
+      /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/,
+    ],
     // THE BACKGROUND PUSH FETCHING ITS OWN PROTO, the successful half of a wake: the GET and the
     // answer's size, twice per push on the Mi 9T (the second after the catch-up). It left NOTIF-2, 19
     // and 20 `PASS-DIRTY` on 2026-10-05 with nothing else - the failure spelling (`proto received=
@@ -3139,13 +3461,19 @@ export function logcatReport(lines, label = 'A1') {
     // lines are the thing it asserts happening - the same reason `fcm-reaction` below is named.
     // The REFUSAL is deliberately not covered: `native builder refused` means the builder declined
     // the work and the reader may get nothing, which must keep surfacing.
-    ['ws-notif-queued', /^\[mines_app_lib::commands::notifications\] \[NOTIF\] native builder queued for /],
+    [
+      'ws-notif-queued',
+      /^\[mines_app_lib::commands::notifications\] \[NOTIF\] native builder queued for /,
+    ],
     ['storage-commands', /^\[mines_app_lib::commands::(storage|cookies)\] /],
     ['background-send', /^\[mines_app_lib::mobile::background\] /],
     // openmls at DEBUG is the key schedule narrating itself - one line per derivation, several per
     // frame. It is loud and it is not a signal; an ERROR from the same module is not covered here
     // and cannot be, because the `E` branch above returns before any rule is consulted.
-    ['openmls-debug', /^\[openmls::(schedule|tree::secret_tree|tree::sender_ratchet|framing::private_message)/],
+    [
+      'openmls-debug',
+      /^\[openmls::(schedule|tree::secret_tree|tree::sender_ratchet|framing::private_message)/,
+    ],
     ['sql', /^\[sqlx::query\] /],
     ['http-pool', /^\[(hyper_util|reqwest)::/],
     ['websocket', /^\[(tokio_tungstenite|tungstenite)(::[a-z_:]+)?\]/],
@@ -3176,7 +3504,9 @@ export function logcatReport(lines, label = 'A1') {
     // threadtime branch is the one `logcatSince` actually produces, so the fix would have been inert
     // in the field and green on the bench. `logcatclassify-selftest.mjs` is what found it.
     const tt = /^(\d{2}-\d{2} [\d:.]+)\s+(\d+)\s+\d+\s+([VDIWEF])\s+(\S+?):\s(.*)$/.exec(raw);
-    const br = tt ? null : /^(\d{2}-\d{2} [\d:.]+)\s+([VDIWEF])\/(.+?)\(\s*(\d+)\):\s?(.*)$/.exec(raw);
+    const br = tt
+      ? null
+      : /^(\d{2}-\d{2} [\d:.]+)\s+([VDIWEF])\/(.+?)\(\s*(\d+)\):\s?(.*)$/.exec(raw);
     if (!tt && !br) {
       // `LOGCAT UNAVAILABLE: ...` is `logcatSince` reporting it could not read the device at all,
       // and an unreadable surface is NOT a clean one - it goes straight to `errors`.
@@ -3262,7 +3592,11 @@ export function logcatReport(lines, label = 'A1') {
       // halves are surfaced together: a run where the first appears without the second has a
       // permanently generic banner, and that must not be silent in a row which, unlike NOTIF-18,
       // does not assert the redraw itself. Explained, reported, and not gating.
-      if (/epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback|generic notification|redrawing/i.test(l.msg))
+      if (
+        /epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback|generic notification|redrawing/i.test(
+          l.msg
+        )
+      )
         notable.push(text);
       continue;
     }
@@ -3366,7 +3700,15 @@ export function logcatReport(lines, label = 'A1') {
 export function dirtOf(rep) {
   const out = {};
   // `outOfRow` is the server's alone (`srvlog.mjs` `ROW_RULES`): a 1.4.1 line another row expects.
-  for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents', 'unexplained', 'outOfRow'])
+  for (const bucket of [
+    'severe',
+    'errors',
+    'exceptions',
+    'badHttp',
+    'wsEvents',
+    'unexplained',
+    'outOfRow',
+  ])
     if (rep?.[bucket]?.length) out[bucket] = rep[bucket];
   // THE EXPLANATION TRAVELS WITH THE FINDING, and only when there IS one.
   //
@@ -3440,7 +3782,11 @@ export function dirtOf(rep) {
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
 export function gate(verdict, reports, observations = {}) {
-  const entries = Object.entries(reports).filter(([, r]) => r);
+  // A ROUTE'S FIRST PRELOAD is forgiven HERE, once, for every row and every seat - not per runner:
+  // COMM's runners call `gate` directly and carried it as dirt while the MLS rows did not.
+  const entries = Object.entries(reports)
+    .filter(([, r]) => r)
+    .map(([label, r]) => [label, forgivingFirstRoutePreloads(r)]);
   const dirty = entries.filter(([, r]) => !r.clean);
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
@@ -3448,7 +3794,10 @@ export function gate(verdict, reports, observations = {}) {
   // THE NAMED ENVIRONMENT EXCEPTION IS LISTED WHEREVER IT WAS USED, clean or not - a PASS taken
   // with it must say so in its own record (`DEV_EDGE_CSP_EXCEPTION`).
   const excepted = entries.filter(([, r]) => r.environmentException);
-  if (excepted.length) detail.environmentException = Object.fromEntries(excepted.map(([label, r]) => [label, r.environmentException]));
+  if (excepted.length)
+    detail.environmentException = Object.fromEntries(
+      excepted.map(([label, r]) => [label, r.environmentException])
+    );
 
   // A RUN THE SERVER RESTARTED UNDER IS NOT A FAILING RUN, IT IS AN ABSENT ONE - see `deploy.mjs`
   // for the measurement that put this here. It was written when a push to `main` redeployed the
@@ -3648,7 +3997,9 @@ export const PHONE_COLD_BOOT = [
   // now WAITS for the election instead of delegating to a leader that may not exist. Seeing both
   // lines is seeing that fix work; seeing either in a steady run would be a client that restarted.
   '[OUTBOX] Flush deferred - tab leadership undecided',
-  new RegExp('^' + '\\' + '[OUTBOX' + '\\' + '] Leadership decided as (leader|follower) after \\d+ ms'),
+  new RegExp(
+    '^' + '\\' + '[OUTBOX' + '\\' + '] Leadership decided as (leader|follower) after \\d+ ms'
+  ),
   // A REPEAT THE APPLICATION ITSELF CALLS HARMLESS, in its own words. `BaseMlsService`'s
   // `REPEAT_MEANS` carries four combinations of channel and prior state, two of which set
   // `accuse: true`; this needle is the closing clause of the ONE that sets `accuse: false`, so the
@@ -3667,15 +4018,113 @@ export const PHONE_COLD_BOOT = [
  * of these instead: it claims only an `unexplained` line whose level is one of `levels`, never an
  * entry of `errors` or `warnings`, so a look-alike that accuses still breaks `clean`.
  *
+ * A BUDGET, when given, bounds how many lines the needle forgives in one `ignoringExpectedLog` call:
+ * the number of decisions the row makes that say the sentence. The line past it stays dirt, so a
+ * forgiven sentence said in a loop is still a finding (removal rows, review of 2026-10-29).
+ *
  * @param {string[]} levels the console levels the product writes the sentence at (`log`, `debug`, `info`)
  * @param {RegExp} re the sentence, stamp and level stripped
+ * @param {number} [max] at most this many lines forgiven; unbounded when omitted
  */
-export function atLevels(levels, re) {
-  return { levels, re, toString: () => `${levels.join('|')}: ${re}` };
+export function atLevels(levels, re, max = Infinity) {
+  return {
+    levels,
+    re,
+    max,
+    toString: () => `${levels.join('|')}${max === Infinity ? '' : ` x${max}`}: ${re}`,
+  };
 }
 
 /** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
-const levelOfEntry = (line) => /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
+const levelOfEntry = (line) =>
+  /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
+
+/** A route's first preload in a document: `pathname` is the route preloaded. */
+const FIRST_ROUTE_PRELOAD = /\[RoutePreload\] \{"pathname":"(\/[a-z]*)","first":true\}$/;
+
+/**
+ * A ROUTE IS PRELOADED ONCE PER DOCUMENT, on the first in-app navigation that reaches it, and says so
+ * at debug (`[RoutePreload] {"pathname":"/chat","first":true}`). `PAGE_BOOT_NARRATION` forgives it
+ * only in a window whose document was replaced. A seat the preflight reloaded JUST BEFORE the row
+ * makes its first navigations inside the row's window instead: read on LIST-RACE-1 on
+ * `1.5.0-alpha.1` (2026-10-27), on W1, W8 and A1.
+ *
+ * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug - applied
+ * by `gate` to every seat of every row, the one place every runner passes through. A
+ * pathname preloaded twice in one window is a document that booted twice, or a preload that is not
+ * the first, and both copies stay dirt. So does `"first":false`, or the line at another level.
+ */
+export function forgivingFirstRoutePreloads(rep) {
+  if (!Array.isArray(rep?.unexplained)) return rep;
+  const seen = new Map();
+  for (const line of rep.unexplained) {
+    const m = FIRST_ROUTE_PRELOAD.exec(line);
+    if (m && levelOfEntry(line) === 'debug') seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+  }
+  const once = [...seen].filter(([, n]) => n === 1).map(([p]) => p);
+  if (!once.length) return rep;
+  const esc = (s) => s.replace(/[/]/g, '\\/');
+  return ignoringExpectedLog(
+    rep,
+    once.map((p) =>
+      atLevels(
+        ['debug'],
+        new RegExp(`^\\[RoutePreload\\] \\{"pathname":"${esc(p)}","first":true\\}$`)
+      )
+    )
+  );
+}
+
+/** A console level as `atLevels` names it: CDP's `verbose` is a `console.debug`, `warning` a `warn`. */
+const levelName = (level) => ({ verbose: 'debug', warning: 'warn' })[level] ?? level;
+
+/**
+ * THE BUDGET OF EVERY BOUNDED `atLevels` NEEDLE, COUNTED WHERE A REPEAT IS STILL VISIBLE: the
+ * timeline. `unexplained` cannot count - `report` de-duplicates it on the text with the clock
+ * stripped, so a sentence said in a loop is ONE line there. The timeline keeps a repeat and collapses
+ * only the double surfacing of one call (within `SAME_EVENT_MS`, compared here on the sentence alone,
+ * since the two copies of a `console.debug` arrive as `debug` and `verbose`).
+ *
+ * Each needle said more often than its `max` gives back ONE dirt line naming both counts and the
+ * first copy past the budget - so `clean` breaks and the reader sees which sentence looped. A report
+ * with no timeline (a hand-built one) is counted on `unexplained`.
+ *
+ * @returns {string[]} lines for the `unexplained` bucket, `level: [said N times, budget M] sentence`
+ */
+function overBudget(rep, needles) {
+  const bounded = needles.filter(
+    (n) => n && typeof n === 'object' && !(n instanceof RegExp) && Number.isFinite(n.max)
+  );
+  if (!bounded.length) return [];
+  const said = Array.isArray(rep.timeline)
+    ? (() => {
+        const last = new Map();
+        const out = [];
+        for (const t of rep.timeline) {
+          const m = /^(\d\d:\d\d:\d\d\.\d+|\?+|\S+) \[([a-z]+)\] ([\s\S]*)$/.exec(t);
+          if (!m || m[2] === 'ws') continue;
+          const s = stripStamp(m[3]);
+          const at = Date.parse(`1970-01-01T${m[1]}Z`);
+          const prev = last.get(s);
+          if (Number.isFinite(at)) last.set(s, at);
+          if (prev !== undefined && Number.isFinite(at) && at - prev < 250) continue;
+          out.push({ level: levelName(m[2]), s });
+        }
+        return out;
+      })()
+    : rep.unexplained.map((l) => ({
+        level: levelName(levelOfEntry(l)),
+        s: stripStamp(l.replace(/^[a-z]+:\s*/, '')),
+      }));
+  return bounded.flatMap((n) => {
+    const copies = said.filter((x) => n.levels.includes(x.level) && n.re.test(x.s));
+    return copies.length > n.max
+      ? [
+          `${copies[n.max].level}: [said ${copies.length} times, budget ${n.max}] ${copies[n.max].s}`,
+        ]
+      : [];
+  });
+}
 
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
@@ -3701,7 +4150,7 @@ export function ignoringExpectedLog(rep, needles) {
 
   const errors = rep.errors.filter(keep('errors'));
   const warnings = rep.warnings.filter(keep('warnings'));
-  const unexplained = rep.unexplained.filter(keep('unexplained'));
+  const unexplained = [...rep.unexplained.filter(keep('unexplained')), ...overBudget(rep, needles)];
   return {
     ...rep,
     errors,
@@ -3725,6 +4174,37 @@ export function ignoringExpectedLog(rep, needles) {
       // going back to a stdout dump the run has long scrolled past.
       unmatched: needles.filter((n) => !matched.has(n)).map(String),
     },
+  };
+}
+
+/**
+ * The same report with the closes of NAMED sockets forgiven, and `clean` recomputed.
+ *
+ * A call's signalling socket (`/api/call`) opens with the call and closes when it ends: one close
+ * per call on each seat that was in it, and the close IS the hang-up. That close is expected and
+ * necessary, and nothing else's is. Matched on the socket's PATH (tagged by `report` from its
+ * `webSocketCreated`), exactly - so the chat gateway dropping during a call stays a finding, and so
+ * does a close whose socket the window never saw open (no `path=` at all).
+ *
+ * FORGIVEN, NOT DELETED: kept as `wsEventsForgiven`, out of the gate.
+ *
+ * @param {object} rep a `report` result
+ * @param {string[]} paths socket pathnames whose closes are this row's own, e.g. `['/api/call']`
+ */
+export function forgivingSocketCloses(rep, paths) {
+  const own = (t) => paths.some((p) => t.endsWith(` path=${p}`));
+  const wsEvents = rep.wsEvents.filter((t) => !own(t));
+  return {
+    ...rep,
+    wsEvents,
+    wsEventsForgiven: rep.wsEvents.filter(own),
+    clean:
+      rep.errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      wsEvents.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
   };
 }
 
@@ -3867,7 +4347,7 @@ export async function sanity(cx) {
         locked: document.body.innerText.indexOf('PIN de chiffrement') !== -1,
         offlineBanner: document.body.innerText.indexOf('Hors-ligne') !== -1,
         url: location.pathname
-      })`,
-    ),
+      })`
+    )
   );
 }

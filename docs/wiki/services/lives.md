@@ -307,9 +307,11 @@ all, and nobody has measured that path.
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
-  broadcaster's removal of a viewer frees that viewer's seat at once, and **an ended live frees all
-  of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded` - which every
-  path that ends a live goes through: the broadcaster's end, the sweep, an ingest that met the end).
+  broadcaster's removal of a viewer frees that viewer's seat at once, and **a live CUT or ERASED
+  frees all of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded`). An
+  ORDINARY end (broadcaster, silence, the hour) keeps them: they are what its purge
+  [waits for](#deletion-at-the-end-plus-a-sweep-q10-l3), and each viewer gives its own back on the
+  end's `410` (or lets it lapse within the lease - no renewal is possible after the end).
   The member's live id is LOWER-CASED (`seatMember`): the take is keyed by the row's id, while a
   leave or a removal carries the id as the URL spelled it, which `ParseUUIDPipe` accepts in upper
   case - and a release naming another member would free nothing.
@@ -360,17 +362,17 @@ count.
   segment after a short backoff (it is still in the manifest window), and never fans out parallel
   retries - a burst of retries is exactly what the limit counts.
 
-**The connection budget, and why nothing is raised.** The host proxy is the DSI's: about 1 500
-concurrent connections across EVERY site on the host (`worker_connections 768`, two per proxied
+**The connection budget, and why nothing is raised.** The host proxy is the DSI's: a host-wide
+proxy connection budget set by the DSI and shared by EVERY site on the host (two per proxied
 connection; [realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md) section 5),
-and raising it is their file and their decision. A seated viewer holds at most four: its app
+and raising it is their file and their decision. Canari keeps its share under a quarter of it. A seated viewer holds at most four: its app
 connection (HTTP/2, the API calls ride it too), its WebSocket and that socket's upstream leg (both
 held by every signed-in member already), and one segment fetch in flight (short: the host buffers it).
-**24 x 4 = 96, under a fifteenth of the budget** - the cap is set by bandwidth long before
+**24 x 4 = 96, well inside that quarter** - the cap is set by bandwidth long before
 connections. Our own nginx keeps the image default (`worker_connections` is not set in
 `Dockerfile.frontend`), and the edge's 4 096 is untouched, as are its `pid /var/run/nginx.pid` and
 `listen 80`, which its healthcheck reads (#2099). `live-segments-route.test.mjs` fails if the cap
-times four ever passes a quarter of 1 500.
+times four ever passes a quarter of the budget.
 
 **WAF.** The host runs CrowdSec inside its nginx. Up to 24 viewers behind one campus address
 polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that
@@ -573,8 +575,35 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
-There is no replay. At the broadcaster's end the segments and the row are deleted at once; every
-other end, and any purge that failed, is finished by `LiveRetentionScheduler` (every 30 s):
+There is no replay. At the broadcaster's end the segments and the row are deleted at once **unless a
+viewer still holds a seat**; every other end, and any purge that failed or waited, is finished by
+`LiveRetentionScheduler` (every 30 s).
+
+**An ordinary end drains its viewers first (LIVE-WEB-2, 2026-10-29).** The purge of an ended live
+is `kept` while the live holds a seat (`LiveSeats.watching(id, 'purge')`, the seats renewed within
+the lease). A seat is renewed by every manifest read and by nothing else, so a held seat is a viewer
+told of segments within the lease that has not said it left: the segments its last manifest named
+are still its to fetch. On `1.5.1-alpha.7` the end's purge deleted segments 5 and 6 between the
+manifest that named them and their download - `404` on both viewers, then the manifest's `404`. The
+order is now a FACT, not a delay: the viewer's player gives its seat back on the end's `410`
+(`livePlayer.ts`), and the next sweep purges; a viewer that never does lets its seat lapse within
+`LIVE_SEAT_LEASE_MS` (30 s).
+
+**Whether to drain is read from durable facts by `purgeEnded` itself, never from `endReason`** (a
+cut of a live already ended keeps its earlier reason, and the erasure writes
+`COALESCE("endReason", 'erased')`):
+
+- **a `live_cuts` row, or a broadcaster that is `DELETED_ACCOUNT`**: moderation or the account's
+  deletion removed it, so every seat is released and the segments go at once - a cut just after an
+  ordinary end, or an erasure inside its drain, included;
+- **`endedAt` older than the lease, on the database clock**: every read answers `410` from `endedAt`
+  on (`assertMayWatch`), so no seat can have been renewed since and every one has lapsed; Redis is
+  not asked, so its outage never holds media past the lease;
+- **otherwise** the seats are read: one held keeps the live (a `debug` line), and a count that cannot
+  be read keeps it too (the seat module's `error`, naming the purge) - for at most the lease.
+
+So an ordinary end's segments outlive it by at most the lease plus one sweep, whatever Redis does.
+The steps of a sweep:
 
 1. end every open live past the reconnect window or the hour;
 2. for every ended live: media-service deletes everything under `live/<liveId>/` and **lists the

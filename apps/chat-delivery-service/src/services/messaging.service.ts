@@ -120,6 +120,8 @@ import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
   sanitizeLogValue,
+  sanitizeLeafLogValue,
+  sanitizeDevicePairLogValue,
   sanitizeStringIdList,
   assertCallerOwnsUserId,
   isUnresolvedIdentity,
@@ -916,15 +918,24 @@ export class MessagingService {
    * devices) nor the `RevokedDevice` denylist (specific to explicit deletion, outside GC).
    * Shared between manual device deletion and the stale-device GC to avoid duplicated
    * purge logic.
+   *
+   * **A REVOCATION RECORDS THE KEY GROUPS THE DEVICE HELD** (`recordKeyGroupsHeld`, passed by the
+   * device deletion alone): in a key group the device rows deleted here are the only thing binding
+   * the user to the group, and the revoked-leaves question answers a leaf only when it is bound. So
+   * one `dm_revoked_device_groups` row per key group is written IN THE SAME TRANSACTION, from the
+   * rows this deletes - a crash between the two cannot lose the binding. Conversations need none:
+   * their seat stays. The GC and the PIN reset do not revoke, so they record nothing.
    */
   async purgeDeviceFootprint(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    options: { recordKeyGroupsHeld?: boolean } = {}
   ): Promise<{
     groupsCleaned: number;
     keyPackagesDeleted: number;
     oneTimeKeyPackagesDeleted: number;
     queuedMessagesDeleted: number;
+    keyGroupsRecorded: number;
   }> {
     const memberships = await this.deviceGroupRepo.find({
       where: { userId, deviceId },
@@ -933,10 +944,30 @@ export class MessagingService {
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
 
     // The device rows and everything queued for the device - Welcomes included - go in ONE
-    // transaction ({@link endDeviceMemberships}).
-    const ended = await this.deviceGroupRepo.manager.transaction((manager) =>
-      endDeviceMemberships(manager, { userId, deviceId }, 'all')
-    );
+    // transaction ({@link endDeviceMemberships}), after the key groups they bind are recorded.
+    let keyGroupsRecorded = 0;
+    const ended = await this.deviceGroupRepo.manager.transaction(async (manager) => {
+      if (options.recordKeyGroupsHeld) {
+        const recorded: unknown[] = await manager.query(
+          `INSERT INTO dm_revoked_device_groups ("groupId", "userId", "deviceId")
+           SELECT DISTINCT m."groupId", m."userId", m."deviceId"
+             FROM dm_device_group_memberships m
+             JOIN dm_groups g ON g.id = m."groupId"
+            WHERE m."userId" = $1 AND m."deviceId" = $2
+              AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL)
+           ON CONFLICT DO NOTHING
+           RETURNING "groupId"`,
+          [userId, deviceId]
+        );
+        keyGroupsRecorded = recorded.length;
+      }
+      return endDeviceMemberships(manager, { userId, deviceId }, 'all');
+    });
+    if (options.recordKeyGroupsHeld) {
+      this.logger.log(
+        `[PURGE_DEVICE] revoked device=${cutUserId(userId)}:${cutDeviceId(deviceId)} key groups recorded=${keyGroupsRecorded} of ${groupIds.length} group(s) held`
+      );
+    }
 
     const memberKey = `${userId}:${deviceId}`;
     for (const gid of groupIds) {
@@ -954,6 +985,7 @@ export class MessagingService {
       keyPackagesDeleted: kpResult.affected ?? 0,
       oneTimeKeyPackagesDeleted: otkpResult.affected ?? 0,
       queuedMessagesDeleted: ended.queued,
+      keyGroupsRecorded,
     };
   }
 
@@ -2227,8 +2259,9 @@ export class MessagingService {
     // (`DeviceSignatureKeysService.record`) - one binding for every route a leaf enters a tree by.
     if (frame.external && frame.leafIdentity !== `${committer}:${deviceId}`) {
       this.logger.warn(
-        `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} device=${deviceId} ` +
-          `sender=${sanitizeLogValue(committer)} leaf=${sanitizeLogValue(frame.leafIdentity)}`
+        `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} ` +
+          `sender=${sanitizeDevicePairLogValue(committer, deviceId)} ` +
+          `leaf=${sanitizeLeafLogValue(frame.leafIdentity)}`
       );
       throw new ForbiddenException({
         error: 'commit_identity_mismatch',
@@ -2644,15 +2677,31 @@ export class MessagingService {
           // THE COMMITTER'S SEAT, whose claim held above (`committerSeat`): written here, with the
           // advance, through the one writer of an active seat - its key package read
           // first, before any device row, the order an account erasure deletes in.
+          //
+          // AN EXTERNAL JOIN WHOSE SEAT CANNOT BE WRITTEN IS REFUSED WHOLE: its leaf enters the tree
+          // with this advance, so accepting it would leave a leaf no seat holds. A pending member's
+          // commit adds no leaf - its Add did - and stands, its seat left `pending`, as above.
           if (committerSeat) {
-            committerSeat =
-              (await this.writeClaimedSeat(
-                m,
-                committer,
-                deviceId,
-                groupId,
-                'MEMBERSHIP_ACTIVE'
-              )) === null;
+            const unwritten = await this.writeClaimedSeat(
+              m,
+              committer,
+              deviceId,
+              groupId,
+              'MEMBERSHIP_ACTIVE'
+            );
+            if (unwritten !== null && frame.external) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} kind=external reason=${unwritten} ` +
+                  `- its seat cannot be written, so its leaf is not accepted; nothing advanced`
+              );
+              throw new ForbiddenException(
+                refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+                  error: 'committer_not_member',
+                })
+              );
+            }
+            committerSeat = unwritten === null;
           }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
@@ -3622,6 +3671,41 @@ export class MessagingService {
           `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove}`
       );
       return cut;
+    });
+  }
+
+  /**
+   * An account erasure's removal of the routes `routes` of `userId` in `groupId` that NO ACTIVE SEAT
+   * of the account stands behind, re-read under the group's seat lock - the routes left by a row
+   * that is gone, a 1:1 DM's tombstone above all.
+   *
+   * A route WITH its active row is left whole, row and route, for the erasure's final pass to cut
+   * together ({@link eraseSeats}). Removing it alone would contradict the row: the next send's
+   * reconciliation finds an active, keyed device missing from the set, writes its route back
+   * (`restoreRoutes`) and accuses a writer that did nothing wrong (`MEMBERS_CACHE_REPAIRED`).
+   *
+   * @returns how many routes went, and how many were kept beside their seat.
+   */
+  async removeUnseatedRoutes(
+    groupId: string,
+    userId: string,
+    routes: readonly string[]
+  ): Promise<{ removed: number; kept: number }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const seats = await m.getRepository(DeviceGroupMembership).find({
+        where: { groupId, userId, status: 'active' as const },
+        select: { deviceId: true },
+      });
+      const seated = new Set(seats.map((s) => `${userId}:${s.deviceId}`));
+      const unseated = routes.filter((r) => !seated.has(r));
+      if (unseated.length > 0) {
+        await this.redis.srem(`group:members:${groupId}`, ...unseated);
+      }
+      this.logger.log(
+        `[INTERNAL_DELETE] routes of user=${userId.slice(0, 8)} group=${groupId} ` +
+          `removed=${unseated.length} kept=${routes.length - unseated.length} (kept beside an active seat, for the final pass)`
+      );
+      return { removed: unseated.length, kept: routes.length - unseated.length };
     });
   }
 
@@ -5163,7 +5247,16 @@ export class MessagingService {
 
     // UNCONDITIONAL, and that is the whole fusion: the row now says the device cannot decrypt this
     // group - or there is no row - so the gateway must stop routing to it and stop electing it.
-    await this.redis.srem(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+    // A failure is logged, never swallowed: the route it leaves keeps the device routable and
+    // electable, and an account erasure later meets it as a route no seat stands behind.
+    await this.redis
+      .srem(`group:members:${groupId}`, `${userId}:${deviceId}`)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `[${tag}] route NOT removed group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+            `- the device stays routable until a later removal: ${String(e)}`
+        )
+      );
 
     if ((demoted.affected ?? 0) === 0) {
       this.logger.warn(

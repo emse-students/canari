@@ -49,3 +49,73 @@ export function gridPriceLabel(product: AssociationProduct): string | null {
 export function gridPriceIsProvisional(product: AssociationProduct, signedIn: boolean): boolean {
   return !signedIn && product.viewerPrice?.kind === 'grid' && product.viewerPrice.dependsOnProfile;
 }
+
+/** Why a membership product is not offered to this viewer (`tierNotOffered`). */
+export type TierNotOffered = 'disabled' | 'held' | 'lower' | 'unranked';
+
+/**
+ * Why the shop offers NO purchase of this membership product to this viewer, read from the
+ * server's annotations, or null when it is offered: `disabled` (its association's cotisations are
+ * disabled, `cotisationDisabled`), else the server's `viewerTierRelation` - `held` (that very tier),
+ * `lower` (not a rise over the tier held), `unranked` (no rank can be established). Each is refused
+ * by the checkout with a 409, so the screen offers no button whose every press fails. Nothing is
+ * re-derived here: the server holds the tiers' prices, the viewer's tags and the association's mode.
+ */
+export function tierNotOffered(product: AssociationProduct): TierNotOffered | null {
+  if (product.cotisationDisabled) return 'disabled';
+  const relation = product.viewerTierRelation;
+  return relation === 'held' || relation === 'lower' || relation === 'unranked' ? relation : null;
+}
+
+/** The sentence for a membership product not offered to this viewer (`tierNotOffered`). */
+export function tierNotOfferedText(reason: TierNotOffered): string {
+  switch (reason) {
+    case 'disabled':
+      return m.shop_cotisation_disabled();
+    case 'held':
+      return m.shop_tier_held_hint();
+    case 'lower':
+      return m.shop_tier_not_a_rise();
+    case 'unranked':
+      return m.shop_tier_not_rankable();
+  }
+}
+
+/**
+ * The name of the tier a tier-linked (`memberPriceTag`) preferential price is for - the one the
+ * server read the tag as naming (`memberPriceTierKey`), never the first tier the viewer holds,
+ * which for a viewer holding two is not always it - or null for the association-wide cotisant
+ * price, or when the server named no tier. Wording only: whether the price applies is the server's
+ * decision, already in `viewerDueCents`. `siblings` are the products of the same association.
+ */
+export function linkedTierName(
+  product: AssociationProduct,
+  siblings: readonly AssociationProduct[]
+): string | null {
+  if (!product.memberPriceTag || product.memberPriceTierKey === undefined) return null;
+  return (
+    siblings.find((s) => s.type === 'membership' && s.variantKey === product.memberPriceTierKey)
+      ?.name ?? null
+  );
+}
+
+/**
+ * The preferential price label for this viewer (`preferentialDueCents`), or null when they pay the
+ * full price. Formatted like the shop's other prices.
+ */
+export function preferentialPriceLabel(product: AssociationProduct): string | null {
+  const due = preferentialDueCents(product);
+  return due === null ? null : `${(due / 100).toFixed(2)} ${product.currency.toUpperCase()}`;
+}
+
+/**
+ * The preferential amount this viewer pays for a fixed-price product, in cents, or null when they
+ * pay the full price (or the product has a grid, a free amount, or no price for them). Read from
+ * the server's `viewerDueCents` - the amount the checkout charges - and NEVER computed from the
+ * product's member-price columns: whether the viewer qualifies rests on tags only the server reads.
+ */
+export function preferentialDueCents(product: AssociationProduct): number | null {
+  const due = product.viewerDueCents;
+  if (product.priceMatrix != null || product.amountCents === null || due == null) return null;
+  return due < product.amountCents ? due : null;
+}

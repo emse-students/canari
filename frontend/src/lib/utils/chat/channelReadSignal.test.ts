@@ -67,6 +67,13 @@ describe('channelReadSignal', () => {
       expect(newestForeignMessageAt([msg('ME', 1000)], 'me')).toBe(0);
     });
 
+    /** A message that landed after the mark was decided (the flush of a leave) was never read. */
+    it('stops at the mark read, skipping a newer foreign message', () => {
+      const messages = [msg('them', 1000), msg('me', 1500), msg('other', 2500)];
+      expect(newestForeignMessageAt(messages, 'me', 2000)).toBe(1000);
+      expect(newestForeignMessageAt(messages, 'me', 2500)).toBe(2500);
+    });
+
     it('is zero for an empty salon and for one holding only our own messages', () => {
       expect(newestForeignMessageAt([], 'me')).toBe(0);
       expect(newestForeignMessageAt([msg('me', 1000)], 'me')).toBe(0);

@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
-import type { ResourceSlots, SlotUnit } from './api';
+import type { SlotUnit } from './api';
 import {
   bookingUnitLimit,
   dragRange,
   formatTimeRange,
+  formatDayHead,
+  formatWeekRange,
+  freeCount,
   freeRunFrom,
-  gridOpeningDate,
-  gridRows,
-  planning,
   slotsReadRange,
   unitDay,
+  weekDates,
+  weekLayout,
+  weekReadRange,
   windowRefusal,
 } from './grid';
 import { localTime } from './zonedTime';
@@ -95,46 +98,6 @@ describe('windowRefusal mirrors the server (D26)', () => {
   });
 });
 
-describe('gridRows', () => {
-  it('lays one date out as rows of ranges, a column per resource, empty where none', () => {
-    const slots: ResourceSlots[] = [
-      { resourceId: 'a', units: [unit('10:00', 30), unit('09:00', 30)] },
-      {
-        resourceId: 'b',
-        units: [
-          unit('09:00', 30),
-          { ...unit('09:00', 30), date: '2026-11-03', startMs: 1, endMs: 2 },
-        ],
-      },
-    ];
-    const rows = gridRows(['a', 'b'], slots, '2026-11-02', PARIS);
-    expect(rows.map((r) => r.label)).toEqual(['09:00 - 09:30', '10:00 - 10:30']);
-    expect(rows.every((r) => !r.nextDay)).toBe(true);
-    expect(rows[0].cells.every((c) => c !== null)).toBe(true);
-    expect(rows[1].cells[0]?.state).toBe('free');
-    expect(rows[1].cells[1]).toBeNull();
-  });
-});
-
-describe('a night window on the grid', () => {
-  it("keeps its after-midnight units on the window's date, marked as the next day", () => {
-    const late = {
-      date: '2026-11-06',
-      startMs: at('2026-11-06T22:30:00Z'),
-      state: 'free' as const,
-    };
-    const units: SlotUnit[] = [
-      { ...late, endMs: late.startMs + 30 * 60_000 },
-      { ...late, startMs: late.startMs + 30 * 60_000, endMs: late.startMs + 60 * 60_000 },
-    ];
-    const rows = gridRows(['a'], [{ resourceId: 'a', units }], '2026-11-06', PARIS);
-    expect(rows.map((r) => [r.label, r.nextDay])).toEqual([
-      ['23:30 - 24:00', false],
-      ['00:00 - 00:30', true],
-    ]);
-  });
-});
-
 describe('freeRunFrom', () => {
   const units = [unit('09:00', 30), unit('09:30', 30), unit('10:00', 30, 'blocked')];
 
@@ -159,83 +122,188 @@ describe('freeRunFrom', () => {
   });
 });
 
-describe('planning', () => {
-  it('lists the next free units the window accepts, and keeps a full resource, empty', () => {
-    const slots: ResourceSlots[] = [
-      { resourceId: 'a', units: [unit('09:00', 30), unit('10:00', 30), unit('11:00', 30)] },
-      { resourceId: 'b', units: [unit('09:00', 30, 'blocked')] },
+const none = { opensAt: null, minNoticeMinutes: null, horizonDays: null };
+const paris = { timeZone: PARIS, ...none };
+
+/** A free unit of `minutes` starting at the Paris wall time `local` ("2026-11-03T10:00"). */
+function parisUnit(local: string, minutes: number, offset = '+01:00'): SlotUnit {
+  const startMs = at(`${local}:00${offset}`);
+  return { date: local.slice(0, 10), startMs, endMs: startMs + minutes * 60_000, state: 'free' };
+}
+
+describe('the week (WP-R2, D46)', () => {
+  it('is the ISO week, Monday first, whatever day of it is asked', () => {
+    expect(weekDates('2026-11-04')).toEqual([
+      '2026-11-02',
+      '2026-11-03',
+      '2026-11-04',
+      '2026-11-05',
+      '2026-11-06',
+      '2026-11-07',
+      '2026-11-08',
+    ]);
+    expect(weekDates('2026-11-08')[0]).toBe('2026-11-02');
+    expect(weekDates('2026-11-02')[0]).toBe('2026-11-02');
+  });
+
+  it('reads from the day before the Monday, so a Sunday night window reaches Monday 00:30', () => {
+    expect(weekReadRange('2026-11-05')).toEqual({ from: '2026-11-01', to: '2026-11-08' });
+  });
+
+  it('names the week and a day in the reader language', () => {
+    expect(formatWeekRange(weekDates('2026-11-04'))).toMatch(/2.+8.+2026/);
+    expect(formatDayHead('2026-11-04')).toMatchObject({ num: 4 });
+  });
+
+  it('places each unit by the wall time of its start, the same hour on every day', () => {
+    const units = [parisUnit('2026-11-02T10:00', 30), parisUnit('2026-11-03T10:00', 30)];
+    const layout = weekLayout(units, weekDates('2026-11-02'), paris, at('2026-11-01T00:00:00Z'));
+    expect(layout.days.map((d) => d.state)).toEqual([
+      'open',
+      'open',
+      'closed',
+      'closed',
+      'closed',
+      'closed',
+      'closed',
+    ]);
+    expect(layout.days[0].placed[0]).toMatchObject({ topMin: 600, heightMin: 30 });
+    expect(layout.days[1].placed[0].topMin).toBe(600);
+    // One axis for the week, whole hours around what is offered.
+    expect([layout.startMin, layout.endMin]).toEqual([600, 660]);
+  });
+
+  it('keeps 18:00 at 18:00 across the daylight-saving change (2026-10-24 to 2026-10-26)', () => {
+    // 2026-10-25 02:00 Paris is the fall-back: Monday 26 is UTC+1, Saturday 24 was UTC+2.
+    const units = [
+      parisUnit('2026-10-24T18:00', 60, '+02:00'),
+      parisUnit('2026-10-26T18:00', 60, '+01:00'),
     ];
-    const now = at('2026-11-02T08:30:00Z'); // 09:30 in Paris
-    const rows = planning(
-      { opensAt: null, minNoticeMinutes: null, horizonDays: null },
-      ['a', 'b'],
-      slots,
-      now,
-      1
+    const layout = weekLayout(
+      units,
+      ['2026-10-24', '2026-10-25', '2026-10-26'],
+      paris,
+      at('2026-10-20T00:00:00Z')
     );
-    expect(rows[0].units.map((u) => localTime(u.startMs, PARIS))).toEqual(['10:00']);
-    expect(rows[1].units).toEqual([]);
+    const tops = layout.days.flatMap((d) => d.placed.map((p) => p.topMin));
+    expect(tops).toEqual([1080, 1080]);
+  });
+
+  it('draws the doubled hour of a fall-back night side by side, and moves nothing else', () => {
+    // 2026-10-25 in Paris lasts 25 hours: 02:00-03:00 happens twice (UTC+2, then UTC+1).
+    const day = Array.from({ length: 25 }, (_, i) => {
+      const startMs = at('2026-10-24T22:00:00Z') + i * 3_600_000;
+      return { date: '2026-10-25', startMs, endMs: startMs + 3_600_000, state: 'free' as const };
+    });
+    const layout = weekLayout(day, ['2026-10-25'], paris, at('2026-10-20T00:00:00Z'));
+    const placed = layout.days[0].placed;
+    // The wall hours 0,1,2,2,3,4,...,23: every unit on its own wall time, the shift never carried.
+    expect(placed.map((p) => p.topMin / 60)).toEqual([
+      0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    ]);
+    expect(placed.map((p) => [p.lane, p.lanes]).slice(0, 5)).toEqual([
+      [0, 1],
+      [0, 1],
+      [0, 2],
+      [1, 2],
+      [0, 1],
+    ]);
+    expect(layout.days[0].cells[2].startMs).toBeLessThan(layout.days[0].cells[3].startMs);
+    expect([layout.startMin, layout.endMin]).toEqual([0, 1440]);
+  });
+
+  it('puts the morning of a night window on its own day, which the read that starts the day before holds', () => {
+    // Friday 2026-11-06 22:00 to Saturday 02:00 (UTC+1): the server stamps all of it Friday.
+    const night = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+      date: '2026-11-06',
+      startMs: at('2026-11-06T21:00:00Z') + i * 30 * 60_000,
+      endMs: at('2026-11-06T21:00:00Z') + (i + 1) * 30 * 60_000,
+      state: 'free' as const,
+    }));
+    const serverRead = ({ from, to }: { from: string; to: string }) =>
+      night.filter((u) => from <= u.date && u.date <= to);
+    const layout = weekLayout(
+      serverRead(weekReadRange('2026-11-07')),
+      weekDates('2026-11-07'),
+      paris,
+      at('2026-11-05T00:00:00Z')
+    );
+    const friday = layout.days[4];
+    const saturday = layout.days[5];
+    expect(friday.placed.map((p) => p.topMin)).toEqual([1320, 1350, 1380, 1410]);
+    expect(saturday.placed.map((p) => p.topMin)).toEqual([0, 30, 60, 90]);
+    // The axis reaches midnight and back: it spans the whole day.
+    expect([layout.startMin, layout.endMin]).toEqual([0, 1440]);
+  });
+
+  it('puts Monday 00:30 of a Sunday night window in Monday, read from the Sunday before', () => {
+    // Sunday 2026-11-01 22:00 to Monday 02:00 (UTC+1), stamped Sunday: outside Monday's own read.
+    const unit: SlotUnit = {
+      date: '2026-11-01',
+      startMs: at('2026-11-01T23:30:00Z'),
+      endMs: at('2026-11-02T00:00:00Z'),
+      state: 'free',
+    };
+    expect(weekReadRange('2026-11-02').from).toBe('2026-11-01');
+    const layout = weekLayout([unit], weekDates('2026-11-02'), paris, at('2026-10-30T00:00:00Z'));
+    expect(layout.days[0].placed[0]).toMatchObject({ topMin: 30, heightMin: 30 });
+  });
+
+  it('folds a day with nothing offered and tells a full day from an open one', () => {
+    const units: SlotUnit[] = [
+      parisUnit('2026-11-02T10:00', 30),
+      { ...parisUnit('2026-11-03T10:00', 30), state: 'blocked' },
+    ];
+    const layout = weekLayout(units, weekDates('2026-11-02'), paris, at('2026-11-01T00:00:00Z'));
+    expect(layout.days.slice(0, 3).map((d) => d.state)).toEqual(['open', 'none', 'closed']);
+  });
+
+  it('counts a unit the booking window refuses on the device clock as not free', () => {
+    const units = [parisUnit('2026-11-02T10:00', 30), parisUnit('2026-11-02T11:00', 30)];
+    const now = at('2026-11-02T10:30:00+01:00');
+    expect(freeCount(units, none, now)).toBe(1);
+    const layout = weekLayout(units.slice(0, 1), ['2026-11-02'], paris, now);
+    expect(layout.days[0].state).toBe('none');
+  });
+
+  it('shares the width between two slots that overlap, and gives a lone unit all of it', () => {
+    const units = [parisUnit('2026-11-02T10:00', 60), parisUnit('2026-11-02T10:30', 60)];
+    const lone = parisUnit('2026-11-02T14:00', 30);
+    const layout = weekLayout([...units, lone], ['2026-11-02'], paris, at('2026-11-01T00:00:00Z'));
+    expect(layout.days[0].placed.map((p) => [p.lane, p.lanes])).toEqual([
+      [0, 2],
+      [1, 2],
+      [0, 1],
+    ]);
+  });
+
+  it('is tall enough that the shortest unit holds a line of text, and capped', () => {
+    const short = weekLayout(
+      [parisUnit('2026-11-02T10:00', 15)],
+      ['2026-11-02'],
+      paris,
+      at('2026-11-01T00:00:00Z')
+    );
+    expect(short.remPerHour).toBe(7);
+    const long = weekLayout(
+      [parisUnit('2026-11-02T10:00', 120)],
+      ['2026-11-02'],
+      paris,
+      at('2026-11-01T00:00:00Z')
+    );
+    expect(long.remPerHour).toBe(4);
+  });
+
+  it('has no axis when nothing is offered', () => {
+    const layout = weekLayout([], weekDates('2026-11-02'), paris, 0);
+    expect([layout.startMin, layout.endMin]).toEqual([0, 0]);
+    expect(layout.days.every((d) => d.state === 'closed')).toBe(true);
   });
 });
 
-describe('a night window still running after midnight (Saturday 00:15, Paris)', () => {
-  // Friday 2026-11-06 22:00 to Saturday 02:00 in Paris (UTC+1): one window, stamped Friday by the
-  // server, in steps of 30 min. The member opens the page on Saturday at 00:15.
-  const friday = '2026-11-06';
-  const saturday = '2026-11-07';
-  const windowStart = at('2026-11-06T21:00:00Z');
-  const night: SlotUnit[] = Array.from({ length: 8 }, (_, i) => ({
-    date: friday,
-    startMs: windowStart + i * 30 * 60_000,
-    endMs: windowStart + (i + 1) * 30 * 60_000,
-    state: 'free' as const,
-  }));
-  const saturdayMorning = {
-    date: saturday,
-    startMs: at('2026-11-07T09:00:00Z'),
-    endMs: at('2026-11-07T09:30:00Z'),
-    state: 'free' as const,
-  };
-  /** The server's `spaceSlots(from, to)`: a unit is kept when its WINDOW's date is in the range. */
-  const serverRead = ({ from, to }: { from: string; to: string }): ResourceSlots[] => [
-    {
-      resourceId: 'room',
-      units: [...night, saturdayMorning].filter((u) => from <= u.date && u.date <= to),
-    },
-  ];
-  const now = at('2026-11-06T23:15:00Z'); // Saturday 00:15 in Paris
-  const none = { opensAt: null, minNoticeMinutes: null, horizonDays: null };
-  const halfPastMidnight = at('2026-11-06T23:30:00Z');
-
-  it('reads from the day before, so the 00:30 unit is in hand', () => {
-    expect(slotsReadRange(saturday, 14)).toEqual({ from: friday, to: '2026-11-20' });
-    const read = serverRead(slotsReadRange(saturday, 7));
-    expect(read[0].units.some((u) => u.startMs === halfPastMidnight)).toBe(true);
-    // The read that started on Saturday lost it.
-    const old = serverRead({ from: saturday, to: '2026-11-13' });
-    expect(old[0].units.some((u) => u.startMs === halfPastMidnight)).toBe(false);
-  });
-
-  it("opens the grid on Friday's window, whose rest of the night is drawn as the next day", () => {
-    const read = serverRead(slotsReadRange(saturday, 7));
-    const opening = gridOpeningDate(read, saturday, now);
-    expect(opening).toBe(friday);
-    const rows = gridRows(['room'], read, opening, PARIS);
-    expect(rows.find((r) => r.startMs === halfPastMidnight)).toMatchObject({
-      label: '00:30 - 01:00',
-      nextDay: true,
-    });
-  });
-
-  it('lists the 00:30 unit first in the planning, the 00:00 one having started', () => {
-    const read = serverRead(slotsReadRange(saturday, 14));
-    const [room] = planning(none, ['room'], read, now, 2);
-    expect(room.units.map((u) => localTime(u.startMs, PARIS))).toEqual(['00:30', '01:00']);
-  });
-
-  it('opens on today once the night window has ended', () => {
-    const read = serverRead(slotsReadRange(saturday, 7));
-    expect(gridOpeningDate(read, saturday, at('2026-11-07T01:00:00Z'))).toBe(saturday);
+describe('the read of a night window', () => {
+  it('starts the day before, so the 00:30 unit is in hand (the server keeps a unit by its window date)', () => {
+    expect(slotsReadRange('2026-11-07', 14)).toEqual({ from: '2026-11-06', to: '2026-11-20' });
   });
 });
 

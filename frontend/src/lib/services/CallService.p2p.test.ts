@@ -12,6 +12,8 @@ import {
   CALL_SIGNALLING_RESUME_MAX_DELAY_MS,
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
 } from './CallService';
+import { canari } from '$lib/proto/canari.js';
+import { decodeAppMessage } from '$lib/proto/codec';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
@@ -51,7 +53,6 @@ vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn(async () => {}) }));
 vi.mock('$lib/utils/chat/callSystemMessages', () => ({
   getCallSystemMessageContext: () => null,
-  recordCallMissed: vi.fn(),
 }));
 vi.mock('$lib/stores/notificationPreferences.svelte', () => ({
   notificationPreferences: { callsAllowed: vi.fn(() => true) },
@@ -1799,8 +1800,15 @@ describe('the E2E worker report (2026-10-19)', () => {
   });
 });
 
+/** The CallMsg frames this device sent over MLS since the last `mockClear`. */
+const sentCallFrames = () =>
+  vi
+    .mocked(fakeMls.sendMessage)
+    .mock.calls.map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1])?.call)
+    .filter((c) => !!c);
+
 describe('a second call while one is up', () => {
-  it('does not ring over the call in progress, sends nothing for it, and says why', async () => {
+  it('does not ring over the call in progress, answers it with a typed BUSY frame, and says why', async () => {
     const service = new CallService(fakeMls);
     await callerJoined(service);
     const { appendLog } = await import('$lib/utils/sessionLog');
@@ -1824,13 +1832,339 @@ describe('a second call while one is up', () => {
     expect(get(service.callState)).toBe('calling');
     expect(service.currentCallId).toBe('room-1');
     expect(service.incomingCallerId).toBeNull();
-    expect(fakeMls.sendMessage).not.toHaveBeenCalled();
+    // B16: the caller is ANSWERED (one typed busy frame for the second call, no hangup), so it does
+    // not ring out the server's window. The call in progress is untouched.
+    const frames = sentCallFrames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.callId).toBe('room-2');
+    expect(frames[0]?.busy).toBe(true);
+    expect(frames[0]?.hangup).toBeFalsy();
     expect(
       vi
         .mocked(appendLog)
         .mock.calls.map((c) => c[0])
         .join(' ')
-    ).toContain('invite room-2 in group-2 not rung - busy');
+    ).toContain('invite room-2 in group-2 meets state=calling call=room-1');
+  });
+});
+
+describe('when a busy answer is, and is not, given', () => {
+  const inviteOf = (callId: string, ringTimeoutMs = 60_000) => ({
+    callId,
+    offerSdp: 'START',
+    hasVideo: false,
+    deviceId: 'device-9',
+    ringTimeoutMs,
+  });
+  const ring = (
+    service: CallService,
+    callId: string,
+    group = 'group-2',
+    from = 'other@example.org'
+  ) => service.handleCallSignal(from, group, inviteOf(callId), 'me@example.org', 'device-1');
+
+  it('an invite during the ended summary rings, with no busy', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-2', 'group-1');
+
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('incoming');
+    expect(service.currentCallId).toBe('room-2');
+    // The summary's old timer must not cut the new ring short.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(get(service.callState)).toBe('incoming');
+  });
+
+  it('a call still in its setup (no id yet) loses a glare and rings the invite', async () => {
+    const service = new CallService(fakeMls);
+    const internals = service as unknown as { currentGroupId: string | null };
+    service.callState.set('calling');
+    internals.currentGroupId = 'group-1';
+    expect(service.currentCallId).toBeNull();
+
+    await ring(service, 'room-2', 'group-1');
+
+    expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
+    expect(get(service.callState)).toBe('incoming');
+    expect(service.currentCallId).toBe('room-2');
+  });
+
+  it('answers no busy to a sender it has blocked', async () => {
+    const { isBlockedWith } = await import('$lib/users/blocks');
+    vi.mocked(isBlockedWith).mockResolvedValueOnce(true);
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-2');
+
+    expect(sentCallFrames()).toHaveLength(0);
+  });
+
+  it('answers no busy to an invite with no ring window', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await service.handleCallSignal(
+      'other@example.org',
+      'group-2',
+      inviteOf('room-2', 0),
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(sentCallFrames()).toHaveLength(0);
+  });
+
+  it('answers no busy to a redelivery of the invite of the call it is already in', async () => {
+    const service = new CallService(fakeMls);
+    await ring(service, 'room-1', 'group-1', 'peer@example.org');
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-1', 'group-1', 'peer@example.org');
+
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('incoming');
+  });
+
+  it('glare: the LOWER callId wins, ignoring the other invite and sending no busy', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-9', 'group-1');
+
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('calling');
+    expect(service.currentCallId).toBe('room-1');
+  });
+
+  it('glare: the HIGHER callId yields, cancels its call and rings the winner', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await ring(service, 'room-0', 'group-1');
+
+    expect(get(service.callState)).toBe('incoming');
+    expect(service.currentCallId).toBe('room-0');
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'cancelled', undefined);
+    expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
+  });
+
+  it('a busy answer only ends the caller own call, never another one', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-0', busy: true },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('calling');
+  });
+});
+
+describe('a call whose callee reached the room is ANSWERED (B15)', () => {
+  const asked = async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    return { chat, service, ws };
+  };
+  const failCall = (service: CallService, why: string) =>
+    (service as unknown as { failCall: (r: string) => void }).failCall(why);
+
+  it('the callee leaves before any media: PeerLeft writes a duration, not an unanswered call', async () => {
+    const { chat, service, ws } = await asked();
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
+
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+  });
+
+  it('the callee MLS hangup first: the same fact, written by the signal path alone', async () => {
+    const { chat, service } = await asked();
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true },
+      'me@example.org',
+      'device-1'
+    );
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(chat.onCallEnded).not.toHaveBeenCalled();
+  });
+
+  it('a hang-up by the caller after the callee arrived sends no unanswered reason', async () => {
+    const { chat, service } = await asked();
+    service.endCall();
+
+    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason ?? 0).toBe(canari.CallEndReason.CALL_END_REASON_UNSPECIFIED);
+  });
+
+  it('a stalled media path after the callee joined fails an answered call, with a hangup', async () => {
+    const { chat, service } = await asked();
+    failCall(service, 'ice failed');
+
+    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    expect(sentCallFrames().some((c) => c?.hangup)).toBe(true);
+  });
+});
+
+describe('a call that fails after its invite left (B15)', () => {
+  it('is NOT ANSWERED, never cancelled, and its hangup says so', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    (service as unknown as { failCall: (r: string) => void }).failCall('signalling closed');
+
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'not-answered', undefined);
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
+  });
+});
+
+describe('a busy answer, caller side (B16)', () => {
+  const busyFrame = { callId: 'room-1', busy: true, deviceId: 'device-9' };
+
+  it('ends the ringing call at once, tells the user, and records it as busy', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const { showToast } = await import('$lib/stores/toast.svelte');
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      busyFrame,
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(showToast).toHaveBeenCalledWith(m.call_busy(), 'info');
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'busy', undefined);
+    // The hangup stops the callee's other devices ringing, and says why.
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_BUSY);
+  });
+
+  it('ignores a busy frame from the own account, for another call, or once connected', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'me@example.org',
+      'group-1',
+      busyFrame,
+      'me@example.org',
+      'device-1'
+    );
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { ...busyFrame, callId: 'other-call' },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('calling');
+    expect(chat.onCallEnded).not.toHaveBeenCalled();
+  });
+});
+
+describe('the typed end reason of an unanswered call (B15)', () => {
+  const incoming = { callId: 'room-1', offerSdp: 'START', ringTimeoutMs: 60_000, deviceId: 'd-2' };
+
+  it('says CANCELLED when the caller hangs up a ring', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await callerJoined(service);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    service.endCall();
+
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'cancelled', undefined);
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_CANCELLED);
+  });
+
+  it('says DECLINED, naming the caller, when the callee refuses a ring', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      incoming,
+      'me@example.org',
+      'device-1'
+    );
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    service.endCall();
+
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      'declined',
+      'peer@example.org'
+    );
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_DECLINED);
+  });
+
+  it('writes nothing for a hangup the OTHER party sent: the signal path is the writer', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+    const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      incoming,
+      'me@example.org',
+      'device-1'
+    );
+
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true, endReason: canari.CallEndReason.CALL_END_REASON_CANCELLED },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('idle');
+    expect(chat.onCallEnded).not.toHaveBeenCalled();
   });
 });
 
@@ -1854,15 +2188,19 @@ describe('the ring window, both sides', () => {
 
   it('relays the server window in the invite, and ends an unanswered call as missed', async () => {
     server.ringTimeoutMs = 5;
-    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
-    vi.mocked(recordCallMissed).mockClear();
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
     const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
     await callerJoined(service);
 
     await pastWindow();
 
     expect(['ended', 'idle']).toContain(get(service.callState));
-    expect(recordCallMissed).toHaveBeenCalledTimes(1);
+    // The typed reason, sent on the hangup and handed to the ONE record writer.
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'not-answered', undefined);
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
   });
 
   it('keeps the call once the other party has arrived', async () => {
@@ -1901,9 +2239,9 @@ describe('the ring window, both sides', () => {
   });
 
   it('stops ringing the callee when the window closes, and writes nothing', async () => {
-    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
-    vi.mocked(recordCallMissed).mockClear();
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
     const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
     await service.handleCallSignal(
       'peer@example.org',
       'group-1',
@@ -1916,7 +2254,7 @@ describe('the ring window, both sides', () => {
     await pastWindow();
 
     expect(get(service.callState)).toBe('idle');
-    expect(recordCallMissed).not.toHaveBeenCalled();
+    expect(chat.onCallEnded).not.toHaveBeenCalled();
   });
 
   it('does not ring in a conversation whose call permission refuses it', async () => {
@@ -2017,9 +2355,9 @@ describe('the ring opens the server window', () => {
 
   it('sends no invite, and writes no missed call, when the ring is refused', async () => {
     server.ringStatus = 410;
-    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
-    vi.mocked(recordCallMissed).mockClear();
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
     const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
 
     const started = service.startCall('group-1', false);
     await settle();
@@ -2030,7 +2368,8 @@ describe('the ring opens the server window', () => {
     await expect(started).rejects.toThrow('calls/ring failed (410)');
     // The server opens the window before it fans out: a refused ring rang nobody.
     expect(order).not.toContain('mls');
-    expect(recordCallMissed).not.toHaveBeenCalled();
+    // Nobody was rung: the end carries no outcome, so no record is written.
+    expect(chat.onCallEnded.mock.calls.every((c) => c[2] === undefined)).toBe(true);
   });
 
   it('does not invite, arm or publish presence for a call hung up while the ring was in flight', async () => {
@@ -2199,13 +2538,13 @@ describe('no missed call for a call that never rang', () => {
     ['the initiate is refused', () => (server.initiateStatus = 403)],
   ])('writes no missed call when %s', async (_, arrange) => {
     arrange();
-    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
-    vi.mocked(recordCallMissed).mockClear();
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
     const service = new CallService(fakeMls);
+    service.setChatNotifier(chat);
 
     await expect(service.startCall('group-1', false)).rejects.toThrow();
 
-    expect(recordCallMissed).not.toHaveBeenCalled();
+    expect(chat.onCallEnded.mock.calls.every((c) => c[2] === undefined)).toBe(true);
     expect(FakeSocket.instances).toHaveLength(0);
   });
 });

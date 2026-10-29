@@ -109,7 +109,60 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
 | B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
 | B13 | **The production server preflight** (read-only, below) | **checklist written** (P1-P10, each with its command, 2026-10-21); **owed**: running it after #2180 deploys production, P7 and P8 (c) in the review window | every line of the preflight read |
+| B15 | **An unanswered call was written as a call with a duration** (CALL-WEB-4..7, `1.4.1-alpha.6`, 2026-10-26): cancelled, declined, unreachable and busy calls all read "lasted less than a minute". Two writers disagreed about the same call (`recordCallMissed` and `recordCallEnded`) | **built (draft PR, 2026-10-27)**: ONE writer, `recordCallEnded(ctx, groupId, callId, outcome?, starterId?)` in `utils/chat/callSystemMessages.ts`; `recordCallMissed` is deleted. The outcome is TYPED (`CallEndReason`: `cancelled` / `declined` / `not-answered` / `busy`, absent = answered), sent on the hangup as proto `CallMsg.end_reason`, stored in the row as `callEvent.outcome`, never read from text. See [the call record](#the-call-record-one-writer-a-typed-reason-2026-10-27) | read on the web rows (CALL-WEB-4..7), then the blocker closes |
+| B16 | **A busy callee left the second caller ringing for 60 s** (CALL-WEB-7) | **built (draft PR, 2026-10-27)**: a busy device answers the invite with a typed `CallMsg.busy` frame (never a hangup); the caller's device ends its ring at once, toasts `call_busy`, sends a hangup carrying reason `busy` (stops the callee's other devices and the server ring) and writes `busy`. See [the call record](#the-call-record-one-writer-a-typed-reason-2026-10-27) | read on CALL-WEB-7 |
 | B14 | **The store answers** (below): Apple review notes + demo accounts + video, privacy labels; Play Data safety | **drafted** (the microphone string, the review notes, the privacy candidates, 2026-10-21); **owed**: the owner's answers to the privacy table, the demo pair, the video (Play FGS declaration: DONE 2026-10-21) | WP-C9 |
+
+### The call record: one writer, a typed reason (2026-10-27)
+
+B15 and B16, built together because the busy answer is one of the reasons.
+
+- **The writer is `recordCallEnded`**, and nothing else writes a call's final row. It is idempotent
+  per callId and final (`callEvent.endedAt`, never the text, guards a duplicate). `recordCallStarted`
+  only makes the ringing row, and gives way to an end that won the race.
+- **The reason is a type, sent by the side that knows.** Hangup carries `end_reason`: `cancelled`
+  (the caller hung up a ring), `declined` (the callee refused it), `not-answered` (the ring window
+  closed; also a call lost after its invite), `busy`. No reason = an answered call (duration) or a
+  hangup of a build from before the field.
+- **Two call sites, disjoint by origin.** A fact that arrives from ANOTHER party (an MLS hangup, an
+  invite) is written by `handleCallSignalForChat`; a fact this device caused (it hung up, declined,
+  its ring timer closed, a busy answer arrived) is written through `CallChatNotifier.onCallEnded`.
+  `endCall(notify, reason, remoteOrigin)` skips the notifier when the MLS hangup is the other party's.
+- **Answered means the callee reached the room.** A caller in `calling` whose `peerArrived` is set
+  (`PeerReady`) has an ANSWERED call, even if its media never connected: no unanswered reason, a
+  duration. So the relay's `PeerLeft` (a local end) and the callee's MLS hangup (remote) reach the
+  one writer with the same fact, in either order. A failure after the invite left (`failCall`, a
+  refused resume, a failed setup) is `not-answered` when nobody arrived, and ALWAYS sends the
+  hangup now, so the other party's row is finalized.
+- **Reading by side.** The caller reads its own sentence (`chat_system_call_cancelled`,
+  `_not_answered`, `_declined`, `_busy`); the callee reads "missed call" for cancelled, not answered
+  and busy, and "declined" for a ring it refused. A device with no started row for a call (it never
+  rang: busy, offline during the ring) gets its missed call from the hangup, created when the
+  sender is another account and the reason is not `declined`. A call that failed before its invite
+  left (initiate refused, no ICE servers, no microphone) has no outcome, so no row is written for
+  it. Rows are written with `soleWriter` so a bulk ingest never buffers them away from their end.
+- **BUSY end to end.** Busy means "this device is in a call". It is answered ONLY for an admitted
+  invite (permission, ring window, no block), after those checks, with `mkCallBusy` (proto
+  `CallMsg.busy = 11`, ephemeral like every call frame). Never from the ended summary, never for the
+  invite of the call it is already in. GLARE (both sides calling each other in one conversation):
+  the LOWER callId wins and sends no busy; the higher one drops its own call (`cancelled`) and
+  rings the winner. The caller acts on a busy answer only for its own callId, while `calling`, with
+  nobody arrived, from another account. The native classifier lists the payload as control that ends
+  nothing (`proto_fields.rs`, pinned).
+- **An invite during the 1.5 s ended summary RINGS**: the summary and its timer are cleared first
+  (the timer is a field, cleared by `cleanup`, so it cannot cut a later call's summary short). A
+  `calling` call with no id yet (`startCall` sets the state before the server gives the id) has rung
+  nobody and loses any glare in its conversation.
+- **Glare noise, accepted**: the loser's `cancelled` hangup reaches the winner, whose writer files a
+  missed call from the loser. **Compat, dev only**: a client built before `busy` reads a busy frame
+  as an invite and logs a false "carries no ring window" WARN; calls are dev builds only, so no
+  user sees it.
+- **Not decided, recorded**: a callee with a second, idle device stops that device's ring too.
+  The ended-summary overlay of a busy caller shows the generic ended screen (the toast and the
+  record carry the message). The row text is baked per side at write time; rendering from
+  `callEvent.outcome` / `starterId` instead is a P3 in the [backlog](../../backlog.md).
+- Tests: `callSystemMessages.outcome.test.ts` (writer, sides, races, signal path),
+  `codec.call.test.ts`, and the busy / reason describes of `CallService.p2p.test.ts`.
 
 ### The order
 
@@ -895,7 +948,7 @@ The rule is ONE function on each side - `callsAllowedFor` in
 | Path | Who applies it | What a refused conversation gets |
 |---|---|---|
 | The ring PUSH (`POST /api/calls/ring`: FCM `call_ring`, APNs VoIP) - the only thing that rings a killed or backgrounded phone | **the server**, `CallsService.ringGroup` -> `membersWhoTakeCalls`, read at each ring, never cached | no push at all, whatever build the phone runs; logged `[ring] call=... withheld from N member(s) - calls not allowed in this conversation` (ids cut). The caller is told nothing - the call goes unanswered like any other |
-| The in-app invite (MLS `call_invite` over the chat socket - ciphertext the server cannot read) | **the client**, from its copy in `notificationPreferences` | `CallService.handleCallSignal` does not ring (logged); `handleCallSignalForChat` writes the call as **MISSED at once** (`recordCallMissed`, final - the caller's later hangup leaves it), so the line is in the conversation instead of the ring. One predicate, one timeline writer |
+| The in-app invite (MLS `call_invite` over the chat socket - ciphertext the server cannot read) | **the client**, from its copy in `notificationPreferences` | `CallService.handleCallSignal` does not ring (logged); `handleCallSignalForChat` writes the call as **MISSED at once** (`recordCallEnded` with outcome `not-answered`, final - the caller's later hangup leaves it), so the line is in the conversation instead of the ring. One predicate, one timeline writer |
 | A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS) | **owed at revival** (WP-C5 / WP-C6), from the device's local copy - today `CALLS_NATIVE_RING_COMPILED = false` and no native ring runs | - |
 
 **Stored and synced like the level.** On the member's own membership row: per ACCOUNT, every device,
@@ -1502,7 +1555,8 @@ experiment rows of the rig (below) settle it on Chrome 155:
   again** hands a new capture to the SAME sender, `sendrecv` - its transform stays attached and fed
   (rig `video-off-on`). The first camera of a call that had none is a FRESH transceiver, as before.
 - **Switch** stops the current capture first (a phone opens one camera at a time), opens the other
-  with an EXACT `facingMode`, `replaceTrack` on the same sender. A switch that cannot open the other
+  with an EXACT `facingMode` (the first capture is IDEAL; one builder, `facingConstraint` in
+  `utils/cameraFacing.ts`, shared with the reel and live cameras), `replaceTrack` on the same sender. A switch that cannot open the other
   camera turns the camera OFF, said (`call_camera_switch_failed`) and logged at ERROR - never a
   silent keep of the old one. Offered only when `enumerateDevices` lists two cameras.
 - **One camera operation at a time, OFF always wins**: a tap while an on or a switch is still
@@ -1882,9 +1936,9 @@ What changed: the other person's photo, blown up, blurred and dimmed, is the bac
   any other failure, the screen and the bar say "Toucher pour entendre", and the NEXT pointer event
   anywhere (or the Accept tap, which primes the sink) starts it. Logged: `[Call] WARN voice refused
   without a gesture (<why>) - waiting for a tap`.
-- **A second call while one is up is not rung, and nothing is sent back.** A hangup would reach the
-  whole conversation - our own other devices included, which may be free to answer it. Logged:
-  `[Call] invite <callId> in <groupId> not rung - busy (state=... call=...)`
+- **A second call while one is up is answered BUSY** (a typed frame, never a hangup, which would reach
+  the whole conversation); see [the call record](#the-call-record-one-writer-a-typed-reason-2026-10-27).
+  Logged: `[Call] invite <callId> in <groupId> meets state=... call=...`
   (`CallService.p2p.test.ts`, "a second call while one is up").
 - **The 64px controls are size-checked on the RENDERED screen**, not by `iconButtonScale.test.ts`:
   they are drawn by a snippet that markup scan cannot see through. `CallOverlay.svelte.test.ts`
@@ -2227,7 +2281,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 | `utils/opusPacket.ts` | `isValidOpusPacket` - RFC 6716 section 3.4 rules R1-R7, the worker's witness |
 | `utils/callE2eReport.ts` | the E2E worker report as one log line, and the engine facts it is read against ([above](#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)) |
 | `utils/callAudio.ts`, `utils/callPresence.ts`, `utils/callFailure.ts` | Sender audio parameters, presence, the typed initiate failure |
-| `utils/chat/callSystemMessages.ts` | Call started/ended/missed messages in the timeline |
+| `utils/chat/callSystemMessages.ts` | The ONE writer of a call's timeline record (started row, then final: duration or typed outcome) |
 
 ## API endpoints (chat-delivery-service)
 

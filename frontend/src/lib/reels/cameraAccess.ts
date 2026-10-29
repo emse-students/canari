@@ -15,6 +15,7 @@
  * NO SECOND PATH. A refused camera is a state the screen explains (`CameraScreen`), never a hand-off
  * to the system camera app - the capture screen is the app's own (R3).
  */
+import { facingConstraint, lensIsExact, type CameraFacing } from '$lib/utils/cameraFacing';
 import { REEL_AUDIO_CONSTRAINTS, cameraVideoConstraints } from './framedCapture';
 import { REEL_FRAME_RATIO, containFrame } from './reelFrame';
 
@@ -44,8 +45,7 @@ export class CameraAccessError extends Error {
   }
 }
 
-/** Which lens: the member's face, or the world. */
-export type CameraFacing = 'user' | 'environment';
+export type { CameraFacing };
 
 /**
  * Turns a `getUserMedia` rejection into a {@link CameraFault}.
@@ -88,8 +88,15 @@ export function classifyCameraError(err: unknown): CameraFault {
  *
  * @throws {CameraAccessError} for every refusal, with its {@link CameraFault}.
  */
-export async function openReelCamera(facing: CameraFacing, withAudio = true): Promise<MediaStream> {
-  console.debug(`[camera] opening ${facing}${withAudio ? '' : ' (no microphone)'}`);
+export async function openReelCamera(
+  facing: CameraFacing,
+  withAudio = true,
+  switching = false
+): Promise<MediaStream> {
+  const exact = lensIsExact(switching);
+  console.debug(
+    `[camera] opening ${facing} (${exact ? 'exact' : 'ideal'})${withAudio ? '' : ' (no microphone)'}`
+  );
   const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
   if (!devices?.getUserMedia) {
     // A fact before a request: an insecure origin or an engine with no capture at all.
@@ -108,10 +115,11 @@ export async function openReelCamera(facing: CameraFacing, withAudio = true): Pr
     const wanted = cameraVideoConstraints(shown, window.devicePixelRatio || 1);
     const stream = await devices.getUserMedia({
       video: {
-        // EXACT, never a bare value: a bare `facingMode` is only an IDEAL, which WKWebView answered with
-        // the BACK lens on an iPhone (alpha.4 reading, 2026-10-06). An unavailable lens is then an
+        // EXACT on a phone and on a switch (`lensIsExact`): an IDEAL was answered with the BACK lens by
+        // WKWebView on an iPhone (alpha.4 reading, 2026-10-06). An unavailable lens is then an
         // OverconstrainedError, classified below and logged - never a silent switch to the other one.
-        facingMode: { exact: facing },
+        // IDEAL on a desktop's first capture: a webcam has no facing, so an exact one never opens.
+        facingMode: facingConstraint(facing, exact),
         width: { ideal: wanted.width },
         height: { ideal: wanted.height },
         frameRate: { ideal: wanted.frameRate },
@@ -120,7 +128,7 @@ export async function openReelCamera(facing: CameraFacing, withAudio = true): Pr
     });
     const video = stream.getVideoTracks()[0];
     const reported = video?.getSettings?.().facingMode;
-    if (reported && reported !== facing) {
+    if (exact && reported && reported !== facing) {
       // The engine granted a lens other than the exact one asked for: a defect to read, not to absorb.
       console.error(`[camera] asked ${facing} exactly, the track reports ${reported}`);
     }
@@ -134,8 +142,10 @@ export async function openReelCamera(facing: CameraFacing, withAudio = true): Pr
 }
 
 /** The opener of a PHOTO-ONLY camera: the lens alone, no microphone request. */
-export const openPhotoCamera: (facing: CameraFacing) => Promise<MediaStream> = (facing) =>
-  openReelCamera(facing, false);
+export const openPhotoCamera: (
+  facing: CameraFacing,
+  switching?: boolean
+) => Promise<MediaStream> = (facing, switching) => openReelCamera(facing, false, switching);
 
 /**
  * The opener of the NEW-POST camera: the lens and the microphone as TWO INDEPENDENT requests.
@@ -158,10 +168,13 @@ export const openPhotoCamera: (facing: CameraFacing) => Promise<MediaStream> = (
  * The returned opener throws {@link CameraAccessError} when the LENS is refused - never for the
  * microphone.
  */
-export function postCameraOpener(): (facing: CameraFacing) => Promise<MediaStream> {
+export function postCameraOpener(): (
+  facing: CameraFacing,
+  switching?: boolean
+) => Promise<MediaStream> {
   let microphoneRefused: CameraFault | null = null;
-  return async (facing) => {
-    const lens = await openReelCamera(facing, false);
+  return async (facing, switching) => {
+    const lens = await openReelCamera(facing, false, switching);
     if (microphoneRefused) {
       console.debug(
         `[camera] post camera: microphone already refused (${microphoneRefused}) this session - not asked again`

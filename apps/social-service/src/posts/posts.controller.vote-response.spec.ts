@@ -125,7 +125,6 @@ describe('PostsController.votePoll', () => {
       interactions as never,
       {} as never,
       {} as never,
-      {} as never,
       { isUserMuted: jest.fn(() => Promise.resolve(false)) } as never
     );
     const vote = (viewer: string, admin = false) =>

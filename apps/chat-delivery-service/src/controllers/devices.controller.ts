@@ -937,8 +937,11 @@ export class DevicesController {
       'Cannot delete another user device'
     );
 
-    // 1. Purge the full per-device footprint (shared helper with the stale-device GC).
-    const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId);
+    // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
+    //    key groups the device held: its rows were the binding the revoked-leaves question reads.
+    const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId, {
+      recordKeyGroupsHeld: true,
+    });
 
     // 2. Denylist the device to prevent immediate re-registration (explicit deletion only;
     //    the GC does not denylist).
