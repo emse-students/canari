@@ -8,6 +8,7 @@ import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import type { BookerSpace, OrganiserBooking } from '$lib/bookings/api';
 import { m } from '$lib/paraglide/messages';
+import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
 
 const api = vi.hoisted(() => ({
   upcomingSpaceBookings: vi.fn(),
@@ -93,10 +94,14 @@ it('a cancel opens in its row: "Garder" closes it and cancels nothing', async ()
   await open();
   buttons(m.bookings_upcoming_cancel())[0].click();
   flushSync();
-  expect(document.body.textContent).toContain(m.bookings_cancel_confirm_organiser());
+  // The confirm's sentence is D13's while the notices are off, the "who is told" one once on.
+  const said = BOOKING_NOTIFICATIONS_LIVE
+    ? m.bookings_upcoming_cancel_notified({ name: 'Holder b' })
+    : m.bookings_cancel_confirm_organiser();
+  expect(document.body.textContent).toContain(said);
   buttons(m.bookings_cancel_keep())[0].click();
   flushSync();
-  expect(document.body.textContent).not.toContain(m.bookings_cancel_confirm_organiser());
+  expect(document.body.textContent).not.toContain(said);
   expect(api.cancelBooking).not.toHaveBeenCalled();
 });
 
