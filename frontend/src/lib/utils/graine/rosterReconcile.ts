@@ -3,7 +3,11 @@ import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/di
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import {
+  canonicalUserId,
+  isAddressableLeafIdentity,
+  userIdOfLeaf,
+} from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
@@ -244,14 +248,53 @@ async function reconcileOnce(
 
   const tree = leafIdentities as string[];
   const diff = diffRosterAgainstTree({ leafIdentities: tree, rosterUserIds, selfUserId: userId });
-  if (diff.strayUserIds.length === 0) {
+
+  // THE ROSTER NAMES PEOPLE; A REVOKED DEVICE OF ONE WHO STAYS IS INVISIBLE TO IT. Asked of the
+  // leaves the user diff keeps, this device's own excluded - see {@link revokedLeafCandidates}.
+  const { candidates, malformed } = revokedLeafCandidates(
+    tree,
+    new Set(diff.strayUserIds),
+    userId,
+    mlsService.getDeviceId()
+  );
+  if (malformedChanged(userId, groupId, malformed)) {
+    // Never sent: the server would only skip them. A leaf no registered device can carry is a
+    // crafted or corrupt credential - the count only, a leaf identity names a person. Said when that
+    // set changes, not on every pass over a tree that still holds it.
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: ${malformed.length} leaf/leaves outside the leaf-identity rule left out of the revocation question - no registered device carries such a credential`
+    );
+  }
+  let revokedLeaves: string[];
+  let reused = false;
+  try {
+    ({ revoked: revokedLeaves, reused } = await askRevokedLeaves(
+      mlsService,
+      userId,
+      groupId,
+      candidates
+    ));
+  } catch (e) {
+    // Not "none revoked": an unanswered question removes nobody by device this pass, and says so.
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: could not ask which of ${candidates.length} leaf/leaves belong to a revoked device (${String(e)}) - no device removed this pass`
+    );
+    revokedLeaves = [];
+  }
+
+  if (diff.strayUserIds.length === 0 && revokedLeaves.length === 0) {
     // A CONVERGED PASS SAYS SO. The branch above claims to distinguish "this device does not hold
     // the group" from "a pass ran and found nothing" - and it could not, because this one was
     // silent. A mechanism whose success is indistinguishable from its absence can only be verified
     // by reading the database, which is how this very fix had to be checked on prod.
     log(
-      `[GRAINE] ${scopeLabel(scope)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove`
+      `[GRAINE] ${scopeLabel(scope)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove${reused ? ' (the revocation answer of an unchanged tree reused)' : ''}`
     );
+    return { removedUserIds: [], heldUserIds: leafUsers(tree) };
+  }
+
+  if (diff.strayUserIds.length === 0) {
+    await removeRevokedLeaves(mlsService, groupId, scope, revokedLeaves, log);
     return { removedUserIds: [], heldUserIds: leafUsers(tree) };
   }
 
@@ -297,6 +340,11 @@ async function reconcileOnce(
   log(
     `[GRAINE] ${scopeLabel(scope)} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the next send mints a session they cannot open`
   );
+  // AFTER the departures, as the conversation sweep orders them: one commit each, the second built
+  // on the epoch the first landed, and decided again on the tree that epoch left. A revoked device
+  // is never a departed user's (`revokedLeafCandidates` excludes them), so the report below - who
+  // holds a leaf, by USER - is what the departure left, whatever this commit does.
+  await removeRevokedLeaves(mlsService, groupId, scope, revokedLeaves, log);
   const removed = new Set(diff.strayUserIds);
   return {
     removedUserIds: diff.strayUserIds,
@@ -361,6 +409,153 @@ async function reportRefusedRemoval(
       : `[GRAINE] could not remove ${strays.size} departed member(s) from ${label}: ${String(error)} - ${left} of them still hold a leaf and can still read it`
   );
   return held;
+}
+
+/**
+ * The last ANSWERED revoked-leaf question per account and key group: the leaves asked about, as one
+ * key, and the answer. Session memory only - it holds no decision, just spares the question.
+ */
+const revokedLeafAnswers = new Map<string, { asked: string; revoked: string[] }>();
+
+/**
+ * Which of `candidates` belong to a revoked device - asked of the server only when the leaves to ask
+ * about changed since the last ANSWERED pass on this group in this session; otherwise that answer
+ * is reused. A community open runs a roster pass per key group, and the leaves of an unchanged tree
+ * give the same answer until a revocation happens - the one thing the tree cannot show. So a device
+ * revoked while the tree stands still is seen at the next session's first pass, which is the
+ * convergent pass this always relied on; a failed removal is retried from the reused answer. Throws
+ * what the request threw: an unanswered question is never recorded as "none revoked".
+ */
+async function askRevokedLeaves(
+  mlsService: { getRevokedLeaves(groupId: string, identities: string[]): Promise<string[]> },
+  userId: string,
+  groupId: string,
+  candidates: string[]
+): Promise<{ revoked: string[]; reused: boolean }> {
+  if (candidates.length === 0) return { revoked: [], reused: false };
+  const key = `${canonicalUserId(userId)}|${groupId}`;
+  const asked = [...candidates].sort().join('\n');
+  const last = revokedLeafAnswers.get(key);
+  // Said in the pass's own outcome line, not a line of its own: one per key group per pass is noise.
+  if (last?.asked === asked) return { revoked: last.revoked, reused: true };
+  const revoked = await mlsService.getRevokedLeaves(groupId, candidates);
+  revokedLeafAnswers.set(key, { asked, revoked });
+  return { revoked, reused: false };
+}
+
+/**
+ * The malformed leaves last SAID per account and key group, as one key - so the line naming their
+ * count is said when that set changes, not on every roster pass over a tree that still holds them.
+ * Session memory only, like {@link revokedLeafAnswers}.
+ */
+const saidMalformed = new Map<string, string>();
+
+/** Whether `malformed` differs from what was last said for this group - and records it if so. */
+function malformedChanged(userId: string, groupId: string, malformed: string[]): boolean {
+  const key = `${canonicalUserId(userId)}|${groupId}`;
+  const said = [...malformed].sort().join('\n');
+  if ((saidMalformed.get(key) ?? '') === said) return false;
+  saidMalformed.set(key, said);
+  return malformed.length > 0;
+}
+
+/**
+ * Forgets every remembered revoked-leaf answer and malformed-leaf line: on sign-out (the next account
+ * asks for itself), and for a test, which shares the module.
+ */
+export function forgetRevokedLeafAnswers(): void {
+  revokedLeafAnswers.clear();
+  saidMalformed.clear();
+}
+
+/**
+ * The leaves whose revocation is worth asking about: those the user diff KEEPS (a stray's leaves go
+ * with its user), never this device's own - a revoked device is wiped by its own revocation path,
+ * and one that removed its own leaf would only strand the group it holds. PURE.
+ *
+ * The user half is compared without case, the device half exact - the canonical identity Rust binds.
+ *
+ * ONLY IDENTITIES THE SERVER WILL ANSWER ABOUT ({@link isAddressableLeafIdentity}, the rule both
+ * sides share through `libs/contracts/leaf-identity.cases.json`). A legacy BARE leaf names no
+ * device, so no revocation can name it, and is left out silently - it is a known shape
+ * (docs/wiki/legacy-compatibility.md). Any OTHER leaf outside the rule is a credential no
+ * registered device carries, and is left out and COUNTED in `malformed`, for the caller to say.
+ */
+export function revokedLeafCandidates(
+  leafIdentities: string[],
+  strayUserIds: Set<string>,
+  selfUserId: string,
+  selfDeviceId: string
+): { candidates: string[]; malformed: string[] } {
+  const self = canonicalUserId(selfUserId);
+  const malformed = new Set<string>();
+  const candidates = new Set<string>();
+  for (const identity of leafIdentities) {
+    if (!identity.includes(':')) continue;
+    if (!isAddressableLeafIdentity(identity)) {
+      malformed.add(identity);
+      continue;
+    }
+    const user = userIdOfLeaf(identity);
+    if (!user || strayUserIds.has(user)) continue;
+    if (user === self && identity.slice(identity.indexOf(':') + 1) === selfDeviceId) continue;
+    candidates.add(identity);
+  }
+  return { candidates: [...candidates], malformed: [...malformed] };
+}
+
+/**
+ * Commits ONE Remove for every revoked device's leaf still in the key group, by device - the key
+ * group's half of "a revoked device's leaf is removed" (mls-protocol), which until 2026-10-27 only
+ * conversations had. Decided again on a FRESH tree (the departures may just have moved it): only a
+ * leaf the server named AND the tree still holds is removed. Staged only on the published branch
+ * (`removeMemberDevice`): nobody asked for this commit either.
+ */
+async function removeRevokedLeaves(
+  mlsService: ReturnType<typeof requireGraineRuntime>['mlsService'],
+  groupId: string,
+  scope: DistributionScope,
+  revokedLeaves: string[],
+  log: (message: string) => void
+): Promise<void> {
+  if (revokedLeaves.length === 0) return;
+  const label = scopeLabel(scope);
+  let present: string[];
+  try {
+    const tree = new Set(await mlsService.getGroupMemberIdentities(groupId));
+    present = revokedLeaves.filter((identity) => tree.has(identity));
+  } catch (e) {
+    log(
+      `[GRAINE] ${label}: could not re-read the tree before removing ${revokedLeaves.length} revoked device(s) (${String(e)}) - nobody removed`
+    );
+    return;
+  }
+  if (present.length === 0) {
+    log(`[GRAINE] ${label}: no revoked leaf left on a fresh tree - nothing to commit`);
+    return;
+  }
+  log(`[GRAINE] ${label}: ${present.length} revoked device(s) still hold a leaf - removing`);
+  try {
+    await mlsService.removeMemberDevice(groupId, present);
+  } catch (e) {
+    if (e instanceof UnpublishedBranchError) {
+      log(
+        `[GRAINE] ${present.length} revoked device(s) NOT removed from ${label}: the published base cannot vouch for this device's state (${e.reason}) - nothing staged`
+      );
+      return;
+    }
+    // Loud: until this lands, whoever holds a revoked device can read every seed minted on this
+    // group. A lost epoch race is carried by the next pass.
+    log(
+      `[GRAINE] could not remove ${present.length} revoked device(s) from ${label}: ${String(e)} - they can still read it`
+    );
+    return;
+  }
+  const { userId, deviceKey } = requireGraineRuntime('persist a revoked-leaf removal');
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKey(), log);
+  log(
+    `[GRAINE] ${label} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the revoked devices' leaves are gone`
+  );
 }
 
 /**

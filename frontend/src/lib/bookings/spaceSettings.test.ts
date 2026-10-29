@@ -112,6 +112,8 @@ describe('the badge on the collapsed booking rules', () => {
     expect(
       activeRuleCount({ ...base, horizonDays: '30', participantWithdrawMinMinutes: '60' })
     ).toBe(2);
+    // The ceiling of people moved to "who" (WP-R6): it is not a collapsed rule any more.
+    expect(activeRuleCount({ ...base, maxPeople: '4' })).toBe(0);
   });
 });
 

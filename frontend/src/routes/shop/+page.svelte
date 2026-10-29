@@ -18,7 +18,15 @@
     type PartnershipCard,
   } from '$lib/associations/api';
   import { currentUserId } from '$lib/stores/user';
-  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
+  import {
+    gridPriceIsProvisional,
+    gridPriceLabel,
+    gridRefuses,
+    linkedTierName,
+    preferentialPriceLabel,
+    tierNotOffered,
+    tierNotOfferedText,
+  } from '$lib/pricing/viewerPrice';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
@@ -217,36 +225,6 @@
         ? m.shop_type_topup()
         : m.shop_type_other();
   }
-
-  /** Returns the reduced cotisant price label, or null when the product has no member pricing. */
-  function memberPriceLabel(p: AssociationProduct): string | null {
-    if (p.amountCentsMember == null) return null;
-    return `${(p.amountCentsMember / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
-  }
-
-  /** Sibling tier whose grantedTagName matches this product's memberPriceTag (tier-upgrade pricing), if any. */
-  function upgradeSibling(
-    p: AssociationProduct,
-    siblings: AssociationProduct[]
-  ): AssociationProduct | null {
-    if (!p.memberPriceTag) return null;
-    return siblings.find((s) => s.grantedTagName === p.memberPriceTag) ?? null;
-  }
-
-  /**
-   * Returns true when the viewer actually qualifies for `amountCentsMember`: either the
-   * asso-wide cotisant reduction (no memberPriceTag), or holding the specific sibling tier
-   * tag a tier-upgrade price is linked to. Mirrors the server-side check in resolvePurchase.
-   */
-  function qualifiesForMemberPrice(p: AssociationProduct, siblings: AssociationProduct[]): boolean {
-    // A grid replaces the member price rather than competing with it - the cotisation criterion is
-    // where a gridded product says what a cotisant pays.
-    if (p.viewerPrice?.kind === 'grid') return false;
-    if (p.amountCentsMember == null) return false;
-    if (!p.memberPriceTag) return p.viewerIsCotisant === true;
-    const sibling = upgradeSibling(p, siblings);
-    return sibling != null && p.viewerActiveTier === sibling.variantKey;
-  }
 </script>
 
 <PageContainer width="grid">
@@ -331,8 +309,9 @@
                 <!-- Products grid -->
                 <div class={CARD_GRID}>
                   {#each assocProducts as product (product.id)}
-                    {@const sibling = upgradeSibling(product, assocProducts)}
-                    {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
+                    {@const preferential = preferentialPriceLabel(product)}
+                    {@const linkedTier = linkedTierName(product, assocProducts)}
+                    {@const notOffered = tierNotOffered(product)}
                     <CardTile
                       iconUrl={product.iconUrl}
                       fallbackIcon={productFallbackIcon(product.type)}
@@ -368,17 +347,17 @@
                               </span>
                             {/if}
                           </div>
-                          {#if memberEligible && memberPriceLabel(product)}
+                          {#if preferential}
                             <span class="text-right text-sm font-bold">
                               <span class="text-text-muted font-normal line-through"
                                 >{priceLabel(product)}</span
                               >
                               <span class="text-emerald-600 dark:text-emerald-400"
-                                >{memberPriceLabel(product)}</span
+                                >{preferential}</span
                               >
                               <span class="text-text-muted block text-xs font-normal sm:inline"
-                                >{sibling
-                                  ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
+                                >{linkedTier
+                                  ? m.shop_tier_upgrade_price_suffix({ tier: linkedTier })
                                   : m.shop_member_price_suffix()}</span
                               >
                             </span>
@@ -427,13 +406,19 @@
                           </div>
                         {/if}
 
-                        <ProductPurchaseButton
-                          {product}
-                          customAmountEuros={customAmounts[product.id]}
-                          disabled={(product.membersOnly && !product.viewerIsCotisant) ||
-                            gridRefuses(product)}
-                          class="w-full"
-                        />
+                        {#if notOffered}
+                          <p class="text-text-muted text-xs" data-tier-not-offered={notOffered}>
+                            {tierNotOfferedText(notOffered)}
+                          </p>
+                        {:else}
+                          <ProductPurchaseButton
+                            {product}
+                            customAmountEuros={customAmounts[product.id]}
+                            disabled={(product.membersOnly && !product.viewerIsCotisant) ||
+                              gridRefuses(product)}
+                            class="w-full"
+                          />
+                        {/if}
                         {#if gridRefuses(product)}
                           <p class="text-xs text-amber-700 dark:text-amber-400">
                             {m.shop_price_unavailable_hint()}

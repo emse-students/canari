@@ -1,0 +1,33 @@
+-- Migration 112: product_checkouts."heldTierProductId", the tier the buyer held when the checkout
+-- OPENED (docs/wiki/cotisations.md, "Rising to a higher tier").
+--
+-- See apps/social-service/src/associations/entities/product-checkout.entity.ts.
+--
+-- A cotisation tier is sold only as a rise over the tier its buyer holds, and the opening decides it
+-- against the tier prices of that moment. The settlement used to decide it AGAIN, against the prices
+-- of the settlement moment, so a price an admin edited in between could turn a paid rise into a
+-- payment that grants nothing. The opening now freezes WHICH tier it ranked against - the product id
+-- of `pickHeldTier`'s choice - and the settlement grants when the buyer still holds that very tier
+-- (or holds none), never reading a price. Decided by the user on 2026-10-27.
+--
+-- WHY A PRODUCT ID, NOT THE TIER KEY: a tier retag renames the `variantKey` (and every holder's tag)
+-- between an opening and its settlement, while the product id stays; and an opened checkout over a
+-- held tier ALWAYS has that tier's product (a held tag with no product is `unranked`, refused at the
+-- opening). NULL means the buyer held no tier at the opening, a non-tier product, or a row opened
+-- before this migration: all three settle as "nothing was held", the cautious reading - a buyer who
+-- holds a tier at settlement is then marked `paid_not_granted`, reported, and closed by a person.
+--
+-- No foreign key: a product deleted while an attempt is open must not lose the attempt (101).
+--
+-- The `status` CHECK is NOT widened: no new checkout state is needed. A paid rise that is not
+-- granted is still a `paid` attempt; the purchase record carries `paid_not_granted`.
+--
+-- Schema only: one nullable column, which PostgreSQL adds without rewriting the table. Nothing is
+-- backfilled, nothing is dropped. Idempotent for CD: IF NOT EXISTS.
+--
+-- LOCK TIMEOUT: every checkout writes this table; if a long transaction holds it, this migration
+-- gives up after five seconds rather than queue every checkout behind its ACCESS EXCLUSIVE request.
+-- The deploy then fails loudly, and a re-run is safe (idempotent above).
+SET lock_timeout = '5s';
+
+ALTER TABLE product_checkouts ADD COLUMN IF NOT EXISTS "heldTierProductId" uuid NULL;

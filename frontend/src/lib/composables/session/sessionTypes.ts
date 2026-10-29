@@ -206,9 +206,10 @@ export interface SessionContext {
   resetMls(only?: IMlsService): void;
   /**
    * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
-   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.
+   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client. `why`
+   * names the end in the native log (a sign-out unless given).
    */
-  retireMls(finalWrite: Promise<void>): Promise<void>;
+  retireMls(finalWrite: Promise<void>, why?: 'sign-out' | 'lost session'): Promise<void>;
   /** Settles once every retired client's final checkpoint has landed; a login waits for it. */
   whenMlsRetired(): Promise<void>;
   /** True while a retired client's final checkpoint is still being written. */

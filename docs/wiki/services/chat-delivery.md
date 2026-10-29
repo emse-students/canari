@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -68,10 +68,11 @@ key set from both, the fallback armed from both, and the FCM visibility each owe
 
 ### What a group owns, and the one list that says so
 
-A group's rows live in **seven** tables, and `GROUP_OWNED_TABLES`
+A group's rows live in **eleven** tables, and `GROUP_OWNED_TABLES`
 ([`utils/group-purge.ts`](../../../apps/chat-delivery-service/src/utils/group-purge.ts)) is the only
-definition of that set: `queued_message`, `dm_group_members`, `dm_device_group_memberships`,
-`mls_commit_log`, `mls_group_info`, `group_invites` - plus `dm_user_dismissed_groups`, which
+definition of that set: `dm_group_members`, `queued_message`, `queued_payload`,
+`dm_device_group_memberships`, `mls_commit_log`, `mls_group_info`, `group_invites`,
+`dm_group_membership_intervals`, `dm_seat_evictions`, `dm_revoked_device_groups` - plus `dm_user_dismissed_groups`, which
 `deleteGroupOwnedRows` takes only on a HARD delete. Plus three Redis key shapes in
 `GROUP_REDIS_KEY_PREFIXES`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
 (`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an
@@ -692,11 +693,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
   settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
   the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
-  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
-  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
-  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
-  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
-  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+  the stage, and the state reset's sweep (`end_native_session`, through `remove_mls_state_held`)
+  holds that lock, so it removes both or neither. The entry names its commit's digest, so a settle
+  forgets its own stage and never a later one of the same group. The warm mark is STICKY for a
+  signed-in session (set by the foreground load, cleared only when the native session ends -
+  `end_native_session`, 2026-10-27), so a process Android keeps alive refuses every background
+  Welcome; its rate is owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -724,7 +726,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
   target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
   against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
-  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  the MLS state (`remove_mls_state_held`, under the teardown's hold) sweeps the memo and its `.tmp` with it - and deletes
   `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
   finish; the owner record
   (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
@@ -1314,6 +1316,7 @@ sweeps (`GET mls/invitations/pending`) names conversations only, never a key-dis
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which of up to 1000 sent leaf identities belong to a revoked device - key groups included; admitted members only, about users bound to the group, throttled per user; each identity is validated as `userId` + `deviceId`, never against the 128 bound as a whole (a real one is 147-149 characters); one outside the rule (`libs/contracts/leaf-identity.cases.json`) is skipped and counted, never a refusal of the batch ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 

@@ -28,6 +28,8 @@
   } from '$lib/utils/deviceKeyVault';
   import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
   import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
+  import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
+  import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -83,6 +85,7 @@
     commitReleasedDepartureIfElected,
     forgetDeferredRemovals,
   } from '$lib/utils/graine/departureCommitter';
+  import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type {
@@ -90,7 +93,7 @@
     WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import type { BulkIngestPhase } from '$lib/mls-client';
+  import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -98,6 +101,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
     shouldBlockSessionUnlock,
@@ -706,6 +710,26 @@
   }
 
   /**
+   * A lost MLS session (`reportMlsSessionLost`): the live session ends on this device and the account
+   * reopens at the PIN gate. NOT `handleSessionExpired`: nothing here is a 401/403, so nothing is
+   * revoked, erased or signed out - see `reopenAtPinGate`.
+   */
+  async function handleMlsSessionLost(why: MlsSessionLoss) {
+    await reopenAtPinGate({
+      why,
+      endLiveSession: () => globalSession.endLostSession(sessionCb()),
+      releaseLoginFlow: () => {
+        dismissAuthPrompts();
+        pinError = '';
+        _loginInProgress = false;
+        globalSession.isLoginInProgress = false;
+      },
+      openPinGate: () => openPinModal(globalSession.userId || currentUserId() || ''),
+      log: appendLog,
+    });
+  }
+
+  /**
    * The device half of every sign-out, run by `clearAuth` before it drops the credential.
    *
    * TWO THINGS OUTLIVED A SIGN-OUT, AND TOGETHER THEY LOCKED THE NEXT SIGN-IN OUT (Mi 9T,
@@ -729,6 +753,8 @@
     forgetPostComposerMedia();
     // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
     salonGrants.clear();
+    // ...and the revocation answers it was given, which the next account must ask for itself.
+    forgetRevokedLeafAnswers();
     // ...and the removals this device deferred to an actor, which a release is matched against.
     forgetDeferredRemovals();
     _loginInProgress = false;
@@ -1225,7 +1251,15 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        // A mark still owed for it could only meet the server's 404 CHANNEL_NOT_FOUND.
+        forgetSalonReadMark(globalSession.userId || currentUserId() || '', channelConversationId);
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            console.warn(
+              `[CHANNEL] deleted salon ${event.channelId.slice(0, 8)} left its local row: ${String(e)}`
+            )
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -1401,6 +1435,9 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
+    // A signed-in session whose MLS session is lost is NOT an expired one - that is a status, this a
+    // local fact (`mlsSessionLoss.ts`) - so it ends on this device only and reopens at the PIN gate.
+    setMlsSessionLostHandler((why) => void handleMlsSessionLost(why));
     // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
     setSignOutHandler(handleSignedOut);
 
@@ -1408,6 +1445,7 @@
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setMlsSessionLostHandler(null);
       setSignOutHandler(null);
       setGraineRepairListener(null);
     };
@@ -1793,7 +1831,17 @@
             steps.push(`${name} ${Math.round(now - stepStart)}`);
             stepStart = now;
           };
-          await globalSession.ensureMls().reloadStateFromDisk();
+          try {
+            await globalSession.ensureMls().reloadStateFromDisk();
+          } catch (e) {
+            if (!(e instanceof MlsSessionVacantError)) throw e;
+            // The loss was reported and the session is reopening at the PIN gate: no later step of
+            // this resume may run on it.
+            appendLog(
+              '[RESUME] Stopped - no native MLS session under this session; it reopens at the PIN gate.'
+            );
+            return;
+          }
           stepDone('reload');
           // The push-join ledger is the warm process's too (channel-encryption section 26): taken
           // right after the reload, so a group joined while away is registered before the drain.

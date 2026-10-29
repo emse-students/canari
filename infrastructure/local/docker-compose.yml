@@ -302,7 +302,7 @@ services:
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
@@ -386,7 +386,7 @@ services:
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
       LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       # The last of the 17 keys the drift audit found (2026-09-02). Le Cercle is a separate

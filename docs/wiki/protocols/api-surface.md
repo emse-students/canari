@@ -96,7 +96,8 @@ deployment change and is deliberately not bundled with a correctness fix.**
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence of the asked users the caller shares a conversation or a community with ([audience](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)) |
+| POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000 per request) the caller shares a conversation or a community with ([audience](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
+| GET | `/api/presence?users=` | yes | LEGACY, same answer, for clients installed before the POST ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
 | GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
 | GET | `/api/health` | no | Liveness probe |
 
@@ -144,6 +145,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member (current members only) |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which sent leaf identities belong to a revoked device (key groups included) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 

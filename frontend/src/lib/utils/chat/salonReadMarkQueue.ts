@@ -34,7 +34,23 @@ export interface OwedSalonMark {
 
 type Owed = Record<string, OwedSalonMark>;
 
-/** What the flush calls to deliver one mark; throws on a refusal. */
+/**
+ * THE SERVER ANSWERED THAT THE MARK'S TARGET NO LONGER EXISTS (a salon deleted while a mark was
+ * owed: `404 CHANNEL_NOT_FOUND`). Thrown by the deliverer, classified there from the status and the
+ * server's code, never from a message. It is an ANSWER, not a failure: the same mark would meet the
+ * same answer at every load, so the flush drops it instead of keeping it owed.
+ */
+export class ReadMarkTargetGoneError extends Error {
+  constructor(readonly targetId: string) {
+    super(`read mark target ${targetId} no longer exists`);
+    this.name = 'ReadMarkTargetGoneError';
+  }
+}
+
+/**
+ * What the flush calls to deliver one mark; throws on a refusal, and {@link ReadMarkTargetGoneError}
+ * when the server answered that the target is gone.
+ */
 export type SendSalonMark = (channelId: string, at: number, serverAt?: number) => Promise<unknown>;
 
 /** Which ledger a mark is owed in: a salon's goes to the server, a DM's or group's to the outbox. */
@@ -160,10 +176,24 @@ export function owedSalonReadMarks(userId: string): Owed {
  * group is gone, so a frame queued for it could only loop in the flusher.
  */
 export function forgetDmReadMark(userId: string, conversationId: string): void {
-  const owed = load('dm', userId);
-  if (!(conversationId in owed)) return;
-  delete owed[conversationId];
-  store('dm', userId, owed);
+  forget('dm', userId, conversationId);
+}
+
+/**
+ * Drops the owed mark of a salon this device was told is deleted (`channel.deleted`): posting it
+ * could only meet the server's 404. The flush drops it on that 404 too, for a deletion this device
+ * was offline for - this is the same answer, known earlier.
+ */
+export function forgetSalonReadMark(userId: string, channelConversationId: string): void {
+  forget('salon', userId, channelConversationId);
+}
+
+function forget(space: MarkSpace, userId: string, id: string): void {
+  if (!userId) return;
+  const owed = load(space, userId);
+  if (!(id in owed)) return;
+  delete owed[id];
+  store(space, userId, owed);
 }
 
 /** The DM and group marks still owed to the outbox, for tests and diagnostics. */
@@ -173,7 +203,9 @@ export function owedDmReadMarks(userId: string): Owed {
 
 /**
  * Delivers every owed mark. A mark is removed only when the server answered AND nothing higher was
- * recorded while the call was in flight; a refusal keeps it and is reported once per salon.
+ * recorded while the call was in flight, or when the server answered that the salon no longer exists
+ * ({@link ReadMarkTargetGoneError}); any other refusal or transport failure keeps it, reported once
+ * per salon.
  *
  * @returns how many marks the server took.
  */
@@ -210,6 +242,16 @@ async function flush(
       delivered++;
       if (space === 'salon') salonMarksDelivered++;
     } catch (e) {
+      if (e instanceof ReadMarkTargetGoneError) {
+        // AN ANSWER, NOT A FAILURE: dropped, and said once - the mark is gone from storage, so no
+        // later flush meets it again. Until 2026-10-29 it was kept and posted at every load, a 404
+        // per load for a salon deleted while the mark was owed.
+        forget(space, userId, id);
+        console.info(
+          `[READ] ${space} mark ${mark.at} for ${id} dropped - the server answered that it no longer exists`
+        );
+        continue;
+      }
       console.warn(
         `[READ] ${space} mark ${mark.at} for ${id} not delivered - kept, and asked again at` +
           ` ${nextChance} (its senders still see it unread until then): ${String(e)}`

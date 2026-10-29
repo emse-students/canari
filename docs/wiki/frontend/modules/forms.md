@@ -461,7 +461,7 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 - **A throttle of 30 answers per minute per visitor** (`ClientIpThrottlerGuard`). Building it found
   that no per-IP throttle here had ever been one: the container nginx overwrote `X-Real-IP` with the
-  Docker gateway, so prod logged `172.25.0.1` for every visitor and the existing "20/min per IP" on
+  Docker gateway, so prod logged the bridge gateway's address for every visitor and the existing "20/min per IP" on
   `/api/public/` was 20/min for everybody. The container now takes the client from the host proxy
   (`set_real_ip_from` the private ranges, `real_ip_header X-Real-IP`) and the guard keys on that
   header. A room of guests behind ONE NAT (a school network at an event) shares an address, which is
@@ -553,7 +553,7 @@ sent the answer.
     the `$logged_request_uri` map in `Dockerfile.frontend`, asserted by
     `access-log-redaction.test.mjs` and run against a real nginx);
   - every `/f/` page is answered with the HEADER `Referrer-Policy: no-referrer` (the
-    `$public_form_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
+    `$capability_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
     `static-headers.test.mjs` and run against a real nginx), so the page's own requests - its
     chunks, the confirm call, the retry link - do not carry the URL into that log's referer field.
     It has to be a header: the page boots on the client, so its first chunk requests leave before

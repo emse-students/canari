@@ -57,7 +57,7 @@ export function estateOriginsAmong(contacted) {
  * WHY. The iPhone has no `adb reverse`, so its bench build (`ios.yml` `local_url`) reaches the
  * workstation's nginx by the LAN address, `http://<LAN ip>:8081` - the SAME estate as
  * `http://localhost:8081`. Measured 2026-10-01: `pin.mjs` refused I1 with "THIS CLIENT IS NOT ON THE
- * LOCAL ESTATE: it called http://192.168.1.32:8081". An address is an alias only when the machine
+ * LOCAL ESTATE: it called http://<LAN ip>:8081". An address is an alias only when the machine
  * HOLDS it, read from its interfaces - never a range, so a phone built against another workstation
  * is still a stranger. A non-local `site` has no aliases.
  *

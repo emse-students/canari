@@ -94,11 +94,11 @@ function stringDrop(data: Record<string, string>): DataTransfer {
 describe('localFileAddressesFromTransfer', () => {
   it('recognises what Nemo hands Firefox: a file URI and a path, no file', () => {
     const dt = stringDrop({
-      'text/uri-list': 'file:///home/leon/Documents/affiche.pdf\r\n',
-      'text/plain': '/home/leon/Documents/affiche.pdf',
+      'text/uri-list': 'file:///home/user/Documents/affiche.pdf\r\n',
+      'text/plain': '/home/user/Documents/affiche.pdf',
     });
     expect(filesFromTransfer(dt)).toEqual([]);
-    expect(localFileAddressesFromTransfer(dt)).toEqual(['file:///home/leon/Documents/affiche.pdf']);
+    expect(localFileAddressesFromTransfer(dt)).toEqual(['file:///home/user/Documents/affiche.pdf']);
   });
 
   it('recognises an absolute path alone, one per dragged file', () => {
