@@ -294,8 +294,13 @@ reminder cron claims nothing, and the screens keep D13's sentences, which are th
   alone); a HOLDER's cancellation the participants (Q-R2), with no word; a WITHDRAWAL the holder
   (Q-R2); a BOOKING its participants and the holder of a booking made on their behalf (D20); a
   SPACE DELETED the people of its coming live bookings, read under the space's lock before the
-  delete (Q-R4). The one who acted is never told, the organiser never (Q-R7). An organiser acting
-  on an association space is named as the ASSOCIATION, with its logo.
+  delete (Q-R4), after the delete's response. The one who acted is never told, the organiser
+  never (Q-R7). An organiser acting on an association space is named as the ASSOCIATION, with its
+  logo; **on a space reached by its link only, an organiser is named as NOBODY** - the platform's
+  name, no face, no logo (review of #2692: the association's name, or the owner's, says what the
+  space is, Q-R5). **The organiser's word on a link-only space goes to the bell row ONLY, never to
+  the push** (decided by Master, 2026-10-29: a word on a lock screen can name what the space
+  hides); the row is written without its push and the neutral push sent on its own.
 - **What it says**: four types, `booking_cancelled`, `booking_withdrawn`, `booking_added`,
   `booking_reminder`, a bell row and a push each through `PostNotificationsService` (contentKeys
   `social_booking_*`, category `bookings`, Q-R15). `text` is the place (`bookingPlace`) - or the

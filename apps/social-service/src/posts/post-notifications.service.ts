@@ -65,9 +65,18 @@ export const ANONYMOUS_NOTIFICATION_ACTOR_NAME = 'Anonyme';
  */
 export const SYSTEM_ACTOR_NAME = 'Canari';
 
-/** `content` with `icon`, when there is one: the bookings' builders take no picture of their own. */
+/** The `actorId` of a notice no person acted on - the platform, which has no face to show. */
+export const SYSTEM_ACTOR_ID = 'system';
+
+/**
+ * `content` with `icon`, when there is one: the bookings' builders take no picture of their own.
+ * The platform's "face" is no picture at all: a notice that names nobody (a link-only space's
+ * organiser, Q-R5) must not show the face of whoever acted either.
+ */
 const withIcon = (content: PushContent, icon?: PushIcon): PushContent =>
-  icon ? { ...content, icon } : content;
+  icon && !(icon.kind === 'user' && icon.userId === SYSTEM_ACTOR_ID)
+    ? { ...content, icon }
+    : content;
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()

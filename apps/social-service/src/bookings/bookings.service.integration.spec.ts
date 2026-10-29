@@ -105,9 +105,26 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   let organiser: BookingSpacesService;
   let notices: BookingNotificationsService;
   let reminders: BookingReminderScheduler;
-  /** Every notice handed to the notification pipeline (WP-N), one entry per recipient. */
-  const told: { to: string; type: string; text: string; actorName?: string; bookingId: string }[] =
-    [];
+  /** Every bell row handed to the notification pipeline (WP-N), one entry per recipient. */
+  const told: {
+    to: string;
+    type: string;
+    text: string;
+    actorName?: string;
+    actorId: string;
+    associationId?: string;
+    bookingId: string;
+  }[] = [];
+  /** Every PUSH the pipeline would send - what a lock screen shows - one entry per recipient. */
+  const pushed: {
+    to: string;
+    type: string;
+    text: string;
+    actorName?: string;
+    actorId: string;
+    associationId?: string;
+    associationLogoMediaId?: string | null;
+  }[] = [];
   /** `account:association` pairs holding MANAGE_BOOKINGS. */
   const grants = new Set<string>();
   /** The audience facts of an account, as `PricingFactsService` would build them. */
@@ -206,15 +223,32 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     };
     // The notification pipeline is `PostNotificationsService`'s, with its own specs: what is under
     // test here is WHO each booking change reaches, and with which line.
+    type Notice = {
+      recipientIds: string[];
+      actorId: string;
+      type: string;
+      text: string;
+      actorName?: string;
+      associationId?: string;
+      associationLogoMediaId?: string | null;
+      postId: string;
+      skipPush?: boolean;
+    };
+    const push = (d: Omit<Notice, 'postId' | 'recipientIds'>, to: string[]) => {
+      for (const id of to) {
+        pushed.push({
+          to: id,
+          type: d.type,
+          text: d.text,
+          actorName: d.actorName,
+          actorId: d.actorId,
+          associationId: d.associationId,
+          associationLogoMediaId: d.associationLogoMediaId,
+        });
+      }
+    };
     const pipeline = {
-      createNotifications: async (d: {
-        recipientIds: string[];
-        actorId: string;
-        type: string;
-        text: string;
-        actorName?: string;
-        postId: string;
-      }) => {
+      createNotifications: async (d: Notice) => {
         const to = [...new Set(d.recipientIds)].filter((id) => id !== d.actorId);
         for (const id of to) {
           told.push({
@@ -222,25 +256,30 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
             type: d.type,
             text: d.text,
             actorName: d.actorName,
+            actorId: d.actorId,
+            associationId: d.associationId,
             bookingId: d.postId,
           });
         }
+        if (!d.skipPush) push(d, to);
         return to.length;
       },
-      createNotification: async (d: {
-        recipientId: string;
-        type: string;
-        text: string;
-        actorName?: string;
-        postId: string;
-      }) => {
+      pushNotice: async (d: Omit<Notice, 'postId'>) => {
+        const to = [...new Set(d.recipientIds)].filter((id) => id !== d.actorId);
+        push(d, to);
+        return to.length;
+      },
+      resolveActorName: async (id: string) => `name-of-${id.slice(0, 4)}`,
+      createNotification: async (d: Omit<Notice, 'recipientIds'> & { recipientId: string }) => {
         told.push({
           to: d.recipientId,
           type: d.type,
           text: d.text,
           actorName: d.actorName,
+          actorId: d.actorId,
           bookingId: d.postId,
         });
+        push(d, [d.recipientId]);
       },
     } as unknown as PostNotificationsService;
     notices = new BookingNotificationsService(
@@ -1768,6 +1807,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         `UPDATE booking_participants SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`
       );
       told.length = 0;
+      pushed.length = 0;
       notices.enabled = true;
     });
     afterEach(() => {
@@ -1846,16 +1886,51 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
 
     it('a space reached by its link only is never named on a lock screen (Q-R5)', async () => {
       const { space, resourceIds } = await setup({ discoverability: 'link' });
+      await q(
+        `UPDATE associations SET name = 'Cabinet', "logoMediaId" = gen_random_uuid() WHERE id = $1`,
+        [space.associationId]
+      );
       const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
         participantIds: [BOB],
       });
-      expect(told.map((t) => t.text)).toEqual(['']);
+      expect(pushed.map((t) => t.text)).toEqual(['']);
       await reminders.remindOnce(new Date(on('09:00')));
-      expect(told.filter((t) => t.type === 'booking_reminder').map((t) => t.text)).toEqual([
+      expect(pushed.filter((t) => t.type === 'booking_reminder').map((t) => t.text)).toEqual([
         '10:00',
         '10:00',
       ]);
-      expect(id).toBeTruthy();
+
+      // The ORGANISER acts: the push names nobody - no association, no logo, no person - and the
+      // organiser's word reaches the bell row only, never the lock screen (Q-R3 on Q-R5).
+      told.length = 0;
+      pushed.length = 0;
+      await service.cancel(id, as(ORGA), NOW, 'Le cabinet est ferme');
+      expect(
+        pushed
+          .map((t) => [
+            t.to,
+            t.text,
+            t.actorName,
+            t.actorId,
+            t.associationId,
+            t.associationLogoMediaId,
+          ])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      ).toEqual([ALICE, BOB].map((to) => [to, '', 'Canari', 'system', undefined, undefined]));
+      expect(
+        told
+          .map((t) => [t.to, t.text, t.actorName, t.actorId, t.associationId])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      ).toEqual(
+        [ALICE, BOB].map((to) => [to, 'Le cabinet est ferme', 'Canari', 'system', undefined])
+      );
+
+      // An organiser booking for someone on that space names nobody either.
+      pushed.length = 0;
+      await book(space.id, resourceIds[0], '12:00', '12:30', ORGA, { holderId: CAROL });
+      expect(pushed.map((t) => [t.to, t.actorName, t.actorId, t.associationId])).toEqual([
+        [CAROL, 'Canari', 'system', undefined],
+      ]);
     });
 
     it('deleting a space tells the people of its COMING bookings (Q-R4)', async () => {
@@ -1864,7 +1939,11 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const gone = await book(space.id, resourceIds[0], '11:00', '11:30', CAROL);
       await service.cancel(gone.id, as(CAROL), NOW);
       told.length = 0;
+      // The notices go AFTER the response (the delete does not wait on them): await them here.
+      const sent = jest.spyOn(notices, 'spaceDeleted');
       await organiser.remove(space.id, as(ORGA), NOW);
+      await sent.mock.results[0].value;
+      sent.mockRestore();
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
     });
 
@@ -1911,6 +1990,14 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         participantIds: [BOB],
       });
       expect(await refusal(service.setReminder(id, 30, as(STRANGER), NOW))).toEqual({
+        code: 'not-yours',
+      });
+      // A participant who LEFT is no longer one of its people.
+      const left = await book(space.id, resourceIds[0], '15:00', '15:30', ALICE, {
+        participantIds: [RACERS[1]],
+      });
+      await service.withdraw(left.id, as(RACERS[1]), NOW);
+      expect(await refusal(service.setReminder(left.id, 30, as(RACERS[1]), NOW))).toEqual({
         code: 'not-yours',
       });
       await service.setReminder(id, 30, as(ALICE), NOW);

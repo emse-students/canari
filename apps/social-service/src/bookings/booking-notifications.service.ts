@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
-import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
+import {
+  PostNotificationsService,
+  SYSTEM_ACTOR_ID,
+  SYSTEM_ACTOR_NAME,
+} from '../posts/post-notifications.service';
 import { BOOKINGS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import { bookingPlace } from './booking-calendar';
@@ -61,10 +65,15 @@ export function reminderLine(facts: PlaceFacts, startsAt: Date, timeZone: string
 /** Who a notice names as having acted, and the picture it carries. */
 interface Presented {
   actorName?: string;
+  /** The row's actor when it is not the one who acted: the platform, for a neutral notice. */
+  rowActorId?: string;
   associationId?: string;
   associationLogoUrl?: string | null;
   associationLogoMediaId?: string | null;
 }
+
+/** The space facts that decide how a notice presents its actor. */
+type PresentingSpace = Pick<BookingSpace, 'associationId' | 'discoverability'>;
 
 /** One booking a deleted space took with it, as read BEFORE the deletion (Q-R4). */
 export interface DeletedBookingNotice {
@@ -88,7 +97,8 @@ export interface DeletedBookingNotice {
  * Who is told, and who is not:
  * - a CANCELLATION (by the organiser, D53; by the holder, Q-R2): the holder and every participant
  *   still in, the one who cancelled excepted. The organiser's optional word (Q-R3) is the line the
- *   notice quotes, and is stored nowhere else.
+ *   notice quotes, and is stored nowhere else - on a LINK-ONLY space, in the bell row only, never
+ *   on the lock screen (decided 2026-10-29: a word can name what the space hides).
  * - a WITHDRAWAL (Q-R2): the holder.
  * - a BOOKING: every participant added, and the holder of a booking made on their behalf (D20).
  * - a SPACE DELETED (Q-R4): the people of its COMING live bookings, as a cancellation.
@@ -115,20 +125,26 @@ export class BookingNotificationsService {
 
   /** A booking was cancelled by `actorId` (its holder or its organiser); `message` is Q-R3's word. */
   async cancelled(bookingId: string, actorId: string, message?: string): Promise<void> {
-    await this.guard('cancelled', bookingId, async () => {
+    await this.guard('cancelled', bookingId.slice(0, 8), async () => {
       const ctx = await this.context(bookingId);
       if (!ctx) return;
       const people = [ctx.booking.holderId, ...ctx.people];
       const word = message?.trim() ?? '';
-      await this.send('booking_cancelled', ctx.booking.id, people, actorId, word || ctx.place, {
-        ...(await this.present(ctx.space, actorId, people)),
-      });
+      const linkOnly = ctx.space.discoverability === 'link';
+      await this.send(
+        'booking_cancelled',
+        ctx.booking.id,
+        people,
+        actorId,
+        { row: word || ctx.place, push: linkOnly ? '' : word || ctx.place },
+        await this.present(ctx.space, actorId, people)
+      );
     });
   }
 
   /** A participant left a booking (Q-R2): its holder is told. */
   async withdrawn(bookingId: string, participantId: string): Promise<void> {
-    await this.guard('withdrawn', bookingId, async () => {
+    await this.guard('withdrawn', bookingId.slice(0, 8), async () => {
       const ctx = await this.context(bookingId);
       if (!ctx) return;
       await this.send(
@@ -136,7 +152,7 @@ export class BookingNotificationsService {
         ctx.booking.id,
         [ctx.booking.holderId],
         participantId,
-        ctx.place,
+        { row: ctx.place, push: ctx.place },
         {}
       );
     });
@@ -144,27 +160,35 @@ export class BookingNotificationsService {
 
   /** A booking was made by `actorId`: its participants, and its holder when made on their behalf. */
   async added(bookingId: string, actorId: string): Promise<void> {
-    await this.guard('added', bookingId, async () => {
+    await this.guard('added', bookingId.slice(0, 8), async () => {
       const ctx = await this.context(bookingId);
       if (!ctx) return;
       const people = [ctx.booking.holderId, ...ctx.people];
-      await this.send('booking_added', ctx.booking.id, people, actorId, ctx.place, {
-        ...(await this.present(ctx.space, actorId, people)),
-      });
+      await this.send(
+        'booking_added',
+        ctx.booking.id,
+        people,
+        actorId,
+        { row: ctx.place, push: ctx.place },
+        await this.present(ctx.space, actorId, people)
+      );
     });
   }
 
   /**
    * A space was DELETED with coming bookings in it (Q-R4): their people are told, as of a
    * cancellation by the organiser. `notices` were read under the space's lock, before the delete,
-   * since nothing of them is left after it.
+   * since nothing of them is left after it. The deleter is the organiser of every one of them, so
+   * who the notice names is decided ONCE (`present` with nobody among the people).
    */
   async spaceDeleted(
     space: Pick<BookingSpace, 'name' | 'discoverability' | 'associationId'>,
     notices: DeletedBookingNotice[],
     actorId: string
   ): Promise<void> {
-    await this.guard('spaceDeleted', `${notices.length} booking(s)`, async () => {
+    await this.guard('spaceDeleted', `space-deleted(${notices.length})`, async () => {
+      if (notices.length === 0) return;
+      const presented = await this.present(space, actorId, []);
       for (const notice of notices) {
         // Per booking, each in its own `try`: one that fails does not silence the others.
         try {
@@ -173,9 +197,14 @@ export class BookingNotificationsService {
             discoverability: space.discoverability,
             resourceName: notice.resourceName,
           });
-          await this.send('booking_cancelled', notice.bookingId, notice.people, actorId, place, {
-            ...(await this.present(space, actorId, notice.people)),
-          });
+          await this.send(
+            'booking_cancelled',
+            notice.bookingId,
+            notice.people,
+            actorId,
+            { row: place, push: place },
+            notice.people.includes(actorId) ? {} : presented
+          );
         } catch (e) {
           this.logger.error(
             `[BOOKINGS_NOTIFY] space deleted: booking=${notice.bookingId.slice(0, 8)} not told: ${String(e)}`
@@ -191,7 +220,7 @@ export class BookingNotificationsService {
       recipientId,
       type: 'booking_reminder',
       postId: bookingId,
-      actorId: 'system',
+      actorId: SYSTEM_ACTOR_ID,
       actorName: SYSTEM_ACTOR_NAME,
       text: line,
       pushData: { target: BOOKINGS_TARGET },
@@ -211,7 +240,7 @@ export class BookingNotificationsService {
       await act();
     } catch (e) {
       this.logger.error(
-        `[BOOKINGS_NOTIFY] ${what} not told for ${subject.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+        `[BOOKINGS_NOTIFY] ${what} not told for ${subject}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
@@ -238,16 +267,23 @@ export class BookingNotificationsService {
 
   /**
    * Who the notice names: the actor themselves when they are one of the booking's people (a holder
-   * who cancels, a member who adds a friend); otherwise the actor acted as the ORGANISER, and an
-   * association space names its association (its logo on the push) - a personal space names its
-   * owner, who is that actor.
+   * who cancels, a member who adds a friend - someone the recipient booked with). Otherwise the
+   * actor acted as the ORGANISER:
+   * - on a space reached by its LINK ONLY, NOBODY (Q-R5): the platform's name, no face, no logo -
+   *   an association's name or the owner's (the psychologist's) would say what the space is;
+   * - on an association space, the association, its logo on the push;
+   * - on a personal space, its owner, who is that actor.
    */
   private async present(
-    space: Pick<BookingSpace, 'associationId'>,
+    space: PresentingSpace,
     actorId: string,
     people: string[]
   ): Promise<Presented> {
-    if (people.includes(actorId) || !space.associationId) return {};
+    if (people.includes(actorId)) return {};
+    if (space.discoverability === 'link') {
+      return { actorName: SYSTEM_ACTOR_NAME, rowActorId: SYSTEM_ACTOR_ID };
+    }
+    if (!space.associationId) return {};
     const [row]: { name: string; logoUrl: string | null; logoMediaId: string | null }[] =
       await this.spaces.manager.query(
         `SELECT name, "logoUrl", "logoMediaId" FROM associations WHERE id = $1`,
@@ -262,13 +298,18 @@ export class BookingNotificationsService {
     };
   }
 
-  /** One bell row and one push per recipient, the actor and a tombstoned account excepted. */
+  /**
+   * One bell row and one push per recipient, the one who acted and a tombstoned account excepted.
+   * `text.row` is what the bell keeps, `text.push` what a lock screen shows: they differ only for an
+   * organiser's word on a link-only space (Q-R3 with Q-R5), and then the row is written without its
+   * push and the push sent on its own, through the same pipeline.
+   */
   private async send(
     type: BookingNoticeType,
     bookingId: string,
     recipients: string[],
     actorId: string,
-    line: string,
+    text: { row: string; push: string },
     presented: Presented
   ): Promise<void> {
     const to = [...new Set(recipients)].filter((id) => id !== actorId && id !== DELETED_ACCOUNT);
@@ -278,17 +319,39 @@ export class BookingNotificationsService {
       );
       return;
     }
-    const written = await this.notifications.createNotifications({
-      recipientIds: to,
+    const { rowActorId, ...shown } = presented;
+    const common = {
       type,
-      postId: bookingId,
-      actorId,
-      text: line,
-      ...presented,
+      actorId: rowActorId ?? actorId,
+      ...shown,
       pushData: { target: BOOKINGS_TARGET },
-    });
+    };
+    let written: number;
+    if (text.row === text.push) {
+      written = await this.notifications.createNotifications({
+        ...common,
+        recipientIds: to,
+        postId: bookingId,
+        text: text.row,
+      });
+    } else {
+      written = await this.notifications.createNotifications({
+        ...common,
+        recipientIds: to,
+        postId: bookingId,
+        text: text.row,
+        skipPush: true,
+      });
+      await this.notifications.pushNotice({
+        ...common,
+        recipientIds: to,
+        actorName: shown.actorName ?? (await this.notifications.resolveActorName(actorId)),
+        text: text.push,
+      });
+    }
     this.logger.log(
-      `[BOOKINGS_NOTIFY] ${type} booking=${bookingId.slice(0, 8)} told=${written} placeNamed=${line !== ''}`
+      `[BOOKINGS_NOTIFY] ${type} booking=${bookingId.slice(0, 8)} told=${written} ` +
+        `placeNamed=${text.push !== ''} wordInBellOnly=${text.row !== text.push}`
     );
   }
 }

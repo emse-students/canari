@@ -493,7 +493,9 @@ export class BookingSpacesService {
     this.logger.log(
       `[BOOKINGS] space deleted id=${spaceId.slice(0, 8)} comingBookingsOfOthersErased=${erased}`
     );
-    await this.notices.spaceDeleted(space, notices, actor.userId);
+    // After the response, not inside it: one notice per coming booking is no reason for the
+    // organiser's delete to wait. `spaceDeleted` is guarded and never rejects.
+    void this.notices.spaceDeleted(space, notices, actor.userId);
     // Its files (D7) are now orphans (`booking_files."bookingId"` set NULL): the retention purge
     // takes them at its next run.
     if (poster) await this.posterMedia.releaseUncited([poster], 'its space was deleted');
