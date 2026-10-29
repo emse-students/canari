@@ -1680,6 +1680,12 @@ export interface CotisationOptions {
    * add needs, because a form that grants a cotisation on payment does the same thing.
    */
   mayGrant: boolean;
+  /**
+   * CAPABILITY: this social-service derives a new tier's key from its label (`deriveVariantKey`).
+   * Absent on an older server, which would strip the flag and create a BASE tier instead - so the
+   * admin screen offers tier creation only when this is `true` (`mayCreateTier`).
+   */
+  tierKeyFromLabel?: boolean;
 }
 
 /**
@@ -1947,6 +1953,11 @@ export interface CreateProductPayload {
   amountCentsMember?: number;
   /** Named cotisation tier (e.g. "avec-alcool"); only meaningful for `type: 'membership'`. */
   variantKey?: string;
+  /**
+   * Membership only: let the server derive a new named tier's `variantKey` from `name`. The admin
+   * screen sends this and never a key - the key is a technical id no person types (cotisations.md).
+   */
+  deriveVariantKey?: boolean;
   /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8, unused today). */
   variantLevel?: number;
   /** Sibling tier's granted tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
