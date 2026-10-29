@@ -4,7 +4,8 @@
  * days of the week shown - so the numbers and the grid can never disagree.
  */
 import type { ResourceSlots } from './api';
-import { intlLocale, unitDay } from './grid';
+import { formatDay, intlLocale, unitDay } from './grid';
+import { m } from '$lib/paraglide/messages';
 
 /** What the counters line says about one week of a space, every column together. */
 export interface WeekCounters {
@@ -55,4 +56,54 @@ export function weekCounters(
 /** Minutes as hours for the counters line, in the reader's language: "21", "1,5" / "1.5". */
 export function hoursOf(minutes: number): string {
   return new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: 1 }).format(minutes / 60);
+}
+
+/** The local date after `date` (YYYY-MM-DD), calendar arithmetic only. */
+function nextDate(date: string): string {
+  const [y, mo, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, mo - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+/** One day of the "coming" list: its heading and its bookings, in the order they were given. */
+export interface UpcomingDay<T> {
+  date: string;
+  label: string;
+  items: T[];
+}
+
+/**
+ * The "coming" list grouped by the day each booking STARTS on in the space's zone (D50's mockup:
+ * "Aujourd'hui", "Demain", then the date), in the order the server gave them (by start). Today and
+ * tomorrow are the space's, read at the device's `nowMs` - a heading, never a rule.
+ */
+export function upcomingDays<T extends { startsAt: string }>(
+  items: readonly T[],
+  timeZone: string,
+  nowMs: number
+): UpcomingDay<T>[] {
+  const today = unitDay({ startMs: nowMs }, timeZone);
+  const tomorrow = nextDate(today);
+  const days: UpcomingDay<T>[] = [];
+  for (const item of items) {
+    const date = unitDay({ startMs: Date.parse(item.startsAt) }, timeZone);
+    let day = days.at(-1);
+    if (!day || day.date !== date) {
+      // A booking under way since yesterday still reads under today: it is what is on now.
+      const shown = date < today ? today : date;
+      if (day && day.date === shown) {
+        day.items.push(item);
+        continue;
+      }
+      const label =
+        shown === today
+          ? m.bookings_week_today()
+          : shown === tomorrow
+            ? m.bookings_upcoming_tomorrow()
+            : formatDay(shown);
+      day = { date: shown, label, items: [] };
+      days.push(day);
+    }
+    day.items.push(item);
+  }
+  return days;
 }

@@ -4271,6 +4271,8 @@
   "bookings_upcoming_on_behalf": "booked on their behalf",
   "bookings_upcoming_people": "With: {names}",
   "bookings_upcoming_cancel": "Cancel",
+  "bookings_upcoming_tomorrow": "Tomorrow",
+  "bookings_cancel_keep": "Keep",
   "bookings_grid_block_hint": "Drag across free slots (long-press on mobile) to block them.",
   "bookings_cell_free": "Free",
   "bookings_cell_booked": "Taken",

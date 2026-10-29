@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ResourceSlots, SlotUnit } from './api';
-import { hoursOf, weekCounters } from './dashboard';
+import { hoursOf, upcomingDays, weekCounters } from './dashboard';
 
 const STEP = 30 * 60_000;
 const at = (iso: string) => Date.parse(iso);
@@ -81,5 +81,44 @@ describe('hoursOf', () => {
   it('says whole hours whole, and a half hour with one decimal', () => {
     expect(hoursOf(21 * 60)).toBe('21');
     expect(['1,5', '1.5']).toContain(hoursOf(90));
+  });
+});
+
+describe('upcomingDays (the "coming" list by day, D50)', () => {
+  const b = (id: string, startsAt: string) => ({ id, startsAt });
+  const NOW = at('2026-11-02T08:00:00Z');
+
+  it("heads today, tomorrow, then the date, in the space's zone and the server's order", () => {
+    const days = upcomingDays(
+      [
+        b('a', '2026-11-02T07:30:00Z'),
+        b('b', '2026-11-02T18:00:00Z'),
+        b('c', '2026-11-03T09:00:00Z'),
+        b('d', '2026-11-05T09:00:00Z'),
+      ],
+      'UTC',
+      NOW
+    );
+    expect(days.map((d) => [d.date, d.items.map((i) => i.id)])).toEqual([
+      ['2026-11-02', ['a', 'b']],
+      ['2026-11-03', ['c']],
+      ['2026-11-05', ['d']],
+    ]);
+    expect(days[0].label).not.toBe(days[1].label);
+  });
+
+  it('reads the day in the space zone, not UTC', () => {
+    // 23:30 UTC on the 2nd is already the 3rd in Paris.
+    const [day] = upcomingDays([b('a', '2026-11-02T23:30:00Z')], 'Europe/Paris', NOW);
+    expect(day.date).toBe('2026-11-03');
+  });
+
+  it('puts a booking under way since yesterday under today', () => {
+    const days = upcomingDays(
+      [b('a', '2026-11-01T23:00:00Z'), b('b', '2026-11-02T10:00:00Z')],
+      'UTC',
+      NOW
+    );
+    expect(days.map((d) => [d.date, d.items.length])).toEqual([['2026-11-02', 2]]);
   });
 });

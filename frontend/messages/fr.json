@@ -4271,6 +4271,8 @@
   "bookings_upcoming_on_behalf": "réservé pour son compte",
   "bookings_upcoming_people": "Avec : {names}",
   "bookings_upcoming_cancel": "Annuler",
+  "bookings_upcoming_tomorrow": "Demain",
+  "bookings_cancel_keep": "Garder",
   "bookings_grid_block_hint": "Glissez sur des cases libres (appui long sur mobile) pour les bloquer.",
   "bookings_cell_free": "Libre",
   "bookings_cell_booked": "Occupé",

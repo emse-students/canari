@@ -259,10 +259,14 @@ sentence and nothing else; the server refuses every organiser read anyway.
   sat behind every past booking of the space.
 - **"A venir"** (`UpcomingBookings.svelte`): the first page (50) from the device's now, then "Voir
   plus" continuing the SAME list (the same `from`, a row never listed twice if a cancel shifted the
-  pages). Each row: when (the space's zone), its column when columns are shown (D44), the holder,
-  "pour son compte" (D20), the participants; the one under way is marked and has no cancel (D5).
-  The cancel is the existing organiser gesture (`cancelWithConfirm`), so its confirmation still
-  says what it says until WP-N changes it.
+  pages). Grouped as the mockup (#2579, `dashboard.html`) draws it: under the day each booking
+  starts on in the space's zone - "Aujourd'hui", "Demain", then the date (`upcomingDays`; one under
+  way since yesterday reads under today). Each row: the times, its column when columns are shown
+  (D44), the holder, "pour son compte" (D20), the participants; the one under way is marked and has
+  no cancel (D5). **The cancel opens IN ITS ROW** ("Garder" / "Annuler la réservation"), no dialog
+  over the list; its sentence is the D13 one until WP-N adds the optional message and replaces it.
+- **The layout**: from `lg` the week and "A venir" sit side by side (the mockup's desktop); below
+  it a segmented control shows one at a time. The counters are one line of pills.
 - **"Planning"** is `SpaceWeek.svelte` in `block` mode. **`SpaceWeek` is the booker page's week
   EXTRACTED** (column selector, week bar or day strip, grid, the three sheets, the read guard), so
   the two pages draw one implementation; the booker's page keeps only its load, poster, link and

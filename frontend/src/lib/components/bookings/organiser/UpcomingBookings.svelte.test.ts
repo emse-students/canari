@@ -9,10 +9,13 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import type { BookerSpace, OrganiserBooking } from '$lib/bookings/api';
 import { m } from '$lib/paraglide/messages';
 
-const api = vi.hoisted(() => ({ upcomingSpaceBookings: vi.fn() }));
-const actions = vi.hoisted(() => ({ cancelWithConfirm: vi.fn(async () => true) }));
+const api = vi.hoisted(() => ({
+  upcomingSpaceBookings: vi.fn(),
+  cancelBooking: vi.fn(async () => ({ ok: true })),
+}));
+const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock('$lib/bookings/api', () => api);
-vi.mock('$lib/bookings/bookingActions', () => actions);
+vi.mock('$lib/stores/toast.svelte', () => toast);
 
 import UpcomingBookings from './UpcomingBookings.svelte';
 
@@ -82,6 +85,36 @@ it('reads from now, marks the one under way and offers it no cancel', async () =
   expect(buttons(m.bookings_upcoming_cancel())).toHaveLength(1);
 });
 
+it('a cancel opens in its row: "Garder" closes it and cancels nothing', async () => {
+  api.upcomingSpaceBookings.mockResolvedValueOnce({
+    items: [row('b', '2026-11-02T13:00:00Z', '2026-11-02T13:30:00Z')],
+    nextOffset: null,
+  });
+  await open();
+  buttons(m.bookings_upcoming_cancel())[0].click();
+  flushSync();
+  expect(document.body.textContent).toContain(m.bookings_cancel_confirm_organiser());
+  buttons(m.bookings_cancel_keep())[0].click();
+  flushSync();
+  expect(document.body.textContent).not.toContain(m.bookings_cancel_confirm_organiser());
+  expect(api.cancelBooking).not.toHaveBeenCalled();
+});
+
+it('groups the list under the day each booking starts on', async () => {
+  api.upcomingSpaceBookings.mockResolvedValueOnce({
+    items: [
+      row('a', '2026-11-02T13:00:00Z', '2026-11-02T13:30:00Z'),
+      row('b', '2026-11-03T13:00:00Z', '2026-11-03T13:30:00Z'),
+    ],
+    nextOffset: null,
+  });
+  await open();
+  expect([...document.querySelectorAll('h3')].map((h) => h.textContent?.trim())).toEqual([
+    m.bookings_week_today(),
+    m.bookings_upcoming_tomorrow(),
+  ]);
+});
+
 it('a cancel in place re-reads the list and tells the page', async () => {
   api.upcomingSpaceBookings
     .mockResolvedValueOnce({
@@ -91,8 +124,10 @@ it('a cancel in place re-reads the list and tells the page', async () => {
     .mockResolvedValueOnce({ items: [], nextOffset: null });
   await open();
   buttons(m.bookings_upcoming_cancel())[0].click();
+  flushSync();
+  buttons(m.bookings_cancel_action())[0].click();
   await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
-  expect(actions.cancelWithConfirm).toHaveBeenCalledWith('b', true);
+  expect(api.cancelBooking).toHaveBeenCalledWith('b');
   expect(api.upcomingSpaceBookings).toHaveBeenCalledTimes(2);
   await tick();
   expect(document.body.textContent).toContain(m.bookings_upcoming_empty());

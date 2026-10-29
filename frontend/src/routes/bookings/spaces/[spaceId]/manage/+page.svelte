@@ -191,24 +191,16 @@
       {/if}
 
       {#if counters}
-        <dl class="grid grid-cols-3 gap-2" aria-label={m.bookings_dashboard_counters_label()}>
-          <div class="border-cn-border bg-cn-surface rounded-lg border px-3 py-2">
-            <dt class="text-text-muted text-xs">{m.bookings_dashboard_count_bookings()}</dt>
-            <dd class="text-text-main text-lg font-bold tabular-nums">{counters.bookings}</dd>
-          </div>
-          <div class="border-cn-border bg-cn-surface rounded-lg border px-3 py-2">
-            <dt class="text-text-muted text-xs">{m.bookings_dashboard_count_hours()}</dt>
-            <dd class="text-text-main text-lg font-bold tabular-nums">
-              {m.bookings_dashboard_hours_of({
-                booked: hoursOf(counters.bookedMinutes),
-                offered: hoursOf(counters.offeredMinutes),
-              })}
-            </dd>
-          </div>
-          <div class="border-cn-border bg-cn-surface rounded-lg border px-3 py-2">
-            <dt class="text-text-muted text-xs">{m.bookings_dashboard_count_blocks()}</dt>
-            <dd class="text-text-main text-lg font-bold tabular-nums">{counters.blocks}</dd>
-          </div>
+        <!-- The mockup's pills: one line of the week's numbers above everything else. -->
+        <dl class="flex flex-wrap gap-2" aria-label={m.bookings_dashboard_counters_label()}>
+          {#each [{ label: m.bookings_dashboard_count_bookings(), value: String(counters.bookings) }, { label: m.bookings_dashboard_count_hours(), value: m.bookings_dashboard_hours_of( { booked: hoursOf(counters.bookedMinutes), offered: hoursOf(counters.offeredMinutes) } ) }, { label: m.bookings_dashboard_count_blocks(), value: String(counters.blocks) }] as pill (pill.label)}
+            <div
+              class="border-cn-border bg-cn-surface inline-flex items-baseline gap-1.5 rounded-full border px-3 py-1"
+            >
+              <dt class="text-text-muted text-xs">{pill.label}</dt>
+              <dd class="text-text-main text-sm font-bold tabular-nums">{pill.value}</dd>
+            </div>
+          {/each}
         </dl>
       {/if}
 
@@ -229,35 +221,43 @@
         </div>
       {/if}
 
-      <SegmentedControl
-        items={[
-          { key: 'upcoming', label: m.bookings_dashboard_tab_upcoming(), icon: ListChecks },
-          { key: 'planning', label: m.bookings_dashboard_tab_planning(), icon: CalendarDays },
-        ]}
-        value={tab}
-        onSelect={(key: Tab) => (tab = key)}
-        label={m.bookings_dashboard_title()}
-      />
+      <!-- Two columns side by side from lg (the mockup's desktop); below it, one at a time. -->
+      <div class="lg:hidden">
+        <SegmentedControl
+          items={[
+            { key: 'upcoming', label: m.bookings_dashboard_tab_upcoming(), icon: ListChecks },
+            { key: 'planning', label: m.bookings_dashboard_tab_planning(), icon: CalendarDays },
+          ]}
+          value={tab}
+          onSelect={(key: Tab) => (tab = key)}
+          label={m.bookings_dashboard_title()}
+        />
+      </div>
 
       <!-- Both stay mounted: the counters come from the week's read, the list from its own. -->
       {#key space.id}
-        <div class:hidden={tab !== 'upcoming'}>
-          <UpcomingBookings
-            bind:this={upcoming}
-            {space}
-            {nowMs}
-            onChanged={() => void week?.reread()}
-          />
-        </div>
-        <div class:hidden={tab !== 'planning'}>
-          <SpaceWeek
-            bind:this={week}
-            {space}
-            bind:nowMs
-            mode="block"
-            onWeekRead={weekRead}
-            onChanged={() => void upcoming?.reload()}
-          />
+        <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6">
+          <div class={tab !== 'planning' ? 'max-lg:hidden' : ''}>
+            <SpaceWeek
+              bind:this={week}
+              {space}
+              bind:nowMs
+              mode="block"
+              onWeekRead={weekRead}
+              onChanged={() => void upcoming?.reload()}
+            />
+          </div>
+          <aside class={tab !== 'upcoming' ? 'max-lg:hidden' : ''}>
+            <h2 class="text-text-main mb-3 hidden text-sm font-bold lg:block">
+              {m.bookings_dashboard_tab_upcoming()}
+            </h2>
+            <UpcomingBookings
+              bind:this={upcoming}
+              {space}
+              {nowMs}
+              onChanged={() => void week?.reread()}
+            />
+          </aside>
         </div>
       {/key}
     </div>
