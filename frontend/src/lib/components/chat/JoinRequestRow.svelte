@@ -1,7 +1,12 @@
 <script lang="ts">
   import { UserPlus } from '@lucide/svelte';
-  import { pendingJoinRequests, canAnswerJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
-  import { answerJoinRequestOrToast } from '$lib/utils/chat/joinRequestAnswer';
+  import {
+    pendingJoinRequests,
+    canAnswerJoinRequests,
+    isOwnDeviceAsk,
+  } from '$lib/utils/chat/joinRequests.svelte';
+  import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
+  import { answerJoinRequestOrToast, deviceAskDetail } from '$lib/utils/chat/joinRequestAnswer';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import type { JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
@@ -22,6 +27,9 @@
    * nothing; the global banner shows the asks of the other conversations.
    *
    * Any member may add them: the Add is this device's own, and only one device wins the add lock.
+   * A device never seen here, of a user already in the conversation (`kind: 'device'`), is told in
+   * its own words, one card per device with its name and key fingerprint, and its answer is about
+   * that device alone (`memberDeviceAnswers.ts`).
    */
   const asks = $derived(
     canAnswerJoinRequests() ? pendingJoinRequests().filter((r) => r.groupId === groupId) : []
@@ -38,20 +46,32 @@
   }
 </script>
 
-{#each asks as request (request.userId)}
+{#each asks as request (`${request.kind ?? 'person'}|${request.userId}|${request.kind === 'device' ? request.deviceIds[0] : ''}`)}
   <div
     class="my-3 flex justify-center"
     role="group"
     aria-label={m.join_request_title()}
     data-join-request={request.userId}
+    data-join-request-kind={request.kind ?? 'person'}
   >
     <div
       class="bg-cn-surface border-cn-border text-text-main flex max-w-[90%] flex-col items-center gap-2 rounded-2xl border px-4 py-3 text-center text-xs shadow-sm"
     >
       <span class="inline-flex items-center gap-2 font-semibold">
         <UserPlus size={14} class="shrink-0" aria-hidden="true" />
-        {m.join_request_row_text({ user: getUserDisplayNameSync(request.userId) })}
+        {#if request.kind !== 'device'}
+          {m.join_request_row_text({ user: getUserDisplayNameSync(request.userId) })}
+        {:else if isOwnDeviceAsk(request, session.userId)}
+          {m.join_request_device_row_text_own()}
+        {:else}
+          {m.join_request_device_row_text({ user: getUserDisplayNameSync(request.userId) })}
+        {/if}
       </span>
+      {#if request.kind === 'device'}
+        <span class="text-text-muted font-mono" data-device-ask-detail
+          >{deviceAskDetail(request)}</span
+        >
+      {/if}
       <div class="flex items-center gap-2">
         <button
           type="button"

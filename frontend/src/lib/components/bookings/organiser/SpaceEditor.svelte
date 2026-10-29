@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import {
     CalendarRange,
+    Columns3,
     Database,
     Download,
     Info,
@@ -34,6 +35,8 @@
   } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
+  import { columnsHidden } from '$lib/bookings/columns';
+  import { sectionSummaries } from '$lib/bookings/spaceSummaries';
   import { guardUnsavedChanges } from '$lib/navigation/unsavedChanges';
   import StrandedBookings from './StrandedBookings.svelte';
   import {
@@ -54,9 +57,12 @@
   import { Log } from '$lib/utils/Log';
 
   /**
-   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections: General; Resources and
-   * availability; Who and how; Booking rules (collapsed, a badge counting what is set); Data
-   * (collapsed). The space's settings save together through the bar at the bottom; each resource
+   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections, worded as the questions an
+   * organiser asks (WP-R6, D51, Q-R13): L'essentiel; Quand peut-on reserver ?; Qui peut reserver,
+   * et que demande-t-on ? (who, names, discoverability, the people ceiling, the questions and the
+   * after-booking information); Regles de reservation (collapsed, a badge counting what is set);
+   * Donnees (collapsed, a badge with the retention). Each title carries the section's current
+   * answer on a line below it. The space's settings save together through the bar at the bottom; each resource
    * and its availability save on their own, because each is its own call and the server may refuse
    * one (D29) while the others stand. Loading and navigation are the page's
    * (`routes/bookings/spaces/[spaceId]/edit`); this component only edits what it is handed.
@@ -81,6 +87,11 @@
   let saveError = $state('');
   let addingResource = $state(false);
   let resourceError = $state('');
+  /** The space shows no columns while it has exactly one (D44). */
+  const hidden = $derived(columnsHidden(space.name, space.resources));
+  /** "Ajouter une colonne" on a hidden column: the form naming the new one is open. */
+  let revealing = $state(false);
+  let newColumnName = $state('');
   /** The bookings the last refused save named (D29), and a key so a new refusal is a new list. */
   let stranded = $state<{ ids: string[]; key: number }>({ ids: [], key: 0 });
 
@@ -98,6 +109,14 @@
   );
   const problems = $derived(draftProblems(draft));
   const rulesActive = $derived(activeRuleCount(draft));
+  /** The one line under each title: what the fields hold now (D51). */
+  const summaries = $derived(sectionSummaries(draft, space.resources.length));
+  /** The data section's badge: how long answers and files are kept. */
+  const retentionBadge = $derived(
+    /^\d+$/.test(draft.retentionDays.trim())
+      ? m.bookings_retention_badge({ days: draft.retentionDays.trim() })
+      : undefined
+  );
   const zones = $derived(timeZoneChoices(draft.timeZone));
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
@@ -119,8 +138,15 @@
     saving = true;
     saveError = '';
     stranded = { ids: [], key: stranded.key };
+    const formerName = space.name;
     try {
       await updateSpace(space.id, settings);
+      // The server carries the hidden column's name along with the space's (WP-R1); the copy
+      // here follows by the same rule, so the column reads right the moment it is revealed.
+      const only = space.resources.length === 1 ? space.resources[0] : null;
+      if (only && settings.name !== undefined && only.name === formerName) {
+        only.name = settings.name;
+      }
       space = { ...space, ...settings };
       savedSettings = snapshot(draft);
       Log.i('BOOKINGS', `settings saved space=${space.id.slice(0, 8)}`);
@@ -133,11 +159,18 @@
     }
   }
 
-  async function newResource() {
+  /** Opens the form naming the column that reveals the columns level (D44). */
+  function startReveal() {
+    newColumnName = m.bookings_resource_default_name();
+    revealing = true;
+    Log.d('BOOKINGS', `reveal columns space=${space.id.slice(0, 8)}`);
+  }
+
+  async function newResource(chosenName?: string) {
     if (addingResource) return;
     addingResource = true;
     resourceError = '';
-    const name = m.bookings_resource_default_name();
+    const name = chosenName?.trim() || m.bookings_resource_default_name();
     const position = space.resources.length;
     try {
       const { id } = await addResource(space.id, { name, position });
@@ -151,6 +184,11 @@
         lines: [],
         exceptions: [],
       });
+      revealing = false;
+      Log.i(
+        'BOOKINGS',
+        `column added space=${space.id.slice(0, 8)} columns=${space.resources.length}`
+      );
     } catch (e) {
       resourceError = describeBookingRefusal(e, m.bookings_resource_add_button());
     } finally {
@@ -205,7 +243,7 @@
   }
 </script>
 
-<FormSection title={m.bookings_section_general()} icon={Info}>
+<FormSection title={m.bookings_section_general()} summary={summaries.essentials} icon={Info}>
   <Input
     id="space-name"
     label={m.bookings_field_name()}
@@ -239,22 +277,13 @@
       onValueChange={(v) => (draft.timeZone = v)}
     />
   </div>
-  <div>
-    <Textarea
-      id="space-private"
-      label={m.bookings_field_private_info()}
-      bind:value={draft.privateInfo}
-      rows={2}
-      maxlength={4000}
-    />
-    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
-  </div>
 </FormSection>
 
 <FormSection
   title={m.bookings_section_resources()}
+  summary={summaries.when}
   icon={CalendarRange}
-  badge={String(space.resources.length)}
+  badge={hidden ? undefined : String(space.resources.length)}
 >
   <div>
     <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_mode()}</span>
@@ -293,6 +322,54 @@
   {#if space.resources.length === 0}
     <p class="text-text-muted text-sm">{m.bookings_resource_none()}</p>
   {/if}
+  {#if hidden}
+    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-3 sm:p-4">
+      <Columns3 size={18} class="text-text-muted mt-0.5 shrink-0" />
+      <!-- A basis, so a phone wraps the button below the hint rather than crushing the hint. -->
+      <div class="min-w-0 flex-1 basis-56">
+        <p class="text-text-main text-sm font-bold">{m.bookings_columns_hidden_title()}</p>
+        <p class={CONTROL_HINT_CLASS}>{m.bookings_columns_hidden_hint()}</p>
+      </div>
+      {#if !revealing}
+        <button
+          type="button"
+          onclick={startReveal}
+          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors"
+        >
+          <Plus size={16} />
+          {m.bookings_resource_add_button()}
+        </button>
+      {/if}
+      {#if revealing}
+        <div class="w-full space-y-3">
+          <Input
+            id="space-new-column"
+            label={m.bookings_columns_new_name()}
+            bind:value={newColumnName}
+            maxlength={120}
+          />
+          <div class="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onclick={() => (revealing = false)}
+              class="text-text-main hover:bg-control-fill rounded-xl px-4 py-2.5 text-sm font-bold"
+            >
+              {m.common_cancel_button()}
+            </button>
+            <button
+              type="button"
+              onclick={() => newResource(newColumnName)}
+              disabled={addingResource || !newColumnName.trim()}
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40"
+            >
+              <Plus size={16} />
+              {m.bookings_columns_add_confirm()}
+            </button>
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
   <div class="space-y-4">
     {#each space.resources as resource (resource.id)}
       <ResourceEditor
@@ -303,6 +380,7 @@
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
         onDirty={(d) => (dirtyResources[resource.id] = d)}
+        {hidden}
       />
     {/each}
   </div>
@@ -314,18 +392,20 @@
       {resourceError}
     </p>
   {/if}
-  <button
-    type="button"
-    onclick={newResource}
-    disabled={addingResource}
-    class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
-  >
-    <Plus size={16} />
-    {m.bookings_resource_add_button()}
-  </button>
+  {#if !hidden}
+    <button
+      type="button"
+      onclick={() => newResource()}
+      disabled={addingResource}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
+    >
+      <Plus size={16} />
+      {m.bookings_resource_add_button()}
+    </button>
+  {/if}
 </FormSection>
 
-<FormSection title={m.bookings_section_who()} icon={Users}>
+<FormSection title={m.bookings_section_who()} summary={summaries.who} icon={Users}>
   <!-- The forms' audience switch (FormAdvancedSettings): off is everybody (null), on starts an
          empty set of criteria for the editor to fill. -->
   <div class="space-y-3">
@@ -367,6 +447,26 @@
       onSelect={(k) => (draft.discoverability = k)}
     />
   </div>
+  <div>
+    <Input
+      id="space-max-people"
+      label={m.bookings_field_max_people()}
+      inputmode="numeric"
+      bind:value={draft.maxPeople}
+      error={problemOf('maxPeople')}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_max_people_hint()}</p>
+  </div>
+  <div>
+    <Textarea
+      id="space-private"
+      label={m.bookings_field_private_info()}
+      bind:value={draft.privateInfo}
+      rows={2}
+      maxlength={4000}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
+  </div>
 </FormSection>
 
 <FormQuestionsSection
@@ -379,6 +479,7 @@
 
 <FormSection
   title={m.bookings_section_rules()}
+  summary={summaries.rules}
   icon={ListChecks}
   collapsible
   startOpen={false}
@@ -424,13 +525,6 @@
       error={problemOf('maxActiveBookings')}
     />
     <Input
-      id="space-max-people"
-      label={m.bookings_field_max_people()}
-      inputmode="numeric"
-      bind:value={draft.maxPeople}
-      error={problemOf('maxPeople')}
-    />
-    <Input
       id="space-quota"
       label={m.bookings_field_quota()}
       inputmode="numeric"
@@ -463,7 +557,14 @@
   </div>
 </FormSection>
 
-<FormSection title={m.bookings_section_data()} icon={Database} collapsible startOpen={false}>
+<FormSection
+  title={m.bookings_section_data()}
+  summary={summaries.data}
+  badge={retentionBadge}
+  icon={Database}
+  collapsible
+  startOpen={false}
+>
   <Input
     id="space-retention"
     label={m.bookings_field_retention()}
@@ -526,7 +627,9 @@
   summary={Object.keys(problems).length
     ? m.bookings_problems_summary()
     : dirty
-      ? m.bookings_tab_resources_count({ count: space.resources.length })
+      ? hidden
+        ? m.bookings_unsaved_settings()
+        : m.bookings_tab_resources_count({ count: space.resources.length })
       : m.bookings_saved()}
   saveLabel={m.bookings_save_settings()}
   onSave={saveSettings}

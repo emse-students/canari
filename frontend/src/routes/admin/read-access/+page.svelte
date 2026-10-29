@@ -7,7 +7,7 @@
    * document reviewers only, so they get that list with no tab bar above it.
    */
   import { resolve } from '$app/paths';
-  import { goto, replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { Eye, FileCheckCorner } from '@lucide/svelte';
@@ -28,19 +28,23 @@
   let ready = $state(false);
   /** Whether this viewer may see the named readers (global admin). */
   let canGrant = $state(false);
-  // `?tab=` keeps the tab across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the tab across a reload; written as a shallow `goto`, see `tabQuery`.
   let tab = $state<Tab>(parseTab(page.url.searchParams.get('tab'), TABS, 'readers'));
 
   function switchTab(next: Tab) {
     Log.d('admin.read-access.switchTab', { next });
     tab = next;
-    replaceState(resolve(internalPath(tabUrl(page.url, next, 'readers'))), page.state);
+    void goto(resolve(internalPath(tabUrl(page.url, next, 'readers'))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
   }
 
   onMount(async () => {
     await ensureAssociationSuperAdmin();
     if (!isGlobalAdmin() && !isAssociationSuperAdmin()) {
-      void goto(resolve('/admin'), { replaceState: true });
+      void goto(resolve('/admin'), { replace: true });
       return;
     }
     // Cross-space rights stay with global admins (D24): the readers and their journal are theirs alone.

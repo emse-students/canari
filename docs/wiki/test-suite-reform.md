@@ -204,7 +204,7 @@ change failing.
   `changelog.d/` or repo files - check `lineEndings`, `googleVerification`, `svelteConfigStamp`) to
   `.github/scripts/tests` as `bun` scripts wired into `test-ci-scripts`
   (`recipe-covers-tests.test.mjs` then enforces the wiring); build the production frontend on PRs
-  that touch `frontend/package.json`, `bun.lock`, `patches/`, `svelte.config.js` or `vite.config.js`
+  that touch `frontend/package.json`, `bun.lock`, `patches/`, `kit.config.js` or `vite.config.js`
   (+0.7 min on those PRs only).
 - **Removes**: defects 3.1, 3.2 and 3.3. Minutes: none; this WP buys catches.
 - **Risk**: none for behaviour. Revalidate: a docs-only PR with a bad fragment goes red; a jest

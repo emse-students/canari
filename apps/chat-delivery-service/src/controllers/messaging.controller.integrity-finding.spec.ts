@@ -66,6 +66,29 @@ describe('MessagingController - POST mls/integrity-finding', () => {
     );
   });
 
+  it('prints no full user id - the reporter and the peer, each device kept apart', async () => {
+    const alice = 'a1'.repeat(32);
+    const bob = 'b2'.repeat(32);
+    members.add(`g-1234|${alice}`);
+
+    await controller.reportIntegrityFinding(alice, `web-${alice}-mh9x2k1q-a7c3`, {
+      kind: 'fork',
+      groupId: 'g-1234',
+      epoch: 7,
+      peer: `${bob}:tauri-${bob}-mh9x2k1q-0z9y`,
+      detail: 'fork',
+      proven: true,
+    });
+
+    const line = error.mock.calls[0][0] as string;
+    expect(line).not.toContain(alice);
+    expect(line).not.toContain(bob);
+    expect(line).toContain(
+      'reporter=a1a1a1a1:web-a1a1a1a1-mh9x2k1q-a7c3 group=g-1234 epoch=7 ' +
+        'claimedPeer=b2b2b2b2:tauri-b2b2b2b2-mh9x2k1q-0z9y'
+    );
+  });
+
   it('prints an unproven fork at warn, as mls-core does', async () => {
     await controller.reportIntegrityFinding('alice', 'web-alice-1', {
       kind: 'fork',

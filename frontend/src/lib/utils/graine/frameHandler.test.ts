@@ -1656,6 +1656,17 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     expect(noteHistoryHeldNothingSpy).toHaveBeenCalledWith('ws-1', 'Bob', 'r-h', 'web-bob');
   });
 
+  it('says no `absorbed` line for a bundle that carried no seed - it reaches every member, and what it decides is said where it is decided', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(holdsNothingFrame());
+
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('absorbed');
+    debug.mockRestore();
+  });
+
   it('ignores the claim, out loud, when the same bundle carries seeds', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);

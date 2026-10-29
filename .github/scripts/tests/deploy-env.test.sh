@@ -236,6 +236,16 @@ else
   fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - production must be false, dev true"
 fi
 
+# THE LYDIA RECONCILIATION SWITCH, by the same rule: production asks Lydia nothing on its own until
+# the signed amount format is measured (docs/wiki/lydia-api.md section 7).
+reconcile_prod="$(port_of "$TMP/ports-prod.env" LYDIA_RECONCILE_ENABLED)"
+reconcile_dev="$(port_of "$TMP/ports-dev.env" LYDIA_RECONCILE_ENABLED)"
+if [ "$reconcile_prod" = "false" ] && [ "$reconcile_dev" = "true" ]; then
+  pass "LYDIA_RECONCILE_ENABLED renders false on production and true on dev"
+else
+  fail "LYDIA_RECONCILE_ENABLED renders prod='$reconcile_prod' dev='$reconcile_dev' - production must be false, dev true"
+fi
+
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
 # asserts that prod and dev do not collide with EACH OTHER, which is what the 2026-09-01 defect was
 # - and it is not what the 2026-09-25 outage was. Production asked for 8080, another local service
@@ -250,10 +260,10 @@ fi
 # whose result would have to escape a subshell.
 reserved_host_ports() {
   cat <<'PORTS'
-22 the DSI sshd
-80 the host nginx, which fronts all eight vhosts
-443 the host nginx, which fronts all eight vhosts
-8080 CrowdSec's Local API
+22 the host's ssh service
+80 the host nginx, which fronts every vhost on the host
+443 the host nginx, which fronts every vhost on the host
+8080 a host security service
 PORTS
 }
 

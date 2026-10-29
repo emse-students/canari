@@ -39,7 +39,7 @@ const quoteProps = (content: string) => ({
   replyId: 'm1',
   content,
   isOwn: false,
-  replierDisplayName: 'Leon',
+  replierDisplayName: 'Alex',
 });
 
 describe('ReplyGifThumb', () => {

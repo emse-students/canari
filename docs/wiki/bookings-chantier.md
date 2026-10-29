@@ -96,6 +96,183 @@ see who else booked.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
 
+## WP-R1 as built - the hidden default column (D44, 2026-10-27)
+
+- **`POST spaces` creates the space's ONE column** (`writeDefaultColumn` in
+  `booking-spaces.service.ts`), named after the space, at position 0, in the creation's own
+  transaction. It answers `{ id, resourceId }`.
+- **The first hours may come in the same call** (`CreateSpaceDto.availability`, the same nested
+  `AvailabilityDto` as `PUT resources/:id/availability`). They are parsed before the transaction (a
+  malformed line is a 400 and nothing is written) and inserted inside it, so the creation wizard
+  (D52, WP-R7) can never leave a space without its hours. Without them the column starts closed.
+- **THE HIDDEN COLUMN IS ONE PREDICATE, SHARED BY BOTH SIDES** (review of #2590): exactly one
+  column AND it bears the space's name - `columnsHidden(spaceName, resources)` in
+  `frontend/src/lib/bookings/columns.ts`, and the server's rename rule below. A single column named
+  otherwise (a space set up before WP-R1, "Piano" in "Foyer") is a VISIBLE column, renamable and
+  deletable. Renaming a single column to the space's own name makes it the hidden column, and it
+  follows the space's later renames from then on.
+- **A renamed space carries its hidden column's name** (`renameDefaultColumn`, under the update's
+  space lock): only when the space has exactly one column and that column still bears the space's
+  former name - the former name IS the discriminator. This keeps the name read in "my bookings",
+  the `.ics` and the export right without any client rule.
+- **The editor's copy of a column's name follows the server** (review of #2590, the blocker):
+  `ResourceEditor` re-seeds its name from the resource when the organiser has not edited it, and
+  sends a name ONLY when the organiser typed one. Before, a space renamed "Old" -> "New", then a
+  column added, then the first column's fields saved, wrote "Old" back.
+- **The screens hide the columns level for the hidden column.** In `SpaceEditor` it shows its hours
+  and linked account only (no name, no delete, and its texts only when it already carries some, so
+  nothing the server serves is out of sight); an "Une seule colonne" card offers **Ajouter une
+  colonne**, which names the new column and reveals the level; the save bar says "Modifications non
+  enregistrées" rather than "1 ressource(s)". `SpaceGrid` and `SpacePlanning` draw no column name
+  (the grid's caption already names the space). The entity tab's list drops the count of a space
+  with one column.
+- **A place is never read twice**: `bookingPlace(space, column)` names the space alone when the
+  column bears its name, on the client (calendar titles, "my bookings", which also drops the
+  column line) and in the `.ics` summary (`booking-calendar.ts`). The sheets' titles already read
+  the column's name, which IS the space's. The export keeps its column column: it is data.
+- **No new cap**: the hours of a creation go through `AvailabilityDto`, which already caps lines
+  (200) and closures (100) with `ArrayMaxSize`.
+**Proof.** `bookings.service.integration.spec.ts`, "the hidden default column (WP-R1, D44)", on a
+real PostgreSQL 18: one column named after the space; the first hours written and a booking accepted
+at once; a malformed line refused with no space written; a failure INSIDE the transaction (the
+database's weekday CHECK, reached by calling the service directly) leaving neither space nor column;
+the rename followed by the hidden column and by nothing the organiser named, and by a single column
+once renamed to the space's name. Control: with the rename call disabled, the rename test fails.
+`SpaceEditor.hiddenColumn.svelte.test.ts` mounts the editor and runs the blocker's sequence (rename,
+reveal, save): the former name is never sent; control: with the old copy restored, it fails. `dto/create-space.dto.spec.ts` (the nested hours
+validated as a 400), `columns.test.ts`, `booking-calendar.spec.ts` (no doubled summary). **Seen** at 390 and 1280 on a local build, on a fixture space
+(a temporary signed-out preview route, not committed): the card reads its title, hint and button;
+at 390 the button had crushed the hint to one word a line, so the hint now holds a basis and the
+button wraps below it. Not yet seen against a running API.
+
+## WP-R2 as built - the booker's week (D45-D48, 2026-10-27)
+
+Front only: no route, no migration. The page still reads `GET spaces/:id/slots`, now ONE read of
+the week plus the day before it (`weekReadRange`, the same day-before rule as `slotsReadRange`: the
+server keeps a unit by its WINDOW's date, so Monday 00:30 of a Sunday-night window is in no read that
+starts on Monday).
+
+- **One view, chosen by the width** (`SCHEDULE_AGENDA_QUERY`, as the agenda). **`SpacePlanning` and the
+  grid/planning switch are deleted** (D47, Q-R8): so are `gridRows`, `gridOpeningDate`, `planning` and
+  their messages. A unit sits in the column of the day it STARTS on, so the grid needs no "window
+  date" and no "next day" row.
+- **`weekLayout` (pure, `lib/bookings/grid.ts`)** lays ONE column's units out: a unit's top is the
+  WALL minute of its start and its height its elapsed length, so 18:00 is 18:00 every day, daylight
+  saving included, and nothing is ever shifted. The one disagreement between wall and elapsed time
+  is a fall-back night's doubled hour: its two units sit at the same wall time, overlap, and share
+  the width in lanes like two slots of a list (allowed since WP-B2), so every later unit keeps its
+  own wall time. (A first version displaced the second one and carried the shift: the rest of that
+  day sat an hour low, found in review.) The
+  axis is whole hours around what the week offers; an hour is tall enough for the shortest unit to
+  hold a line (4 to 12 rem). A night window crossing midnight is two columns, as its two days.
+- **A day is `open`, `none` (nothing left to take on the device's clock) or `closed` (nothing
+  offered).** On a desktop a closed day FOLDS to a narrow strip (Q-R10); on a phone the strip's dot says
+  `open` / `none` / closed, from the same read as the day under it.
+- **Desktop (`WeekBar`)**: previous / next week, "Aujourd'hui" only when the week shown does not hold
+  today, the week's dates, and the legend, whose words are the grid's own (`bookings_cell_*`).
+  **Phone (`DayStrip`)**: the seven days of the week, the chosen one marked, a week step either side,
+  and ONE day on its own axis below. The chosen weekday is kept when the week moves.
+- **The column selector (`ColumnSelect`, D46) shows only for several columns** (D44): pills up to five,
+  a list beyond, each with how many units one may take in the week read. The drag, the 250 ms finger
+  hold, the step ceiling and the chip are unchanged, now along a DAY (`dragRange` is untouched).
+- **The poster is already a banner on this page** (`SpacePoster`, WP-B5): nothing changed there.
+- **Kept on purpose**: the sentence that nobody is notified (D13) stays until WP-N lands, since it is
+  true until then.
+
+**Proof.** `grid.test.ts` (the week's dates, the read's first day, wall-time placement across both
+2026-10-24..26, the 25 contiguous hours of the fall-back day, a Friday night and a Sunday night, folded and full days, lanes,
+the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every drag case along a day,
+plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
+next paragraph says.
+
+## WP-R3 as built - the poster as a thumbnail (D45, 2026-10-27)
+
+Front only. `GET spaces` already returned `poster`; the Reservations list was `SectionHub` rows,
+which carry no image, so the spaces now have their own list, `SpaceList.svelte` (a real link per row,
+the same look, a 48 px box leading it).
+
+- **`SpacePoster` gained `thumb`.** The same component decrypts the banner and the thumbnail (one
+  decryption path, one blob cache); `thumb` makes it a small square and defers its work until the
+  box is NEAR the viewport (`nearViewport`, once - the picture stays once drawn). A list of twenty
+  spaces therefore decrypts what is on screen and what is just below it, never twenty posters on
+  arrival. A failed one is an icon with no sentence in a thumbnail's room.
+- **A space with no poster keeps the calendar glyph in the same box**, so names line up. The line
+  under the name is who runs it, then the column count FROM TWO (a single column says nothing, D44 -
+  as the entity tab's list since WP-R1).
+- **Not done**: the entity tab's own list of spaces is a different list (the organiser's) and is
+  untouched.
+
+**Proof.** `SpaceList.thumb.svelte.test.ts`: three posters, nothing downloaded on mount, one
+downloaded when its row nears the viewport and it is the right one; the decrypted picture is drawn
+in its row; a space with no poster fetches nothing and keeps a glyph. Control: without the
+`nearViewport` gate, the first test fails (three downloads on mount). **Not yet seen** on a phone.
+
+## WP-R4 as built - the painted week (D49, 2026-10-27)
+
+Front only: the painter writes the same `PUT resources/:id/availability`, the stored lines are
+unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint (`WeekPainter`),
+"En clair" (the weekly lines, to read and to type exact times in), the dated lines apart, closures.
+
+- **One model: the editor's `rows`.** The painter, the templates and the typed lines all edit the
+  same `rows`, so they cannot disagree and the save, the dirty flag, the 24/7 warning and the D29
+  refusal (`StrandedBookings`, each booking with its cancel) are untouched. The painter reads
+  `weekRunsOf(rows)` and writes `paintRows(...)`.
+- **RUNS, not cells** (`lib/bookings/availabilityPaint.ts`, pure): per weekday, the merged open
+  `[start, end)` minutes. A gesture is 30 min (Q-R11) but an edge typed at 18:45 stays 18:45 when
+  something else is painted; only the part a rectangle covers changes. A run is written back through
+  `fromStoredLines`, so Friday 22:00-24:00 plus Saturday 00:00-02:00 is ONE line again; the days are
+  written Monday last because Monday's morning is Sunday night's tail.
+- **One gesture, no brush**: pressing a closed cell opens the rectangle, pressing an open one closes
+  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); the keyboard and
+  screen readers use the typed lines, and each day column is named with its hours.
+- **A line the editor refuses** (a start equal to its end) is not drawn as a run and is never
+  normalised by a paint or a template: it stays in the typed lines, flagged, until fixed. The
+  painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
+  its height is clamped (30 to 40 rem). **The keyboard's route is the typed lines below**, said in
+  the hint under the painter.
+- **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
+  Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
+  Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
+  without a confirmation: nothing is saved until the button, and leaving warns.
+- **Dated lines have their own list** and the per-line "type" select is gone (a line is weekly or
+  dated by the list it sits in). Not built: hiding the week under the event template, as the mockup
+  draws - the painted week stays visible.
+
+**Proof.** `availabilityPaint.test.ts` (round trips incl. a night and a Sunday night, merge, split,
+off-grain edges kept, to 24:00, the same rows back when nothing changes, mode from the pressed cell,
+templates, dated lines kept) and `AvailabilityEditor.painter.svelte.test.ts` (templates, a drag over
+days, a close splitting a run, a night as two stored halves, one cell, dated lines kept) on the real
+editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
+readings owed.
+
+## WP-R6 as built - the settings in plain words (D51, Q-R13, 2026-10-27)
+
+Front only: no setting is added or removed, the draft and the PATCH are unchanged.
+
+- **Titles, as Q-R13 drew them**: L'essentiel / Quand peut-on reserver ? / Qui peut reserver, et que
+  demande-t-on ? / Regles de reservation / Donnees (accents in the messages). D35's five sections and
+  their order stay.
+- **Each title carries the section's CURRENT answer on a line below it** (`FormSection` gained an
+  optional `summary`, rendered OUTSIDE the header button, which it describes through `aria-describedby`; the heading wraps the button and the button holds only spans; `lib/bookings/spaceSummaries.ts`, pure over the
+  draft, so it follows an unsaved change). "When" reads the mode (steps of N min, M at most, or fixed
+  slots) and the column count from two; "who" reads audience, names, discoverability and the number
+  of questions; the other three keep a fixed hint.
+- **Two fields moved to "who"** (Q-R13): the people ceiling (from the collapsed rules) and the
+  after-booking information (from "General"). The collapsed rules' badge stopped counting the ceiling
+  (`activeRuleCount`), since it is always in view now. The data section gained a badge with the
+  retention (`7 j`), the rules badge is unchanged.
+- **Not done**: the questions stay their own card (`FormQuestionsSection`, shared with forms) right
+  after "who" instead of being merged into it, so the title "...et que demande-t-on ?" sits over the
+  audience block and the card follows it; the numbered tiles of the mockup are not drawn; the radio
+  "choice" cards of the mockup are the existing segmented controls and toggle. The wording of
+  options other than titles is untouched.
+
+**Proof.** `spaceSummaries.test.ts` (each line, an unsaved change, fixed slots and columns, a
+half-typed step), `SpaceEditor.sections.svelte.test.ts` (the mounted editor: titles, a line under
+each, the two fields in "who" and absent elsewhere, the line following a click, the two last
+sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling no longer counted).
+`paraglideMessages.test.ts` for the strings. **Not yet seen** at 390 and 1280 or at 200 % text.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to

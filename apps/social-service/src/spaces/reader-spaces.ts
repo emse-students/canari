@@ -1,3 +1,4 @@
+import { acceptedFollowSql } from '../follows/follow-status';
 import { ruleReachesSpaceSql } from './rule-sql';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
@@ -262,14 +263,16 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
  *   post is announced to its author's followers who see it (`announceRecipientsSql(true)`), and
  *   once the republication commits they see it, so the sweep tells them - and telling them here
  *   too would tell them twice. After the announce, the sweep is spent and everyone newly reached is
- *   told here.
+ *   told here. A follower is an ACCEPTED one, exactly as the sweep counts them: someone whose
+ *   request is still pending is not told by the sweep, so they are told here.
  */
 export function newlyReachedByPersonalRepublicationSql(announced: boolean): string {
   const followers = announced
     ? ''
     : `
     AND NOT EXISTS (SELECT 1 FROM user_follows nr_follow
-      WHERE nr_follow."followedUserId" = nr_post."authorId" AND nr_follow."followerUserId" = nr_user.id)`;
+      WHERE nr_follow."followedUserId" = nr_post."authorId" AND nr_follow."followerUserId" = nr_user.id
+        AND ${acceptedFollowSql('nr_follow')})`;
   return `${NEWLY_REACHED_BY_REPUBLICATION_SQL}
     AND NOT EXISTS (SELECT 1 FROM user_blocks nr_block
       WHERE (nr_block."blockerId" = nr_user.id AND nr_block."blockedId" = nr_post."authorId")
@@ -376,12 +379,14 @@ export const READER_PROFILE_SQL = `SELECT campus, cursus FROM users WHERE id = $
 
 /**
  * Who is told about post `$1`: everyone who can SEE it, minus its author. The scheduler narrows a
- * personal post further to its author's followers (`followersOnly`).
+ * personal post further to its author's ACCEPTED followers (`followersOnly`): a pending request is
+ * not a follow (WP-F1).
  */
 export function announceRecipientsSql(followersOnly: boolean): string {
   const follows = followersOnly
     ? `AND EXISTS (SELECT 1 FROM user_follows ann_follow
-         WHERE ann_follow."followedUserId" = ann_post."authorId" AND ann_follow."followerUserId" = ann_user.id)`
+         WHERE ann_follow."followedUserId" = ann_post."authorId" AND ann_follow."followerUserId" = ann_user.id
+           AND ${acceptedFollowSql('ann_follow')})`
     : '';
   return `SELECT ann_user.id FROM users ann_user JOIN posts ann_post ON ann_post.id = $1
     WHERE ann_user.id <> ann_post."authorId" ${follows}
