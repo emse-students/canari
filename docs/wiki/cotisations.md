@@ -826,8 +826,10 @@ to a higher tier").
   `cashSaleQuoteFor`, the one computation the sale itself runs (`priced` with `preferential`,
   `typed` for a free amount, `not-sold` when the grid closes the combination), and the Achats tab
   shows it under the amount field, which is always offered and sent as `amountCents` when filled.
-  **A free amount's bounds bind only an amount the cashier TYPES**: the resolved default is a price
-  the checkout charges unchecked too, so a member price under `customAmountMinCents` is recorded. The
+  **A free amount's bounds bind only an amount the cashier TYPES as an override**: the resolved
+  default is a price the checkout charges unchecked too, so a member price under
+  `customAmountMinCents` is recorded - and typing that very quoted amount is the default, not an
+  override. The
   price is read before the buyer's tier lock, as the grid cell always was: a tier granted to that
   buyer in the same instant can leave the default one tier stale, never the grant itself.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`

@@ -3481,9 +3481,18 @@ export class ProductsService {
     let amountCents: number;
     if (dto.amountCents != null) {
       // A TYPED amount is what the bounds of a free-amount product bind - never the default resolved
-      // below, which is a price the checkout charges with no bounds check either.
+      // below, which is a price the checkout charges with no bounds check either. Typing the very
+      // amount the screen quoted is that default, so it is not bound either.
       if (product.allowCustomAmount) {
-        this.assertWithinCustomBounds(product, associationId, dto.amountCents, 'cash grant amount');
+        const quote = await this.cashSaleQuoteFor(product, dto.userId);
+        if (quote.kind !== 'priced' || quote.amountCents !== dto.amountCents) {
+          this.assertWithinCustomBounds(
+            product,
+            associationId,
+            dto.amountCents,
+            'cash grant amount'
+          );
+        }
       }
       amountCents = dto.amountCents;
     } else {

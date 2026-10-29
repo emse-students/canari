@@ -1730,11 +1730,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
       });
 
-      it('CONTROL: still refuses a TYPED amount under the minimum', async () => {
+      it('records a typed amount EQUAL to the quoted default as the default, unbounded', async () => {
+        const { service, purchaseRecordService } = boundedSetUp();
+        await service.grantProductPurchase('asso1', 'prod1', 'admin1', {
+          userId: 'user1',
+          amountCents: 300,
+        });
+        expect(purchaseRecordService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ amountCents: 300 }),
+          expect.anything()
+        );
+      });
+
+      it('CONTROL: still refuses a TYPED override under the minimum', async () => {
         const { service, purchaseRecordService } = boundedSetUp();
         jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+        // 200: under the minimum (500) AND not the quoted 300, so it is a genuine override.
         const err = await service
-          .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 300 })
+          .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 200 })
           .catch((e: unknown) => e);
         expect((err as BadRequestException).getResponse()).toMatchObject({
           code: 'AMOUNT_OUT_OF_RANGE',
@@ -1770,6 +1783,18 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
           kind: 'typed',
         });
+      });
+
+      it('answers 404 for a product of ANOTHER association', async () => {
+        const { service, productRepo } = setUp(true);
+        // The repository answers only the pair it is asked for: prod1 belongs to asso1.
+        productRepo.findOne.mockImplementation(
+          ({ where }: { where: { id: string; associationId: string } }) =>
+            Promise.resolve(where.associationId === 'asso1' ? product() : null)
+        );
+        await expect(service.quoteCashSale('asso2', 'prod1', 'user1')).rejects.toThrow(
+          NotFoundException
+        );
       });
 
       it('answers 404 for a top-up, which has no cash sale', async () => {
@@ -3275,6 +3300,51 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(7000);
+    });
+
+    describe('a cash sale of a gridded product, quoted and recorded', () => {
+      const gridSetUp = (cells: Record<string, number | null>) => {
+        const made = makeService();
+        made.assoRepo.findOne.mockResolvedValue(asso());
+        made.productRepo.findOne.mockResolvedValue(
+          product({ amountCents: 1000, amountCentsMember: 500, priceMatrix: promoGrid(cells) })
+        );
+        made.pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
+        made.productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+        made.purchaseRecordService.create.mockImplementation((x: unknown) =>
+          Promise.resolve({
+            ...(x as object),
+            id: 'rec1',
+            paidAt: new Date('2026-10-29T12:00:00Z'),
+          })
+        );
+        return made;
+      };
+
+      it("quotes and records the beneficiary's cell, never the fixed or member price", async () => {
+        const { service, purchaseRecordService } = gridSetUp({ b1: 7000, b2: 9000, _others: 1 });
+        await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+          kind: 'priced',
+          amountCents: 9000,
+          preferential: false,
+        });
+        await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+        expect(purchaseRecordService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ amountCents: 9000 }),
+          expect.anything()
+        );
+      });
+
+      it('quotes `not-sold` where the grid closes the combination, and the sale refuses with nothing typed', async () => {
+        const { service, purchaseRecordService } = gridSetUp({ b1: 7000, b2: null, _others: 1 });
+        await expect(service.quoteCashSale('asso1', 'prod1', 'user1')).resolves.toEqual({
+          kind: 'not-sold',
+        });
+        await expect(
+          service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' })
+        ).rejects.toThrow(BadRequestException);
+        expect(purchaseRecordService.create).not.toHaveBeenCalled();
+      });
     });
 
     it('prices an unrecognised promo from the generated "everyone else" cell', async () => {

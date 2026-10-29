@@ -256,16 +256,33 @@ describe('EditAchatsTab, the amount a cash sale records', () => {
       .querySelector('form')!
       .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 
-  async function choosePair(target: HTMLElement) {
-    await pickUser('grant-user', 'Ri');
+  const hoodie = { id: 'prod-2', name: 'Hoodie', type: 'other', amountCents: 2000 };
+
+  /** Chooses a product in the real Picker, by its visible name. */
+  async function chooseProduct(target: HTMLElement, name: string) {
     (target.querySelector('#grant-product') as HTMLButtonElement).click();
     flushSync();
     const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (o) => o.textContent?.trim() === 'Sweat'
+      (o) => o.textContent?.trim() === name
     )!;
     option.click();
     await settle();
   }
+
+  async function choosePair(target: HTMLElement) {
+    await pickUser('grant-user', 'Ri');
+    await chooseProduct(target, 'Sweat');
+  }
+
+  /** A quote answer the test releases when it chooses, to order two answers by hand. */
+  function deferredQuote() {
+    let resolve!: (q: unknown) => void;
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  const shownQuote = (target: HTMLElement) =>
+    target.querySelector('[data-testid="grant-quote"]')?.textContent?.trim();
 
   it('shows the preferential amount the server quotes, and records it when nothing is typed', async () => {
     state.products = [sweat];
@@ -316,5 +333,45 @@ describe('EditAchatsTab, the amount a cash sale records', () => {
 
     expect(target.textContent).toContain(m.asso_achats_grant_quote_not_sold());
     expect((target.querySelector('#grant-amount') as HTMLInputElement).required).toBe(true);
+  });
+
+  it("drops an earlier selection's answer that lands after the later one's", async () => {
+    state.products = [sweat, hoodie];
+    const first = deferredQuote();
+    const second = deferredQuote();
+    state.quote.mockImplementation((_a: string, productId: string) =>
+      productId === 'prod-1' ? first.promise : second.promise
+    );
+    const target = await render([]);
+
+    await pickUser('grant-user', 'Ri');
+    await chooseProduct(target, 'Sweat');
+    await chooseProduct(target, 'Hoodie');
+    // The later selection answers first, the earlier one LAST.
+    second.resolve({ kind: 'priced', amountCents: 2000, preferential: false });
+    await settle();
+    first.resolve({ kind: 'priced', amountCents: 300, preferential: true });
+    await settle();
+
+    expect(state.quote).toHaveBeenCalledTimes(2);
+    expect(shownQuote(target)).toBe(m.asso_achats_grant_quote({ amount: formatAmount(2000) }));
+  });
+
+  it('shows no answer that lands after the beneficiary was cleared', async () => {
+    state.products = [sweat];
+    const pending = deferredQuote();
+    state.quote.mockImplementation(() => pending.promise);
+    const target = await render([]);
+
+    await choosePair(target);
+    // Typing in the beneficiary field drops the chosen person (`UserAutocomplete` clears its value).
+    const user = document.getElementById('grant-user') as HTMLInputElement;
+    user.value = 'X';
+    user.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    pending.resolve({ kind: 'priced', amountCents: 300, preferential: true });
+    await settle();
+
+    expect(shownQuote(target)).toBeUndefined();
   });
 });

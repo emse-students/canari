@@ -84,14 +84,18 @@
   $effect(() => {
     const userId = grantUserId.trim();
     const productId = grantProductId;
+    // Bumped BEFORE the early return: clearing a field must also void an answer still in flight.
+    const seq = ++quoteSeq;
     grantQuote = null;
     if (!userId || !productId) return;
-    void loadQuote(userId, productId);
+    void loadQuote(userId, productId, seq);
   });
 
-  /** Asks the server what a cash sale of `productId` to `userId` records by default. */
-  async function loadQuote(userId: string, productId: string) {
-    const seq = ++quoteSeq;
+  /**
+   * Asks the server what a cash sale of `productId` to `userId` records by default; the answer is
+   * shown only while `seq` is still the latest selection.
+   */
+  async function loadQuote(userId: string, productId: string, seq: number) {
     Log.d('ASSO', `quoting a cash sale of product ${productId.slice(0, 8)}`);
     try {
       const quote = await quoteCashSale(asso.id, productId, userId);
@@ -308,17 +312,23 @@
         </div>
       {/if}
     </div>
-    {#if grantQuote?.kind === 'priced'}
-      <p class="text-text-main text-xs font-semibold" data-testid="grant-quote">
-        {grantQuote.preferential
-          ? m.asso_achats_grant_quote_preferential({ amount: formatAmount(grantQuote.amountCents) })
-          : m.asso_achats_grant_quote({ amount: formatAmount(grantQuote.amountCents) })}
-      </p>
-    {:else if grantQuote?.kind === 'not-sold'}
-      <p class="text-text-muted text-xs" data-testid="grant-quote">
-        {m.asso_achats_grant_quote_not_sold()}
-      </p>
-    {/if}
+    <!-- The live region stays mounted so a screen reader announces each quote as it changes; a
+         region inserted together with its text is not reliably announced. -->
+    <div aria-live="polite">
+      {#if grantQuote?.kind === 'priced'}
+        <p class="text-text-main text-xs font-semibold" data-testid="grant-quote">
+          {grantQuote.preferential
+            ? m.asso_achats_grant_quote_preferential({
+                amount: formatAmount(grantQuote.amountCents),
+              })
+            : m.asso_achats_grant_quote({ amount: formatAmount(grantQuote.amountCents) })}
+        </p>
+      {:else if grantQuote?.kind === 'not-sold'}
+        <p class="text-text-muted text-xs" data-testid="grant-quote">
+          {m.asso_achats_grant_quote_not_sold()}
+        </p>
+      {/if}
+    </div>
     <p class="text-text-muted text-xs">
       {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
         {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
