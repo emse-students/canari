@@ -1,37 +1,47 @@
 import { intlLocale } from '$lib/bookings/grid';
 
-/** What a booking notice's bell row says, once split (the server's `noticeRowText` layout). */
-export interface BookingNoticeText {
+/** The structured facts of a booking notice (`post_notifications.meta`, migration 117). */
+export interface BookingNoticeMeta {
   /** The space's name (empty on a space reached by its link only, Q-R5). */
   place: string;
-  /** The organiser's word on a cancellation (Q-R3); empty when none. */
-  word: string;
   /** The slot's start, an ISO instant. */
   startsAt: string;
+  /** The space's IANA zone: the slot is drawn on ITS clock (D25), as the reminder is. */
+  timeZone: string;
 }
 
 /**
- * Splits a booking notice's `text`: three lines - place, word, slot start (UTC instant). A row
- * written before the slot was carried holds ONE line (a place or a word, which cannot be told
- * apart), so anything that is not three lines ending in a valid instant returns null and the caller
- * draws the text as it always did.
+ * Reads a notice's `meta` as booking facts, or null when it is absent (a row written before the
+ * column, every other type) or not of that shape - the caller then draws the row as it always did.
+ * Nothing is ever read out of the row's `text`, which is the organiser's word alone.
  */
-export function parseBookingNoticeText(text: string): BookingNoticeText | null {
-  const lines = text.split('\n');
-  if (lines.length !== 3) return null;
-  const [place, word, startsAt] = lines;
+export function readBookingNoticeMeta(meta: unknown): BookingNoticeMeta | null {
+  if (typeof meta !== 'object' || meta === null) return null;
+  const { place, startsAt, timeZone } = meta as Record<string, unknown>;
+  if (typeof place !== 'string' || typeof startsAt !== 'string' || typeof timeZone !== 'string') {
+    return null;
+  }
   if (Number.isNaN(new Date(startsAt).getTime())) return null;
-  return { place, word, startsAt };
+  return { place, startsAt, timeZone };
 }
 
-/** The slot's start in the reader's locale and clock: "mar. 3 nov., 10:00". */
-export function formatNoticeSlot(startsAt: string): string {
-  return new Intl.DateTimeFormat(intlLocale(), {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(new Date(startsAt));
+/**
+ * The slot's start in the reader's language on the SPACE's clock: "mar. 3 nov., 10:00". Null when
+ * the zone is not one the runtime knows, so a wrong day or hour is never shown for a right one.
+ */
+export function formatNoticeSlot(startsAt: string, timeZone: string): string | null {
+  try {
+    return new Intl.DateTimeFormat(intlLocale(), {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZone,
+    }).format(new Date(startsAt));
+  } catch (e) {
+    console.warn(`[BOOKINGS] notice slot not drawn, zone "${timeZone}" refused: ${String(e)}`);
+    return null;
+  }
 }

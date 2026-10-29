@@ -1,34 +1,47 @@
-import { describe, it, expect } from 'vitest';
-import { formatNoticeSlot, parseBookingNoticeText } from './noticeText';
+import { describe, it, expect, vi } from 'vitest';
+import { formatNoticeSlot, readBookingNoticeMeta } from './noticeText';
 
-describe('parseBookingNoticeText', () => {
-  it('splits place, word and slot start', () => {
-    expect(parseBookingNoticeText('Salle\ndesole\n2026-11-03T09:00:00.000Z')).toEqual({
-      place: 'Salle',
-      word: 'desole',
-      startsAt: '2026-11-03T09:00:00.000Z',
-    });
+describe('readBookingNoticeMeta', () => {
+  it('reads place, slot start and zone', () => {
+    const meta = { place: 'Salle', startsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Europe/Paris' };
+    expect(readBookingNoticeMeta(meta)).toEqual(meta);
   });
 
-  it('accepts an empty place (link-only space) and an empty word', () => {
-    expect(parseBookingNoticeText('\n\n2026-11-03T09:00:00.000Z')).toEqual({
-      place: '',
-      word: '',
-      startsAt: '2026-11-03T09:00:00.000Z',
-    });
+  it('accepts an empty place (link-only space)', () => {
+    const meta = { place: '', startsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Europe/Paris' };
+    expect(readBookingNoticeMeta(meta)).toEqual(meta);
   });
 
-  it('returns null for a row written before the slot was carried', () => {
-    expect(parseBookingNoticeText('Salle de musique')).toBeNull();
-    expect(parseBookingNoticeText('')).toBeNull();
-    expect(parseBookingNoticeText('a\nb\nnot a date')).toBeNull();
+  it('returns null for a legacy row (no meta) and for anything not of that shape', () => {
+    expect(readBookingNoticeMeta(null)).toBeNull();
+    expect(readBookingNoticeMeta(undefined)).toBeNull();
+    expect(readBookingNoticeMeta('Salle')).toBeNull();
+    expect(readBookingNoticeMeta({ place: 'x' })).toBeNull();
+    expect(
+      readBookingNoticeMeta({ place: 'x', startsAt: 'not a date', timeZone: 'Europe/Paris' })
+    ).toBeNull();
   });
 });
 
 describe('formatNoticeSlot', () => {
-  it('names the day and the start time', () => {
-    const text = formatNoticeSlot('2026-11-03T09:00:00.000Z');
-    expect(text).toMatch(/3/);
-    expect(text).toMatch(/\d{2}:\d{2}/);
+  const instant = '2026-11-03T09:00:00.000Z';
+
+  it('draws the day and the time on the SPACE clock, whatever the device zone is', () => {
+    // 09:00 UTC is 10:00 in Paris (CET) and 04:00 in New York (EST): the zone argument decides.
+    expect(formatNoticeSlot(instant, 'Europe/Paris')).toMatch(/^mar\.? 3 nov\.?,? 10:00$/);
+    expect(formatNoticeSlot(instant, 'America/New_York')).toMatch(/^mar\.? 3 nov\.?,? 04:00$/);
+  });
+
+  it('moves the DAY with the zone when the instant crosses midnight there', () => {
+    expect(formatNoticeSlot('2026-11-03T23:30:00.000Z', 'Europe/Paris')).toMatch(
+      /^mer\.? 4 nov\.?,? 00:30$/
+    );
+  });
+
+  it('is null, and says so, for a zone the runtime refuses', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(formatNoticeSlot(instant, 'Mars/Olympus')).toBeNull();
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });

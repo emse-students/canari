@@ -441,16 +441,18 @@ same pull request.
   default; `PATCH bookings/:id/reminder { minutes }` for the holder or a participant still in,
   refused once cancelled or started; choosing re-arms the claim. `mine` returns the reader's own.
   The organiser's default is a space setting (`reminderMinutes`).
-- **The bell row's text** (cancellation, withdrawal, booking; fix of 2026-10-30, measured on dev
-  `1.5.1-alpha.8`: the word had replaced the space's name and no row named the slot) is THREE lines in
-  the existing `text` column - place (empty on a link-only space), the organiser's word (one line),
-  the slot's START as a UTC instant (`noticeRowText`, parsed by `lib/bookings/noticeText.ts`, drawn in
-  the reader's locale). A row of one line is an older one and is drawn as before. **The push is
-  unchanged** (place, or the word off a link-only space; never the slot). **The privacy register's C17
-  and the policy say a notice names "the place" and the word: the slot's start now rides the same
-  row, kept 90 days like it - the wording is the owner's to confirm, not changed here.** The bell
-  badge is the shared 60 s `postNotifStore` poll for EVERY notification type; no type has a live
-  signal, so a booking notice not showing at once is the design, not an omission.
+- **The bell row's place and slot** (cancellation, withdrawal, booking; fix of 2026-10-30, measured on
+  dev `1.5.1-alpha.8`: the word had replaced the space's name and no row named the slot) ride a nullable
+  `post_notifications.meta` jsonb (**migration 117**, applied only after the owner's yes):
+  `{ place, startsAt, timeZone }` - the place (empty on a link-only space, Q-R5), the slot's START as a
+  UTC instant, the space's IANA zone. `text` is the organiser's word ALONE (or empty); nothing is ever
+  parsed out of it. The client (`lib/bookings/noticeText.ts`) draws the slot on the SPACE's clock in the
+  reader's language, as the reminder does. A row with null `meta` (every row before the migration)
+  renders exactly as before. **The push is unchanged** (place, or the word off a link-only space; never
+  the slot). C17 and the privacy policy's Reservations paragraph say it: the notice names the place and
+  the slot's start, kept 90 days, after the space is deleted too. The bell badge is the shared 60 s
+  `postNotifStore` poll for EVERY notification type; no type has a live signal, so a booking notice not
+  showing at once is the design, not an omission.
 - **The client** knows the four types (`KNOWN_NOTIFICATION_TYPES`, `notificationHref` ->
   `/bookings`, `NotificationRow` sentences and glyphs), the `bookings` host, the `bookings`
   settings category, and the three native tables carry the four keys.

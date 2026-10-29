@@ -56,14 +56,24 @@ export function noticePlace(facts: PlaceFacts): string {
 }
 
 /**
- * THE BELL ROW'S TEXT for a cancellation, a withdrawal or a booking: three lines the client splits
- * (`frontend/src/lib/bookings/noticeText.ts` parses the same layout) - the place (empty on a space
- * reached by its link only, Q-R5), the organiser's word (empty when none; whitespace folded so it
- * stays one line) and the slot's START as a UTC instant. The client draws the instant in the
- * reader's own locale, so the server composes no date sentence. The push never carries this text.
+ * THE STRUCTURED FACTS OF A BOOKING NOTICE, stored in `post_notifications.meta` (migration 117) so
+ * the client names WHERE and WHEN in the reader's language without parsing `text`, which holds the
+ * organiser's word alone: the place (empty on a space reached by its link only, Q-R5), the slot's
+ * START as a UTC instant, and the space's IANA zone the client draws it in (D25). The push never
+ * carries it. Kept 90 days with the row, after the space is deleted too (C17).
  */
-export function noticeRowText(place: string, word: string, startsAt: Date): string {
-  return [place, word.replace(/\s+/g, ' ').trim(), startsAt.toISOString()].join('\n');
+export interface BookingNoticeMeta extends Record<string, unknown> {
+  place: string;
+  startsAt: string;
+  timeZone: string;
+}
+
+export function bookingNoticeMeta(
+  place: string,
+  startsAt: Date,
+  timeZone: string
+): BookingNoticeMeta {
+  return { place, startsAt: startsAt.toISOString(), timeZone };
 }
 
 /** The reminder's line: the place and the start time on the space's clock, or the time alone. */
@@ -148,11 +158,9 @@ export class BookingNotificationsService {
         ctx.booking.id,
         people,
         actorId,
-        {
-          row: noticeRowText(ctx.place, word, ctx.booking.startsAt),
-          push: linkOnly ? '' : word || ctx.place,
-        },
-        await this.present(ctx.space, actorId, people)
+        { row: word, push: linkOnly ? '' : word || ctx.place },
+        await this.present(ctx.space, actorId, people),
+        ctx.meta
       );
     });
   }
@@ -167,8 +175,9 @@ export class BookingNotificationsService {
         ctx.booking.id,
         [ctx.booking.holderId],
         participantId,
-        { row: noticeRowText(ctx.place, '', ctx.booking.startsAt), push: ctx.place },
-        {}
+        { row: '', push: ctx.place },
+        {},
+        ctx.meta
       );
     });
   }
@@ -184,8 +193,9 @@ export class BookingNotificationsService {
         ctx.booking.id,
         people,
         actorId,
-        { row: noticeRowText(ctx.place, '', ctx.booking.startsAt), push: ctx.place },
-        await this.present(ctx.space, actorId, people)
+        { row: '', push: ctx.place },
+        await this.present(ctx.space, actorId, people),
+        ctx.meta
       );
     });
   }
@@ -197,7 +207,7 @@ export class BookingNotificationsService {
    * who the notice names is decided ONCE (`present` with nobody among the people).
    */
   async spaceDeleted(
-    space: Pick<BookingSpace, 'name' | 'discoverability' | 'associationId'>,
+    space: Pick<BookingSpace, 'name' | 'discoverability' | 'associationId' | 'timeZone'>,
     notices: DeletedBookingNotice[],
     actorId: string
   ): Promise<void> {
@@ -217,8 +227,9 @@ export class BookingNotificationsService {
             notice.bookingId,
             notice.people,
             actorId,
-            { row: noticeRowText(place, '', notice.startsAt), push: place },
-            notice.people.includes(actorId) ? {} : presented
+            { row: '', push: place },
+            notice.people.includes(actorId) ? {} : presented,
+            bookingNoticeMeta(place, notice.startsAt, space.timeZone)
           );
         } catch (e) {
           this.logger.error(
@@ -277,7 +288,8 @@ export class BookingNotificationsService {
       discoverability: space.discoverability,
       resourceName: resource.name,
     });
-    return { booking, space, people, place };
+    const meta = bookingNoticeMeta(place, booking.startsAt, space.timeZone);
+    return { booking, space, people, place, meta };
   }
 
   /**
@@ -315,9 +327,10 @@ export class BookingNotificationsService {
 
   /**
    * One bell row and one push per recipient, the one who acted and a tombstoned account excepted.
-   * `text.row` is what the bell keeps (place, word and slot, {@link noticeRowText}), `text.push` what
-   * a lock screen shows (the place, or the word; never the slot). They now always differ, so the row
-   * is written without its push and the push sent on its own, through the same pipeline.
+   * `text.row` is what the bell keeps (the organiser's word alone, or empty), `text.push` what a
+   * lock screen shows (the place, or the word; never the slot). They differ unless there is a word on
+   * a named space; then the row is written without its push and the push sent on its own, through the
+   * same pipeline. `meta` rides every bell row (never the push): the place, slot and zone.
    */
   private async send(
     type: BookingNoticeType,
@@ -325,7 +338,8 @@ export class BookingNotificationsService {
     recipients: string[],
     actorId: string,
     text: { row: string; push: string },
-    presented: Presented
+    presented: Presented,
+    meta: BookingNoticeMeta
   ): Promise<void> {
     const to = [...new Set(recipients)].filter((id) => id !== actorId && id !== DELETED_ACCOUNT);
     if (to.length === 0) {
@@ -339,6 +353,7 @@ export class BookingNotificationsService {
       type,
       actorId: rowActorId ?? actorId,
       ...shown,
+      meta,
       pushData: { target: BOOKINGS_TARGET },
     };
     let written: number;
@@ -366,7 +381,7 @@ export class BookingNotificationsService {
     }
     this.logger.log(
       `[BOOKINGS_NOTIFY] ${type} booking=${bookingId.slice(0, 8)} told=${written} ` +
-        `placeNamed=${text.push !== ''} wordInBellOnly=${text.row !== text.push}`
+        `placeNamed=${text.push !== ''} wordInBellOnly=${text.row !== '' && text.row !== text.push}`
     );
   }
 }

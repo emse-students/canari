@@ -219,27 +219,58 @@ describe('NotificationRow sentence', () => {
 
   // The space and the slot are named, and the organiser's word is quoted on its own line.
   it('names the space and the slot of a booking notice, with the word apart', () => {
-    const iso = '2026-11-03T09:00:00.000Z';
+    const startsAt = '2026-11-03T09:00:00.000Z';
+    const meta = { place: 'Salle fermee', startsAt, timeZone: 'Europe/Paris' };
     const row = renderRow({
       ...postRow('booking_cancelled'),
       postId: 'b-1',
-      text: `Salle fermee\ndesole A8 test\n${iso}`,
+      text: 'desole A8 test',
+      meta,
     });
     const text = row.textContent ?? '';
     expect(text).toContain(m.notif_booking_cancelled_text());
     expect(text).toContain('Salle fermee');
-    expect(text).toContain(formatNoticeSlot(iso));
-    const quote = row.querySelector('.block.italic');
-    expect(quote?.textContent).toContain('desole A8 test');
-    expect(row.querySelector('.italic')?.textContent).toBe('Salle fermee');
+    // The slot is the SPACE's clock: 09:00 UTC is 10:00 in Paris.
+    expect(text).toContain(formatNoticeSlot(startsAt, 'Europe/Paris')!);
+    expect(text).toContain('10:00');
+    expect(row.querySelector('.block.italic')?.textContent).toBe('“desole A8 test”');
+    // The word never takes the space's place.
+    expect(row.querySelectorAll('.italic')[0]?.textContent).toBe('Salle fermee');
+
+    // A word with newlines is TEXT, kept on its own block, never read as layout or markup.
+    const multi = renderRow({
+      ...postRow('booking_cancelled'),
+      postId: 'b-1',
+      text: 'ligne 1\nligne 2 <b>x</b>',
+      meta,
+    });
+    const quote = multi.querySelector('.block.italic');
+    expect(quote?.textContent).toContain('ligne 1\nligne 2 <b>x</b>');
+    expect(quote?.querySelector('b')).toBeNull();
+
     // No word: no quote line. Link-only space (Q-R5): no space name, the slot alone.
     const bare = renderRow({
       ...postRow('booking_added'),
       postId: 'b-1',
-      text: `\n\n${iso}`,
+      text: '',
+      meta: { ...meta, place: '' },
     });
     expect(bare.querySelector('.italic')).toBeNull();
-    expect(bare.textContent).toContain(formatNoticeSlot(iso));
+    expect(bare.textContent).toContain('10:00');
+  });
+
+  // A row written before `meta` existed draws exactly as it always did: its text quoted, no slot.
+  it('draws a booking notice with no meta from its text alone (legacy row)', () => {
+    const legacy = renderRow({
+      ...postRow('booking_cancelled'),
+      postId: 'b-1',
+      text: 'Salle de musique',
+    });
+    expect(legacy.textContent).toContain(m.notif_booking_cancelled_text());
+    expect(legacy.querySelectorAll('.italic')).toHaveLength(1);
+    expect(legacy.querySelector('.italic')?.textContent).toBe('Salle de musique');
+    expect(legacy.querySelector('.block')).toBeNull();
+    expect(legacy.textContent).not.toMatch(/\d{2}:\d{2}/);
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.

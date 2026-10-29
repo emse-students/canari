@@ -53,7 +53,7 @@ import { BookingFilesService } from './booking-files.service';
 import { BookingFile } from './entities/booking-file.entity';
 import type { BookingPosterMedia } from './booking-poster-media';
 import type { FormFilesService } from '../forms/form-files.service';
-import { BookingNotificationsService, noticeRowText } from './booking-notifications.service';
+import { BookingNotificationsService } from './booking-notifications.service';
 import { BookingReminderScheduler } from './booking-reminder.scheduler';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 
@@ -114,6 +114,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     actorId: string;
     associationId?: string;
     bookingId: string;
+    meta?: Record<string, unknown>;
   }[] = [];
   /** Every PUSH the pipeline would send - what a lock screen shows - one entry per recipient. */
   const pushed: {
@@ -233,6 +234,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       associationLogoMediaId?: string | null;
       postId: string;
       skipPush?: boolean;
+      meta?: Record<string, unknown>;
     };
     const push = (d: Omit<Notice, 'postId' | 'recipientIds'>, to: string[]) => {
       for (const id of to) {
@@ -259,6 +261,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
             actorId: d.actorId,
             associationId: d.associationId,
             bookingId: d.postId,
+            meta: d.meta,
           });
         }
         if (!d.skipPush) push(d, to);
@@ -1971,16 +1974,26 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       told.length = 0;
       await service.cancel(id, as(ORGA), NOW, 'Salle inondee');
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
-      // The row names the space, quotes the word on its own line and carries the slot's start.
+      // `text` is the word ALONE; the place, the slot's start and the space's zone ride `meta`.
       expect(
         told.every(
           (t) =>
-            t.text.split('\n')[0].startsWith(space.name) &&
-            t.text.split('\n').slice(1).join('\n') ===
-              noticeRowText('', 'Salle inondee', new Date(on('10:00'))).slice(1) &&
-            t.actorName === 'Club Musique'
+            t.text === 'Salle inondee' &&
+            t.actorName === 'Club Musique' &&
+            typeof t.meta?.place === 'string' &&
+            (t.meta.place as string).startsWith(space.name) &&
+            t.meta.startsAt === new Date(on('10:00')).toISOString() &&
+            t.meta.timeZone === 'UTC'
         )
       ).toBe(true);
+      // Without a word the row's text is empty, never the place (no word replaces the space).
+      told.length = 0;
+      const second = await book(space.id, resourceIds[0], '11:00', '11:30', ALICE);
+      told.length = 0;
+      await service.cancel(second.id, as(ORGA), NOW);
+      expect(told.map((t) => [t.text, t.meta?.startsAt])).toEqual([
+        ['', new Date(on('11:00')).toISOString()],
+      ]);
     });
 
     it("the holder's cancellation tells the participants (Q-R2), and carries no word of theirs", async () => {
@@ -2043,13 +2056,15 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           .map((t) => [t.to, t.text, t.actorName, t.actorId, t.associationId])
           .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
       ).toEqual(
-        [ALICE, BOB].map((to) => [
-          to,
-          noticeRowText('', 'Le cabinet est ferme', new Date(on('10:00'))),
-          'Canari',
-          'system',
-          undefined,
-        ])
+        [ALICE, BOB].map((to) => [to, 'Le cabinet est ferme', 'Canari', 'system', undefined])
+      );
+      // The bell row names no place (Q-R5) but still carries the slot.
+      expect(told.map((t) => t.meta)).toEqual(
+        [ALICE, BOB].map(() => ({
+          place: '',
+          startsAt: new Date(on('10:00')).toISOString(),
+          timeZone: 'UTC',
+        }))
       );
 
       // An organiser booking for someone on that space names nobody either.
