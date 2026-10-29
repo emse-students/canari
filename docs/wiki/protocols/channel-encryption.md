@@ -653,7 +653,11 @@ window with a durable row and a lock:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
   roster write and its eviction record in one transaction), the commit's advance (its admits), an
   account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
-  that transaction, so an accepted commit never leaves a leaf without its seat),
+  that transaction; an external join whose seat cannot be written - a departure in progress, a
+  revoked device, no key package - is refused whole with `NOT_A_MEMBER`, so an accepted external
+  commit never leaves a leaf without its seat; a pending member's commit adds no leaf, since its Add
+  did, and stands with its seat left `pending`, logged `committer seat NOT written` or
+  `REFUSED ... reason=`),
   `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
   registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
   roster re-read under it).
@@ -710,15 +714,12 @@ window with a durable row and a lock:
   the admit is dropped and the commit accepted, since the leaf belongs to an account that is going or
   a device revoked while the Add was in flight, and the accept names it in `refusedAdmits` so the
   committer owes and sends it no Welcome - [mls-protocol](mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)),
-  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
-  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
-  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
-  key package - and removes the route itself. And the creation bootstrap of `addGroupMember` (a
-  caller enrolling ITSELF into an empty roster), which writes the roster row and `pending` seats
-  with no seat lock. Since ADM-3 (2026-10-25) the route enrols nobody else: another person's device
-  rows go through `writePendingSeats` under the seat lock, or the route refuses
-  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
-  pass", narrowed). An account erasure deletes the account's key packages FIRST, in a
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats` - which `addGroupMember` uses for
+  every write, the creator enrolling itself into its empty roster included (`enrol: 'creator'`).
+  **One known exception.** The demotion (`deactivateDeviceMembership`, the stale-device cron among
+  its callers), deliberately: it only moves a row that exists to `pending`, without that read - the
+  cron demotes precisely a device with no recent key package - and removes the route itself. An
+  account erasure deletes the account's key packages FIRST, in a
   transaction of its own, so a writer either holds one and the delete waits for it - its row is
   then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
   group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
@@ -727,9 +728,13 @@ window with a durable row and a lock:
   package (`register-device`), and a token issued before the deletion is honoured for up to an
   hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
   device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
-  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
-  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
-  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`, then
+  every route of the account FOUND off the routing sets by its prefix (`findRoutesOfUser`, never off
+  a row) and removed under that group's seat lock when no active seat of the account stands behind
+  it (`removeUnseatedRoutes`) - a 1:1 DM whose tombstone committed before a crash is named by no
+  row, and its route goes all the same. **No device row is deleted outside `eraseSeats`**: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS - a route removed
+  alone would be written back by the next send's reconciliation (`MEMBERS_CACHE_REPAIRED`) - which core starts
   once every token expired, so no republish can follow it - termination is that pass's, never the
   ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
   `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`

@@ -2260,7 +2260,7 @@ be undone by the route the same second. Now the accepted commit is the one write
 | Writer | Since ADM-3 |
 | --- | --- |
 | The accepted commit (`enrolAdmittedPeople` + `liftAwaitingAdmission`) | The ONLY one. Newcomers and awaiting seats, ordered against the invitation's generation, under the seat lock. |
-| `POST mls/groups/:id/members` (`addGroupMember`) | Enrols nobody but the caller, into an empty roster (the bootstrap). For anyone else it re-reads the seat under the seat lock (`writePendingSeats`, `requireAdmitted`): admitted -> writes their device rows, a no-op for the roster; absent or awaiting -> `409 MEMBER_NOT_ADMITTED`, nothing written. |
+| `POST mls/groups/:id/members` (`addGroupMember`) | Enrols nobody but the caller, into an empty roster (the bootstrap) - re-read under the seat lock taken exclusive, so a second caller who also read it empty is answered `409 MEMBER_NOT_ADMITTED`, nothing written. For anyone else it re-reads the seat under the seat lock (`writePendingSeats`, `requireAdmitted`): admitted -> writes their device rows, a no-op for the roster; absent or awaiting -> `409 MEMBER_NOT_ADMITTED`, nothing written. |
 | A Welcome sent apart (`sendWelcome`) | Admits nobody; refused for an awaiting seat. |
 | An inline Welcome in a commit | Admitted only if the commit's gate admits its target; otherwise the commit is refused. |
 | Link acceptance (`writePendingSeats`, `enrol`) | Writes an ASK, never an admission. After a Decline it may write a new one: a Decline is not a ban. |

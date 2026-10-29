@@ -222,7 +222,7 @@ export class InvitationsController {
       group.id,
       callerId,
       deviceIds,
-      true
+      'awaiting_admission'
     );
     if (outcome !== 'written') {
       this.logger.warn(

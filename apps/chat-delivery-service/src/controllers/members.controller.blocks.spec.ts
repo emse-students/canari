@@ -144,12 +144,25 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     // `isBlockedBetween` short-circuits on a === b, so the creator registering itself into its own
     // empty group cannot be refused by a block row that could not exist in the first place.
     groupMemberRepo.count.mockResolvedValue(0);
+    jest.mocked(writePendingSeats).mockResolvedValue('written');
     await expect(
       controller.addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
     ).resolves.toEqual({ status: 'added' });
     expect(blockQuery).not.toHaveBeenCalled();
-    // The one enrolment this route still writes: the creator, into its empty roster.
-    expect(transaction).toHaveBeenCalled();
+    // The one enrolment this route still writes: the creator, into its empty roster - through the
+    // one pending-seat writer, under the seat lock and beside each device's key package.
+    expect(writePendingSeats).toHaveBeenCalledWith(expect.anything(), GROUP, CALLER, [], 'creator');
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("answers 410 when the creator's group ended before its enrolment, and enrols nobody", async () => {
+    groupMemberRepo.count.mockResolvedValue(0);
+    jest.mocked(writePendingSeats).mockResolvedValue('group_gone');
+
+    await expect(
+      controller.addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
+    ).rejects.toMatchObject({ response: { error: 'group_deleted' } });
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it.each([

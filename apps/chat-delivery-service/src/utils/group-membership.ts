@@ -10,6 +10,7 @@ import { RepeatCounter, cutUserId } from './log-repeat';
 import {
   bumpSeatGeneration,
   heldKeyPackages,
+  takeSeatLock,
   takeSharedSeatLock,
   withSeatLock,
 } from './seat-eviction';
@@ -137,9 +138,15 @@ export async function ensureGroupMember(
 /**
  * What {@link writePendingSeats} did: the seats written, or why none was. `not_admitted` only for a
  * caller that asked for an admitted seat (`requireAdmitted`): the roster row awaits a member's
- * admission.
+ * admission. `roster_taken` only for a `'creator'` enrolment: someone else is already on the roster,
+ * so the caller is not the group's creator and nothing was written.
  */
-export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster' | 'not_admitted';
+export type PendingSeatsOutcome =
+  | 'written'
+  | 'group_gone'
+  | 'not_on_roster'
+  | 'not_admitted'
+  | 'roster_taken';
 
 /**
  * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
@@ -152,10 +159,16 @@ export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster' | '
  * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
  * read finds no row - or waits, then deletes what this wrote.
  *
- * @param enrol true for an invite acceptance, which writes the roster row itself in the same
- *   transaction ({@link ensureGroupMember}) as a seat AWAITING A MEMBER'S ADMISSION - no member chose
- *   this person, the link did (`GroupMember.awaitingAdmission`); false for a device registration,
- *   which writes seats only where its owner is ALREADY on the roster.
+ * @param enrol how the roster row is written, in the same transaction ({@link ensureGroupMember}):
+ *   `'awaiting_admission'` for an invite acceptance - a seat AWAITING A MEMBER'S ADMISSION, since no
+ *   member chose this person, the link did (`GroupMember.awaitingAdmission`); `'creator'` for a
+ *   group's creator enrolling itself into its empty roster (`MembersController.addGroupMember`),
+ *   admitted - and ONLY while the roster is empty, re-read here under the seat lock taken EXCLUSIVE:
+ *   the route's own "empty roster" read is unlocked, so two callers who both read it empty were both
+ *   enrolled admitted (review of #2585). Exclusive, two creators run one after the other, and the
+ *   second finds the first's committed row and gets `roster_taken`. The caller's own row does not
+ *   count: a creator's retry stays the no-op it was; false for a device registration, which writes seats only where its owner is ALREADY
+ *   on the roster.
  * @param opts.requireAdmitted (with `enrol` false) the owner's roster row must also be ADMITTED - not
  *   awaiting a member: the member-add route, which writes the device seats of a person an accepted
  *   commit admitted and never admits anyone itself (`MembersController.addGroupMember`). Read under
@@ -168,19 +181,37 @@ export async function writePendingSeats(
   groupId: string,
   userId: string,
   deviceIds: readonly string[],
-  enrol: boolean,
+  enrol: false | 'awaiting_admission' | 'creator',
   opts: { requireAdmitted?: boolean } = {}
 ): Promise<PendingSeatsOutcome> {
   return manager.transaction(async (m) => {
-    await takeSharedSeatLock(m, groupId);
+    // A creator decides who the group's first member is: exclusive, so no second creator reads the
+    // roster empty beside it. Every other writer only adds seats beside an existing one: shared.
+    if (enrol === 'creator') await takeSeatLock(m, groupId);
+    else await takeSharedSeatLock(m, groupId);
     const [group] = await m.getRepository(Group).find({
       where: { id: groupId },
       select: { id: true, deletedAt: true },
       lock: { mode: 'pessimistic_read' },
     });
     if (!group || group.deletedAt) return 'group_gone';
+    if (enrol === 'creator') {
+      const other = await m.getRepository(GroupMember).findOne({
+        where: { groupId, userId: Not(userId) },
+        select: { id: true, userId: true },
+      });
+      if (other) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED roster_taken group=${groupId} user=${cutUserId(userId)} ` +
+            `- enrolling as the creator, but ${cutUserId(other.userId)} is already on the roster; nothing written`
+        );
+        return 'roster_taken';
+      }
+    }
     if (enrol) {
-      await ensureGroupMember(m, groupId, userId, { awaitingAdmission: true });
+      await ensureGroupMember(m, groupId, userId, {
+        awaitingAdmission: enrol === 'awaiting_admission',
+      });
     } else {
       const seat = await m.getRepository(GroupMember).findOne({
         where: { groupId, userId },

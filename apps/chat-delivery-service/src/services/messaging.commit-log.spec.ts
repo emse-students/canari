@@ -1154,6 +1154,35 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
     });
 
+    /**
+     * AN EXTERNAL JOIN'S LEAF ENTERS THE TREE WITH THE ADVANCE, so its seat is written there or the
+     * join is refused whole: a device whose key package an erasure took while the commit waited on
+     * the seat lock adds no leaf no seat holds (`writeClaimedSeat`, whose every refusal is one).
+     */
+    it('refuses an EXTERNAL commit whose seat cannot be written under the lock, nothing fanned out', async () => {
+      tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-1' }] });
+      txErasedDevices.add('user-1:device-1');
+      const sent = fanOut();
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+      });
+      expect(sent).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts a pending member commit whose seat cannot be written, its leaf already in the tree', async () => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [{ ...ownDevice, status: 'pending', kickedAt: null }],
+      });
+      txErasedDevices.add('user-1:device-1');
+      fanOut();
+
+      await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    });
+
     it('refuses an external commit from a person who is not on the roster', async () => {
       tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-2' }] });
 

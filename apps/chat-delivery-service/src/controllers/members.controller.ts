@@ -50,7 +50,6 @@ import {
   withSeatLock,
 } from '../utils/seat-eviction';
 import {
-  ensureGroupMember,
   endDeviceMemberships,
   endGroupMembership,
   exclusionWindows,
@@ -211,6 +210,10 @@ export class MembersController {
   /**
    * The group-creation bootstrap: `caller` registers ITSELF into a group whose roster is still empty
    * - the creator, before anyone else exists. The one enrolment the member-add route still writes.
+   *
+   * UNLOCKED, SO IT ONLY ROUTES: two callers can both read the roster empty. What decides is the
+   * re-read under the seat lock taken exclusive (`writePendingSeats(..., 'creator')`), which answers
+   * the later one `roster_taken`, a 409 here.
    */
   private async isCreationBootstrap(
     safeGroupId: string,
@@ -644,30 +647,39 @@ export class MembersController {
       return { status: 'added' };
     }
 
-    // THE CREATOR, into a group whose roster is still empty: the one enrolment written here.
-    await this.dataSource.transaction(async (manager) => {
-      // Enrol at the user level, leaving an existing enrolment untouched - the same call the
-      // invitation-link join makes, so the two writers of this table cannot disagree about what a
-      // second call means. Until 2026-09-16 this one rewrote `joinedAt` on every call, which is why
-      // no row of a 31-member production group carried that group's own creation minute.
-      await ensureGroupMember(manager, safeGroupId, safeUserId);
-
-      // Upsert DeviceGroupMembership for each active device: no-op if already present.
-      for (const device of userDevices) {
-        await manager
-          .createQueryBuilder()
-          .insert()
-          .into(DeviceGroupMembership)
-          .values({
-            userId: safeUserId,
-            deviceId: device.deviceId,
-            groupId: safeGroupId,
-            status: 'pending',
-          })
-          .orIgnore()
-          .execute();
-      }
-    });
+    // THE CREATOR, into a group whose roster is still empty: the one enrolment written here, through
+    // the one pending-seat writer (`writePendingSeats`), so under the group's seat lock, against the
+    // group row re-read under it, and each device row only beside its key package read `FOR SHARE`
+    // there - an account being erased gets no row its erasure could no longer find. The roster row
+    // is written as `ensureGroupMember` writes it, an existing enrolment left untouched.
+    const created = await writePendingSeats(
+      this.dataSource.manager,
+      safeGroupId,
+      safeUserId,
+      userDevices.map((d) => d.deviceId),
+      'creator'
+    );
+    if (created === 'group_gone') {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] REFUSED group_gone group=${safeGroupId} - the creator's group ended before its enrolment`
+      );
+      throw new GoneException({ error: 'group_deleted', groupId: safeGroupId });
+    }
+    // The "empty roster" read above is unlocked; the one that decides is the re-read under the
+    // seat lock. Someone else got there first: this caller is not the creator, and no accepted
+    // commit admitted them - the same typed 409 as any other person this route enrols nobody for.
+    if (created === 'roster_taken') {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] REFUSED not_admitted group=${safeGroupId} user=${cutUserId(safeUserId)} ` +
+          `reason=roster_taken - another creator enrolled first; nothing written`
+      );
+      throw new ConflictException(
+        refusalBody(
+          RefusalCode.MEMBER_NOT_ADMITTED,
+          'No accepted commit admitted this person; this route enrols nobody.'
+        )
+      );
+    }
 
     // NB: NOT added to group:members Redis here - devices enter the routing
     // set only when their Welcome is sent (sendWelcome sets status to active).
