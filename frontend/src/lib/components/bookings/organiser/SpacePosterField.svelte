@@ -17,18 +17,32 @@
    * The posts' path, copied: compressed on the device (`preparePostMedia`), encrypted with a key of
    * its own and uploaded `archive` (`encryptAndUpload`), and only the reference goes to the server,
    * which keeps the new one and releases the one it replaces (`booking-poster-media.ts`).
+   *
+   * In the creation wizard (D52) there is no space yet: `spaceId` is null, the reference is only
+   * handed to `onChanged`, and the creation claims it (`POST bookings/spaces`). An image picked and
+   * then abandoned with the wizard is left to the idle sweep of `poster-pending` uploads.
    */
   interface Props {
-    spaceId: string;
+    /** The space the poster is saved on at once, or null when the creation will carry it. */
+    spaceId: string | null;
     spaceName: string;
     poster: Poster | null;
     onChanged: (poster: Poster | null) => void;
+    /**
+     * Whether an upload is under way: the wizard holds its steps meanwhile, so a creation cannot
+     * leave before `onChanged` hands it the poster.
+     */
+    onBusy?: (busy: boolean) => void;
   }
 
-  let { spaceId, spaceName, poster, onChanged }: Props = $props();
+  let { spaceId, spaceName, poster, onChanged, onBusy }: Props = $props();
 
   let busy = $state(false);
   let error = $state('');
+
+  $effect(() => {
+    onBusy?.(busy);
+  });
 
   async function picked(event: Event & { currentTarget: HTMLInputElement }) {
     const input = event.currentTarget;
@@ -67,8 +81,12 @@
         ...(ref.width ? { width: ref.width } : {}),
         ...(ref.height ? { height: ref.height } : {}),
       };
-      await setSpacePoster(spaceId, next);
-      Log.i('BOOKINGS', `poster set space=${spaceId.slice(0, 8)}`);
+      if (spaceId) {
+        await setSpacePoster(spaceId, next);
+        Log.i('BOOKINGS', `poster set space=${spaceId.slice(0, 8)}`);
+      } else {
+        Log.i('BOOKINGS', 'poster uploaded for the space being created');
+      }
       onChanged(next);
     } catch (e) {
       Log.i('BOOKINGS', `poster not set: ${String(e)}`);
@@ -83,8 +101,12 @@
     busy = true;
     error = '';
     try {
-      await setSpacePoster(spaceId, null);
-      Log.i('BOOKINGS', `poster removed space=${spaceId.slice(0, 8)}`);
+      if (spaceId) {
+        await setSpacePoster(spaceId, null);
+        Log.i('BOOKINGS', `poster removed space=${spaceId.slice(0, 8)}`);
+      } else {
+        Log.d('BOOKINGS', 'poster dropped from the space being created');
+      }
       onChanged(null);
     } catch (e) {
       Log.i('BOOKINGS', `poster not removed: ${String(e)}`);
@@ -132,7 +154,9 @@
       </button>
     {/if}
   </div>
-  <p class={CONTROL_HINT_CLASS}>{m.bookings_poster_hint()}</p>
+  <p class={CONTROL_HINT_CLASS}>
+    {spaceId ? m.bookings_poster_hint() : m.bookings_wizard_poster_hint()}
+  </p>
   {#if error}
     <p class="text-red-err text-xs font-medium" role="alert">{error}</p>
   {/if}
