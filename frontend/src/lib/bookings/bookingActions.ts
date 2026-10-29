@@ -5,6 +5,7 @@
  */
 import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
 import { m } from '$lib/paraglide/messages';
+import { BOOKING_NOTIFICATIONS_LIVE } from './notified';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { socialUrl } from '$lib/utils/apiUrl';
@@ -42,13 +43,17 @@ async function confirmed(
 }
 
 /**
- * The holder or the organiser cancels a coming booking (D5). `byOrganiser` says the cost D13
- * names: the holder is not told, they find out by coming back.
+ * The holder or the organiser cancels a coming booking (D5). `byOrganiser` says what its people
+ * learn: nothing while the notices are off (D13), a notification once they are live (D53).
  */
 export function cancelWithConfirm(bookingId: string, byOrganiser: boolean): Promise<boolean> {
   return confirmed(
     'cancel',
-    byOrganiser ? m.bookings_cancel_confirm_organiser() : m.bookings_cancel_confirm(),
+    byOrganiser
+      ? BOOKING_NOTIFICATIONS_LIVE
+        ? m.bookings_cancel_confirm_organiser_notified()
+        : m.bookings_cancel_confirm_organiser()
+      : m.bookings_cancel_confirm(),
     m.bookings_cancel_action(),
     () => cancelBooking(bookingId),
     m.bookings_cancel_done()

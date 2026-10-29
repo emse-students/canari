@@ -9,6 +9,7 @@
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -100,7 +101,11 @@
             {/each}
           </ul>
         {/if}
-        <p class="text-text-muted text-xs">{m.bookings_mine_no_notification_note()}</p>
+        <p class="text-text-muted text-xs">
+          {BOOKING_NOTIFICATIONS_LIVE
+            ? m.bookings_mine_notification_note()
+            : m.bookings_mine_no_notification_note()}
+        </p>
         {#if history.length}
           <details class="group">
             <summary

@@ -20,6 +20,7 @@
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import { exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -171,7 +172,11 @@
         <SpaceWeek {space} bind:nowMs />
       {/key}
 
-      <p class="text-text-muted text-xs">{m.bookings_space_no_notification_note()}</p>
+      <p class="text-text-muted text-xs">
+        {BOOKING_NOTIFICATIONS_LIVE
+          ? m.bookings_space_notification_note()
+          : m.bookings_space_no_notification_note()}
+      </p>
     </div>
   {/if}
 </PageContainer>

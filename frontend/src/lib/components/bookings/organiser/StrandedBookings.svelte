@@ -6,6 +6,7 @@
   import { rangeInZone, STRANDED_PAGE } from '$lib/bookings/stranded';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { getLocale } from '$lib/paraglide/runtime';
   import { Log } from '$lib/utils/Log';
 
@@ -55,7 +56,10 @@
 
   async function cancel(b: BookingView) {
     if (cancelling) return;
-    const confirmed = await showConfirm(m.bookings_stranded_cancel_confirm({ when: when(b) }), {
+    const question = BOOKING_NOTIFICATIONS_LIVE
+      ? m.bookings_stranded_cancel_confirm_notified({ when: when(b) })
+      : m.bookings_stranded_cancel_confirm({ when: when(b) });
+    const confirmed = await showConfirm(question, {
       danger: true,
       // "Annuler" would name both buttons: the confirm says what it cancels, the other keeps it.
       confirmLabel: m.bookings_stranded_cancel_confirm_button(),
@@ -81,7 +85,9 @@
   aria-label={m.bookings_stranded_title()}
 >
   <h5 class="text-text-main text-sm font-bold">{m.bookings_stranded_title()}</h5>
-  <p class="text-text-muted text-xs">{m.bookings_stranded_hint()}</p>
+  <p class="text-text-muted text-xs">
+    {BOOKING_NOTIFICATIONS_LIVE ? m.bookings_stranded_hint_notified() : m.bookings_stranded_hint()}
+  </p>
 
   {#if loading}
     <div class="flex justify-center py-3">
