@@ -32,6 +32,7 @@ import {
 } from './chat.mjs';
 import { RESOLVE } from './cdp.mjs';
 import { closeOverlays } from './groupnav.mjs';
+import { GRANT_ADD_MARK, markGrantAddJs } from './grantpanel.mjs';
 import {
   currentLabelOf,
   decidePickerChoice,
@@ -744,18 +745,14 @@ export async function grantChannelAccess(cx, displayName) {
   await until(cx, `!!${RESOLVE}('text=${displayName}')`, 8000);
   await realClick(cx, `text=${displayName}`);
 
-  const add = caption('common_add_button');
-  await until(
-    cx,
-    `(function () {
-       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-         return (x.innerText || '').indexOf(${JSON.stringify(add)}) >= 0;
-       })[0];
-       return !!b && !b.disabled;
-     })()`,
-    8000
-  );
-  await realClick(cx, `text=${add}`);
+  // THE PANEL'S OWN ADD BUTTON, never the first "Ajouter" on the page: see `grantpanel.mjs`.
+  const markAdd = markGrantAddJs({
+    placeholder,
+    add: caption('common_add_button'),
+    section: caption('chat_channel_add_user_label'),
+  });
+  await until(cx, markAdd, 8000);
+  await realClick(cx, `[${GRANT_ADD_MARK}]`);
   await until(
     cx,
     `(function () {

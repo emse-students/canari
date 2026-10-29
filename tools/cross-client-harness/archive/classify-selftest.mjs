@@ -75,6 +75,9 @@ const CASES = [
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove', 'benign'],
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (the revocation answer of an unchanged tree reused)', 'benign'],
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (2 still to remove)', 'unexplained'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before it was ever sent', 'benign'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before this tab sent it', 'benign'],
   // A group exit settling its queue (GRP-6): clean only when nothing was lost.
