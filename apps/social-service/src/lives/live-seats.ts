@@ -193,9 +193,10 @@ export class LiveSeats {
   }
 
   /**
-   * Gives back every seat of an ENDED live at once, so the host's cap does not wait a lease for
-   * viewers whose next poll is a 410. Throws on a Redis failure; the caller logs it and lets the
-   * seats lapse.
+   * Gives back every seat of a live CUT or ERASED at once, so the host's cap does not wait a lease
+   * for viewers whose next poll is a 410. An ordinary end keeps them: they are what its purge waits
+   * for (`LivesService.purgeEnded`). Throws on a Redis failure; the caller logs it and lets the seats
+   * lapse.
    */
   async releaseLive(liveId: string): Promise<number> {
     const freed = Number(

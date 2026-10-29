@@ -660,10 +660,40 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       // is left, so a "full" would win if it were asked first.
       store.failPurge = true;
       await lives.end(ALICE, live.id);
-      // The end frees the live's seats at once, even with the purge refused (CAROL's, here).
-      expect(seats.held.size).toBe(0);
+      // The end KEEPS a seated viewer's seat (CAROL's): its purge waits for it (LIVE-WEB-2).
+      expect(seats.held.size).toBe(1);
       seats.cap = 0;
       expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_ENDED');
+    });
+
+    it('THE END DRAINS ITS VIEWERS: a seated viewer still fetches what its last manifest named, and its leave lets the purge go (LIVE-WEB-2)', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await lives.get(BOB, live.id);
+      const named = (await lives.manifest(BOB, live.id)).segments.map((s) => s.name);
+      expect(named).toHaveLength(2);
+      // The broadcaster ends between BOB's manifest and BOB's downloads.
+      await lives.end(ALICE, live.id);
+      // The segments BOB was told of are still in the store, and the row (410, invisible) with them.
+      for (const name of named) expect(store.objects.has(`live/${live.id}/${name}`)).toBe(true);
+      expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_ENDED');
+      expect((await sweeper.sweepOnce()).kept).toBe(1);
+      // BOB's player gives its seat back on the 410: the next sweep deletes everything.
+      await lives.leave(BOB, live.id);
+      expect((await sweeper.sweepOnce()).deleted).toBe(1);
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+    });
+
+    it('a CUT does not drain: the seats go and the segments with them, at once', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id);
+      await q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'cut' WHERE id = $1`, [live.id]);
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('deleted');
+      expect(seats.held.size).toBe(0);
+      expect(store.countFor(live.id)).toBe(0);
     });
   });
 

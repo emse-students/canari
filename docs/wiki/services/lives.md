@@ -307,9 +307,11 @@ all, and nobody has measured that path.
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
-  broadcaster's removal of a viewer frees that viewer's seat at once, and **an ended live frees all
-  of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded` - which every
-  path that ends a live goes through: the broadcaster's end, the sweep, an ingest that met the end).
+  broadcaster's removal of a viewer frees that viewer's seat at once, and **a live CUT or ERASED
+  frees all of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded`). An
+  ORDINARY end (broadcaster, silence, the hour) keeps them: they are what its purge
+  [waits for](#deletion-at-the-end-plus-a-sweep-q10-l3), and each viewer gives its own back on the
+  end's `410` (or lets it lapse within the lease - no renewal is possible after the end).
   The member's live id is LOWER-CASED (`seatMember`): the take is keyed by the row's id, while a
   leave or a removal carries the id as the URL spelled it, which `ParseUUIDPipe` accepts in upper
   case - and a release naming another member would free nothing.
@@ -573,8 +575,23 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
-There is no replay. At the broadcaster's end the segments and the row are deleted at once; every
-other end, and any purge that failed, is finished by `LiveRetentionScheduler` (every 30 s):
+There is no replay. At the broadcaster's end the segments and the row are deleted at once **unless a
+viewer still holds a seat**; every other end, and any purge that failed or waited, is finished by
+`LiveRetentionScheduler` (every 30 s).
+
+**An ordinary end drains its viewers first (LIVE-WEB-2, 2026-10-29).** The purge of an ended live
+whose reason is `broadcaster`, `dropped` or `max_duration` (`drainsViewers`) is `kept` while the
+live holds a seat (`LiveSeats.watching`, the seats renewed within the lease). A seat is renewed by
+every manifest read and by nothing else, so a held seat is a viewer told of segments within the
+lease that has not said it left: the segments its last manifest named are still its to fetch. On
+`1.5.1-alpha.7` the end's purge deleted segments 5 and 6 between the manifest that named them and
+their download - `404` on both viewers, then the manifest's `404`. The order is now a FACT, not a
+delay: the viewer's player gives its seat back on the end's `410` (`livePlayer.ts`), and the next
+sweep purges; a viewer that never does lets its seat lapse within `LIVE_SEAT_LEASE_MS` (30 s), since
+an ended live answers every read with a `410` that renews nothing. So an ordinary end's segments
+outlive it by at most the lease plus one sweep. A seat count that cannot be read keeps the live (a
+`warn`; the next sweep asks again). **A `cut` or an `erased` account does not wait**: every seat is
+released and the segments go at once. The steps of a sweep:
 
 1. end every open live past the reconnect window or the hour;
 2. for every ended live: media-service deletes everything under `live/<liveId>/` and **lists the
