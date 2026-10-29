@@ -308,7 +308,8 @@ sentence and nothing else; the server refuses every organiser read anyway.
   way since yesterday reads under today). Each row: the times, its column when columns are shown
   (D44), the holder, "pour son compte" (D20), the participants; the one under way is marked and has
   no cancel (D5). **The cancel opens IN ITS ROW** ("Garder" / "Annuler la réservation"), no dialog
-  over the list; its sentence is the D13 one until WP-N adds the optional message and replaces it.
+  over the list; its sentence is the D13 one until WP-N adds the optional message and replaces it. The first read shows a spinner, never the empty sentence; a cancel that succeeded but whose
+  re-read of the list failed says exactly that, and still redraws the week.
 - **The layout**: from `lg` the week and "A venir" sit side by side (the mockup's desktop); below
   it a segmented control shows one at a time. The counters are one line of pills.
 - **"Planning"** is `SpaceWeek.svelte` in `block` mode. **`SpaceWeek` is the booker page's week

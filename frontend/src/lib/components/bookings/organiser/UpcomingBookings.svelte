@@ -54,8 +54,8 @@
     void reload();
   });
 
-  /** The list from now, first page; called again after every change. */
-  export async function reload() {
+  /** The list from now, first page; called again after every change. `false` when the read failed. */
+  export async function reload(): Promise<boolean> {
     Log.d('BOOKINGS', `dashboard upcoming read space=${space.id.slice(0, 8)}`);
     fromMs = Date.now();
     loading = true;
@@ -64,9 +64,11 @@
       const page = await upcomingSpaceBookings(space.id, fromMs, 0, PAGE);
       items = page.items;
       nextOffset = page.nextOffset;
+      return true;
     } catch (e) {
       Log.i('BOOKINGS', `dashboard upcoming read failed: ${String(e)}`);
       error = describeBookingRefusal(e, m.common_load_error());
+      return false;
     } finally {
       loading = false;
     }
@@ -98,7 +100,11 @@
       Log.i('BOOKINGS', `dashboard cancel done booking=${booking.id.slice(0, 8)}`);
       showToast(m.bookings_cancel_done(), 'info');
       confirming = null;
-      await reload();
+      // The cancel IS done: a list that cannot be read again says so, not that the cancel failed.
+      if (!(await reload())) {
+        Log.i('BOOKINGS', 'dashboard cancel done, the list re-read failed');
+        error = m.bookings_upcoming_refresh_failed_after_cancel();
+      }
       onChanged();
     } catch (e) {
       Log.i('BOOKINGS', `dashboard cancel refused: ${String(e)}`);
@@ -118,7 +124,18 @@
       {error}
     </p>
   {/if}
-  {#if !loading && items.length === 0 && !error}
+  {#if loading && items.length === 0 && !error}
+    <!-- The first read: the manage page's spinner, never an empty list that looks final. -->
+    <div
+      class="flex items-center justify-center py-8"
+      role="status"
+      aria-label={m.common_loading()}
+    >
+      <div
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+      ></div>
+    </div>
+  {:else if !loading && items.length === 0 && !error}
     <p class="text-text-muted py-8 text-center text-sm">{m.bookings_upcoming_empty()}</p>
   {:else}
     {#each days as day (day.date)}
