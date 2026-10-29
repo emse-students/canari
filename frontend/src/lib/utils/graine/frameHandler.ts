@@ -1152,14 +1152,21 @@ async function absorbSeedBundle(
   //
   // Counted per SEED and the salons named: "answered with N seed(s)" upstream against "absorbed 0"
   // here is the shape of an answer whose seeds were all refused, and nothing else would show it.
-  console.debug(
-    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held` +
-      (absorbed > 0
-        ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
-        : '') +
-      `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
-      page
-  );
+  //
+  // NOTHING CARRIED, NOTHING SAID (2026-10-29). A bundle with no seed - an "I hold nothing" answer
+  // or a decline - reaches EVERY member of the key group, and `absorbed 0/0 ... salon(s) none` was
+  // one line per member per answer to somebody else's ask: a read, not a decision. What such a
+  // bundle decides is said where it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
+  if (carried.length > 0) {
+    console.debug(
+      `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held` +
+        (absorbed > 0
+          ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
+          : '') +
+        `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
+        page
+    );
+  }
 
   // A HISTORY ASK ANSWERED WITH A SEED THIS DEVICE DID NOT HOLD settles a widened ask
   // (`historyClosedSeen.ts`). Only a STORED one: a bundle of seeds already held, or of seeds all
