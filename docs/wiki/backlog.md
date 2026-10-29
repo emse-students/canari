@@ -2859,6 +2859,13 @@ Mechanism of both: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-r
 
 The client's path line ([calls](frontend/modules/calls.md); a diagnostic since 2026-10-21 - the TURN budget reads Cloudflare's meter, never this line) is written ONCE, at `connected`; ICE may move to a better pair afterwards. Bench P1 logged `relayed=yes` on both ends while `getStats` read `host/udp -> host/udp` at the end ([readings](device-readings-2026-10.md)). Fix: log the pair again when the selected pair changes (or at hang-up), so the last line names the path the call ended on. Delete with its fix.
 
+## P3 - Two call log lines that say less than the call did (Tier A K1, `1.5.1-alpha.8`, 2026-10-29; ride 1.5.2)
+
+- **The ICE-server line never names the TURN relay.** `CallService.ts:1437` prints `N ICE server(s) (direct first, TURN relay last)` followed by `urlPreview`, which is the flattened URL list cut by `.slice(0, 2)`. The STUN entry carries two URLs, so the preview is always the two STUN ones and the relay listed "last" is never shown. On K1, both ends read `2 ICE server(s) ... stun:...:3478, stun:...:443`, yet gathering found 10-12 relay candidates and `CALL_REPORT` said `turn=turn.cloudflare.com:443`. Fix: preview one URL per server entry, or count URLs and name the relay host.
+- **An answered call ends with `outcome=answered-or-unrung`.** At `CallService.ts:1030`, `outcome` is `undefined` both for an answered call and for one whose invite never rang, and the line prints the two cases as one word. K1 was answered and lasted 37 s, but the caller's line could not say so. Fix: name the two cases apart where they are already known (`peerArrived`, `inviteSent`).
+
+Delete each with its fix.
+
 ## P1 - CALL-WS-V6 is fixed on a branch and owed ONE phone reading (2026-10-20)
 
 The native chat socket now races IPv6 and IPv4 and closes a connect it abandoned ([mobile](frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)). Owed on the Mi 9T, on the alpha that carries it: the PC's mobile hotspot with broken IPv6 (bench P6), `Connected to Chat Gateway` within a second, one `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` instead means the IPv6 attempt errored rather than hung - record which), no `[WS] native socket completed ... closing it` WARN, and the iPhone's call RINGING the phone; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete with that reading.
