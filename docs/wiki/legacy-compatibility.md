@@ -86,8 +86,8 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
-| Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
+| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor is now `1.2.9` on production) |
+| Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | Send answered without `receivedAt` read as accepted-undated (`postApplicationMessage`, #1878) | no estate runs a chat-delivery older than #1878 | not a client version question | none | the `null` arm | kept: harmless (the copy is undated); only the API's PARSEABLE JSON reaches it since 2026-10-25 - a non-JSON 2xx is no answer ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
@@ -247,8 +247,11 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 **Removal condition:** none; this is a floor requirement, not a shim.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
-Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
-ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
+**Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the
+owner's explicit decision, read back from the public version endpoint as `1.2.9`; both stores serve `1.5.0`,
+far above the floor, so the raise cannot lock out a shipped client (compare the v0.14.0 incident above). A new
+notification type, bookings included, may now ship once its own flag flips. Dev's floor is a separate row
+([backlog](backlog.md)). Steps 2-4 are done for `form_paid_over_capacity`, which ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
 **The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
 version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
 knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
