@@ -580,18 +580,30 @@ viewer still holds a seat**; every other end, and any purge that failed or waite
 `LiveRetentionScheduler` (every 30 s).
 
 **An ordinary end drains its viewers first (LIVE-WEB-2, 2026-10-29).** The purge of an ended live
-whose reason is `broadcaster`, `dropped` or `max_duration` (`drainsViewers`) is `kept` while the
-live holds a seat (`LiveSeats.watching`, the seats renewed within the lease). A seat is renewed by
-every manifest read and by nothing else, so a held seat is a viewer told of segments within the
-lease that has not said it left: the segments its last manifest named are still its to fetch. On
-`1.5.1-alpha.7` the end's purge deleted segments 5 and 6 between the manifest that named them and
-their download - `404` on both viewers, then the manifest's `404`. The order is now a FACT, not a
-delay: the viewer's player gives its seat back on the end's `410` (`livePlayer.ts`), and the next
-sweep purges; a viewer that never does lets its seat lapse within `LIVE_SEAT_LEASE_MS` (30 s), since
-an ended live answers every read with a `410` that renews nothing. So an ordinary end's segments
-outlive it by at most the lease plus one sweep. A seat count that cannot be read keeps the live (a
-`warn`; the next sweep asks again). **A `cut` or an `erased` account does not wait**: every seat is
-released and the segments go at once. The steps of a sweep:
+is `kept` while the live holds a seat (`LiveSeats.watching(id, 'purge')`, the seats renewed within
+the lease). A seat is renewed by every manifest read and by nothing else, so a held seat is a viewer
+told of segments within the lease that has not said it left: the segments its last manifest named
+are still its to fetch. On `1.5.1-alpha.7` the end's purge deleted segments 5 and 6 between the
+manifest that named them and their download - `404` on both viewers, then the manifest's `404`. The
+order is now a FACT, not a delay: the viewer's player gives its seat back on the end's `410`
+(`livePlayer.ts`), and the next sweep purges; a viewer that never does lets its seat lapse within
+`LIVE_SEAT_LEASE_MS` (30 s).
+
+**Whether to drain is read from durable facts by `purgeEnded` itself, never from `endReason`** (a
+cut of a live already ended keeps its earlier reason, and the erasure writes
+`COALESCE("endReason", 'erased')`):
+
+- **a `live_cuts` row, or a broadcaster that is `DELETED_ACCOUNT`**: moderation or the account's
+  deletion removed it, so every seat is released and the segments go at once - a cut just after an
+  ordinary end, or an erasure inside its drain, included;
+- **`endedAt` older than the lease, on the database clock**: every read answers `410` from `endedAt`
+  on (`assertMayWatch`), so no seat can have been renewed since and every one has lapsed; Redis is
+  not asked, so its outage never holds media past the lease;
+- **otherwise** the seats are read: one held keeps the live (a `debug` line), and a count that cannot
+  be read keeps it too (the seat module's `error`, naming the purge) - for at most the lease.
+
+So an ordinary end's segments outlive it by at most the lease plus one sweep, whatever Redis does.
+The steps of a sweep:
 
 1. end every open live past the reconnect window or the hour;
 2. for every ended live: media-service deletes everything under `live/<liveId>/` and **lists the

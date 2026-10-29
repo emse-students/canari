@@ -42,6 +42,7 @@ import {
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_SEGMENT_BURST,
   LIVE_RULES_VERSION,
+  LIVE_SEAT_LEASE_MS,
   LIVE_STARTS_PER_HOUR,
 } from './live.constants';
 import type { AssociationsService } from '../associations/associations.service';
@@ -686,14 +687,32 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
     });
 
-    it('a CUT does not drain: the seats go and the segments with them, at once', async () => {
+    it('THE DRAIN IS BOUNDED BY THE LEASE, ON THE DATABASE CLOCK: an end older than it reads no seat at all', async () => {
       const live = await start();
       await lives.ingest(ALICE, live.id, 0, segment(0));
       await lives.get(BOB, live.id);
-      await q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'cut' WHERE id = $1`, [live.id]);
+      await lives.end(ALICE, live.id);
+      // Inside the lease, a seat count that cannot be read keeps the live: nothing deleted under a
+      // viewer that may be owed a segment.
+      const watching = seats.watching.bind(seats);
+      seats.watching = async () => {
+        seats.watchingCalls++;
+        return null;
+      };
+      seats.watchingCalls = 0;
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('kept');
+      expect(seats.watchingCalls).toBe(1);
+      // Past the lease nothing can have renewed a seat (every read is a 410 from endedAt on): the
+      // purge goes on without asking Redis, so its outage never holds media past the lease.
+      await q(
+        `UPDATE lives SET "endedAt" = now() - $2 * interval '1 millisecond' - interval '1 second'
+          WHERE id = $1`,
+        [live.id, LIVE_SEAT_LEASE_MS]
+      );
       await expect(lives.purgeEnded(live.id)).resolves.toBe('deleted');
-      expect(seats.held.size).toBe(0);
+      expect(seats.watchingCalls).toBe(1);
       expect(store.countFor(live.id)).toBe(0);
+      seats.watching = watching;
     });
   });
 
@@ -1485,6 +1504,20 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
 
   describe('moderation (WP-L8): a report, a staff cut, the first-live rules', () => {
     const MOD = '9'.repeat(64);
+
+    it('a CUT of a live ALREADY ENDED purges at once: its seated viewers are not waited for, though it keeps the reason "broadcaster"', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id);
+      await lives.end(ALICE, live.id);
+      expect(store.countFor(live.id)).toBe(1); // drained: BOB is seated
+      await expect(lives.cut(MOD, live.id, { reason: 'spam' })).resolves.toMatchObject({
+        endReason: 'broadcaster',
+      });
+      expect(store.countFor(live.id)).toBe(0);
+      expect(seats.held.size).toBe(0);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+    });
     const reports = () =>
       new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
     const report = (reporterId: string, liveId: string) =>
@@ -1833,6 +1866,22 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           userId
         )
       );
+
+    it('an ERASURE during the drain of an ordinary end purges at once: the seated viewers are not waited for', async () => {
+      const live = await start(ALICE);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id);
+      await lives.end(ALICE, live.id);
+      expect(store.countFor(live.id)).toBe(1); // drained: BOB is seated
+      await erase(ALICE);
+      // The erasure keeps the reason it found ('broadcaster'); the tombstone is what the purge reads.
+      expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { endReason: 'broadcaster' },
+      ]);
+      expect((await sweeper.sweepOnce()).deleted).toBe(1);
+      expect(store.countFor(live.id)).toBe(0);
+      expect(seats.held.size).toBe(0);
+    });
 
     it("ends and anonymises the broadcaster's live, which the sweep then deletes", async () => {
       const own = await start(ALICE);
