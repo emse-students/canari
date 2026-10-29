@@ -30,6 +30,8 @@ const SERVER_HOSTS = [
   'notifications',
   // The organiser alert (a payment landed on a full form): that form's responses.
   'form-responses',
+  // WP-N: a booking cancelled, left, made for the reader, or about to start - the Reservations page.
+  'bookings',
 ];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */

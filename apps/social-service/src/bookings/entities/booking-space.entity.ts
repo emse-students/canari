@@ -71,6 +71,10 @@ export type BookingQuotaPeriod = 'day' | 'week';
 @Check('booking_spaces_participant_withdraw_min', `"participantWithdrawMinMinutes" >= 0`)
 @Check('booking_spaces_max_people', `"maxPeople" IS NULL OR "maxPeople" >= 1`)
 @Check('booking_spaces_retention_days', `"retentionDays" BETWEEN 1 AND 30`)
+@Check(
+  'booking_spaces_reminder_range',
+  `"reminderMinutes" IS NULL OR "reminderMinutes" BETWEEN 5 AND 10080`
+)
 export class BookingSpace {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -172,6 +176,13 @@ export class BookingSpace {
   /** Answers and files are purged this many days after the slot's end, 1 to 30 (D23). */
   @Column({ type: 'int', default: 7 })
   retentionDays: number;
+
+  /**
+   * The DEFAULT reminder delay before a slot, in minutes, copied onto each person of a new booking
+   * (WP-N, D53, Q-R1, migration 115); each person may change their own. NULL = no reminder.
+   */
+  @Column({ type: 'int', nullable: true, default: 60 })
+  reminderMinutes: number | null;
 
   /**
    * The poster (D35, migration 092): a media reference ENCRYPTED BY THE CLIENT, its key in this

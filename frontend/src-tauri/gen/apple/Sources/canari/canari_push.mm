@@ -627,6 +627,11 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     @"social_follow_request" : @"follow_request",
     @"social_follow_accepted" : @"follow_accepted",
+    // The bookings' notices (WP-N): who acted names the title, the place (or the organiser's word)
+    // is the body, a fixed sentence on a link-only space (Q-R5).
+    @"social_booking_cancelled" : @"booking_cancelled",
+    @"social_booking_withdrawn" : @"booking_withdrawn",
+    @"social_booking_added" : @"booking_added",
   };
   NSString *stem = actorTitled[key];
   if (stem) {
@@ -649,6 +654,12 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
   if (fixedStem) {
     *title = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.title", fixedStem]);
     *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
+    return;
+  }
+  // The bookings' reminder (WP-N): nobody acted, a fixed title; the body is the place and the time.
+  if ([key isEqualToString:@"social_booking_reminder"]) {
+    *title = CanariLocalized(@"notif.social.booking_reminder.title");
+    *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.booking_reminder.body");
     return;
   }
   if ([key isEqualToString:@"social_reaction"]) {

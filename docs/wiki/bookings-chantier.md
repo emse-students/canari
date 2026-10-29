@@ -392,6 +392,58 @@ each, the two fields in "who" and absent elsewhere, the line following a click, 
 sections closed with the retention badge), `spaceSettings.test.ts` (the ceiling no longer counted).
 `paraglideMessages.test.ts` for the strings. **Not yet seen** at 390 and 1280 or at 200 % text.
 
+## WP-N as built - the bookings notices and the reminder (D53, 2026-10-29)
+
+**SWITCHED OFF**: `BOOKING_NOTIFICATIONS_ENABLED = false` (server,
+`booking-notifications.service.ts`) and its mirror `BOOKING_NOTIFICATIONS_LIVE` (client,
+`lib/bookings/notified.ts`, pinned equal by `notified.contract.test.ts`). The durable rule of
+[legacy-compatibility](legacy-compatibility.md) - no new notification type before the floor covers
+#1911 - is why; the flip is a one-line pull request of its own. Off, nothing is written or sent, the
+reminder cron claims nothing, and the screens keep D13's sentences, which are then true.
+
+- **Migration 115** (`115_booking_notifications.sql`): `booking_spaces."reminderMinutes"` (the
+  space's default, 60 for every space including the existing ones, NULL = none, 5..10080 by a
+  CHECK), and on `bookings` (the holder) and `booking_participants` (each participant)
+  `"reminderMinutes"`, `"reminderSetAt"`, `"reminderSentAt"`, with a partial index each on the due
+  scan. A booking written before the migration has NULL: nobody is reminded of it. No erasure
+  change: the columns hold no account reference and go with their rows.
+- **Who is told** (`BookingNotificationsService`, after the commit, best-effort and logged): an
+  ORGANISER's cancellation reaches the holder and every participant still in, with the organiser's
+  optional word (Q-R3, `POST :id/cancel { message }`, at most 500 characters, carried by the notice
+  alone); a HOLDER's cancellation the participants (Q-R2), with no word; a WITHDRAWAL the holder
+  (Q-R2); a BOOKING its participants and the holder of a booking made on their behalf (D20); a
+  SPACE DELETED the people of its coming live bookings, read under the space's lock before the
+  delete (Q-R4), after the delete's response. The one who acted is never told, the organiser
+  never (Q-R7). An organiser acting on an association space is named as the ASSOCIATION, with its
+  logo; **on a space reached by its link only, an organiser is named as NOBODY** - the platform's
+  name, no face, no logo (review of #2692: the association's name, or the owner's, says what the
+  space is, Q-R5). **The organiser's word on a link-only space goes to the bell row ONLY, never to
+  the push** (decided by Master, 2026-10-29: a word on a lock screen can name what the space
+  hides); the row is written without its push and the neutral push sent on its own.
+- **What it says**: four types, `booking_cancelled`, `booking_withdrawn`, `booking_added`,
+  `booking_reminder`, a bell row and a push each through `PostNotificationsService` (contentKeys
+  `social_booking_*`, category `bookings`, Q-R15). `text` is the place (`bookingPlace`) - or the
+  word, or for a reminder the place and the start time on the space's clock - and is EMPTY on a
+  space reached by its link only (Q-R5): the push then shows a fixed sentence and never the
+  space's name. A tap opens Reservations (`target: 'bookings'`, host `bookings`).
+- **The reminder** (`BookingReminderScheduler`, every minute): one predicate per table over the
+  durable columns - a delay, not yet sent, live, not started, its instant (`startsAt` minus the
+  delay) reached, and that instant still ahead when the delay was chosen (`reminderSetAt`: a booking
+  made inside its delay gets none, Q-R6). Each batch is selected `FOR UPDATE SKIP LOCKED` and stamped
+  in one transaction committed BEFORE any send: two replicas never both send, a crash after the
+  commit loses that reminder (at most once, as the forms reminder). The reference test runs two at
+  once and counts one per person.
+- **Each person's delay** (Q-R1): the holder's from the booking request (`reminderMinutes`, absent =
+  the space's default; never for an account booked on behalf of), a participant's the space's
+  default; `PATCH bookings/:id/reminder { minutes }` for the holder or a participant still in,
+  refused once cancelled or started; choosing re-arms the claim. `mine` returns the reader's own.
+  The organiser's default is a space setting (`reminderMinutes`).
+- **The client** knows the four types (`KNOWN_NOTIFICATION_TYPES`, `notificationHref` ->
+  `/bookings`, `NotificationRow` sentences and glyphs), the `bookings` host, the `bookings`
+  settings category, and the three native tables carry the four keys.
+- **Preset delays** offered by the screens: 15 min, 1 h, 24 h ("la veille"), none. The mockup's
+  "la veille a 18:00" is a wall-clock time, not a delay, and is not built: 24 h before stands in.
+
 ## WP-R7 as built - the creation wizard (D52, Q-R14, 2026-10-29)
 
 Front only: `POST spaces` already took every setting, a poster and the first hours (WP-R1), so the

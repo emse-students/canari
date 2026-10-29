@@ -4796,6 +4796,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_withdrawn_title),
                 res.getString(R.string.notif_social_live_withdrawn_body)
             )
+            // The bookings' notices (WP-N): who acted names the title - a person, or the
+            // association of the space - and the body is the place, the organiser's word for a
+            // cancellation, or a fixed sentence when the space is reached by its link only (Q-R5).
+            "social_booking_cancelled" -> Pair(
+                res.getString(R.string.notif_social_booking_cancelled_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_cancelled_body) }
+            )
+            "social_booking_withdrawn" -> Pair(
+                res.getString(R.string.notif_social_booking_withdrawn_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_withdrawn_body) }
+            )
+            "social_booking_added" -> Pair(
+                res.getString(R.string.notif_social_booking_added_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_added_body) }
+            )
+            // The reminder: nobody acted, a fixed title; the body is the place and the time.
+            "social_booking_reminder" -> Pair(
+                res.getString(R.string.notif_social_booking_reminder_title),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_reminder_body) }
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)

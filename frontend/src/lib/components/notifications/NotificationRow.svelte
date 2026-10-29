@@ -15,6 +15,7 @@
     Newspaper,
     Repeat2,
     CalendarPlus,
+    CalendarMinus,
     Bell,
     VideoOff,
     TriangleAlert,
@@ -195,7 +196,10 @@
     (notif.type === 'association_post' ||
       isRepostNotif ||
       isCoorganiseNotif ||
-      notif.type === 'repost_personal_requested') &&
+      notif.type === 'repost_personal_requested' ||
+      // An organiser of an association space cancelled or booked: the association acted (WP-N).
+      notif.type === 'booking_cancelled' ||
+      notif.type === 'booking_added') &&
       !!notif.associationId
   );
   /**
@@ -212,6 +216,19 @@
   const FOLLOW_TYPES = ['follow_request', 'follow_accepted'] as const;
   const isFollowNotif = $derived((FOLLOW_TYPES as readonly string[]).includes(notif.type));
   const isProfileNotif = $derived((PROFILE_TYPES as readonly string[]).includes(notif.type));
+  /**
+   * THE BOOKINGS' FOUR (WP-N), named for the same reason. `text` is the PLACE - or the organiser's
+   * word for a cancellation (Q-R3), the place and the time for a reminder - and is EMPTY for a space
+   * reached by its link only (Q-R5): the sentence then stands alone. The reminder has no actor (the
+   * platform), so its sentence is the whole of it, like a moderation notice.
+   */
+  const BOOKING_TEXT: Readonly<Record<string, () => string>> = {
+    booking_cancelled: m.notif_booking_cancelled_text,
+    booking_withdrawn: m.notif_booking_withdrawn_text,
+    booking_added: m.notif_booking_added_text,
+  };
+  const isBookingReminder = $derived(notif.type === 'booking_reminder');
+  const isBookingNotif = $derived(isBookingReminder || Object.hasOwn(BOOKING_TEXT, notif.type));
 
   /**
    * A refusal carries its reason after a newline - the one thing a reader cannot reconstruct from
@@ -328,6 +345,14 @@
         <UserPlus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_accepted'}
         <UserCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_cancelled'}
+        <CalendarX size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_withdrawn'}
+        <CalendarMinus size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_added'}
+        <CalendarPlus size={glyph} strokeWidth={2.75} />
+      {:else if isBookingReminder}
+        <Clock size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif || isPersonalRepostNotif}
@@ -356,12 +381,14 @@
         {m.notif_unknown_type_text()}
       {:else if isLiveModerationNotif}
         <span class="font-semibold">{liveModerationText}</span>
+      {:else if isBookingReminder}
+        <span class="font-semibold">{m.notif_booking_reminder_text()}</span>
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif || isLiveModerationNotif}
+      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -420,6 +447,9 @@
             ? m.notif_repost_personal_accepted_text()
             : m.notif_repost_personal_refused_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isBookingNotif}
+        {#if !isBookingReminder}{BOOKING_TEXT[notif.type]()}{/if}
+        {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if isFollowNotif}
         {notif.type === 'follow_request'
           ? m.notif_follow_request_text()

@@ -193,6 +193,29 @@ describe('NotificationRow sentence', () => {
     expect(refused.textContent).not.toContain('a commenté');
   });
 
+  // WP-N: the bookings' four - their own sentence, the place quoted, never the comment sentence.
+  it('says a booking was cancelled, left, made for you, or is about to start', () => {
+    const booking = (type: string, text: string) => ({ ...postRow(type), postId: 'b-1', text });
+    for (const [type, sentence] of [
+      ['booking_cancelled', m.notif_booking_cancelled_text()],
+      ['booking_withdrawn', m.notif_booking_withdrawn_text()],
+      ['booking_added', m.notif_booking_added_text()],
+    ] as const) {
+      const row = renderRow(booking(type, 'Salle de musique'));
+      expect(row.textContent).toContain(sentence);
+      expect(row.textContent).toContain('Salle de musique');
+      expect(row.textContent).not.toContain('a commenté');
+      expect(row.textContent).not.toContain(m.notif_unknown_type_text());
+    }
+    const reminder = renderRow(booking('booking_reminder', '10:00'));
+    expect(reminder.textContent).toContain(m.notif_booking_reminder_text());
+    expect(reminder.textContent).toContain('10:00');
+    // A link-only space names nothing (Q-R5): the sentence stands alone, no empty quote.
+    const neutral = renderRow(booking('booking_added', ''));
+    expect(neutral.textContent).toContain(m.notif_booking_added_text());
+    expect(neutral.querySelector('.italic')).toBeNull();
+  });
+
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.
   it('says a person asks to follow you, and that a person accepted your request', () => {
     const follow = (type: string) => ({ ...postRow(type), postId: 'member-1', text: '' });

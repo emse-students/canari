@@ -45,6 +45,14 @@
 "notif.social.live_suspended.body" = "After another cut by moderators, you cannot start a live for now.";
 "notif.social.live_withdrawn.title" = "Right to go live withdrawn";
 "notif.social.live_withdrawn.body" = "Moderators have withdrawn your right to start a live.";
+"notif.social.booking_cancelled.title" = "%@ cancelled a booking";
+"notif.social.booking_cancelled.body" = "It will not take place";
+"notif.social.booking_withdrawn.title" = "%@ left your booking";
+"notif.social.booking_withdrawn.body" = "Your booking still stands";
+"notif.social.booking_added.title" = "%@ added you to a booking";
+"notif.social.booking_added.body" = "Find it in Bookings";
+"notif.social.booking_reminder.title" = "Booking reminder";
+"notif.social.booking_reminder.body" = "Your booking starts soon";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";
