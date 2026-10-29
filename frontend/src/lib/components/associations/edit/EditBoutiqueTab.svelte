@@ -26,6 +26,7 @@
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { fetchCotisationOptions, type MembershipTier } from '$lib/associations/api';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
@@ -546,15 +547,12 @@
                     {m.asso_boutique_grid_summary()}
                   {:else}
                     {product.amountCents != null
-                      ? `${(product.amountCents / 100).toFixed(2)} €`
+                      ? formatAmount(product.amountCents)
                       : m.asso_boutique_product_free()}
                   {/if}
-                  {product.grantedTagName
-                    ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}`
-                    : ''}
                   {#if !product.priceMatrix && product.amountCentsMember != null}
                     · {m.asso_boutique_product_member_price_label({
-                      price: (product.amountCentsMember / 100).toFixed(2),
+                      price: formatAmount(product.amountCentsMember),
                     })}
                   {/if}
                   {#if product.allowRepeatPurchase}

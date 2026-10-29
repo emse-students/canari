@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchActivePaymentProvider = vi.fn();
 vi.mock('$lib/associations/api', () => ({ fetchActivePaymentProvider }));
@@ -11,6 +11,12 @@ vi.mock('$lib/associations/api', () => ({ fetchActivePaymentProvider }));
  * pin the three states a screen may branch on.
  */
 describe('activePaymentProvider', () => {
+  // The module graph's first transform is paid here, once, not inside the first case - under a
+  // whole-folder run it exceeded the 5 s case timeout (see membershipProbe.test.ts).
+  beforeAll(async () => {
+    await import('./activePaymentProvider.svelte');
+  }, 60_000);
+
   beforeEach(() => {
     vi.resetModules();
     fetchActivePaymentProvider.mockReset();
