@@ -35,9 +35,9 @@ describe('MembersController - lock order of an add and a removal', () => {
   /**
    * What the database answers a SELECT: one row for the group and for bob's ADMITTED seat, and one
    * key package per device - built from the column aliases the real builder wrote, so the row is the
-   * shape TypeORM hydrates.
+   * shape TypeORM hydrates. The group's recorded creator is `creator` (`Group.createdBy`).
    */
-  const answerAsAdmitted = (stmt: RecordedStatement): unknown[] => {
+  const answerAsAdmitted = (stmt: RecordedStatement, creator = 'bob'): unknown[] => {
     if (!stmt.sql.startsWith('SELECT') || stmt.sql.includes('pg_advisory_xact_lock')) return [];
     const aliases = [...stmt.sql.matchAll(/AS "([A-Za-z]+)_([A-Za-z]+)"/g)];
     // A raw query (the block check) is no entity read: it answers nothing, as with no block.
@@ -54,6 +54,7 @@ describe('MembersController - lock order of an add and a removal', () => {
               deviceId,
               deletedAt: null,
               awaitingAdmission: false,
+              createdBy: creator,
             } as Record<string, unknown>
           )[field] ?? null,
         ])
@@ -137,21 +138,26 @@ describe('MembersController - lock order of an add and a removal', () => {
 
   describe("a creator's enrolment into a roster read empty", () => {
     /** The unlocked reads say "empty roster, caller holds no seat": the creation bootstrap. */
-    async function creatorOn(answer: (stmt: RecordedStatement) => unknown) {
+    async function creatorOn(answer: (stmt: RecordedStatement) => unknown, creator: string) {
       const add = await controllerOn(answer);
       const repos = add.controller as unknown as {
         groupMemberRepo: { findOne: jest.Mock; count: jest.Mock };
+        groupRepo: { findOne: jest.Mock };
       };
       repos.groupMemberRepo.findOne.mockResolvedValue(null);
       repos.groupMemberRepo.count.mockResolvedValue(0);
+      // The unlocked creator read: the caller made this group.
+      repos.groupRepo.findOne.mockResolvedValue({ id: 'g-1', createdBy: creator });
       return add;
     }
 
     it('re-reads the roster under the seat lock taken EXCLUSIVE, and enrols when nobody else is there', async () => {
-      const add = await creatorOn((stmt) =>
-        tableOf(stmt.sql) === 'dm_group_members' && stmt.sql.startsWith('SELECT')
-          ? []
-          : answerAsAdmitted(stmt)
+      const add = await creatorOn(
+        (stmt) =>
+          tableOf(stmt.sql) === 'dm_group_members' && stmt.sql.startsWith('SELECT')
+            ? []
+            : answerAsAdmitted(stmt),
+        'bob'
       );
       await expect(
         add.controller.addGroupMember('g-1', { userId: 'bob' }, 'bob', undefined)
@@ -167,8 +173,8 @@ describe('MembersController - lock order of an add and a removal', () => {
 
     it('answers the 409 MEMBER_NOT_ADMITTED and writes nothing when someone enrolled first', async () => {
       // The re-read under the lock finds another person's row (`answerAsAdmitted` names bob's seat
-      // with userId 'bob'; the caller here is 'carol').
-      const add = await creatorOn(answerAsAdmitted);
+      // with userId 'bob'; the caller here is 'carol', the group's recorded creator).
+      const add = await creatorOn((stmt) => answerAsAdmitted(stmt, 'carol'), 'carol');
       await expect(
         add.controller.addGroupMember('g-1', { userId: 'carol' }, 'carol', undefined)
       ).rejects.toMatchObject({ status: 409, response: { code: 'MEMBER_NOT_ADMITTED' } });
