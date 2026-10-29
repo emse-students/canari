@@ -41,13 +41,13 @@ import {
   selectedChannel,
 } from '../comm.mjs';
 import { dismissMintedNoticesOn } from '../devicenotice.mjs';
-import { awaitCommunityRouting, awaitUserRouting, channelIdOf, communityDistribution, groupCommits, groupEpochAndRoster, keyGroupsOfDevice, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
+import { awaitCommunityRouting, awaitUserRouting, channelIdOf, communityChannels, communityDistribution, groupCommits, groupEpochAndRoster, keyGroupsOfDevice, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { becomeANewDeviceAndConfirm } from '../newdevice.mjs';
-import { PEER_NAME, PORTS } from '../names.mjs';
-import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, removalOwn } from '../removalrows.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, removalNarration, removalOwn } from '../removalrows.mjs';
 import { exitOnRecorded, mark, record } from '../results.mjs';
 import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
-import { EVICTED_REJOIN_NARRATION, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
+import { EVICTED_REJOIN_NARRATION, PAGE_BOOT_NARRATION, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
 
 const arg = (name) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -169,6 +169,8 @@ function revokeDevice(deviceId) {
 }
 
 const detail = { community, salon };
+/** The row's ids its narration is scoped to (`removalNarration`), read once the venue exists. */
+let rowIds = null;
 let verdict = 'ERROR';
 let failures = [];
 try {
@@ -191,6 +193,14 @@ try {
   }
   const groups = groupsBefore(v, subjectDevices);
   log(`armed on ${groups.length} key group(s): ${JSON.stringify(groups)}`);
+  const channels = communityChannels(v.workspaceId);
+  rowIds = {
+    workspaceId: v.workspaceId,
+    channelIds: channels.channelIds,
+    keyGroupIds: [...channels.keyGroupIds, communityDistribution(v.workspaceId)?.groupId, ...groups.map((g) => g.groupId)].filter(Boolean),
+    ownerUserId: userIdOf(OWNER_NAME),
+    subjectUserId: spec.subject === 'W2' ? userIdOf(PEER_NAME) : null,
+  };
   const origin = await evaluate(w1, TIME_ORIGIN);
 
   // THE GESTURE - one per row.
@@ -233,9 +243,19 @@ try {
   }
 }
 
+/**
+ * A seat's report with what THIS row made it say forgiven (`removalNarration`), and its boot narration
+ * only when its window saw a document replaced - the rule `observersOf` applies to the MLS rows.
+ */
+async function observed(seat, w, extra = []) {
+  let rep = await report(w);
+  if ((rep.documentsReplaced ?? 0) > 0) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
+  return ignoringExpectedLog(rep, [...extra, ...(rowIds ? removalNarration(id, seat, rowIds) : [])]);
+}
+
 const gated = gate(verdict, {
-  W1: await report(wa),
-  ...(wb ? { W2: ignoringExpectedLog(await report(wb), EVICTED_REJOIN_NARRATION) } : {}),
+  W1: await observed('W1', wa),
+  ...(wb ? { W2: await observed('W2', wb, EVICTED_REJOIN_NARRATION) } : {}),
 });
 record(id, gated.verdict, { ...gated.detail, ...detail, failures });
 log(`verdict: ${gated.verdict}`);
