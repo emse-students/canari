@@ -447,6 +447,13 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
     zero-after-first-gap rule. That is this decision.
   - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
+- **The owner decided (2026-10-29): the viewer must NOT stall; fix the cause.** So the contract
+  moved, not the row: branch `fix/live-buffer-from-cadence` bounds the longest wait from the shape
+  of the deliveries (a pair shows its ~5 s wait AT the pair) and re-anchors a buffer shorter than
+  it at once ([buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); W4's
+  trace replayed in `liveBufferPolicy.test.ts` stalls once under the old rule and never under the
+  new. The row's zero-after-first-gap rule stands. Owed: LIVE-STALL-1 rerun on the pre-release that
+  carries it, then delete this entry.
 
 ## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
 
@@ -471,6 +478,16 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
     assertion: "stalled 2 time(s) and never named a delivery gap".
   - All of it falls in the last 2 s before the end, so both viewers lost the end of the live to the
     purge.
+- **Built on branch `fix/live-buffer-from-cadence` (2026-10-29), owed a LIVE-WEB-2 rerun on the
+  pre-release that carries it.** The purge of an ordinary end waits for the live's seats - the fact
+  that a viewer read a manifest within the lease - and the player gives its seat back on the end's
+  `410`; a cut or an erasure still purges at once
+  ([lives](services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)). W4's 9.84 s stall (2.67 s
+  ahead before a 3.5 s gap) is the short buffer the new policy re-anchors; its end-of-live jump
+  over 5 and 6 came from the fixed "more than 2 segments" catch-up, now sized by the slack behind
+  the target. Its 14.94 s wait was the last segment playing out before the `404` arrived; with
+  5-7 kept and the 4 s anchor it should not recur, which the rerun must show. No migration, no
+  production data action.
 
 ## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
 
