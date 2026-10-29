@@ -415,6 +415,139 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
   the first gap (stricter than the contract), and align the row's definition and its judge in
   `liverows.mjs` with that decision. Neither is changed until it is taken.
+- **The first reading with #2679** (`1.5.1-alpha.7`, dev.a062d13, 2026-10-29: `FAIL`, nothing
+  forgiven). The figures come from the new `delivery of N appended of M taken` line, in
+  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T11-27-53-820Z-W4.log`:
+  - W4 took 20 deliveries, 11 of two segments. Gaps were 1.2-4.4 s, and the target buffer rose 3663,
+    3790, 4118, 4223, then 4383 ms, once at each new longest gap.
+  - "Ahead" fell to 0.53-1.10 s before each two-segment delivery and rose to about 4-5 s after it.
+  - ONE stall, at 31.55 s with the target at 4118 ms: the next gap was 4223 ms, longer than the
+    3.99 s ahead after the delivery before it. The following delivery then seeked to the live edge.
+  - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
+    zero-after-first-gap rule. That is this decision.
+  - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
+
+## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
+
+- On LIVE-WEB-2 (dev.dce778b), both web viewers asked for the live's last segment after the end had
+  purged it. Each got `GET /api/media/public/live/<live>/<segment> -> 404` and logged `segment 7 is
+  gone - skipped`. media-service logged the same segment as `asked for and absent`, and the manifest
+  answered `404 LIVE_NOT_FOUND` about a second later.
+- So a viewer loses the end of the live it was watching: the end's purge races the downloads that the
+  last manifest announced.
+- The rig refuses to forgive a segment 404 on purpose (`liveRefusals` in `liverows.mjs`), so
+  LIVE-WEB-2 cannot reach `PASS` until this is fixed.
+- Owed: the purge must not remove segments that a manifest has already announced before its viewers
+  could fetch them. The order should be decided by a fact, such as the viewers' last read, not by a
+  delay. Then rerun LIVE-WEB-2.
+- **Still there on `1.5.1-alpha.7`** (dev.a062d13, LIVE-WEB-2 `FAIL`, 2026-10-29; consoles
+  `STATE_DIR/logs/consoles/LIVE-WEB-2-2026-10-29T11-32-29-348Z-W2.log` and `-W4.log`):
+  - W2 got the segment 404 and logged `delivery of 1 appended of 2 taken (5-6)`. It stalled at 9.75 s
+    and then met the manifest's `404 LIVE_NOT_FOUND`.
+  - W4 never received segments 5 and 6: `3 segments behind - jumping from 4 to 7`. It then took a
+    delivery whose buffer did not cover the play position (`ahead 0.16 -> 0.16 s`). It stalled at
+    9.84 s and again at 14.94 s, without ever naming a delivery gap. That is the row's failed
+    assertion: "stalled 2 time(s) and never named a delivery gap".
+  - All of it falls in the last 2 s before the end, so both viewers lost the end of the live to the
+    purge.
+
+## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
+
+- Read on dev.a062d13 (2026-10-29): neither line appeared in two runs each of KICK-COMMIT,
+  SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
+- On every RMC run (dev.dce778b), each member device logs these lines whenever it reads a fresh
+  community:
+  - `[GRAINE] <device> holds nothing of community <ws> - recorded; N device(s) of <user> still to
+    answer`, once per answering device;
+  - `[GRAINE] absorbed 0/0 seed(s) (0 already held) from <user> in community <ws> - salon(s) none`.
+- Both say the same empty answer again on every read. The rig deliberately leaves them as dirt
+  (`salonNarration` in `salonrows.mjs`: "said once per READ rather than per decision ... fixed at the
+  source"), so no row that creates a community can reach `PASS` while they print.
+- Owed: log the empty answer once per decision (the first time a community's history is found to be
+  empty, or the final verdict over every device), and keep the per-device detail out of the info level.
+  Then rerun KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
+## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
+
+- Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
+  devices enter its key groups by external commit, and every member's client logs this line once per
+  device at `log::error!`.
+- Reading `observe_merged_commit` (`frontend/mls-core/src/device_trust.rs`):
+  - The line fires when a device makes its first entry into a group, by its own commit, under a key
+    that another group pinned, while another device of the same user is already in the tree.
+  - In a CONVERSATION that is the uninvited entry the trust layer exists to report.
+  - In a KEY-DISTRIBUTION group, an external commit is the ordinary door for every member's device.
+    The notice layer already knows this and says nothing (`[DEVICE_NOTICE] self-admitted entry in
+    <group> - not a conversation, nothing to say`).
+  - The Rust observer does not know the group's kind, so it accuses the normal path.
+- Decision from the reading: on a key group the line is NOISE; on a conversation it is correct.
+- Owed: give the observer the group's kind where it is already known, so that it does not log the
+  key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
+  accusing. Pair the change with a test that a conversation's self-entry still logs at error.
+
+## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29)
+
+- The handler logs the redelivery and drops it as idempotent. There are two spellings in
+  `setupMessageHandler.ts`: the conversation one (`[WELCOME] <group>… already held - redelivered
+  Welcome ignored (idempotent)`, already met in the cold-start item further down) and the key-group
+  one (`[WELCOME] key group <group>... already held - redelivered Welcome ignored (idempotent)`).
+- Read on the peer seat (W2) on dev.a062d13:
+  - KICK-COMMIT, runs 3 and 4 (11:53:56, 11:58:00);
+  - SALON-REVOKE-COMMIT, run 2 (12:05:12).
+- The drop is safe, but the delivery is not: a Welcome the device already applied came back, so
+  something upstream either sends it twice or does not see the first one consumed. The lead decided
+  (2026-10-29) that it stays dirt in the rig, under the same rule as the salon rows, and is not
+  forgiven.
+- Owed: name what re-sends a consumed Welcome (a server redelivery whose acknowledgement was lost,
+  or a second mint for the same device), and remove the second send there. The idempotent drop stays
+  as the witness.
+
+## P2 - A minted device's history asks are answered with a second WELCOME_REQ pass 15 s after the first (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
+
+- On the owner seat (W1), console `STATE_DIR/logs/consoles/DEVREVOKE-KEYGROUP-2026-10-29T11-18-04-803Z-W1.log`:
+  - 12:15:15-17: a `WELCOME_REQ` and a `JOIN_REQUEST` for each of the 6 conversations of the new
+    device;
+  - 12:15:30-34: a second `WELCOME_REQ` for the same 6 conversations: same device, same key, no
+    `JOIN_REQUEST`. That makes 12 lines for 6 conversations.
+- Nothing between the two passes changed the device or its key. This is one decision said twice,
+  the per-read class. The lead decided (2026-10-29) that it is a product defect: no budget in the
+  rig.
+- Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
+  same device), and make the request depend on a durable "already asked for this device and key",
+  not on the read.
+
+## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
+
+- On the owner seat (W1), same console as the item above. Two lines repeat together at 12:14:44,
+  12:15:15 and 12:15:28, each time the minted device asks again:
+  - `withholding 1 seed(s) ... 1 of a salon riding another key group, 0 not listed`;
+  - `not answering <requester>'s history ask ... withheld for their salon's roster`.
+- The withholding is correct. Saying it again on every ask, when the roster has not changed, is a
+  decision said three times. The lead decided (2026-10-29) that it is a product defect of the
+  per-read class: no budget in the rig.
+- Owed: say the withholding once per roster state (keyed on what it was decided on), and answer a
+  repeat of the same ask with that one decision.
+
+## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
+
+- Run 1 on dev.a062d13, the peer seat (W2). The console was not kept, because that run predates the
+  rig's kept consoles; these are the run's notable lines from the ledger, with ids replaced:
+
+  ```
+  [12:02:20.450] [RUST::INFO] forget_group: <kg>…, min_epoch=0
+  [12:02:20.451] [MLS] dropped local state for <kg>... (the server refused the external commit, minEpoch=0)
+  [12:02:20.451] [MLS] externalJoin REFUSED for <kg>... (base 0, reason epoch_mismatch, group at 1) - attempt 1/3
+  [12:02:21.045] [GRAINE] could not join the distribution group of community <ws> (refused)
+  ```
+
+- The attempt says "1/3", but no attempt 2 is logged before the give-up 0.6 s later. Either the
+  bounded retry did not run, or it ran without a line, which leaves the give-up unexplained.
+- A refused join on the community's key group leaves the device out of its seed distribution.
+- Related: the two-devices race in the P3 "Two devices of one account joining a community at once"
+  ends in the same give-up line, after three logged attempts.
+- Owed: read which path gave up after one attempt, and log every attempt or the reason the retry
+  stopped. Then rerun SALON-REVOKE-COMMIT with consoles kept.
 
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
@@ -497,6 +630,12 @@ Questions:
 
 The reclaim wait counts against the commit's lock-hold budget (`mayStartCommitRequest`). On a slow
 device or a large bundle, this wait could turn a commit's outcome into "unknown".
+
+**Seen again on `1.5.1-alpha.7`** (dev.a062d13, KICK-COMMIT, 2026-10-29): the owner seat (W1) logged
+`[MLS_LOCK] the commit of cc3dc2a7… has its answer - waiting for the frame applied under its loan`
+at 11:58:00. It is the kick's own commit, so it is not tied to a minted device. The cause is still
+unread. Until it is read, the line stays dirt in the removal rows: it is not added to the rig's
+classifier.
 
 ## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
 
