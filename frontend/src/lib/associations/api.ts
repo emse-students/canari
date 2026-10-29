@@ -2028,8 +2028,35 @@ export async function listAssociationProductsForManage(
 
 export interface GrantProductPurchasePayload {
   userId: string;
-  /** Amount in cents; required when the product has no fixed price. */
+  /**
+   * Amount in cents; required when the product has no price for this beneficiary (a free amount,
+   * a grid that closes their combination). Otherwise it overrides the quoted default.
+   */
   amountCents?: number;
+}
+
+/**
+ * What a cash sale records when the cashier types no amount: `priced` (the beneficiary's grid cell
+ * or fixed price, `preferential` when it is the member price), `typed` (a free amount: one must be
+ * typed), `not-sold` (the grid closes this beneficiary's combination: one must be typed).
+ */
+export type CashSaleQuote =
+  | { kind: 'priced'; amountCents: number; preferential: boolean }
+  | { kind: 'typed' }
+  | { kind: 'not-sold' };
+
+/**
+ * The amount a cash sale of `productId` to `userId` records when no amount is typed - the same
+ * server computation the sale itself runs. Requires MANAGE_PRODUCTS.
+ */
+export async function quoteCashSale(
+  associationId: string,
+  productId: string,
+  userId: string
+): Promise<CashSaleQuote> {
+  return request<CashSaleQuote>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/grant-quote?userId=${encodeURIComponent(userId)}`
+  );
 }
 
 /**

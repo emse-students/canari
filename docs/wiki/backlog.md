@@ -67,17 +67,21 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
   settlement, but a held tier differs: the form grant renews it, the settlement does not grant it.
 - **P3 - no client wording for `MEMBER_PRICE_TAG_NOT_A_TIER`** in the admin tabs: add a Paraglide
   message (fr, en).
-- **Decision owed to the user - the cash sale's amount.** `grantProductPurchase` records the full
-  `amountCents` by default even when the beneficiary qualifies for the preferential price: decide
-  whether the cash path records the preferential amount.
+- **P3 - a cash sale's default price is computed outside `lockBuyerTiers`, one tier stale at worst.**
+  `grantProductPurchase`'s `cashSaleQuoteFor` reads the beneficiary's tiers (`tierFactsOf`, or the
+  grid's `listHeldCotisationTiers`) before `fulfillProductPurchase` takes the buyer's lock, so a tier granted
+  or revoked in the same instant can leave the recorded default one tier off; the tag and the record
+  stay correct, and a cashier is present. Compute the default inside the locked transaction, both
+  branches ([cotisations](cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
 
-## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more (decision owed, 2026-10-28)
+## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more - decided by the user on 2026-10-29
 
 A form that grants a cotisation tier and charges for more than the tier (an event, a meal) applies
 the shop's rise rule to the whole answer: a holder of that tier or a dearer one is refused before
-any payment ([cotisations](cotisations.md#rising-to-a-higher-tier)). Kept that way by the review of
-#2597 rather than splitting the payment from the grant. Owed: the user's confirmation, or the rule a
-form should follow instead (sell the rest and skip the grant, or a form without the grant).
+any payment, `409 FORM_TIER_ALREADY_HELD` or the shop's codes
+([cotisations](cotisations.md#rising-to-a-higher-tier)). **The user confirmed on 2026-10-29 that the
+refusal stays exactly as the review of #2597 built it - no change.** The alternatives that were
+open (sell the rest and skip the grant, split the payment from the grant) are not to be built.
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
@@ -398,12 +402,19 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
-## P3 - The live viewer's stall line prints its target buffer unrounded (LIVE-STALL-1, `1.5.1-alpha.1`, 2026-10-27)
+## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
 
-- `livePlayer.ts` writes `stalled at <t> (target ${this.policy.targetMs} ms)` and printed
-  `target 4634.20000000298 ms`. The gap and seek lines round the same value (`Math.round`).
-- One value in two spellings is noise a reader has to reconcile. The rig reads both since #2635.
-- Owed: round it where it is printed, as the other two lines do.
+- The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
+  the target is measured from the gaps already seen, so a gap longer than all of them can still run
+  the buffer dry once before the target grows.
+- The row fails a viewer on ANY stall after its first delivery gap. A producer whose gaps keep
+  growing for a while (3.6 s, then 4.7 s, then 4.75 s) can therefore fail the row while the player
+  keeps its contract exactly.
+- The mid-fetch stall defect found on `1.5.1-alpha.6` is fixed separately and is not this question;
+  this row asks only which rule the board judges by.
+- Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
+  the first gap (stricter than the contract), and align the row's definition and its judge in
+  `liverows.mjs` with that decision. Neither is changed until it is taken.
 
 ## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
 
@@ -2531,8 +2542,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **decide whether a cash sale of a tier records the preferential amount** when the beneficiary qualifies (today the full price by default) | decision | [the entry](#display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands) |
-| **confirm the rule for a paid form that grants a tier AND charges for more**: kept refused for a holder of an equal or dearer tier (review of #2597, 2026-10-28) | decision | [the entry](#a-paid-form-that-grants-a-tier-is-refused-to-a-holder-of-an-equal-or-dearer-tier-even-when-it-sells-more-decision-owed-2026-10-28) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
@@ -2548,6 +2557,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask a co-tenant of the shared host whether a leftover runner workspace may go** - somebody else's archive; nothing runs from it | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **decide whether the host-update report gets a runner key on the old VMs** (your own; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **confirm whether to decommission the two older project-team VMs** (out of scope and unused) | 1 decision | [estate-migration](infrastructure/estate-migration.md#two-older-project-team-virtual-machines-are-out-of-scope-decided-2026-10-18) |
+| **turn off JavaScript detections on the `canari-emse.fr` zone** (Security > Bots): its injected inline script is refused by the page policy on every dev document, one console error per load; production is not behind Cloudflare. Done when a dev document's console holds no CSP refusal, and the rig's `DEV_EDGE_CSP_EXCEPTION` can go | 1 dashboard toggle | [cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22) |
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
 | **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
@@ -3893,6 +3903,8 @@ Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's 
 ### P3 - a read mark for a salon that no longer exists is retried forever
 
 Seen on most rows of the `1.5.0-alpha.1` replay (2026-10-27): every load on W1 and W2 posts `POST /api/channels/<id>/read-mark` for a deleted salon, gets `404`, and `salonReadMarkQueue.ts` logs `[READ] salon mark ... not delivered - kept, and asked again at the next load`. A `404` there is an ANSWER - the salon is gone - and never a reason to retry: the mark must be dropped on that status (typed by status, never by message) and the drop logged once. Today it is dirt on nearly every row; a fix-after-stable item, not something to narrate.
+
+**FIXED AT THE SOURCE 2026-10-29, owed its reading.** The read-mark route now answers `404 CHANNEL_NOT_FOUND`, `ChannelService.advanceReadMark` turns exactly that into `ReadMarkTargetGoneError`, and the flush drops the mark with one `[READ] salon mark ... dropped - the server answered that it no longer exists` (an unnamed 404, a 403 or a transport failure stay owed); a `channel.deleted` frame forgets the owed mark before any POST ([offline-and-weak-network](frontend/offline-and-weak-network.md)). **Owed:** a pre-release carrying it on dev, then KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP re-run - the FIRST run still posts the old mark once (one 404 and the drop line), every later run none. Delete this row then. Not done: a `403` (a member no longer allowed into the salon) still keeps its mark owed; not seen in any log.
 
 ### P3 - an admin who never joined a private salon is not told when it is created or deleted
 

@@ -120,6 +120,8 @@ import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
   sanitizeLogValue,
+  sanitizeLeafLogValue,
+  sanitizeDevicePairLogValue,
   sanitizeStringIdList,
   assertCallerOwnsUserId,
   isUnresolvedIdentity,
@@ -2257,8 +2259,9 @@ export class MessagingService {
     // (`DeviceSignatureKeysService.record`) - one binding for every route a leaf enters a tree by.
     if (frame.external && frame.leafIdentity !== `${committer}:${deviceId}`) {
       this.logger.warn(
-        `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} device=${deviceId} ` +
-          `sender=${sanitizeLogValue(committer)} leaf=${sanitizeLogValue(frame.leafIdentity)}`
+        `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} ` +
+          `sender=${sanitizeDevicePairLogValue(committer, deviceId)} ` +
+          `leaf=${sanitizeLeafLogValue(frame.leafIdentity)}`
       );
       throw new ForbiddenException({
         error: 'commit_identity_mismatch',
