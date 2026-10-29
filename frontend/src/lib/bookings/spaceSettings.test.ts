@@ -20,6 +20,7 @@ const SPACE: ManagedSpace = {
   slotMode: 'step',
   stepMinutes: 30,
   maxSteps: 4,
+  slotMinutes: null,
   nameVisibility: 'occupied',
   discoverability: 'listed',
   audience: null,
@@ -82,6 +83,27 @@ describe('the draft round trip', () => {
     expect(settingsFromDraft({ ...draft, timeZone: 'Europe/Paris' })!.opensAt).toBe(
       '2026-11-02T16:00:00.000Z'
     );
+  });
+});
+
+describe('the slot length (migration 116)', () => {
+  const SLOTS = { ...SPACE, slotMode: 'slots', stepMinutes: null, maxSteps: null } as const;
+
+  it('reads a stored length back as it was', () => {
+    const draft = draftFromSpace({ ...SLOTS, slotMinutes: 25 });
+    expect(draft.slotMinutes).toBe('25');
+    expect(settingsFromDraft(draft)).toMatchObject({ slotMode: 'slots', slotMinutes: 25 });
+  });
+
+  it('keeps a space created before it unstored: null back, the painter reads the lines', () => {
+    expect(settingsFromDraft(draftFromSpace(SLOTS))).toMatchObject({ slotMinutes: null });
+  });
+
+  it('sends none on a step space, so a switch to step clears it', () => {
+    const draft = { ...draftFromSpace({ ...SLOTS, slotMinutes: 25 }), slotMode: 'step' as const };
+    draft.stepMinutes = '30';
+    draft.maxSteps = '4';
+    expect(settingsFromDraft(draft)).toMatchObject({ slotMode: 'step', slotMinutes: null });
   });
 });
 

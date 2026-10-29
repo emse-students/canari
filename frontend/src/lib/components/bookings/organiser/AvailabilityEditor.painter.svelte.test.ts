@@ -20,7 +20,7 @@ import AvailabilityEditor from './AvailabilityEditor.svelte';
 const mounted: (() => void)[] = [];
 const onDirty = vi.fn();
 
-async function open(lines: unknown[] = [], fixedSlots = false) {
+async function open(lines: unknown[] = [], fixedSlots = false, slotMinutes: number | null = null) {
   const app = mount(AvailabilityEditor, {
     target: document.body,
     props: {
@@ -32,6 +32,7 @@ async function open(lines: unknown[] = [], fixedSlots = false) {
       exceptions: [],
       stepMinutes: fixedSlots ? null : 30,
       fixedSlots,
+      slotMinutes,
       onSaved: vi.fn(),
       onDirty,
     },
@@ -205,5 +206,18 @@ describe('AvailabilityEditor - a fixed-slot space (owner, 2026-10-29)', () => {
     drag(6, 0, 6, 47); // the whole Sunday
     expect(document.body.textContent).toContain('au-delà des 200');
     expect((await saved()).length).toBe(200);
+  });
+
+  it('on an EMPTIED week, a press opens a slot of the STORED length (migration 116)', async () => {
+    await open([], true, 45);
+    expect(document.body.textContent).toContain('créneau de 45 min');
+    drag(0, 28, 0, 28); // Monday 14:00
+    expect(times(await saved())).toEqual(['1 14:00-14:45']);
+  });
+
+  it('a space with no stored length still reads it from its lines', async () => {
+    await open(SLOTS, true, null);
+    drag(1, 28, 1, 28);
+    expect(times(await saved())).toContain('2 14:00-14:30');
   });
 });

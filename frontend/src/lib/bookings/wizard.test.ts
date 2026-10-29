@@ -113,12 +113,18 @@ describe('wizardPayload', () => {
     expect(p?.lines).toHaveLength(5);
   });
 
-  it('sends no step for fixed slots, and the slots as lines', () => {
+  it('sends no step for fixed slots, the slot length instead, and the slots as lines', () => {
     const p = wizardPayload({ ...newWizardDraft('Alumni'), slotMode: 'slots', slotMinutes: 60 });
     expect(p?.fields.stepMinutes).toBeUndefined();
     expect(p?.fields.maxSteps).toBeUndefined();
     expect(p?.fields.slotMode).toBe('slots');
+    // Stored (migration 116), so the painter opens 60-min slots even once the week is emptied.
+    expect(p?.fields.slotMinutes).toBe(60);
     expect(p?.lines).toHaveLength(5 * 12);
+  });
+
+  it('sends no slot length for a step space', () => {
+    expect(wizardPayload(newWizardDraft('Salle'))?.fields).not.toHaveProperty('slotMinutes');
   });
 
   it('sends the audience only when restricted', () => {
@@ -155,6 +161,7 @@ describe('wizardPayload', () => {
       slotMode: 'step',
       stepMinutes: 30,
       maxSteps: 4,
+      slotMinutes: null,
       nameVisibility: 'occupied',
       discoverability: 'listed',
       audience: null,

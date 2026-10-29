@@ -5,7 +5,7 @@
     applyTemplate,
     paintRows,
     paintSlotRows,
-    slotLengthOf,
+    slotLengthFor,
     weekRunsOf,
     weekSlotsOf,
     type PaintMode,
@@ -63,6 +63,11 @@
      * or closes whole slots, never merging them (owner, 2026-10-29).
      */
     fixedSlots: boolean;
+    /**
+     * The space's SAVED slot length (migration 116), what a painted slot opens; null on a space
+     * created before it was stored, whose length is then read from its lines.
+     */
+    slotMinutes: number | null;
     /** Called once the server took the new availability, with what it now stores. */
     onSaved: (lines: StoredLine[], exceptions: Closure[]) => void;
     /** Whether the editor holds changes not saved, for the leave warning. */
@@ -78,6 +83,7 @@
     exceptions,
     stepMinutes,
     fixedSlots,
+    slotMinutes,
     onSaved,
     onDirty,
   }: Props = $props();
@@ -114,7 +120,7 @@
   /** The week as the painter draws it, always read from the lines: slots apart, hours merged. */
   const week = $derived(fixedSlots ? weekSlotsOf(rows) : weekRunsOf(rows));
   /** What a painted cell opens on a fixed-slot space, said under the painter. */
-  const slotLength = $derived(fixedSlots ? slotLengthOf(rows) : null);
+  const slotLength = $derived(fixedSlots ? slotLengthFor(rows, slotMinutes) : null);
 
   const TEMPLATES: { key: TemplateKey; name: () => string; sub: () => string }[] = [
     {
@@ -156,7 +162,7 @@
     let next: readonly EditorLine[];
     capNotice = null;
     if (fixedSlots) {
-      const painted = paintSlotRows(rows, dayA, dayB, slotA, slotB, mode);
+      const painted = paintSlotRows(rows, dayA, dayB, slotA, slotB, mode, slotMinutes);
       next = painted.rows;
       if (painted.refused > 0) {
         const count = toStoredLines(next).length + painted.refused;

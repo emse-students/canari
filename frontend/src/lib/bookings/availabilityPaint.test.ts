@@ -14,6 +14,7 @@ import {
   paintRows,
   paintSlotRows,
   rowsOfWeek,
+  slotLengthFor,
   slotLengthOf,
   weekSlotsOf,
   templateWeek,
@@ -222,6 +223,39 @@ describe('fixed slots (owner, 2026-10-29): whole slots, never merged', () => {
     expect(slotLengthOf([...ALUMNI, weekly(2, '10:00', '10:20')])).toBe(25);
     expect(slotLengthOf([])).toBe(30);
     expect(slotLengthOf([weekly(1, '10:00', '10:20'), weekly(1, '11:00', '11:25')])).toBe(20);
+  });
+
+  it('takes the STORED length first (migration 116), the lines only when none is stored', () => {
+    expect(slotLengthFor(ALUMNI, 60)).toBe(60);
+    expect(slotLengthFor([], 25)).toBe(25);
+    // A space created before the length was stored: read from its lines, as before.
+    expect(slotLengthFor(ALUMNI, null)).toBe(25);
+    expect(slotLengthFor([], null)).toBe(30);
+  });
+
+  it('opens slots of the stored length on an EMPTIED week, where the lines say nothing', () => {
+    // Mon 14:00-15:00 painted: three 25-min starts fall inside it.
+    expect(stored(paintSlotRows([], 0, 0, 28, 29, 'open', 25).rows)).toEqual([
+      '1 14:00-14:25',
+      '1 14:25-14:50',
+      '1 14:50-15:15',
+    ]);
+    // Unstored, the same paint falls back to the grain.
+    expect(stored(paintSlotRows([], 0, 0, 28, 29, 'open', null).rows)).toEqual([
+      '1 14:00-14:30',
+      '1 14:30-15:00',
+    ]);
+  });
+
+  it('opens slots of the stored length even where the lines say another', () => {
+    expect(stored(paintSlotRows(ALUMNI, 1, 1, 28, 28, 'open', 60).rows).slice(3)).toEqual([
+      '2 14:00-15:00',
+    ]);
+    // A legacy space (null) keeps inferring 25 from the same lines.
+    expect(stored(paintSlotRows(ALUMNI, 1, 1, 28, 28, 'open', null).rows).slice(3)).toEqual([
+      '2 14:00-14:25',
+      '2 14:25-14:50',
+    ]);
   });
 
   it('closes only the slots the rectangle touches, whole', () => {

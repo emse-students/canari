@@ -39,4 +39,15 @@ describe('CreateSpaceDto', () => {
     ).toEqual(['availability']);
     expect(await errorsOf({ name: 'x', availability: { lines: [] } })).toEqual(['availability']);
   });
+
+  it("takes a slot length in the wizard's range (15..120 min, whole), or null; nothing else", async () => {
+    for (const ok of [15, 25, 120, null]) {
+      expect(await errorsOf({ name: 'x', slotMode: 'slots', slotMinutes: ok })).toEqual([]);
+    }
+    for (const bad of [14, 121, 22.5, '30', 0]) {
+      expect(await errorsOf({ name: 'x', slotMode: 'slots', slotMinutes: bad })).toEqual([
+        'slotMinutes',
+      ]);
+    }
+  });
 });

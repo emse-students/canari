@@ -40,6 +40,7 @@ const SPACE = {
   slotMode: 'step',
   stepMinutes: 30,
   maxSteps: 6,
+  slotMinutes: null,
   nameVisibility: 'occupied',
   discoverability: 'listed',
   audience: null,

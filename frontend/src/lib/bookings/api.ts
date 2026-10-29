@@ -32,6 +32,11 @@ export interface SpaceSettings {
   slotMode: SlotMode;
   stepMinutes: number | null;
   maxSteps: number | null;
+  /**
+   * How long one fixed slot lasts, on a 'slots' space only (migration 116); null on a step space
+   * and on a slots space created before the length was stored, whose painter reads it from the lines.
+   */
+  slotMinutes: number | null;
   nameVisibility: NameVisibility;
   discoverability: Discoverability;
   audience: AudienceCondition | null;

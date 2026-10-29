@@ -17,6 +17,7 @@ export const ORGANISER_REFUSAL_CODES = [
   'resource-not-found',
   'time-zone',
   'step-shape',
+  'slot-shape',
   'quota-pair',
   'export-labels',
   'item-id',
@@ -94,6 +95,8 @@ function sentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_time_zone();
     case 'step-shape':
       return m.bookings_refusal_step_shape();
+    case 'slot-shape':
+      return m.bookings_refusal_slot_shape();
     case 'quota-pair':
       return m.bookings_refusal_quota_pair();
     case 'export-labels':

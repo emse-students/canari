@@ -1356,6 +1356,89 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect([view.slotMode, view.stepMinutes, view.maxSteps]).toEqual(['slots', null, null]);
     });
 
+    describe('the stored slot length (migration 116)', () => {
+      it('a slots space is created with it and reads it back; a step space has none', async () => {
+        const { id } = await organiser.create(
+          { name: 'Alumni', slotMode: 'slots', slotMinutes: 25 } as never,
+          as(ALICE)
+        );
+        const view = await organiser.managedSpaceView(id, as(ALICE));
+        expect([view.slotMode, view.stepMinutes, view.maxSteps, view.slotMinutes]).toEqual([
+          'slots',
+          null,
+          null,
+          25,
+        ]);
+        const { id: step } = await organiser.create({ name: 'Salle' }, as(ALICE));
+        expect((await organiser.managedSpaceView(step, as(ALICE))).slotMinutes).toBeNull();
+      });
+
+      it('the mode switch writes it, and a switch to step clears it', async () => {
+        const { id } = await organiser.create({ name: 'x' }, as(ALICE));
+        const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
+        const read = async () => {
+          const v = await organiser.managedSpaceView(id, as(ALICE));
+          return [v.slotMode, v.stepMinutes, v.maxSteps, v.slotMinutes];
+        };
+        await expect(patch({ slotMode: 'slots', slotMinutes: 45 })).resolves.toEqual({ ok: true });
+        expect(await read()).toEqual(['slots', null, null, 45]);
+        // Unnamed by the body: cleared with the switch, so the CHECK never sees a step space with one.
+        await expect(patch({ slotMode: 'step', stepMinutes: 30, maxSteps: 2 })).resolves.toEqual({
+          ok: true,
+        });
+        expect(await read()).toEqual(['step', 30, 2, null]);
+        // A slots space may keep NO length: a space created before 116 reads its lines instead.
+        await expect(patch({ slotMode: 'slots' })).resolves.toEqual({ ok: true });
+        expect(await read()).toEqual(['slots', null, null, null]);
+      });
+
+      it('refuses a length on a step space, and one out of range, as slot-shape', async () => {
+        expect(
+          await refusal(organiser.create({ name: 'x', slotMinutes: 30 } as never, as(ALICE)))
+        ).toEqual({ code: 'slot-shape' });
+        expect(
+          await refusal(
+            organiser.create(
+              {
+                name: 'x',
+                slotMode: 'step',
+                stepMinutes: 30,
+                maxSteps: 2,
+                slotMinutes: 30,
+              } as never,
+              as(ALICE)
+            )
+          )
+        ).toEqual({ code: 'slot-shape' });
+        expect(
+          await refusal(
+            organiser.create({ name: 'x', slotMode: 'slots', slotMinutes: 500 } as never, as(ALICE))
+          )
+        ).toEqual({ code: 'slot-shape' });
+        const { id } = await organiser.create({ name: 'x' }, as(ALICE));
+        expect(
+          await refusal(organiser.update(id, { slotMinutes: 30 } as never, as(ALICE), NOW))
+        ).toEqual({ code: 'slot-shape' });
+      });
+
+      it('the CHECK holds the same pair under the service', async () => {
+        const repo = ds.getRepository(BookingSpace);
+        await expect(
+          repo.save({ ownerId: ALICE, name: 'x', stepMinutes: 30, maxSteps: 1, slotMinutes: 30 })
+        ).rejects.toThrow(/booking_spaces_slot_minutes/);
+        await expect(
+          repo.save({ ownerId: ALICE, name: 'x', slotMode: 'slots', slotMinutes: 10 })
+        ).rejects.toThrow(/booking_spaces_slot_minutes/);
+        const ok = await repo.save({
+          ownerId: ALICE,
+          name: 'x',
+          slotMode: 'slots',
+          slotMinutes: 120,
+        });
+        expect(ok.slotMinutes).toBe(120);
+      });
+    });
+
     it('writes availability and reads it back; refuses a malformed line', async () => {
       const { space, resourceIds } = await setup();
       const r = resourceIds[0];
