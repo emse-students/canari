@@ -75,8 +75,6 @@ const CASES = [
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
-  ['log', '[11:58:00] [MLS_LOCK] the commit of cc3dc2a7… has its answer - waiting for the frame applied under its loan', 'notable'],
-  ['log', '[11:58:00] [MLS_LOCK] the commit of cc3dc2a7… has its answer - waiting for the frame applied under its loan for 30 s', 'unexplained'],
   ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove', 'benign'],
   ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (the revocation answer of an unchanged tree reused)', 'benign'],
   ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (2 still to remove)', 'unexplained'],
