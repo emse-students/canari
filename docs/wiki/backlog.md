@@ -419,6 +419,20 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   could fetch them. The order should be decided by a fact, such as the viewers' last read, not by a
   delay. Then rerun LIVE-WEB-2.
 
+## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29)
+
+- On every RMC run (dev.dce778b), each member device logs these lines whenever it reads a fresh
+  community:
+  - `[GRAINE] <device> holds nothing of community <ws> - recorded; N device(s) of <user> still to
+    answer`, once per answering device;
+  - `[GRAINE] absorbed 0/0 seed(s) (0 already held) from <user> in community <ws> - salon(s) none`.
+- Both say the same empty answer again on every read. The rig deliberately leaves them as dirt
+  (`salonNarration` in `salonrows.mjs`: "said once per READ rather than per decision ... fixed at the
+  source"), so no row that creates a community can reach `PASS` while they print.
+- Owed: log the empty answer once per decision (the first time a community's history is found to be
+  empty, or the final verdict over every device), and keep the per-device detail out of the info level.
+  Then rerun KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
 ## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
 
 - Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
