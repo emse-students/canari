@@ -708,9 +708,44 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     await settle();
     expect(heldNothingLines()).toEqual([
       expect.stringContaining(
-        'bob holds nothing of community ws-1 on web-bob,bob-phone at distribution epoch 7 - recorded, every device of bob on the key group has answered - asking the next member'
+        'bob holds nothing of community ws-1 on web-bob,bob-phone at distribution epoch 7 - recorded, every device of bob on the key group has answered'
       ),
     ]);
+    // The decision names the member, never the next step: the walk's own next line says it.
+    expect(heldNothingLines()[0]).not.toContain('asking the next member');
+    info.mockRestore();
+  });
+
+  it('an ask REPLACED before its decision still says what it gathered: who answered, who was owed', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+    ]);
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1'];
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    await settle();
+    await requestCommunityHistory('ws-1', { evenIfSeedsHeld: true });
+
+    const ended = info.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('ended before'));
+    expect(ended).toEqual([
+      expect.stringContaining(
+        'the history ask of community ws-1 to bob ended before its decision (replaced by a new ask): web-bob recorded as holding nothing at distribution epoch 7, bob-phone still owed'
+      ),
+    ]);
+    info.mockRestore();
+  });
+
+  it('an ask replaced before ANY answer ends in silence', async () => {
+    await requestCommunityHistory('ws-1');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await requestCommunityHistory('ws-1', { evenIfSeedsHeld: true });
+    expect(info.mock.calls.flat().join(' ')).not.toContain('ended before');
     info.mockRestore();
   });
 

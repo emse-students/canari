@@ -4256,11 +4256,19 @@ account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, 
   member, once per epoch. Once every device the request named has answered (or, when it named none,
   every tree device of the member), the next member is asked at once, from the answer itself, and
   THAT decision is the one line said: `<member> holds nothing of community <ws> on <devices> at
-  distribution epoch N - recorded, ... - asking the next member`, naming every device that answered
-  this request. A device answering while a sibling is still to answer moves only the durable record
-  and says nothing (until 2026-10-29 it said `... - recorded; N device(s) still to answer`, one line
-  per device per ask, which the cross-client rig reads as dirt); a member whose last device never
-  answers stays visible, because the next ask names only its unrecorded devices. A
+  distribution epoch N - recorded, every device of <member> on the key group has answered`, naming
+  every device that answered this request. It stops at the member: whether anybody is left is known
+  only after the next roster read, so the walk's own next line says it (`asked <next member>`, `is
+  final at distribution epoch N`, or why it waits). A device answering while a sibling is still to
+  answer moves only the durable record and says nothing (until 2026-10-29 it said `... - recorded; N
+  device(s) still to answer`, one line per device per ask, which the cross-client rig reads as
+  dirt). An ask that ends BEFORE its decision - replaced by a new ask, or dropped with its
+  community - says what it gathered once (`closeHistoryRequest`): `the history ask of community
+  <ws> to <member> ended before its decision (<why>): <devices> recorded as holding nothing at
+  distribution epoch N, <devices> still owed`; one that gathered nothing ends in silence. **Limit:
+  the in-flight ask is in memory**, so one cut short by a restart says nothing of its partial
+  answers; they stay in the durable record, and the next start's `asked <member> (<devices>)` names
+  only the devices not yet recorded. A
   device recorded already never moves the walk again, so a repeated answer cannot loop it.
 - The election skips a member whose devices are all recorded (`exhausted`), and for now a member
   whose ONLINE devices are all recorded (`spent`) - only the unrecorded online devices are named.
@@ -4330,7 +4338,7 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 (per-device keying, a repeated answer is not new, version replacement, malformed records), `proto_fields.rs`
 (`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
 reading - a cold start with every other member online, then a second start: the first shows one
-`<member> holds nothing ... on <devices> at distribution epoch N - recorded, ... asking the next member` per member and then
+`<member> holds nothing ... on <devices> at distribution epoch N - recorded, ...` per member (each followed by `asked <next member>`) and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
 
 ## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)
