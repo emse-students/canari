@@ -171,7 +171,9 @@
           délai de rappel que chacun choisit, et l'heure à laquelle ce rappel est parti. Le message
           qu'un organisateur joint à une annulation n'est pas conservé avec la réservation : il ne
           figure que dans la notification. Sur un espace accessible par son seul lien, la
-          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur.
+          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Ces
+          notifications, message compris, sont supprimées au bout de 90 jours, comme toute
+          notification dans l'application.
         </dd>
       </div>
       <div>
