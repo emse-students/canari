@@ -1,7 +1,8 @@
 /**
- * THE LIVE VIEWER'S BUFFER POLICY: how far behind its newest buffered media the player sits, and
- * what a `waiting` from the `<video>` means. Pure - no timer, no DOM: the caller reads its monotonic
- * clock and hands the reading in, so the policy is tested with numbers alone.
+ * THE LIVE VIEWER'S BUFFER POLICY: how far behind its newest buffered media the player sits, when it
+ * re-anchors there, and what a `waiting` from the `<video>` means. Pure - no timer, no DOM: the caller
+ * reads its monotonic clock and its buffer and hands the readings in, so the policy is tested with
+ * numbers alone.
  *
  * WHY IT EXISTS (L-F1, read on dev 2026-10-26, docs/wiki/frontend/modules/live.md "The buffer
  * policy"). Two defects made a viewer freeze every ~4 s behind an Android broadcaster:
@@ -14,19 +15,33 @@
  *    (exactly end - 2 s). The latched stall made the next delivery seek again, whose `waiting` latched
  *    again - a seek at every delivery, for as long as the live lasted.
  *
- * THE POLICY. The target is the longest wall-clock gap between two deliveries the viewer has seen
- * (the last {@link LIVE_PLAYER_CADENCE_WINDOW} of them), never below
- * {@link LIVE_PLAYER_MIN_TARGET_BUFFER_MS}: the buffer must outlast the longest wait for the next
- * media, and that wait is the producer's cadence as THIS viewer receives it (pairs, poll, fetch).
- * A gap longer than any seen costs at most one stall - the stall IS the measurement - and the
- * re-anchor that follows uses the grown target. A gap that is an outage, not a cadence (a catch-up
- * jump, a retried poll, a quiet broadcaster) is never recorded: {@link LiveBufferPolicy.interrupt}.
+ * AND WHY IT IS SIZED FROM THE DELIVERY'S SHAPE (LIVE-STALL-1, `1.5.1-alpha.7`, 2026-10-29). The
+ * target used to be the longest GAP seen, so it grew only AFTER a longer gap had drained the buffer,
+ * and it was applied only at a seek - a viewer sitting closer to the edge than its own target was
+ * left there. W4 held 3.99 s after a delivery with its target at 4118 ms, the next gap was 4223 ms,
+ * and it stalled. Both are fixed here:
+ *
+ * - THE LONGEST WAIT IS BOUNDED FROM WHAT A DELIVERY SHOWS, before the gap that would prove it: a
+ *   delivery of K segments of D ms each means the producer withheld K x D of media, so its next
+ *   handover can come K x D later, and the poll learns of it up to one {@link LIVE_MANIFEST_POLL_MS}
+ *   after that. {@link LiveBufferPolicy.longestWaitMs} is the largest of that bound, the longest gap
+ *   measured, and the floor.
+ * - A BUFFER SHORTER THAN THE LONGEST WAIT IS RE-ANCHORED AT ONCE ({@link LiveBufferPolicy.reanchor}),
+ *   not left to stall: after a delivery, the media ahead must outlast the wait for the next one.
+ * - THE ANCHOR SITS ONE POLL ABOVE THAT WAIT ({@link LiveBufferPolicy.targetMs}): a delivery's phase
+ *   against the poll moves by up to one poll, so an anchor exactly at the wait would re-anchor on that
+ *   ordinary jitter - a backward seek every few deliveries.
+ *
+ * A gap that is an outage, not a cadence (a catch-up jump, a retried poll, a quiet broadcaster) is
+ * never recorded: {@link LiveBufferPolicy.interrupt}.
  */
 
 import {
+  LIVE_MANIFEST_POLL_MS,
   LIVE_PLAYER_CADENCE_WINDOW,
   LIVE_PLAYER_DRIFT_SLACK_MS,
   LIVE_PLAYER_MIN_TARGET_BUFFER_MS,
+  LIVE_SEGMENT_MS,
 } from './constants';
 
 /** The `buffered` ranges of a source buffer, as MSE gives them. */
@@ -74,6 +89,16 @@ export type LiveCadenceBreak =
   /** The server says the broadcaster stored nothing for a while: its absence, not its cadence. */
   | 'broadcaster-quiet';
 
+/**
+ * What one delivery brought: how many segments were appended, and how much media they added at the
+ * buffered end, in ms - `null` when that growth does not measure them (a hole opened: a re-acquired
+ * camera's timestamps jumped forward, so the end moved by the time away, not by the segments).
+ */
+export interface LiveDeliveryShape {
+  segments: number;
+  mediaMs: number | null;
+}
+
 /** What one delivery did to the policy. */
 export interface LiveDelivery {
   /** The wall-clock gap since the previous delivery, in ms; null when none is to be measured. */
@@ -84,23 +109,51 @@ export interface LiveDelivery {
   grew: boolean;
 }
 
+/**
+ * Why a delivery re-anchors the playhead at the target, when nothing else asked for a seek:
+ * - `short`: the media ahead would not outlast {@link LiveBufferPolicy.longestWaitMs} - the next
+ *   delivery may come after it runs dry;
+ * - `drift`: the video sits past the target plus {@link LIVE_PLAYER_DRIFT_SLACK_MS} behind the edge.
+ */
+export type LiveReanchor = 'short' | 'drift';
+
 /** One per run of a viewer: reset at every (re)start. */
 export class LiveBufferPolicy {
   private readonly gaps: number[] = [];
+  /** The measured deliveries' sizes over the same window as the gaps: segments, ms per segment. */
+  private readonly groups: { segments: number; segmentMs: number }[] = [];
   private lastDeliveryAt: number | null = null;
 
   constructor(
     private readonly window: number = LIVE_PLAYER_CADENCE_WINDOW,
-    private readonly floorMs: number = LIVE_PLAYER_MIN_TARGET_BUFFER_MS
+    private readonly floorMs: number = LIVE_PLAYER_MIN_TARGET_BUFFER_MS,
+    private readonly pollMs: number = LIVE_MANIFEST_POLL_MS
   ) {
     if (!Number.isInteger(window) || window < 1) {
       throw new RangeError(`live buffer policy: window ${window} is not a positive integer`);
     }
   }
 
-  /** How far behind the newest buffered media the player aims to sit, in ms. */
+  /**
+   * The longest the viewer may wait for its next media, in ms: the largest of the floor (one segment
+   * plus one poll), the longest gap measured, and the GROUP BOUND - the largest group of segments one
+   * delivery brought, times the longest segment measured, plus one poll. The bound is known from the
+   * first grouped delivery, before any gap has had to prove it.
+   */
+  get longestWaitMs(): number {
+    const gap = this.gaps.reduce((a, b) => Math.max(a, b), this.floorMs);
+    if (this.groups.length === 0) return gap;
+    const most = this.groups.reduce((a, g) => Math.max(a, g.segments), 0);
+    const longest = this.groups.reduce((a, g) => Math.max(a, g.segmentMs), 0);
+    return Math.max(gap, most * longest + this.pollMs);
+  }
+
+  /**
+   * How far behind the newest buffered media the player anchors, in ms: the longest wait plus one
+   * poll, the jitter of a delivery's phase against the poll, so ordinary jitter never re-anchors.
+   */
   get targetMs(): number {
-    return this.gaps.reduce((a, b) => Math.max(a, b), this.floorMs);
+    return this.longestWaitMs + this.pollMs;
   }
 
   /** Past this many ms behind the newest buffered media, the player seeks back to the target. */
@@ -109,10 +162,35 @@ export class LiveBufferPolicy {
   }
 
   /**
-   * Media was appended at `nowMs` (the caller's monotonic clock). The first delivery after a reset
-   * or an {@link interrupt} only anchors the next measurement.
+   * Whether `segments` new segments in one manifest are a BACKLOG to jump over rather than media to
+   * play: when appending them all would put the video past {@link maxBehindMs} anyway, so the drift
+   * would seek over them after paying their download. Sized by the longest segment measured (the
+   * floor's own segment, {@link LIVE_SEGMENT_MS}, before any): a producer's ordinary group - a pair,
+   * the flush of its last fragments at the end of the live - is played, never skipped
+   * (LIVE-WEB-2, `1.5.1-alpha.7`: three segments at the end were "3 segments behind" and two were
+   * dropped).
    */
-  delivered(nowMs: number): LiveDelivery {
+  isBacklog(segments: number): boolean {
+    const longest = this.groups.reduce((a, g) => Math.max(a, g.segmentMs), 0);
+    return segments * (longest > 0 ? longest : LIVE_SEGMENT_MS) > this.maxBehindMs;
+  }
+
+  /**
+   * Whether a delivery that left `aheadMs` of media before the playhead re-anchors it at the
+   * target, and why ({@link LiveReanchor}); null when it plays on.
+   */
+  reanchor(aheadMs: number): LiveReanchor | null {
+    if (aheadMs < this.longestWaitMs) return 'short';
+    if (aheadMs > this.maxBehindMs) return 'drift';
+    return null;
+  }
+
+  /**
+   * Media was appended at `nowMs` (the caller's monotonic clock), in the shape `shape` says. The
+   * first delivery after a reset or an {@link interrupt} only anchors the next measurement - its gap
+   * and its size are a backlog (the join, a catch-up), not the producer's cadence.
+   */
+  delivered(nowMs: number, shape?: LiveDeliveryShape): LiveDelivery {
     const before = this.targetMs;
     const previous = this.lastDeliveryAt;
     this.lastDeliveryAt = nowMs;
@@ -120,6 +198,10 @@ export class LiveBufferPolicy {
     const gap = Math.max(0, nowMs - previous);
     this.gaps.push(gap);
     if (this.gaps.length > this.window) this.gaps.shift();
+    if (shape && shape.segments > 0 && shape.mediaMs !== null && shape.mediaMs > 0) {
+      this.groups.push({ segments: shape.segments, segmentMs: shape.mediaMs / shape.segments });
+      if (this.groups.length > this.window) this.groups.shift();
+    }
     const after = this.targetMs;
     return { gapMs: gap, targetMs: after, grew: after > before };
   }
@@ -129,9 +211,10 @@ export class LiveBufferPolicy {
     this.lastDeliveryAt = null;
   }
 
-  /** Forgets every gap: a new run measures its own producer. */
+  /** Forgets every gap and group: a new run measures its own producer. */
   reset(): void {
     this.gaps.length = 0;
+    this.groups.length = 0;
     this.lastDeliveryAt = null;
   }
 }

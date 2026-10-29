@@ -447,6 +447,13 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
     zero-after-first-gap rule. That is this decision.
   - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
+- **The owner decided (2026-10-29): the viewer must NOT stall; fix the cause.** So the contract
+  moved, not the row: branch `fix/live-buffer-from-cadence` bounds the longest wait from the shape
+  of the deliveries (a pair shows its ~5 s wait AT the pair) and re-anchors a buffer shorter than
+  it at once ([buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); W4's
+  trace replayed in `liveBufferPolicy.test.ts` stalls once under the old rule and never under the
+  new. The row's zero-after-first-gap rule stands. Owed: LIVE-STALL-1 rerun on the pre-release that
+  carries it, then delete this entry.
 
 ## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
 
@@ -471,6 +478,16 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
     assertion: "stalled 2 time(s) and never named a delivery gap".
   - All of it falls in the last 2 s before the end, so both viewers lost the end of the live to the
     purge.
+- **Built on branch `fix/live-buffer-from-cadence` (2026-10-29), owed a LIVE-WEB-2 rerun on the
+  pre-release that carries it.** The purge of an ordinary end waits for the live's seats - the fact
+  that a viewer read a manifest within the lease - and the player gives its seat back on the end's
+  `410`; a cut or an erasure still purges at once
+  ([lives](services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)). W4's 9.84 s stall (2.67 s
+  ahead before a 3.5 s gap) is the short buffer the new policy re-anchors; its end-of-live jump
+  over 5 and 6 came from the fixed "more than 2 segments" catch-up, now sized by the slack behind
+  the target. Its 14.94 s wait was the last segment playing out before the `404` arrived; with
+  5-7 kept and the 4 s anchor it should not recur, which the rerun must show. No migration, no
+  production data action.
 
 ## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
 
@@ -2953,13 +2970,13 @@ From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#
 
 *"Pour la prochaine mise a jour"*: the user held 1.2.8 until both shipped, and they did. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
-## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, the floor is owed)
+## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, production floor `1.2.9` since 2026-10-29)
 
-The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): wait for the release carrying PR #1911 to be served by both stores, then raise `minClientVersion` to it. Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
+The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): **MET on production 2026-10-29** (floor raised to `1.2.9`, both stores serve `1.5.0`). **Owed follow-up: dev's `MIN_CLIENT_VERSION` seed and live row still read `1.2.7` and must follow production** ([dev-environment](infrastructure/dev-environment.md)). Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
 
-## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; the floor is owed)
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; production floor raised to `1.2.9` on 2026-10-29)
 
-**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **DONE ON PRODUCTION 2026-10-29 (owner's decision; dev still owed): the step was to raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
 Built (#1878): server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
 
@@ -3778,7 +3795,7 @@ undated, and those are placed by their client clock with a one-hour margin
 [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add)).
 **OWED TO THE USER - `minClientVersion`:** the withholding runs on the ANSWERING device, so an answerer
 on an older build still sends the window unfiltered; the guarantee is complete only once
-`minClientVersion` (1.2.7 today) reaches the build that ships it. Raising it is the user's call, not
+`minClientVersion` (`1.2.9` on production since 2026-10-29) reaches the build that ships it. Raising it is the user's call, not
 an agent's. **And a known abuse, accepted with the decision:** a member can remove and re-add someone
 to open an artificial window, making that span unrestorable to every new device while the person
 stays; nothing tells it from a real removal.
