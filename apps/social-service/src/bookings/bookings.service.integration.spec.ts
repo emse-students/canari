@@ -792,6 +792,37 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(last.nextOffset).toBeNull();
     });
 
+    it('lists only the LIVE bookings still to come from `from`, paged by start (WP-R5)', async () => {
+      const { space, resourceIds } = await setup();
+      const early = await book(space.id, resourceIds[0], '09:00', '09:30');
+      const underWay = await book(space.id, resourceIds[0], '10:00', '11:00');
+      const cancelled = await book(space.id, resourceIds[0], '12:00', '12:30');
+      const next = await book(space.id, resourceIds[0], '13:00', '13:30');
+      const last = await book(space.id, resourceIds[0], '14:00', '14:30');
+      await service.cancel(cancelled.id, as(ALICE), NOW);
+      // Monday 10:30: the 09:00 one has ended, the 10:00 one is under way.
+      const from = Date.parse(on('10:30'));
+
+      const first = await service.spaceBookings(space.id, as(ORGA), 0, 2, undefined, from);
+      expect(first.items.map((b) => b.id)).toEqual([underWay.id, next.id]);
+      expect(first.nextOffset).toBe(2);
+      const rest = await service.spaceBookings(space.id, as(ORGA), 2, 2, undefined, from);
+      expect(rest.items.map((b) => b.id)).toEqual([last.id]);
+      expect(rest.nextOffset).toBeNull();
+      // Without `from` the whole history is still there, the ended and the cancelled included.
+      const all = await service.spaceBookings(space.id, as(ORGA));
+      expect(all.items.map((b) => b.id)).toEqual([
+        early.id,
+        underWay.id,
+        cancelled.id,
+        next.id,
+        last.id,
+      ]);
+      expect(
+        await refusal(service.spaceBookings(space.id, as(ALICE), 0, 2, undefined, from))
+      ).toEqual({ code: 'not-manager' });
+    });
+
     it('narrows the organiser list to the bookings a D29 refusal named, in this space only', async () => {
       const { space, resourceIds } = await setup();
       const other = await setup({ name: 'other' });

@@ -36,7 +36,8 @@ export const BLOCK_LENGTH_CHOICES = 48;
 
 const DAY_MS = 86_400_000;
 
-const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
+/** The Intl locale this client formats dates and numbers in. */
+export const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
 
 /** The day a unit is ON: the local date of its start in the space's zone (see the header). */
 export function unitDay(unit: { startMs: number }, zone: string): string {

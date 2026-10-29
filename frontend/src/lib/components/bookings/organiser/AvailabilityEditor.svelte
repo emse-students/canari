@@ -16,6 +16,7 @@
     timeChoices,
     toStoredLines,
     wholeDaysInARow,
+    weekdayNames as weekdayNamesIn,
     type Closure,
     type EditorLine,
     type StoredLine,
@@ -91,29 +92,15 @@
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
   const step = $derived(stepMinutes && 60 % stepMinutes === 0 ? stepMinutes : 15);
 
-  /** Monday..Sunday in the reader's language, capitalised as a choice; 2024-01-01 was a Monday. */
-  const weekdayNames = $derived(
-    [1, 2, 3, 4, 5, 6, 7].map((d) =>
-      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
-        weekday: 'long',
-        timeZone: 'UTC',
-      })
-    )
-  );
+  /** Monday..Sunday in the reader's language, capitalised as a choice. */
+  const weekdayNames = $derived(weekdayNamesIn(locale, 'long'));
   const weekdayOptions = $derived(
     weekdayNames.map((name, i) => ({
       value: String(i + 1),
       label: name.charAt(0).toUpperCase() + name.slice(1),
     }))
   );
-  const shortDayNames = $derived(
-    [1, 2, 3, 4, 5, 6, 7].map((d) =>
-      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
-        weekday: 'short',
-        timeZone: 'UTC',
-      })
-    )
-  );
+  const shortDayNames = $derived(weekdayNamesIn(locale, 'short'));
   /** The week as the painter draws it, always read from the lines. */
   const week = $derived(weekRunsOf(rows));
 

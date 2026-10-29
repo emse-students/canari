@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository, type EntityManager } from 'typeorm';
+import { In, IsNull, MoreThan, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
@@ -559,16 +559,21 @@ export class BookingsService {
    * D20). `offset` is the position in that order; `nextOffset` is null on the last page. `ids`
    * narrows it to those bookings - the ones a D29 refusal named, which the organiser's screen lists
    * with their cancel button; an id of another space is simply not found.
+   *
+   * `fromMs` (WP-R5, D50) narrows it to what is STILL TO COME: the LIVE bookings (never cancelled)
+   * that end after that instant - the one under way included - so the dashboard's first page is
+   * the next ones, not the oldest of the space's whole history.
    */
   async spaceBookings(
     spaceId: string,
     actor: Actor,
     offset = 0,
     limit = SPACE_BOOKINGS_PAGE,
-    ids?: readonly string[]
+    ids?: readonly string[],
+    fromMs?: number
   ) {
     this.logger.debug(
-      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'}`
+      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'} from=${fromMs ?? 'all'}`
     );
     const space = await this.loadSpace(spaceId);
     if (!(await this.mayManage(space, actor))) {
@@ -578,7 +583,13 @@ export class BookingsService {
     const resources = await this.resources.findBy({ spaceId });
     if (resources.length === 0 || ids?.length === 0) return { items: [], nextOffset: null };
     const rows = await this.bookings.find({
-      where: { resourceId: In(resources.map((r) => r.id)), ...(ids ? { id: In([...ids]) } : {}) },
+      where: {
+        resourceId: In(resources.map((r) => r.id)),
+        ...(ids ? { id: In([...ids]) } : {}),
+        ...(fromMs !== undefined
+          ? { cancelledAt: IsNull(), endsAt: MoreThan(new Date(fromMs)) }
+          : {}),
+      },
       order: { startsAt: 'ASC', id: 'ASC' },
       skip: offset,
       take: take + 1,

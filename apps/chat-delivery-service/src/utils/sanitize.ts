@@ -251,6 +251,15 @@ export function assertCallerOwnsUserId(
   }
 }
 
+/**
+ * The one form two account ids are compared in: trimmed and lower-cased, the form
+ * `HeaderAuthGuard` verifies the `x-user-id` HMAC against. Comparing a body field with the raw
+ * header instead would let the same account fail, or match, on case alone.
+ */
+export function canonicalUserId(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 /** Validates that `value` is a non-empty string of at most 256 characters suitable for display. */
 export function sanitizeDisplayText(value: unknown, fieldName: string): string {
   if (typeof value !== 'string') {

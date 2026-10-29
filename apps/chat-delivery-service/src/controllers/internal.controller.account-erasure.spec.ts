@@ -230,6 +230,17 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     );
   });
 
+  it('anonymises the creator of the groups the account made, which live on for their members', async () => {
+    const { controller, repos } = make();
+    await controller.deleteUserData(USER, SECRET);
+
+    // `[deleted]` matches no caller, so nobody can bootstrap an empty roster in its name.
+    expect(repos.group.update).toHaveBeenCalledWith(
+      { createdBy: USER },
+      { createdBy: DELETED_ACCOUNT }
+    );
+  });
+
   it('cuts each group seat under its seat lock on a RETRY, when no key package is left to name a device', async () => {
     const { controller, redis, repos, messagingService } = make({
       deviceGroups: ['g-distribution'],
