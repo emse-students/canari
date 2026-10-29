@@ -28,11 +28,11 @@ export class Group {
   imageMediaId?: string | null;
 
   /**
-   * The account that created this group - the authenticated `x-user-id` of `POST mls/groups`, never
-   * a body field - and the ONE person the creation bootstrap of `POST mls/groups/:id/members` may
-   * enrol into the group's empty roster (`MembersController.isCreationBootstrap`, re-read under the
-   * seat lock by `writePendingSeats(..., 'creator')`). Without it, anyone who knew the id of a group
-   * whose roster was still empty enrolled themselves as its first admitted member.
+   * The account that created this group - the authenticated `x-user-id` of `POST mls/groups` in
+   * canonical form, never a body field. The creation bootstrap enrols the group's recorded creator
+   * (`createdBy`) and nobody else; a group with no recorded creator is bootstrapped by nobody
+   * (`MembersController.isCreationBootstrap`, re-read under the seat lock by
+   * `writePendingSeats(..., 'creator')`). INTERNAL: never returned to a client.
    *
    * NULL - a group written before migration 042, a key-distribution group, a creation with no
    * authenticated caller - means NOBODY may bootstrap it: refused, never admitted. An erased

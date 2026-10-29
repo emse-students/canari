@@ -929,6 +929,13 @@ describe('the CREATE_GROUP door', () => {
     expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
   });
 
+  it('compares the body and the header in canonical form: an id differing only in case is the caller', async () => {
+    await controller.createGroup({ ...BODY, createdBy: ' U1 ' }, 'U1');
+
+    // Stored lower-cased, the form the guard verifies the header against.
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
   it('refuses 403 a body createdBy naming someone other than the caller, and writes no row', async () => {
     const err = await controller.createGroup(BODY, 'mallory').catch((e: unknown) => e);
 

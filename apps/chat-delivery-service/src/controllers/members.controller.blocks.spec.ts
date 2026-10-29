@@ -166,6 +166,17 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
+  it('admits the recorded creator into its empty roster whatever the case of its header', async () => {
+    groupMemberRepo.count.mockResolvedValue(0);
+    groupMemberRepo.findOne.mockResolvedValue(null);
+    groupRepo.findOne.mockResolvedValue({ id: GROUP, createdBy: CALLER });
+    jest.mocked(writePendingSeats).mockResolvedValue('written');
+
+    await expect(
+      controller.addGroupMember(GROUP, { userId: 'ALICE' }, 'ALICE', undefined)
+    ).resolves.toEqual({ status: 'added' });
+  });
+
   it.each([
     ['somebody else created', { id: GROUP, createdBy: TARGET }],
     ['has no recorded creator (before migration 042)', { id: GROUP, createdBy: null }],

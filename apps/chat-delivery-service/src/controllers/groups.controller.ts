@@ -27,6 +27,7 @@ import { assertCallerActsOnGroup, isKeyDistributionGroup } from '../utils/group-
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import { cutUserId } from '../utils/log-repeat';
 import {
+  canonicalUserId,
   sanitizeIdentityValue,
   sanitizeOptionalQueryValue,
   sanitizeQueryValue,
@@ -154,11 +155,10 @@ export class GroupsController {
    * destructive action here needs. The failure is NEVER masked: the discard's own errors are logged
    * and the original refusal is what the caller receives.
    *
-   * **THE CREATOR IS THE AUTHENTICATED CALLER, AND THE ROW RECORDS IT** (`Group.createdBy`). It is
-   * the one person `POST mls/groups/:id/members` may enrol into the still-empty roster; reading
-   * "empty" alone let anyone who knew the id become its first admitted member. A body `createdBy`
-   * naming someone else is refused 403 before anything is written: the caller would otherwise enrol
-   * another account's device into a group it made.
+   * **THE CREATOR IS THE AUTHENTICATED CALLER, AND THE ROW RECORDS IT** (`Group.createdBy`, in
+   * canonical form). The creation bootstrap enrols the group's recorded creator and nobody else; a
+   * group with no recorded creator is bootstrapped by nobody. A body `createdBy` naming another
+   * account is refused 403 before anything is written.
    */
   async createGroup(
     @Body()
@@ -166,8 +166,9 @@ export class GroupsController {
     @Headers('x-user-id') headerUserId?: string
   ) {
     const traceId = this.makeTraceId('create-grp');
-    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id') ?? null;
-    if (caller && body.createdBy && String(body.createdBy).trim() !== caller) {
+    const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const caller = header ? canonicalUserId(header) : null;
+    if (caller && body.createdBy && canonicalUserId(String(body.createdBy)) !== caller) {
       this.logger.warn(
         `[CREATE_GROUP][${traceId}] REFUSED createdBy=${cutUserId(String(body.createdBy))} caller=${cutUserId(caller)} - a group is created by its caller; no group row was written`
       );
@@ -286,7 +287,10 @@ export class GroupsController {
       where: { groupId: g.id },
     });
     this.logger.log(`[GET_GROUP] groupId=${groupId} found=true`);
-    return { ...g, groupId: g.id, baseEpoch: base?.baseEpoch ?? null };
+    // `createdBy` is internal - it decides the creation bootstrap and nothing a client reads - so it
+    // never leaves the service, whoever holds the id.
+    const { createdBy: _createdBy, ...visible } = g;
+    return { ...visible, groupId: g.id, baseEpoch: base?.baseEpoch ?? null };
   }
 
   @UseGuards(HeaderAuthGuard)

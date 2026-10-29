@@ -805,9 +805,8 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       }
     });
 
-    it('a stranger who knows the id of a group whose roster is empty is refused 403, nothing written', async () => {
-      // The hole: an empty roster was the whole test, so anyone holding the id became its first
-      // ADMITTED member. The group was created by INVITER, who has not enrolled yet.
+    it('an account other than the recorded creator is refused 403 on an empty roster, nothing written', async () => {
+      // Only the recorded creator bootstraps an empty roster. INVITER created it, not yet enrolled.
       const fresh = '00000000-0000-4000-8000-0000000000b6';
       await q(
         `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "createdBy") VALUES ($1, true, 0, $2)`,
@@ -884,7 +883,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
     });
 
     it('two enrolments as creator that both read the roster empty: the creator is enrolled, the other refused under the lock', async () => {
-      // #2585's interleaving, at the writer: the route's unlocked reads now refuse a stranger before
+      // #2585's interleaving, at the writer: the route's unlocked reads now refuse another account before
       // the lock, so both are sent to the locked writer directly - the re-read there is what decides.
       const fresh = '00000000-0000-4000-8000-0000000000b5';
       await q(

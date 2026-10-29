@@ -1192,32 +1192,29 @@ re-invite it. That is the intended cost of a revocation being real.
 
 `POST mls/groups/:id/members` enrols ONE person itself: a group's creator, registering into the
 still-empty roster right after `POST mls/groups` (`groupCreation.ts` calls `registerMember` for
-itself before it creates the local MLS group, so the server names the group first). **Until
-2026-10-29 "the roster is empty and the caller adds itself" was the whole test**, so anyone who knew
-the id of a group whose roster was still empty - in the seconds between creation and the creator's
-own call, or for good on a group whose creator never made that call - enrolled themselves as its
-first ADMITTED member, with every power that seat carries (adding others, reading the roster, the
-external-join base). #2585 had closed only the race between two creators.
+itself before it creates the local MLS group, so the server names the group first). **The creation
+bootstrap enrols the group's recorded creator (`createdBy`) and nobody else; a group with no recorded
+creator is bootstrapped by nobody.**
 
 - **The creation route records its AUTHENTICATED caller** in `dm_groups."createdBy"` (the HMAC-bound
-  `x-user-id`, never a body field). A body `createdBy` naming someone else is refused `403
-  MEMBERSHIP_NOT_ALLOWED` before any row is written - otherwise the caller enrolled another account's
-  device into a group it made.
+  `x-user-id`, never a body field), in canonical form (`canonicalUserId`: trimmed, lower-cased, the
+  form the guard verifies), and every comparison with it uses that form. A body `createdBy` naming
+  another account is refused `403 MEMBERSHIP_NOT_ALLOWED` before any row is written.
+- **It is INTERNAL**: `GET mls/groups/:id` strips it, and no other route returns a group row whole.
 - **The bootstrap admits that account and nobody else.** `isCreationBootstrap` routes on it
   (unlocked), and `writePendingSeats(..., 'creator')` re-reads `createdBy` beside the roster under the
-  seat lock taken exclusive, answering `not_creator` (the route's `409 MEMBER_NOT_ADMITTED`). A
-  stranger is refused earlier, at the route's guard: `403 MEMBERSHIP_NOT_ALLOWED`, nothing written,
+  seat lock taken exclusive, answering `not_creator` (the route's `409 MEMBER_NOT_ADMITTED`). Any
+  other account is refused earlier, at the route's guard: `403 MEMBERSHIP_NOT_ALLOWED`, nothing written,
   and `[ADD_MEMBER] bootstrap REFUSED ... creator=<id|none>` at WARN.
 - **A NULL creator is bootstrapped by nobody**, never admitted: every row written before migration
   042 (additive, nullable, no backfill, no default - nothing rewritten, nothing deleted), every
   key-distribution group (also refused earlier by `KEY_DISTRIBUTION_GROUP`). A group that already has
-  members never takes the bootstrap, so the legacy rows it affects are the empty-roster ones alone,
-  and those have no creator anyone can name now.
+  members never takes the bootstrap.
 - **An account erasure anonymises it** to `[deleted]` (`ACCOUNT_ERASURE_COVERAGE`), which matches no
-  caller: the group lives on for its members, and its empty roster, if ever empty, admits nobody.
+  caller; the group lives on for its members.
 
-Pinned by `add-enrolment.integration.spec.ts` against PostgreSQL (the stranger, the creator after
-him, the legacy row, the locked `roster_taken` and the race at the writer), and by
+Pinned by `add-enrolment.integration.spec.ts` against PostgreSQL (another account, the creator after
+it, the legacy row, the locked `roster_taken` and the race at the writer), and by
 `members.controller.blocks.spec.ts` / `messaging.one-active-writer.spec.ts` at the route.
 
 ## Refusal codes - one stable name per refusal a member can act on (2026-10-19)

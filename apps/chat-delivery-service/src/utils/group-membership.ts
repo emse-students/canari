@@ -6,6 +6,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
+import { canonicalUserId } from './sanitize';
 import { RepeatCounter, cutUserId } from './log-repeat';
 import {
   bumpSeatGeneration,
@@ -199,10 +200,10 @@ export async function writePendingSeats(
     });
     if (!group || group.deletedAt) return 'group_gone';
     if (enrol === 'creator') {
-      // THE CREATOR ALONE, read here under the lock as the roster is: an empty roster used to be the
-      // whole test, so anyone who knew the id enrolled themselves as its first admitted member. A
-      // group with no recorded creator (written before migration 042) is enrolled into by nobody.
-      if (group.createdBy !== userId) {
+      // THE CREATOR ALONE, read here under the lock as the roster is. The creation bootstrap enrols
+      // the group's recorded creator (`createdBy`) and nobody else; a group with no recorded creator
+      // is bootstrapped by nobody. Compared in canonical form ({@link canonicalUserId}).
+      if (!group.createdBy || group.createdBy !== canonicalUserId(userId)) {
         seatsLogger.warn(
           `[PENDING_SEATS] REFUSED not_creator group=${groupId} user=${cutUserId(userId)} ` +
             `creator=${group.createdBy ? cutUserId(group.createdBy) : 'none'} - nothing written`

@@ -34,6 +34,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
 import {
+  canonicalUserId,
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
   parseLeafIdentity,
@@ -212,10 +213,9 @@ export class MembersController {
    * `POST mls/groups`) registers ITSELF into a group whose roster is still empty, before anyone else
    * exists. The one enrolment the member-add route still writes.
    *
-   * THE CREATOR, NOT WHOEVER COMES FIRST. Until migration 042 an empty roster was the whole test, so
-   * anyone who knew the id of a group whose roster was still empty - between its creation and its
-   * creator's own call, or a group whose creator never made it - enrolled themselves as its first
-   * ADMITTED member. A group with no recorded creator (written before 042) is bootstrapped by nobody.
+   * The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody else; a
+   * group with no recorded creator is bootstrapped by nobody (migration 042). Compared in canonical
+   * form ({@link canonicalUserId}).
    *
    * UNLOCKED, SO IT ONLY ROUTES. What decides is the re-read under the seat lock taken exclusive
    * (`writePendingSeats(..., 'creator')`), which checks the creator and the empty roster again.
@@ -231,7 +231,7 @@ export class MembersController {
       where: { id: safeGroupId },
       select: { id: true, createdBy: true },
     });
-    if (group?.createdBy === caller) return true;
+    if (group?.createdBy && group.createdBy === canonicalUserId(caller)) return true;
     this.logger.warn(
       `[ADD_MEMBER] bootstrap REFUSED group=${safeGroupId} caller=${cutUserId(caller)} ` +
         `creator=${group?.createdBy ? cutUserId(group.createdBy) : 'none'} - an empty roster is ` +

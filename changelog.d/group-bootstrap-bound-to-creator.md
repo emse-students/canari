@@ -1,5 +1,4 @@
-### Security - only a group's creator can enrol into its empty roster
+### Security - a group records its creator
 
-A new group records who created it, and only that account may enrol itself into the group before
-anyone else is in it; before, anyone who knew the id could, during that window
+A group now records its creator, and only that account enrols itself into the group's empty roster
 ([chat-delivery](docs/wiki/services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29)).
