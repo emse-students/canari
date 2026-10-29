@@ -251,7 +251,11 @@ try {
     await enterCommunities(w1);
     await openCommunity(w1, community);
     await deleteCommunity(w1, community);
-    detail.deleted = true;
+    // THE SERVER'S ANSWER, NOT THE CONFIRMATION CLICK: `deleteCommunity` returns once the dialog is
+    // confirmed, and a DELETE that died in transport (ERR_CONNECTION_CLOSED, KICK-COMMIT on
+    // `1.5.1-alpha.8`) was recorded `deleted: true` over a community the server still held.
+    for (let i = 0; i < 25 && workspaceIdOf(community); i++) await sleep(600);
+    detail.deleted = workspaceIdOf(community) ? `not deleted: the server still holds ${community} 15 s after the confirmation` : true;
   } catch (e) {
     detail.deleted = `not deleted: ${String(e?.message ?? e).slice(0, 200)}`;
   }
