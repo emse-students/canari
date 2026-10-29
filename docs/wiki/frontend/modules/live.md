@@ -539,7 +539,7 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
 3. The join on the NEWEST `LIVE_PLAYER_JOIN_SEGMENTS` (two) segments. Every segment is SELF-CONTAINED - the recorder's init
    (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so
    their init is appended, then their fragments, then a seek to `end - target`, the
-   [buffer policy's](#the-buffer-policy-l-f1-2026-10-27) target (3 s at the join). Only the newest one is required;
+   [buffer policy's](#the-buffer-policy-l-f1-2026-10-27) target (4 s at the join: the 3 s floor wait plus a poll). Only the newest one is required;
    a first segment with no init is "Live indisponible" (`playback`).
 4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **A segment's init
    is appended only when its bytes DIFFER from the last one appended** (a camera re-acquired
@@ -550,8 +550,9 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    keeps each fragment at its own timestamps, so a re-acquire (timestamps moved FORWARD by the time
    away) opens a second buffered range: the `waiting` at the end of the first seeks across at once,
    and a drift past the target plus `LIVE_PLAYER_DRIFT_SLACK_MS` does the same - one seek, never a loop.
-   **The jump to the live edge**: more than `LIVE_PLAYER_CATCHUP_SEGMENTS` behind the manifest's
-   `nextIndex` asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
+   **The jump to the live edge**: a backlog behind the manifest's `nextIndex` whose media would put
+   the video past the target plus its slack anyway (`LiveBufferPolicy.isBacklog`, sized by the
+   longest segment measured - four 2 s segments at the floor are played, a fifth is a backlog) asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
    takes only its newest segment; a STARVED `waiting` since the last segment (never the wait of a
    seek) re-anchors at the next one, at the policy's target. Each
    poll that brings media calls `play()` if something paused the video. What was played more than
@@ -579,13 +580,31 @@ of that run is gone). Two defects, each enough to freeze a viewer:
 - **A `waiting` is classified once** (`classifyLiveWait`, typed `LiveWait`): `seeking` when
   `video.seeking` holds (logged, nothing else); `time-gap` when media lies past a hole ahead (a
   re-acquired camera, crossed at once); `starved` otherwise, which latches the re-anchor.
-- **The target is MEASURED, not a constant**: the longest wall-clock gap between two deliveries over
-  the last `LIVE_PLAYER_CADENCE_WINDOW` (30), never under `LIVE_PLAYER_MIN_TARGET_BUFFER_MS` = one
-  segment plus one poll (3 s, where the WP-L1 Mi 9T viewer played 21 min with 0 stalls). Pairs every
-  4 s measure ~4-5 s. The clock is the injected monotonic `now()`: it is READ to measure a gap, never
-  waited on, and no decision is deferred by it.
-- **A longer gap than any seen costs at most one stall**: the delivery that ends it records it first,
-  then the re-anchor uses the grown target. Drift seeks past target + `LIVE_PLAYER_DRIFT_SLACK_MS`.
+- **The longest wait is BOUNDED from the shape of the deliveries, before a gap proves it**
+  (LIVE-STALL-1, `1.5.1-alpha.7`, 2026-10-29). `longestWaitMs` is the largest of: the floor
+  `LIVE_PLAYER_MIN_TARGET_BUFFER_MS` = one segment plus one poll (3 s, where the WP-L1 Mi 9T viewer
+  played 21 min with 0 stalls); the longest wall-clock gap between two deliveries over the last
+  `LIVE_PLAYER_CADENCE_WINDOW` (30); and the GROUP BOUND - the most segments one delivery brought,
+  times the longest segment measured (the buffered end's growth, unless a hole opened), plus one
+  poll. A delivery of K segments means the producer withheld K segments of media, so its next
+  handover can come that much later, learnt up to a poll after. A pair of 2 s segments bounds the
+  wait at ~5 s AT the pair. The clock is the injected monotonic `now()`: READ to measure a gap, never
+  waited on.
+- **The anchor sits one poll past that wait** (`targetMs`): a delivery's phase against the poll
+  moves by up to one poll, so an anchor exactly at the wait would re-anchor on ordinary jitter. 4 s
+  at the floor, ~6 s behind a paired producer.
+- **A delivery that leaves less media ahead than the longest wait re-anchors at once**
+  (`reanchor` -> `short`, a seek line `(short)`), never left to stall. Before, the target grew only
+  AFTER a longer gap had drained the buffer, and was applied only at a seek: W4 held 3.99 s after a
+  delivery with its target at 4118 ms, the next gap was 4223 ms, and it stalled. A buffer that does
+  not hold the target behind its edge is left to fill (a clamped seek would replay its start at
+  every delivery). Drift seeks past target + `LIVE_PLAYER_DRIFT_SLACK_MS` (`drift`).
+- **The replay** (`liveBufferPolicy.test.ts`, "LIVE-STALL-1, replayed"): W4's twenty recorded
+  deliveries (gap, segments, media), played at the wall's pace from the state the first left (which
+  reproduces every recorded "ahead" to 0.02 s up to the stall). The rule this replaced stalls at
+  delivery 10, the rig's stall (and 10 ms short before delivery 13, where the rig's video, slowed
+  70 ms by its stall seek, did not). This policy: one re-anchor at the first pair, no stall, and
+  never under 1.3 s ahead after it.
 - **A stall latched while a delivery is awaited is re-anchored on that delivery** (LIVE-STALL-1,
   2026-10-29). The poll reads the stall latch AFTER its segment fetches, opens and appends, never
   before them, and only the re-anchor it asks for (`seekToEdge` answering that it seeked) clears it.
@@ -604,11 +623,12 @@ of that run is gone). Two defects, each enough to freeze a viewer:
 - **An outage is never a cadence** (`interrupt`, typed `LiveCadenceBreak`): a catch-up jump, a
   retried step, a broadcaster the manifest says is quiet. So a 20 s loss of network never leaves a
   viewer 20 s behind.
-- **The join takes the newest two segments**, so the first frame starts with the 3 s floor ahead.
+- **The join takes the newest two segments**, so the first frame starts with the 4 s anchor ahead.
 
-**The price**: a regular producer (iPhone) is watched ~1 s further behind than with the 2 s target;
-an Android producer delivering in pairs ~3 s further. A paired producer cannot be played smoothly
-with less buffer than its period.
+**The price**: a regular producer (iPhone) is watched 4 s behind its buffer's end (2 s more than
+the first 2 s target), an Android producer delivering in pairs ~6 s; and the first pair costs one
+backward seek of up to ~2 s (seen video replayed once) where it used to cost a stall. A paired
+producer cannot be played smoothly with less buffer than its period plus the poll.
 
 **Not changed, and unverified**: the PRODUCER. Why the Mi 9T's recorder (2 s timeslice, 2 s
 keyframes) emits on every other tick only is not known; a shorter timeslice might hand each fragment
@@ -616,7 +636,7 @@ over as it completes, but that is a hypothesis no device has read, and installed
 their cadence anyway - which is why the viewer must follow whatever cadence it receives.
 
 **Verified by tests** (`liveBufferPolicy.test.ts`; `livePlayer.test.ts`'s "the buffer policy"
-block, whose four cases fail against the old player; the mid-fetch stall case holds the segment
+block, whose cases fail against the old player - the `short` re-anchor among them; the mid-fetch stall case holds the segment
 fetch open by hand and fails against the player that snapshotted the latch). **Owed on hardware**: L-F1's reading again on
 the pre-release that carries it - the Mi 9T broadcasting, a phone AND a browser watching, 0
 `stalled` lines past the first delivery gap and no `seek ... (stall)` loop.
@@ -627,7 +647,7 @@ the pre-release that carries it - the Mi 9T broadcasting, a phone AND a browser 
 | --- | --- |
 | `full` (`503 LIVE_FULL`) | "Live complet" with "Réessayer"; no automatic retry (never hammered); no seat to give back |
 | `seats-unavailable`, `rate-limited`, `unavailable` (a bare 5xx), `retry-segment`, a transport failure | "Reconnexion...", the same step again after 1 s doubling to 8 s - **never "complet"** |
-| `ended` (`410`), or `not-found` once the key was served | "Le live est terminé"; no timer left. Every final screen pauses the video. The broadcaster's end deletes the row at once ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a viewer polling a second later reads `404`, not `410` |
+| `ended` (`410`), or `not-found` once the key was served | "Le live est terminé"; no timer left. Every final screen pauses the video, and gives the seat back: an ordinary end's purge waits for its seated viewers ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a seated viewer reads `410` and fetches the segments its last manifest named; a viewer that joins after the purge reads `404` |
 | `not-found` before the key, `removed`, `disabled`, `refused` | the neutral "Live indisponible" |
 | An engine with no MSE or no `avc1`/`mp4a` support | "Live indisponible" (`unsupported`) |
 | The joining segment that does not open, or three segments in a row | "Live indisponible" (`undecryptable`); one segment that does not open, or one the server no longer has (`404`), is skipped |
