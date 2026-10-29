@@ -33,6 +33,10 @@ import {
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
 import { BookingPosterMedia, posterOf } from './booking-poster-media';
+import {
+  BookingNotificationsService,
+  deletedBookingNotices,
+} from './booking-notifications.service';
 
 /** The settings that change which shapes are bookable, so they run the D29 check (WP-B2). */
 const SHAPE_KEYS = ['timeZone', 'slotMode', 'stepMinutes', 'maxSteps'] as const;
@@ -63,6 +67,7 @@ export const SPACE_SETTING_KEYS = [
   'participantWithdrawMinMinutes',
   'maxPeople',
   'retentionDays',
+  'reminderMinutes',
 ] as const satisfies readonly (keyof SpaceSettingsDto & keyof BookingSpace)[];
 
 /** The fields a request may write onto a resource, by name, for the reason above. */
@@ -117,7 +122,8 @@ export class BookingSpacesService {
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
     private readonly userTags: UserTagService,
-    private readonly posterMedia: BookingPosterMedia
+    private readonly posterMedia: BookingPosterMedia,
+    private readonly notices: BookingNotificationsService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -460,13 +466,15 @@ export class BookingSpacesService {
 
   /**
    * Deletes the space and EVERYTHING under it, history included (D27) - other people's COMING
-   * bookings too, hard-deleted with no notice (D13: no notification in v1). How many is logged, so
-   * a deletion that erased someone's evening is never silent in the logs.
+   * bookings too. Their people are told once it is committed (Q-R4, `BookingNotificationsService`,
+   * while its switch is on): who they are is read under the space's lock, BEFORE the delete takes
+   * every row that names them. How many bookings of others went is logged, so a deletion that
+   * erased someone's evening is never silent in the logs.
    */
   async remove(spaceId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] remove space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    const { erased, poster } = await this.spaces.manager.transaction(async (m) => {
+    const { erased, poster, space, notices } = await this.spaces.manager.transaction(async (m) => {
       const space = await this.lockSpace(m, spaceId);
       const [{ n }]: { n: number }[] = await m.query(
         `SELECT count(*)::int AS n FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
@@ -474,12 +482,18 @@ export class BookingSpacesService {
             AND b."holderId" <> $3`,
         [spaceId, new Date(nowMs), actor.userId]
       );
+      const notices = await deletedBookingNotices(
+        (sql, params) => m.query(sql, params),
+        spaceId,
+        nowMs
+      );
       await m.delete(BookingSpace, { id: spaceId });
-      return { erased: n, poster: space.poster?.mediaId ?? null };
+      return { erased: n, poster: space.poster?.mediaId ?? null, space, notices };
     });
     this.logger.log(
       `[BOOKINGS] space deleted id=${spaceId.slice(0, 8)} comingBookingsOfOthersErased=${erased}`
     );
+    await this.notices.spaceDeleted(space, notices, actor.userId);
     // Its files (D7) are now orphans (`booking_files."bookingId"` set NULL): the retention purge
     // takes them at its next run.
     if (poster) await this.posterMedia.releaseUncited([poster], 'its space was deleted');

@@ -9,6 +9,7 @@ import {
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -23,7 +24,7 @@ import { contentDisposition } from '../common/content-disposition';
 import { FORM_FILE_MAX_BYTES, type UploadedFormFile } from '../forms/form-files.service';
 import { parseBookingExportLabels } from './booking-export';
 import { BookingsService, SPACE_BOOKINGS_PAGE, type Actor } from './bookings.service';
-import { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
+import { CancelBookingDto, CreateBlockDto, CreateBookingDto, ReminderDto } from './dto/booking.dto';
 
 /** The caller nginx authenticated. */
 export const actorOf = (userId: string, globalAdmin: string | undefined): Actor => ({
@@ -128,14 +129,29 @@ export class BookingsController {
     return this.service.book(spaceId, dto, actorOf(userId, ga), Date.now());
   }
 
-  /** Cancels a coming booking: its holder or the organiser, at any time before the start (D5). */
+  /**
+   * Cancels a coming booking: its holder or the organiser, at any time before the start (D5). The
+   * body is optional - an older client sends none - and carries the organiser's word (Q-R3).
+   */
   @Post(':bookingId/cancel')
   cancel(
     @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: CancelBookingDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.cancel(bookingId, actorOf(userId, ga), Date.now());
+    return this.service.cancel(bookingId, actorOf(userId, ga), Date.now(), dto?.message);
+  }
+
+  /** Sets the caller's own reminder delay on a booking they are one of the people of (Q-R1). */
+  @Patch(':bookingId/reminder')
+  reminder(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: ReminderDto,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.setReminder(bookingId, dto.minutes, actorOf(userId, ga), Date.now());
   }
 
   /** A participant leaves a coming booking. */

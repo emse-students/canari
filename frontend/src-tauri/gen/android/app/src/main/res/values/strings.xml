@@ -109,6 +109,14 @@
     <string name="notif_social_live_suspended_body">Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.</string>
     <string name="notif_social_live_withdrawn_title">Droit de lancer un live retiré</string>
     <string name="notif_social_live_withdrawn_body">La modération vous a retiré le droit de lancer un live.</string>
+    <string name="notif_social_booking_cancelled_title">%1$s a annulé une réservation</string>
+    <string name="notif_social_booking_cancelled_body">Elle n\'aura pas lieu</string>
+    <string name="notif_social_booking_withdrawn_title">%1$s a quitté votre réservation</string>
+    <string name="notif_social_booking_withdrawn_body">Votre réservation est maintenue</string>
+    <string name="notif_social_booking_added_title">%1$s vous a inscrit à une réservation</string>
+    <string name="notif_social_booking_added_body">Retrouvez-la dans Réservations</string>
+    <string name="notif_social_booking_reminder_title">Rappel de réservation</string>
+    <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>

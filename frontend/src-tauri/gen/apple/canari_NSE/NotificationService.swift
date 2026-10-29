@@ -217,6 +217,17 @@ class NotificationService: UNNotificationServiceExtension {
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     case "social_follow_request": composed = actorTitled("follow_request")
     case "social_follow_accepted": composed = actorTitled("follow_accepted")
+    // The bookings' notices (WP-N): who acted names the title, the place (or the organiser's
+    // word) is the body, a fixed sentence on a link-only space (Q-R5).
+    case "social_booking_cancelled": composed = actorTitled("booking_cancelled")
+    case "social_booking_withdrawn": composed = actorTitled("booking_withdrawn")
+    case "social_booking_added": composed = actorTitled("booking_added")
+    // The reminder: nobody acted, a fixed title; the body is the place and the time.
+    case "social_booking_reminder":
+      composed = (
+        Self.localized("notif.social.booking_reminder.title", locale: locale),
+        arg.isEmpty ? Self.localized("notif.social.booking_reminder.body", locale: locale) : arg
+      )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn":

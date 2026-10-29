@@ -17,7 +17,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { FormItemDto } from '../../forms/dto/form.dto';
-import { ZONED_INSTANT, ZONED_INSTANT_MESSAGE } from './booking.dto';
+import {
+  REMINDER_MAX_MINUTES,
+  REMINDER_MIN_MINUTES,
+  ZONED_INSTANT,
+  ZONED_INSTANT_MESSAGE,
+} from './booking.dto';
 
 /** At most this many questions, availability lines and exceptions: far above any real space. */
 export const MAX_SPACE_ITEMS = 50;
@@ -203,6 +208,14 @@ export class SpaceSettingsDto {
   @Min(1)
   @Max(30)
   retentionDays?: number;
+
+  /** The default reminder delay before a slot (WP-N, D53, Q-R1); null = no reminder. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(REMINDER_MIN_MINUTES)
+  @Max(REMINDER_MAX_MINUTES)
+  reminderMinutes?: number | null;
 
   /** The poster (D35), encrypted by the client; null removes it. */
   @IsOptional()

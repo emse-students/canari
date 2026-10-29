@@ -255,6 +255,16 @@ knows the type), on BOTH estates, once BOTH Play AND the App Store serve that ve
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
 
+**Built and waiting on this floor (2026-10-29): the bookings' four** - `booking_cancelled`,
+`booking_withdrawn`, `booking_added`, `booking_reminder` ([bookings-chantier](bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)).
+Steps 2-4 are done in the same pull request (target `bookings`, the four rows, the three native
+tables). They ship behind `BOOKING_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/bookings/booking-notifications.service.ts`) and its client mirror
+`BOOKING_NOTIFICATIONS_LIVE`. A `1.2.9` client draws them as the neutral unknown-type row, shows the
+push's French legacy sentence, and on Android a tap opens the app where it was (no `bookings` host);
+the version CARRYING this pull request draws all of it. The flip is a one-line pull request of its
+own, merged once the floor read-back shows the version the user chose.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.
