@@ -226,6 +226,15 @@ export function slotLengthOf(rows: readonly EditorLine[]): number {
   return best;
 }
 
+/**
+ * The length a painted slot takes on a fixed-slot space: the space's STORED slot length
+ * (`slotMinutes`, migration 116) when it has one, else what the lines say (`slotLengthOf`) - the
+ * reading kept for a space created before the length was stored, which has none.
+ */
+export function slotLengthFor(rows: readonly EditorLine[], stored: number | null): number {
+  return stored ?? slotLengthOf(rows);
+}
+
 /** A paint on a fixed-slot space: the rows after it, and what the line cap kept it from opening. */
 export interface SlotPaint {
   rows: readonly EditorLine[];
@@ -235,7 +244,8 @@ export interface SlotPaint {
 
 /**
  * The rows after a rectangle is painted on a FIXED-SLOT space. `close` removes every slot the
- * rectangle touches, whole; `open` lays new slots of `slotLengthOf` from the rectangle's first row,
+ * rectangle touches, whole; `open` lays new slots of `slotLengthFor` (the space's stored length,
+ * `stored`, else the lines' own) from the rectangle's first row,
  * one for each start inside it, skipping any that would overlap a slot already there - so a tap
  * opens one whole slot. An open stops at {@link MAX_AVAILABILITY_LINES} stored lines and says so
  * (`refused`), since the server would refuse the whole save past it. Dated lines and lines with a
@@ -247,7 +257,8 @@ export function paintSlotRows(
   dayB: number,
   slotA: number,
   slotB: number,
-  mode: PaintMode
+  mode: PaintMode,
+  stored: number | null = null
 ): SlotPaint {
   const [d0, d1] = [Math.min(dayA, dayB), Math.max(dayA, dayB)];
   const from = Math.max(0, Math.min(slotA, slotB)) * GRAIN_MIN;
@@ -258,7 +269,7 @@ export function paintSlotRows(
     const kept = rows.filter((r) => !slotPieces(r).some(([d, s, e]) => touches(d, s, e)));
     return { rows: kept.length === rows.length ? rows : kept, refused: 0 };
   }
-  const length = slotLengthOf(rows);
+  const length = slotLengthFor(rows, stored);
   const taken = weekSlotsOf(rows);
   // A new slot never crosses midnight, so it is ONE stored line.
   let budget = MAX_AVAILABILITY_LINES - toStoredLines(rows).length;
