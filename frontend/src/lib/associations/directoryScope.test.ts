@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * THE DIRECTORY AND THE CATALOGUE ARE TWO QUESTIONS, AND NEITHER MAY ANSWER FOR THE OTHER (D37).
@@ -37,6 +37,12 @@ async function freshApi() {
 /** The paths requested, in order, without the base the module prefixes (unset under test). */
 const paths = () =>
   request.mock.calls.map((c) => String(c[0]).slice(String(c[0]).indexOf('/api/')));
+
+// The module graph's first transform is paid here, once, not inside the first case - under a
+// whole-folder run it exceeded the 5 s case timeout (see membershipProbe.test.ts).
+beforeAll(async () => {
+  await import('./api');
+}, 60_000);
 
 beforeEach(() => {
   request.mockReset();

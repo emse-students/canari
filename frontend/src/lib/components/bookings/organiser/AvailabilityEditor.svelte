@@ -4,7 +4,10 @@
   import {
     applyTemplate,
     paintRows,
+    paintSlotRows,
+    slotLengthOf,
     weekRunsOf,
+    weekSlotsOf,
     type PaintMode,
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
@@ -13,9 +16,11 @@
     crossesMidnight,
     fromStoredLines,
     lineProblem,
+    MAX_AVAILABILITY_LINES,
     timeChoices,
     toStoredLines,
     wholeDaysInARow,
+    weekdayNames as weekdayNamesIn,
     type Closure,
     type EditorLine,
     type StoredLine,
@@ -53,6 +58,11 @@
     exceptions: Closure[];
     /** The space's step, so the times offered fall on it; 15 min for a space of fixed slots. */
     stepMinutes: number | null;
+    /**
+     * The space's SAVED mode is fixed slots: each weekly line is one slot, and the painter opens
+     * or closes whole slots, never merging them (owner, 2026-10-29).
+     */
+    fixedSlots: boolean;
     /** Called once the server took the new availability, with what it now stores. */
     onSaved: (lines: StoredLine[], exceptions: Closure[]) => void;
     /** Whether the editor holds changes not saved, for the leave warning. */
@@ -67,6 +77,7 @@
     lines,
     exceptions,
     stepMinutes,
+    fixedSlots,
     onSaved,
     onDirty,
   }: Props = $props();
@@ -91,31 +102,19 @@
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
   const step = $derived(stepMinutes && 60 % stepMinutes === 0 ? stepMinutes : 15);
 
-  /** Monday..Sunday in the reader's language, capitalised as a choice; 2024-01-01 was a Monday. */
-  const weekdayNames = $derived(
-    [1, 2, 3, 4, 5, 6, 7].map((d) =>
-      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
-        weekday: 'long',
-        timeZone: 'UTC',
-      })
-    )
-  );
+  /** Monday..Sunday in the reader's language, capitalised as a choice. */
+  const weekdayNames = $derived(weekdayNamesIn(locale, 'long'));
   const weekdayOptions = $derived(
     weekdayNames.map((name, i) => ({
       value: String(i + 1),
       label: name.charAt(0).toUpperCase() + name.slice(1),
     }))
   );
-  const shortDayNames = $derived(
-    [1, 2, 3, 4, 5, 6, 7].map((d) =>
-      new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, {
-        weekday: 'short',
-        timeZone: 'UTC',
-      })
-    )
-  );
-  /** The week as the painter draws it, always read from the lines. */
-  const week = $derived(weekRunsOf(rows));
+  const shortDayNames = $derived(weekdayNamesIn(locale, 'short'));
+  /** The week as the painter draws it, always read from the lines: slots apart, hours merged. */
+  const week = $derived(fixedSlots ? weekSlotsOf(rows) : weekRunsOf(rows));
+  /** What a painted cell opens on a fixed-slot space, said under the painter. */
+  const slotLength = $derived(fixedSlots ? slotLengthOf(rows) : null);
 
   const TEMPLATES: { key: TemplateKey; name: () => string; sub: () => string }[] = [
     {
@@ -147,10 +146,31 @@
     touch();
   }
 
+  /**
+   * The slots a paint could not open, the column being at the server's line cap, and how many it
+   * would have held: said under the painter until the next paint, rather than refused at the save.
+   */
+  let capNotice = $state<{ count: number } | null>(null);
+
   function paint(dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) {
-    const next = paintRows(rows, dayA, dayB, slotA, slotB, mode);
+    let next: readonly EditorLine[];
+    capNotice = null;
+    if (fixedSlots) {
+      const painted = paintSlotRows(rows, dayA, dayB, slotA, slotB, mode);
+      next = painted.rows;
+      if (painted.refused > 0) {
+        const count = toStoredLines(next).length + painted.refused;
+        Log.i('BOOKINGS', `availability paint capped: ${painted.refused} slot(s) not opened`);
+        capNotice = { count };
+      }
+    } else {
+      next = paintRows(rows, dayA, dayB, slotA, slotB, mode);
+    }
     if (next === rows) return;
-    Log.d('BOOKINGS', `availability paint days=${dayA}-${dayB} slots=${slotA}-${slotB} ${mode}`);
+    Log.d(
+      'BOOKINGS',
+      `availability paint days=${dayA}-${dayB} slots=${slotA}-${slotB} ${mode} fixed=${fixedSlots}`
+    );
     rows = [...next];
     touch();
   }
@@ -255,7 +275,20 @@
 
   <div class="space-y-2">
     <p class="text-text-main text-sm font-semibold">{m.bookings_avail_week_title()}</p>
-    <WeekPainter {week} dayNames={weekdayNames} {shortDayNames} onPaint={paint} />
+    <WeekPainter
+      {week}
+      dayNames={weekdayNames}
+      {shortDayNames}
+      onPaint={paint}
+      hint={slotLength === null
+        ? undefined
+        : m.bookings_avail_paint_slots_hint({ minutes: slotLength })}
+    />
+    {#if capNotice}
+      <p class="text-red-err text-xs font-medium" role="alert">
+        {m.bookings_avail_lines_cap({ count: capNotice.count, max: MAX_AVAILABILITY_LINES })}
+      </p>
+    {/if}
   </div>
 
   <div class="space-y-3">

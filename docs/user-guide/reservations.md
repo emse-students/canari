@@ -95,8 +95,8 @@ calendrier (**Ajouter a mon calendrier**).
 ### Mes espaces personnels
 
 **Mes espaces personnels** permet de proposer vous-meme des creneaux : des entretiens, un
-instrument a preter. Donnez un nom, **Creer l'espace**, puis reglez-le comme n'importe quel espace
-(voir ci-dessous). Si le proprietaire d'un espace personnel supprime son compte, les reservations a
+instrument a preter. Donnez un nom, **Creer l'espace**, puis suivez l'assistant ou reglez-le comme
+n'importe quel espace (voir ci-dessous). Si le proprietaire d'un espace personnel supprime son compte, les reservations a
 venir de cet espace disparaissent sans avertissement.
 
 ---
@@ -107,8 +107,23 @@ venir de cet espace disparaissent sans avertissement.
 
 Dans une association, une liste ou une institution, il faut le droit **Gerer les reservations** (voir
 [Les permissions d'une association](permissions-association.md)). L'onglet **Reservations** de
-l'entite liste ses espaces : saisissez le **Nom du nouvel espace**, **Creer l'espace**, puis
-**Modifier**. Un espace personnel se cree depuis la page Reservations.
+l'entite liste ses espaces : saisissez le **Nom du nouvel espace** puis **Creer l'espace**. Un
+espace personnel se cree depuis la page Reservations, de la meme facon.
+
+**L'assistant de creation** s'ouvre alors, en trois etapes :
+
+1. **C'est quoi ?** - le nom, une phrase (facultatif), une affiche (facultatif).
+2. **Quand ?** - un modele (*Toujours ouvert*, *Jours ouvres 8h-20h*, *Evenement ponctuel*, *Vide*)
+   puis la semaine a peindre, ou la date de l'evenement ; et la duree d'une reservation : **Au
+   choix** (jusqu'a une duree, par pas) ou **Creneaux fixes** (tous de la meme duree, decoupes dans
+   les heures choisies).
+3. **Pour qui ?** - tout le monde sur Canari ou seulement certaines personnes (promo, formation,
+   cotisation), si les autres voient qui a reserve, et si l'espace est dans la liste ou accessible
+   par lien ou QR code seulement.
+
+**Creer l'espace** l'enregistre en une fois et ouvre ses reglages, ou tout le reste (fermetures,
+colonnes, questions, regles) se precise ensuite. **Je regle tout moi-meme** saute l'assistant :
+l'espace est cree avec son seul nom, et tout se regle dans les cinq sections ci-dessous.
 
 Sur la page d'un espace, tout le monde dispose de **Copier le lien de l'espace** et du **QR code**
 (son scan ouvre la page de reservation) ; un gestionnaire voit en plus **Gerer l'espace**.
@@ -150,7 +165,10 @@ une nuit, ecrivez une plage du soir qui finit le lendemain matin.
 
 - **Pas reguliers** : chaque plage est decoupee en pas (duree d'un pas en minutes) ; une reservation
   prend un ou plusieurs pas qui se suivent, jusqu'a un maximum que vous fixez.
-- **Creneaux fixes** : chaque plage est un creneau, reserve en entier.
+- **Creneaux fixes** : chaque plage est un creneau, reserve en entier. Sur un tel espace, la
+  semaine type se peint **creneau par creneau** : appuyer sur une case fermee ouvre un creneau entier
+  (de la duree la plus courante de vos creneaux, 30 minutes par defaut), appuyer sur un creneau le
+  ferme en entier, et deux creneaux qui se touchent ne sont **jamais fusionnes**.
 
 **Les colonnes.** Tant qu'il n'y a qu'une colonne, vous reglez directement ses horaires. La carte
 " Une seule colonne " propose **Ajouter une colonne** (nommez-la, puis **Ajouter la colonne**) si

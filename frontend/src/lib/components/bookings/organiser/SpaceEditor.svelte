@@ -26,9 +26,7 @@
   import SpacePosterField from './SpacePosterField.svelte';
   import {
     addResource,
-    bookingExportLabels,
     deleteSpace,
-    exportBookings,
     updateSpace,
     type ManagedResource,
     type ManagedSpace,
@@ -52,7 +50,7 @@
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { downloadSpaceExport } from '$lib/bookings/bookingActions';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -214,9 +212,7 @@
     exporting = true;
     exportError = '';
     try {
-      const blob = await exportBookings(space.id, bookingExportLabels());
-      await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
-      Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
+      await downloadSpaceExport(space);
     } catch (e) {
       Log.i('BOOKINGS', `export refused: ${String(e)}`);
       exportError = describeBookingRefusal(e, m.bookings_export_button());
@@ -377,6 +373,7 @@
         spaceId={space.id}
         timeZone={space.timeZone}
         stepMinutes={savedStep}
+        fixedSlots={space.slotMode === 'slots'}
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
         onDirty={(d) => (dirtyResources[resource.id] = d)}
