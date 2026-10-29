@@ -32,10 +32,26 @@ vi.mock('$app/navigation', async (importOriginal) => ({
 }));
 const native = vi.hoisted(() => ({ pick: vi.fn(async (_kind: string) => [] as File[]) }));
 vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively: native.pick }));
+// Whether the soft keyboard is up decides whether "+" may take focus (`menuPressKeepsFocus`).
+const kb = vi.hoisted(() => ({ isOpen: true }));
+vi.mock('$lib/stores/keyboardViewport.svelte', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/stores/keyboardViewport.svelte')>();
+  return {
+    ...actual,
+    getKeyboardViewport: () => ({ ...actual.getKeyboardViewport(), isOpen: kb.isOpen }),
+  };
+});
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The menu fades; happy-dom rejects a cancelled animation, see the helper.
 afterAll(adoptTransitionAnimations());
+
+/** Whether a press's default action (moving focus) was cancelled. */
+function press(el: Element): boolean {
+  const e = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  el.dispatchEvent(e);
+  return e.defaultPrevented;
+}
 
 const mounted: (() => void)[] = [];
 const originalMatchMedia = window.matchMedia;
@@ -133,19 +149,30 @@ describe('the one attachment menu - Android app', () => {
     expect(plus().getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('leaves the keyboard up: neither "+" nor an entry takes focus from the text field', () => {
+  it('with the keyboard up, neither "+" nor an entry takes focus from the text field', () => {
     // Mi 9T 2026-10-02: focus moving onto "+" let the keyboard fall, and the composer dropped
     // 345 px under a menu that floats, then rose again under the GIF panel.
     stubMatchMedia(true);
+    kb.isOpen = true;
     mountComposer();
-    const press = (el: Element) => {
-      const e = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-      el.dispatchEvent(e);
-      return e.defaultPrevented;
-    };
     expect(press(plus())).toBe(true);
     openMenu();
     expect(press(menuItem('Photothèque'))).toBe(true);
+  });
+
+  it('with the keyboard down, "+" takes focus, so the field it leaves cannot raise the keyboard', () => {
+    // Mi 9T 2026-10-29: the field stays focused after Back, and Chromium raised the keyboard on the
+    // "+" tap instead of the menu, which the rising keyboard then closed.
+    stubMatchMedia(true);
+    kb.isOpen = false;
+    try {
+      mountComposer();
+      expect(press(plus())).toBe(false);
+      openMenu();
+      expect(press(menuItem('Photothèque'))).toBe(false);
+    } finally {
+      kb.isOpen = true;
+    }
   });
 
   // A fresh composer per entry: reopening a menu inside its own 180 ms outro is a test artefact

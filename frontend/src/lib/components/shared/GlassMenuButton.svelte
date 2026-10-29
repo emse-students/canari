@@ -56,7 +56,9 @@
      * The button and its entries never take focus: a press leaves it where it was. The composer's
      * "+" needs it - focus moving onto the button blurs the text field, the phone's keyboard falls,
      * and the composer drops the keyboard's height under a menu that only floats above it (measured on
-     * the Mi 9T 2026-10-02: 532 -> 877 -> 532 px through "+" then "Envoyer un GIF").
+     * the Mi 9T 2026-10-02: 532 -> 877 -> 532 px through "+" then "Envoyer un GIF"). It asks for it
+     * only WHILE THE KEYBOARD IS UP (`menuPressKeepsFocus`): with the keyboard down, a field kept
+     * focused makes an Android WebView raise the keyboard on the tap instead of the menu.
      */
     keepsFocus?: boolean;
   }

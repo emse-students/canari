@@ -1179,6 +1179,15 @@ other 3 it spends 24 ms at 881.5. No real IME on this phone is that short; a flo
 one-row keyboard would be. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkW-mi9t.json`
 (the LatinIME run; the ADB-keyboard numbers above are the only record of that run).
 
+**Two more steps, owed on the Mi 9T on the first build carrying the fix of 2026-10-29**
+([the field that stays focused](frontend/modules/chat.md#a-field-that-stays-focused-with-the-keyboard-down-the-rise-that-covered-the-thread-and-the--that-raised-the-keyboard-2026-10-29)):
+
+4. Open the keyboard in a long DM, put it away with Back, scroll up ~150-300 px, tap the text field:
+   the thread goes to its last message above the composer (`[ChatArea] keyboard opened:
+   follow-bottom`); on `1.5.1-alpha.7` it stayed put and the keyboard covered 345 px of it.
+5. Open the keyboard, put it away with Back, tap "+": the menu, and NO keyboard. Then tap the field
+   and "+" again: the menu over the keyboard, the keyboard still up.
+
 ## DT. A double tap likes a post - owed on BOTH phones
 
 **Proves** [the double tap that likes](frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)
