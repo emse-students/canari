@@ -8,7 +8,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyLiveWait,
+  formatLiveRanges,
   LiveBufferPolicy,
+  mediaAheadS,
   type LiveDeliveryShape,
   type LiveTimeRanges,
 } from './liveBufferPolicy';
@@ -52,8 +54,41 @@ describe('classifyLiveWait', () => {
     expect(classifyLiveWait(false, 0, ranges())).toEqual({ kind: 'starved' });
   });
 
-  it('a wait INSIDE the newest range is not a time gap (no hole to cross)', () => {
-    expect(classifyLiveWait(false, 2, ranges([0, 6]))).toEqual({ kind: 'starved' });
+  it("a wait with media ahead in its own range is the engine's own wait, never a stall (LIVE-STALL-1, alpha.8)", () => {
+    // W4: waiting at 55.56, the delivery before it had left one range to 58.19.
+    const w4 = classifyLiveWait(false, 55.56, ranges([40.11, 58.19]));
+    expect(w4.kind).toBe('held');
+    expect(w4.kind === 'held' && w4.ahead).toBeCloseTo(2.63, 5);
+    // In an older range with a newer one past a hole: still held, nothing to cross yet.
+    expect(classifyLiveWait(false, 2, ranges([0, 6], [34, 36]))).toEqual({
+      kind: 'held',
+      ahead: 4,
+    });
+  });
+
+  it('a wait with under half a second left in its range is a dry buffer, or a hole to cross', () => {
+    expect(classifyLiveWait(false, 5.7, ranges([0, 6]))).toEqual({ kind: 'starved' });
+    expect(classifyLiveWait(false, 3.7, ranges([0, 4], [34, 36]))).toEqual({
+      kind: 'time-gap',
+      to: 34,
+    });
+  });
+});
+
+describe('mediaAheadS and formatLiveRanges', () => {
+  it('reads the media ahead in the range holding the playhead, none in a hole', () => {
+    expect(mediaAheadS(1, ranges([0, 4], [34, 36]))).toBe(3);
+    expect(mediaAheadS(10, ranges([0, 4], [34, 36]))).toBe(0);
+    expect(mediaAheadS(4, ranges([0, 4]))).toBe(0);
+    expect(mediaAheadS(1, null)).toBe(0);
+  });
+
+  it('prints every range, so a hole ahead of the playhead is on the line', () => {
+    expect(formatLiveRanges(ranges([40.11, 55.56], [56.18, 58.19]))).toBe(
+      '[40.11-55.56 56.18-58.19]'
+    );
+    expect(formatLiveRanges(ranges())).toBe('[]');
+    expect(formatLiveRanges(null)).toBe('[]');
   });
 });
 

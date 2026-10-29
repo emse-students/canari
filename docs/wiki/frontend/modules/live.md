@@ -578,8 +578,25 @@ of that run is gone). Two defects, each enough to freeze a viewer:
 **The policy** (`liveBufferPolicy.ts`, applied by `livePlayer.ts`):
 
 - **A `waiting` is classified once** (`classifyLiveWait`, typed `LiveWait`): `seeking` when
-  `video.seeking` holds (logged, nothing else); `time-gap` when media lies past a hole ahead (a
-  re-acquired camera, crossed at once); `starved` otherwise, which latches the re-anchor.
+  `video.seeking` holds (logged, nothing else); `held` when the range holding the playhead has more
+  than 0.5 s of media past it; `time-gap` when media lies past a hole ahead (a re-acquired camera,
+  crossed at once); `starved` otherwise, which latches the re-anchor.
+- **A wait with media ahead is the engine's own, and is no stall** (LIVE-STALL-1, `1.5.1-alpha.8`,
+  2026-10-29). W4 logged `stalled at 55.56` at 23:23:04.085. The delivery 3.5 s earlier had left
+  52.03 -> 58.19 in ONE range (`ahead 6.17`, which is read from the range holding the playhead, so
+  no hole lay before 58.19), and the playhead had advanced at exactly 1x since. It then played on BY
+  ITSELF to 55.74 before the next delivery's line, which is printed before any seek. So nothing was
+  missing ahead: Chrome fires `waiting` when its decoder or renderer underflows too, and a rig
+  running three browsers and an emulator is where that happens. The old player latched it as
+  starvation and the next delivery seeked FORWARD to 56.18. That skipped 0.44 s of media for a wait
+  no seek shortens, and it failed the row. Now `held` logs `waiting at T with A s buffered ahead
+  [ranges] - the engine's own wait`, with no latch and no seek. The NEXT delivery reads the
+  playhead: if it moved, `the engine's own wait at T ended by itself, now at T'`; if it is still at
+  T, the ordinary `stalled at T` line is written and the delivery re-anchors as for any stall. The
+  proof is the playhead at a delivery the poll was making anyway, not a timer. A seek closes the
+  open wait. Still unknown: WHY the engine underflowed, which no line here can name. A short
+  freeze of this kind stays visible to the viewer, and the row no longer counts it as a stall; its
+  line is what a reading counts.
 - **The longest wait is BOUNDED from the shape of the deliveries, before a gap proves it**
   (LIVE-STALL-1, `1.5.1-alpha.7`, 2026-10-29). `longestWaitMs` is the largest of: the floor
   `LIVE_PLAYER_MIN_TARGET_BUFFER_MS` = one segment plus one poll (3 s, where the WP-L1 Mi 9T viewer
@@ -614,12 +631,14 @@ of that run is gone). Two defects, each enough to freeze a viewer:
   segment opened 44.768, stalled again 48.794). A stall latched during the trim that follows stays
   latched for the next delivery. No timer is involved: the rule is the ORDER of the read.
 - **One debug line per delivery** says what it did to the buffer: `delivery of N appended of M taken
-  (a-b), gap G ms: end E0 -> E1, at T0 -> T1, ahead A0 -> A1 s` - `M` segments taken in `a-b`, of
+  (a-b), gap G ms: end E0 -> E1, at T0 -> T1, ahead A0 -> A1 s, ranges [R0] -> [R1]` - `M` segments taken in `a-b`, of
   which `N` were appended (the rest skipped: gone or unopenable); the buffered end, the playhead and the
   media playable ahead of it, before the first fetch and after the last append (before any seek,
   which has its own line). At most one per poll, the bound of the seek line beside it. It separates
   a producer whose segments carry uneven media (`E1 - E0` against `N`) from a player
-  that drifts (`T1 - T0` against the gap). The rig forgives it on a viewer seat (`liverows.mjs`).
+  that drifts (`T1 - T0` against the gap). `R0`/`R1` are EVERY buffered range (`[a-b c-d]`,
+  `formatLiveRanges`), since 2026-10-29: a hole ahead of the playhead shows there and nowhere else.
+  The rig forgives it on a viewer seat (`liverows.mjs`).
 - **An outage is never a cadence** (`interrupt`, typed `LiveCadenceBreak`): a catch-up jump, a
   retried step, a broadcaster the manifest says is quiet. So a 20 s loss of network never leaves a
   viewer 20 s behind.

@@ -462,10 +462,10 @@ describe('the poll', () => {
 
   it('seeks back to the edge at the first segment after a stall', async () => {
     const p = await joined();
-    live.push(1);
+    live.push(1); // -> [0, 6]
     await tickTimer();
+    video.currentTime = 6; // played to the end of what it holds
     p.noteStall();
-    video.currentTime = 0.5;
     live.push(1);
     await tickTimer();
     expect(video.currentTime).toBe(4); // end 8 - target 4
@@ -597,7 +597,7 @@ describe('the buffer policy (L-F1)', () => {
     debug.mockRestore();
   });
 
-  it('says once per delivery what it did to the buffer: the segments, the end, the playhead, the media ahead', async () => {
+  it('says once per delivery what it did to the buffer: the segments, the end, the playhead, the media ahead, every range', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     await joined(); // range [0, 4], seeked to 1
     video.currentTime = 2.5;
@@ -608,7 +608,7 @@ describe('the buffer policy (L-F1)', () => {
       .map((c) => String(c[0]))
       .filter((l) => l.includes('delivery of'));
     expect(lines).toEqual([
-      `[LIVE] viewer ${LIVE}: delivery of 2 appended of 2 taken (3-4), gap 2000 ms: end 4.00 -> 8.00, at 2.50 -> 2.50, ahead 1.50 -> 5.50 s`,
+      `[LIVE] viewer ${LIVE}: delivery of 2 appended of 2 taken (3-4), gap 2000 ms: end 4.00 -> 8.00, at 2.50 -> 2.50, ahead 1.50 -> 5.50 s, ranges [0.00-4.00] -> [0.00-8.00]`,
     ]);
     // A poll that brings nothing says nothing.
     await tickTimer();
@@ -621,7 +621,7 @@ describe('the buffer policy (L-F1)', () => {
     expect(
       debug.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('delivery of'))[1]
     ).toBe(
-      `[LIVE] viewer ${LIVE}: delivery of 1 appended of 2 taken (5-6), gap 0 ms: end 8.00 -> 10.00, at 2.50 -> 2.50, ahead 5.50 -> 7.50 s`
+      `[LIVE] viewer ${LIVE}: delivery of 1 appended of 2 taken (5-6), gap 0 ms: end 8.00 -> 10.00, at 2.50 -> 2.50, ahead 5.50 -> 7.50 s, ranges [0.00-8.00] -> [0.00-10.00]`
     );
     errors.mockRestore();
     debug.mockRestore();
@@ -664,17 +664,91 @@ describe('the buffer policy (L-F1)', () => {
     const remove = fake.remove.bind(fake);
     // The video runs dry while the trim is awaited - after this poll's seek decision.
     fake.remove = (start: number, end: number) => {
+      video.currentTime = 72;
       p.noteStall();
       remove(start, end);
     };
     live.push(1); // 3 -> range [0, 72], 4 s behind: inside the target and its slack
     await tickTimer();
     expect(fake.removed).toEqual([[0, 58]]);
-    expect(video.currentTime).toBe(68); // nothing seeked after the trim
+    expect(video.currentTime).toBe(72); // nothing seeked after the trim
     fake.remove = remove;
-    live.push(1); // 4 -> range [0, 74], 6 s behind: still no drift, so only the latch can seek
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    live.push(1); // 4 -> range [0, 74]
     await tickTimer();
     expect(video.currentTime).toBe(70); // the stall's re-anchor: end 74 - target 4
+    expect(debug.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 74.00, 4000 ms behind`
+    );
+    debug.mockRestore();
+  });
+
+  it("the engine's own wait with media ahead is no stall: no seek, and the next delivery says it ended (LIVE-STALL-1, alpha.8)", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined(); // range [0, 4], seeked to 0
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]
+    await tickTimer();
+    // W4 waited at 55.56 with one range to 58.19, and played on to 55.74 before any seek.
+    video.currentTime = 2.5;
+    p.noteStall();
+    const said = () => debug.mock.calls.map((c) => String(c[0]));
+    expect(said()).toContain(
+      `[LIVE] viewer ${LIVE}: waiting at 2.50 with 3.50 s buffered ahead [0.00-6.00] - the engine's own wait`
+    );
+    expect(video.currentTime).toBe(2.5);
+    video.currentTime = 2.7; // it resumed by itself
+    clock = 4_000;
+    live.push(1); // 4 -> [0, 8]: 5.3 s ahead, inside the target and its slack
+    await tickTimer();
+    expect(video.currentTime).toBe(2.7); // no seek: nothing was missing
+    expect(said()).toContain(
+      `[LIVE] viewer ${LIVE}: the engine's own wait at 2.50 ended by itself, now at 2.70`
+    );
+    expect(said().filter((l) => l.includes('stall'))).toEqual([]);
+    debug.mockRestore();
+  });
+
+  it("the engine's own wait that never ends is a stall at the next delivery, re-anchored as one", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]
+    await tickTimer();
+    video.currentTime = 2.5;
+    p.noteStall(); // held: 3.5 s ahead
+    clock = 4_000;
+    live.push(1); // 4 -> [0, 8], and the playhead never moved
+    await tickTimer();
+    const said = debug.mock.calls.map((c) => String(c[0]));
+    expect(said).toContain(`[LIVE] viewer ${LIVE} stalled at 2.50 (target 4000 ms)`);
+    expect(said).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 8.00, 4000 ms behind`
+    );
+    expect(video.currentTime).toBe(4); // end 8 - target 4
+    debug.mockRestore();
+  });
+
+  it("a seek closes the engine's own wait: the playhead it moved is not read as that wait's end", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined(); // range [0, 4], seeked to 0
+    video.currentTime = 1;
+    p.noteStall(); // held: 3 s ahead
+    // Then a re-acquired camera's hole: the wait at the end of the first range crosses it.
+    buffer().ranges = [
+      [0, 4],
+      [34, 36],
+    ];
+    video.currentTime = 4;
+    p.noteStall();
+    expect(video.currentTime).toBe(34);
+    clock = 2_000;
+    live.push(1); // 3 -> [34, 38]
+    await tickTimer();
+    const said = debug.mock.calls.map((c) => String(c[0]));
+    expect(said.filter((l) => l.includes("engine's own wait at"))).toEqual([]);
+    expect(said.filter((l) => l.includes('stalled at'))).toEqual([]);
+    debug.mockRestore();
   });
 
   it("a poll's own outage is never read as the producer's cadence", async () => {

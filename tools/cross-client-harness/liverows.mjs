@@ -163,6 +163,8 @@ const D = ['debug'];
 const L = ['log'];
 const N = String.raw`\d+`;
 const F = String.raw`[\d.]+`;
+/** A buffered-ranges list as `formatLiveRanges` prints it: `[]`, or `[a-b c-d]`. */
+const R = String.raw`\[(?:${F}-${F}(?: ${F}-${F})*)?\]`;
 const at = (levels, s) => atLevels(levels, new RegExp(`^${s}$`));
 
 /** The feed every seat of the row opens: the broadcaster to compose, a viewer to find the card. */
@@ -268,7 +270,13 @@ const VIEWER = [
   // One per delivery: what it did to the buffer, so a reading separates uneven media from drift.
   // The gap is `-` after an outage the policy did not measure; the end is always a number here,
   // since the join buffered media before any poll delivers.
-  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} appended of ${N} taken \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s`),
+  // Every buffered range closes it (LIVE-STALL-1, 1.5.1-alpha.8: a wait with 2.6 s "ahead" asked
+  // whether a hole lay inside, and the line could not say): `[]` with none, else `[a-b c-d]`.
+  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} appended of ${N} taken \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s, ranges ${R} -> ${R}`),
+  // The engine's own wait, media buffered ahead in the playhead's range: no stall and no seek, read
+  // again at the next delivery - ended by itself, or a `stalled at` line the judge counts.
+  at(D, String.raw`\[LIVE\] viewer ${S}: waiting at ${F} with ${F} s buffered ahead ${R} - the engine's own wait`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: the engine's own wait at ${F} ended by itself, now at ${F}`),
   at(L, String.raw`\[LIVE\] viewer ${S} \(ended\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),
