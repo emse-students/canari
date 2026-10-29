@@ -167,7 +167,8 @@ export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
 
 /**
  * How many of the collapsed "booking rules" (D35 section 4) are set - the badge on the collapsed
- * section, as forms' advanced settings show one, so a rule is never hidden AND forgotten.
+ * section, as forms' advanced settings show one, so a rule is never hidden AND forgotten. The
+ * ceiling of people is NOT one of them since WP-R6 (Q-R13): it sits in "who", always in view.
  */
 export function activeRuleCount(draft: SettingsDraft): number {
   const set = (v: string) => v.trim() !== '';
@@ -178,7 +179,6 @@ export function activeRuleCount(draft: SettingsDraft): number {
     set(draft.maxActiveBookings),
     set(draft.maxMinutesPerPeriod),
     set(draft.participantWithdrawMinMinutes) && draft.participantWithdrawMinMinutes.trim() !== '0',
-    set(draft.maxPeople),
   ].filter(Boolean).length;
 }
 

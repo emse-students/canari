@@ -27,13 +27,18 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { Throttle } from '@nestjs/throttler';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
+  parseLeafIdentity,
   assertCallerOwnsUserId,
+  type LeafIdentity,
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
@@ -53,6 +58,7 @@ import {
   partingKey,
   withdrawAwaitingSeat,
   writePendingSeats,
+  assertCallerActsOnGroup,
   callerSeatStanding,
   refuseAwaitingSeat,
   withheldWindows,
@@ -73,6 +79,23 @@ import { RefusalCode, refusalBody } from '../utils/refusal-codes';
  * was sized on held 89 groups.
  */
 export const GROUP_ROSTERS_MAX_GROUPS = 200;
+
+/**
+ * The most leaf identities `POST /api/mls/groups/:groupId/revoked-leaves` answers in one request -
+ * a whole key group's tree in one read. MIRRORED BY `REVOKED_LEAVES_MAX_IDENTITIES` in
+ * `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, which chunks by it.
+ */
+export const REVOKED_LEAVES_MAX_IDENTITIES = 1000;
+
+/**
+ * Revoked-leaf questions one user may ask per minute. The client asks at most once per key group a
+ * device holds per roster pass, and again only when that group's leaves changed
+ * (`rosterReconcile.ts`): a session start asks once per held key group - one per community and one
+ * per private salon held. Sized for an account in hundreds of them, since a refused question removes
+ * no revoked device that pass (it is not recorded, and the next pass asks again); a loop asking
+ * about arbitrary pairs is still bounded to a few per second.
+ */
+export const REVOKED_LEAVES_LIMIT_PER_MINUTE = 600;
 
 /** One device's seat in one group, with the facts that say which kind of `pending` it is. */
 interface DeviceSeatFacts {
@@ -113,6 +136,8 @@ export class MembersController {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(RevokedDeviceGroup)
+    private revokedDeviceGroupRepo: Repository<RevokedDeviceGroup>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource
   ) {}
@@ -829,6 +854,145 @@ export class MembersController {
       `[GROUP_ROSTERS] asked=${groupIds.length} answered=${groupIds.length - refused.length} refused=${refused.length} rows=${rows.length} revoked=${revokedNamed}`
     );
     return { rosters, refused, revoked, awaiting };
+  }
+
+  /**
+   * Which of the given leaf identities (`userId:deviceId`) of `groupId`'s tree belong to a device
+   * under an ACTIVE revocation - answered for a KEY-DISTRIBUTION group as much as a conversation.
+   *
+   * **WHY IT EXISTS.** `POST mls/group-rosters` names the revoked devices of each answered roster,
+   * but a key group has no user roster here (its roster is social-service's) and is never answered
+   * there - so a revoked device of a community member kept its leaf in every community and salon key
+   * group for good, even across reloads. The client's key-group roster pass reads its TREE, asks
+   * this, and removes exactly what is named (`rosterReconcile.ts`).
+   *
+   * **AN ALLOWLIST, ASKED BY A MEMBER, ABOUT MEMBERS.** The caller must be an admitted member of the
+   * group (`assertCallerActsOnGroup`: an active device row for a key group, a seat for a
+   * conversation), AND each identity asked is answered only when it is bound to THIS group - its
+   * user holds a device row in it, of any status, or a seat in it, or that exact device is recorded
+   * as having held the key group when its revocation purged its rows (`dm_revoked_device_groups`,
+   * {@link RevokedDeviceGroup}: in a key group the device rows were the user's only binding, and the
+   * purge deletes them). Anybody else's pair is answered "not revoked" whatever the truth, so a
+   * member of one group cannot read the revocations of people outside it.
+   * The answer adds only "this one is revoked", under the one active-revocation rule
+   * (`activeRevocationWhere`), and the route is throttled per user
+   * ({@link REVOKED_LEAVES_LIMIT_PER_MINUTE}). The user half is
+   * compared without case, the device half exact - the canonical identity Rust binds - and each
+   * identity is answered AS SENT, so the client matches its own leaf string. An identity that is not
+   * a leaf identity (`libs/contracts/leaf-identity.cases.json`) is skipped and counted, never a
+   * refusal of the batch; a body that is not a list, or over the cap, is still a 400.
+   */
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: REVOKED_LEAVES_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Post('mls/groups/:groupId/revoked-leaves')
+  async getRevokedLeaves(
+    @Param('groupId') groupId: string,
+    @Body() body: { identities?: unknown } | undefined,
+    @Headers('x-user-id') headerUserId?: string
+  ): Promise<{ revoked: string[] }> {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const requested = body?.identities;
+    if (!Array.isArray(requested)) {
+      throw new BadRequestException('identities must be an array');
+    }
+    if (requested.length > REVOKED_LEAVES_MAX_IDENTITIES) {
+      throw new BadRequestException(
+        `At most ${REVOKED_LEAVES_MAX_IDENTITIES} identities per request`
+      );
+    }
+    const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
+    await assertCallerActsOnGroup(
+      { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+      this.logger,
+      'REVOKED_LEAVES',
+      safeGroupId,
+      caller
+    );
+
+    // `userId:deviceId`, exactly one colon, each half under its own rule - never the generic 128
+    // bound on the whole, which every real identity exceeds ({@link parseLeafIdentity}). A MALFORMED
+    // ONE IS SKIPPED, NEVER A REFUSAL OF THE BATCH: a leaf identity is whatever a credential in the
+    // tree says, so one crafted credential would otherwise block the answer about every other leaf
+    // of the group, for every member. Counted in the line below, never printed.
+    const leaves = new Map<string, LeafIdentity>();
+    let malformed = 0;
+    for (const value of requested) {
+      const leaf = parseLeafIdentity(value);
+      if (leaf === null) malformed++;
+      else leaves.set(leaf.identity, leaf);
+    }
+    const pairs = [...leaves.values()].map(({ identity, userId, deviceId }) => ({
+      identity,
+      sentUser: userId,
+      user: userId.toLowerCase(),
+      device: deviceId,
+    }));
+    // A current client filters what this skips (`isAddressableLeafIdentity`), so a skipped one
+    // accuses a credential or an old client - said at warn, with the count alone.
+    const say = (line: string, converged: boolean): void => {
+      if (malformed > 0)
+        this.logger.warn(`${line} malformed=${malformed} - skipped, never answered`);
+      else if (converged) this.logger.debug(line);
+      else this.logger.log(line);
+    };
+    if (pairs.length === 0) {
+      if (malformed > 0) {
+        say(`[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=0`, true);
+      }
+      return { revoked: [] };
+    }
+
+    // The user half both as sent and lowercased: the column holds whichever casing was written.
+    const asked = [...new Set(pairs.flatMap((p) => [p.user, p.sentUser]))];
+    // BOUND TO THIS GROUP: only users with a device row or a seat in it are answered at all - or
+    // the exact device a revocation recorded as having held it ({@link RevokedDeviceGroup}).
+    const [deviceRows, seatRows, revokedHeldRows] = await Promise.all([
+      this.deviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true },
+      }),
+      this.groupMemberRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true },
+      }),
+      this.revokedDeviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true, deviceId: true },
+      }),
+    ]);
+    const bound = new Set([...deviceRows, ...seatRows].map((r) => r.userId.toLowerCase()));
+    const heldWhenRevoked = new Set(
+      revokedHeldRows.map((r) => `${r.userId.toLowerCase()}:${r.deviceId}`)
+    );
+    const inGroup = pairs.filter(
+      (p) => bound.has(p.user) || heldWhenRevoked.has(`${p.user}:${p.device}`)
+    );
+    if (inGroup.length === 0) {
+      // Not converged: no leaf asked about is bound to this group, so nothing here can be answered -
+      // said at log level.
+      say(
+        `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${pairs.length} revoked=0`,
+        false
+      );
+      return { revoked: [] };
+    }
+    const users = [...new Set(inGroup.flatMap((p) => [p.user, p.sentUser]))];
+    const rows = await this.revokedDeviceRepo.find({
+      where: activeRevocationWhere({ userId: In(users) }),
+      select: { userId: true, deviceId: true },
+    });
+    const banned = new Set(rows.map((r) => `${r.userId.toLowerCase()}:${r.deviceId}`));
+    const revoked = inGroup
+      .filter((p) => banned.has(`${p.user}:${p.device}`))
+      .map((p) => p.identity);
+
+    // A CONVERGED ANSWER IS DEBUG (the noise rule): every pass of every member of every key group
+    // asks, and "all bound, none revoked" is the ordinary answer. A revoked or an unbound leaf is
+    // what a reader needs, and stays at log level.
+    const outside = pairs.length - inGroup.length;
+    const line = `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${outside} revoked=${revoked.length}`;
+    say(line, revoked.length === 0 && outside === 0);
+    return { revoked };
   }
 
   @UseGuards(HeaderAuthGuard)

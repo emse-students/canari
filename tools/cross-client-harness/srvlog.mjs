@@ -258,7 +258,7 @@ const BENIGN = [
   /\[ChannelService\] \[CHANNEL_PUSH\] channel=\S+ message=\S+ recipients=\d+/,
   // NOT OURS, AND ATTRIBUTED RATHER THAN GUESSED. `[404] POST /inform` arrives on the SSR server
   // every ~18 seconds; nothing in the client bundle or the SSR output contains that path, and the
-  // nginx log names the caller: `"AirControl Agent v1.0"` from 10.0.0.47 - a Ubiquiti access point
+  // nginx log names the caller: `"AirControl Agent v1.0"` from a LAN address - a Ubiquiti access point
   // on the LAN looking for its UniFi controller, which answers `inform` on that path. It found this
   // host instead.
   //
@@ -1271,6 +1271,39 @@ const ROW_RULES = [
       /\[CallsService\] \[ring\] ringGroup caller=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ring\] call=[0-9a-f-]{36} group=[0-9a-f-]{36} rang=(\d+)\/\1 devices$|\[CallsService\] \[calls\] presence active user=[0-9a-f]{64} device=\S+ call=[0-9a-f-]{36}$|\[CallsService\] \[calls\] requestRoomToken user=[0-9a-f]{64} group=[0-9a-f-]{36} room=[0-9a-f-]{36}$|\[CallsService\] \[call\] join-token room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$/,
     rows: ['CALL-WEB-*'],
   },
+  // THE RING'S END AND THE PRESENCE CLEARED (`calls.service.ts` `endRing`, `reportCallPresence`;
+  // first read on `1.5.1-alpha.1`, 2026-10-27). The `reason` is pinned per row to what its scenario
+  // sends - an answered call `answered` then `ended`, a declined one `ended`, a cancelled or
+  // unanswered one `cancelled`, the busy row its answered call (`answered`, then `ended` at the hang-up,
+  // absent from the first reading's window, present in the second) and W5's busy one `cancelled` - so a ring
+  // ended for another reason is read by the rule of a row it is not, and stays dirt. `notified=R/N`
+  // is forgiven only when R equals N, as the ring's `rang=R/N` is.
+  //
+  // TWO LIMITS, stated. CALL-WEB-7's three reasons cannot be pinned per CALL: the server line carries
+  // only the user's and the call's hashes, which the rule cannot tie to "W2's call" or "W5's" - so in
+  // that row any of the three is forgiven for either call. CALL-WEB-3 (the callee hangs up) sends
+  // what 1 and 2 send; CALL-WEB-8 (a reload) sends `answered` only - the reloaded page never hangs up,
+  // so no `ended` comes (both read on `1.5.1-alpha.1`, 2026-10-28).
+  ...[
+    { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2', 'CALL-WEB-3'] },
+    { name: 'call ring ended: answered, then the peer reloaded', reasons: 'answered', rows: ['CALL-WEB-8'] },
+    { name: 'call ring ended: declined', reasons: 'ended', rows: ['CALL-WEB-4'] },
+    { name: 'call ring ended: cancelled or unanswered', reasons: 'cancelled', rows: ['CALL-WEB-5', 'CALL-WEB-6'] },
+    { name: 'call ring ended: one answered and hung up, one busy', reasons: 'answered|cancelled|ended', rows: ['CALL-WEB-7'] },
+  ].map(({ name, reasons, rows }) => ({
+    name,
+    tag: /\[CallsService\] \[(ring\] (endRing|ring-end) |calls\] cleared presence )/,
+    shape: new RegExp(
+      [
+        String.raw`\[CallsService\] \[ring\] endRing user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36} reason=(${reasons})`,
+        String.raw`\[CallsService\] \[ring\] ring-end call=[0-9a-f-]{36} notified=(\d+)\/\2`,
+        String.raw`\[CallsService\] \[calls\] cleared presence for user=[0-9a-f]{64} device=\S+`,
+      ]
+        .map((s) => `${s}$`)
+        .join('|')
+    ),
+    rows,
+  })),
   // call-service's half (Rust, `call_service`): a signalling socket per seat, its p2p pairing and
   // relays, and its end. `disposition=client-close` is the only end forgiven: any other is a call
   // the service ended, which is a finding.

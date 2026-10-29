@@ -283,6 +283,22 @@ export function messageCount(channelId) {
 }
 
 /**
+ * A salon's messages as the server holds them: its own id and the id the sending client minted
+ * (`clientMessageId`, empty when none was sent), oldest first. A removal row reads its one message
+ * here so the sender's echo lines are forgiven for THAT message only (`removalNarration`).
+ *
+ * @returns {{id: string, clientId: string}[]}
+ */
+export function channelMessages(channelId) {
+  return rows(
+    psql(
+      `SELECT id, coalesce("clientMessageId",'') FROM channel_messages ` +
+        `WHERE "channelId" = '${channelId}' ORDER BY "createdAt"`
+    )
+  ).map(([id, clientId]) => ({ id, clientId }));
+}
+
+/**
  * The Graine SESSIONS a salon's transcript was sealed under, and how many rows each one holds.
  *
  * A SESSION IS THE UNIT THAT ROTATES, AND A MESSAGE COUNT CANNOT SEE IT. `messageCount` answers how

@@ -43,7 +43,9 @@ const GAP = new RegExp(String.raw`^\[LIVE\] viewer ${S}: a delivery gap of (\d+)
 // THE SPELLINGS ARE `livePlayer.ts`'s ON MAIN AFTER #2583 (the L-F1 fix), read from the source: a
 // pattern that matched no real line would make this judge pass on every viewer. `stallsOf` also
 // keeps every viewer line that SAYS stall and matches neither, and such a line fails the row.
-const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \(target \d+ ms\))?$`);
+const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \(target \d+(?:\.\d+)? ms\))?$`);
+// `\.\d+`: the stall line prints the target UNROUNDED (`livePlayer.ts`, `${this.policy.targetMs}`),
+// read as `4634.20000000298 ms` on LIVE-STALL-1 (1.5.1-alpha.1) - the gap and seek lines round it.
 const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live edge \(stall\) at [\d.]+(?:, \d+ ms behind)?$`);
 const NOT_A_STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting while seeking at [\d.]+ - not a stall$`);
 const SAYS_STALL = /^\[LIVE\] viewer .*stall/;
@@ -66,6 +68,8 @@ const sentence = (line) => stripStamp(String(line).replace(/^(?:log|info|debug|v
 export function stallsOf(lines) {
   const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [], endAnswers: 0, strayEndAnswers: 0 };
   let answered = false;
+  /** Each stall not yet resolved by a seek, oldest first: true when it came after the first gap. */
+  const unresolved = [];
   for (const raw of lines) {
     const s = sentence(raw);
     if (answered && !STOPPED_ON_END.test(s)) out.strayEndAnswers++;
@@ -82,9 +86,19 @@ export function stallsOf(lines) {
       continue;
     }
     const after = out.gaps.length > 0;
-    if (STALL.test(s)) out[after ? 'stallsAfter' : 'stallsBefore']++;
-    else if (STALL_SEEK.test(s)) out[after ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
-    else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
+    if (STALL.test(s)) {
+      out[after ? 'stallsAfter' : 'stallsBefore']++;
+      unresolved.push(after);
+    } else if (STALL_SEEK.test(s)) {
+      // A STALL SEEK BELONGS TO THE STALL IT RESOLVES, not to where its line falls: the player names
+      // the gap and then seeks in the same tick, so the seek out of a stall taken BEFORE the first gap
+      // is printed just after it (LIVE-WEB-2 and LIVE-STALL-1 on 1.5.1-alpha.1, W2). A seek with no
+      // stall left open is counted where it falls. A pre-gap stall left open can absorb ONE later seek,
+      // and that is safe: the player emits a stall seek only out of a stall, and any stall LINE after
+      // the gap is counted after on its own and still fails the row.
+      const of = unresolved.length ? unresolved.shift() : after;
+      out[of ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
+    } else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
   }
   if (answered) out.strayEndAnswers++; // an end answer as the very last line stopped nothing
   return out;
@@ -207,6 +221,30 @@ const BROADCASTER = [
   at(D, String.raw`\[LIVE-BROADCAST\] dispose in (preview|ended)`),
 ];
 
+/**
+ * WHAT THE PHONE SAYS WHILE IT TAPS ITS WAY TO THE COMPOSER, and only the phone, only as the
+ * broadcaster (read on LIVE-WEB-2, A1 on the #2652 head 582975676, 2026-10-28). A1 reaches the feed by a
+ * TAP, not a page load, so these are decisions of an in-app navigation, not of a boot: the boot
+ * narration (`PAGE_BOOT_NARRATION`) is NOT forgiven here, and a phone that reloads mid-row stays dirt.
+ *
+ * - `[AvatarPresence] <missing> of <asked> have no photo - not requested`: the feed asked the server which authors
+ *   have a photo and DECIDED not to fetch the rest (#1840). Only that answered shape is forgiven; every
+ *   fallback (`HTTP <status>`, `could not say`, `could not ask` - each ends "each avatar is asked") is
+ *   the question going unanswered, and stays dirt.
+ * - `[NameMirror] mirrored N name(s), 0 removal(s), N held`: the names this navigation resolved were
+ *   written to the native file the push path reads (WP-MENTION-NAME, #2047). Only a mobile Tauri build
+ *   prints it, so a web seat saying it is a finding. A REMOVAL is an account the server just called
+ *   deleted, which nothing in a live row deletes, so `1 removal(s)` stays dirt; so do the dropped-batch
+ *   line and the `[NAME_MIRROR] store failed` warn.
+ */
+const PHONE_BROADCASTER = [
+  at(D, String.raw`\[AvatarPresence\] ${N} of ${N} have no photo - not requested`),
+  at(D, String.raw`\[NameMirror\] mirrored ${N} name\(s\), 0 removal\(s\), ${N} held`),
+];
+
+/** A native app seat (`A1` Android, `I1` iOS) - the only one that prints the NameMirror line. */
+const isAppSeat = (seat) => /^[AI]\d+$/.test(seat);
+
 /** A viewer, from the feed to the end it was told about. */
 const VIEWER = [
   ...FEED,
@@ -227,6 +265,10 @@ const VIEWER = [
   at(D, String.raw`\[LIVE\] viewer ${S} stalled at ${F} \(target ${N} ms\)`),
   at(D, String.raw`\[LIVE\] viewer ${S}: waiting while seeking at ${F} - not a stall`),
   at(D, String.raw`\[LIVE\] viewer ${S}: a delivery gap of ${N} ms - target buffer now ${N} ms`),
+  // One per delivery: what it did to the buffer, so a reading separates uneven media from drift.
+  // The gap is `-` after an outage the policy did not measure; the end is always a number here,
+  // since the join buffered media before any poll delivers.
+  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} appended of ${N} taken \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s`),
   at(L, String.raw`\[LIVE\] viewer ${S} \(ended\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),
@@ -237,11 +279,13 @@ const VIEWER = [
  *
  * @param {string} row a `LIVE_ROWS` id
  * @param {string} seat
+ * @param {Record<string, {by: string, viewers: string[]}>} [rows] the table; the self-test passes one
+ *   with a WEB broadcaster, a shape no live row has yet, to prove the app-seat scope holds
  */
-export function liveNarration(row, seat) {
-  const spec = LIVE_ROWS[row];
+export function liveNarration(row, seat, rows = LIVE_ROWS) {
+  const spec = rows[row];
   if (!spec) return [];
-  if (seat === spec.by) return BROADCASTER;
+  if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : BROADCASTER;
   if (spec.viewers.includes(seat)) return VIEWER;
   return [];
 }

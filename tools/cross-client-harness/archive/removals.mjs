@@ -40,13 +40,14 @@ import {
   revokeChannelAccess,
   selectedChannel,
 } from '../comm.mjs';
-import { awaitCommunityRouting, awaitUserRouting, channelIdOf, communityDistribution, groupCommits, groupEpochAndRoster, keyGroupsOfDevice, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
+import { dismissMintedNoticesOn } from '../devicenotice.mjs';
+import { awaitCommunityRouting, awaitUserRouting, channelIdOf, channelMessages, communityChannels, communityDistribution, groupCommits, groupEpochAndRoster, keyGroupsOfDevice, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { becomeANewDeviceAndConfirm } from '../newdevice.mjs';
-import { PEER_NAME, PORTS } from '../names.mjs';
-import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, removalOwn } from '../removalrows.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, bootForgiven, removalNarration, removalOwn } from '../removalrows.mjs';
 import { exitOnRecorded, mark, record } from '../results.mjs';
 import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
-import { EVICTED_REJOIN_NARRATION, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
+import { EVICTED_REJOIN_NARRATION, PAGE_BOOT_NARRATION, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
 
 const arg = (name) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -74,6 +75,8 @@ const wa = await watch(w1, 'W1');
 const w2 = spec.subject === 'W2' ? await client(PORTS.W2) : null;
 const wb = w2 ? await watch(w2, 'W2') : null;
 let w3 = null;
+/** The device id W3 was minted as (DEVREVOKE-KEYGROUP): the one notice this row may dismiss on the owner seats. */
+let mintedIds = [];
 
 /** Opens the row's salon the way every COMM row does: the community list, the community, the salon. */
 async function openSalon(cx) {
@@ -166,6 +169,10 @@ function revokeDevice(deviceId) {
 }
 
 const detail = { community, salon };
+/** The row's ids its narration is scoped to (`removalNarration`), read once the venue exists. */
+let rowIds = null;
+/** Each watched window's event index when the gesture began (`bootForgiven`); unset if it never did. */
+const gestureAt = {};
 let verdict = 'ERROR';
 let failures = [];
 try {
@@ -179,6 +186,7 @@ try {
     w3 = minted.cx;
     await openSalon(w3);
     subjectDevices = await evaluate(w3, DEVICE_IDS);
+    mintedIds = [...subjectDevices];
     // THE NEW DEVICE PUTS ITS OWN LEAF IN, on loading: waited for on the roster, in rounds.
     const onEvery = () => spec.groups.every((scope) => keyGroupsOfDevice(subjectDevices[0]).some((g) => g.scope === scope));
     for (let r = 0; r < COMMIT_ROUNDS && !onEvery(); r++) await sleep(ROUND_MS);
@@ -187,9 +195,27 @@ try {
   }
   const groups = groupsBefore(v, subjectDevices);
   log(`armed on ${groups.length} key group(s): ${JSON.stringify(groups)}`);
+  const channels = communityChannels(v.workspaceId);
+  const ownerUserId = userIdOf(OWNER_NAME);
+  const isOwner = (d) => d.userId.toLowerCase() === ownerUserId.toLowerCase();
+  rowIds = {
+    workspaceId: v.workspaceId,
+    channelIds: channels.channelIds,
+    keyGroupIds: [...channels.keyGroupIds, communityDistribution(v.workspaceId)?.groupId, ...groups.map((g) => g.groupId)].filter(Boolean),
+    ownerUserId,
+    subjectUserId: spec.subject === 'W2' ? userIdOf(PEER_NAME) : null,
+    // The owner's OTHER devices: the ones W1 answers for history. W1's own never asks itself.
+    ownerDeviceIds: [
+      ...new Set([...(communityDistribution(v.workspaceId)?.devices ?? []), ...(salonDistribution(v.channelId)?.devices ?? [])].filter(isOwner).map((d) => d.deviceId).concat(mintedIds)),
+    ].filter((d) => !actorDevices.includes(d)),
+    messages: channelMessages(v.channelId),
+  };
   const origin = await evaluate(w1, TIME_ORIGIN);
 
-  // THE GESTURE - one per row.
+  // THE GESTURE - one per row. Each window's event index here is what `bootForgiven` dates its
+  // document replacements against.
+  gestureAt.W1 = w1.events.length;
+  if (w2) gestureAt.W2 = w2.events.length;
   if (id === 'KICK-COMMIT') {
     await enterCommunities(w1);
     await openCommunity(w1, community);
@@ -229,12 +255,42 @@ try {
   }
 }
 
+/** Event indices of a window's main-frame navigations - read before `report`, which consumes the events. */
+const replacedAt = (cx) => cx.events.flatMap((e, i) => (e.method === 'Page.frameNavigated' && !e.params?.frame?.parentId ? [i] : []));
+
+/**
+ * A seat's report with what THIS row made it say forgiven (`removalNarration`), and its boot narration
+ * only when every document its window replaced is one the row replaced on purpose (`bootForgiven`).
+ */
+async function observed(seat, cx, w, extra = []) {
+  const navs = replacedAt(cx);
+  let rep = await report(w);
+  const boot = bootForgiven(id, seat, navs, gestureAt[seat] ?? Infinity);
+  if (navs.length) log(`${seat}: ${navs.length} document(s) replaced (event ${navs.join(', ')}; gesture at ${gestureAt[seat] ?? 'never'}) - boot narration ${boot ? 'forgiven' : 'NOT forgiven'}`);
+  if (boot) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
+  return ignoringExpectedLog(rep, [...extra, ...(rowIds ? removalNarration(id, seat, rowIds) : [])]);
+}
+
 const gated = gate(verdict, {
-  W1: await report(wa),
-  ...(wb ? { W2: ignoringExpectedLog(await report(wb), EVICTED_REJOIN_NARRATION) } : {}),
+  W1: await observed('W1', w1, wa),
+  ...(wb ? { W2: await observed('W2', w2, wb, EVICTED_REJOIN_NARRATION) } : {}),
 });
 record(id, gated.verdict, { ...gated.detail, ...detail, failures });
 log(`verdict: ${gated.verdict}`);
+// THE OWNER SEATS' "NOUVEL APPAREIL" NOTICE OF THE MINTED W3, dismissed after the verdict (`devicenotice.mjs`).
+// W6 drove the device panel in its own process, so it is attached here for this alone.
+// An unreachable W6 is logged and never keeps the seats below from closing (review, 2026-10-27).
+let w6 = null;
+try {
+  w6 = mintedIds.length ? await client(PORTS.W6) : null;
+} catch (e) {
+  console.error(`[${id}] W6 not reached for the notice dismissal: ${String(e?.message ?? e)}`);
+}
+await dismissMintedNoticesOn([
+  { seat: 'W1', cx: w1, minted: mintedIds },
+  { seat: 'W6', cx: w6, minted: mintedIds },
+]);
+w6?.close();
 w1.close();
 w2?.close();
 w3?.close();
