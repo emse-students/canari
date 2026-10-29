@@ -35,11 +35,14 @@ describe('mlsStateLoadErrorOf', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  it('leaves a null code untyped, whatever its message names, without accusing the boundary', () => {
+  it('leaves a null code untyped, whatever its message names, with ONE warning and no accusation of the boundary', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const typed = mlsStateLoadErrorOf({ code: null, message: 'STATE_ALTERED: a sentence' });
     expect(typed).toBeInstanceOf(MlsStateLoadUntypedError);
     expect(typed).not.toBeInstanceOf(MlsStateVerdictError);
     expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('does not type');
   });
 
   it('accuses a code outside the closed set - a bindings mismatch, never a verdict', () => {

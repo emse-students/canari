@@ -74,6 +74,7 @@ import {
   MlsStateVerdictError,
   type MlsStateVerdictCode,
 } from '$lib/mls-client/mlsStateSeal';
+import { MlsStateLoadUntypedError } from '$lib/mls-client/mlsStateLoadError';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -861,6 +862,10 @@ export abstract class BaseMlsService implements IMlsService {
     // boundary as a CODE field and was typed there (`mlsStateLoadErrorOf`), never read from prose.
     if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
     if (isKeystoreKeyUnavailable(error)) return 'keystore_unavailable';
+    // Untyped AT A BOUNDARY, which already accused it (`mlsStateLoadErrorOf` logs every untyped
+    // answer once, because not every caller of a boundary classifies). A second line here would be
+    // the same failure logged twice.
+    if (error instanceof MlsStateLoadUntypedError) return 'unknown';
     // NOTHING BELOW READS TEXT. An error outside the closed set - `MlsStateLoadUntypedError`, or
     // anything thrown before a boundary typed it - is `unknown` whatever its message names: a
     // sentence containing `STATE_ALTERED` is not a verdict, and treating it as one would rotate an

@@ -11,8 +11,8 @@
  *  - a verdict about the bytes -> {@link MlsStateVerdictError} (`mlsStateSeal.ts`, the same type the
  *    web's v2 opener and the deterministic reader throw);
  *  - an empty keystore -> {@link KeystoreKeyUnavailableError};
- *  - anything else -> {@link MlsStateLoadUntypedError}, which the classifier calls `unknown` and
- *    accuses. A message that NAMES a code is still untyped: the text proves nothing.
+ *  - anything else -> {@link MlsStateLoadUntypedError}, accused here and called `unknown` by the
+ *    classifier. A message that NAMES a code is still untyped: the text proves nothing.
  *
  * No older shape is understood, deliberately: the native app EMBEDS its frontend and the WASM ships
  * in the same bundle as this file, so the code and its reader always come from one build.
@@ -69,6 +69,11 @@ function isVerdictCode(code: string): code is MlsStateVerdictCode {
  * before the command ran, a WASM trap - is untyped and ACCUSED here, because it means the
  * boundary's contract was not what answered. So is a code outside the closed set: these bindings and
  * `mls-core` disagree, a build defect, never a verdict.
+ *
+ * **EVERY UNTYPED ANSWER IS LOGGED HERE, ONCE, AND NOWHERE ELSE.** Not every caller classifies (the
+ * MLS workers and the WebMlsService key probes construct a client too), so the boundary is the one
+ * place every such failure passes; `classifyStateLoadFailure` stays silent on an
+ * {@link MlsStateLoadUntypedError} for that reason, and two lines for one failure would be noise.
  */
 export function mlsStateLoadErrorOf(rejection: unknown): Error {
   if (!isStateLoadRefusal(rejection)) {
@@ -78,7 +83,12 @@ export function mlsStateLoadErrorOf(rejection: unknown): Error {
     return new MlsStateLoadUntypedError(String(rejection), rejection);
   }
   const { code, message } = rejection;
-  if (code === null) return new MlsStateLoadUntypedError(message, rejection);
+  if (code === null) {
+    console.warn(
+      `[MLS] A state load failed for a reason mls-core does not type, so its cause is unknown and nothing will be destroyed on account of it: ${message.slice(0, 200)}`
+    );
+    return new MlsStateLoadUntypedError(message, rejection);
+  }
   if (isVerdictCode(code)) return new MlsStateVerdictError(code, message, null, rejection);
   if (code === KEYSTORE_KEY_UNAVAILABLE) return new KeystoreKeyUnavailableError(message, rejection);
   console.error(

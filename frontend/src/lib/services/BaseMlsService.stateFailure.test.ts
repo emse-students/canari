@@ -88,9 +88,13 @@ describe('BaseMlsService.classifyStateLoadFailure', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
     expect(classify(new Error(text))).toBe('unknown');
-    expect(classify(new MlsStateLoadUntypedError(text))).toBe('unknown');
     expect(classify(text)).toBe('unknown');
-    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(2);
+    // Typed untyped AT A BOUNDARY: `mlsStateLoadErrorOf` already accused it, so one failure is one
+    // line, never two.
+    warn.mockClear();
+    expect(classify(new MlsStateLoadUntypedError(text))).toBe('unknown');
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('reads a v2 decrypt rejection that is not a tag check as `unknown`, accused and not destroyed', () => {
