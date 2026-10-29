@@ -3,10 +3,10 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { CalendarClock, CalendarDays, Pencil, Plus } from '@lucide/svelte';
+  import { CalendarClock, CalendarDays, LayoutDashboard, Pencil, Plus } from '@lucide/svelte';
   import { createSpace, listManagedSpaces, type ManagedSpaceRow } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
-  import { spaceEditorHref, spaceHref } from '$lib/bookings/routes';
+  import { spaceDashboardHref, spaceEditorHref, spaceHref } from '$lib/bookings/routes';
   import Input from '$lib/components/ui/Input.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -133,13 +133,20 @@
                 : m.bookings_discoverability_listed()}
             </p>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <a
               href={resolve(internalPath(spaceHref(space.id)))}
               class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
             >
               <CalendarDays size={12} />
               {m.bookings_tab_open_action()}
+            </a>
+            <a
+              href={resolve(internalPath(spaceDashboardHref(space.id)))}
+              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+            >
+              <LayoutDashboard size={12} />
+              {m.bookings_dashboard_title()}
             </a>
             <a
               href={resolve(internalPath(spaceEditorHref(space.id)))}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BookerResource, BookerSpace, SlotUnit } from '$lib/bookings/api';
   import {
+    BLOCK_LENGTH_CHOICES,
     bookingUnitLimit,
     dragRange,
     formatBookingRange,
@@ -28,6 +29,11 @@
    * page scrolling, and is left alone), and the page does not scroll while a range is being drawn.
    * Letting go calls `onPick` with the first unit and how many were taken; a plain tap still calls
    * it with one unit.
+   *
+   * IN BLOCK MODE (the organiser's dashboard, WP-R5, D50) the same drag draws an "Indisponible"
+   * instead: red, in slots mode too, and as long as a block may be (`BLOCK_LENGTH_CHOICES`) rather
+   * than a booking. It still stops at the first unit that is not free, so it never crosses a
+   * booking; the server answers `bookings-inside-block` if the grid was stale.
    */
   interface Props {
     space: BookerSpace;
@@ -36,11 +42,13 @@
     layout: WeekLayout;
     /** `day` draws one column without its axis header and never folds it (the phone). */
     mode: 'week' | 'day';
+    /** The organiser's dashboard: a drag draws a block, not a booking (WP-R5). */
+    blockMode?: boolean;
     nowMs: number;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
-  let { space, resource, layout, mode, nowMs, onPick }: Props = $props();
+  let { space, resource, layout, mode, blockMode = false, nowMs, onPick }: Props = $props();
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
   const HOLD_MS = 250;
@@ -49,8 +57,11 @@
   /** Pointer travel (px) that turns a mouse press into a drag. */
   const DRAG_SLOP_PX = 4;
 
-  /** The most units one booking may cover; a drag is offered only when that is more than one. */
-  const unitLimit = $derived(bookingUnitLimit(space));
+  /**
+   * The most units one gesture may cover - a booking's, or in block mode a block's; a drag is
+   * offered only when that is more than one.
+   */
+  const unitLimit = $derived(blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space));
 
   interface Selection {
     day: number;
@@ -245,7 +256,9 @@
   {#if selected && selectedReading}
     <p
       role="status"
-      class="bg-cn-yellow text-cn-ink pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
+      class="{blockMode
+        ? 'bg-red-err text-cn-surface'
+        : 'bg-cn-yellow text-cn-ink'} pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
     >
       {selectedReading}
     </p>
@@ -339,7 +352,9 @@
               class="absolute block overflow-hidden border px-1.5 py-0.5 text-left text-xs leading-tight font-semibold transition-colors {joinedAbove
                 ? 'rounded-t-none border-t-black/5'
                 : 'rounded-t-lg'} {joinedBelow ? 'rounded-b-none' : 'rounded-b-lg'} {inRange
-                ? 'bg-cn-yellow/40 text-text-main border-cn-yellow'
+                ? blockMode
+                  ? 'bg-red-err/20 text-red-err border-red-err'
+                  : 'bg-cn-yellow/40 text-text-main border-cn-yellow'
                 : cellClass(unit, cell.closed)}"
             >
               {joinedAbove ? '' : unitText(unit, cell.text)}
@@ -352,5 +367,7 @@
 </div>
 
 {#if unitLimit > 1}
-  <p class="text-text-muted text-2xs px-1 pt-1">{m.bookings_grid_drag_hint()}</p>
+  <p class="text-text-muted text-2xs px-1 pt-1">
+    {blockMode ? m.bookings_grid_block_hint() : m.bookings_grid_drag_hint()}
+  </p>
 {/if}
