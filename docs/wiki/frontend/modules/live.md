@@ -594,11 +594,12 @@ of that run is gone). Two defects, each enough to freeze a viewer:
   stalled again seconds later (W4 on dev `1.5.1-alpha.6`: manifest 44.042, stall latched 44.471,
   segment opened 44.768, stalled again 48.794). A stall latched during the trim that follows stays
   latched for the next delivery. No timer is involved: the rule is the ORDER of the read.
-- **One debug line per delivery** says what it did to the buffer: `delivery of N segment(s) (a-b),
-  gap G ms: end E0 -> E1, at T0 -> T1, ahead A0 -> A1 s` - the buffered end, the playhead and the
+- **One debug line per delivery** says what it did to the buffer: `delivery of N appended of M taken
+  (a-b), gap G ms: end E0 -> E1, at T0 -> T1, ahead A0 -> A1 s` - `M` segments taken in `a-b`, of
+  which `N` were appended (the rest skipped: gone or unopenable); the buffered end, the playhead and the
   media playable ahead of it, before the first fetch and after the last append (before any seek,
   which has its own line). At most one per poll, the bound of the seek line beside it. It separates
-  a producer whose segments carry uneven media (`E1 - E0` against the segment count) from a player
+  a producer whose segments carry uneven media (`E1 - E0` against `N`) from a player
   that drifts (`T1 - T0` against the gap). The rig forgives it on a viewer seat (`liverows.mjs`).
 - **An outage is never a cadence** (`interrupt`, typed `LiveCadenceBreak`): a catch-up jump, a
   retried step, a broadcaster the manifest says is quiet. So a 20 s loss of network never leaves a

@@ -268,7 +268,7 @@ const VIEWER = [
   // One per delivery: what it did to the buffer, so a reading separates uneven media from drift.
   // The gap is `-` after an outage the policy did not measure; the end is always a number here,
   // since the join buffered media before any poll delivers.
-  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} segment\(s\) \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} appended of ${N} taken \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s`),
   at(L, String.raw`\[LIVE\] viewer ${S} \(ended\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),

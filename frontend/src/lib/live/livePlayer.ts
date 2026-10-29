@@ -813,7 +813,7 @@ export class LivePlayer {
     const now = this.playhead();
     const range = `${fresh[0].index}-${fresh[fresh.length - 1].index}`;
     console.debug(
-      `[LIVE] viewer ${this.liveId}: delivery of ${count} segment(s) (${range}), gap ${d.gapMs === null ? '-' : Math.round(d.gapMs)} ms: ` +
+      `[LIVE] viewer ${this.liveId}: delivery of ${count} appended of ${fresh.length} taken (${range}), gap ${d.gapMs === null ? '-' : Math.round(d.gapMs)} ms: ` +
         `end ${fmtS(seen.end)} -> ${fmtS(now.end)}, at ${fmtS(seen.at)} -> ${fmtS(now.at)}, ` +
         `ahead ${fmtS(seen.ahead)} -> ${fmtS(now.ahead)} s`
     );
