@@ -310,6 +310,12 @@ impl WasmMlsClient {
         self.manager.key_package_census_summary_at(now_secs as u64)
     }
 
+    /// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
+    #[wasm_bindgen]
+    pub fn own_signature_key(&self) -> Vec<u8> {
+        self.manager.own_signature_key()
+    }
+
     /// Signs a v2 session ENDORSEMENT with this device's MLS credential key (channel-encryption §21).
     #[wasm_bindgen]
     pub fn sign_with_device_credential(&self, message: &[u8]) -> Result<Vec<u8>, JsValue> {
@@ -1109,6 +1115,18 @@ impl WasmMlsClient {
     pub fn export_group_info(&self, group_id: String) -> Result<Vec<u8>, JsValue> {
         self.manager
             .export_group_info(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+    /// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+    #[wasm_bindgen]
+    pub fn external_join_is_a_further_device(
+        &self,
+        group_info_bytes: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .external_join_is_a_further_device(&group_info_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

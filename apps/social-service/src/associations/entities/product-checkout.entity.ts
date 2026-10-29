@@ -87,6 +87,15 @@ export class ProductCheckout {
   @Column({ type: 'timestamptz', nullable: true })
   settledAt: Date | null;
 
+  /**
+   * The tier the buyer held when this attempt OPENED (migration 112): the product id of the tier a
+   * cotisation checkout was ranked against, frozen so the settlement decides on what the opening
+   * decided and never on a price edited since (`ProductsService.settlementMayGrant`). Null when
+   * nothing was held, for a non-tier product, and for an attempt opened before the column existed.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  heldTierProductId: string | null;
+
   /** The purchase record a `paid` settlement wrote, exactly once. */
   @Column({ type: 'uuid', nullable: true })
   purchaseRecordId: string | null;

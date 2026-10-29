@@ -20,6 +20,7 @@
  */
 import {
   consoleDump,
+  forgivingFirstRoutePreloads,
   CONTACT_DEVICE_NOTICE_NARRATION,
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
@@ -35,6 +36,7 @@ import {
   mintedKeyPackageVettedNarration,
   admissionJoinerNarration,
   admissionMemberNarration,
+  atLevels,
   bigRowNarration,
   REVOKED_SIGN_OUT_NARRATION,
   revokedLogoutOnce,
@@ -1508,6 +1510,26 @@ const FORGIVE_CASES = [
     OWNER_DEVICE_NOTICE_NARRATION,
     { clean: false, unmatched: 3 },
   ],
+  // A BUDGETED NEEDLE forgives as many lines as the decisions it stands for, and the next one is dirt:
+  // a sentence said in a loop is a finding even when each copy reads as narration.
+  [
+    'a budgeted needle forgives up to its budget',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 2)],
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'a budgeted needle said once more than its budget leaves that line dirt',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1)],
+    { clean: false, unmatched: 0 },
+  ],
   [
     "a contact's device notice, forgiven at its levels",
     [
@@ -1953,6 +1975,23 @@ for (const [what, lines, needles, want] of FORGIVE_CASES) {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);
 }
+// ONE CALL SURFACED TWICE (the same millisecond - `timelineOf`'s own rule) is one decision against a
+// budget of one; the same sentence a second later is two.
+{
+  const line = '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device';
+  const needle = atLevels(['debug'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1);
+  const ev = (at) => ({ method: 'Runtime.consoleAPICalled', params: { type: 'debug', timestamp: at, args: [{ value: line }] } });
+  const t0 = 1_786_710_000_000;
+  const once = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0)] }, label: 'selftest' }), [needle]);
+  const twice = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0 + 1000)] }, label: 'selftest' }), [needle]);
+  for (const [what, ok] of [
+    ['a budget counts the double surfacing of one call once', once.clean],
+    ['a budget counts the same sentence a second later twice', !twice.clean && twice.unexplained.some((l) => l.includes('[said 2 times, budget 1]'))],
+  ]) {
+    if (!ok) failures++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
+  }
+}
 /**
  * A PATH RULE MUST FORGIVE THE SAME REQUEST WHATEVER ESTATE IT WAS MADE AGAINST.
  *
@@ -2072,6 +2111,31 @@ const CUT_LINE =
     signOutCount([]) === 0;
   console.log(`${okCount ? 'ok  ' : 'FAIL'} ${'logouts'.padEnd(12)} the sign-out counter reads zero, one and two`);
   if (!okCount) failures++;
+}
+
+// A ROUTE'S FIRST PRELOAD, ONCE PER PATHNAME (`forgivingFirstRoutePreloads`, LIST-RACE-1 on 1.5.0-alpha.1).
+{
+  const pre = (p, first = true, level = 'debug') => `${level}: [00:45:33.543] [2026-10-26T23:45:33.543Z] [RoutePreload] {"pathname":"${p}","first":${first}}`;
+  const rep = (lines) => ({ errors: [], warnings: [], unexplained: lines, badHttp: [], exceptions: [], severe: [], wsEvents: [] });
+  const left = (lines) => forgivingFirstRoutePreloads(rep(lines)).unexplained;
+  const cases = [
+    ['two routes preloaded once each are forgiven', left([pre('/chat'), pre('/posts')]).length === 0],
+    ['the same route preloaded twice keeps both', left([pre('/chat'), pre('/chat')]).length === 2],
+    ['... and does not stop another route being forgiven', left([pre('/chat'), pre('/chat'), pre('/posts')]).length === 2],
+    ['"first":false stays dirt', left([pre('/chat', false)]).length === 1],
+    ['the line at log level stays dirt', left([pre('/chat', true, 'log')]).length === 1],
+    ['an unrelated line stays', left([pre('/chat'), 'debug: [00:00:00.000] [OTHER] x']).length === 1],
+    ['a clean window is clean after it', forgivingFirstRoutePreloads(rep([pre('/chat')])).clean === true],
+    ['a report with no unexplained list passes through', forgivingFirstRoutePreloads({ clean: true }).clean === true],
+    // Applied by `gate` for every runner (COMM calls it directly): a lone preload keeps a PASS a PASS,
+    // a doubled one demotes it.
+    ['gate forgives a lone first preload', gate('PASS', { W1: { ...rep([pre('/chat')]), clean: false } }).verdict === 'PASS'],
+    ['gate keeps a doubled preload as dirt', gate('PASS', { W1: { ...rep([pre('/chat'), pre('/chat')]), clean: false } }).verdict === 'PASS-DIRTY'],
+  ];
+  for (const [name, ok] of cases) {
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'preload'.padEnd(12)} first route preload: ${name}`);
+    if (!ok) failures++;
+  }
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');

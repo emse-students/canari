@@ -40,23 +40,25 @@
  * path rather than about the filter. The title (`<Communaute> - #<salon>`) is what identifies the
  * notification; whether the body carries the marker is written down beside it.
  *
- * IT BUILDS A SALON IN THE CAMPAIGN VENUE and deletes it. The community is shared because the level
+ * IT BUILDS A PRIVATE SALON IN THE CAMPAIGN VENUE, granted to the peer, and deletes it. The community is shared because the level
  * is per SALON: a fresh community would cost an invite and an accept to observe the same column.
  */
-import { client, fireComposer, mentionInComposer, realClick, send } from '../chat.mjs';
+import { clearOverlays, client, fireComposer, mentionInComposer, realClick, send } from '../chat.mjs';
 import {
   channelRow,
   createChannel,
   deleteChannel,
   enterCommunities,
+  grantChannelAccess,
   inPanel,
+  openChannelAccess,
   openChannelSettings,
   openCommunity,
   selectedChannel,
   setChannelNotifLevel,
 } from '../comm.mjs';
 import { channelIdOf, channelNotifLevelOf, userIdOf, workspaceIdOf } from '../grainedb.mjs';
-import { OWNER_NAME, PORTS, VENUE } from '../names.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
 import { foreground, home as phoneHome, notifications, pid as phonePid, wake } from '../phone.mjs';
 import { clientBuild, mark, record } from '../results.mjs';
 import { srvLines } from '../estate.mjs';
@@ -210,12 +212,23 @@ await step('background the phone', async () => {
 
 const armed = !!ownerId && !!workspaceId && !!phoneUp;
 
-// -- The venue: one PUBLIC salon, so the peer can post in it without a grant ----------------------
+// -- The venue: one PRIVATE salon holding the owner and the peer, and nobody else ------------------
+//
+// PRIVATE SINCE 2026-10-27. The negatives assert the server chose NOBODY (`recipients=0`), which is
+// a statement about every member of the salon's audience - and a public salon's audience is the
+// whole venue. The venue has since gained the campaign's third and fourth accounts, at the default
+// `all`, so `none` and an unmentioned `mentions` read `recipients=2`: correctly excluding the owner
+// and correctly pushing the two others. A private salon makes the audience exactly the two people
+// this row is about.
 const channelId = armed
   ? await step('create the salon on W1', async () => {
       await enterCommunities(w1);
       await openCommunity(w1, VENUE.community);
-      await createChannel(w1, salon, { visibility: 'public' });
+      await createChannel(w1, salon, { visibility: 'private' });
+      await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
+      await openChannelAccess(w1);
+      await grantChannelAccess(w1, PEER_NAME);
+      await clearOverlays(w1);
       return channelIdOf(workspaceId, salon);
     })
   : null;

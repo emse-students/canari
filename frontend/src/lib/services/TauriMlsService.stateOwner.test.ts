@@ -9,7 +9,12 @@ vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
 
-import { SavedStateOfAnotherAccountError, SavedStateUnopenedError } from '$lib/mls-client';
+import {
+  MlsSessionVacantError,
+  SavedStateOfAnotherAccountError,
+  SavedStateUnopenedError,
+} from '$lib/mls-client';
+import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -156,5 +161,92 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     expect((err as SavedStateUnopenedError).reason).toBe('rotated');
     expect(rotate).not.toHaveBeenCalled();
     expect(calls('initialiser_mls')).toBe(1);
+  });
+});
+
+/**
+ * A FAILED INSTALL LEAVES NO SESSION BEHIND. The native slot is process-wide and was only ever
+ * written on success, so account B's refused sign-in left account A's manager and key installed.
+ * The native install guard empties it by construction; the service ends it through the one helper
+ * too, before the refusal reaches the gate - and the install's own error is what propagates.
+ */
+describe('TauriMlsService init - a refused initialiser_mls ends the native session', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  });
+
+  afterEach(() => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  it("ends it, keeping the state files, and rethrows the install's own error", async () => {
+    disk(UNDECRYPTABLE, 'alice');
+    const { svc } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
+
+    expect(err).toBeInstanceOf(SavedStateOfAnotherAccountError);
+    const ends = invoke.mock.calls.filter((c) => c[0] === 'terminer_session_mls');
+    expect(ends.length).toBeGreaterThanOrEqual(1);
+    expect(ends[0][1]).toMatchObject({ reason: 'failed initialiser_mls', sweepState: false });
+    // Ended BEFORE the gate reads whose state it is: nothing of the failed install is left to read it.
+    const order = invoke.mock.calls.map((c) => c[0]);
+    expect(order.indexOf('terminer_session_mls')).toBeLessThan(order.indexOf('mls_state_owner'));
+  });
+});
+
+/**
+ * A RESUME INTO AN EMPTY SLOT IS NOT A WARNING. With no native session under a signed-in one, every
+ * later MLS command is refused while the screen looks alive - so the vacancy is reported (the shell
+ * ends the session into the sign-in screen) and the resume sequence is told to stop, typed.
+ */
+describe('TauriMlsService resume - no native session under a signed-in one', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => setMlsSessionLostHandler(null));
+
+  it('reports the vacancy and rejects with MlsSessionVacantError', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'recharger_mls_au_resume'
+        ? Promise.reject(
+            new Error('MLS_MANAGER_ABSENT: no MLS session is installed in this process')
+          )
+        : Promise.resolve(undefined)
+    );
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const svc = new TauriMlsService() as unknown as {
+      _deviceKeyB64: string;
+      reloadStateFromDisk(): Promise<void>;
+    };
+    svc._deviceKeyB64 = KEY;
+
+    await expect(svc.reloadStateFromDisk()).rejects.toBeInstanceOf(MlsSessionVacantError);
+    expect(lost).toHaveBeenCalledWith('resume found no native session');
+  });
+
+  it('any other reload failure is logged and the resume carries on, as before', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'recharger_mls_au_resume'
+        ? Promise.reject(new Error('reload mls.bin: aead::Error'))
+        : Promise.resolve(undefined)
+    );
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const svc = new TauriMlsService() as unknown as {
+      _deviceKeyB64: string;
+      reloadStateFromDisk(): Promise<void>;
+    };
+    svc._deviceKeyB64 = KEY;
+
+    await expect(svc.reloadStateFromDisk()).resolves.toBeUndefined();
+    expect(lost).not.toHaveBeenCalled();
   });
 });

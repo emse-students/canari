@@ -1,8 +1,79 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { cutLeafIdentity, cutUserId } from './log-repeat';
 
 /** Allowlist regex for generic query/path values: alphanumerics plus `_`, `.`, `:`, `@`, `-`, up to 128 chars. */
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
+
+/** A leaf identity's two halves, read by {@link parseLeafIdentity}; `identity` is the value AS SENT. */
+export interface LeafIdentity {
+  identity: string;
+  userId: string;
+  deviceId: string;
+}
+
+/**
+ * Splits an MLS leaf identity `userId:deviceId` into its halves, or `null` when it is not one: not
+ * a string, not exactly ONE colon, or a half this service would refuse as a `userId` / `deviceId`
+ * wherever that half is written ({@link SAFE_QUERY_VALUE_REGEX}, untrimmed - an identity is matched
+ * against a leaf string AS SENT).
+ *
+ * **WHY EACH HALF AND NEVER THE WHOLE.** The pair is not a query value, it is two of them. A real
+ * identity is `<64-hex user>:<platform>-<64-hex user>-<base36 time>-<base36 rand>` (the device id
+ * embeds its user, `BaseMlsService.generateDeviceId`), 147 characters on the web and 149 on a Tauri
+ * build - so the generic 128 bound refused EVERY real one, and the revoked-leaves route that applied
+ * it answered 400 to every request it ever received. Each half keeps the exact alphabet and bound it
+ * is stored under, which is all the allowlist was for (no whitespace, no newline, no quote reaches a
+ * log line or a query parameter); the pair's own bound is therefore 128 + 1 + 128.
+ * `sanitize.leaf-identity.spec.ts` ties this to the generator's shape so the two cannot drift again.
+ *
+ * **THE CLIENT APPLIES THE SAME RULE BEFORE IT SENDS** (`isAddressableLeafIdentity`,
+ * `frontend/src/lib/mls-client/leafIdentity.ts`): both sides run every case of
+ * `libs/contracts/leaf-identity.cases.json`.
+ */
+export function parseLeafIdentity(value: unknown): LeafIdentity | null {
+  if (typeof value !== 'string') return null;
+  const colon = value.indexOf(':');
+  if (colon === -1 || colon !== value.lastIndexOf(':')) return null;
+  const userId = value.slice(0, colon);
+  const deviceId = value.slice(colon + 1);
+  if (!SAFE_QUERY_VALUE_REGEX.test(userId) || !SAFE_QUERY_VALUE_REGEX.test(deviceId)) return null;
+  return { identity: value, userId, deviceId };
+}
+
+/**
+ * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value by
+ * {@link cutLeafIdentity}: the user id cut wherever it appears, the device half's embedded copy
+ * included, and the rest of the device kept - it is what tells two devices of one person apart. A
+ * bare user id (a field that may name only the user)
+ * is cut the same way. Anything else reads as {@link sanitizeLogValue} reads it: `invalid`, or
+ * `absent` when nothing was sent - never a refusal.
+ *
+ * A real identity is longer than the 128 bound, so these fields printed `invalid` until 2026-10-28
+ * - the evidence each report exists to carry - and then printed the whole user id.
+ */
+export function sanitizeLeafLogValue(value: unknown, absent = 'unstated'): string {
+  if (typeof value === 'string') {
+    const leaf = parseLeafIdentity(value.trim());
+    if (leaf !== null) return cutLeafIdentity(leaf.userId, leaf.deviceId);
+  }
+  const plain = sanitizeLogValue(value, absent);
+  return plain === absent || plain === 'invalid' ? plain : cutUserId(plain);
+}
+
+/**
+ * A user and a device sent as TWO fields (a reporter's headers, an envelope's sender), printed as
+ * one `user:device` log value the way {@link sanitizeLeafLogValue} prints a leaf: each half through
+ * {@link sanitizeLogValue} first (so a forged newline is still `invalid`), then no full user id left
+ * in either ({@link cutLeafIdentity}). `absentDevice` names a device the caller did not send.
+ */
+export function sanitizeDevicePairLogValue(
+  userId: unknown,
+  deviceId: unknown,
+  absentDevice = 'unstated'
+): string {
+  return cutLeafIdentity(sanitizeLogValue(userId), sanitizeLogValue(deviceId, absentDevice));
+}
 
 /**
  * Validates that `value` is a non-empty string matching the safe query allowlist.
@@ -91,6 +162,9 @@ export function isUnresolvedIdentity(value: string): boolean {
  * itself, `unstated` when the caller sent none, and `invalid` when it sent something outside
  * {@link SAFE_QUERY_VALUE_REGEX} - which is also what stops a caller writing newlines into a log and
  * forging lines in it.
+ *
+ * A field that carries a leaf identity uses {@link sanitizeLeafLogValue} instead: a real one is
+ * longer than the 128 bound.
  */
 export function sanitizeLogValue(value: unknown, absent = 'unstated'): string {
   if (value === undefined || value === null || value === '') return absent;

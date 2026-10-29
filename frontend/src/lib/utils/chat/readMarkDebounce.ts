@@ -18,18 +18,25 @@ import { appendLog } from '$lib/utils/sessionLog';
 /** Hands a mark on. */
 export type DeliverReadMark = (at: number) => void;
 
-/** The pending mark of one reading, and the three ways it ends. */
+/** The pending mark of one reading, and the ways it ends. */
 export interface ReadMarkDebounce {
   /**
-   * Raises the pending mark to at least `at`. The first note of a window arms it with `deliver`,
-   * which later notes in the same window do not replace: the window belongs to the reading that
-   * opened it.
+   * Raises the pending mark to at least `at`. The first note of a window arms it with `deliver` and
+   * the `conversation` being read, which later notes in the same window do not replace: the window
+   * belongs to the reading that opened it.
    */
-  note: (at: number, deliver: DeliverReadMark) => void;
-  /** Delivers the pending mark NOW - the reader left, or the app left the screen. */
+  note: (at: number, deliver: DeliverReadMark, conversation: string) => void;
+  /**
+   * Delivers the pending mark NOW when the window belongs to a conversation other than `selected`.
+   * The receipt effect calls it FIRST on every run, with the CURRENT selection. It used to ask
+   * from its teardown, where Svelte hands a `$state` read its pre-change value, so the leave was
+   * never seen: the next conversation's note joined the old window and nothing was delivered on
+   * leave (frontend/architecture, "A teardown sees the values its effect saw"). A salon's delivery
+   * is what sends the banner signal to the account's other devices, so it is delivered, not dropped.
+   */
+  follow: (selected: string | null) => void;
+  /** Delivers the pending mark NOW - the app left the screen, or the page clears the selection. */
   flush: () => void;
-  /** Forgets the pending mark without delivering it, for a mark already owed elsewhere. */
-  cancel: () => void;
   /** The pending mark, 0 when none. */
   readonly pending: number;
 }
@@ -38,6 +45,7 @@ export interface ReadMarkDebounce {
 export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
   let pendingAt = 0;
   let deliverPending: DeliverReadMark | null = null;
+  let owner: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   function take(): { at: number; deliver: DeliverReadMark | null } {
@@ -46,6 +54,7 @@ export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
     timer = null;
     pendingAt = 0;
     deliverPending = null;
+    owner = null;
     return taken;
   }
 
@@ -57,18 +66,19 @@ export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
   }
 
   return {
-    note(at, deliver) {
+    note(at, deliver, conversation) {
       pendingAt = Math.max(pendingAt, at);
       if (timer) return;
       deliverPending = deliver;
+      owner = conversation;
       timer = setTimeout(() => fire(false), windowMs);
+    },
+    follow(selected) {
+      if (owner === null || owner === selected) return;
+      fire(true);
     },
     flush() {
       fire(true);
-    },
-    cancel() {
-      const { at } = take();
-      if (at > 0) appendLog(`[READ] mark ${at} left to the owed-mark queue, not delivered here`);
     },
     get pending() {
       return pendingAt;
