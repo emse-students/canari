@@ -8,4 +8,4 @@
  * them. On, the screens say who is told and offer the reminder. Both flip in ONE pull request,
  * once `minClientVersion` covers a client that knows the four types (docs/wiki/legacy-compatibility.md).
  */
-export const BOOKING_NOTIFICATIONS_LIVE = false;
+export const BOOKING_NOTIFICATIONS_LIVE = true;

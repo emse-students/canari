@@ -27,7 +27,7 @@ import { BookingSpace } from './entities/booking-space.entity';
  * mirror and the spec that pins them. Off, nothing is written or sent, the reminder cron claims
  * nothing, and the screens keep saying that nobody is notified, which is then true.
  */
-export const BOOKING_NOTIFICATIONS_ENABLED = false;
+export const BOOKING_NOTIFICATIONS_ENABLED = true;
 
 /** The bell row types; the push `contentKey` of each is `social_<type>` (`push-content.ts`). */
 export const BOOKING_NOTICE_TYPES = [

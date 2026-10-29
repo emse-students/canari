@@ -58,8 +58,8 @@ de pas.
 La fenetre " Reserver " peut demander :
 
 - **Autres personnes** : des comptes Canari a ajouter a la reservation (jusqu'au maximum fixe par
-  l'espace, vous compris). Elles sont ajoutees directement, **sans etre prevenues** : elles la
-  verront sur Reservations et pourront s'en retirer. Quelqu'un qui vous a bloque, ou que vous avez
+  l'espace, vous compris). Elles sont ajoutees directement et **prevenues par une notification** :
+  elles la verront sur Reservations et pourront s'en retirer. Quelqu'un qui vous a bloque, ou que vous avez
   bloque, ne peut pas etre ajoute.
 - **Les questions de l'organisateur** (texte, choix...). Une question " fichier " accepte un PDF, un
   JPEG, un PNG ou un WebP de 8 Mo au plus. Il part des que vous le choisissez, et le bouton
@@ -89,8 +89,14 @@ calendrier (**Ajouter a mon calendrier**).
 - Un **participant** peut **Me retirer** : la reservation reste celle de son titulaire. L'espace peut
   fixer un delai (" jusqu'a X minutes avant ") ; passe ce delai, on ne peut plus se retirer.
 - Une fois qu'une reservation a commence, elle ne se modifie plus : c'est l'historique.
-- **Personne n'est prevenu** d'une annulation ou d'un ajout : l'application l'ecrit a l'ecran. Vous
-  le decouvrez en revenant sur Reservations.
+- **Vous etes prevenu par une notification** quand l'organisateur annule une reservation ou vous
+  etes (avec son message s'il en laisse un), quand le titulaire annule une reservation ou vous etes
+  participant, quand un participant se retire de la votre et quand quelqu'un vous ajoute a une
+  reservation. Personne n'est prevenu de son propre geste. Ces notifications se reglent dans les
+  reglages, categorie **Reservations**.
+- **Un rappel** arrive avant le creneau. Par defaut, c'est celui choisi par l'espace ; le **Rappel**
+  se change dans la fenetre " Reserver " et sur chaque reservation a venir : 15 min, 1 h, la veille
+  (24 h avant) ou pas de rappel. Une reservation faite plus tard que ce delai n'a pas de rappel.
 
 ### Mes espaces personnels
 
@@ -183,7 +189,7 @@ fermeture.
 **Changer les horaires quand des reservations existent.** Si des reservations a venir tombent dans
 ce que vous retirez, l'enregistrement est **refuse** : la section " Les reservations en travers "
 les liste, chacune avec un bouton **Annuler**. Annulez celles qui doivent partir, puis **Enregistrer
-de nouveau**. Les personnes concernees ne sont pas prevenues : prevenez-les vous-meme.
+de nouveau**. Les personnes concernees sont prevenues par une notification.
 
 ### Qui peut reserver, et que demande-t-on ?
 
@@ -210,6 +216,8 @@ Un badge indique combien de regles sont actives. Toutes sont facultatives :
 - **Duree maximale par personne**, par jour ou par semaine ;
 - **Retrait d'un participant, jusqu'a (minutes avant)** : 0 signifie jusqu'au debut. Le titulaire peut
   toujours annuler.
+- **Rappel envoye avant le creneau** : le rappel par defaut de chaque personne d'une reservation
+  (1 h si vous n'y touchez pas) ; chacune peut changer le sien.
 
 ### Donnees (repliee)
 
@@ -219,8 +227,8 @@ Un badge indique combien de regles sont actives. Toutes sont facultatives :
   (date, debut, fin, ressource, titulaire, participants, statut). Un fichier joint y figure par un
   mot, jamais par son contenu.
 - **Supprimer l'espace** : tout part avec lui, colonnes, disponibilites **et historique des
-  reservations**. Les reservations a venir disparaissent et leurs personnes ne sont **pas
-  prevenues** : prevenez-les d'abord. C'est definitif.
+  reservations**. Les reservations a venir disparaissent et leurs personnes en sont
+  **prevenues** par une notification. C'est definitif.
 
 ### Au jour le jour
 
@@ -232,7 +240,9 @@ Sur la grille de l'espace, un gestionnaire (ou la personne liee a une colonne, p
   annulez-les d'abord. **Lever l'indisponibilite** la retire.
 - **Reserver pour quelqu'un** (gestionnaires seulement) : l'option " Reserver pour quelqu'un " met la
   reservation au nom de la personne choisie, hors limites par personne.
-- **Annuler** une reservation a venir en l'ouvrant dans la grille. Son titulaire n'est pas prevenu.
+- **Annuler** une reservation a venir en l'ouvrant dans la grille, ou depuis " A venir " sur le
+  tableau de bord, qui permet d'y joindre un message. Son titulaire et ses participants sont
+  prevenus.
 
 Pour lire un fichier recu, ouvrez la reservation dans la grille : la reponse affiche le nom du
 fichier et un bouton de telechargement, reserve aux gestionnaires de l'espace.
