@@ -165,7 +165,10 @@ une nuit, ecrivez une plage du soir qui finit le lendemain matin.
 
 - **Pas reguliers** : chaque plage est decoupee en pas (duree d'un pas en minutes) ; une reservation
   prend un ou plusieurs pas qui se suivent, jusqu'a un maximum que vous fixez.
-- **Creneaux fixes** : chaque plage est un creneau, reserve en entier.
+- **Creneaux fixes** : chaque plage est un creneau, reserve en entier. Sur un tel espace, la
+  semaine type se peint **creneau par creneau** : appuyer sur une case fermee ouvre un creneau entier
+  (de la duree la plus courante de vos creneaux, 30 minutes par defaut), appuyer sur un creneau le
+  ferme en entier, et deux creneaux qui se touchent ne sont **jamais fusionnes**.
 
 **Les colonnes.** Tant qu'il n'y a qu'une colonne, vous reglez directement ses horaires. La carte
 " Une seule colonne " propose **Ajouter une colonne** (nommez-la, puis **Ajouter la colonne**) si

@@ -6,11 +6,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ManagedSpace } from './api';
-import type { StoredLine } from './availability';
+import { MAX_AVAILABILITY_LINES, type StoredLine } from './availability';
 import { draftFromSpace, settingsFromDraft } from './spaceSettings.svelte';
 import {
   fixedSlotLines,
-  MAX_CREATION_LINES,
   newWizardDraft,
   wizardPayload,
   wizardProblems,
@@ -89,7 +88,7 @@ describe('wizardProblems', () => {
       slotMinutes: 30,
     };
     expect(wizardProblems(d).hours).toBe('too-many');
-    expect(MAX_CREATION_LINES).toBe(200);
+    expect(MAX_AVAILABILITY_LINES).toBe(200);
     expect(wizardProblems({ ...d, slotMinutes: 120 }).hours).toBeUndefined();
   });
 });

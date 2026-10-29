@@ -23,16 +23,10 @@ import {
   toStoredLines,
   type EditorLine,
   type StoredLine,
+  MAX_AVAILABILITY_LINES,
 } from './availability';
 import { applyTemplate, timeOfMinutes, type TemplateKey } from './availabilityPaint';
 import { NUMBER_BOUNDS } from './spaceSettings.svelte';
-
-/**
- * The server's cap on the lines one availability carries (`MAX_AVAILABILITY_LINES`,
- * `apps/social-service/src/bookings/dto/space.dto.ts`): fixed slots are one line each, so a long
- * week of short slots can pass it, and the wizard says so before the server refuses.
- */
-export const MAX_CREATION_LINES = 200;
 
 /** The steps a "Au choix" booking is cut in. */
 export const STEP_CHOICES = [15, 30, 60] as const;
@@ -130,7 +124,7 @@ export function wizardProblems(draft: WizardDraft): WizardProblems {
       draft.maxMinutes / draft.stepMinutes > NUMBER_BOUNDS.maxSteps.max)
   ) {
     problems.hours = 'duration';
-  } else if (wizardLines(draft).length > MAX_CREATION_LINES) problems.hours = 'too-many';
+  } else if (wizardLines(draft).length > MAX_AVAILABILITY_LINES) problems.hours = 'too-many';
   return problems;
 }
 

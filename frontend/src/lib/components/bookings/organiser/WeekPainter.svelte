@@ -24,9 +24,11 @@
     /** Monday..Sunday, short, for the header. */
     shortDayNames: string[];
     onPaint: (dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) => void;
+    /** The sentence under the painter when the gesture means something else (fixed slots). */
+    hint?: string;
   }
 
-  let { week, dayNames, shortDayNames, onPaint }: Props = $props();
+  let { week, dayNames, shortDayNames, onPaint, hint }: Props = $props();
 
   interface Drag {
     pointerId: number;
@@ -150,7 +152,7 @@
           role="img"
           aria-label="{dayNames[day]} : {formatRuns(runs) || m.bookings_day_closed()}"
         >
-          {#each runs as [start, end] (start)}
+          {#each runs as [start, end], i (i)}
             <div
               class="bg-green-ok/25 border-green-ok/50 absolute inset-x-0 rounded-md border"
               style:top="{(start / dayMin) * 100}%"
@@ -173,6 +175,6 @@
     </div>
   </div>
   <p class="text-text-muted px-1 pt-2 text-xs">
-    {m.bookings_avail_paint_hint({ grain: GRAIN_MIN })}
+    {hint ?? m.bookings_avail_paint_hint({ grain: GRAIN_MIN })}
   </p>
 </div>

@@ -12,7 +12,12 @@
   import WeekPainter from './WeekPainter.svelte';
   import { createSpace } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
-  import { lineProblem, timeChoices, weekdayNames } from '$lib/bookings/availability';
+  import {
+    lineProblem,
+    MAX_AVAILABILITY_LINES,
+    timeChoices,
+    weekdayNames,
+  } from '$lib/bookings/availability';
   import {
     applyTemplate,
     paintRows,
@@ -21,7 +26,6 @@
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
   import {
-    MAX_CREATION_LINES,
     MAX_DURATION_CHOICES,
     newWizardDraft,
     SLOT_LENGTH_CHOICES,
@@ -160,7 +164,7 @@
       case 'duration':
         return m.bookings_wizard_problem_duration();
       case 'too-many':
-        return m.bookings_wizard_problem_too_many({ count: lineCount, max: MAX_CREATION_LINES });
+        return m.bookings_avail_lines_cap({ count: lineCount, max: MAX_AVAILABILITY_LINES });
       default:
         return '';
     }
