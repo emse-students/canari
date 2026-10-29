@@ -192,7 +192,15 @@
           lire. Les autres personnes ne voient votre nom que si l'espace l'affiche, sinon seulement
           « occupé ». L'affiche d'un espace est chiffrée sur l'appareil de l'organisateur, comme
           l'image d'une publication. Un organisateur peut exporter les réservations de son espace
-          dans un tableur ; un fichier n'y figure que par un mot, jamais par son contenu.
+          dans un tableur ; un fichier n'y figure que par un mot, jamais par son contenu. Les
+          personnes d'une réservation sont prévenues par une notification de son annulation, d'un
+          retrait, d'un ajout et, avant le créneau, par un rappel ; Canari enregistre pour cela le
+          délai de rappel que chacun choisit, et l'heure à laquelle ce rappel est parti. Le message
+          qu'un organisateur joint à une annulation n'est pas conservé avec la réservation : il ne
+          figure que dans la notification. Sur un espace accessible par son seul lien, la
+          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Ces
+          notifications, message compris, sont supprimées au bout de 90 jours, comme toute
+          notification dans l'application.
         </dd>
       </div>
       <div>
