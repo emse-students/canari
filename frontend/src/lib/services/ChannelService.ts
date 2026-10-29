@@ -297,6 +297,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { readApiJson } from '$lib/utils/apiJson';
 import { Log } from '$lib/utils/Log';
+import { ReadMarkTargetGoneError } from '$lib/utils/chat/salonReadMarkQueue';
 
 /**
  * A refusal answered by the channels API.
@@ -312,6 +313,9 @@ import { Log } from '$lib/utils/Log';
  * (social-service migration 090's tombstone): nothing is left to send or to offer again.
  */
 export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
+
+/** The 404 code a salon read mark gets when the salon no longer exists (deleted while it was owed). */
+export const CHANNEL_NOT_FOUND = 'CHANNEL_NOT_FOUND';
 
 export class ChannelApiError extends ApiRefusalError {
   constructor(status: number, code: string | null, message: string) {
@@ -915,7 +919,8 @@ export class ChannelService {
    * read message's timestamp, which for a salon message IS its server `createdAt`). The server
    * bounds it, stores it and tells the salon's readers with `channel.read`.
    *
-   * Throws on a refusal - the caller owns the one line a lost receipt leaves.
+   * Throws on a refusal - the caller owns the one line a lost receipt leaves - and
+   * `ReadMarkTargetGoneError` when the server answered that the salon no longer exists.
    *
    * @returns the stored instant, or `null` when the server already held as much.
    */
@@ -925,7 +930,16 @@ export class ChannelService {
       method: 'POST',
       body: JSON.stringify({ at, ...(serverAt ? { serverAt } : {}) }),
     });
-    await this.handleError(res);
+    try {
+      await this.handleError(res);
+    } catch (e) {
+      // Classified HERE, at the throw, from the status and the server's code: the owed queue drops
+      // the mark on this answer and keeps it on every other one.
+      if (e instanceof ChannelApiError && e.status === 404 && e.code === CHANNEL_NOT_FOUND) {
+        throw new ReadMarkTargetGoneError(channelId);
+      }
+      throw e;
+    }
     const body = (await res.json()) as { at: number | null };
     Log.d('CHANNEL_READ', `mark ${cid.slice(0, 8)} asked=${at} stored=${body.at}`);
     return body.at;
