@@ -32,7 +32,7 @@ import {
 } from './chat.mjs';
 import { RESOLVE } from './cdp.mjs';
 import { closeOverlays } from './groupnav.mjs';
-import { GRANT_ADD_MARK, markGrantAddJs } from './grantpanel.mjs';
+import { GRANT_ADD_MARK, awaitGrantAdd, markGrantAddJs } from './grantpanel.mjs';
 import {
   currentLabelOf,
   decidePickerChoice,
@@ -751,7 +751,7 @@ export async function grantChannelAccess(cx, displayName) {
     add: caption('common_add_button'),
     section: caption('chat_channel_add_user_label'),
   });
-  await until(cx, markAdd, 8000);
+  await awaitGrantAdd(() => evaluate(cx, markAdd), 8000);
   await realClick(cx, `[${GRANT_ADD_MARK}]`);
   await until(
     cx,
