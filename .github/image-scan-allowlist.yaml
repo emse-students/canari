@@ -97,10 +97,6 @@ vulnerabilities:
     paths:
       - "usr/local/bin/gosu"
     statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
-  - id: CVE-2026-56857
-    paths:
-      - "usr/local/bin/gosu"
-    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs (os.Root.Mkdir following Windows junctions, and gosu runs on Linux only). Upstream postgres image."
   - id: CVE-2026-56858
     paths:
       - "usr/local/bin/gosu"
