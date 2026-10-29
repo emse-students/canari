@@ -304,13 +304,10 @@ wizard is ONE call and a space is never half made.
 - **Factored**: the weekday names of the painter (`weekdayNames`, `availability.ts`), shared with
   `AvailabilityEditor`.
 
-**Known cost, found building this (not fixed here):** the painter of `AvailabilityEditor` reads a
-week as merged RUNS (WP-R4), so on a `slots` space a paint ANYWHERE rewrites adjacent slots
-(14:00-14:25, 14:25-14:50) as ONE line, i.e. one long slot. Templates replace the week anyway; the
-typed lines are unaffected. The wizard makes such spaces common: what painting should mean on a
-fixed-slot space is a decision owed before the next stable that ships the wizard. **Pending with the
-owner (2026-10-29)**; Master's proposed rule is "painting opens or closes whole fixed slots, never
-merges them" - NOT built until the owner decides.
+**Found building this, decided by the owner on 2026-10-29:** the WP-R4 painter read every week as
+merged runs, so on a `slots` space a paint rewrote touching slots as ONE long slot - and the wizard
+makes such spaces common. Decision: painting a fixed-slot space opens or closes WHOLE slots, one by
+one, and never merges them. Built apart from the wizard, in #2691 ("Painting a fixed-slot space").
 
 **Proof.** `wizard.test.ts` (slot cutting, the problems, the payload, and the WP's proof: a wizard
 payload over the server's defaults read back through `draftFromSpace`/`settingsFromDraft` is the
