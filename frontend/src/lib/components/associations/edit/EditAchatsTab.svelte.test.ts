@@ -5,26 +5,44 @@
  * own), records the outcome, and the row then shows it - the "Not granted" mark stays. A refusal is
  * worded from its typed code.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { Association, AssociationPurchase } from '$lib/associations/api';
 import { SocialApiError } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
 import { grantRefusalMessage } from '$lib/associations/purchaseClosing';
 import { flushMacrotask } from '../../../../test/flush';
+import { adoptTransitionAnimations } from '../../../../test/adoptTransitionAnimations';
+
+// The product picker's panel plays an outro when an option is chosen.
+afterAll(adoptTransitionAnimations());
 
 const state = vi.hoisted(() => ({
   rows: [] as unknown[],
+  products: [] as unknown[],
   confirm: true,
   confirmed: [] as string[],
   close: vi.fn(),
+  quote: vi.fn(),
+  grant: vi.fn(),
 }));
 
 vi.mock('$lib/associations/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/associations/api')>()),
-  listAssociationProductsForManage: vi.fn(() => Promise.resolve([])),
+  listAssociationProductsForManage: vi.fn(() => Promise.resolve(state.products)),
   listAssociationPurchases: vi.fn(() => Promise.resolve(state.rows)),
   closePaidNotGranted: state.close,
+  quoteCashSale: state.quote,
+  grantProductPurchase: state.grant,
+}));
+
+vi.mock('$lib/utils/apiFetch', () => ({
+  // The beneficiary search: one candidate, Rita.
+  apiFetch: vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify([{ id: 'user-r', displayName: 'Rita' }]), { status: 200 })
+    )
+  ),
 }));
 
 vi.mock('$lib/stores/confirm.svelte', () => ({
@@ -35,6 +53,8 @@ vi.mock('$lib/stores/confirm.svelte', () => ({
 }));
 
 import EditAchatsTab from './EditAchatsTab.svelte';
+import { pickUser } from '../../../../test/pickUser';
+import { formatAmount } from '$lib/forms/fillAnswers';
 
 const open: AssociationPurchase = {
   id: 'rec-1',
@@ -60,6 +80,9 @@ afterEach(() => {
   mounted.splice(0).forEach((f) => f());
   document.body.innerHTML = '';
   state.close.mockReset();
+  state.quote.mockReset();
+  state.grant.mockReset();
+  state.products = [];
   state.confirmed = [];
   state.confirm = true;
 });
@@ -212,5 +235,143 @@ describe('EditAchatsTab, closing a payment paid for and not granted', () => {
   it('names no tier, held or not, for an erased buyer', async () => {
     const target = await render([{ ...open, grantRefusal: 'buyer-erased' }]);
     expect(target.textContent).not.toContain(m.asso_achats_buyer_tier_none());
+  });
+});
+
+/**
+ * A CASH SALE SHOWS THE AMOUNT IT WILL RECORD, AND THE CASHIER MAY TYPE ANOTHER (user, 2026-10-29).
+ * The default is the server's quote for the chosen pair - the preferential price when the
+ * beneficiary qualifies - and a typed amount is sent as the override.
+ */
+describe('EditAchatsTab, the amount a cash sale records', () => {
+  const sweat = { id: 'prod-1', name: 'Sweat', type: 'other', amountCents: 1000 };
+
+  /**
+   * The submit event the form answers, dispatched directly: happy-dom reports every value of a
+   * `step="0.01"` number field as a step mismatch (10, 3 and 2.5 all read `stepMismatch`), so
+   * `requestSubmit` would refuse a valid amount.
+   */
+  const submit = (target: HTMLElement) =>
+    target
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+  const hoodie = { id: 'prod-2', name: 'Hoodie', type: 'other', amountCents: 2000 };
+
+  /** Chooses a product in the real Picker, by its visible name. */
+  async function chooseProduct(target: HTMLElement, name: string) {
+    (target.querySelector('#grant-product') as HTMLButtonElement).click();
+    flushSync();
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (o) => o.textContent?.trim() === name
+    )!;
+    option.click();
+    await settle();
+  }
+
+  async function choosePair(target: HTMLElement) {
+    await pickUser('grant-user', 'Ri');
+    await chooseProduct(target, 'Sweat');
+  }
+
+  /** A quote answer the test releases when it chooses, to order two answers by hand. */
+  function deferredQuote() {
+    let resolve!: (q: unknown) => void;
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  const shownQuote = (target: HTMLElement) =>
+    target.querySelector('[data-testid="grant-quote"]')?.textContent?.trim();
+
+  it('shows the preferential amount the server quotes, and records it when nothing is typed', async () => {
+    state.products = [sweat];
+    state.quote.mockResolvedValue({ kind: 'priced', amountCents: 300, preferential: true });
+    state.grant.mockResolvedValue({});
+    const target = await render([]);
+
+    await choosePair(target);
+
+    expect(state.quote).toHaveBeenCalledWith('asso-1', 'prod-1', 'user-r');
+    expect(target.querySelector('[data-testid="grant-quote"]')?.textContent?.trim()).toBe(
+      m.asso_achats_grant_quote_preferential({ amount: formatAmount(300) })
+    );
+    const amount = target.querySelector('#grant-amount') as HTMLInputElement;
+    expect(amount.required).toBe(false);
+
+    submit(target);
+    await settle();
+    expect(state.grant).toHaveBeenCalledWith('asso-1', 'prod-1', { userId: 'user-r' });
+  });
+
+  it('sends a typed amount as the override of the quoted default', async () => {
+    state.products = [sweat];
+    state.quote.mockResolvedValue({ kind: 'priced', amountCents: 300, preferential: true });
+    state.grant.mockResolvedValue({});
+    const target = await render([]);
+
+    await choosePair(target);
+    const amount = target.querySelector('#grant-amount') as HTMLInputElement;
+    amount.value = '10';
+    amount.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+
+    submit(target);
+    await settle();
+    expect(state.grant).toHaveBeenCalledWith('asso-1', 'prod-1', {
+      userId: 'user-r',
+      amountCents: 1000,
+    });
+  });
+
+  it('requires a typed amount when the grid does not sell to this beneficiary, and says so', async () => {
+    state.products = [sweat];
+    state.quote.mockResolvedValue({ kind: 'not-sold' });
+    const target = await render([]);
+
+    await choosePair(target);
+
+    expect(target.textContent).toContain(m.asso_achats_grant_quote_not_sold());
+    expect((target.querySelector('#grant-amount') as HTMLInputElement).required).toBe(true);
+  });
+
+  it("drops an earlier selection's answer that lands after the later one's", async () => {
+    state.products = [sweat, hoodie];
+    const first = deferredQuote();
+    const second = deferredQuote();
+    state.quote.mockImplementation((_a: string, productId: string) =>
+      productId === 'prod-1' ? first.promise : second.promise
+    );
+    const target = await render([]);
+
+    await pickUser('grant-user', 'Ri');
+    await chooseProduct(target, 'Sweat');
+    await chooseProduct(target, 'Hoodie');
+    // The later selection answers first, the earlier one LAST.
+    second.resolve({ kind: 'priced', amountCents: 2000, preferential: false });
+    await settle();
+    first.resolve({ kind: 'priced', amountCents: 300, preferential: true });
+    await settle();
+
+    expect(state.quote).toHaveBeenCalledTimes(2);
+    expect(shownQuote(target)).toBe(m.asso_achats_grant_quote({ amount: formatAmount(2000) }));
+  });
+
+  it('shows no answer that lands after the beneficiary was cleared', async () => {
+    state.products = [sweat];
+    const pending = deferredQuote();
+    state.quote.mockImplementation(() => pending.promise);
+    const target = await render([]);
+
+    await choosePair(target);
+    // Typing in the beneficiary field drops the chosen person (`UserAutocomplete` clears its value).
+    const user = document.getElementById('grant-user') as HTMLInputElement;
+    user.value = 'X';
+    user.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    pending.resolve({ kind: 'priced', amountCents: 300, preferential: true });
+    await settle();
+
+    expect(shownQuote(target)).toBeUndefined();
   });
 });
