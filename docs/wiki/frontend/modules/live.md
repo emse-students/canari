@@ -590,13 +590,22 @@ of that run is gone). Two defects, each enough to freeze a viewer:
   running three browsers and an emulator is where that happens. The old player latched it as
   starvation and the next delivery seeked FORWARD to 56.18. That skipped 0.44 s of media for a wait
   no seek shortens, and it failed the row. Now `held` logs `waiting at T with A s buffered ahead
-  [ranges] - the engine's own wait`, with no latch and no seek. The NEXT delivery reads the
-  playhead: if it moved, `the engine's own wait at T ended by itself, now at T'`; if it is still at
-  T, the ordinary `stalled at T` line is written and the delivery re-anchors as for any stall. The
-  proof is the playhead at a delivery the poll was making anyway, not a timer. A seek closes the
-  open wait. Still unknown: WHY the engine underflowed, which no line here can name. A short
-  freeze of this kind stays visible to the viewer, and the row no longer counts it as a stall; its
-  line is what a reading counts.
+  [ranges] - the engine's own wait`, with no latch and no seek. The NEXT delivery settles it. The
+  wait ENDED only if the engine says it plays on: the playhead moved, `readyState` is at least
+  `HAVE_FUTURE_DATA`, and the video is not paused. A sub-frame creep (WebKit), or a recovery that
+  froze again without a second `waiting`, does not count as an end. An ended wait logs `the
+  engine's own wait at T ended by itself after W ms, now at T': held about H ms (budget B ms)`.
+  H is the wall time W minus the media played since. A wait that did not end writes the ordinary
+  `stalled at T` line, and the delivery re-anchors as for any stall. The proof is the engine's
+  state at a delivery the poll was making anyway, not a timer. A seek closes the open wait.
+- **The budget, and the decision behind it** (owner, 2026-10-29). A wait of the engine's own that
+  holds the picture for at most `LIVE_PLAYER_HELD_WAIT_BUDGET_MS` = 500 ms (`constants.ts`) is no
+  longer a stall. No policy constant measures a freeze, so half a second was chosen: about where a
+  viewer reads a pause as a hitch. **This moves the bar of LIVE-STALL-1, knowingly**: the old
+  forward seek cost the viewer media for a wait that no seek shortens. The rig's judge
+  (`liverows.mjs`) IMPORTS the same constant. It still fails a viewer on a hold over the budget,
+  and on a wait no delivery showed ended, before the first delivery gap too. Still unknown: WHY the
+  engine underflowed, which no line here can name.
 - **The longest wait is BOUNDED from the shape of the deliveries, before a gap proves it**
   (LIVE-STALL-1, `1.5.1-alpha.7`, 2026-10-29). `longestWaitMs` is the largest of: the floor
   `LIVE_PLAYER_MIN_TARGET_BUFFER_MS` = one segment plus one poll (3 s, where the WP-L1 Mi 9T viewer

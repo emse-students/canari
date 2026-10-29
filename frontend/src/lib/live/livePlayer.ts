@@ -54,6 +54,7 @@ import {
 import {
   LIVE_BROADCASTER_QUIET_MS,
   LIVE_MANIFEST_POLL_MS,
+  LIVE_PLAYER_HELD_WAIT_BUDGET_MS,
   LIVE_PLAYER_JOIN_SEGMENTS,
   LIVE_PLAYER_KEEP_BEHIND_MS,
   LIVE_RECORDER_MIME,
@@ -96,9 +97,18 @@ export interface LiveVideoLike {
   readonly paused: boolean;
   /** True while the engine completes a seek: a `waiting` then is the seek's own, never a stall. */
   readonly seeking: boolean;
+  /**
+   * The engine's `HTMLMediaElement.readyState`: at {@link HAVE_FUTURE_DATA} or above it can play on.
+   * Read when the engine's own wait is settled - a playhead that crept but sits below it is still
+   * waiting.
+   */
+  readonly readyState: number;
   play(): Promise<void>;
   pause(): void;
 }
+
+/** `HTMLMediaElement.HAVE_FUTURE_DATA`: enough is decoded ahead for the engine to play on. */
+export const HAVE_FUTURE_DATA = 3;
 
 /** What the player needs from outside: the network, the seal, the media source, a timer. */
 export interface LivePlayerDeps {
@@ -251,10 +261,11 @@ export class LivePlayer {
   private running = false;
   private stalled = false;
   /**
-   * Where the playhead stood at the engine's own wait (`held`, media buffered ahead of it), until
-   * the next delivery reads whether it moved since; null when no such wait is open.
+   * The engine's own wait (`held`, media buffered ahead of the playhead): where the playhead stood
+   * and the monotonic clock then, until the next delivery reads whether it ended; null when none is
+   * open.
    */
-  private heldAt: number | null = null;
+  private held: { at: number; wallMs: number } | null = null;
   private broadcasterQuiet = false;
   /** How far behind the edge to sit, from the delivery cadence this run measures. */
   private readonly policy = new LiveBufferPolicy();
@@ -355,7 +366,7 @@ export class LivePlayer {
         console.debug(
           `[LIVE] viewer ${this.liveId}: waiting at ${at.toFixed(2)} with ${wait.ahead.toFixed(2)} s buffered ahead ${formatLiveRanges(ranges)} - the engine's own wait`
         );
-        this.heldAt = at;
+        this.held = { at, wallMs: this.deps.now() };
         return;
       case 'time-gap':
         // The broadcaster re-acquired its camera, its timestamps moved forward: no engine plays
@@ -408,7 +419,7 @@ export class LivePlayer {
     this.openFailures = 0;
     this.appendFailures = 0;
     this.stalled = false;
-    this.heldAt = null;
+    this.held = null;
     this.broadcasterQuiet = false;
     this.policy.reset();
     this.appended = 0;
@@ -786,23 +797,32 @@ export class LivePlayer {
   }
 
   /**
-   * Reads the engine's own wait ({@link heldAt}) at a delivery and closes it: a playhead that moved
-   * since ended it by itself (said, nothing to do); one still where it waited is a stall the engine
-   * did not recover from, latched for this delivery's re-anchor. The proof is the playhead, read at
-   * a delivery the poll was making anyway - no timer.
+   * Reads the engine's own wait ({@link held}) at a delivery and closes it. It ENDED only when the
+   * engine says it plays on - the playhead moved, `readyState` is at least {@link HAVE_FUTURE_DATA}
+   * and the video is not paused: a playhead that crept a sub-frame (WebKit) or recovered and froze
+   * again with no second `waiting` fails that, and is a stall like any other, latched for this
+   * delivery's re-anchor. An ended wait says how long it held the picture: the wall time since it
+   * began minus the media played meanwhile, against {@link LIVE_PLAYER_HELD_WAIT_BUDGET_MS} - the
+   * rig's judge counts a longer hold as a stall. Read at a delivery the poll was making anyway: no
+   * timer.
    */
   private settleHeldWait(): void {
-    const heldAt = this.heldAt;
-    if (heldAt === null) return;
-    this.heldAt = null;
+    const held = this.held;
+    if (held === null) return;
+    this.held = null;
     const at = this.video.currentTime;
-    if (at !== heldAt) {
-      console.debug(
-        `[LIVE] viewer ${this.liveId}: the engine's own wait at ${heldAt.toFixed(2)} ended by itself, now at ${at.toFixed(2)}`
-      );
+    const playing =
+      at !== held.at && this.video.readyState >= HAVE_FUTURE_DATA && !this.video.paused;
+    if (!playing) {
+      this.latchStall(at);
       return;
     }
-    this.latchStall(at);
+    const wallMs = Math.max(0, this.deps.now() - held.wallMs);
+    const playedMs = Math.max(0, (at - held.at) * 1000);
+    const heldMs = Math.max(0, wallMs - playedMs);
+    console.debug(
+      `[LIVE] viewer ${this.liveId}: the engine's own wait at ${held.at.toFixed(2)} ended by itself after ${Math.round(wallMs)} ms, now at ${at.toFixed(2)}: held about ${Math.round(heldMs)} ms (budget ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms)`
+    );
   }
 
   /** A stall at `at`: said once, and latched for the next delivery's re-anchor. */
@@ -843,7 +863,7 @@ export class LivePlayer {
     }
     this.video.currentTime = Math.max(start, end - target / 1000);
     // A seek ends any wait of the engine's own: the playhead it moved proves nothing about it.
-    this.heldAt = null;
+    this.held = null;
     this.seeks++;
     console.debug(
       `[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`

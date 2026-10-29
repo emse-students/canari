@@ -23,6 +23,7 @@ import {
   type LiveSourceBufferLike,
   type LivePlayerDeps,
 } from './livePlayer';
+import { LIVE_PLAYER_HELD_WAIT_BUDGET_MS } from './constants';
 import { LiveRefusalError } from './api';
 import { LiveSegmentOpenError, openLiveSegment, sealLiveSegment } from './liveCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -173,6 +174,7 @@ let video: {
   currentTime: number;
   paused: boolean;
   seeking: boolean;
+  readyState: number;
   play: () => Promise<void>;
   pause: () => void;
 };
@@ -221,6 +223,7 @@ beforeEach(() => {
     currentTime: 0,
     paused: true,
     seeking: false,
+    readyState: 4, // HAVE_ENOUGH_DATA: an engine playing on
     play: vi.fn(async () => {
       video.paused = false;
     }),
@@ -697,13 +700,13 @@ describe('the buffer policy (L-F1)', () => {
       `[LIVE] viewer ${LIVE}: waiting at 2.50 with 3.50 s buffered ahead [0.00-6.00] - the engine's own wait`
     );
     expect(video.currentTime).toBe(2.5);
-    video.currentTime = 2.7; // it resumed by itself
+    video.currentTime = 4.4; // it resumed by itself: 1.9 s played in the next 2 s
     clock = 4_000;
-    live.push(1); // 4 -> [0, 8]: 5.3 s ahead, inside the target and its slack
+    live.push(1); // 4 -> [0, 8]: 3.6 s ahead, inside the target and its slack
     await tickTimer();
-    expect(video.currentTime).toBe(2.7); // no seek: nothing was missing
+    expect(video.currentTime).toBe(4.4); // no seek: nothing was missing
     expect(said()).toContain(
-      `[LIVE] viewer ${LIVE}: the engine's own wait at 2.50 ended by itself, now at 2.70`
+      `[LIVE] viewer ${LIVE}: the engine's own wait at 2.50 ended by itself after 2000 ms, now at 4.40: held about 100 ms (budget ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms)`
     );
     expect(said().filter((l) => l.includes('stall'))).toEqual([]);
     debug.mockRestore();
@@ -726,6 +729,50 @@ describe('the buffer policy (L-F1)', () => {
       `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 8.00, 4000 ms behind`
     );
     expect(video.currentTime).toBe(4); // end 8 - target 4
+    debug.mockRestore();
+  });
+
+  it('a playhead that moved while the engine still cannot play on (readyState under HAVE_FUTURE_DATA) is a stall, not an ended wait', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]
+    await tickTimer();
+    video.currentTime = 2.5;
+    p.noteStall(); // held: 3.5 s ahead
+    // It crept (a sub-frame, or a recovery that froze again with no second `waiting`), and the
+    // engine still has only the current frame.
+    video.currentTime = 2.6;
+    video.readyState = 2; // HAVE_CURRENT_DATA
+    clock = 4_000;
+    live.push(1); // 4 -> [0, 8]
+    await tickTimer();
+    const said = debug.mock.calls.map((c) => String(c[0]));
+    expect(said).toContain(`[LIVE] viewer ${LIVE} stalled at 2.60 (target 4000 ms)`);
+    expect(said).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 8.00, 4000 ms behind`
+    );
+    expect(said.filter((l) => l.includes('ended by itself'))).toEqual([]);
+    expect(video.currentTime).toBe(4);
+    debug.mockRestore();
+  });
+
+  it("a paused video ends no wait of the engine's own: a stall", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1);
+    await tickTimer();
+    video.currentTime = 2.5;
+    p.noteStall();
+    video.currentTime = 2.9;
+    video.paused = true;
+    clock = 4_000;
+    live.push(1);
+    await tickTimer();
+    expect(debug.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE} stalled at 2.90 (target 4000 ms)`
+    );
     debug.mockRestore();
   });
 

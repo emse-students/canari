@@ -131,6 +131,17 @@ export const LIVE_PLAYER_DRIFT_SLACK_MS = 2 * LIVE_SEGMENT_MS;
  */
 export const LIVE_BROADCASTER_QUIET_MS = 3 * LIVE_SEGMENT_MS;
 
+/**
+ * The longest the engine's own wait (a `waiting` with media buffered ahead in the playhead's range:
+ * a decoder or renderer behind, nothing missing) may hold the picture before it counts as a stall,
+ * in ms. Under it the viewer neither seeks nor stalls - the old forward seek skipped media for a wait
+ * no seek shortens (LIVE-STALL-1, `1.5.1-alpha.8`: ~130 ms at 55.56, then 0.44 s skipped). No policy
+ * constant measures a freeze, so half a second: about where a viewer reads a pause as a hitch. ONE
+ * value, printed by the player and read by the rig's judge (`liverows.mjs`), which counts a longer
+ * hold as a stall.
+ */
+export const LIVE_PLAYER_HELD_WAIT_BUDGET_MS = 500;
+
 /** How much played media the viewer keeps behind its position, in ms, before trimming the buffer. */
 export const LIVE_PLAYER_KEEP_BEHIND_MS = 10_000;
 
