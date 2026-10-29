@@ -764,8 +764,8 @@ End-user (paying) surfaces:
   qualifies for a member price; the "for holders of" suffix names the tier the server read the tag
   as naming (`memberPriceTierKey`, `linkedTierName`). A viewer who pays the full price still reads
   what the holders of the linked tier pay ("5,00 EUR pour les détenteurs de Cotisation",
-  `memberOfferLabel`: the stored `amountCentsMember`, shown only when the server named the tier, as
-  information - never what this viewer is charged). A product with NO price at all (no grid, no
+  `memberOfferLabel`: the stored `amountCentsMember`, shown only when the server named the tier and
+  that tier has a single price - an unrankable one is refused every rise - as information - never what this viewer is charged). A product with NO price at all (no grid, no
   fixed amount, no free amount - the unpriced base tier every association gets when it enables
   cotisations) has no row or card (`hasAPrice` in `lib/shop/productCards.ts`): the checkout refuses
   it ("No amount provided"), and such a cotisation is granted by hand in the Achats tab. And the tier the viewer holds
