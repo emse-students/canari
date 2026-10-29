@@ -892,6 +892,19 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   pins nothing. The marker is in the sealed state, so a checkpoint and a restart before the merge
   keep it, and the load-time seeding skips any group with a pending commit. Clearing an external
   join's pending commit forgets the group: there is no prior epoch to fall back to.
+- **An unmerged external join is the crate's marker, never an openmls pending commit (settled
+  2026-10-27, `src/external_join_pending_tests.rs`).** openmls 0.9's `ExternalCommitBuilder::finalize`
+  stages the commit and merges it in the same call, so the joiner's group and its stored
+  `GroupState` are `Operational` at `base + 1` from the start: `has_pending_commit` answers `false`
+  before and after a save and reload, and openmls's `clear_pending_commit` has nothing to clear (it
+  ignores an `External` pending commit too). "Held unmerged" is `pending_external_joins` alone, and it
+  does survive the sealed save and load; `merge_pending_commit_for` after the reload ends it, and the
+  two devices then exchange messages. Dropping the join (`clear_pending_commit_for` -> `forget_group`)
+  leaves the provider's storage byte-identical to before the join, the signature key and key
+  packages included, and a pre-join key package still opens a Welcome. Keeping the group after a
+  "clear" leaves a group at an epoch the real group never reached: a member's frame is refused as
+  `PastEpochApplication`, its own frames are unreadable to the member, and a retry from a fresh base
+  is refused with `GroupAlreadyHeld`. So the only way to drop an external join is to drop the group.
 - **Events.** Every NEW device a merged commit admitted - ours or a peer's, the signer read from the
   verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
   `first-sight` / `key-changed`, `addedBy`). The diff is on `(identity, key)` pairs, never on leaf
