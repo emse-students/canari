@@ -28,6 +28,7 @@ function loadedSpace(): ManagedSpace {
     slotMode: 'step',
     stepMinutes: 30,
     maxSteps: 4,
+    slotMinutes: null,
     nameVisibility: 'occupied',
     discoverability: 'listed',
     audience: AUDIENCE,

@@ -26,6 +26,7 @@
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
   import {
+    durationChoices,
     MAX_DURATION_CHOICES,
     newWizardDraft,
     SLOT_LENGTH_CHOICES,
@@ -131,19 +132,6 @@
       sub: () => m.bookings_avail_tpl_empty_sub(),
     },
   ];
-
-  /** A duration in the reader's words: "30 min", "2 h", "1 h 30". */
-  function duration(minutes: number): string {
-    const h = Math.floor(minutes / 60);
-    const rest = minutes % 60;
-    if (h === 0) return m.bookings_wizard_minutes({ minutes: rest });
-    return rest === 0
-      ? m.bookings_wizard_hours({ hours: h })
-      : m.bookings_wizard_hours_minutes({ hours: h, minutes: rest });
-  }
-
-  const choices = (values: readonly number[]) =>
-    values.map((v) => ({ value: String(v), label: duration(v) }));
 
   function useTemplate(key: TemplateKey) {
     Log.d('BOOKINGS', `wizard template=${key}`);
@@ -391,14 +379,14 @@
                   id="wizard-max"
                   label={m.bookings_wizard_max_label()}
                   value={String(draft.maxMinutes)}
-                  options={choices(MAX_DURATION_CHOICES)}
+                  options={durationChoices(MAX_DURATION_CHOICES)}
                   onValueChange={(v) => (draft.maxMinutes = Number(v))}
                 />
                 <Select
                   id="wizard-step"
                   label={m.bookings_wizard_step_label()}
                   value={String(draft.stepMinutes)}
-                  options={choices(STEP_CHOICES)}
+                  options={durationChoices(STEP_CHOICES)}
                   onValueChange={(v) => (draft.stepMinutes = Number(v))}
                 />
               </span>
@@ -430,7 +418,7 @@
                 id="wizard-slot"
                 label={m.bookings_wizard_slot_length()}
                 value={String(draft.slotMinutes)}
-                options={choices(SLOT_LENGTH_CHOICES)}
+                options={durationChoices(SLOT_LENGTH_CHOICES)}
                 onValueChange={(v) => (draft.slotMinutes = Number(v))}
               />
               <span class="text-text-muted block text-xs" role="status">

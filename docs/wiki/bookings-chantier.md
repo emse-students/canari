@@ -259,18 +259,31 @@ The creation wizard (WP-R7) makes such spaces common, which is how it was found.
   own border in `WeekPainter`; a `step` space keeps `weekRunsOf`, where touching hours ARE one
   window.
 - **Close** (`paintSlotRows`): every slot the rectangle touches goes, whole - a slot is never cut.
-- **Open**: new slots of `slotLengthOf` (the week's most common slot length, ties to the shorter;
-  the 30-min grain when there is none), one for each start inside the rectangle, never past 24:00,
+- **Open**: new slots of `slotLengthFor` - the space's STORED `slotMinutes` (below), else
+  `slotLengthOf` (the week's most common slot length, ties to the shorter; the 30-min grain when
+  there is none), one for each start inside the rectangle, never past 24:00,
   skipping any that would overlap a slot already there. A tap on a closed cell opens one slot; with
   25-min slots a 30-min cell holds two starts, so it opens two. A slot crossing midnight is ONE
   slot: drawn on both days, closed whole from either.
-- **THE SLOT LENGTH IS STORED NOWHERE** (review of #2691): the wizard's "Creneaux fixes" length
-  only shapes the lines it cuts (`fixedSlotLines`, WP-R7); no column or setting holds it, so the
-  lines are the only evidence and an emptied week falls back to the grain. **The smallest honest
-  place, if the owner wants it kept**: a nullable `slotMinutes` on `booking_spaces`, set only in a
-  `slots` space (a CHECK mirroring the step pair), written by the wizard and the mode switch, and
-  read by the painter before `slotLengthOf` - one migration, one DTO field. Not built: a schema
-  change for a fallback is the owner's call.
+- **THE SLOT LENGTH IS STORED (decided by the owner on 2026-10-29, built for 1.5.1).** Found in the
+  review of #2691: the wizard's "Creneaux fixes" length only shaped the lines it cut
+  (`fixedSlotLines`, WP-R7), so the lines were the only evidence and an emptied week fell back to
+  the grain. Now **migration 116** adds a nullable `booking_spaces."slotMinutes"`, held by the CHECK
+  `booking_spaces_slot_minutes` (NULL, or a `slots` space and 15 to 120 minutes - the mirror of
+  `booking_spaces_step_shape`, the range the wizard's `SLOT_LENGTH_CHOICES` span). The DTO field
+  (`SpaceSettingsDto.slotMinutes`, so `CreateSpaceDto` too) is validated to the same range; the
+  service refuses a length on a step space, or out of range, as `slot-shape`, and a switch to
+  `step` that does not name one CLEARS it, as a switch to `slots` clears the step pair. Written by
+  the wizard's ONE create call (`wizardPayload`, slots only) and by the settings' mode switch: the
+  "Duree d'un creneau" field under the mode in `SpaceEditor` (a SAVED step space switched to slots
+  starts at 30 min; going back to the saved mode restores the saved length). Returned by the
+  managed read (`managedSpaceView`), and handed through `ResourceEditor` to `AvailabilityEditor`
+  as the SAVED value, read by the painter (`slotLengthFor`) BEFORE `slotLengthOf`.
+  **No backfill**: a slots space created before 116 keeps `slotMinutes` NULL and keeps inferring
+  its length from its lines, as it did before; its editor offers "Lue dans les creneaux existants"
+  until a length is chosen and saved. **Not personal data** (one number describing a space's
+  configuration), so the [register of processing](compliance/register-of-processing.md) is
+  unchanged.
 - **The cap** (`MAX_AVAILABILITY_LINES`, 200, the server's DTO, now in `availability.ts` and shared
   with the wizard): an open stops at it and counts what it could not open (`refused`); the painter
   says so in the wizard's sentence (`bookings_avail_lines_cap`), so a drag over a week of 25-min
@@ -287,6 +300,17 @@ spanning midnight; the cap and its count; the saved lines round-tripped) and
 elsewhere leaves touching slots three lines and three drawn runs; a step space still merges; a
 paint at the cap says so and saves 200 lines).
 Control: with the step painting on a fixed-slot space, the "touching slots separate" test fails.
+The stored length (migration 116): `availabilityPaint.test.ts` (the stored length first, the lines
+only when none is stored; an emptied week opens slots of the stored length, the grain when unstored;
+a stored length beats the lines'), `AvailabilityEditor.painter.svelte.test.ts` (mounted: an emptied
+week with a stored 45 min opens 14:00-14:45 and says so; an unstored space still reads its lines),
+`wizard.test.ts` (the slots payload carries `slotMinutes`, the step one does not),
+`spaceSettings.test.ts` (read back, unstored kept null, a switch to step sends null),
+`SpaceEditor.hiddenColumn.svelte.test.ts` (the mounted switch saves 30 then null),
+`create-space.dto.spec.ts` (15..120 whole or null, nothing else), and
+`bookings.service.integration.spec.ts` against PostgreSQL with 087 onwards applied twice (create
+and read back, the switch writes and clears it, `slot-shape` on a step space and out of range, the
+CHECK under the service; the schema-equality test holds the entity's CHECK to the migration's).
 **Not yet seen** on a phone.
 
 ## WP-R5 as built - the organiser's dashboard (D50, 2026-10-29)
