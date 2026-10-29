@@ -32,6 +32,7 @@ import {
 } from './chat.mjs';
 import { RESOLVE } from './cdp.mjs';
 import { closeOverlays } from './groupnav.mjs';
+import { GRANT_ADD_MARK, markGrantAddJs } from './grantpanel.mjs';
 import {
   currentLabelOf,
   decidePickerChoice,
@@ -744,31 +745,14 @@ export async function grantChannelAccess(cx, displayName) {
   await until(cx, `!!${RESOLVE}('text=${displayName}')`, 8000);
   await realClick(cx, `text=${displayName}`);
 
-  // THE PANEL'S OWN ADD BUTTON, FOUND FROM ITS SEARCH FIELD - never the first "Ajouter" on the page.
-  // A member's join-request banner carries an "Ajouter" too, and a page-wide `text=` click approved
-  // a device's join instead of granting the salon (KICK-COMMIT on `1.5.1-alpha.7`, 2026-10-29: the
-  // grant never ran, and W1 logged `approved by this member` at that instant). So the button is
-  // marked from the field's nearest ancestor that holds one, and that mark is what is waited on
-  // and clicked.
-  const add = caption('common_add_button');
-  const markAdd = `(function () {
-       var input = document.querySelector(${JSON.stringify(`input[placeholder=${JSON.stringify(placeholder)}]`)});
-       for (var el = input && input.parentElement; el; el = el.parentElement) {
-         var b = [].slice.call(el.querySelectorAll('button')).filter(function (x) {
-           return (x.innerText || '').trim() === ${JSON.stringify(add)};
-         })[0];
-         if (b) {
-           [].slice.call(document.querySelectorAll('[data-harness-grant-add]')).forEach(function (x) {
-             x.removeAttribute('data-harness-grant-add');
-           });
-           b.setAttribute('data-harness-grant-add', '1');
-           return !b.disabled;
-         }
-       }
-       return false;
-     })()`;
+  // THE PANEL'S OWN ADD BUTTON, never the first "Ajouter" on the page: see `grantpanel.mjs`.
+  const markAdd = markGrantAddJs({
+    placeholder,
+    add: caption('common_add_button'),
+    section: caption('chat_channel_add_user_label'),
+  });
   await until(cx, markAdd, 8000);
-  await realClick(cx, '[data-harness-grant-add]');
+  await realClick(cx, `[${GRANT_ADD_MARK}]`);
   await until(
     cx,
     `(function () {

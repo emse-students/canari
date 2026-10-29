@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-113 scripts.
+114 scripts.
 
 | script | what it is |
 |---|---|
@@ -64,6 +64,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `gaprows.mjs` | THE GAP ROWS OF THE 1.4.1 CAMPAIGN - frames that arrive ahead of their commits, frames delivered |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
+| `grantpanel.mjs` | THE SALON ACCESS PANEL'S OWN "ADD" BUTTON, FOUND FROM ITS SEARCH FIELD - a page-side snippet. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
 | `handrows.mjs` | THE ROWS ONLY A PERSON CAN PLAY, AND HOW THEIR WORD IS WRITTEN - `archive/handrow.mjs`'s pure half. |
 | `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
@@ -255,7 +256,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-67 scripts.
+68 scripts.
 
 | script | what it is |
 |---|---|
@@ -286,6 +287,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/gap-selftest.mjs` | THE GAP ROWS' PULL REWRITES AND JUDGEMENTS, PINNED (`gaprows.mjs`). |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
+| `archive/grantpanel-selftest.mjs` | THE GRANT CLICKS THE PANEL'S OWN "ADD", NEVER A JOIN-REQUEST BANNER'S (`grantpanel.mjs`). |
 | `archive/handrow-selftest.mjs` | THE HAND ROWS' RECORDING, PINNED (`handrows.mjs`). |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
 | `archive/idpform-selftest.mjs` | The rig's sign-in reads the MiConnect terms page as a stage it answers, not as a stall. |
@@ -384,4 +386,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-323 scripts in total.
+325 scripts in total.

@@ -44,7 +44,7 @@ import { dismissMintedNoticesOn } from '../devicenotice.mjs';
 import { awaitCommunityRouting, awaitUserRouting, channelIdOf, channelMessages, communityChannels, communityDistribution, groupCommits, groupEpochAndRoster, keyGroupsOfDevice, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { becomeANewDeviceAndConfirm } from '../newdevice.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
-import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, bootForgiven, removalNarration, removalOwn } from '../removalrows.mjs';
+import { COMMIT_ROUNDS, REMOVAL_ROWS, ROUND_MS, bootForgiven, entriesOf, removalNarration, removalOwn } from '../removalrows.mjs';
 import { exitOnRecorded, keepConsoles, mark, record } from '../results.mjs';
 import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
 import { EVICTED_REJOIN_NARRATION, PAGE_BOOT_NARRATION, consoleDump, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
@@ -211,7 +211,7 @@ try {
     messages: channelMessages(v.channelId),
   };
   rowIds.subjectDeviceIds = spec.subject === 'W2' ? subjectDevices : [];
-  rowIds.entries =[...new Set(rowIds.keyGroupIds)].reduce((n, g) => n + (groupEpochAndRoster(g)?.devices.length ?? 0), 0);
+  rowIds.entries = entriesOf(rowIds.keyGroupIds, groupEpochAndRoster);
   const origin = await evaluate(w1, TIME_ORIGIN);
 
   // THE GESTURE - one per row. Each window's event index here is what `bootForgiven` dates its

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHASES, devicesFor } from '../checks.mjs';
-import { COMMIT_ROUNDS, REMOVAL_ROWS, bootForgiven, pinSalonNeedles, removalNarration, removalOwn } from '../removalrows.mjs';
+import { COMMIT_ROUNDS, REMOVAL_ROWS, bootForgiven, entriesOf, pinSalonNeedles, removalNarration, removalOwn } from '../removalrows.mjs';
 import { ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
@@ -71,6 +71,7 @@ const IDS = {
   subjectUserId: SUBJ,
   ownerDeviceIds: [`tauri-${OWNER}-mvn33w3u-4b2d`, `web-${OWNER}-mvsslaf7-h7qh`],
   messages: [{ id: '858b036a-0000-4000-8000-000000000006', clientId: 'a677dd1a-0000-4000-8000-000000000007' }],
+  entries: 2,
 };
 const rep = (lines) => ({ errors: [], warnings: [], unexplained: lines, badHttp: [], exceptions: [], severe: [], wsEvents: [] });
 /** Every line forgiven, together - so a repeat is counted against its budget. */
@@ -173,6 +174,28 @@ ok('... NOT in a kick, where the owner asks nothing', !forgiven(K, 'W1', MINTED_
 ok('... NOT at log', !forgiven(K, 'W1', NOT_NAMED.replace('debug:', 'log:'), subjIds));
 
 // THE BUDGETS (review, 2026-10-29): a forgiven sentence said more often than the row decides it is dirt.
+{
+  const ROSTERS = { g1: { devices: ['d1', 'd2', 'd3'] }, g2: { devices: ['d1', 'd4'] }, g3: { devices: [] } };
+  const throws = (f) => {
+    try {
+      f();
+      return false;
+    } catch (e) {
+      return /no readable roster for key group g9/.test(String(e?.message));
+    }
+  };
+  ok('entriesOf sums the devices over the groups (3 + 2 + 0)', entriesOf(['g1', 'g2', 'g3'], (g) => ROSTERS[g]) === 5);
+  ok('entriesOf of no group is 0', entriesOf([], (g) => ROSTERS[g]) === 0);
+  ok('entriesOf NAMES a group with no readable roster instead of counting it 0', throws(() => entriesOf(['g1', 'g9'], (g) => ROSTERS[g])));
+  ok('a row without counted entries is refused, not budgeted on the key groups', (() => {
+    try {
+      removalNarration(K, 'W1', { ...IDS, entries: undefined });
+      return false;
+    } catch (e) {
+      return /ids\.entries is not counted/.test(String(e?.message));
+    }
+  })());
+}
 ok('one self-entry per device per key group is forgiven (entries 3), a fourth is NOT', allForgiven(K, 'W1', [SELF_ENTRY, SELF_ENTRY, SELF_ENTRY], { ...IDS, entries: 3 }) && !allForgiven(K, 'W1', [SELF_ENTRY, SELF_ENTRY, SELF_ENTRY, SELF_ENTRY], { ...IDS, entries: 3 }));
 ok('the kick said once is forgiven, said twice is NOT', allForgiven(K, 'W1', [REMOVE_COMMUNITY]) && !allForgiven(K, 'W1', [REMOVE_COMMUNITY, REMOVE_COMMUNITY]));
 ok('the one message sent twice is NOT', !allForgiven(K, 'W1', ['log: [SALON-ECHO] a677dd1a… sending', 'log: [SALON-ECHO] a677dd1a… sending']));

@@ -62,7 +62,7 @@ export const REMOVAL_ROWS = {
     committer: 'remaining',
     devices: ['W1', 'W6', 'W3'],
     groups: ['community', 'salon'],
-    what: "W6 revokes a fresh device of the owner account (W3) that loaded a community and its private salon: every key group the device was routed on advances by a commit of a remaining device",
+    what: 'W6 revokes a fresh device of the owner account (W3) that loaded a community and its private salon: every key group the device was routed on advances by a commit of a remaining device',
   },
 };
 
@@ -81,8 +81,16 @@ export const REMOVAL_ROWS = {
 export function removalOwn(row, m) {
   const spec = REMOVAL_ROWS[row];
   const groups = m.groups ?? [];
-  const missing = spec.groups.filter((scope) => !groups.some((g) => g.scope === scope && g.routedBefore));
-  if (missing.length) return { verdict: 'VACUOUS', failures: [`not armed: the subject was routed on no ${missing.join(' or ')} key group before the gesture`] };
+  const missing = spec.groups.filter(
+    (scope) => !groups.some((g) => g.scope === scope && g.routedBefore)
+  );
+  if (missing.length)
+    return {
+      verdict: 'VACUOUS',
+      failures: [
+        `not armed: the subject was routed on no ${missing.join(' or ')} key group before the gesture`,
+      ],
+    };
   const failures = [];
   const subject = new Set(m.subjectDevices ?? []);
   const actor = new Set(m.actorDevices ?? []);
@@ -96,14 +104,25 @@ export function removalOwn(row, m) {
     }
     if (g.routedAfter) failures.push(`${tag}: the subject is still routed after the gesture`);
     if (g.movedAtRound === null) {
-      failures.push(`${tag}: the epoch did not advance past ${g.before} within ${COMMIT_ROUNDS} rounds`);
+      failures.push(
+        `${tag}: the epoch did not advance past ${g.before} within ${COMMIT_ROUNDS} rounds`
+      );
       continue;
     }
     const removal = (g.commits ?? []).filter((c) => c.baseEpoch >= g.before);
-    const by = spec.committer === 'actor' ? removal.filter((c) => actor.has(c.senderDeviceId)) : removal.filter((c) => !subject.has(c.senderDeviceId));
-    if (!by.length) failures.push(`${tag}: no commit from epoch ${g.before} on was sent by ${spec.committer === 'actor' ? "the actor's session" : 'a remaining device'} (${JSON.stringify(removal)})`);
+    const by =
+      spec.committer === 'actor'
+        ? removal.filter((c) => actor.has(c.senderDeviceId))
+        : removal.filter((c) => !subject.has(c.senderDeviceId));
+    if (!by.length)
+      failures.push(
+        `${tag}: no commit from epoch ${g.before} on was sent by ${spec.committer === 'actor' ? "the actor's session" : 'a remaining device'} (${JSON.stringify(removal)})`
+      );
   }
-  if (spec.committer === 'actor' && m.reloaded) failures.push("the actor's page was reloaded - the removal must come from the session as it is");
+  if (spec.committer === 'actor' && m.reloaded)
+    failures.push(
+      "the actor's page was reloaded - the removal must come from the session as it is"
+    );
   return { verdict: failures.length ? 'FAIL' : 'PASS', failures };
 }
 
@@ -140,7 +159,8 @@ const N = String.raw`\d+`;
 /** One or more: a count of zero is a different sentence (nothing happened) and stays dirt. */
 const P = String.raw`[1-9]\d*`;
 /** A device id as the app shortens it in a Graine line: `tauri-f7a9bb80…-mvn33w3u-4b2d`. */
-const deviceShort = (d) => String(d).replace(/^((?:web|tauri)-[0-9a-f]{8})[0-9a-f]*(-.+)$/, '$1…$2');
+const deviceShort = (d) =>
+  String(d).replace(/^((?:web|tauri)-[0-9a-f]{8})[0-9a-f]*(-.+)$/, '$1…$2');
 
 /**
  * The row's ids the narration is scoped to.
@@ -153,9 +173,29 @@ const deviceShort = (d) => String(d).replace(/^((?:web|tauri)-[0-9a-f]{8})[0-9a-
  * @property {string|null} subjectUserId the peer account a kick or a salon revoke removes (W2), or null
  * @property {string[]} ownerDeviceIds the owner's devices other than W1's, on the row's key groups
  * @property {{id: string, clientId: string}[]} messages the salon's messages: the one the row sent
- * @property {number} [entries] devices on the row's key groups, summed over the groups: each enters each once
+ * @property {number} entries devices on the row's key groups, summed over the groups: each enters each once (`entriesOf`)
  * @property {string[]} [subjectDeviceIds] the subject's devices on the salon (W2 rows)
  */
+
+/**
+ * The `entries` budget: every device of every member enters each of the row's key groups once, so
+ * the devices are summed over the groups' rosters.
+ *
+ * A GROUP WHOSE ROSTER CANNOT BE READ IS NAMED, NEVER COUNTED AS EMPTY: a zero there would shrink
+ * the budget and turn the next run's legitimate lines into dirt with no trace of why.
+ *
+ * @param {string[]} keyGroupIds the row's key groups, already distinct
+ * @param {(groupId: string) => {devices: unknown[]}|null|undefined} rosterOf the group's roster, from the server
+ * @returns {number}
+ */
+export function entriesOf(keyGroupIds, rosterOf) {
+  return keyGroupIds.reduce((n, g) => {
+    const roster = rosterOf(g);
+    if (!roster || !Array.isArray(roster.devices))
+      throw new Error(`entriesOf: no readable roster for key group ${g}`);
+    return n + roster.devices.length;
+  }, 0);
+}
 
 /**
  * HOW MANY TIMES EACH DECISION HAPPENS IN A ROW, from what the runner does - each budget below is one
@@ -166,11 +206,13 @@ function decisions(row, ids) {
   const spec = REMOVAL_ROWS[row];
   const grants = spec.subject === 'W2' ? 1 : 0;
   const revokes = row === 'SALON-REVOKE-COMMIT' ? 1 : 0;
+  if (!Number.isInteger(ids.entries))
+    throw new Error(`decisions(${row}): ids.entries is not counted (entriesOf)`);
   return {
     channels: ids.channelIds.length,
     salons: Math.max(1, ids.channelIds.length - 1),
     keyGroups: ids.keyGroupIds.length,
-    entries: ids.entries ?? ids.keyGroupIds.length,
+    entries: ids.entries,
     grants,
     panels: grants + revokes,
     messages: ids.messages.length,
@@ -202,7 +244,14 @@ const SALON_NEEDLES = [
 ];
 
 function pinnedSalonNarration(row, ids) {
-  return pinSalonNeedles(salonNarration({ workspaceId: ids.workspaceId, channelIds: ids.channelIds, keyGroupIds: ids.keyGroupIds }), decisions(row, ids));
+  return pinSalonNeedles(
+    salonNarration({
+      workspaceId: ids.workspaceId,
+      channelIds: ids.channelIds,
+      keyGroupIds: ids.keyGroupIds,
+    }),
+    decisions(row, ids)
+  );
 }
 
 /**
@@ -215,7 +264,8 @@ function pinnedSalonNarration(row, ids) {
 export function pinSalonNeedles(needles, n) {
   return needles.flatMap((re) => {
     const rule = SALON_NEEDLES.find(([fragment]) => re.source.includes(fragment));
-    if (!rule) throw new Error(`removalNarration: salonNarration needle ${re} has no level and budget here`);
+    if (!rule)
+      throw new Error(`removalNarration: salonNarration needle ${re} has no level and budget here`);
     const [, levels, budget, per = 1] = rule;
     if (!levels) return [];
     return [atLevels(levels, re, (typeof budget === 'number' ? budget : n[budget]) * per)];
@@ -244,8 +294,16 @@ function communityNarration(row, ids) {
     ...pinnedSalonNarration(row, ids),
     at(D, String.raw`\[TRUST\] ${P} device event\(s\) handed to the notices \(drain end\)`, k),
     at(D, String.raw`\[DEVICE_NOTICE\] ${P} device event\(s\) to sort \(\+0 undecided\)`, k),
-    at(D, String.raw`\[DEVICE_NOTICE\] self-admitted entry in ${kg}\.\.\. - not a conversation, nothing to say`, k),
-    at(L, String.raw`\[DEVICE_NOTICE\] ${P} device\(s\) seen for the first time here are not new`, k),
+    at(
+      D,
+      String.raw`\[DEVICE_NOTICE\] self-admitted entry in ${kg}\.\.\. - not a conversation, nothing to say`,
+      k
+    ),
+    at(
+      L,
+      String.raw`\[DEVICE_NOTICE\] ${P} device\(s\) seen for the first time here are not new`,
+      k
+    ),
   ];
 }
 
@@ -265,15 +323,33 @@ function senderNarration(row, ids) {
   const o = short(ids.ownerUserId);
   const m = decisions(row, ids).messages;
   const cid = oneOf(ids.messages.map((x) => short(x.clientId)).filter(Boolean));
-  const settled = oneOf(ids.messages.filter((x) => x.clientId).map((x) => `${short(x.clientId)}… settled as ${short(x.id)}…`));
+  const settled = oneOf(
+    ids.messages
+      .filter((x) => x.clientId)
+      .map((x) => `${short(x.clientId)}… settled as ${short(x.id)}…`)
+  );
   return [
-    at(D, String.raw`\[CHAT_VIEW\] channel_ messages ${m} \(hasNewMessage=true, response=follow-bottom\)`, m),
+    at(
+      D,
+      String.raw`\[CHAT_VIEW\] channel_ messages ${m} \(hasNewMessage=true, response=follow-bottom\)`,
+      m
+    ),
     at(L, String.raw`\[SALON-ECHO\] ${cid}… sending`, m),
     at(L, String.raw`\[SALON-ECHO\] ${settled}`, m),
     at(D, String.raw`\[SALON-UNSENT\] ${P} entr\(y/ies\) forgotten: the server holds them`, m),
-    at(L, String.raw`\[SALON-REPEAT\] the server echoed client id ${cid}\.\.\.: a repeated send is answered with its row - 0 waiting repeat\(s\) released`, 1),
+    at(
+      L,
+      String.raw`\[SALON-REPEAT\] the server echoed client id ${cid}\.\.\.: a repeated send is answered with its row - 0 waiting repeat\(s\) released`,
+      1
+    ),
     // One needle per device, each answered once.
-    ...(ids.ownerDeviceIds ?? []).map((d) => at(I, String.raw`\[GRAINE\] answered ${o}…:${esc(deviceShort(d))} with ${P} seed\(s\) in ${P} page\(s\)`, 1)),
+    ...(ids.ownerDeviceIds ?? []).map((d) =>
+      at(
+        I,
+        String.raw`\[GRAINE\] answered ${o}…:${esc(deviceShort(d))} with ${P} seed\(s\) in ${P} page\(s\)`,
+        1
+      )
+    ),
   ];
 }
 
@@ -293,19 +369,39 @@ function gestureNarration(row, ids) {
   const s = short(ids.subjectUserId);
   const o = short(ids.ownerUserId);
   const n = decisions(row, ids);
-  const departure = (where, max) => at(L, String.raw`\[GRAINE\] DEPARTURE ${s} from ${where}: the actor's device ${o} holds a leaf - left to it; decided again only if it releases it`, max);
+  const departure = (where, max) =>
+    at(
+      L,
+      String.raw`\[GRAINE\] DEPARTURE ${s} from ${where}: the actor's device ${o} holds a leaf - left to it; decided again only if it releases it`,
+      max
+    );
   if (row === 'KICK-COMMIT') {
     return [
-      at(L, String.raw`\[GRAINE\] REMOVE community ${ws}: ${s} kicked from the community - committing it from this device`, 1),
-      at(L, String.raw`\[GRAINE\] REMOVE ${s}: ${P} private salon\(s\) of ${ws} registered here - each committed in turn`, 1),
-      at(L, String.raw`\[GRAINE\] REMOVE salon ${ch} of ${ws}: ${s} kicked from the community - committing it from this device`, n.salons),
+      at(
+        L,
+        String.raw`\[GRAINE\] REMOVE community ${ws}: ${s} kicked from the community - committing it from this device`,
+        1
+      ),
+      at(
+        L,
+        String.raw`\[GRAINE\] REMOVE ${s}: ${P} private salon\(s\) of ${ws} registered here - each committed in turn`,
+        1
+      ),
+      at(
+        L,
+        String.raw`\[GRAINE\] REMOVE salon ${ch} of ${ws}: ${s} kicked from the community - committing it from this device`,
+        n.salons
+      ),
       departure(`community ${ws}`, 1),
       departure(`salon ${ch} of ${ws}`, n.salons),
     ];
   }
   if (row === 'SALON-REVOKE-COMMIT') {
     // The access panel is a side panel on this viewport; going back to the salon closes it.
-    return [departure(`salon ${ch} of ${ws}`, n.salons), at(D, String.raw`\[historyOverlay\] a navigation closes ${P} open overlay\(s\)`, n.panels)];
+    return [
+      departure(`salon ${ch} of ${ws}`, n.salons),
+      at(D, String.raw`\[historyOverlay\] a navigation closes ${P} open overlay\(s\)`, n.panels),
+    ];
   }
   return [];
 }
@@ -347,10 +443,22 @@ function subjectNarration(row, ids) {
   const o = short(ids.ownerUserId);
   const m = decisions(row, ids).messages;
   return [
-    at(D, String.raw`\[GRAINE\] seed [A-Za-z0-9_-]{16,} from ${o}… for channel ${ch} - v2 endorsement verified from the tree`, m),
-    at(D, String.raw`\[GRAINE\] drain over - re-reading ${P} salon\(s\) once for the seeds it brought`, m),
+    at(
+      D,
+      String.raw`\[GRAINE\] seed [A-Za-z0-9_-]{16,} from ${o}… for channel ${ch} - v2 endorsement verified from the tree`,
+      m
+    ),
+    at(
+      D,
+      String.raw`\[GRAINE\] drain over - re-reading ${P} salon\(s\) once for the seeds it brought`,
+      m
+    ),
     at(D, String.raw`\[notificationPreferences\.fetchChannelLevel\(${ch}…\)\]`, 1),
-    at(D, String.raw`\[CHAT_VIEW\] channel_ messages ${m} \(hasNewMessage=true, response=(?:follow-bottom|repin-entry)\)`, m),
+    at(
+      D,
+      String.raw`\[CHAT_VIEW\] channel_ messages ${m} \(hasNewMessage=true, response=(?:follow-bottom|repin-entry)\)`,
+      m
+    ),
   ];
 }
 
@@ -370,10 +478,26 @@ function mintedDeviceNarration(ids) {
   const o = short(ids.ownerUserId);
   return [
     at(L, String.raw`\[DEVICE_NOTICE\] a new device was added to this account \(first-sight\)`, 1),
-    at(L, String.raw`\[WELCOME_REQ\] ${o}…:web-${o}\.\.\. is a device this one never saw, of a member of [0-9a-f]{8}\.\.\. - not added automatically, a member's approval of key [0-9a-f]{8}… is asked`, 1),
-    at(L, String.raw`\[JOIN_REQUEST\] an unseen device web-${o}\.\.\. of ${o}… asks to join [0-9a-f]{8}\.\.\. under key [0-9a-f]{8}… - a member's answer is awaited`, 1),
-    at(I, String.raw`\[GRAINE\] withholding ${P} seed\(s\) from ${o}… on community ${ws}: ${N} of a salon riding another key group, ${N} not listed on this device`, 1),
-    at(I, String.raw`\[GRAINE\] not answering ${o}…'s history ask in community ${ws}: ${P} seed\(s\) withheld for their salon's roster - not "I hold nothing"`, 1),
+    at(
+      L,
+      String.raw`\[WELCOME_REQ\] ${o}…:web-${o}\.\.\. is a device this one never saw, of a member of [0-9a-f]{8}\.\.\. - not added automatically, a member's approval of key [0-9a-f]{8}… is asked`,
+      1
+    ),
+    at(
+      L,
+      String.raw`\[JOIN_REQUEST\] an unseen device web-${o}\.\.\. of ${o}… asks to join [0-9a-f]{8}\.\.\. under key [0-9a-f]{8}… - a member's answer is awaited`,
+      1
+    ),
+    at(
+      I,
+      String.raw`\[GRAINE\] withholding ${P} seed\(s\) from ${o}… on community ${ws}: ${N} of a salon riding another key group, ${N} not listed on this device`,
+      1
+    ),
+    at(
+      I,
+      String.raw`\[GRAINE\] not answering ${o}…'s history ask in community ${ws}: ${P} seed\(s\) withheld for their salon's roster - not "I hold nothing"`,
+      1
+    ),
   ];
 }
 
@@ -395,11 +519,16 @@ export function removalNarration(row, seat, ids) {
       ...communityNarration(row, ids),
       ...senderNarration(row, ids),
       ...gestureNarration(row, ids),
-      ...(spec.subject === 'W2' ? peerAskNarration(ids, ids.subjectUserId, (ids.subjectDeviceIds ?? []).length) : []),
-      ...(spec.subject === 'W3' ? [...mintedDeviceNarration(ids), ...peerAskNarration(ids, ids.ownerUserId, 1)] : []),
+      ...(spec.subject === 'W2'
+        ? peerAskNarration(ids, ids.subjectUserId, (ids.subjectDeviceIds ?? []).length)
+        : []),
+      ...(spec.subject === 'W3'
+        ? [...mintedDeviceNarration(ids), ...peerAskNarration(ids, ids.ownerUserId, 1)]
+        : []),
     ];
   }
-  if (seat === 'W2' && spec.subject === 'W2') return [...communityNarration(row, ids), ...subjectNarration(row, ids)];
+  if (seat === 'W2' && spec.subject === 'W2')
+    return [...communityNarration(row, ids), ...subjectNarration(row, ids)];
   return [];
 }
 
@@ -420,5 +549,7 @@ export function removalNarration(row, seat, ids) {
 export function bootForgiven(row, seat, replacedAt, gestureAt) {
   const spec = REMOVAL_ROWS[row];
   const expected = spec && seat === 'W2' && spec.subject === 'W2' ? 1 : 0;
-  return replacedAt.length > 0 && replacedAt.length <= expected && replacedAt.every((i) => i < gestureAt);
+  return (
+    replacedAt.length > 0 && replacedAt.length <= expected && replacedAt.every((i) => i < gestureAt)
+  );
 }
