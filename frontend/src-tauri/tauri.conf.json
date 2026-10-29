@@ -151,6 +151,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "bookings"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

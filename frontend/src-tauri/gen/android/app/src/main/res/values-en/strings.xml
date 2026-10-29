@@ -80,6 +80,14 @@
     <string name="notif_social_live_suspended_body">After another cut by moderators, you cannot start a live for now.</string>
     <string name="notif_social_live_withdrawn_title">Right to go live withdrawn</string>
     <string name="notif_social_live_withdrawn_body">Moderators have withdrawn your right to start a live.</string>
+    <string name="notif_social_booking_cancelled_title">%1$s cancelled a booking</string>
+    <string name="notif_social_booking_cancelled_body">It will not take place</string>
+    <string name="notif_social_booking_withdrawn_title">%1$s left your booking</string>
+    <string name="notif_social_booking_withdrawn_body">Your booking still stands</string>
+    <string name="notif_social_booking_added_title">%1$s added you to a booking</string>
+    <string name="notif_social_booking_added_body">Find it in Bookings</string>
+    <string name="notif_social_booking_reminder_title">Booking reminder</string>
+    <string name="notif_social_booking_reminder_body">Your booking starts soon</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>

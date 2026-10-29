@@ -24,6 +24,13 @@ export const NOTIFICATIONS_TARGET = 'notifications';
 export const FORM_RESPONSES_TARGET = 'form-responses';
 
 /**
+ * The `target` naming the reader's Reservations page (WP-N), and the deep-link host for it: the tap
+ * of a bookings notice - a cancellation, a withdrawal, an addition, a reminder. The page lists the
+ * reader's bookings, the cancelled ones included, so every notice lands where its booking is.
+ */
+export const BOOKINGS_TARGET = 'bookings';
+
+/**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
  *
  * A tap is handled natively and the two platforms used to disagree about what it needed. Android
@@ -80,6 +87,11 @@ export function socialDeepLink(data: Record<string, string>): string {
   // the member's - a `post/<id>` link would open a post that does not exist.
   if (data.target === NOTIFICATIONS_TARGET) {
     return `fr.emse.canari://${NOTIFICATIONS_TARGET}`;
+  }
+  // A bookings notice (WP-N): Reservations. Before `postId`, which such a notice never carries as
+  // a post - its row's id is the BOOKING's.
+  if (data.target === BOOKINGS_TARGET) {
+    return `fr.emse.canari://${BOOKINGS_TARGET}`;
   }
   const postId = data.postId;
   if (postId) {

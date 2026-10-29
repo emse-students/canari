@@ -1,4 +1,5 @@
 import {
+  Check,
   Column,
   CreateDateColumn,
   Entity,
@@ -19,6 +20,14 @@ import { DELETED_ACCOUNT } from '../../internal/account-erasure';
  * is a partial unique index that leaves those tombstones out.
  */
 @Entity('booking_participants')
+@Check(
+  'booking_participants_reminder_range',
+  `"reminderMinutes" IS NULL OR "reminderMinutes" BETWEEN 5 AND 10080`
+)
+// The reminder cron's scan (migration 115): only the rows still owed one.
+@Index('booking_participants_reminder_due_idx', ['bookingId'], {
+  where: `"reminderSentAt" IS NULL AND "reminderMinutes" IS NOT NULL AND "withdrawnAt" IS NULL`,
+})
 @Index('booking_participants_booking_user_uq', ['bookingId', 'userId'], {
   unique: true,
   where: `"userId" <> '${DELETED_ACCOUNT}'`,
@@ -47,4 +56,18 @@ export class BookingParticipant {
 
   @Column({ type: 'timestamptz', nullable: true })
   withdrawnAt: Date | null;
+
+  /**
+   * The bookings reminder (WP-N, D53, migration 115): THIS person's delay before the slot, in
+   * minutes (NULL = none), when it was chosen, and the CLAIM stamped before the reminder is sent.
+   * `BookingReminderScheduler` is the only reader of the last two.
+   */
+  @Column({ type: 'int', nullable: true })
+  reminderMinutes: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  reminderSetAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  reminderSentAt: Date | null;
 }

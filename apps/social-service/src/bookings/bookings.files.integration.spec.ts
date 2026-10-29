@@ -25,6 +25,7 @@ import { BookingSlotsService } from './booking-slots.service';
 import { BookingSpacesService } from './booking-spaces.service';
 import { BOOKING_FILE_MAX_PENDING_PER_ACCOUNT, BookingFilesService } from './booking-files.service';
 import { BookingRetentionScheduler } from './booking-retention.scheduler';
+import type { BookingNotificationsService } from './booking-notifications.service';
 import { HttpService } from '@nestjs/axios';
 import { of } from 'rxjs';
 import { BookingPosterMedia } from './booking-poster-media';
@@ -257,6 +258,13 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       repo(Booking)
     );
     files = new BookingFilesService(repo(BookingFile), formFiles);
+    // The notices (WP-N) have their own cases in `bookings.service.integration.spec.ts`.
+    const silent = {
+      added: async () => {},
+      cancelled: async () => {},
+      withdrawn: async () => {},
+      spaceDeleted: async () => {},
+    } as unknown as BookingNotificationsService;
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
@@ -266,7 +274,8 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       slots,
       associations,
       pricingFacts,
-      files
+      files,
+      silent
     );
     organiser = new BookingSpacesService(
       repo(BookingSpace),
@@ -277,7 +286,8 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       slots,
       associations,
       { listCotisationTiers: async () => [] } as unknown as UserTagService,
-      posterMedia
+      posterMedia,
+      silent
     );
     retention = new BookingRetentionScheduler(repo(BookingFile), formFiles);
   });

@@ -53,6 +53,9 @@ import { BookingFilesService } from './booking-files.service';
 import { BookingFile } from './entities/booking-file.entity';
 import type { BookingPosterMedia } from './booking-poster-media';
 import type { FormFilesService } from '../forms/form-files.service';
+import { BookingNotificationsService } from './booking-notifications.service';
+import { BookingReminderScheduler } from './booking-reminder.scheduler';
+import type { PostNotificationsService } from '../posts/post-notifications.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -100,6 +103,28 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   let service: BookingsService;
   let slotsService: BookingSlotsService;
   let organiser: BookingSpacesService;
+  let notices: BookingNotificationsService;
+  let reminders: BookingReminderScheduler;
+  /** Every bell row handed to the notification pipeline (WP-N), one entry per recipient. */
+  const told: {
+    to: string;
+    type: string;
+    text: string;
+    actorName?: string;
+    actorId: string;
+    associationId?: string;
+    bookingId: string;
+  }[] = [];
+  /** Every PUSH the pipeline would send - what a lock screen shows - one entry per recipient. */
+  const pushed: {
+    to: string;
+    type: string;
+    text: string;
+    actorName?: string;
+    actorId: string;
+    associationId?: string;
+    associationLogoMediaId?: string | null;
+  }[] = [];
   /** `account:association` pairs holding MANAGE_BOOKINGS. */
   const grants = new Set<string>();
   /** The audience facts of an account, as `PricingFactsService` would build them. */
@@ -126,7 +151,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     await ds.initialize();
     // The tables of other owners the API reads, in the shape it reads them.
     await q(
-      `CREATE TABLE associations (id uuid PRIMARY KEY, name varchar, archived boolean NOT NULL DEFAULT false)`
+      `CREATE TABLE associations (id uuid PRIMARY KEY, name varchar, archived boolean NOT NULL DEFAULT false,
+         "logoUrl" varchar, "logoMediaId" uuid)`
     );
     await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
     await q(
@@ -195,6 +221,75 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     const unreachable = () => {
       throw new Error('the media service is not part of this spec');
     };
+    // The notification pipeline is `PostNotificationsService`'s, with its own specs: what is under
+    // test here is WHO each booking change reaches, and with which line.
+    type Notice = {
+      recipientIds: string[];
+      actorId: string;
+      type: string;
+      text: string;
+      actorName?: string;
+      associationId?: string;
+      associationLogoMediaId?: string | null;
+      postId: string;
+      skipPush?: boolean;
+    };
+    const push = (d: Omit<Notice, 'postId' | 'recipientIds'>, to: string[]) => {
+      for (const id of to) {
+        pushed.push({
+          to: id,
+          type: d.type,
+          text: d.text,
+          actorName: d.actorName,
+          actorId: d.actorId,
+          associationId: d.associationId,
+          associationLogoMediaId: d.associationLogoMediaId,
+        });
+      }
+    };
+    const pipeline = {
+      createNotifications: async (d: Notice) => {
+        const to = [...new Set(d.recipientIds)].filter((id) => id !== d.actorId);
+        for (const id of to) {
+          told.push({
+            to: id,
+            type: d.type,
+            text: d.text,
+            actorName: d.actorName,
+            actorId: d.actorId,
+            associationId: d.associationId,
+            bookingId: d.postId,
+          });
+        }
+        if (!d.skipPush) push(d, to);
+        return to.length;
+      },
+      pushNotice: async (d: Omit<Notice, 'postId'>) => {
+        const to = [...new Set(d.recipientIds)].filter((id) => id !== d.actorId);
+        push(d, to);
+        return to.length;
+      },
+      resolveActorName: async (id: string) => `name-of-${id.slice(0, 4)}`,
+      createNotification: async (d: Omit<Notice, 'recipientIds'> & { recipientId: string }) => {
+        told.push({
+          to: d.recipientId,
+          type: d.type,
+          text: d.text,
+          actorName: d.actorName,
+          actorId: d.actorId,
+          bookingId: d.postId,
+        });
+        push(d, [d.recipientId]);
+      },
+    } as unknown as PostNotificationsService;
+    notices = new BookingNotificationsService(
+      repo(Booking),
+      repo(BookingParticipant),
+      repo(BookingResource),
+      repo(BookingSpace),
+      pipeline
+    );
+    reminders = new BookingReminderScheduler(repo(Booking), notices);
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
@@ -208,7 +303,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         storeBlob: unreachable,
         fetchBlob: unreachable,
         purgeBlobs: unreachable,
-      } as unknown as FormFilesService)
+      } as unknown as FormFilesService),
+      notices
     );
     organiser = new BookingSpacesService(
       repo(BookingSpace),
@@ -219,7 +315,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       slots,
       associations,
       { listCotisationTiers: async () => [] } as unknown as UserTagService,
-      { claim: async () => {}, releaseUncited: async () => {} } as unknown as BookingPosterMedia
+      { claim: async () => {}, releaseUncited: async () => {} } as unknown as BookingPosterMedia,
+      notices
     );
   });
 
@@ -1812,6 +1909,236 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         const createdRow = await ds.getRepository(BookingSpace).findOneByOrFail({ id: mine.id });
         expect([createdRow.id === forgedId, createdRow.ownerId]).toEqual([false, ORGA]);
       });
+    });
+  });
+
+  describe('the notices and the reminder (WP-N, D53, Q-R1..Q-R7)', () => {
+    beforeEach(async () => {
+      // The schema is shared with every case above, many on the same morning: their people are
+      // marked reminded, so each case here reads only the reminders of its own bookings.
+      await q(`UPDATE bookings SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`);
+      await q(
+        `UPDATE booking_participants SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`
+      );
+      told.length = 0;
+      pushed.length = 0;
+      notices.enabled = true;
+    });
+    afterEach(() => {
+      notices.enabled = false;
+    });
+
+    const tos = (type: string) =>
+      told
+        .filter((t) => t.type === type)
+        .map((t) => t.to)
+        .sort();
+
+    it('OFF, nothing is told and the reminder claims nothing', async () => {
+      notices.enabled = false;
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await service.cancel(id, as(ORGA), NOW);
+      expect(told).toEqual([]);
+      // The cron's own entry point returns before claiming: nothing is stamped.
+      await reminders.remindDue();
+      expect((await q(`SELECT "reminderSentAt" FROM bookings WHERE id = $1`, [id]))[0]).toEqual({
+        reminderSentAt: null,
+      });
+    });
+
+    it('a booking tells its participants, and the holder of a booking made on their behalf', async () => {
+      const { space, resourceIds } = await setup();
+      await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, { participantIds: [BOB] });
+      expect(tos('booking_added')).toEqual([BOB]);
+      told.length = 0;
+      await book(space.id, resourceIds[0], '11:00', '11:30', ORGA, {
+        holderId: CAROL,
+        participantIds: [DAN],
+      });
+      expect(tos('booking_added')).toEqual([CAROL, DAN]);
+    });
+
+    it("the organiser's cancellation tells the holder and the participants still in, with its word", async () => {
+      const { space, resourceIds } = await setup();
+      await q(`UPDATE associations SET name = 'Club Musique' WHERE id = $1`, [space.associationId]);
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB, RACERS[0]],
+      });
+      await service.withdraw(id, as(RACERS[0]), NOW);
+      told.length = 0;
+      await service.cancel(id, as(ORGA), NOW, 'Salle inondee');
+      expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
+      expect(told.every((t) => t.text === 'Salle inondee' && t.actorName === 'Club Musique')).toBe(
+        true
+      );
+    });
+
+    it("the holder's cancellation tells the participants (Q-R2), and carries no word of theirs", async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      told.length = 0;
+      await service.cancel(id, as(ALICE), NOW, 'ignored');
+      expect(tos('booking_cancelled')).toEqual([BOB]);
+      expect(told[0].text).not.toBe('ignored');
+      expect(told[0].actorName).toBeUndefined();
+    });
+
+    it("a participant's withdrawal tells the holder (Q-R2); the organiser is never told (Q-R7)", async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      told.length = 0;
+      await service.withdraw(id, as(BOB), NOW);
+      expect(told.map((t) => [t.type, t.to])).toEqual([['booking_withdrawn', ALICE]]);
+    });
+
+    it('a space reached by its link only is never named on a lock screen (Q-R5)', async () => {
+      const { space, resourceIds } = await setup({ discoverability: 'link' });
+      await q(
+        `UPDATE associations SET name = 'Cabinet', "logoMediaId" = gen_random_uuid() WHERE id = $1`,
+        [space.associationId]
+      );
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      expect(pushed.map((t) => t.text)).toEqual(['']);
+      await reminders.remindOnce(new Date(on('09:00')));
+      expect(pushed.filter((t) => t.type === 'booking_reminder').map((t) => t.text)).toEqual([
+        '10:00',
+        '10:00',
+      ]);
+
+      // The ORGANISER acts: the push names nobody - no association, no logo, no person - and the
+      // organiser's word reaches the bell row only, never the lock screen (Q-R3 on Q-R5).
+      told.length = 0;
+      pushed.length = 0;
+      await service.cancel(id, as(ORGA), NOW, 'Le cabinet est ferme');
+      expect(
+        pushed
+          .map((t) => [
+            t.to,
+            t.text,
+            t.actorName,
+            t.actorId,
+            t.associationId,
+            t.associationLogoMediaId,
+          ])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      ).toEqual([ALICE, BOB].map((to) => [to, '', 'Canari', 'system', undefined, undefined]));
+      expect(
+        told
+          .map((t) => [t.to, t.text, t.actorName, t.actorId, t.associationId])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      ).toEqual(
+        [ALICE, BOB].map((to) => [to, 'Le cabinet est ferme', 'Canari', 'system', undefined])
+      );
+
+      // An organiser booking for someone on that space names nobody either.
+      pushed.length = 0;
+      await book(space.id, resourceIds[0], '12:00', '12:30', ORGA, { holderId: CAROL });
+      expect(pushed.map((t) => [t.to, t.actorName, t.actorId, t.associationId])).toEqual([
+        [CAROL, 'Canari', 'system', undefined],
+      ]);
+    });
+
+    it('deleting a space tells the people of its COMING bookings (Q-R4)', async () => {
+      const { space, resourceIds } = await setup();
+      await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, { participantIds: [BOB] });
+      const gone = await book(space.id, resourceIds[0], '11:00', '11:30', CAROL);
+      await service.cancel(gone.id, as(CAROL), NOW);
+      told.length = 0;
+      // The notices go AFTER the response (the delete does not wait on them): await them here.
+      const sent = jest.spyOn(notices, 'spaceDeleted');
+      await organiser.remove(space.id, as(ORGA), NOW);
+      await sent.mock.results[0].value;
+      sent.mockRestore();
+      expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
+    });
+
+    it('THE REFERENCE: a reminder run twice sends once, to each person, at its instant', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      expect(await reminders.remindOnce(new Date(on('08:59')))).toEqual({
+        claimed: 0,
+        sent: 0,
+        failed: 0,
+      });
+      const [first, second] = await Promise.all([
+        reminders.remindOnce(new Date(on('09:00'))),
+        reminders.remindOnce(new Date(on('09:00'))),
+      ]);
+      expect(first.sent + second.sent).toBe(2);
+      expect((await reminders.remindOnce(new Date(on('09:30')))).claimed).toBe(0);
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB]);
+      expect(told.find((t) => t.type === 'booking_reminder')?.text).toContain('10:00');
+      expect(told.every((t) => t.bookingId === id)).toBe(true);
+    });
+
+    it('no reminder for a cancelled booking, a withdrawn participant, or one made inside its delay (Q-R6)', async () => {
+      const { space, resourceIds } = await setup();
+      const cancelled = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await service.cancel(cancelled.id, as(ALICE), NOW);
+      const left = await book(space.id, resourceIds[0], '11:00', '11:30', CAROL, {
+        participantIds: [BOB],
+      });
+      await service.withdraw(left.id, as(BOB), NOW);
+      // Made at 12:30 for 13:00: its 60-minute reminder instant was already past.
+      await book(space.id, resourceIds[0], '13:00', '13:30', DAN, {}, Date.parse(on('12:30')));
+      told.length = 0;
+      await reminders.remindOnce(new Date(on('10:00')));
+      await reminders.remindOnce(new Date(on('12:45')));
+      expect(told.map((t) => [t.type, t.to])).toEqual([['booking_reminder', CAROL]]);
+    });
+
+    it("each person sets their own delay (Q-R1), and only one of the booking's people may", async () => {
+      const { space, resourceIds } = await setup({ reminderMinutes: 120 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      expect(await refusal(service.setReminder(id, 30, as(STRANGER), NOW))).toEqual({
+        code: 'not-yours',
+      });
+      // A participant who LEFT is no longer one of its people.
+      const left = await book(space.id, resourceIds[0], '15:00', '15:30', ALICE, {
+        participantIds: [RACERS[1]],
+      });
+      await service.withdraw(left.id, as(RACERS[1]), NOW);
+      expect(await refusal(service.setReminder(left.id, 30, as(RACERS[1]), NOW))).toEqual({
+        code: 'not-yours',
+      });
+      await service.setReminder(id, 30, as(ALICE), NOW);
+      await service.setReminder(id, null, as(BOB), NOW);
+      told.length = 0;
+      const mine = await service.mine(as(ALICE));
+      expect(mine.find((b) => b.id === id)?.reminderMinutes).toBe(30);
+      expect((await service.mine(as(BOB))).find((b) => b.id === id)?.reminderMinutes).toBeNull();
+      await reminders.remindOnce(new Date(on('08:00')));
+      expect(told).toEqual([]);
+      await reminders.remindOnce(new Date(on('09:30')));
+      expect(tos('booking_reminder')).toEqual([ALICE]);
+      expect(
+        await refusal(service.setReminder(id, 30, as(ALICE), Date.parse(on('10:00'))))
+      ).toEqual({ code: 'history-frozen' });
+    });
+
+    it('migration 115 runs twice without error', async () => {
+      const file = readdirSync(MIGRATION_DIR).find((f) => f.startsWith('115_'));
+      const sql = readFileSync(join(MIGRATION_DIR, file as string), 'utf8');
+      await q(sql);
+      await q(sql);
+      const [{ n }] = (await q(
+        `SELECT count(*)::int AS n FROM pg_constraint WHERE conname LIKE '%reminder_range'
+            AND connamespace = to_regnamespace(current_schema())::oid`
+      )) as { n: number }[];
+      expect(n).toBe(3);
     });
   });
 });

@@ -10,6 +10,10 @@ import {
   formOpeningSoonContent,
   formOpenContent,
   formPaidOverCapacityContent,
+  bookingAddedContent,
+  bookingCancelledContent,
+  bookingReminderContent,
+  bookingWithdrawnContent,
   eventProposedContent,
   eventValidatedContent,
   eventRejectedContent,
@@ -370,6 +374,10 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_live_cut', liveCutContent()],
     ['social_live_suspended', liveSuspendedContent()],
     ['social_live_withdrawn', liveWithdrawnContent()],
+    ['social_booking_cancelled', bookingCancelledContent(ACTOR, '')],
+    ['social_booking_withdrawn', bookingWithdrawnContent(ACTOR, '')],
+    ['social_booking_added', bookingAddedContent(ACTOR, '')],
+    ['social_booking_reminder', bookingReminderContent('')],
   ];
 
   /**

@@ -2375,6 +2375,7 @@ are both ON with no backfill). It lives in THIS service because every push is se
 | `events` | the six `event_*` keys | `sendPushToUser` |
 | `forms` | `form_opening_soon`, `form_open`, `form_paid_over_capacity` (the organiser alert, [forms](../frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off): filed under the EXISTING id, since a new id is a switch older clients cannot draw), `type: 'form_reminder'` | `sendPushToUser` |
 | `follows` | `social_follow_request`, `social_follow_accepted` (WP-F4). A NEW id on purpose: a follow request is no other category's kind. An older build cannot draw its switch, but the choice is per ACCOUNT and decided here, so a switch flipped on any newer device silences every device. Off, the request still waits in the inbox | `sendPushToUser` |
+| `bookings` | `social_booking_cancelled`, `social_booking_withdrawn`, `social_booking_added`, `social_booking_reminder` (WP-N, [bookings-chantier](../bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)). A NEW id, decided by the user's delegate (Q-R15: "a Reservations category in the notification settings"): an older build cannot draw its switch, as for `follows`. Off, the bell still lists them | `sendPushToUser` |
 
 The id list and the push-to-category map are ONE file, `services/push-category.ts`; the frontend
 mirrors the ids (`frontend/src/lib/notifications/categories.ts`) and `categories.contract.test.ts`
