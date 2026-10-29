@@ -101,6 +101,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
     shouldBlockSessionUnlock,
@@ -1250,7 +1251,15 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        // A mark still owed for it could only meet the server's 404 CHANNEL_NOT_FOUND.
+        forgetSalonReadMark(globalSession.userId || currentUserId() || '', channelConversationId);
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            console.warn(
+              `[CHANNEL] deleted salon ${event.channelId.slice(0, 8)} left its local row: ${String(e)}`
+            )
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
