@@ -66,6 +66,7 @@
     if (creating) return;
     if (!name) {
       // The wizard's name was emptied: back to the form, which asks for one.
+      Log.d('BOOKINGS', 'wizard skipped with an empty name: back to the name form');
       wizardName = null;
       return;
     }

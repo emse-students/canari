@@ -28,12 +28,21 @@
     spaceName: string;
     poster: Poster | null;
     onChanged: (poster: Poster | null) => void;
+    /**
+     * Whether an upload is under way: the wizard holds its steps meanwhile, so a creation cannot
+     * leave before `onChanged` hands it the poster.
+     */
+    onBusy?: (busy: boolean) => void;
   }
 
-  let { spaceId, spaceName, poster, onChanged }: Props = $props();
+  let { spaceId, spaceName, poster, onChanged, onBusy }: Props = $props();
 
   let busy = $state(false);
   let error = $state('');
+
+  $effect(() => {
+    onBusy?.(busy);
+  });
 
   async function picked(event: Event & { currentTarget: HTMLInputElement }) {
     const input = event.currentTarget;

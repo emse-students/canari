@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { ArrowLeft, ArrowRight, Check } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -65,6 +65,10 @@
   /** A step's problems show once its "Suivant" was pressed, not while the organiser types. */
   let tried = $state(false);
   let creating = $state(false);
+  /** The poster is uploading: the steps wait for its reference (review of #2687). */
+  let posterBusy = $state(false);
+  /** The current step's heading, focused on each step change so a screen reader follows. */
+  let stepHeading = $state<HTMLHeadingElement | null>(null);
   let error = $state('');
   let tiers = $state<MembershipTier[]>([]);
   let formations = $state<FormationOption[]>([]);
@@ -162,7 +166,14 @@
     }
   }
 
+  /** Moves the focus to the new step's heading once it is drawn. */
+  async function focusStep() {
+    await tick();
+    stepHeading?.focus();
+  }
+
   function next() {
+    if (posterBusy) return;
     if (stepBlocked) {
       tried = true;
       Log.d('BOOKINGS', `wizard step ${step} blocked: ${JSON.stringify(problems)}`);
@@ -170,16 +181,21 @@
     }
     tried = false;
     step += 1;
+    void focusStep();
   }
 
   function back() {
     tried = false;
     if (step === 1) onCancel();
-    else step -= 1;
+    else {
+      step -= 1;
+      void focusStep();
+    }
   }
 
   async function create() {
     const payload = wizardPayload(draft);
+    if (posterBusy) return;
     if (!payload || creating) {
       tried = true;
       return;
@@ -240,7 +256,13 @@
 
   {#if step === 1}
     <div class="space-y-4">
-      <h4 class="text-text-main text-sm font-bold">{m.bookings_wizard_step_what()}</h4>
+      <h4
+        bind:this={stepHeading}
+        tabindex="-1"
+        class="text-text-main text-sm font-bold outline-none"
+      >
+        {m.bookings_wizard_step_what()}
+      </h4>
       <Input
         id="wizard-name"
         label={m.bookings_field_name()}
@@ -262,11 +284,18 @@
         spaceName={draft.name}
         poster={draft.poster}
         onChanged={(poster) => (draft.poster = poster)}
+        onBusy={(b) => (posterBusy = b)}
       />
     </div>
   {:else if step === 2}
     <div class="space-y-4">
-      <h4 class="text-text-main text-sm font-bold">{m.bookings_section_resources()}</h4>
+      <h4
+        bind:this={stepHeading}
+        tabindex="-1"
+        class="text-text-main text-sm font-bold outline-none"
+      >
+        {m.bookings_section_resources()}
+      </h4>
       <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {#each TEMPLATES as tpl (tpl.key)}
           <button
@@ -413,7 +442,13 @@
     </div>
   {:else}
     <div class="space-y-4">
-      <h4 class="text-text-main text-sm font-bold">{m.bookings_wizard_step_who()}</h4>
+      <h4
+        bind:this={stepHeading}
+        tabindex="-1"
+        class="text-text-main text-sm font-bold outline-none"
+      >
+        {m.bookings_wizard_step_who()}
+      </h4>
       <fieldset class="space-y-2">
         <legend class={CONTROL_LABEL_CLASS}>{m.bookings_wizard_audience_title()}</legend>
         <label
@@ -499,7 +534,8 @@
       <button
         type="button"
         onclick={next}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors"
+        disabled={posterBusy}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
         {m.bookings_wizard_next()}
         <ArrowRight size={16} />
@@ -508,7 +544,7 @@
       <button
         type="button"
         onclick={create}
-        disabled={creating}
+        disabled={creating || posterBusy}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Check size={16} />

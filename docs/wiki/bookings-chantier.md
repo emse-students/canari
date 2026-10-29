@@ -296,7 +296,11 @@ wizard is ONE call and a space is never half made.
   step before the server would refuse it (a 24/7 week in 30-min slots is 336).
 - **The poster is uploaded when picked and claimed by the creation** (`SpacePosterField` with
   `spaceId` null): a wizard abandoned leaves a `poster-pending` upload to the media sweep
-  (`POSTER_PENDING_TTL_MS`). "Je regle tout moi-meme" does not carry a picked poster.
+  (`POSTER_PENDING_TTL_MS`). "Je regle tout moi-meme" does not carry a picked poster. **While the
+  upload runs, "Suivant" and the creation are held** (`onBusy`, review of #2687): otherwise a fast
+  organiser created the space before the reference came back, and the poster was silently lost.
+- **The focus moves to the new step's heading** on "Suivant" and "Retour", so a screen reader
+  follows the step change.
 - **Factored**: the weekday names of the painter (`weekdayNames`, `availability.ts`), shared with
   `AvailabilityEditor`.
 
@@ -304,13 +308,17 @@ wizard is ONE call and a space is never half made.
 week as merged RUNS (WP-R4), so on a `slots` space a paint ANYWHERE rewrites adjacent slots
 (14:00-14:25, 14:25-14:50) as ONE line, i.e. one long slot. Templates replace the week anyway; the
 typed lines are unaffected. The wizard makes such spaces common: what painting should mean on a
-fixed-slot space is a decision owed before the next stable that ships the wizard.
+fixed-slot space is a decision owed before the next stable that ships the wizard. **Pending with the
+owner (2026-10-29)**; Master's proposed rule is "painting opens or closes whole fixed slots, never
+merges them" - NOT built until the owner decides.
 
 **Proof.** `wizard.test.ts` (slot cutting, the problems, the payload, and the WP's proof: a wizard
 payload over the server's defaults read back through `draftFromSpace`/`settingsFromDraft` is the
 same settings) and `SpaceWizard.svelte.test.ts` (the mounted wizard: three steps, a step held with
-its sentence, ONE `createSpace` with the hours and fields, the owner passed, the skip creating
-nothing). **Not yet seen** at 390 and 1280, on a phone, or against a running API.
+its sentence, ONE `createSpace` with the hours and fields, the owner passed, the steps held during a
+poster upload and the poster then carried - control: without `onBusy` that test fails -, the dated
+line of "Evenement ponctuel" held until dated then sent, the focus on each step's heading, the skip
+creating nothing). **Not yet seen** at 390 and 1280, on a phone, or against a running API.
 
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
