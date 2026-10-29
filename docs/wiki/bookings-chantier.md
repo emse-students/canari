@@ -245,6 +245,36 @@ days, a close splitting a run, a night as two stored halves, one cell, dated lin
 editor. **Not yet seen** on a phone: the finger painting and the painter's height (clamped, 30 to 40 rem) are the
 readings owed.
 
+## Painting a fixed-slot space (decided by the owner on 2026-10-29)
+
+**Decision: on a `slots` space, painting opens or closes WHOLE fixed slots, one by one, and NEVER
+merges them.** Before it, the WP-R4 painter read every week as merged runs, so on a fixed-slot space
+a paint anywhere rewrote touching slots (14:00-14:25, 14:25-14:50) as ONE line - one long slot.
+The creation wizard (WP-R7) makes such spaces common, which is how it was found.
+
+- **The mode is the SAVED one** (`fixedSlots`, from `SpaceEditor` through `ResourceEditor` to
+  `AvailabilityEditor`): the server cuts by the stored mode, so an unsaved switch does not change
+  what a paint means.
+- **Drawn apart**: `weekSlotsOf` gives each weekly line its own run (never merged), each with its
+  own border in `WeekPainter`; a `step` space keeps `weekRunsOf`, where touching hours ARE one
+  window.
+- **Close** (`paintSlotRows`): every slot the rectangle touches goes, whole - a slot is never cut.
+- **Open**: new slots of `slotLengthOf` (the week's most common slot length, ties to the shorter;
+  the 30-min grain when there is none), one for each start inside the rectangle, never past 24:00,
+  skipping any that would overlap a slot already there. A tap on a closed cell opens one slot; with
+  25-min slots a 30-min cell holds two starts, so it opens two.
+- **Untouched**: dated lines, lines with a problem, the templates (they still replace the week with
+  runs: on a fixed-slot space "Jours ouvres 8h-20h" is one 12 h slot a day, as before), the typed
+  lines. The hint under the painter says what a press does there.
+
+**Proof.** `availabilityPaint.test.ts` (slots read apart where the step reading merges them; the
+length; a close removes only the touched slots, whole; an open lays whole slots and skips the
+overlaps; a tap; the same rows when nothing changes; dated lines kept) and
+`AvailabilityEditor.painter.svelte.test.ts` (mounted: a press closes one slot alone; a paint
+elsewhere leaves touching slots three lines and three drawn runs; a step space still merges).
+Control: with the step painting on a fixed-slot space, the "touching slots separate" test fails.
+**Not yet seen** on a phone.
+
 ## WP-R6 as built - the settings in plain words (D51, Q-R13, 2026-10-27)
 
 Front only: no setting is added or removed, the draft and the PATCH are unchanged.

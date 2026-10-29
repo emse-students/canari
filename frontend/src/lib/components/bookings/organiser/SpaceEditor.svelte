@@ -377,6 +377,7 @@
         spaceId={space.id}
         timeZone={space.timeZone}
         stepMinutes={savedStep}
+        fixedSlots={space.slotMode === 'slots'}
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
         onDirty={(d) => (dirtyResources[resource.id] = d)}

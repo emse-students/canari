@@ -3,6 +3,8 @@
  * THE PAINTED WEEK WRITES THE SAME LINES THE LIST DOES (WP-R4, D49). Pinned: a template and a drag
  * both change the one set of lines the save sends; a gesture starting on an open cell closes; a
  * night painted on two days is saved as the two stored halves; a press paints one cell; and the dated lines have their own list.
+ * On a FIXED-SLOT space (owner, 2026-10-29) a paint opens or closes whole slots and never merges
+ * them, while a step space still merges touching hours.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -18,7 +20,7 @@ import AvailabilityEditor from './AvailabilityEditor.svelte';
 const mounted: (() => void)[] = [];
 const onDirty = vi.fn();
 
-async function open(lines: unknown[] = []) {
+async function open(lines: unknown[] = [], fixedSlots = false) {
   const app = mount(AvailabilityEditor, {
     target: document.body,
     props: {
@@ -28,7 +30,8 @@ async function open(lines: unknown[] = []) {
       resourceName: 'Salle',
       lines: lines as never,
       exceptions: [],
-      stepMinutes: 30,
+      stepMinutes: fixedSlots ? null : 30,
+      fixedSlots,
       onSaved: vi.fn(),
       onDirty,
     },
@@ -148,5 +151,44 @@ describe('AvailabilityEditor - the painted week', () => {
       expect.objectContaining({ onDate: '2026-11-12', startTime: '14:00', endTime: '18:45' }),
     ]);
     expect(lines.filter((l) => l.weekday)).toHaveLength(7);
+  });
+});
+
+describe('AvailabilityEditor - a fixed-slot space (owner, 2026-10-29)', () => {
+  const slot = (weekday: number, start: string, end: string) => ({
+    weekday,
+    onDate: null,
+    startTime: `${start}:00`,
+    endTime: `${end}:00`,
+  });
+  // Three touching 30-min slots: one painter row each.
+  const SLOTS = [slot(1, '14:00', '14:30'), slot(1, '14:30', '15:00'), slot(1, '15:00', '15:30')];
+
+  it('a press on one slot closes that slot alone, whole', async () => {
+    await open(SLOTS, true);
+    drag(0, 29, 0, 29); // row 29 = 14:30, the second slot
+    expect(times(await saved())).toEqual(['1 14:00-14:30', '1 15:00-15:30']);
+  });
+
+  it('a paint elsewhere leaves touching slots separate', async () => {
+    await open(SLOTS, true);
+    drag(1, 28, 1, 28); // Tuesday 14:00: opens ONE slot of the week's length
+    expect(times(await saved())).toEqual([
+      '1 14:00-14:30',
+      '1 14:30-15:00',
+      '1 15:00-15:30',
+      '2 14:00-14:30',
+    ]);
+    // The painter still draws Monday as three slots, not one run.
+    const monday = document
+      .querySelector('[data-painter] [role="img"]')!
+      .getAttribute('aria-label');
+    expect(monday).toContain('14:00 - 14:30, 14:30 - 15:00, 15:00 - 15:30');
+  });
+
+  it('a step space still merges touching hours, as before', async () => {
+    await open([slot(1, '14:00', '14:25'), slot(1, '14:25', '14:50')]);
+    drag(1, 28, 1, 28);
+    expect(times(await saved())).toEqual(['1 14:00-14:50', '2 14:00-14:30']);
   });
 });

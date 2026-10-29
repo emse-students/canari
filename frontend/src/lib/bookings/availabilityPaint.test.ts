@@ -6,7 +6,10 @@ import {
   isOpenAt,
   modeFrom,
   paintRows,
+  paintSlotRows,
   rowsOfWeek,
+  slotLengthOf,
+  weekSlotsOf,
   templateWeek,
   weekRunsOf,
 } from './availabilityPaint';
@@ -188,5 +191,71 @@ describe('the reading of a day', () => {
       ])
     ).toBe('00:00 - 02:00, 22:00 - 24:00');
     expect(formatRuns([])).toBe('');
+  });
+});
+
+describe('fixed slots (owner, 2026-10-29): whole slots, never merged', () => {
+  const ALUMNI = [
+    weekly(1, '14:00', '14:25'),
+    weekly(1, '14:25', '14:50'),
+    weekly(1, '14:50', '15:15'),
+  ];
+
+  it('reads each slot as its own run', () => {
+    expect(weekSlotsOf(ALUMNI)[0]).toEqual([
+      [840, 865],
+      [865, 890],
+      [890, 915],
+    ]);
+    // The step reading merges them: the very thing a fixed-slot space must not do.
+    expect(weekRunsOf(ALUMNI)[0]).toEqual([[840, 915]]);
+  });
+
+  it('takes the most common slot length, the grain when there is none', () => {
+    expect(slotLengthOf(ALUMNI)).toBe(25);
+    expect(slotLengthOf([...ALUMNI, weekly(2, '10:00', '10:20')])).toBe(25);
+    expect(slotLengthOf([])).toBe(30);
+    expect(slotLengthOf([weekly(1, '10:00', '10:20'), weekly(1, '11:00', '11:25')])).toBe(20);
+  });
+
+  it('closes only the slots the rectangle touches, whole', () => {
+    // Row 29 (14:30-15:00) touches the second slot and the third.
+    expect(stored(paintSlotRows(ALUMNI, 0, 0, 29, 29, 'close'))).toEqual(['1 14:00-14:25']);
+    // Row 28 (14:00-14:30) touches the first two.
+    expect(stored(paintSlotRows(ALUMNI, 0, 0, 28, 28, 'close'))).toEqual(['1 14:50-15:15']);
+  });
+
+  it('opens whole slots of the length, skipping those that would overlap', () => {
+    const next = paintSlotRows(ALUMNI, 0, 1, 28, 31, 'open'); // Mon..Tue 14:00-16:00
+    expect(stored(next)).toEqual([
+      '1 14:00-14:25',
+      '1 14:25-14:50',
+      '1 14:50-15:15',
+      '1 15:15-15:40',
+      '1 15:40-16:05',
+      '2 14:00-14:25',
+      '2 14:25-14:50',
+      '2 14:50-15:15',
+      '2 15:15-15:40',
+      '2 15:40-16:05',
+    ]);
+    // Each is its own line: nothing was merged.
+    expect(next.filter((r) => r.kind === 'weekly')).toHaveLength(10);
+  });
+
+  it('a tap opens one whole slot, even longer than the cell', () => {
+    expect(stored(paintSlotRows([weekly(1, '09:00', '10:00')], 2, 2, 20, 20, 'open'))).toEqual([
+      '1 09:00-10:00',
+      '3 10:00-11:00',
+    ]);
+  });
+
+  it('returns the same rows when nothing changes, and leaves dated lines alone', () => {
+    const rows = [...ALUMNI, dated('2026-11-03', '14:00', '15:00')];
+    expect(paintSlotRows(rows, 3, 3, 28, 28, 'close')).toBe(rows);
+    expect(paintSlotRows(rows, 0, 0, 28, 28, 'open')).toBe(rows);
+    expect(
+      paintSlotRows(rows, 0, 6, 0, 47, 'close').filter((r) => r.kind === 'dated')
+    ).toHaveLength(1);
   });
 });
