@@ -2,7 +2,7 @@
 
 The owner wants lives in production as early as possible: moderation (WP-L8) first, the audience
 cap lifted later. **This page is the only copy of the blocker list, the order of the switch, the
-viewer-cap ladder and the held privacy wording.** The design stays on [live](live.md), the server
+viewer-cap ladder and the owner's points on the lives terms and privacy text.** The design stays on [live](live.md), the server
 on [lives](../../services/lives.md), the store mapping on [store-ugc-answers](../../store-ugc-answers.md),
 the register rows C19/C20 on [register-of-processing](../../compliance/register-of-processing.md).
 Read against `main` at `0413bdeff` (2026-10-21). **Nothing here flips a switch.** It mirrors what
@@ -42,8 +42,8 @@ estate; `owed` = not done. A gate closes only when its last column is true.
 | G7 | **Crypto reviews**: the segment seal v1 and the chat seal C12, each "owed an adversarial crypto review" ([live](live.md#the-segment-seal-format-v1), [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6)) | **owed** (no review is on record on either page) | one adversarial review each, its verdict written where the format is |
 | G8 | **WP-L6 load**: several dev viewers chatting while a broadcaster sends segments (the chat shares the live's row lock with the ingest; nothing measured that contention) | **owed** | one dev reading, numbers on [lives](../../services/lives.md#the-row-lock-extended) |
 | G9 | **Phone readings**: check Y (watching) and LIVE-B1 (broadcasting) of [device-verification](../../device-verification.md#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both) on the Mi 9T and the iPhone 12; the moderation screens; the chat panel and the floating reactions; the three pushes once a store build carries their strings | **owed** - the iOS app's WKWebView in particular: WP-L1 broadcast from Safari, not from the app (#2109, draft) | the board rows `PASS`, never `PASS-DIRTY` |
-| G10 | **The owner's texts**: (a) the terms' (`/legal/cgu`) section 6 paragraph on lives - the cut, the ladder, the first-live rules, no replay; (b) the filtering statement for the stores (R1: post-hoc moderation, no automatic filter) | **owed - the owner's** | both texts given, the terms merged with G11 |
-| G11 | **The privacy policy and the register, together** (CLAUDE.md: the policy is the register's public face) - `/legal/privacy` gains the paragraphs of [section 5](#5-the-privacy-policy-wording---held-for-the-owner), and C19/C20 drop "switched OFF on production" | **drafted below, HELD** for the owner | the owner's yes on the wording; one pull request changing the page AND the two rows, merged before or with the flip |
+| G10 | **The owner's texts**: (a) the terms' (`/legal/cgu#directs`) section 6 paragraph on lives - the cut, the ladder, the first-live rules, no replay; (b) the filtering statement for the stores (R1: post-hoc moderation, no automatic filter) | (a) **written 2026-10-29, draft pull request, owed the owner's reread** ([section 5](#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)); (b) **owed - the owner's** | both texts approved, the terms merged with G11 |
+| G11 | **The privacy policy and the register, together** (CLAUDE.md: the policy is the register's public face) - `/legal/privacy` gains its lives paragraphs and C19/C20 point at them | **written 2026-10-29 in the same draft pull request as G10 (a), owed the owner's reread** ([section 5](#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)); C19/C20 drop "switched OFF on production" at the flip | the owner's yes on the wording; the pull request merged before or with the flip |
 | G12 | **The stores (WP-L9)**: the review notes ([draft](../../store-ugc-answers.md#what-to-write-in-the-review-notes-draft-english)) re-read against Apple 1.2 and Play UGC as published that day; **the review VIDEO** showing a report and a staff cut on a running live (L7); the App Privacy labels and Play Data safety re-read for live video and chat; the camera and microphone purpose strings (they name posts and CanaReels, not lives - Apple 5.1.1 reads them as the uses) | **owed** | the video recorded FROM a pre-release run (never staged after), the notes and labels the owner approved |
 | G13 | **A global stop that is not a release** (see section 1): a runtime switch read by the live guard, as calls got `platform_config.calls_mode` (B12 of [calls](calls.md#the-blockers-each-with-its-evidence)) | **a decision - the owner's** (D-1 below) | decided; if yes, built and its `off` read refusing a start on dev before the first alpha with the flip |
 | G14 | **Two questions to the school IT department, asked before the first public live** (asking is a question, not a change): whether the host's CrowdSec reads a lecture hall behind one campus address (~10-20 requests a second) as a crawl; and the link's real speed and Canari's share (Q3), which sets the cap | **owed** | their written answers, recorded in the private operations notes, the cap figure on this page |
@@ -101,75 +101,40 @@ operations notes** (never written here: this repository is public). Every line r
 | P8 | Redis has no `live:seats` key on production | absent |
 | P9 | the host proxy's connections in use at a busy hour (`ss`, read only) against its host-wide budget | the headroom recorded, as the cap's fourth figure ([lives](../../services/lives.md#the-viewer-cap-wp-l4)) |
 
-## 5. The privacy policy wording - HELD for the owner
+## 5. The privacy policy and the terms - written 2026-10-29, owed the owner's reread
 
-**HELD: not applied to `/legal/privacy`.** It is the public face of rows C19 and C20, which already
-carry the facts; the page changes in the same pull request as those rows, before or with the flip
-(G11), and is re-dated that day. The owner checks every claim, as for #2183 (calls). Each paragraph
-names its home in the page.
+**Written, not merged on its own authority.** The owner asked on 2026-10-29 for the terms and the
+privacy text, "in the same spirit as the rest, without lying", and rereads them. They are no longer
+drafted here: the ONLY copy is the pages themselves - `/legal/cgu#directs` (section 6, "Directs") and
+`/legal/privacy` (section 2 "Directs" and "Signalements", the section 3 row, the FCM/APNs paragraph
+of section 4, the section 6 rows and the "Sauvegardes" note, section 8's end-to-end paragraph,
+section 10's account deletion), with rows C19 and C20 of the
+[register](../../compliance/register-of-processing.md) changed in the same pull request. Both carry
+the heading "quand la fonction est ouverte", as calls did. Every claim was read against
+[lives](../../services/lives.md) and `apps/social-service/src/lives/` at `68435dfea`.
 
-**Section 2, "Données traitées" - a new entry after "Publications, commentaires, réactions,
-sondages, CanaReels":**
+**What the owner decides before it merges** - facts the code cannot give, or rules that are his:
 
-> **Directs (lives)** - Quand vous lancez un direct, la vidéo est découpée sur votre appareil en
-> courts segments, chiffrés avant l'envoi avec une clé propre au direct. Le serveur conserve cette
-> clé et la remet aux membres autorisés à regarder (les mêmes que pour une publication : un espace en
-> commun avec vous, ou le public de l'association au nom de laquelle vous diffusez) : ce n'est donc
-> pas un chiffrement de bout en bout, mais ni le stockage ni un tiers ne peuvent lire la vidéo. Le
-> serveur connaît, en clair : qui diffuse, au nom de quelle association, les heures de début et de
-> fin, la taille des segments, les membres que vous retirez du direct, et, pour chaque spectateur,
-> qu'il regarde (son compte et l'heure de sa dernière lecture, 30 secondes au plus après son départ).
-> Les messages du chat sont chiffrés avec la même clé et portent le nom de leur auteur, visible des
-> autres spectateurs ; les réactions (cœur, rire, bravo, feu, poussin) sont comptées par le serveur
-> en clair. Un direct n'est pas enregistré : rien n'en reste à sa fin, sauf ce que décrit la ligne
-> « Signalements » ci-dessous. Avant votre premier direct, vous acceptez les règles de publication ;
-> la version acceptée et sa date sont conservées.
-
-**Section 2, "Signalements, blocages et modération" - appended:**
-
-> Pour un direct : le signalement d'un message du chat transmet son texte, que le serveur vérifie
-> contre le message chiffré avant de le garder pour la modération ; une coupure par la modération est
-> enregistrée (le direct, la personne, le motif, la date), et les coupures récentes peuvent suspendre
-> puis retirer le droit de diffuser.
-
-**Section 3, the table - a new row:**
-
-> | Directs, chat et réactions | Diffuser un direct aux membres autorisés et prévenir vos abonnés | Exécution du service (6.1.b) |
-
-and the "Signalements, blocages, modération" row's purpose gains *", y compris des directs"*
-(interest 6.1.f unchanged; the rules acceptance is 6.1.b, a condition of the feature, as C20 says).
-
-**Section 4, the FCM/APNs paragraph - appended:**
-
-> Quand un membre que vous suivez lance un direct, la notification contient en clair le nom de la
-> personne ou de l'association qui diffuse, sans autre texte.
-
-**Section 6, the retention table - new rows:**
-
-> | Direct (vidéo chiffrée, chat, réactions, spectateurs) | Supprimé à la fin du direct (par vous, 60 secondes sans vidéo, ou au bout d'une heure) ; les segments mis en cache par notre serveur web, deux minutes au plus après leur dernière lecture |
-> | Message du chat d'un direct signalé | Jusqu'au traitement du signalement, 90 jours au plus, y compris si son auteur supprime son compte entre-temps |
-> | Coupure d'un direct par la modération | 90 jours ; une deuxième coupure dans ce délai suspend le droit de diffuser 30 jours, et à partir de la troisième la modération peut le retirer jusqu'à ce qu'elle le rende |
-> | Acceptation des règles du direct | Tant que le compte existe |
-
-**The "Sauvegardes" note - one sentence appended:**
-
-> Un direct en cours au moment d'une sauvegarde nocturne peut y laisser des segments chiffrés (sans
-> leur clé, supprimée avec le direct) et ses lignes de base de données, dans les durées ci-dessus.
-
-**What the owner checks, each a claim to confirm or strike:**
-
-- "ni le stockage ni un tiers ne peuvent lire la vidéo": true of the media store and nginx's cache
-  (ciphertext, the key only in social-service's row); the HOST's administrators can read the
-  database, which holds the key - as for every post CEK. Is "un tiers" fair, or say "hors Canari"?
-- "les réactions ... comptées par le serveur en clair" (C7, C12 of [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6)).
-- the viewer's seat: the broadcaster gets no list of viewers (no `/api/lives` route returns one, read
-  2026-10-21) - worth saying in the policy, or not?
-- a backup keeping the KEY: the key is a column of `lives`, so a nightly dump taken DURING a live
-  holds it, 14 days. The sentence above says "sans leur clé" of the MEDIA backup only; the database
-  dump is covered by the generic 14-day sentence. Confirm the wording is not misleading.
-- "rien n'en reste à sa fin": the broadcaster may keep a copy on their OWN device (L3, Q8 of [live](live.md#open-questions-for-the-user-each-with-a-recommendation)); whether that save is built was not read - if it is, the sentence says so
-- the edge cache of section 6 (a Cloudflare cache of segments) is NOT in this text: it does not
-  exist. If it is ever built, section 4 gains Cloudflare for segments and C19 its retention.
+- **When it takes effect.** Merged before the flip, the pages describe a feature production does not
+  run, as the calls text did by the owner's decision of 2026-10-22 (register, under section 2).
+  Whether this change is "substantial" under section 12 of the policy and section 14 of the terms
+  (15 days' in-app notice) is his call.
+- **Rules that are new, and his to keep or strike**: "filmer une personne qui n'a pas accepté d'y
+  apparaître" is forbidden in a live; each chat author is responsible for their message; the
+  24-hour target for a live report (weekends not counted) is now PUBLIC, worded as an effort
+  ("s'efforce"), not a commitment. The first-live rules sheet shows section 5 only, and the terms say
+  exactly that ("Vous acceptez les règles de la section 5 avant votre premier direct");
+  `LIVE_RULES_VERSION` is NOT raised (review of #2698).
+- **Art. 22**: the suspension at every cut from the 2nd within 90 days is applied by a rule; every cut is a person's. Section 2
+  of the policy says so plainly (section 3 keeps its "aucune décision automatisée" sentence) - whether that is enough is a
+  legal reading, not a code one.
+- **"pourrait les déchiffrer"**: the text says the server holds the key (sealed at rest under a
+  server secret since migration 110) and decrypts live content only to check a reported chat line,
+  which is what the code does; it does not promise the host's administrators cannot.
+- **Facts left OUT because nothing documents them**: the viewer cap's figure (the text says "limité"
+  only, since it is meant to move, section 6); any R2 or Cloudflare edge for segments (not built - if
+  it is, section 4 of the policy and C19 change with it); the transfer safeguards already open for
+  Google and Apple (section 5 of the policy) now also cover the live push.
 
 ## 6. The viewer cap - from 24 to none, in measured steps
 
@@ -217,11 +182,11 @@ to the owner as it is.
 | # | Decision | Recommendation |
 | --- | --- | --- |
 | D-1 | **A runtime global stop (G13)** before the flip, or accept that turning lives off is a stable through both stores | **Yes, build it** - the same shape calls got (Q2 of the calls flip), one row in `platform_config`, read by the guard; the compile-time client lock can then go |
-| D-2 | **The privacy wording of section 5** | approve, correct or strike each claim of its checklist |
-| D-3 | **The terms' lives paragraph and the filtering statement** (G10) | the statement as drafted in [store-ugc-answers](../../store-ugc-answers.md#what-to-write-in-the-review-notes-draft-english); the paragraph is the owner's text |
+| D-2 | **The privacy and terms text of section 5** (now on the pages, draft pull request) | approve, correct or strike each point of section 5's list |
+| D-3 | **The terms' lives paragraph and the filtering statement** (G10) | the statement as drafted in [store-ugc-answers](../../store-ugc-answers.md#what-to-write-in-the-review-notes-draft-english); the paragraph is written (section 5), the owner rereads it |
 | D-4 | **Open production at 24 viewers** (S0) rather than wait for any step of section 6 | **Yes** - the cap is a refusal with a clear screen, never a failure, and every later step needs production readings anyway |
 | D-5 | **Ask the school IT department the two G14 questions now** | **Yes**, they gate S2 and the first public live, and their answer takes time |
-| D-6 | **Whether viewers see a viewer count**, and whether the policy says the broadcaster gets no viewer list | the count to the broadcaster only in v1 |
+| D-6 | **Whether viewers see a viewer count**, and whether the policy says the broadcaster gets no viewer list | **decided 2026-10-21: the exact count to everyone watching**; the policy says no feature shows the list (section 5) |
 | D-7 | **`minClientVersion` for lives** | **No raise** - an old build never draws a live |
 
 ## See also

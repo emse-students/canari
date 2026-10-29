@@ -30,9 +30,7 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS, type PageWidth } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
-  import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
-  import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
@@ -66,16 +64,14 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
-  import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
+  import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
+  import ProductCard from '$lib/components/shop/ProductCard.svelte';
   import {
-    gridPriceIsProvisional,
-    gridPriceLabel,
-    gridRefuses,
-    linkedTierName,
-    preferentialPriceLabel,
-    tierNotOffered,
-    tierNotOfferedText,
-  } from '$lib/pricing/viewerPrice';
+    cotisationDisabledForAssociation,
+    hasUnrankedTier,
+    nonTierProducts,
+    offeredTiers,
+  } from '$lib/shop/productCards';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
 
@@ -599,102 +595,26 @@
             {m.asso_view_all_shop()}
           </a>
         </div>
+        <!-- One membership card with the tiers inside, then one card per other product -->
         <div class={CARD_GRID}>
-          {#each products as product (product.id)}
-            {@const preferential = preferentialPriceLabel(product)}
-            {@const linkedTier = linkedTierName(product, products)}
-            {@const notOffered = tierNotOffered(product)}
-            <CardTile
-              iconUrl={product.iconUrl}
-              fallbackIcon={productFallbackIcon(product.type)}
+          {#if offeredTiers(products).length > 0 || cotisationDisabledForAssociation(products)}
+            <MembershipCard
+              tiers={offeredTiers(products)}
+              allProducts={products}
               accentColor={cardAccentColor}
-              badgeText={product.badgeText}
-            >
-              <div class="flex h-full flex-col gap-3 p-5">
-                <div class="min-w-0 flex-1">
-                  <p class="text-text-main text-sm font-semibold">{product.name}</p>
-                  {#if product.description}
-                    <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
-                  {/if}
-                  <p class="text-text-muted mt-1 text-xs">
-                    <!--
-                      A grid answers first and alone: while one is set the product's own amount
-                      decides nothing, so printing it would name a figure no checkout charges.
-                    -->
-                    <!--
-                      A preferential price is the server's `viewerDueCents`, the amount the
-                      checkout charges this viewer - shown as /shop shows it, never recomputed.
-                    -->
-                    {#if gridPriceLabel(product) !== null}
-                      {gridPriceLabel(product)}
-                    {:else if preferential && product.amountCents}
-                      <span class="line-through"
-                        >{(product.amountCents / 100).toFixed(2)}
-                        {product.currency.toUpperCase()}</span
-                      >
-                      <span class="font-semibold text-emerald-600 dark:text-emerald-400"
-                        >{preferential}</span
-                      >
-                      {linkedTier
-                        ? m.shop_tier_upgrade_price_suffix({ tier: linkedTier })
-                        : m.shop_member_price_suffix()}
-                    {:else if product.amountCents}
-                      {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
-                    {:else if product.allowCustomAmount}
-                      {m.asso_product_custom_price()}
-                    {:else}
-                      {m.asso_product_free_price()}
-                    {/if}
-                    <span
-                      class="bg-cn-border/40 text-2xs ml-2 rounded-full px-1.5 py-0.5 font-bold uppercase"
-                    >
-                      {product.type === 'membership'
-                        ? m.asso_product_membership_type()
-                        : product.type === 'balance_topup'
-                          ? m.asso_product_topup_type()
-                          : m.asso_product_other_type()}
-                    </span>
-                  </p>
-                  {#if product.allowCustomAmount && product.amountCents === null}
-                    <div class="mt-2 flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={product.customAmountMinCents != null
-                          ? product.customAmountMinCents / 100
-                          : 0}
-                        max={product.customAmountMaxCents != null
-                          ? product.customAmountMaxCents / 100
-                          : undefined}
-                        step="0.01"
-                        placeholder={m.asso_product_amount_placeholder()}
-                        class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                        bind:value={shopCustomAmounts[product.id]}
-                      />
-                    </div>
-                  {/if}
-                </div>
-                {#if gridRefuses(product)}
-                  <p class="text-xs text-amber-700 dark:text-amber-400">
-                    {m.shop_price_unavailable_hint()}
-                  </p>
-                {:else if gridPriceIsProvisional(product, userId !== null)}
-                  <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
-                {/if}
-                <!-- A tier the checkout would refuse (409) gets its reason, never a button. -->
-                {#if notOffered}
-                  <p class="text-text-muted text-xs" data-tier-not-offered={notOffered}>
-                    {tierNotOfferedText(notOffered)}
-                  </p>
-                {:else}
-                  <ProductPurchaseButton
-                    {product}
-                    customAmountEuros={shopCustomAmounts[product.id]}
-                    disabled={gridRefuses(product)}
-                    class="w-full"
-                  />
-                {/if}
-              </div>
-            </CardTile>
+              unrankedHint={hasUnrankedTier(products)}
+              cotisationDisabled={cotisationDisabledForAssociation(products)}
+              signedIn={userId !== null}
+            />
+          {/if}
+          {#each nonTierProducts(products) as product (product.id)}
+            <ProductCard
+              {product}
+              siblings={products}
+              accentColor={cardAccentColor}
+              bind:customAmountCents={shopCustomAmounts[product.id]}
+              signedIn={userId !== null}
+            />
           {/each}
         </div>
       </div>
