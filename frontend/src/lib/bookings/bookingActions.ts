@@ -9,7 +9,15 @@ import { showConfirm } from '$lib/stores/confirm.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
-import { calendarLink, cancelBooking, removeBlock, withdrawBooking } from './api';
+import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+import {
+  bookingExportLabels,
+  calendarLink,
+  cancelBooking,
+  exportBookings,
+  removeBlock,
+  withdrawBooking,
+} from './api';
 import { describeBookingRefusal } from './refusals';
 
 /** Asks, then runs `act`; `true` once it is done, `false` when declined or refused (said). */
@@ -85,4 +93,15 @@ export async function bookingIcsUrl(bookingId: string): Promise<string> {
   Log.d('BOOKINGS', `calendar link asked booking=${bookingId.slice(0, 8)}`);
   const { path } = await calendarLink(bookingId);
   return `${socialUrl()}${path}`;
+}
+
+/**
+ * The space's bookings as an .xlsx (D24), its columns in this client's words, saved under the
+ * space's name. One implementation for the editor and the dashboard (WP-R5); a refusal is thrown
+ * for the caller to word.
+ */
+export async function downloadSpaceExport(space: { id: string; name: string }): Promise<void> {
+  const blob = await exportBookings(space.id, bookingExportLabels());
+  await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
+  Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
 }

@@ -142,20 +142,26 @@ export function listManagedSpaces(associationId: string | null): Promise<Managed
   return call('listManagedSpaces', `/managed${query}`);
 }
 
+/** What a creation carries besides its name and owner: any setting, and a poster already uploaded. */
+export type CreateSpaceFields = Partial<Omit<SpaceSettings, 'name'>> & { poster?: SpacePoster };
+
 /**
- * A new space with its ONE default column (D44), named after it; every other setting starts at the
- * server's default. The server writes both in one transaction, with the column's first hours when
- * `availability` is given (the creation wizard, D52), so no half-made space is ever left behind.
+ * A new space with its ONE default column (D44), named after it. The server writes both in one
+ * transaction, with the column's first hours when `availability` is given, so no half-made space
+ * is ever left behind. `fields` are the settings the creation wizard asked (D52, `wizard.ts`);
+ * every setting absent starts at the server's default.
  */
 export function createSpace(
   name: string,
   associationId: string | null,
-  availability?: { lines: StoredLine[]; exceptions: Closure[] }
+  availability?: { lines: StoredLine[]; exceptions: Closure[] },
+  fields: CreateSpaceFields = {}
 ): Promise<{ id: string; resourceId: string }> {
   return call(
     'createSpace',
     '/spaces',
     json('POST', {
+      ...fields,
       name,
       ...(associationId ? { associationId } : {}),
       ...(availability ? { availability } : {}),
@@ -263,6 +269,36 @@ export async function namedSpaceBookings(spaceId: string, ids: string[]): Promis
     `/spaces/${encodeURIComponent(spaceId)}/bookings${query}`
   );
   return page.items;
+}
+
+/** One row of the organiser's list: the view, and how it was made (WP-B3). */
+export interface OrganiserBooking extends BookingView {
+  /** The organiser booked it for its holder (D20). */
+  bookedOnBehalf: boolean;
+  cancelledByHolder: boolean;
+}
+
+/** One page of the organiser's list; `nextOffset` is null on the last page. */
+export interface OrganiserBookingsPage {
+  items: OrganiserBooking[];
+  nextOffset: number | null;
+}
+
+/**
+ * The dashboard's "coming" list (WP-R5, D50): the space's LIVE bookings that end after `fromMs` -
+ * the one under way included - by start, `limit` at a time from `offset`.
+ */
+export function upcomingSpaceBookings(
+  spaceId: string,
+  fromMs: number,
+  offset = 0,
+  limit = 50
+): Promise<OrganiserBookingsPage> {
+  const query = `?from=${encodeURIComponent(new Date(fromMs).toISOString())}&offset=${offset}&limit=${limit}`;
+  return call<OrganiserBookingsPage>(
+    'upcomingSpaceBookings',
+    `/spaces/${encodeURIComponent(spaceId)}/bookings${query}`
+  );
 }
 
 /** The holder or the organiser cancels a coming booking (D5); nobody is notified in v1 (D13). */

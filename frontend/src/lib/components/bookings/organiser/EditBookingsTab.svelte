@@ -3,11 +3,12 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { CalendarClock, CalendarDays, Pencil, Plus } from '@lucide/svelte';
+  import { CalendarClock, CalendarDays, LayoutDashboard, Pencil, Plus } from '@lucide/svelte';
   import { createSpace, listManagedSpaces, type ManagedSpaceRow } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
-  import { spaceEditorHref, spaceHref } from '$lib/bookings/routes';
+  import { spaceDashboardHref, spaceEditorHref, spaceHref } from '$lib/bookings/routes';
   import Input from '$lib/components/ui/Input.svelte';
+  import SpaceWizard from './SpaceWizard.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -16,7 +17,9 @@
    * list or an institution (D16, D38), drawn only to a holder of `MANAGE_BOOKINGS`, which is what
    * the server asks of every call here - or, with `associationId` null, the reader's PERSONAL spaces
    * on the Reservations page (D16: "a personal space is created from the page itself"). Every
-   * setting is edited on the space's own page.
+   * setting is edited on the space's own page. A creation opens the three-step wizard (D52, offered
+   * on every creation, Q-R14) with the name typed; "Je regle tout moi-meme" creates by the name
+   * alone, as before the wizard, and both land on the space's editor.
    */
   interface Props {
     /** The owning entity, or `null` for the reader's personal spaces. */
@@ -31,6 +34,8 @@
   let error = $state('');
   let newName = $state('');
   let creating = $state(false);
+  /** The name the wizard opened with; null while the wizard is closed. */
+  let wizardName = $state<string | null>(null);
 
   onMount(load);
 
@@ -47,21 +52,39 @@
     }
   }
 
-  async function create(event: SubmitEvent) {
+  /** The name is typed: the wizard takes it from here. */
+  function create(event: SubmitEvent) {
     event.preventDefault();
     const name = newName.trim();
     if (!name || creating) return;
+    error = '';
+    wizardName = name;
+  }
+
+  /** "Je regle tout moi-meme": the space by its name alone, every setting at its default. */
+  async function createByName(name: string) {
+    if (creating) return;
+    if (!name) {
+      // The wizard's name was emptied: back to the form, which asks for one.
+      Log.d('BOOKINGS', 'wizard skipped with an empty name: back to the name form');
+      wizardName = null;
+      return;
+    }
     creating = true;
     error = '';
     try {
       const { id } = await createSpace(name, associationId);
       Log.i('BOOKINGS', `space created from the tab id=${id.slice(0, 8)}`);
-      await goto(resolve(internalPath(spaceEditorHref(id))));
+      await openEditor(id);
     } catch (e) {
       error = describeBookingRefusal(e, m.bookings_tab_create_button());
     } finally {
       creating = false;
     }
+  }
+
+  function openEditor(id: string) {
+    return goto(resolve(internalPath(spaceEditorHref(id))));
   }
 </script>
 
@@ -76,25 +99,35 @@
     </p>
   </div>
 
-  <form class="flex flex-col gap-3 sm:flex-row sm:items-end" onsubmit={create}>
-    <div class="min-w-0 flex-1">
-      <Input
-        id="bookings-new-space"
-        label={m.bookings_tab_new_label()}
-        placeholder={m.bookings_tab_new_placeholder()}
-        bind:value={newName}
-        maxlength={120}
-      />
-    </div>
-    <button
-      type="submit"
-      disabled={!newName.trim() || creating}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      <Plus size={16} />
-      {m.bookings_tab_create_button()}
-    </button>
-  </form>
+  {#if wizardName !== null}
+    <SpaceWizard
+      {associationId}
+      initialName={wizardName}
+      onCreated={(id) => void openEditor(id)}
+      onSkip={(name) => void createByName(name)}
+      onCancel={() => (wizardName = null)}
+    />
+  {:else}
+    <form class="flex flex-col gap-3 sm:flex-row sm:items-end" onsubmit={create}>
+      <div class="min-w-0 flex-1">
+        <Input
+          id="bookings-new-space"
+          label={m.bookings_tab_new_label()}
+          placeholder={m.bookings_tab_new_placeholder()}
+          bind:value={newName}
+          maxlength={120}
+        />
+      </div>
+      <button
+        type="submit"
+        disabled={!newName.trim() || creating}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Plus size={16} />
+        {m.bookings_tab_create_button()}
+      </button>
+    </form>
+  {/if}
 
   {#if error}
     <p
@@ -133,13 +166,20 @@
                 : m.bookings_discoverability_listed()}
             </p>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <a
               href={resolve(internalPath(spaceHref(space.id)))}
               class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
             >
               <CalendarDays size={12} />
               {m.bookings_tab_open_action()}
+            </a>
+            <a
+              href={resolve(internalPath(spaceDashboardHref(space.id)))}
+              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+            >
+              <LayoutDashboard size={12} />
+              {m.bookings_dashboard_title()}
             </a>
             <a
               href={resolve(internalPath(spaceEditorHref(space.id)))}
