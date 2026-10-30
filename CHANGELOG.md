@@ -14,6 +14,421 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-30
+
+### Changed - the cotisation tier editor reads as sentences, and no admin screen shows a technical key
+
+A rise between tiers is a fill-in sentence with a preview, tiers are listed cheapest first, and a new tier's key is derived from its label on the server and never shown or edited; the Achats tab names a Cercle top-up by its type and formats amounts in the reader's locale ([cotisations](docs/wiki/cotisations.md#the-tier-editor)).
+
+### Fixed - on Android, the keyboard no longer covers the thread, and "+" opens its menu after the keyboard was put away
+
+A text field stays focused when the Android keyboard is put away: raising it again now takes the
+thread to its last message, and "+" no longer raises the keyboard instead of its menu
+([chat](docs/wiki/frontend/modules/chat.md#a-field-that-stays-focused-with-the-keyboard-down-the-rise-that-covered-the-thread-and-the--that-raised-the-keyboard-2026-10-29)).
+
+### Changed - an association's slug is no longer shown or typed
+
+The creation form asks for a name only and the server derives the URL slug (`-2`, `-3` on a collision); `@slug` is gone from the detail and edit headers ([associations](docs/wiki/frontend/modules/associations.md#the-slug-is-a-technical-id-derived-by-the-server-never-shown-typed-or-edited-user-2026-10-26)).
+
+### Changed - the offsite backup host is no longer a default in the public repository
+
+`BACKUP_SSH_HOST` has no default any more: the production crontab carries it, an unset value stops the backup instead of dropping the offsite copy ([backup](docs/wiki/infrastructure/backup.md)).
+
+### Fixed - the "new device" banner no longer squeezes its text on a phone
+
+A banner's actions now wrap below its label instead of sitting beside it, so the text takes the full width at 392 px (Mi 9T, 1.5.1-alpha.8).
+
+### Changed - the campaign board follows the ledger again
+
+Sixteen rows of the board were behind the ledger (older builds, or `pending` for runs already recorded); each now carries its newest verdict and build. See [cross-client-testing](docs/wiki/cross-client-testing.md).
+
+### Fixed - the dashboard's coming list shows its first read, and a cancel whose refresh failed says it was done
+
+A spinner during the first read instead of an empty list, and "cancelled, but the list could not be
+read again" instead of a bare load error ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r5-as-built---the-organisers-dashboard-d50-2026-10-29)).
+
+### Changed - the French bookings guide follows the redesign
+
+The user guide for Reservations now describes the hidden column, the booker's week, poster thumbnails, the painted week and the five settings sections as they are on main ([bookings-chantier](docs/wiki/bookings-chantier.md)).
+
+### Changed - a bookings space is created with one hidden column
+
+The space's hours are set directly; "Ajouter une colonne" reveals the columns ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r1-as-built---the-hidden-default-column-d44-2026-10-27)).
+
+### Changed - bookings notices and reminders are on
+
+A booking's people are now told of a cancellation, a withdrawal, being added and a deleted space, and reminded before the slot; the guide and the privacy policy say so ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)).
+
+### Added - the bookings reminder pickers and the organiser's word, waiting on the switch
+
+Reminder pickers (space default, booking sheet, each booking), the organiser's optional message on a cancel, and the sentences saying who is told - all shown only once the notices are live ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)).
+
+### Added - bookings notices and reminders, built and switched off
+
+A cancellation, a withdrawal, a booking made for someone, a deleted space and a reminder before the
+slot each reach the booking's people, behind one switch until the client floor allows new types
+([bookings-chantier](docs/wiki/bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)).
+
+### Added - a bookings space has an organiser's dashboard
+
+The week's counters, the coming bookings with a cancel in place, and the week where a drag blocks free slots ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r5-as-built---the-organisers-dashboard-d50-2026-10-29)).
+
+### Fixed - painting a fixed-slot space no longer merges its slots
+
+The painter opens or closes whole slots there, as the owner decided ([bookings-chantier](docs/wiki/bookings-chantier.md#painting-a-fixed-slot-space-decided-by-the-owner-on-2026-10-29)).
+
+### Changed - the bookings redesign's sixteen questions are decided
+
+Delegated by the user and taken on 2026-10-27 ([bookings-chantier](docs/wiki/bookings-chantier.md#decisions-taken-by-master-on-2026-10-27-user-delegated)).
+
+### Added - a fixed-slot bookings space stores its slot length
+
+A `slots` space now keeps the slot length chosen in the wizard or the settings (migration 116), and
+the availability painter opens slots of it even on an emptied week; older spaces keep reading it
+from their lines
+([bookings-chantier](docs/wiki/bookings-chantier.md#painting-a-fixed-slot-space-decided-by-the-owner-on-2026-10-29)).
+
+### Changed - the booking page shows the week, days as columns
+
+A phone shows one day under a week strip; "Prochains creneaux" is gone ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r2-as-built---the-bookers-week-d45-d48-2026-10-27)).
+
+### Changed - the poster of a bookable space is a thumbnail in the Reservations list
+
+It is decrypted only when the row is near the screen ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r3-as-built---the-poster-as-a-thumbnail-d45-2026-10-27)).
+
+### Changed - a space's opening hours are painted on a week, from four templates
+
+Press and drag to open, start on an open cell to close; the exact hours stay typed below ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r4-as-built---the-painted-week-d49-2026-10-27)).
+
+### Changed - the space settings are worded as questions, each with its current answer
+
+Two fields moved to "who" ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r6-as-built---the-settings-in-plain-words-d51-q-r13-2026-10-27)).
+
+### Added - a bookings space is created through a three-step wizard
+
+"C'est quoi ? / Quand ? / Pour qui ?" then one creation; "Je regle tout moi-meme" skips to the five sections ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-r7-as-built---the-creation-wizard-d52-q-r14-2026-10-29)).
+
+### Fixed - an unanswered call reads as unanswered, and a busy callee tells its caller (calls, dev builds only)
+
+One writer for a call's record, fed a typed end reason (cancelled, declined, not answered, busy), and a typed busy answer that ends the second caller's ring at once. See [calls](docs/wiki/frontend/modules/calls.md#the-call-record-one-writer-a-typed-reason-2026-10-27).
+
+### Fixed - a cash sale records the preferential price when its beneficiary qualifies
+
+The Achats tab now shows the amount a cash sale will record, the member price when the beneficiary qualifies, and the cashier may type another; a free amount's bounds bind only a typed amount ([cotisations](docs/wiki/cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
+
+### Fixed - kicking a community member commits their removal at once, private salons included
+
+The device that kicks now commits the Remove in the community's key group and in each private salon's group it holds, right after the server accepts ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)).
+
+### Fixed - a draft stays in the conversation it was written in
+
+The composer's text was one field for every conversation, so a draft or a shared link left in one followed the reader into the next and its Send posted it there; each conversation now keeps its own draft, forgotten at sign-out ([chat](docs/wiki/frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)).
+
+### Fixed - a paid form refuses a tier that is not a rise, and every undelivered payment is marked
+
+A form granting a cotisation tier now refuses a non-rise before any payment, like the shop; a form payment replayed or landing without a seat, and a payment for a product deleted meanwhile, are recorded paid and not granted ([cotisations](docs/wiki/cotisations.md#rising-to-a-higher-tier)).
+
+### Fixed - a tier rise is settled on what its checkout decided, and a payment not granted can be closed
+
+A cotisation rise is granted on the tier the buyer held when the checkout opened, so a price edited before the payment lands no longer leaves it ungranted; a payment paid for and not granted can be marked refunded, granted when it is a first tier or a rise, or recorded as delivered when the tier is already held as its own delivery, from the association's purchases, and the hourly report then stops counting it ([cotisations](docs/wiki/cotisations.md#rising-to-a-higher-tier)).
+
+### Fixed - a cotisation tier is bought only as a rise over the one held
+
+A holder of a tier can no longer buy a cheaper, equally priced or unrankable sibling tier, which used to replace theirs, and the preferential price of a rise keeps applying across the academic-year rollover; the shop (`/shop`) now shows the price the checkout charges and no button for a tier it would refuse - the association page follows later - and a tier paid for but not granted is marked in the association's purchases and reported hourly ([cotisations](docs/wiki/cotisations.md#rising-to-a-higher-tier)).
+
+### Fixed - a departed member's removal found by a roster diff is staged only on the published branch
+
+The conversation stray sweep and the key-group roster pass now stage their removal through the same fork check as the leaf refresh and the revoked-device removal ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh)).
+
+### Fixed - a member who leaves, or is removed by someone outside the group, is committed out by one elected device
+
+A salon leave now announces itself like a removal, and the remaining members elect one online device to commit the Remove. An actor that could not commit a removal it claimed releases it, and the election runs then ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)).
+
+### Fixed - desktop Chrome could not open the live or reel camera
+
+A desktop webcam reports no facing, so the exact `facingMode` the live and reel cameras asked for was always refused. The first capture is now ideal on a desktop and stays exact on a phone and on a lens switch, from one shared builder ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Changed - the CSP refusal on every dev page is Cloudflare's injected script
+
+The one console error on every `dev.canari-emse.fr` page is the dev zone's JavaScript detections script, refused by the page policy; production is not behind Cloudflare and is unaffected, and turning the detections off is owed to the owner
+([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
+
+### Fixed - the dev seed meets every CHECK on its tables, asserted on the pull request
+
+The seeded follows carry their `acceptedAt`, which migration 114 requires, and `seed.test.ts` now holds every seeded row to every CHECK the entities and migrations declare, as each is currently written ([dev-environment](docs/wiki/infrastructure/dev-environment.md)).
+
+### Fixed - a file saved twice on Android is `X (1).mp3`, no longer `X.mp3 (1)`
+
+The save dialog now carries the file's extension, so Android keeps it when it numbers a duplicate ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Changed - tighten referrer policy and access-log redaction for pages and routes whose URL carries a capability
+
+Join pages, the sign-in callback and the login page now send only their origin as Referer (`strict-origin`, which keeps the real `Origin` header). The container's access log redacts invite tokens, link-preview queries, the callback query, every spelling of a `token` key, and the referer of those pages ([nginx](docs/wiki/infrastructure/nginx.md#urls-that-carry-a-capability-2026-10-28)).
+
+### Added - a test settles how an unmerged external join is held and dropped
+
+openmls 0.9 merges an external commit inside `finalize`, so "unmerged" is mls-core's sealed marker alone; dropping the join leaves the key store byte-identical, and keeping the group after a clear leaves it unusable. See [mls-protocol](docs/wiki/protocols/mls-protocol.md#device-binding).
+
+### Added - a follow request can be answered (WP-F2)
+
+The person asked is notified once and accepts or refuses from an inbox; each is told once per pair, a refusal tells nobody, an ask of a non-person or across a block is refused, and one account may hold 100 unanswered requests and tell 50 new people a day, however many asks run at once ([social-service](docs/wiki/services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)).
+
+### Added - the follow request screens (WP-F4)
+
+A profile's button reads Suivre / Demande envoyee / Abonne, requests are answered from an inbox under the notifications, "Mes abonnes" lets a person remove a follower, and a "follows" notification switch controls the two pushes ([social-service](docs/wiki/services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)).
+
+### Added - following a person is a request first (WP-F1, migration 114)
+
+`user_follows` gains a status: existing follows are kept as accepted, a new follow of a person is a pending request, and only accepted rows feed Suivis, announces and live pushes ([social-service](docs/wiki/services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)).
+
+### Added - a person's own followers list, "remove follower" and sent requests (WP-F3)
+
+A follower can be removed without telling them, and an unanswered request can be withdrawn from a list ([social-service](docs/wiki/services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)).
+
+### Changed - the register and the privacy policy name follow requests (WP-F7)
+
+Register C5 and `/legal/privacy` describe the follow request, its answer, the followers list and the once-per-pair notice record, with their retention ([register](docs/wiki/compliance/register-of-processing.md)).
+
+### Fixed - the build: a follower row's profile link uses SvelteKit 3's typed route
+
+`FollowPersonRow` resolves `/profile/[id]` with its parameter, the shape SvelteKit 3's typed `resolve()` accepts; the bare template path failed `bun run check` on `main`.
+
+### Fixed - a paid form answer can be paid again after a declined payment
+
+A retry reused the answer's Lydia `order_ref`, which Lydia refuses (error 3); every request now
+carries its own, and callbacks of the old format still settle
+([payments](docs/wiki/frontend/modules/payments.md#a-form-answer-sends-one-order_ref-per-request-2026-10-27)).
+
+### Fixed - two Graine lines were said once per read, not once per decision
+
+A history ask now says one line when a member is answered, naming every device that held nothing, and a bundle carrying no seed no longer says `absorbed 0/0` on every member ([channel-encryption](docs/wiki/protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
+
+### Security - a group records its creator
+
+A group now records its creator, and only that account enrols itself into the group's empty roster
+([chat-delivery](docs/wiki/services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29)).
+
+### Fixed - a group opened from a DM no longer shows an empty transcript until a reload
+
+A derived read in the DM header's teardown stopped the open conversation's pane from listening to it, and a stale read in another teardown kept a read mark from being delivered on leave. Teardowns now read only captured locals ([architecture](docs/wiki/frontend/architecture.md#a-teardown-sees-the-values-its-effect-saw-and-a-derived-read-there-keeps-them-2026-10-27)).
+
+### Fixed - two tabs keep one withheld record per device, and a record written again is kept
+
+A record another tab wrote after this tab's own change is adopted, and a device holds one record,
+the newest
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+
+### Fixed - the history-withholding record keeps its entries when the held conversations are not yet listed
+
+A record is dropped as "no longer held" only from a complete list of held conversations, and a seal
+written by one tab is no longer erased by another
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+
+### Fixed - a second tab no longer erases a device withheld from history by another tab
+
+The withheld devices are merged on write, as the seals are; a record leaves only by a decision of
+the tab that held it
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+
+### Fixed - the image scan's two new undici advisories are allowlisted
+
+`CVE-2026-109383` and `CVE-2026-87018` sit on npm's bundled undici 6.28.0 in `node:24-alpine`, which has no patched tag yet; scoped by purl so the rescan retires them ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a revoked device's leaf is removed from community and salon key groups, for a member with another device there
+
+The key-group roster pass now asks which of the leaves it keeps belong to a revoked device and removes them by device, as conversations already did, for a member who still has another device in that group ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+
+### Fixed - a page that crashes says where again, and offers Retry rather than the sign-in page
+
+Under SvelteKit 3 Kit's own boundary catches a page crash before the layout's could, so the log lost the route and the screen sent a signed-in reader to `/login`; the client error hook now names the route and the error page retries ([architecture](docs/wiki/frontend/architecture.md#a-page-that-crashes)).
+
+### Fixed - a live viewer no longer stalls on a paired producer, nor loses the end of a live
+
+The viewer bounds its wait from the shape of the deliveries and re-anchors a short buffer at once
+([buffer policy](docs/wiki/frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); an
+ordinary end's purge waits for the seated viewers
+([lives](docs/wiki/services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)).
+
+### Fixed - a live viewer no longer seeks forward on a short wait with media buffered ahead
+
+A `waiting` with media ahead in the playhead's range is now treated as the engine's own wait. If it
+holds the picture for 500 ms or less, it is not a stall. The delivery line prints every buffered
+range ([live](docs/wiki/frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)).
+
+### Fixed - a live viewer's stall that fired while a segment was downloading was forgotten
+
+The poll now reads the stall after its downloads and clears it only by the re-anchor it asks for, so the viewer no longer stalls again seconds later; each delivery also logs what it did to the buffer ([live](docs/wiki/frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)).
+
+### Fixed - a live viewer no longer freezes every few seconds behind an Android broadcaster
+
+The viewer sat a fixed 2 s behind a recorder that delivers its fragments in pairs every 4 s, and read its own seek's `waiting` as a stall, so it re-seeked at every delivery; the target now follows the measured delivery cadence and a seek's wait is not a stall ([live](docs/wiki/frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)).
+
+### Added - the terms and the privacy policy describe lives
+
+The terms gain a "Directs" paragraph (rules, the cut, the strike ladder, no recording) and the privacy
+policy says what a live keeps, who sees it and for how long, with register rows C19 and C20; both
+apply once lives open ([live-production](docs/wiki/frontend/modules/live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)).
+
+### Fixed - a Lydia payment whose callback was lost is now recorded without the payer coming back
+
+A sweep reads at Lydia every form answer and boutique attempt whose request has ended unsettled, and settles it through the existing paths only on an answer whose signature verifies over the row's own amount; behind `LYDIA_RECONCILE_ENABLED`, on in dev and off in production until the signed amount format is measured; a signature with trailing junk no longer verifies ([lydia-api](docs/wiki/lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)).
+
+### Fixed - media-service's dependency audit is green again: GHSA-qr28-fpjm-wq7f rides the existing reachability premise
+
+The new `decode-uri-component` advisory sits on the same `minio > query-string` edge as GHSA-vcc3-ghjq-m6fr; its fix is ESM-only and out of minio's range, so it is ignored under the same asserted premise and retires itself with it ([cicd](docs/wiki/cicd.md#five-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable)).
+
+### Changed - mediabunny 1.62.1
+
+Reel and live video muxing moves from 1.61.4 to 1.62.1; the Firefox `avcC` patch is ported (upstream's own workaround does not pass our test). See [video-preparation](docs/wiki/frontend/video-preparation.md).
+
+### Changed - production's minimum client version is 1.2.9 (2026-10-29)
+
+Raised from 1.2.7 on the owner's decision; both stores serve 1.5.0, so no shipped client is locked out. New notification types may now ship ([legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type)).
+
+### Fixed - one crafted credential in a key group no longer blocks revoked-device removal for every member
+
+The client and the server now share one leaf-identity rule (`libs/contracts/leaf-identity.cases.json`): the client leaves a malformed leaf out and counts it, the server skips one instead of refusing the whole question, and logged identities have their user half cut ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+
+### Fixed - the native MLS manager and its at-rest key no longer outlive the account that loaded them
+
+A sign-out, an account switch, a failed sign-in and a state reset now end the native MLS session in one locked step, and every MLS command refuses with a typed error when none is installed; a signed-in session found without one ends on the device and reopens at the PIN gate, without signing out ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
+
+### Fixed - a revoked device's leaf is removed from key groups again: real identities are no longer refused
+
+The revoked-leaves question validated each `userId:deviceId` against a generic 128-character bound that every real identity exceeds, so it was refused on every request; each half is now validated on its own, and the reports carrying an identity print it instead of `invalid` ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+
+### Fixed - the phone header's Publish opens the composer again
+
+Since SvelteKit 3 the command's own strip navigation closed the composer as it opened; the feed now strips first and opens after ([posts](docs/wiki/frontend/modules/posts.md#the-headers-publish-and-search-are-commands-stripped-before-they-act-2026-10-28)).
+
+### Changed - presence ids travel in a POST body, never in the URL
+
+A reverse-proxy log scanner flagged the very long `GET /api/presence?users=...` query strings: the
+client now sends `POST /api/presence` with the ids in its body, split at the 1000-id cap, and the
+legacy GET stays, counted, for installed clients
+([chat-gateway](docs/wiki/services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).
+
+### Security - infrastructure details removed from documentation, and the public-text guard widened
+
+Documentation keeps the verdicts about the hosting and drops the details of machines this project
+does not own; the guard now also reads env templates, shell scripts and source comments
+([durable-rules](docs/wiki/durable-rules.md#no-path-of-one-workstation-enters-the-repository---a-path-is-relative-to-it-or-it-is-local-configuration)).
+
+### Security - personal data removed from documentation and test fixtures
+
+Documentation and fixtures name roles and fictional people only, and the deploy template no longer
+carries an account id as a default ([durable-rules](docs/wiki/durable-rules.md#a-measurement-taken-from-production-names-roles-and-counts-never-people---this-repository-is-public)).
+
+### Fixed - the camera and microphone no longer switch on for a moment after leaving the reel camera
+
+Publishing a reel, or coming back from the gallery picker into a review, no longer opens the camera and the microphone for a fraction of a second ([reels](docs/wiki/frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28)).
+
+### Fixed - the reel camera no longer flashes "Rouvrir la caméra" after a gallery pick
+
+The reopen tap appears only where the gallery picker may never answer; elsewhere the camera says "opening" until the pick lands ([reels](docs/wiki/frontend/modules/reels.md#its-three-loose-ends-closed-follow-up-to-2647)).
+
+### Fixed - the reel camera always has a way back from the gallery picker
+
+If the gallery picker never says it closed, the camera screen offers a tap that brings the camera back, instead of saying "opening" for ever ([reels](docs/wiki/frontend/modules/reels.md#its-three-loose-ends-closed-follow-up-to-2647)).
+
+### Fixed - sharing a CanaReel from the reel viewer did nothing
+
+Every row of the viewer's share sheet (send to a conversation, copy the link, share via) closed the sheet and did nothing; the sheet now acts on the post it was opened for ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Fixed - a return target is held to the page's origin
+
+A `returnTo`/`redirect` target is validated against the page's origin, and control characters are refused ([sessions](docs/wiki/sessions.md#a-return-target-is-held-to-the-pages-origin-2026-10-28)).
+
+### Fixed - a revoked device's leaf is removed from a key group even when it was its owner's only device there
+
+A device revocation now records the community and salon key groups the device held, so the revoked-leaves question can still name its leaf after the purge ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)). Chat-delivery migration 041, additive.
+
+### Fixed - a read mark owed for a deleted salon is dropped instead of retried at every load
+
+The server names the answer (`404 CHANNEL_NOT_FOUND`) and the client drops the mark on it, saying so once ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Fixed - revoking a private salon's member commits their removal at once
+
+The device that revokes the access now commits the key-group Remove right after the server accepts it, instead of leaving it to the next app load ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)).
+
+### Fixed - every seat writer reads the key package under the seat lock, and an erasure's retry removes every unseated route
+
+A group creator's enrolment now goes through the one pending-seat writer, an external join whose seat cannot be written is refused whole, and an account erasure removes, under each group's seat lock, only the routes no active seat stands behind ([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+
+Two callers who both read a new group's roster empty can no longer both enrol as its creator: the empty roster is re-read under the seat lock, and the second gets `409 MEMBER_NOT_ADMITTED` ([chat-delivery](docs/wiki/services/chat-delivery.md)). The erasure route's user-id check no longer caps the length the mint rule does not.
+
+### Fixed - a text shared into Canari on Android no longer leaves an empty folder in the app's cache
+
+A share that kept no file now removes its inbox folder at once instead of at the next app start ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Fixed - a share or a notification tap opens its conversation, instead of closing it at once
+
+On a phone already in Discussions (or a narrow browser window), the share's or the tap's own navigation drained the conversation the landing had just opened, leaving a share in a composer nobody saw; the landing is now published alone and the landing effect routes, as a native notification tap already did, and a reel sent from its viewer closes the viewer ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Security - on iPhone, a share waiting for its conversation is unreadable while the phone is locked
+
+The text and files shared into Canari are written under iOS file protection that keeps them unreadable while the phone is locked, and reading one while it is locked never deletes the share waiting ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Changed - the shared-host Docker prune is documented as needing the DSI's agreement
+
+Nothing in the docs describes the prune or its cron as authorised on the shared host any more; it is
+installed only with the school IT department's written agreement, like everything else there
+([durable-rules](docs/wiki/durable-rules.md)).
+
+### Changed - the shop's free amount is chosen with chips and an in-app keypad
+
+Quick amounts (5, 10, 20, 50 EUR) and an "Autre montant" keypad replace the browser's number field on the shop and association views; a chip or typed amount outside the product's minimum and maximum offers no press, and the server still validates ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - the shop shows one membership card with its tiers, and prices the way the reader writes them
+
+Membership is ONE card with a row per tier (the amount due for this viewer, the full price struck through on a rise); the holder of the highest tier sees none. A top-up reads as "Recharge du compte" instead of its technical key, prices use the locale's money format, and the return from Lydia names what was bought ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Changed - a tier's member price is shown to everyone, an unpriced tier is not sold, and the two payment ways have one name each
+
+A full-price viewer reads what holders of the linked tier pay; a product with no price has no shop row (the checkout refused it); the payment choice reads "Paiement Canari" / "Paiement en direct" with no subtitle ([cotisations](docs/wiki/cotisations.md)).
+
+### Fixed - the association page shows what the checkout charges, and a paid form's tier refusals say what happened
+
+The association page prints the preferential price and hides the button for a membership the checkout would refuse, as `/shop` does; both hide it when cotisations are disabled, and a holder of two tiers is no longer offered one the checkout refuses. A paid form naming a tier no longer sold, or the tier already held, now gets its own wording ([cotisations](docs/wiki/cotisations.md#rising-to-a-higher-tier)).
+
+### Fixed - a social-service refusal reached the app without its code
+
+`socialRequest` dropped the server's `code`, so a screen mapping one (`PROPOSAL_SENDER_GONE`) never saw it; it now reads the code with `refusalFromResponse`, like every other client ([social-service](docs/wiki/services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)).
+
+### Changed - SvelteKit 3 and adapter-node 6
+
+`svelte.config.js` became `kit.config.js` (passed to `sveltekit(...)`), `$app/environment`/`$app/stores`/`$app/paths.base` and the error-hook shape moved, and the server environment is declared in `src/env.ts`. What changed and what only the dev estate can verify: [architecture](docs/wiki/frontend/architecture.md#sveltekit-3-and-adapter-node-6-2026-10-27).
+
+### Fixed - a system notice no longer moves a conversation up the list
+
+A notice such as "a device was added" is not activity (a call record still is): the sidebar order and the stored last-message time follow real messages only ([chat](docs/wiki/frontend/modules/chat.md#a-system-notice-is-not-conversation-activity-user-2026-10-27)).
+
+### Fixed - a tag counts only for the association that issued it
+
+A raw tag grant accepts only one of the granting association's own tiers, a membership product's tag is always derived, never typed, a grant never renews a row another association issued, tier-holding reads and the sibling-tier swap count only the tier's own association's tags, no new slug or tier key may make two associations' tag names coincide, and a membership product of an association whose cotisations are disabled is refused (`COTISATION_DISABLED`) before any money is taken ([cotisations](docs/wiki/cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
+
+### Fixed - a cotisation tier deleted while people still hold it no longer leaves them holding nothing
+
+Deleting a tier people hold is refused with their count, and a tag of a tier already gone ranks as a held tier with no price (a purchase of another tier is refused until a manager regrants) and only a manager's grant swaps it out ([cotisations](docs/wiki/cotisations.md#a-tier-deleted-while-people-still-hold-it)).
+
+### Added - the server derives a new cotisation tier's key from its label
+
+`deriveVariantKey` on a membership product makes social-service build the tier key from the label, unique among the association's tiers, and `cotisation-options` says so with `tierKeyFromLabel`; an explicit key is still honoured for older clients ([cotisations](docs/wiki/cotisations.md#a-new-tiers-key-is-derived-from-its-label-server-2026-10-26)).
+
+### Fixed - a tier identifier shaped like an academic year is refused with a sentence that says why
+
+Creating or renaming a cotisation tier with an identifier such as `2024-2025` was refused with a generic error; the Cotisations tab now explains that such an identifier would be confused with the yearly membership tags, and suggests another ([cotisations](docs/wiki/cotisations.md#a-tier-deleted-while-people-still-hold-it)).
+
+### Fixed - a manager learns why a discounted tier price is refused, and a form granting a deleted tier says so
+
+The tier form explains a discounted price linked to no other tier of the association, and a paid form whose tier was deleted now says the membership no longer exists ([cotisations](docs/wiki/cotisations.md#rising-to-a-higher-tier)).
+
+### Changed - an unseen device of a member is now asked about before it is added
+
+A device of a conversation member that no member admitted waits for a member's tap - one entry per
+device, showing its key - instead of being added automatically or joining by itself, and history is withheld from an unverified device
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+
 ## [1.5.0] - 2026-10-27
 
 ### Added - account restore on a new Android phone (WP-RESTORE-1)

@@ -1,6 +1,43 @@
 import type { AudienceCondition } from './api';
 
 /**
+ * Whether the cotisation criterion asks that the person HOLDS a tier (`cotisation`) or holds NONE
+ * of them (`notCotisation`) - the creator's "detient" / "ne detient pas" (owner, 2026-10-30).
+ */
+export type CotisationMode = 'holds' | 'notHolds';
+
+/** The condition key a mode is stored under. */
+export function cotisationKey(mode: CotisationMode): 'cotisation' | 'notCotisation' {
+  return mode === 'holds' ? 'cotisation' : 'notCotisation';
+}
+
+/**
+ * The mode a condition is in. A stored criterion decides it; with none ticked yet, the mode the
+ * creator last picked (`preferred`) holds, so choosing "ne detient pas" before a tier is kept.
+ */
+export function cotisationModeOf(
+  condition: AudienceCondition | null | undefined,
+  preferred: CotisationMode
+): CotisationMode {
+  if (condition?.notCotisation) return 'notHolds';
+  if (condition?.cotisation) return 'holds';
+  return preferred;
+}
+
+/**
+ * The condition with its cotisation criterion moved under `mode`'s key, the tiers kept. The other
+ * key is always removed: the server refuses a condition carrying both.
+ */
+export function withCotisationMode(
+  condition: AudienceCondition,
+  mode: CotisationMode
+): AudienceCondition {
+  const criterion = condition.cotisation ?? condition.notCotisation;
+  const { cotisation: _held, notCotisation: _notHeld, ...rest } = condition;
+  return criterion ? { ...rest, [cotisationKey(mode)]: criterion } : rest;
+}
+
+/**
  * The one thing an audience condition can be wrong about while it is being built.
  *
  * A condition with no criterion applies to everybody, so it restricts nothing and hides nothing -

@@ -121,9 +121,9 @@ jobs:
           # is on it, and auto-merge lands pull requests unattended for as long as the arms take.
           # Resolving `main` here would be a SECOND resolution of a reference the caller already
           # resolved once, and the `dev-deployed` tag below would then name a commit this tree is
-          # not on. The bump's commit is always an ancestor of `main` (the ruleset forbids a
-          # force-push), so fetching the branch makes it reachable, and `reset` fails loudly if
-          # it somehow is not.
+          # not on. The bump's commit lives on `release/vX.Y.Z` (2026-10-30, docs/wiki/cicd.md), so
+          # it is fetched BY SHA - GitHub serves any commit a ref reaches - and `reset` fails loudly
+          # if it somehow is not there.
           git reset --hard "${{ inputs.sha }}"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 

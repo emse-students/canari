@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * is held shut by the server's `calls_mode`, not here. What still depends on the variable the
  * pipelines write (`VITE_DEPLOY_ENVIRONMENT=development` for dev.canari-emse.fr and every
  * pre-release app, unset for production) is nothing of calls since 1.5.2: video follows calls, and
- * the server's `calls_mode = audio_video` is what opens it.
+ * the server's `calls_mode = audio_video` is what opens it. Lives are compiled into every build
+ * since 2026-10-30, held by the server's `lives_mode` the same way.
  */
 
 async function load() {
@@ -54,6 +55,30 @@ describe('CALLS_ENABLED', () => {
     expect((await load()).CALLS_VIDEO_ENABLED).toBe(true);
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
     expect((await load()).CALLS_VIDEO_ENABLED).toBe(true);
+  });
+});
+
+describe('LIVE_ENABLED - lives in every build (the production flip, owner 2026-10-30)', () => {
+  it('is on for a production build, which sets nothing', async () => {
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
+    expect((await load()).LIVE_ENABLED).toBe(true);
+  });
+
+  it('is on for a dev build', async () => {
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
+    expect((await load()).LIVE_ENABLED).toBe(true);
+  });
+
+  it('no longer reads the deploy environment: the server kill switch is what closes lives', () => {
+    // A production binary that tested `deployEnvironment()` again would draw no live whatever
+    // `platform_config.lives_mode` said - the state 1.5.1 shipped in.
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'features.ts'),
+      'utf8'
+    );
+    const expression = source.match(/export const LIVE_ENABLED = ([^;]+);/);
+    expect(expression, 'LIVE_ENABLED was renamed or removed').not.toBeNull();
+    expect(expression![1]).not.toMatch(/deployEnvironment/);
   });
 });
 

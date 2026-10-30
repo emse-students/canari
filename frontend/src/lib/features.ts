@@ -99,19 +99,16 @@ export const CALLS_VIDEO_ENABLED = CALLS_ENABLED;
  * the feed, the full-screen viewer) and broadcasting (the composer's "Live" chip, the pre-live and
  * broadcast screens) - `components/live/`, `lib/live/`.
  *
- * **ON FOR A DEV BUILD ONLY (2026-10-19)**, by the same test as {@link CALLS_ENABLED}: a build made
- * for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build never
- * does, so a production binary asks `/api/lives` nothing and draws nothing. The server answers every
- * `/api/lives` route `404` on production anyway (its own `LIVE_ENABLED`, docs/wiki/services/lives.md)
- * - two locks, one per side - and the server's RUNTIME kill switch (`platform_config.lives_mode`,
- * published by `/api/version`) closes lives without a release: read this constant through
- * `livesAvailable` (`utils/livesAvailability.ts`), never alone, for any surface. It is off there because **any member may broadcast** (decision D3) and
- * moderation - report a live, the staff cut, block (WP-L8) - is not built: a live nobody can cut is
- * not shipped.
+ * **ON IN EVERY BUILD since the production flip (owner, 2026-10-30: lives in production in 1.5.2).**
+ * It was dev-only from 2026-10-19 until the moderation of WP-L8 existed - a live report, the staff
+ * cut, the first-live rules, the strike ladder and a reported chat line are built, server and client
+ * (docs/wiki/frontend/modules/live-production.md lists what is not). The server opened in the same
+ * commit (`LIVE_ENABLED=true` on both estates, `infrastructure/deploy/env-manifest.tsv`).
  *
- * **Turns on for production when** WP-L8 is built, the store answers (WP-L9) are in, the viewer and
- * broadcaster readings of docs/wiki/device-verification.md (checks Y and LIVE-B1) have passed on the
- * Mi 9T and the iPhone 12, and the server's `LIVE_ENABLED` turns on in the same release
- * (docs/wiki/frontend/modules/live.md).
+ * **What closes lives now is the server's RUNTIME kill switch**, `platform_config.lives_mode`,
+ * published by `/api/version` and moved by a global admin at `/admin/platform` without a release:
+ * read this constant through `livesAvailable` (`utils/livesAvailability.ts`), never alone, for any
+ * surface. This constant is what the binary CAN do; it goes off again only if a build must never
+ * carry lives at all, with the server's `LIVE_ENABLED` in the same commit.
  */
-export const LIVE_ENABLED = deployEnvironment() === 'development';
+export const LIVE_ENABLED = true;
