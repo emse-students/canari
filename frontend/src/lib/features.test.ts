@@ -35,12 +35,12 @@ describe('CALLS_ENABLED', () => {
     expect((await load()).CALLS_ENABLED).toBe(true);
   });
 
-  it('leaves the native ring off whatever the build', async () => {
-    // B2' (owner, 2026-10-21): the native ring is its own fact, and the first production calls ship
-    // without it - so it stays off even on the day CALLS_COMPILED flips.
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
-    const f = await load();
-    expect(f.CALLS_NATIVE_RING_COMPILED).toBe(false);
+  it('compiles the native ring into every build, whatever the environment (owner, 2026-10-30)', async () => {
+    // Its own fact (B2'), a constant like CALLS_COMPILED: no environment turns it on or off.
+    for (const env of ['development', '']) {
+      vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', env);
+      expect((await load()).CALLS_NATIVE_RING_COMPILED).toBe(true);
+    }
   });
 
   it('compiles calls into the store binaries (the flip, 2026-10-22)', async () => {

@@ -385,7 +385,8 @@ iPhone on the full-screen CallKit screen, through an APNs VoIP push. It is built
 switch, `CALLS_NATIVE_RING_COMPILED` (`features.ts`, off), in parallel with the audio enablement
 (draft #2299 flips `CALLS_COMPILED` and makes the iPhone's FCM ring alert generic meanwhile). The
 design-first pull request built everything below that a text test or a unit test can hold, and
-flips nothing: `kCanariCallsEnabled` stays `NO`, `voip` stays out of `Info.plist`.
+flipped nothing. **The flip was made on 2026-10-30** for 1.5.2 - [the native ring
+ships](#the-native-ring-ships-in-152-owner-2026-10-30).
 
 **One fact for "this phone takes VoIP pushes": a `voipToken` on its `push_token` row.** The column
 exists since WP-XP-5 (migration `010_push_token_voip.sql`), so **no migration and no number is
@@ -438,7 +439,8 @@ server's deadline, never `callerName`/`groupName` (decision 6). The phone writes
 CallKit screen from ITS copy of names (`display_names.json`, under the owner rule a mention uses -
 `CanariCallerDisplayName`), and "Appel Canari" / "Canari call" (`notif.call.unknown_caller`) for a
 caller it never named. APNs still sees the two ids and the timing: pseudonymous metadata, the same
-level as every message push. The Android payload is untouched here (WP-C5).
+level as every message push. The Android `call_ring` data carries ids only too since 2026-10-30
+(`{type, groupId, callId, callerId, hasVideo}`), named the same way on the phone.
 
 **Ring timeout and ring-end.** The ring ends at the earliest of: the server's answer deadline
 (`ringUntil`, capped at the native 60 s) - so the phone never rings past the window `room-token`
@@ -467,14 +469,69 @@ keeps its Push Notifications capability (`aps-environment production`). App Revi
 refusal of 2026-08-31 is answered by a build that rings - the review notes and video show a locked
 iPhone ringing. CallKit is not allowed on the China mainland storefront.
 
-**The flip, ONE commit (described, not made):** `CALLS_NATIVE_RING_COMPILED = true`;
-`kCanariCallsEnabled = YES`; `voip` in `Info.plist`; and - the constant is SHARED with Android -
-the Kotlin `CALLS_ENABLED` and `USE_FULL_SCREEN_INTENT`, so either WP-C5 lands first or the
-constant is split per platform (the owner's call). `callsCompiled.test.ts` asserts all of it agrees.
-Preconditions: `CALLS_COMPILED` on (asserted), the `DEV_APNS_VOIP_*` secrets, K6/K7/K8 on the iPhone.
+**The flip, ONE commit: MADE on 2026-10-30** - the next section.
 
 **Uncompiled**: the Objective-C of this lot was written on Windows and is held only by
 `nativeRingVoip.test.ts` (text) until the iOS CI job compiles it and K6/K7/K8 run it.
+
+## The native ring ships in 1.5.2 (owner, 2026-10-30)
+
+**The decision.** After the first production call (an open app only), the owner decided that the
+native incoming-call screen ships in 1.5.2: a call rings a closed or locked phone full screen, as
+WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` asserts they agree.
+
+| Switch | File | What it does when on |
+| --- | --- | --- |
+| `CALLS_NATIVE_RING_COMPILED` | `features.ts` | the fact the others mirror; the iPhone sends its PushKit token at `push/register` instead of an explicit `null` (`voipRegistrationField`) |
+| `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | a `call_ring` FCM data push (or a decrypted MLS `call_invite`) raises the CallStyle ring on the `canari_calls` channel instead of being dropped |
+| `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | lets that ring open `IncomingCallActivity` over the lock screen; without it Android shows a heads-up banner only |
+| `kCanariCallsEnabled` | `canari_push.mm` | installs the `PKPushRegistry` and the `CXProvider` at process start; `CanariReportIncomingCall` reports to CallKit instead of returning |
+| `voip` | `Info.plist` + `project.yml` `UIBackgroundModes` | the only way PushKit hands out a token; App Review checks it is used |
+
+**What moved with them.**
+- **Android's full-screen intent opens a SCREEN, never the answer.** Android launches a full-screen
+  intent BY ITSELF on a locked or idle phone, and it used to be the answer deep link - every call to
+  a locked phone would have been answered with nobody touching it. It is now `IncomingCallActivity`:
+  the caller's photo and name over the lock screen, Decline and Answer. Answer asks the keyguard to
+  go first (`requestDismissKeyguard`), then sends the notification's own answer intent. The screen
+  closes with its ring (`cancelIncomingCallNotification` -> `finishFor`). On Android 14+ the ring
+  logs `canUseFullScreenIntent()`, the permission the user (or Play) may have withheld.
+- **Names come from the phone, never the payload** (decision 6), on both platforms: the server's
+  `call_ring` data is ids only; Android names the caller from `display_names.json`
+  (`callerDisplayName`), iOS from the same file (`CanariCallerDisplayName`) on all three CallKit
+  paths - the VoIP push, the FCM ring of an iPhone with no VoIP token, the decrypted MLS invite. A
+  caller the phone never named is "Appel Canari" / "Canari call".
+- **The caller's photo** is on the ring notification (the `Person` icon and the large icon, re-posted
+  once fetched while the ring is still live) and on the call screen. CallKit cannot show a
+  third-party photo; the iPhone shows the name only.
+
+**Verified by compiling, never by running:** the Android Kotlin (`:app:compileArm64DebugKotlin`) and
+the merged manifest (`:app:processArm64DebugMainManifest`); the server spec (70 tests). **The
+Objective-C was not compiled at all** (written on Windows; the iOS CI job is its first compiler).
+
+**Readings owed before the stable** (calls-revival-plan K6/K7/K8):
+
+| Row | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| K7 - app KILLED, phone unlocked: it rings, with name and photo | the CallStyle ring + call screen | the CallKit screen, name only |
+| K8 - phone LOCKED: it rings full screen; Answer asks the unlock, then joins | `IncomingCallActivity` over the keyguard, nothing answered until a tap | CallKit, Face ID, the app PIN, then the join |
+| K8b - the caller cancels: the screen goes away | within seconds (`call_ring_end`) | the named limitation: may ring to the deadline |
+| K6 - screen locked mid-call keeps the audio | the call service | the `audio` mode |
+| Logs | `IncomingCallActivity` and `canUseFullScreenIntent` lines | `[CanariCallKit] voip credentials updated`, `ringing call=` |
+
+**Operator actions (the owner's):**
+- **Play Console**: Android 14+ grants `USE_FULL_SCREEN_INTENT` by default only to calling and alarm
+  apps; the App content -> Full-screen intent declaration must say "calling". Without it the ring
+  degrades to a heads-up banner (the log line says so).
+- **App Review**: the 1.5.2 notes answer the 2.5.4 refusal of 2026-08-31 - Canari places audio calls,
+  and a VoIP push rings a locked iPhone on CallKit; attach a video of it.
+- **Dev secrets**: the three `DEV_APNS_VOIP_*` repository secrets, absent, so a pre-release on dev
+  rings no VoIP device (the FCM generic alert does not stand in for it).
+- **No new Apple entitlement and no VoIP certificate**: PushKit and CallKit need none, and the `.p8`
+  auth key is team-wide. The production key has never sent a VoIP push: the first K7 proves it signs.
+
+**Still open:** `didInvalidatePushToken` tells the server nothing (the next APNs `410` clears it);
+a VoIP-pushed ring is announced as audio (`hasVideo = NO`) until the video lot decides otherwise.
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
@@ -497,7 +554,7 @@ class `onUndecryptable` reports. Calls are dev builds only, and that is accepted
 | Constant | Value | Holds |
 |---|---|---|
 | `CALLS_COMPILED` | `true` (since the flip PR, 2026-10-22) | the store binaries' calling WITHOUT the native ring (since 2026-10-21, B2'): in-app calls, `audio` (since 2026-10-20), the microphone purpose strings, the Android microphone foreground service. The committed plist carries `audio` since the flip and `ios.yml`'s pre-release patch is deleted. `callsCompiled.test.ts` asserts its switches agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)) |
-| `CALLS_NATIVE_RING_COMPILED` | `false` | the NATIVE RING of an app closed or in the background (since 2026-10-21, B2'): `voip`, `USE_FULL_SCREEN_INTENT`, the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`. The owner's decision of 2026-10-21 ships the first production calls WITHOUT it; it turns on with WP-C5 + WP-C6 and their K6/K7/K8 readings, and never while `CALLS_COMPILED` is off (asserted) |
+| `CALLS_NATIVE_RING_COMPILED` | `true` | the NATIVE RING of an app closed or in the background (since 2026-10-21, B2'): `voip`, `USE_FULL_SCREEN_INTENT`, the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`. The first production calls (2026-10-22) shipped WITHOUT it; ON since 2026-10-30 for 1.5.2 ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30)), K6/K7/K8 owed, never on while `CALLS_COMPILED` is off (asserted) |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
 | `CALLS_VIDEO_ENABLED` | `deployEnvironment() === 'development'` (since 2026-10-21; `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; dev builds only, and it does NOT follow `CALLS_COMPILED`: the first production calls are audio only ([the audio enablement](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
 
@@ -2244,10 +2301,11 @@ VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/
 
 - Channel `canari_calls` (IMPORTANCE_HIGH, ringtone, `setBypassDnd`)
 - `NotificationCompat.CallStyle.forIncomingCall` (API 31+)
-- Full-screen intent (`USE_FULL_SCREEN_INTENT`)
+- Full-screen intent (`USE_FULL_SCREEN_INTENT`) = `IncomingCallActivity`, a screen that asks - never the answer itself
 - `FLAG_INSISTENT` looping ringtone
 - 60 s timeout (`setTimeoutAfter`)
-- Answer = deep link; decline = local dismiss
+- Answer = deep link (after the keyguard, from the call screen); decline = local dismiss
+- Caller named from `display_names.json`, photo from the avatar cache ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30))
 
 ## Ring-end (stop ringing)
 

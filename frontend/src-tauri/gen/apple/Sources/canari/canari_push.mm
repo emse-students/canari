@@ -2662,13 +2662,14 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // the app becomes active - the in-app call UI takes over from there.
 
 /// Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
-/// 2026-10-21; callsCompiled.test.ts asserts it), which holds the native ring - PushKit and CallKit -
-/// off until it has been run on hardware (WP-C6, K6/K7/K8). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
-/// at process start, and there is nothing to ask. The two must be flipped in the same commit,
-/// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
-/// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
-/// silent failure rather than a feature.
-static const BOOL kCanariCallsEnabled = NO;
+/// 2026-10-21; callsCompiled.test.ts asserts it), which compiles the native ring - PushKit and
+/// CallKit - into the build; ON since the owner's decision of 2026-10-30 (it ships in 1.5.2, its
+/// hardware readings K6/K7/K8 owed on calls.md). It is duplicated rather than read from JS because
+/// this code runs BEFORE the webview exists - a PushKit registry is installed at process start, and
+/// there is nothing to ask. The two move in the same commit, together with the `voip`
+/// UIBackgroundModes entry of Info.plist: without that entry PKPushRegistry can never obtain a
+/// token, so installing it here would be a permanent silent failure rather than a feature.
+static const BOOL kCanariCallsEnabled = YES;
 
 static NSString *const kVoipTokenFileName = @"voip_token.txt";
 static NSString *const kPendingCallAcceptFileName = @"pending_call_accept.json";
@@ -2786,10 +2787,27 @@ static void CanariEnsureCallProvider(void) {
   [g_callProvider setDelegate:g_callProviderDelegate queue:nil];
 }
 
+/// The caller's name for the CallKit screen, from THIS PHONE'S copy of names (`display_names.json`,
+/// under the same owner rule as a mention, decision 6 of 2026-10-18), never from the push. A caller
+/// the phone has never named shows the neutral "Canari call" - a person it shares no conversation
+/// with is not somebody it should name.
+static NSString *CanariCallerDisplayName(NSString *callerId) {
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSDictionary *names = CanariLoadMentionNames(ctx.userId.lowercaseString);
+  id name = callerId.length > 0 ? names[callerId.lowercaseString] : nil;
+  BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
+  NSLog(@"[CanariCallKit] caller named=%d", known);
+  return known ? (NSString *)name : CanariLocalized(@"notif.call.unknown_caller");
+}
+
 /// Reports an incoming call to CallKit (full-screen system ring). Deduped per callId (the VoIP
 /// push and the decrypted MLS invite may both arrive); auto-ends as unanswered after 60s.
-static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSString *callerName,
-                                     NSString *groupName, BOOL hasVideo) {
+///
+/// The caller is named from this phone's own copy (`CanariCallerDisplayName`), never from the
+/// frame: since the native ring shipped (2026-10-30) the `call_ring` FCM data carries ids only, and
+/// one path naming the caller one way keeps the two rings of the same call identical.
+static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSString *callerId,
+                                     BOOL hasVideo) {
   if (callId.length == 0) {
     return;
   }
@@ -2815,10 +2833,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
     };
 
     CXCallUpdate *update = [[CXCallUpdate alloc] init];
-    NSString *display = callerName.length > 0 ? callerName : @"Canari";
-    if (groupName.length > 0 && ![groupName isEqualToString:callerName]) {
-      display = [NSString stringWithFormat:@"%@ - %@", display, groupName];
-    }
+    NSString *display = CanariCallerDisplayName(callerId);
     update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
     update.localizedCallerName = display;
     update.hasVideo = hasVideo;
@@ -2850,19 +2865,6 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
                      }
                    });
   });
-}
-
-/// The caller's name for the CallKit screen, from THIS PHONE'S copy of names (`display_names.json`,
-/// under the same owner rule as a mention, decision 6 of 2026-10-18), never from the push. A caller
-/// the phone has never named shows the neutral "Canari call" - a person it shares no conversation
-/// with is not somebody it should name.
-static NSString *CanariCallerDisplayName(NSString *callerId) {
-  CanariPushContext *ctx = CanariLoadPushContext();
-  NSDictionary *names = CanariLoadMentionNames(ctx.userId.lowercaseString);
-  id name = callerId.length > 0 ? names[callerId.lowercaseString] : nil;
-  BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
-  NSLog(@"[CanariCallKit] caller named=%d", known);
-  return known ? (NSString *)name : CanariLocalized(@"notif.call.unknown_caller");
 }
 
 /// Reports a VoIP-pushed call to CallKit, SYNCHRONOUSLY and on EVERY path (Apple's contract, see
@@ -3120,7 +3122,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       NSString *callId = decrypted.callId.length > 0
                              ? decrypted.callId
                              : [NSString stringWithFormat:@"mls-%@", groupId];
-      CanariReportIncomingCall(groupId, callId, senderName, groupName, decrypted.hasVideo);
+      CanariReportIncomingCall(groupId, callId, senderId, decrypted.hasVideo);
       return;
     }
     if (decrypted != nil && [decrypted.type isEqualToString:@"call_control"]) {
@@ -3343,12 +3345,10 @@ static void CanariHandleFcmData(NSDictionary *data) {
     }
     NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
     NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
-    NSString *callerName =
-        [data[@"callerName"] isKindOfClass:[NSString class]] ? data[@"callerName"] : @"";
-    NSString *groupName =
-        [data[@"groupName"] isKindOfClass:[NSString class]] ? data[@"groupName"] : @"";
+    // Ids only, as the VoIP push (decision 6): the name is this phone's to give.
+    NSString *callerId = [data[@"callerId"] isKindOfClass:[NSString class]] ? data[@"callerId"] : @"";
     if (callId.length > 0) {
-      CanariReportIncomingCall(groupId, callId, callerName, groupName,
+      CanariReportIncomingCall(groupId, callId, callerId,
                                [data[@"hasVideo"] isEqualToString:@"true"]);
     }
     return;
