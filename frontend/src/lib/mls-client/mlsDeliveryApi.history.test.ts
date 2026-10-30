@@ -1,4 +1,5 @@
 import { HISTORY_BATCH_MAX_GROUPS, MlsDeliveryApi } from './mlsDeliveryApi';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 describe('MlsDeliveryApi.fetchHistoryBatch', () => {
   it('maps batch response histories to a Map', async () => {
@@ -138,6 +139,32 @@ describe('MlsDeliveryApi.fetchHistoryBatch', () => {
     expect(String(spy.mock.calls[0][0])).toContain('400');
     expect(String(spy.mock.calls[0][0])).toContain('At most 50 groups per batch');
     spy.mockRestore();
+  });
+
+  // A CHUNK NOBODY ANSWERED IS A FACT ABOUT THE LINK, NOT ABOUT ITS GROUPS: rethrown, typed, and the
+  // chunks after it are not sent into the same unreachable server (production 1.5.1: 50/50/25 got
+  // no answer, then 125 per-group replays). Said by the caller, once - nothing logged here.
+  it('rethrows a transport failure and sends no further chunk', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchFn = vi
+      .fn()
+      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchFn,
+    });
+    const groups = Array.from({ length: 110 }, (_, i) => ({ groupId: `g${i}` }));
+
+    const failure = await api.fetchHistoryBatch(groups).catch((e: unknown) => e);
+
+    expect(isTransportFailure(failure)).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    warn.mockRestore();
+    error.mockRestore();
   });
 });
 

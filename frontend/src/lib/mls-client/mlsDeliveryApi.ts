@@ -2267,6 +2267,16 @@ export class MlsDeliveryApi {
    * There is no second way to fetch a page here: an absent group simply arrives at
    * `replayConversationHistory` unprimed and that replay reads its own first page, which is the
    * ordinary path every group took before any of this existed.
+   *
+   * A CHUNK NOBODY ANSWERED IS NOT A REFUSED CHUNK, AND IT THROWS. A refusal is an answer about
+   * THOSE groups; a transport failure is a fact about the LINK, and every page a replay would then
+   * read goes to the same unreachable server. Leaving the groups out sent each one to its own
+   * replay: on production (`1.5.1`, a phone at a cold start with no network) three chunks of
+   * 50/50/25 got no answer, then 125 per-group history reads and 125 mailbox pulls left within one
+   * second, every one of them failing. So the failure is rethrown as it came (typed at the throw,
+   * `isTransportFailure`), the chunks after it are not sent, and the caller stops its catch-up.
+   *
+   * @throws a transport failure (`isTransportFailure`) - never a refusal, which is logged and skipped
    */
   async fetchHistoryBatch(
     groups: Array<{ groupId: string; afterStreamId?: string }>
@@ -2281,9 +2291,10 @@ export class MlsDeliveryApi {
   /**
    * One `POST /api/mls/history/batch`, writing what it gets into `out`.
    *
-   * Never throws: a chunk that fails is a defect to READ, not a branch for the caller to take, so
-   * it is logged with the status AND the server's own words - a status alone cannot tell a refused
-   * request from an unreachable one, and it was a bare status that let the cap go unnoticed.
+   * A chunk the server REFUSES is a defect to READ, not a branch for the caller to take, so it is
+   * logged with the status AND the server's own words - it was a bare status that let the cap go
+   * unnoticed. A chunk that got NO answer is rethrown unlogged: the caller says it once, with what
+   * it does about it (see {@link fetchHistoryBatch}).
    */
   private async fetchHistoryBatchChunk(
     chunk: Array<{ groupId: string; afterStreamId?: string }>,
@@ -2316,13 +2327,10 @@ export class MlsDeliveryApi {
         out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
       }
     } catch (e) {
-      if (isTransportFailure(e)) {
-        console.warn(
-          `[History] batch of ${chunk.length} group(s) got no answer - each replays its own page: ${String(e)}`
-        );
-      } else {
-        console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
-      }
+      // Not logged here: the caller's line names the consequence (the catch-up stops), one line for
+      // the whole batch rather than one per chunk.
+      if (isTransportFailure(e)) throw e;
+      console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
   }
 
