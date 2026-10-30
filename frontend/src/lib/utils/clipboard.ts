@@ -42,27 +42,58 @@ const CONFIRMATION: Record<CopyKind, () => string> = {
  * click handler and, where something async must come first, accept the `refused` result: the failure
  * toast then tells the member to copy by hand from the field the call site shows.
  *
- * @param text - The exact text to place on the clipboard.
+ * A TEXT THAT IS STILL BEING PRODUCED IS PASSED AS A PROMISE, never awaited by the caller first.
+ * WebKit (the iPhone app and Safari) honours a clipboard write only inside the tap's gesture, and
+ * an `await` of a network round trip (an invite minted on the tap) ends the gesture before
+ * `writeText` runs. So a promise takes the `ClipboardItem` road, called SYNCHRONOUSLY from the
+ * handler: the browser keeps the gesture while the promise resolves. If the promise itself rejects,
+ * that error is RETHROWN for the caller's own handling (it is not a clipboard refusal, and gets no
+ * copy-failed toast).
+ *
+ * @param text - The exact text to place on the clipboard, or a promise of it.
  * @param opts.what - What is being copied; picks the confirmation and labels the log line.
  * @param opts.silent - Skip the SUCCESS toast, for a caller that confirms in a richer way. The
  *   failure toast is never skipped.
  * @returns `{ ok: true }` once written, else the typed reason it was not.
+ * @throws whatever a promised text rejects with.
  */
 export async function copyText(
-  text: string,
+  text: string | Promise<string>,
   opts: { what: CopyKind; silent?: boolean }
 ): Promise<CopyResult> {
   const { what, silent = false } = opts;
-  Log.d('Clipboard', `copying a ${what} (${text.length} chars)`);
+  const promised = typeof text !== 'string';
+  Log.d('Clipboard', `copying a ${what}${promised ? ' (promised)' : ` (${text.length} chars)`}`);
   const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
-  if (!clipboard?.writeText) {
+  const supported = promised
+    ? !!clipboard?.write && typeof ClipboardItem !== 'undefined'
+    : !!clipboard?.writeText;
+  if (!clipboard || !supported) {
     Log.d('Clipboard', `no clipboard in this context, a ${what} was not copied`);
+    // The caller still owns the promised text (a minted invite): surface ITS failure, not ours.
+    if (promised) await text;
     showToast(m.clipboard_copy_failed(), 'error');
     return { ok: false, reason: 'unavailable' };
   }
+  let sourceError: { error: unknown } | null = null;
   try {
-    await clipboard.writeText(text);
+    if (promised) {
+      const blob = text.then(
+        (t) => new Blob([t], { type: 'text/plain' }),
+        (error: unknown) => {
+          sourceError = { error };
+          throw error;
+        }
+      );
+      await clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+    } else {
+      await clipboard.writeText(text);
+    }
   } catch (e) {
+    if (sourceError) {
+      Log.d('Clipboard', `the text of a ${what} was never produced: ${String(e)}`);
+      throw (sourceError as { error: unknown }).error;
+    }
     Log.d('Clipboard', `refused the write of a ${what}: ${String(e)}`);
     showToast(m.clipboard_copy_failed(), 'error');
     return { ok: false, reason: 'refused' };

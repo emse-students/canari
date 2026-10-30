@@ -227,13 +227,19 @@
     }
     shareLoading = true;
     shareError = '';
-    try {
+    const id = groupId;
+    // THE LINK IS MINTED ON THE TAP, so it is handed to `copyText` as a PROMISE, synchronously:
+    // WebKit refuses a clipboard write after an awaited round trip. A refusal is toasted by the
+    // helper; the link stays visible for a manual copy.
+    const link = (async () => {
       const { createGroupInvite } = await import('$lib/mls/groupInvites');
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
-      const { token } = await createGroupInvite(groupId);
+      const { token } = await createGroupInvite(id);
       shareLink = publicAppUrl(`/g/join/${token}`);
-      // A refusal is toasted by the helper; the link stays visible for a manual copy.
-      await copyText(shareLink, { what: 'link' });
+      return shareLink;
+    })();
+    try {
+      await copyText(link, { what: 'link' });
     } catch (e) {
       Log.d('chatGroupPanel.generateShareLink failed', e);
       shareError = describeRefusalCode(refusalCode(e)) ?? m.chat_group_link_generation_error();

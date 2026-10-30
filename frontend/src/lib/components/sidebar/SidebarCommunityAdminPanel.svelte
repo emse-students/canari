@@ -499,7 +499,10 @@
     if (!workspaceDbId) return;
     shareLoading = true;
     shareError = '';
-    try {
+    // THE LINK IS MINTED ON THE TAP, so it is handed to `copyText` as a PROMISE, synchronously:
+    // WebKit refuses a clipboard write after an awaited round trip. A refusal is toasted by the
+    // helper; the link stays visible for a manual copy.
+    const link = (async () => {
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
       const invite = await channelService.createWorkspaceInvite(workspaceDbId, {
         rotate,
@@ -517,8 +520,10 @@
       const fragment = await mintInviteFragment(workspaceDbId, invite.expiresAt ?? null);
       shareInvite = invite;
       shareLink = `${publicAppUrl(`/c/join/${invite.token}`)}#${fragment}`;
-      // A refusal is toasted by the helper; the link stays visible for a manual copy.
-      await copyText(shareLink, { what: 'link' });
+      return shareLink;
+    })();
+    try {
+      await copyText(link, { what: 'link' });
     } catch (e) {
       Log.d('communityAdmin.loadShareLink failed', e);
       shareError = m.chat_channel_invite_link_error();

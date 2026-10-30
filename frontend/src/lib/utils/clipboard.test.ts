@@ -64,6 +64,57 @@ describe('copyText', () => {
     expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error');
   });
 
+  it('hands a promised text to a ClipboardItem synchronously, inside the gesture', async () => {
+    const written: unknown[] = [];
+    const write = vi.fn(async (items: unknown[]) => {
+      written.push(...items);
+    });
+    stubClipboard({ write, writeText: vi.fn() });
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(public items: Record<string, Promise<Blob>>) {}
+      }
+    );
+    let resolve!: (t: string) => void;
+    const text = new Promise<string>((r) => (resolve = r));
+    const pending = copyText(text, { what: 'link' });
+    // Called before the text resolved: that is what keeps WebKit's gesture alive.
+    expect(write).toHaveBeenCalledTimes(1);
+    resolve('https://x/g/join/t');
+    expect(await pending).toEqual({ ok: true });
+    const blob = await (written[0] as { items: Record<string, Promise<Blob>> }).items['text/plain'];
+    expect(await blob.text()).toBe('https://x/g/join/t');
+    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'info');
+  });
+
+  it('rethrows the failure of a promised text and shows no copy-failed toast', async () => {
+    stubClipboard({
+      write: async (items: { items: Record<string, Promise<Blob>> }[]) => {
+        await items[0].items['text/plain'];
+      },
+    });
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(public items: Record<string, Promise<Blob>>) {}
+      }
+    );
+    await expect(
+      copyText(Promise.reject(new Error('mint failed')), { what: 'link' })
+    ).rejects.toThrow('mint failed');
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('reports a promised text without ClipboardItem support as unavailable', async () => {
+    stubClipboard({ writeText: async () => {} });
+    vi.stubGlobal('ClipboardItem', undefined);
+    expect(await copyText(Promise.resolve('v'), { what: 'link' })).toEqual({
+      ok: false,
+      reason: 'unavailable',
+    });
+  });
+
   it('reports a context with no clipboard as `unavailable` with an error toast', async () => {
     stubClipboard(undefined);
     expect(await copyText('v', { what: 'code' })).toEqual({ ok: false, reason: 'unavailable' });
