@@ -11,8 +11,11 @@
  * replay, the outbox flusher - is asking whether this device is a reliable source about its own
  * history. Mid-pull it is not, and the two cases below are the two halves of saying so.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { TransportFailureError } from '$lib/utils/transportFailure';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import {
   noteUnackedFrame,
   refusedBacklogIsQueued,
@@ -492,6 +495,92 @@ describe('the refused backlog and the pull that redelivers it', () => {
     await svc.fetchPendingMessages();
 
     expect(refusedBacklogIsQueued('g-bg')).toBe(true);
+    error.mockRestore();
+  });
+});
+
+/**
+ * A LINK KNOWN DOWN OWES ITS PULL TO THE RECONNECT, NOT TO EVERY BARRIER.
+ *
+ * Production `1.5.1`, a phone at a cold start with no network: every conversation the catch-up
+ * settled took the barrier, each barrier pulled into the dead link, 327 `[PENDING] ... got no
+ * answer` lines. A pull that got no answer tells the connectivity store, and while the socket is
+ * closed and the store says unreachable the barrier waits for its scheduler only.
+ */
+describe('the mailbox barrier on a link known down', () => {
+  let svc: BaseMlsService;
+  let pullPendingMessagesJson: ReturnType<typeof vi.fn>;
+  let info: ReturnType<typeof vi.spyOn>;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    connectivity.reset();
+    // Node's `navigator` has no `onLine`, which `reset` would read as "no network": start online.
+    connectivity.isOnline = true;
+    svc = makeService();
+    pullPendingMessagesJson = vi
+      .fn()
+      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
+    poke(svc, {
+      userId: 'user-a',
+      messageCallback: vi.fn().mockResolvedValue(true),
+      messageScheduler: { waitUntilIdle: vi.fn().mockResolvedValue(undefined) },
+      delivery: { ackMessages: vi.fn().mockResolvedValue(undefined), pullPendingMessagesJson },
+      isWsOpen: () => false,
+    });
+    info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    info.mockRestore();
+    warn.mockRestore();
+    connectivity.reset();
+  });
+
+  it('pulls once into the dead link, then holds every later barrier for the reconnect, said once', async () => {
+    await svc.waitForMessageQueueIdle('archive replay', null);
+    for (let i = 0; i < 5; i++) await svc.waitForMessageQueueIdle('archive replay', null);
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    expect(connectivity.isOffline).toBe(true);
+    const held = info.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes('no pull while the link is down')
+    );
+    expect(held).toHaveLength(1);
+  });
+
+  it('pulls again once a request is answered, without waiting for the socket', async () => {
+    await svc.waitForMessageQueueIdle('archive replay', null);
+    connectivity.notifyServerReachable();
+    pullPendingMessagesJson.mockResolvedValue(undefined);
+
+    await svc.waitForMessageQueueIdle('archive replay', null);
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
+  });
+
+  // Review of #2726: a deadline (the token refresh's, say) is already counted by `trackedFetch`
+  // towards STALLS_BEFORE_UNREACHABLE; marking the server unreachable on it would skip that count.
+  it('does not mark the server unreachable on a DEADLINE, and the next barrier pulls again', async () => {
+    pullPendingMessagesJson.mockRejectedValue(
+      new RequestDeadlineError('read', 30_000, 'POST', '/api/auth/refresh', 0)
+    );
+
+    await svc.waitForMessageQueueIdle('archive replay', null);
+    expect(connectivity.isOffline).toBe(false);
+    await svc.waitForMessageQueueIdle('archive replay', null);
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('control: an ANSWERED failure (a 5xx) leaves the link up, and the next barrier pulls again', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    pullPendingMessagesJson.mockRejectedValue(new Error('server said no'));
+
+    await svc.waitForMessageQueueIdle('archive replay', null);
+    await svc.waitForMessageQueueIdle('archive replay', null);
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
     error.mockRestore();
   });
 });

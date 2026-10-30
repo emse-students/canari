@@ -1064,7 +1064,10 @@ export interface IMlsService {
   ): Promise<import('./historyTypes').HistoryPage>;
   /**
    * Fetches the first page of history for multiple groups in one HTTP round-trip.
-   * Groups the caller cannot read return an empty page.
+   * Groups the caller cannot read return an empty page; a chunk the server refuses is left out.
+   *
+   * @throws a transport failure (`isTransportFailure`) when a chunk got no answer: the server is
+   *   unreachable, so the caller stops its catch-up rather than asking each group on its own
    */
   fetchHistoryBatch?(
     groups: Array<{ groupId: string; afterStreamId?: string }>
