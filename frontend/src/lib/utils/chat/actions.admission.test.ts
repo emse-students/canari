@@ -321,6 +321,18 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     resetJoinRequests();
   });
 
+  it('forgets the decisions said about unseen devices at sign-out', async () => {
+    // The record is the leaving account's: the next account's first decision must be said in full.
+    // `useMessaging` resets it next to its other leaving-account records.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(
+      join(process.cwd(), 'src', 'lib', 'composables', 'useMessaging.svelte.ts'),
+      'utf8'
+    );
+    expect(src).toContain('resetUnseenDeviceDecisions();');
+  });
+
   it("asks about the account's OWN unseen device the same way", async () => {
     const onJoinApprovalRequested = vi.fn();
     const mlsService = serverVouches({
