@@ -59,7 +59,7 @@
     "@tauri-apps/plugin-sql": "^2.6.0",
     "@tauri-apps/plugin-store": "^2.5.0",
     "@tauri-apps/plugin-websocket": "^2.5.0",
-    "@zumer/snapdom": "^3.3.6",
+    "@zumer/snapdom": "^3.5.0",
     "highlight.js": "^11.12.0",
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
