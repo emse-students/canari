@@ -381,6 +381,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/control-characters.test.mjs
 	@bun .github/scripts/tests/executable-bit.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
+	@bash .github/scripts/tests/android-app-compile.test.sh
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh

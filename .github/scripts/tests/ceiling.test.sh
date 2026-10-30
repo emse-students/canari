@@ -242,12 +242,13 @@ for c_case in "dependabot/docker_compose/infrastructure/authentik/postgres-18-al
   fi
 done
 
-# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries: the Android app module is compiled
-# only at release time. The JVM test project beside it is built by `test-android`, and is the one
-# Gradle directory let through - an allowlist, so a Gradle directory added later starts refused.
+# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries. The JVM test project is built by
+# `test-android` and the Android app module by `compile-android-app` (2026-10-30); those are the two
+# Gradle directories let through - an allowlist, so a Gradle directory added later starts refused.
 echo "a Gradle update is refused unless a pull-request job builds its tree:"
-for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|refused" \
-  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-dependencies-1a2b3c|refused" \
+for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|allowed" \
+  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-wrapper-9.7.1|allowed" \
+  "dependabot/gradle/frontend/src-tauri/gen/android-extra/junit-junit-4.13.3|refused"   "dependabot/gradle/frontend/src-tauri/gen/android/sub/directory/junit-junit-4.13.3|refused"   "dependabot/gradle/frontend/src-tauri/gen/android/production-dependencies-25cde2b0f9|allowed" \
   "dependabot/gradle/some/new/directory/junit-junit-4.13.3|refused" \
   "dependabot/gradle/frontend/src-tauri/android-tests/junit-junit-4.13.3|allowed" \
   "dependabot/cargo/apps/chat-gateway/serde-1.0.5|allowed" \
@@ -261,6 +262,53 @@ for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.fireb
     failures=$((failures + 1))
   fi
 done
+
+# THE ALLOWANCE FOR `gen/android` IS ONLY AS GOOD AS THE JOB BEHIND IT. If `compile-android-app` is
+# removed, disabled (`if: false`), narrowed so it no longer sees `gen/android`, or dropped from
+# `ci-passed`, the arm above would let a Gradle bump merge on a suite that never compiles `:app` -
+# the exact hole it was written to close. A pull request that does any of that FAILS HERE, in
+# `test-ci-scripts`; the guard makes the removal visible, it cannot restore the gate.
+echo "the gen/android allowance has a gate behind it:"
+tests_dir="$(dirname "${BASH_SOURCE[0]}")"
+ci_yml="$tests_dir/../../workflows/ci.yml"
+check_that() { # <description> <command...>: ok when the command succeeds
+  local description="$1"; shift
+  if "$@"; then echo "  ok   $description"; else echo "  FAIL $description"; failures=$((failures + 1)); fi
+}
+check_not() { # <description> <command...>: ok when the command FAILS
+  local description="$1"; shift
+  if "$@"; then echo "  FAIL $description"; failures=$((failures + 1)); else echo "  ok   $description"; fi
+}
+# The job's own text: from its key to the next job key at the same indentation.
+job_block="$(awk '/^  compile-android-app:/{f=1; print; next} f && /^  [a-zA-Z0-9_-]+:/{exit} f{print}' "$ci_yml")"
+job_has() { grep -qE "$1" <<<"$job_block"; }
+check_that "ci.yml carries a compile-android-app job" test -n "$job_block"
+check_that "the job runs when the android_app filter says so, and not under some other condition" \
+  job_has '^    if: \$\{\{ needs\.changes\.outputs\.run-android-app == .true. \}\}$'
+check_that "the job runs android-app-compile.sh" job_has '^        run: bash \.github/scripts/android-app-compile\.sh$'
+check_that "android-app-compile.sh is executable" test -x "$tests_dir/../android-app-compile.sh"
+# The filter itself is EVALUATED, not grepped: the `if has ...` of the `android_app` block is run
+# against a real path of the tree this job exists to watch, and against one it must not fire on.
+filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^          if has/{c=1} c{print} c && /; then$/{exit}' "$ci_yml")"
+# shellcheck disable=SC2317,SC2329  # `has` is called by the `if has ...` text evaluated below
+filter_fires() { # <path>: does the android_app filter fire for a change to that single path?
+  (
+    CHANGED="$1"
+    has() { echo "$CHANGED" | grep -qE "$1"; }
+    eval "$filter_if
+      exit 0
+    else
+      exit 1
+    fi"
+  )
+}
+check_that "the filter fires for a change to gen/android" filter_fires "frontend/src-tauri/gen/android/app/build.gradle.kts"
+check_that "the filter fires for the Gradle wrapper (the #2564 case)" filter_fires "frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties"
+check_that "the filter fires for the app crate's Rust, the only Android-target compile on a pull request" filter_fires "frontend/src-tauri/src/lib.rs"
+check_not "the filter stays quiet for an unrelated change" filter_fires "apps/core-service/src/main.ts"
+# ...and it must be in the aggregate the ruleset requires, or its failure would block nothing.
+ci_passed_needs() { sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep -q 'compile-android-app'; }
+check_that "ci-passed needs compile-android-app" ci_passed_needs
 
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
