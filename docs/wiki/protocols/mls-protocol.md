@@ -1356,7 +1356,10 @@ only - and the fingerprint of the signature key its KeyPackage carries, in group
 (`deviceAskDetail`). The key is read once per session from one fetched package
 (`keyPackageSignatureKey`, a parse of the RFC 9420 layout held to the real WASM build by
 `deviceTrust.keyPackage.realWasm.test.ts`) and kept, so a waiting ask spends no package per sweep. It
-is raised in ANY conversation row, a 1:1 included, because neither answer touches a seat:
+is raised in ANY conversation row, a 1:1 included, because neither answer touches a seat.
+The waiting device itself shows its own fingerprint (`chat_waiting_own_device_key`) and says what its
+owner does: open the conversation on another device already in it, or ask another member to open
+it, compare the key, tap Add (`join_request_accept`).
 
 - **Add** records the approval of THAT device under THAT fingerprint, across conversations, and
   starts the pending sweep without waiting for it (`setMemberDeviceSweep`; a sweep already running is
