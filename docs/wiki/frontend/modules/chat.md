@@ -3583,7 +3583,8 @@ scroll handler, which nothing could test and nothing could explain.
 
 That last row is the one that makes a single mechanism correct rather than convenient: **composer
 growth and content growth are literally the same number**, so all three observers call one `follow()`
-closure, which asks `shouldFollowThreadBottom` about one `scrollHeight`. Three copies of this
+closure, which asks one predicate about one number (`threadGrowthResponse` and the reach since
+2026-10-30, below). Three copies of this
 judgement could disagree about where the bottom is; one cannot.
 
 Every trigger is the change itself. There is no timer, nothing to tune, and nothing that fires when
@@ -3644,6 +3645,32 @@ Mi 9T (Android 16, edge-to-edge enforced): `IME inset: 885 -> content padding`, 
 build (a capture-phase `mousedown` that skips the hold while the keyboard is down: the menu, no
 keyboard; the hold kept with the keyboard up: the menu over the keyboard, focus kept); the built
 change itself is owed one reading ([check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+
+### A reader at the bottom is anchored to the bottom, in both directions (2026-10-30)
+
+Reported on production 1.5.1 by the owner (Pixel 6a) and a friend: in a DM whose tail holds a photo,
+opening the keyboard showed OLDER messages, the photo cut by the composer and the scroll-down arrow
+up; a text-only DM rose correctly. The friend read it as "it anchors on the end as it was when the
+app opened". **That reading, and the hypothesis of a stale `isNearBottom` snapshot, were refuted on
+the Mi 9T** (`1.5.1`, CDP, the real observer): late growth and new messages were followed every time
+and the flag was right.
+
+**The mover was the row anchor.** On Android the WebView itself resizes for the keyboard
+(`MainActivity.applyKeyboardInsets`), so every `svh` length shrinks with it, and a chat photo sits
+under `--media-max-height: 60svh`. Measured, a 567 px block (60svh) above the last rows, keyboard
+357 px: frame 1, the box shrinks, the reach grows, `follow()` pins (distance 0); frame 2, the WebView
+resize shrinks the block by 214 px (0.6 x 357), the reach SHRINKS, and `shouldFollowThreadBottom`
+followed growth only - so `anchorShift` kept the row at the top of the viewport in place by moving
+`scrollTop` 3527 -> 3313: distance 214, arrow up. The 214 px is the photo's loss, not the keyboard's.
+
+`threadGrowthResponse` (`threadAnchor.ts`) replaces the predicate with three answers: a reader at the
+bottom FOLLOWS any change of reach, growth or shrink (`follow-bottom`), holds when nothing moved
+(`hold-bottom`), and is never anchor-compensated; the row anchor (`keep-row`) is for a reader in
+history, while entering and while older messages are prepended, exactly as before.
+`threadGrowthObserver.test.ts` drives the observer through late growth, the keyboard box and the
+`svh` shrink: the old rule leaves the pinned reader exactly 214 px up, the new one at 0, and a reader
+in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
+portrait photo near its end.**
 
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 

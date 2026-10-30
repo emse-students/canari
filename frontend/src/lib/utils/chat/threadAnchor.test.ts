@@ -5,8 +5,8 @@ import {
   isPinnedToBottom,
   keyboardChangeResponse,
   respondToNewMessage,
-  shouldFollowThreadBottom,
   THREAD_BOTTOM_SLACK_PX,
+  threadGrowthResponse,
   threadReach,
   type NewMessageState,
   type ThreadGrowth,
@@ -40,45 +40,53 @@ describe('threadReach', () => {
     expect(after.scrollHeight).toBe(before.scrollHeight);
     expect(threadReach(after) - threadReach(before)).toBe(330);
     expect(
-      shouldFollowThreadBottom({
+      threadGrowthResponse({
         ...settled,
         previousReach: threadReach(before),
         currentReach: threadReach(after),
       })
-    ).toBe(true);
+    ).toBe('follow-bottom');
   });
 
   it('leaves a reader who had gone up where they are when the keyboard rises', () => {
     expect(
-      shouldFollowThreadBottom({
+      threadGrowthResponse({
         ...settled,
         previousReach: 1400,
         currentReach: 1730,
         wasNearBottom: false,
       })
-    ).toBe(false);
+    ).toBe('keep-row');
   });
 });
 
-describe('shouldFollowThreadBottom', () => {
+describe('threadGrowthResponse', () => {
   it('follows the bottom when a row grows under a reader who was at the bottom', () => {
-    expect(shouldFollowThreadBottom(grew())).toBe(true);
+    expect(threadGrowthResponse(grew())).toBe('follow-bottom');
   });
 
-  it('leaves a reader who is reading history exactly where they are', () => {
-    expect(shouldFollowThreadBottom({ ...grew(), wasNearBottom: false })).toBe(false);
+  it('leaves a reader who is reading history to the row anchor', () => {
+    expect(threadGrowthResponse({ ...grew(), wasNearBottom: false })).toBe('keep-row');
   });
 
-  it('does nothing when the height has not changed', () => {
-    expect(shouldFollowThreadBottom(settled)).toBe(false);
+  it('does nothing when the reach has not changed', () => {
+    expect(threadGrowthResponse(settled)).toBe('hold-bottom');
   });
 
   /**
-   * A row that SHRINKS pulls the bottom up by itself. Pinning would be a second movement for one
-   * change, and it would move the reader who had scrolled away.
+   * THE SHRINK UNDER THE KEYBOARD (Pixel 6a, 1.5.1, 2026-10-30; reproduced on the Mi 9T). A photo
+   * capped at `60svh` shrank by 214 px when the Android WebView resized for a 357 px keyboard. As a
+   * `keep-row` the anchor scrolled the pinned thread UP by those 214 px; a reader at the bottom
+   * stays at the bottom whichever way the reach moves.
    */
-  it('does nothing when a row shrinks - the bottom already came to meet the reader', () => {
-    expect(shouldFollowThreadBottom({ ...settled, currentReach: 972 })).toBe(false);
+  it('keeps a reader at the bottom there when a row shrinks', () => {
+    expect(threadGrowthResponse({ ...settled, currentReach: 1000 - 214 })).toBe('follow-bottom');
+  });
+
+  it('leaves a reader in history to the row anchor when a row shrinks', () => {
+    expect(threadGrowthResponse({ ...settled, currentReach: 972, wasNearBottom: false })).toBe(
+      'keep-row'
+    );
   });
 
   /**
@@ -88,16 +96,16 @@ describe('shouldFollowThreadBottom', () => {
    * while also being near the top, following the bottom would discard the history it just fetched.
    */
   it('refuses while older messages are being prepended, even from the bottom', () => {
-    expect(shouldFollowThreadBottom({ ...grew(4000), isLoadingOlder: true })).toBe(false);
+    expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true })).toBe('keep-row');
   });
 
   it('refuses while the conversation is still being entered', () => {
-    expect(shouldFollowThreadBottom({ ...grew(4000), isEntering: true })).toBe(false);
+    expect(threadGrowthResponse({ ...grew(4000), isEntering: true })).toBe('keep-row');
   });
 
-  it('is decided by the height alone, never by how much it grew', () => {
-    expect(shouldFollowThreadBottom(grew(1))).toBe(true);
-    expect(shouldFollowThreadBottom(grew(5000))).toBe(true);
+  it('is decided by the reach moving, never by how much', () => {
+    expect(threadGrowthResponse(grew(1))).toBe('follow-bottom');
+    expect(threadGrowthResponse(grew(5000))).toBe('follow-bottom');
   });
 });
 

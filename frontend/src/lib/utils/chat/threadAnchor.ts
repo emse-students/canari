@@ -27,7 +27,7 @@ export interface ThreadGrowth {
    * content growing under a stationary reader fires none.
    */
   wasNearBottom: boolean;
-  /** Older messages are being prepended - that caller restores the position itself. */
+  /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
   isLoadingOlder: boolean;
   /** The conversation is still being entered - `fillViewportThenPin` owns the position until it is not. */
   isEntering: boolean;
@@ -49,19 +49,39 @@ export function threadReach(metrics: ThreadScrollMetrics): number {
 }
 
 /**
- * Whether the pane should be pinned back to its bottom after a change in content height.
+ * What one observed change of the thread's extent does to the reader's position.
  *
- * Only growth counts. A row SHRINKING (a reaction removed, a preview collapsing) already pulls the
- * bottom up on its own, and pinning there would move a reader who is reading history.
+ * - `follow-bottom`: the reader was at the bottom and the reach moved - pin it back to the bottom.
+ * - `hold-bottom`: the reader was at the bottom and nothing moved the reach - nothing to do, and in
+ *   particular NO anchor compensation (see below).
+ * - `keep-row`: the reader is reading history (or the component owns the position): the row at the
+ *   top of the viewport is kept where it is ({@link anchorShift}).
  */
-export function shouldFollowThreadBottom(growth: ThreadGrowth): boolean {
-  if (growth.currentReach <= growth.previousReach) return false;
+export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
+
+/**
+ * Decides {@link ThreadGrowthResponse} for one change.
+ *
+ * **A READER AT THE BOTTOM IS ANCHORED TO THE BOTTOM, IN BOTH DIRECTIONS** (owner's Pixel 6a and a
+ * friend's phone on 1.5.1, 2026-10-30; reproduced on the Mi 9T). Only GROWTH used to be followed; a
+ * SHRINK fell through to the row anchor, which keeps the row at the top of the viewport in place.
+ * On Android the soft keyboard resizes the WebView itself, so every `svh` length shrinks with it -
+ * and a photo sits under the `--media-max-height: 60svh` ceiling. The keyboard's first frame pinned
+ * the thread; the next, the WebView's own resize, shrank the photo by 0.6 x the keyboard (214 px of a
+ * 357 px keyboard on the Mi 9T), the rows below it moved up, and the anchor "kept the reader's row"
+ * by scrolling the pane UP by those 214 px: the last messages went under the composer and the
+ * scroll-down arrow appeared. A text-only thread has no viewport-relative row and never showed it.
+ *
+ * For a reader at the bottom the bottom IS the anchor: any change of reach is followed.
+ */
+export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
   // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
   // restores `scrollTop` by exactly that much; following the bottom here would throw away the
   // history it had just fetched and land them where they already were.
-  if (growth.isLoadingOlder) return false;
-  if (growth.isEntering) return false;
-  return growth.wasNearBottom;
+  if (growth.isLoadingOlder) return 'keep-row';
+  if (growth.isEntering) return 'keep-row';
+  if (!growth.wasNearBottom) return 'keep-row';
+  return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }
 
 /**
