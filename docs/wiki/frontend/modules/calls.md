@@ -612,7 +612,9 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
   Play) may have withheld.
 - **The ring is the server's `call_ring` alone.** The decrypted MLS `call_invite` branches (Android
   and iOS) rang past `calls_mode`, the conversation's permission, the video rule and blocks; they
-  are deleted and log the drop.
+  are deleted and log the drop. So is the notification extension's ringing banner for an invite
+  pushed as an alert (only an old or crafted client sends one; current callers send it silent): it
+  is delivered blank, as a control event is.
 - **An open iPhone rings once.** A VoIP push that reaches an app in the foreground (the overlay
   already rings over the socket) is reported to CallKit and ended at once - Apple requires the
   report, and a second ring on top of the overlay is what it would otherwise be.
@@ -1128,7 +1130,7 @@ The rule is ONE function on each side - `callsAllowedFor` in
 |---|---|---|
 | The ring PUSH (`POST /api/calls/ring`: FCM `call_ring`, APNs VoIP) - the only thing that rings a killed or backgrounded phone | **the server**, `CallsService.ringGroup` -> `membersWhoTakeCalls`, read at each ring, never cached | no push at all, whatever build the phone runs; logged `[ring] call=... withheld from N member(s) - calls not allowed in this conversation` (ids cut). The caller is told nothing - the call goes unanswered like any other |
 | The in-app invite (MLS `call_invite` over the chat socket - ciphertext the server cannot read) | **the client**, from its copy in `notificationPreferences` | `CallService.handleCallSignal` does not ring (logged); `handleCallSignalForChat` writes the call as **MISSED at once** (`recordCallEnded` with outcome `not-answered`, final - the caller's later hangup leaves it), so the line is in the conversation instead of the ring. One predicate, one timeline writer |
-| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS `canari_push.mm`) | **never rings** (2026-10-30): the native ring is the server's `call_ring` alone, the one ring that passed `calls_mode`, the conversation's permission, the video rule and blocks. A decrypted invite is logged and dropped; `incomingCallScreen.test.ts` fails if either branch rings again | - |
+| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS `canari_push.mm` and the notification extension) | **never rings** (2026-10-30): the native ring is the server's `call_ring` alone, the one ring that passed `calls_mode`, the conversation's permission, the video rule and blocks. A decrypted invite is logged and dropped; `incomingCallScreen.test.ts` fails if either branch rings again | - |
 
 **Stored and synced like the level.** On the member's own membership row: per ACCOUNT, every device,
 survives a reinstall, ends with the membership (leaving and account erasure hard-delete the row -

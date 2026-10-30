@@ -24,6 +24,7 @@ const read = (p: string) => readFileSync(resolve(SRC, p), 'utf8');
 const push = read('android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt');
 const screen = read('android/app/src/main/java/fr/emse/canari/IncomingCallActivity.kt');
 const pushMm = read('apple/Sources/canari/canari_push.mm');
+const nse = read('apple/canari_NSE/NotificationService.swift');
 
 /** The text from `start` to the next `end` after it, or fail naming what went missing. */
 function between(src: string, start: string, end: string, what: string): string {
@@ -173,6 +174,20 @@ describe('the one native ring is the server call_ring', () => {
     expect(branch).not.toContain('CanariReportVoipCall');
     const sites = [...pushMm.matchAll(/(?<!static void )CanariReportIncomingCall\(/g)];
     expect(sites).toHaveLength(1);
+  });
+
+  it('iOS extension: a decrypted call_invite delivered as an alert rings nothing', () => {
+    const branch = between(
+      nse,
+      'if let call = decrypted, call.type == "call_invite" {',
+      'return',
+      'the extension call_invite branch'
+    );
+    expect(branch).toContain('applyCallControlContent(');
+    expect(branch).toContain('ended: false');
+    expect(nse).not.toContain('applyCallInviteContent');
+    expect(nse).not.toContain('.defaultRingtone');
+    expect(nse).not.toContain('acceptCall=');
   });
 });
 
