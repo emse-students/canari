@@ -18,6 +18,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import NotificationRow from './NotificationRow.svelte';
 import type { PostNotification } from '$lib/posts/api';
 import { m } from '$lib/paraglide/messages';
+import { formatNoticeSlot } from '$lib/bookings/noticeText';
 
 // `Avatar` resolves a display name on mount - stubbed so the test never reaches the network,
 // same convention `MessageReactions.test.ts` uses for the same reason.
@@ -214,6 +215,79 @@ describe('NotificationRow sentence', () => {
     const neutral = renderRow(booking('booking_added', ''));
     expect(neutral.textContent).toContain(m.notif_booking_added_text());
     expect(neutral.querySelector('.italic')).toBeNull();
+  });
+
+  // The space and the slot are named, and the organiser's word is quoted on its own line.
+  it('names the space and the slot of a booking notice, with the word apart', () => {
+    const startsAt = '2026-11-03T09:00:00.000Z';
+    const meta = { place: 'Salle fermee', startsAt, timeZone: 'Europe/Paris', word: '' };
+    const row = renderRow({
+      ...postRow('booking_cancelled'),
+      postId: 'b-1',
+      // The server keeps `text` as it always was (the word, else the place); the new client reads `meta`.
+      text: 'desole A8 test',
+      meta: { ...meta, word: 'desole A8 test' },
+    });
+    const text = row.textContent ?? '';
+    expect(text).toContain(m.notif_booking_cancelled_text());
+    expect(text).toContain('Salle fermee');
+    // The slot is the SPACE's clock: 09:00 UTC is 10:00 in Paris.
+    expect(text).toContain(formatNoticeSlot(startsAt, 'Europe/Paris')!);
+    expect(text).toContain('10:00');
+    expect(row.querySelector('.block.italic')?.textContent).toBe(
+      m.notif_booking_word_quoted({ word: 'desole A8 test' })
+    );
+    // The word never takes the space's place.
+    expect(row.querySelectorAll('.italic')[0]?.textContent).toBe('Salle fermee');
+
+    // A word with newlines is TEXT, kept on its own block, never read as layout or markup.
+    const multi = renderRow({
+      ...postRow('booking_cancelled'),
+      postId: 'b-1',
+      text: 'ligne 1\nligne 2 <b>x</b>',
+      meta: { ...meta, word: 'ligne 1\nligne 2 <b>x</b>' },
+    });
+    const quote = multi.querySelector('.block.italic');
+    expect(quote?.textContent).toContain('ligne 1\nligne 2 <b>x</b>');
+    expect(quote?.querySelector('b')).toBeNull();
+
+    // No word: no quote line. Link-only space (Q-R5): no space name, the slot alone.
+    const bare = renderRow({
+      ...postRow('booking_added'),
+      postId: 'b-1',
+      text: '',
+      meta: { ...meta, place: '', word: '' },
+    });
+    expect(bare.querySelector('.italic')).toBeNull();
+    expect(bare.textContent).toContain('10:00');
+  });
+
+  // A row written before `meta` existed draws exactly as it always did: its text quoted, no slot.
+  it('draws a booking notice with no meta from its text alone (legacy row)', () => {
+    const legacy = renderRow({
+      ...postRow('booking_cancelled'),
+      postId: 'b-1',
+      text: 'Salle de musique',
+    });
+    expect(legacy.textContent).toContain(m.notif_booking_cancelled_text());
+    expect(legacy.querySelectorAll('.italic')).toHaveLength(1);
+    expect(legacy.querySelector('.italic')?.textContent).toBe('Salle de musique');
+    expect(legacy.querySelector('.block')).toBeNull();
+    expect(legacy.textContent).not.toMatch(/\d{2}:\d{2}/);
+  });
+
+  // OLD CLIENTS: a row the new server writes keeps `text` = the word, else the place, so a client
+  // that ignores `meta` (every native app embeds an old frontend) still names something. Drawn here
+  // with `meta` stripped, which is exactly what that rendering path sees.
+  it('draws a NEW row on the old path: text alone still names the place or the word', () => {
+    const startsAt = '2026-11-03T09:00:00.000Z';
+    const meta = { place: 'Salle fermee', startsAt, timeZone: 'Europe/Paris', word: '' };
+    for (const text of ['Salle fermee', 'desole A8 test']) {
+      const row = { ...postRow('booking_cancelled'), postId: 'b-1', text, meta };
+      const old = renderRow({ ...row, meta: undefined });
+      expect(old.textContent).toContain(m.notif_booking_cancelled_text());
+      expect(old.querySelector('.italic')?.textContent).toBe(text);
+    }
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.
