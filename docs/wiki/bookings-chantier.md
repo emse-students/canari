@@ -1289,3 +1289,7 @@ per account, 60 resources per space, 10 unsent files per space and 30 per accoun
 **Left after WP-B6** (2026-10-18): the device readings of WP-B7 (a real poster and a real file on a
 phone, both phones, a two-client run on one slot), the French user guide, and the bookings rows of
 the cross-client rig (nothing there asserts the module yet).
+
+## The space page and the booking sheet against the mockup (2026-10-30)
+
+The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. Not drawn: the owner line under the title (`BookerSpace` carries no owner name).

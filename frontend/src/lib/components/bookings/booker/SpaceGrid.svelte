@@ -8,6 +8,7 @@
     formatDay,
     formatDayHead,
     formatTimeRange,
+    isPastUnit,
     windowRefusal,
     type DayColumn,
     type WeekLayout,
@@ -196,20 +197,21 @@
   }
 
   /** What a cell says, and whether the device's clock puts it outside the booking window. */
-  function reading(unit: SlotUnit): { text: string; closed: boolean } {
+  function reading(unit: SlotUnit): { text: string; closed: boolean; past: boolean } {
     if (unit.state === 'booked') {
       const who = unit.booking.mine
         ? m.bookings_cell_mine()
         : (unit.booking.holderName ?? m.bookings_cell_booked());
-      return { text: who, closed: false };
+      return { text: who, closed: false, past: false };
     }
     if (unit.state === 'blocked') {
-      return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false };
+      return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false, past: false };
     }
     if (windowRefusal(space, unit.startMs, nowMs) === null) {
-      return { text: m.bookings_cell_free(), closed: false };
+      return { text: m.bookings_cell_free(), closed: false, past: false };
     }
-    return { text: m.bookings_cell_closed(), closed: true };
+    // A free unit already over keeps its name for a screen reader but is not written in the cell.
+    return { text: m.bookings_cell_closed(), closed: true, past: isPastUnit(unit, nowMs) };
   }
 
   /**
@@ -221,7 +223,8 @@
   function sameRun(a: SlotUnit | null | undefined, b: SlotUnit | null | undefined): boolean {
     if (!a || !b || a.endMs !== b.startMs || a.state !== b.state) return false;
     if (a.state === 'booked' && b.state === 'booked') return a.booking.id === b.booking.id;
-    return reading(a).text === reading(b).text;
+    const [ra, rb] = [reading(a), reading(b)];
+    return ra.text === rb.text && ra.past === rb.past;
   }
 
   /** The shared axis: its whole hours, as the labels down the left. */
@@ -246,13 +249,14 @@
       : text;
   }
 
-  function cellClass(unit: SlotUnit, closed: boolean): string {
+  function cellClass(unit: SlotUnit, closed: boolean, past: boolean): string {
     if (unit.state === 'booked') {
       return unit.booking.mine
         ? 'bg-cn-yellow/25 text-text-main border-cn-yellow/60'
         : 'bg-cn-border/40 text-text-main border-cn-border';
     }
     if (unit.state === 'blocked') return 'bg-red-err/10 text-red-err border-red-err/30';
+    if (past) return 'bg-cn-bg/50 text-text-muted/40 border-cn-border/30';
     if (closed) return 'bg-cn-bg text-text-muted/60 border-cn-border/60 hover:bg-cn-border/20';
     return 'bg-green-ok/10 text-green-ok border-green-ok/30 hover:bg-green-ok/20';
   }
@@ -365,9 +369,9 @@
                 ? blockMode
                   ? 'bg-red-err/20 text-red-err border-red-err'
                   : 'bg-cn-yellow/40 text-text-main border-cn-yellow'
-                : cellClass(unit, cell.closed)}"
+                : cellClass(unit, cell.closed, cell.past)}"
             >
-              {joinedAbove ? '' : unitText(unit, cell.text)}
+              {joinedAbove || cell.past ? '' : unitText(unit, cell.text)}
             </button>
           {/each}
         </div>

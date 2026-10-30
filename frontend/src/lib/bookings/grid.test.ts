@@ -9,6 +9,7 @@ import {
   formatWeekRange,
   freeCount,
   freeRunFrom,
+  isPastUnit,
   slotsReadRange,
   unitDay,
   weekDates,
@@ -171,6 +172,17 @@ describe('the week (WP-R2, D46)', () => {
     expect(layout.days[1].placed[0].topMin).toBe(600);
     // One axis for the week, whole hours around what is offered.
     expect([layout.startMin, layout.endMin]).toEqual([600, 660]);
+  });
+
+  it('starts the axis at the first hour ANY day opens, not at midnight, and ends after the last', () => {
+    // Monday opens 08:00-09:00, Saturday 10:00-23:00 (Paris): the axis is the union, 08:00-23:00.
+    const units = [
+      parisUnit('2026-11-02T08:00', 60),
+      parisUnit('2026-11-07T10:00', 60),
+      parisUnit('2026-11-07T22:00', 60),
+    ];
+    const layout = weekLayout(units, weekDates('2026-11-02'), paris, at('2026-11-01T00:00:00Z'));
+    expect([layout.startMin, layout.endMin]).toEqual([480, 1380]);
   });
 
   it('keeps 18:00 at 18:00 across the daylight-saving change (2026-10-24 to 2026-10-26)', () => {
@@ -346,5 +358,13 @@ describe('dragRange', () => {
     expect(dragRange(column, 3, 5, 4).count).toBe(0);
     expect(dragRange([null, unit('09:00', 30)], 0, 1, 4).count).toBe(0);
     expect(dragRange(column, 0, 2, 0).count).toBe(0);
+  });
+});
+
+describe('a unit that is over', () => {
+  it('is past once it has ended on the device clock, and not before', () => {
+    const u = unit('10:00', 30);
+    expect(isPastUnit(u, u.endMs - 1)).toBe(false);
+    expect(isPastUnit(u, u.endMs)).toBe(true);
   });
 });
