@@ -40,6 +40,12 @@ mkdir -p "$root/frontend/build"
 (
   cd "$root/frontend/src-tauri"
   export TAURI_ANDROID_PROJECT_PATH="$android"
+  # What the tauri CLI exports around the same build: with the project path set, `tauri`'s build
+  # script rewrites `app/proguard-tauri.pro` for this package and refuses to run without it. The
+  # kotlin files wry would generate are committed, so WRY_ANDROID_KOTLIN_FILES_OUT_DIR stays unset.
+  export TAURI_ANDROID_PACKAGE_UNESCAPED=fr.emse.canari
+  export WRY_ANDROID_PACKAGE=fr.emse.canari
+  export WRY_ANDROID_LIBRARY=mines_app_lib
   export CC_aarch64_linux_android="$bin/aarch64-linux-android24-clang"
   export AR_aarch64_linux_android="$bin/llvm-ar"
   export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android24-clang"
