@@ -1,3 +1,3 @@
-version: 1.5.1
+version: 1.5.2
 
-Nouveau : les directs, pour filmer et diffuser en direct ; les appels audio en tête-à-tête ; les réservations préviennent désormais de chaque réservation et annulation, avec un rappel réglable ; la boutique présente une seule carte d'adhésion avec ses formules et ses prix ; suivre une personne passe désormais par une demande qu'elle accepte ou refuse. Corrigé : le clavier ne recouvre plus la conversation, et « + » ouvre bien son menu après que le clavier a été fermé.
+Nouveau : un appel fait sonner le téléphone même fermé ou verrouillé, en plein écran ; les réservations sont redessinées, et leurs notifications nomment le lieu et le créneau. Amélioré : un appel démarre sur l'écouteur et l'écran s'éteint contre la joue ; le bouton haut-parleur montre où passe vraiment le son. Corrigé : copier un lien ou un message le confirme ; dans CanaReels, toucher à côté referme les réactions ; la conversation reste en bas quand le clavier s'ouvre.
