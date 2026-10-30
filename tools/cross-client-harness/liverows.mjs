@@ -312,7 +312,10 @@ const VIEWER = [
   // again at the next delivery - ended by itself, or a `stalled at` line the judge counts.
   at(D, String.raw`\[LIVE\] viewer ${S}: waiting at ${F} with ${F} s buffered ahead ${R} - the engine's own wait`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the engine's own wait at ${F} ended by itself after ${N} ms, now at ${F}: held about ${N} ms \(budget ${N} ms\)`),
-  at(L, String.raw`\[LIVE\] viewer ${S} \(ended\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
+  // The player's summary: every SUMMARY_EVERY appended segments while it plays (LIVE-STALL-1,
+  // 1.5.1-alpha.9: 30 segments land inside the 60 s watch), then once at the end. `stopped` and
+  // `unavailable` are not narration in a row the broadcaster ends - they stay dirt.
+  at(L, String.raw`\[LIVE\] viewer ${S} \((?:playing|ended)\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),
 ];
