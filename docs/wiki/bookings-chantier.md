@@ -499,6 +499,27 @@ poster upload and the poster then carried - control: without `onBusy` that test 
 line of "Evenement ponctuel" held until dated then sent, the focus on each step's heading, the skip
 creating nothing). **Not yet seen** at 390 and 1280, on a phone, or against a running API.
 
+## The Reservations home as cards (2026-10-30)
+
+The owner found the shipped `/bookings` "very ugly and not ergonomic". Gap against the mockup
+(`spaces.html`, #2579): the mockup draws compact rows (thumbnail, name, `association - columns`,
+chevron), "Vos prochaines reservations" as one-line rows with a bell pill, and "Mes espaces" with a
+"Creer un espace" button to the wizard. Shipped before: poster rows with a generic glyph, a full-width
+reminder `Select` and a bordered cancel button per booking, a long notice sentence, the creation form
+inline. Rebuilt toward the mockup AND the reference app the owner likes (big image cards):
+
+- `SpaceList.svelte`: a card per space - banner (`SpacePoster cover`, lazy, or a tinted glyph box),
+  name, `AssociationAvatar` (initials) + association, a column-count chip from two, "Voir le planning".
+  A search (name or association) from four spaces, and a count.
+- `MyBookingCard.svelte`: the date is the title, the reminder is a `Picker` chip, cancel / leave is a
+  quiet text action. The two notice sentences are one short line each.
+- `EditBookingsTab.svelte` (also the association and list tabs): "Creer un espace" opens a `Modal`
+  holding the name form, then the wizard; no inline form.
+
+**Not drawn, because the data is absent** (report, no backend change made): the association's LOGO
+(`ListedSpace` carries `associationId` and `associationName` only - initials stand in), a price, and a
+space/equipment type badge. Each needs a field on `GET bookings/spaces`.
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
