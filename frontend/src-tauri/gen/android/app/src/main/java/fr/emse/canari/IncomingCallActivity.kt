@@ -1,6 +1,7 @@
 package fr.emse.canari
 
 import android.app.Activity
+import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Context
@@ -54,7 +55,10 @@ class IncomingCallActivity : Activity() {
         /** The screen showing each ringing call, so its ring's end can close it. Main thread only. */
         private val showing = mutableMapOf<String, WeakReference<IncomingCallActivity>>()
 
-        /** The intent of the ring's full-screen intent: what the screen needs, and its two actions. */
+        /**
+         * The intent of the ring's full-screen intent: what the screen needs, and its two actions.
+         * [callerId] is the caller whose photo to show - empty for a caller this phone never named.
+         */
         fun intentFor(
             context: Context,
             callId: String,
@@ -105,11 +109,24 @@ class IncomingCallActivity : Activity() {
      * A SECOND CALL while this screen shows (`singleTop` delivers its full-screen intent here): the
      * screen becomes that call's. The first call's ring is still the notification's to end; its
      * screen entry is dropped, so its `finishFor` no longer closes the screen of the call now shown.
+     *
+     * A second call that NO LONGER RINGS by the time it arrives replaces nothing: the first call's
+     * screen stays while that call still rings, and closes only when it does not either.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
         val previous = callId
+        val next = intent.getStringExtra(EXTRA_CALL_ID) ?: ""
+        if (next.isNotEmpty() && !CanariFirebaseMessagingService.isRinging(next)) {
+            if (previous.isNotEmpty() && CanariFirebaseMessagingService.isRinging(previous)) {
+                Log.i(TAG, "call=${next.take(8)} no longer rings - the screen of call=${previous.take(8)} stays")
+            } else {
+                Log.i(TAG, "call=${next.take(8)} no longer rings, nor call=${previous.take(8)} - closed")
+                finish()
+            }
+            return
+        }
+        setIntent(intent)
         if (showing[previous]?.get() === this) showing.remove(previous)
         main.removeCallbacks(ringWindowOver)
         Log.i(TAG, "a new call screen replaces call=${previous.take(8)}")
@@ -171,8 +188,11 @@ class IncomingCallActivity : Activity() {
         )
 
         // The photo off the main thread: the same cached fetch the ring notification used a moment
-        // ago, so usually a file read.
-        if (callerId.isNotEmpty()) {
+        // ago, so usually a file read. An empty callerId is the ring's word for a caller this phone
+        // never named (decision 6): no face either, the launcher icon stays.
+        if (callerId.isEmpty()) {
+            Log.d(TAG, "caller not named on this phone - no photo on the call screen")
+        } else {
             val app = applicationContext
             Thread({
                 val bitmap = CanariFirebaseMessagingService.callAvatar(app, callerId)
@@ -212,9 +232,29 @@ class IncomingCallActivity : Activity() {
         )
     }
 
+    /**
+     * THE ANSWER MAY START THE APP'S ACTIVITY: from API 34 a PendingIntent's sender must opt in to
+     * lending its background-activity-start privilege, or the deep link is blocked. This screen is
+     * visible when the user taps, so API 36+ asks only for that (`ALLOW_IF_VISIBLE`); API 34-35 have
+     * no such mode and take `ALLOWED`. Below 34 no opt-in exists or is needed.
+     */
     private fun sendAnswer(answer: PendingIntent) {
         try {
-            answer.send()
+            val sdk = android.os.Build.VERSION.SDK_INT
+            if (sdk >= 34) {
+                val mode = if (sdk >= 36) {
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                } else {
+                    @Suppress("DEPRECATION")
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }
+                val options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(mode)
+                Log.i(TAG, "answer sent with background-start mode=${if (sdk >= 36) "ALLOW_IF_VISIBLE" else "ALLOWED"} sdk=$sdk")
+                answer.send(options.toBundle())
+            } else {
+                Log.i(TAG, "answer sent without a background-start mode sdk=$sdk")
+                answer.send()
+            }
             Log.i(TAG, "answer handed to the app for call=${callId.take(8)}")
         } catch (e: PendingIntent.CanceledException) {
             // The ring's intents were cancelled with it: the call is already over.

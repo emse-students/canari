@@ -2801,7 +2801,8 @@ static NSString *CanariCallerDisplayName(NSString *callerId) {
 }
 
 /// Reports an incoming call to CallKit (full-screen system ring). Deduped per callId (the VoIP
-/// push and the decrypted MLS invite may both arrive); auto-ends as unanswered after 60s.
+/// push and the FCM `call_ring` may both arrive); auto-ends as unanswered after 60s. A decrypted
+/// MLS `call_invite` never comes here: the server's `call_ring` is the only ring.
 ///
 /// The caller is named from this phone's own copy (`CanariCallerDisplayName`), never from the
 /// frame: since the native ring shipped (2026-10-30) the `call_ring` FCM data carries ids only, and
@@ -2811,8 +2812,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
   if (callId.length == 0) {
     return;
   }
-  // ONE choke point for four callers (VoIP push, legacy FCM ring, decrypted MLS invite, the bogus
-  // -id path): a peer on an older build can still ring this device, and raising a system call UI
+  // The switch is checked here, at the FCM `call_ring`'s ring: a peer on an older build can still ring this device, and raising a system call UI
   // for a call the webview will refuse to join is worse than no ring at all.
   if (!kCanariCallsEnabled) {
     NSLog(@"[CanariCallKit] calls disabled - not reporting incoming call %@", callId);
@@ -2874,7 +2874,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
 ///   capped at `kCallRingTimeoutSec`: the window is the server's, so the phone does not keep ringing
 ///   for a call nobody can answer any more. A push that arrives past it (APNs held it while the phone
 ///   was off) is reported and ended at once - a flash, and the only thing Apple allows.
-/// - A call already reported for `callId` (the MLS invite rang first) is reported AGAIN under the
+/// - A call already reported for `callId` (the FCM `call_ring` rang first) is reported AGAIN under the
 ///   same UUID: CallKit refuses it as a duplicate, which still honours the contract, and nothing
 ///   new rings.
 /// - Audio only (`hasVideo = NO`) until the video lot decides how the native ring announces video.
@@ -2917,28 +2917,35 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
 
   long long nowMs = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   long long remainingMs = ringUntilMs - nowMs;
+  // A call NOT TO RING (deadline passed, or rung in-app) is ended INSIDE the report's completion:
+  // ending it before CallKit has taken the report races the report itself.
+  BOOL endAtOnce = remainingMs <= 0;
   [g_callProvider reportNewIncomingCallWithUUID:uuid
                                          update:update
                                      completion:^(NSError *_Nullable error) {
                                        if (error == nil) {
-                                         NSLog(@"[CanariCallKit] ringing call=%@ (voip, %lld ms left)",
-                                               callId, remainingMs);
-                                         return;
+                                         NSLog(@"[CanariCallKit] %@ call=%@ (voip, %lld ms left)",
+                                               endAtOnce ? @"reported" : @"ringing", callId,
+                                               remainingMs);
+                                       } else {
+                                         NSLog(@"[CanariCallKit] voip report refused call=%@ "
+                                               @"duplicate=%d: %@",
+                                               callId, existing != nil, CanariErrorReason(error));
+                                         if (existing == nil) {
+                                           [g_ringingCalls removeObjectForKey:callId];
+                                           [g_ringingCallInfo removeObjectForKey:uuid.UUIDString];
+                                         }
                                        }
-                                       NSLog(@"[CanariCallKit] voip report refused call=%@ "
-                                             @"duplicate=%d: %@",
-                                             callId, existing != nil, CanariErrorReason(error));
-                                       if (existing == nil) {
-                                         [g_ringingCalls removeObjectForKey:callId];
-                                         [g_ringingCallInfo removeObjectForKey:uuid.UUIDString];
+                                       if (endAtOnce) {
+                                         NSLog(@"[CanariCallKit] call=%@ voip push not to ring "
+                                               @"(deadline passed, or rung in-app) - reported and "
+                                               @"ended",
+                                               callId);
+                                         CanariEndCallKitCall(callId, CXCallEndedReasonRemoteEnded);
                                        }
                                      }];
-  if (remainingMs <= 0) {
-    NSLog(@"[CanariCallKit] call=%@ voip push not to ring (deadline passed, or rung in-app) - "
-          @"reported and ended",
-          callId);
-    CanariEndCallKitCall(callId, CXCallEndedReasonRemoteEnded);
-    return;
+  if (endAtOnce) {
+    return;  // the completion ends it
   }
   if (existing != nil) {
     return;  // the first report armed its own end
@@ -3123,15 +3130,12 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       decrypted = CanariTryDecryptWithCommitCatchup(queuedMessageId, groupId, senderId, inlineProto);
     }
 
-    // Call signaling over MLS (WP-XP-5, app running in background). Invite -> CallKit ring
-    // (fallback for pre-WP-XP-5 callers that never hit POST /api/calls/ring; deduped per callId
-    // with the VoIP push). Control -> never a message notification; hangup/answered also ends an
-    // active CallKit ring.
+    // Call signaling over MLS (WP-XP-5, app running in background): never a message notification,
+    // and NEVER A RING. The one native ring is the server's `call_ring` (VoIP or FCM), because only
+    // the server applies calls_mode, the per-conversation permission, the video rule and blocks; a
+    // decrypted invite rang past all four. Control: hangup/answered also ends an active CallKit ring.
     if (decrypted != nil && [decrypted.type isEqualToString:@"call_invite"]) {
-      NSString *callId = decrypted.callId.length > 0
-                             ? decrypted.callId
-                             : [NSString stringWithFormat:@"mls-%@", groupId];
-      CanariReportIncomingCall(groupId, callId, senderId, decrypted.hasVideo);
+      NSLog(@"[CanariPush] call_invite over MLS: not a ring - the server's call_ring is the only one");
       return;
     }
     if (decrypted != nil && [decrypted.type isEqualToString:@"call_control"]) {

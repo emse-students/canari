@@ -536,8 +536,9 @@ VoIP delivery to it. So the rule is split in two:
 | A malformed or unknown payload | - | reported and ended at once |
 
 The phone's half is `CanariReportVoipCall` (`canari_push.mm`): synchronous on the registry's main
-queue, before `completion()`; a call already rung by the MLS invite is reported again under the same
-UUID (CallKit refuses the duplicate, which still honours the contract, and nothing new rings).
+queue, before `completion()`; a call already rung by the FCM `call_ring` is reported again under the
+same UUID (CallKit refuses the duplicate, which still honours the contract, and nothing new rings). A
+call not to ring (deadline passed, app in the foreground) is ended inside the report's completion.
 
 **The name: never in the push.** The VoIP payload is `{type, groupId, callId, callerId, hasVideo,
 ringUntil}` (`voipRingPayload`, `call-ring-payload.ts`, its key set pinned by a test) - ids and the
@@ -589,7 +590,7 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
 | Switch | File | What it does when on |
 | --- | --- | --- |
 | `CALLS_NATIVE_RING_COMPILED` | `features.ts` | the fact the others mirror; the iPhone sends its PushKit token at `push/register` instead of an explicit `null` (`voipRegistrationField`) |
-| `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | a `call_ring` FCM data push (or a decrypted MLS `call_invite`) raises the CallStyle ring on the `canari_calls` channel instead of being dropped |
+| `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | a `call_ring` FCM data push raises the CallStyle ring on the `canari_calls` channel instead of being dropped (a decrypted MLS `call_invite` never rings, switch or not) |
 | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | lets that ring open `IncomingCallActivity` over the lock screen; without it Android shows a heads-up banner only |
 | `kCanariCallsEnabled` | `canari_push.mm` | installs the `PKPushRegistry` and the `CXProvider` at process start; `CanariReportIncomingCall` reports to CallKit instead of returning |
 | `voip` | `Info.plist` + `project.yml` `UIBackgroundModes` | the only way PushKit hands out a token; App Review checks it is used |
@@ -604,18 +605,25 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
   `cancelAllMessageNotifications` on the app's resume); a launch that lands after the ring ended
   (between `notify` and `onCreate`) asks `isRinging` and closes at once; and the screen bounds
   itself by the ring window (`CALL_RING_TIMEOUT_MS`). A second call while it shows (`singleTop`)
-  replaces it through `onNewIntent`. On Android 14+ the ring logs `canUseFullScreenIntent()`, the
-  permission the user (or Play) may have withheld.
+  replaces it through `onNewIntent` - unless that call no longer rings, in which case the first
+  call's screen stays while its call still rings. Answer sends its intent with a background-start
+  mode (`ALLOW_IF_VISIBLE` on API 36+, `ALLOWED` on 34-35), without which Android 14+ may block the
+  app's launch. On Android 14+ the ring logs `canUseFullScreenIntent()`, the permission the user (or
+  Play) may have withheld.
+- **The ring is the server's `call_ring` alone.** The decrypted MLS `call_invite` branches (Android
+  and iOS) rang past `calls_mode`, the conversation's permission, the video rule and blocks; they
+  are deleted and log the drop.
 - **An open iPhone rings once.** A VoIP push that reaches an app in the foreground (the overlay
   already rings over the socket) is reported to CallKit and ended at once - Apple requires the
   report, and a second ring on top of the overlay is what it would otherwise be.
 - **Names come from the phone, never the payload** (decision 6), on both platforms: the server's
   `call_ring` data is ids only; Android names the caller from `display_names.json`
-  (`callerDisplayName`), iOS from the same file (`CanariCallerDisplayName`) on all three CallKit
-  paths - the VoIP push, the FCM ring of an iPhone with no VoIP token, the decrypted MLS invite. A
-  caller the phone never named is "Appel Canari" / "Canari call".
+  (`knownCallerName`), iOS from the same file (`CanariCallerDisplayName`) on both CallKit paths -
+  the VoIP push and the FCM ring of an iPhone with no VoIP token. A caller the phone never named is
+  "Appel Canari" / "Canari call", and shows no photo either.
 - **The caller's photo** is on the ring notification (the `Person` icon and the large icon, re-posted
-  once read while the ring is still live) and on the call screen. It is CACHE FIRST: the 24 h file
+  once read while the ring is still live) and on the call screen, for a NAMED caller only. The ring's
+  60 s end is armed before the photo is fetched, so a slow fetch never delays it. It is CACHE FIRST: the 24 h file
   cache every message notification fills (and its remembered "no photo"), the push-secret avatar
   route only on a miss. CallKit cannot show a third-party photo; the iPhone shows the name only.
 
@@ -1120,7 +1128,7 @@ The rule is ONE function on each side - `callsAllowedFor` in
 |---|---|---|
 | The ring PUSH (`POST /api/calls/ring`: FCM `call_ring`, APNs VoIP) - the only thing that rings a killed or backgrounded phone | **the server**, `CallsService.ringGroup` -> `membersWhoTakeCalls`, read at each ring, never cached | no push at all, whatever build the phone runs; logged `[ring] call=... withheld from N member(s) - calls not allowed in this conversation` (ids cut). The caller is told nothing - the call goes unanswered like any other |
 | The in-app invite (MLS `call_invite` over the chat socket - ciphertext the server cannot read) | **the client**, from its copy in `notificationPreferences` | `CallService.handleCallSignal` does not ring (logged); `handleCallSignalForChat` writes the call as **MISSED at once** (`recordCallEnded` with outcome `not-answered`, final - the caller's later hangup leaves it), so the line is in the conversation instead of the ring. One predicate, one timeline writer |
-| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS) | **owed at revival** (WP-C5 / WP-C6), from the device's local copy - today `CALLS_NATIVE_RING_COMPILED = false` and no native ring runs | - |
+| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS `canari_push.mm`) | **never rings** (2026-10-30): the native ring is the server's `call_ring` alone, the one ring that passed `calls_mode`, the conversation's permission, the video rule and blocks. A decrypted invite is logged and dropped; `incomingCallScreen.test.ts` fails if either branch rings again | - |
 
 **Stored and synced like the level.** On the member's own membership row: per ACCOUNT, every device,
 survives a reinstall, ends with the membership (leaving and account erasure hard-delete the row -
@@ -1241,8 +1249,8 @@ the rare silent `call_invite`. Nothing needs that decrypt: every current caller 
 cleartext `call_ring` push, sent and awaited BEFORE the MLS invite (a refused ring ends the call),
 and stops it with `call_ring_end`. The guard is now `silent && isKeyDistribution != true`, identical
 today (the switch is off) and unchanged by the flip; `pushSilentDecrypt.test.ts` fails if it ever
-reads the switch again. The MLS `call_invite` branch below it serves only a NON-silent invite from a
-pre-WP-XP-5 caller.
+reads the switch again. The MLS `call_invite` branch below it rings nothing since 2026-10-30: a
+decrypted invite skipped every rule the server's `call_ring` applies, so it is logged and dropped.
 
 **A call is never placed across a block (WP-C7).** `initiate` refuses `403 { code: 'USER_BLOCKED' }`
 when a block stands between the caller and the other member, in either direction - before a room is
