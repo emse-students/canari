@@ -1,13 +1,12 @@
 <script lang="ts">
   import type { BookerResource, BookerSpace, SlotUnit } from '$lib/bookings/api';
   import {
-    BLOCK_LENGTH_CHOICES,
-    bookingUnitLimit,
     dragRange,
     formatBookingRange,
     formatDay,
     formatDayHead,
     formatTimeRange,
+    gridUnitLimit,
     windowRefusal,
     type DayColumn,
     type WeekLayout,
@@ -71,7 +70,7 @@
    * The most units one gesture may cover - a booking's, or in block mode a block's; a drag is
    * offered only when that is more than one.
    */
-  const unitLimit = $derived(blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space));
+  const unitLimit = $derived(gridUnitLimit(space, blockMode));
 
   interface Selection {
     day: number;

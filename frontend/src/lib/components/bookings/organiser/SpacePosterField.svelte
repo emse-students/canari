@@ -142,7 +142,12 @@
       e.preventDefault();
       over = true;
     }}
-    ondragleave={() => (over = false)}
+    ondragleave={(e) => {
+      // Crossing onto a child (the icon, the text) fires a leave on the zone too: only a pointer
+      // that really left it ends the highlight.
+      const into = e.relatedTarget;
+      if (!(into instanceof Node && e.currentTarget.contains(into))) over = false;
+    }}
     ondrop={dropped}
     class="space-y-2"
   >

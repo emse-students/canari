@@ -40,6 +40,25 @@ describe('SpacePosterField - the drop zone', () => {
     expect(zone.textContent).toContain(m.bookings_poster_choose());
   });
 
+  it('keeps the drop highlight while the pointer crosses onto a child, ends it on a real leave', () => {
+    open();
+    const zone = document.querySelector('[data-poster-zone]') as HTMLElement;
+    const lit = () => zone.className.includes('bg-cn-yellow/15');
+    zone.parentElement!.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    flushSync();
+    expect(lit()).toBe(true);
+    const leave = (relatedTarget: EventTarget | null) => {
+      const e = new Event('dragleave', { bubbles: true });
+      Object.defineProperty(e, 'relatedTarget', { value: relatedTarget });
+      zone.parentElement!.dispatchEvent(e);
+      flushSync();
+    };
+    leave(zone.querySelector('svg') ?? zone);
+    expect(lit()).toBe(true);
+    leave(null);
+    expect(lit()).toBe(false);
+  });
+
   it('refuses a dropped file of a type the server does not take', async () => {
     open();
     const zone = document.querySelector('[data-poster-zone]') as HTMLElement;

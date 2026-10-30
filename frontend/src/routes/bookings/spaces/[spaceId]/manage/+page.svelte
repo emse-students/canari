@@ -22,7 +22,9 @@
   import { downloadSpaceExport } from '$lib/bookings/bookingActions';
   import { columnsHidden } from '$lib/bookings/columns';
   import { hoursOf, weekCounters, type WeekCounters } from '$lib/bookings/dashboard';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { gridDragHint } from '$lib/bookings/gridHint';
+  import { gridUnitLimit } from '$lib/bookings/grid';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import {
@@ -126,9 +128,6 @@
   /** The mockup's header buttons: filled, the icon always and the word from `sm` up. */
   const actionClass =
     'bg-control-fill text-text-main hover:bg-cn-border/60 inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold transition-colors disabled:opacity-40 sm:min-h-10';
-  const TABS = ['upcoming', 'planning'] as const;
-  const tabLabel = (key: Tab) =>
-    key === 'upcoming' ? m.bookings_dashboard_tab_upcoming() : m.bookings_dashboard_tab_planning();
 </script>
 
 <PageContainer width="tool">
@@ -232,10 +231,12 @@
             {/each}
           </dl>
           <!-- The drag that blocks, said in the words of the pointer the reader has. -->
-          <p class="text-text-muted flex items-center gap-1.5 text-xs">
-            <MousePointerClick size={14} aria-hidden="true" />
-            {gridDragHint(true, coarse)}
-          </p>
+          {#if gridUnitLimit(space, true) > 1}
+            <p class="text-text-muted flex items-center gap-1.5 text-xs">
+              <MousePointerClick size={14} aria-hidden="true" />
+              {gridDragHint(true, coarse)}
+            </p>
+          {/if}
         </div>
       {/if}
 
@@ -259,31 +260,28 @@
       {/if}
 
       <!-- Two columns side by side from lg (the mockup's desktop); below it, one at a time. -->
-      <div
-        class="border-cn-border flex gap-1 border-b lg:hidden"
-        role="tablist"
-        aria-label={m.bookings_dashboard_title()}
-      >
-        {#each TABS as key (key)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === key}
-            onclick={() => (tab = key)}
-            class="-mb-px min-h-11 border-b-2 px-4 text-sm font-semibold transition-colors {tab ===
-            key
-              ? 'border-cn-yellow text-text-main'
-              : 'text-text-muted hover:text-text-main border-transparent'}"
-          >
-            {tabLabel(key)}
-          </button>
-        {/each}
-      </div>
+      <SegmentedControl
+        class="lg:hidden"
+        variant="underline"
+        idPrefix="dashboard-"
+        items={[
+          { key: 'upcoming', label: m.bookings_dashboard_tab_upcoming() },
+          { key: 'planning', label: m.bookings_dashboard_tab_planning() },
+        ]}
+        value={tab}
+        onSelect={(key: Tab) => (tab = key)}
+        label={m.bookings_dashboard_title()}
+      />
 
       <!-- Both stay mounted: the counters come from the week's read, the list from its own. -->
       {#key space.id}
         <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6">
-          <div class={tab !== 'planning' ? 'max-lg:hidden' : ''}>
+          <div
+            id="dashboard-tabpanel-planning"
+            role="tabpanel"
+            aria-labelledby="dashboard-tab-planning"
+            class={tab !== 'planning' ? 'max-lg:hidden' : ''}
+          >
             <SpaceWeek
               bind:this={week}
               {space}
@@ -293,7 +291,12 @@
               onChanged={() => void upcoming?.reload()}
             />
           </div>
-          <aside class={tab !== 'upcoming' ? 'max-lg:hidden' : ''}>
+          <div
+            id="dashboard-tabpanel-upcoming"
+            role="tabpanel"
+            aria-labelledby="dashboard-tab-upcoming"
+            class={tab !== 'upcoming' ? 'max-lg:hidden' : ''}
+          >
             <h2 class="text-text-main mb-3 hidden text-sm font-bold lg:block">
               {m.bookings_dashboard_tab_upcoming()}
             </h2>
@@ -303,7 +306,7 @@
               {nowMs}
               onChanged={() => void week?.reread()}
             />
-          </aside>
+          </div>
         </div>
       {/key}
     </div>
