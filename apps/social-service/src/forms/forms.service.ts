@@ -871,11 +871,15 @@ export class FormsService {
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
    * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
    * user who will be told they are not a member. Answers `failed` ONLY when a retry could succeed
-   * (the grant threw), which is what `fulfilPayment` releases its claim on; `not-granted` when the
-   * tier was refused as not a rise over the one held (`grantCotisantIfARise`) - final, not retried.
+   * (the grant threw - the tier lock or a read included), which is what `fulfilPayment` releases its
+   * claim on; `not-granted` when the locked grant refused it (`grantCotisantIfARise`: the tier held
+   * already, not a rise, or a tier the form's `notCotisation` excludes held) - final, not retried.
    */
   private async grantCotisationIfConfigured(
-    form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    form: Pick<
+      Form,
+      'grantsCotisation' | 'cotisationVariantKey' | 'associationId' | 'submitCondition'
+    >,
     userId: string,
     grantedBy: string,
     metadata: Record<string, unknown>
@@ -889,14 +893,16 @@ export class FormsService {
       return 'granted';
     }
     try {
-      // Ranked under the buyer's tier lock, so a paid form never swaps out a dearer tier by the XOR;
-      // unlike a settlement, it renews the tier when that very tier is held (`grantCotisantIfARise`).
+      // Decided under the buyer's tier lock, so a shop settlement committed while the payment was
+      // in flight is seen: never a renewal of the tier held (its price taken twice), never a held
+      // tier the form is for people WITHOUT (`notCotisation`), never a move down by the XOR.
       const outcome = await this.userTagService.grantCotisantIfARise(
         form.associationId,
         userId,
         grantedBy,
         form.cotisationVariantKey,
-        metadata
+        metadata,
+        form.submitCondition?.notCotisation ?? null
       );
       return 'granted' in outcome ? 'granted' : 'not-granted';
     } catch (e) {
@@ -964,11 +970,6 @@ export class FormsService {
               'grants a cotisation: there is no account to grant it to - nothing granted'
           );
         }
-      } else if (await this.excludedCotisationHeldAtPayment(form, submission)) {
-        // Admitted at submit, a holder by the time the money landed (a shop purchase in between):
-        // granting would RENEW the tier they hold and take its price twice. Nothing is granted, and
-        // the purchase is recorded `paid_not_granted` below - the marker a refund is owed on.
-        grant = 'not-granted';
       } else {
         const granted = await this.grantCotisationIfConfigured(
           form,
@@ -1013,42 +1014,14 @@ export class FormsService {
   }
 
   /**
-   * Whether a payment that just landed on a cotisation-GRANTING form comes from someone its
-   * `notCotisation` criterion now excludes - `FORM_COTISATION_HELD`, re-judged at payment because
-   * `submit` judged it before the money, and a tier bought in the shop meanwhile would otherwise be
-   * renewed and paid twice (owner, 2026-10-30: nobody pays a cotisation twice). Only that criterion
-   * is re-judged: it is the only one a person can change between the two, by paying.
-   *
-   * A form that grants nothing takes no cotisation's price, so its seat stands whatever is held.
-   */
-  private async excludedCotisationHeldAtPayment(
-    form: Pick<Form, 'id' | 'grantsCotisation' | 'associationId' | 'submitCondition'>,
-    submission: Pick<Submission, 'id' | 'userId'>
-  ): Promise<boolean> {
-    const excluded = form.submitCondition?.notCotisation;
-    if (!form.grantsCotisation || !excluded || !submission.userId) return false;
-    const facts = await this.pricingFacts.build({
-      userId: submission.userId,
-      associationId: form.associationId,
-      needProfile: false,
-    });
-    if (submitRefusalCode({ notCotisation: excluded }, facts) !== FORM_COTISATION_HELD) {
-      return false;
-    }
-    this.logger.error(
-      `[Forms] submission ${submission.id} on form ${form.id}: ${FORM_COTISATION_HELD} at payment - ` +
-        'the payer now holds a cotisation this form is for people without; nothing granted, ' +
-        'recorded paid_not_granted, a refund is owed'
-    );
-    return true;
-  }
-
-  /**
    * Whether the tier a paid form grants was delivered, as its purchase record must say
    * (`receivedStatus`). `grant` is the decision THIS call took, when it took one. When it took none -
    * a replay whose grant was claimed by an earlier run, or a late payment that landed with no seat
-   * and so ran no grant - the answer is read from what the submitter holds NOW: without a seat
-   * nothing was granted, otherwise the form's tier is held or it is not. A form that grants no tier,
+   * and so ran no grant - the answer is read from DURABLE state: without a seat nothing was granted,
+   * otherwise the form's tier is delivered only when its held tag names THIS answer
+   * (`metadata.submissionId`, written by the grant). A tier merely held - bought in the shop, so
+   * the locked grant refused to renew it - is not this payment's delivery, and the refund it is owed
+   * survives a record write that failed and was replayed. A form that grants no tier,
    * or a guest's payment (nobody to grant to, logged where it is claimed), is delivered as paid.
    * Every "not delivered" is logged at ERROR. The read can OVER-mark - a replay racing the run that
    * is still granting, a failed grant a later replay retries, a tier risen from since - and nothing
@@ -1062,8 +1035,7 @@ export class FormsService {
   ): Promise<boolean> {
     if (!form.grantsCotisation || !form.associationId || !submission.userId) return true;
     if (grant === 'granted') return true;
-    // Refused as not a rise (`grantCotisantIfARise`), or the payer already holds a tier the form
-    // excludes (`excludedCotisationHeldAtPayment`): each logged it at ERROR already.
+    // Refused under the tier lock (`grantCotisantIfARise`): logged at ERROR there already.
     if (grant === 'not-granted') return false;
     const tier = form.cotisationVariantKey ?? 'base';
     if (!seatGiven) {
@@ -1073,21 +1045,23 @@ export class FormsService {
       );
       return false;
     }
-    const holds = await this.userTagService.holdsCotisationTier(
+    const delivered = await this.userTagService.holdsTierDeliveredBy(
       submission.userId,
       form.associationId,
-      form.cotisationVariantKey
+      form.cotisationVariantKey,
+      submission.id
     );
-    if (holds) {
+    if (delivered) {
       this.logger.debug(
-        `[Forms] submission ${submission.id}: tier ${tier} held at record time - recorded paid`
+        `[Forms] submission ${submission.id}: tier ${tier} held as this answer's delivery - recorded paid`
       );
       return true;
     }
     this.logger.error(
-      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held at record ` +
-        `time (grant ${grant ?? 'decided by another run'}) - recorded paid_not_granted; check the ` +
-        'tier is still not held before refunding (a concurrent or later grant does not clear the mark)'
+      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held as this ` +
+        `answer's delivery at record time (grant ${grant ?? 'decided by another run'}) - recorded ` +
+        'paid_not_granted; if it is held, it was held already when the payment landed: refund, do ' +
+        'not grant by hand'
     );
     return false;
   }

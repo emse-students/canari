@@ -363,12 +363,27 @@ cotisation" / "Ne detient pas la cotisation" (`cotisationModeOf` / `withCotisati
   `notCotisation` first, and `matchesCondition` is `failedCriterion(...) === null`. The check carries
   the same code as `refusalCode`, which is how the fill page says "Vous detenez deja cette cotisation"
   rather than "Ce formulaire ne vous est pas destine".
-- **Re-judged when the money lands, on a form that GRANTS a cotisation** (`excludedCotisationHeldAtPayment`
-  in `fulfilPayment`, online and cash alike): someone admitted at submit who bought the tier in the
-  shop before paying would otherwise have it RENEWED and pay twice. Nothing is granted, the purchase
-  is recorded `paid_not_granted` (the existing refund-owed marker the purchases tab and the hourly
-  report already show, closed by a manager - no new mechanism), ERROR line naming
-  `FORM_COTISATION_HELD`. A form that grants nothing keeps the seat it sold.
+- **Re-judged when the money lands, INSIDE the locked grant, on a form that GRANTS a cotisation.**
+  `fulfilPayment` (online and cash alike) hands the form's `notCotisation` to
+  `UserTagService.grantCotisantIfARise`, which decides under the buyer's tier lock - so a shop
+  settlement that committed while the form's payment was in flight is SEEN. It refuses a held tier
+  of that set (`EXCLUDED_TIER_HELD`) and, on every granting form, the very tier already held
+  (`held`): the old rule renewed it, taking its price twice from a holder - the same case submit
+  refuses as `FORM_TIER_ALREADY_HELD`, now judged again when the money lands. No path wanted that
+  renewal (paid forms are the rule's only caller); the one held tag still answered `granted` is
+  this answer's own delivery (`metadata.submissionId`), a replay that writes nothing. A refusal is
+  recorded `paid_not_granted` - the existing refund-owed marker the purchases tab and the hourly
+  report show, closed by a manager; no new mechanism. A throw of the lock or a read releases the
+  grant claim (`failed`) for a replay, never a refusal on a read that failed.
+- **A replay reaches the same verdict from durable state.** When the record write failed and is
+  replayed (`grant === null`), `formTierDelivered` asks whether the tier is held AS THIS ANSWER'S
+  DELIVERY (`holdsTierDeliveredBy`: the tag names this `submissionId`), not merely held - a tier
+  bought in the shop is held but not delivered, and its refund stays owed. The manager hint
+  (`target-held`), the hourly line and the buyer's status say it: already held when the payment
+  landed - refund, do not grant by hand.
+- **A form that grants nothing keeps the seat it sold**, holder or not: it took no cotisation's
+  price, so nothing was paid twice, and refusing the seat after the money would turn an admitted,
+  paid answer into a refund for a rule whose only purpose is not charging a cotisation twice.
 - **A 1.5.1 editor sends both keys** when a manager ticks a held tier on a "ne detient pas"
   condition (it spreads `notCotisation` through and adds `cotisation`): refused
   `400 { code: 'AUDIENCE_COTISATION_BOTH_MODES' }`, worded by a newer client through Paraglide; the
