@@ -1805,20 +1805,27 @@ export class AssociationsController {
   // only accepts genuine server-to-server calls from core-service.
 
   /**
-   * Sets the Lydia Business vendor_token (and dashboard URL, if given) for an association; called
-   * internally by core-service.
+   * Links the Business core-service's onboarding just created: its vendor_token, dashboard URL and
+   * private token (confirmed by Lydia, stored encrypted); called internally by core-service.
+   * Refused with the typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED` while a Business is linked.
    *
    * Answers `{ ok: true }` and nothing of the row: it returned the raw entity, vault key included,
    * and its one caller (core-service `createOnboarding`) never read the body.
    */
   @Post(':id/lydia-account')
   async setLydiaAccount(
-    @Param('id') id: string,
-    @Body() body: { lydiaAccountId: string; lydiaDashboardUrl?: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: { lydiaAccountId?: unknown; lydiaDashboardUrl?: unknown; businessPrivateToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    await this.service.setLydiaAccountId(id, body.lydiaAccountId, body.lydiaDashboardUrl);
+    await this.service.setLydiaAccountId(
+      id,
+      body?.lydiaAccountId,
+      body?.lydiaDashboardUrl,
+      body?.businessPrivateToken
+    );
     return { ok: true as const };
   }
 

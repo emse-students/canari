@@ -1,4 +1,4 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
@@ -64,6 +64,17 @@ export function lydiaAmountString(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
+/**
+ * The `code` of an onboarding that created a Business whose `api_token_id` Lydia's own
+ * `auth/vendortoken` did not confirm as its private token (error 103, or an answer that is not
+ * `status: "ok"`). Nothing is linked and nothing stored: a key Lydia does not recognise would
+ * refuse every callback of that association.
+ */
+export const LYDIA_BUSINESS_KEY_UNVERIFIED = 'LYDIA_BUSINESS_KEY_UNVERIFIED';
+
+/** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
+const LYDIA_VENDOR_TOKEN_MISMATCH = '103';
+
 /** `request/cancel`'s answer for a request already cancelled or expired (sandbox, 2026-10-15). */
 const LYDIA_CANCEL_ALREADY_SETTLED = '2';
 
@@ -82,13 +93,18 @@ const LYDIA_REQUEST_STATES: Readonly<Record<string, CheckoutRequestStateKind>> =
 };
 
 /**
- * Fields no log line may ever carry in the clear - `api_token_id` may be the Business's own
- * private_token (see `createOnboarding`'s docblock on why it is never persisted either), and
+ * Fields no log line may ever carry in the clear - `api_token_id` IS the Business's own private
+ * token (`auth/vendortoken`, homologation 2026-10-30; `createOnboarding` stores it encrypted), and
  * `api_token` is the Business's vendor token, which `business/create` answers with and which was
  * logged in clear until 2026-10-07. `signature` is the value Lydia's `request/state` answers with
  * (and the callbacks carry): the proof the whole confirmation rests on, never a log field.
  */
 const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'api_token', 'signature']);
+
+/** The public origin Lydia calls back on: nginx, the single entry point, from `FRONTEND_URL`. */
+function publicApiBase(): string {
+  return (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
+}
 
 function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -108,11 +124,9 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
  * real gap found while implementing this, not a missing feature to silently stub:
  * - Account/balance status (`getAccountStatus`, `getConnectAccountStatus`, `getConnectBalance`,
  *   `createConnectDashboardLink`) has no live-poll equivalent: Lydia pushes a `BUSINESS_VALIDATED`
- *   webhook event once, it does not expose a "retrieve current status" call. The PaymentProvider
- *   interface assumes a Stripe-style live poll; serving this correctly needs the interface extended
- *   to read Canari's own DB-tracked state (written by the webhook) instead of calling Lydia live.
- *   That webhook receiver is deliberately not built either (2026-08-19): it has no documented
- *   signature and `vendor_token` is PUBLIC, so building it as-is would be forgeable.
+ *   webhook event once, it does not expose a "retrieve current status" call. The webhook is
+ *   received (`lydia-business-webhook`) but it is UNSIGNED and `vendor_token` is PUBLIC, so it is
+ *   logged as a hint and decides nothing: a global admin still validates by hand.
  * - There are no saved payment methods: every purchase is its own `request/do` with payer
  *   interaction, there is no server-side vaulted instrument.
  * - `createCheckoutSession` requires `payerRecipient`: the payment controller builds it from the
@@ -140,8 +154,16 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * success/cancel URL this controller already hands to Stripe and Lydia.
    */
   private callbackUrl(outcome: 'confirm' | 'cancel' | 'expire'): string {
-    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
-    return `${frontendUrl}/api/payments/lydia-request-callback?outcome=${outcome}`;
+    return `${publicApiBase()}/api/payments/lydia-request-callback?outcome=${outcome}`;
+  }
+
+  /**
+   * URL Lydia POSTs a Business's `BUSINESS_VALIDATED` / `BUSINESS_UNVALIDATED` event to, given to
+   * `business/create` as `webhook` (`webhook.controller.ts`'s `lydia-business-webhook` route). The
+   * same public origin as the request callbacks.
+   */
+  private businessWebhookUrl(): string {
+    return `${publicApiBase()}/api/payments/lydia-business-webhook`;
   }
 
   isConfigured(): boolean {
@@ -410,12 +432,15 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * as `OnboardingResult.url` so the treasurer has somewhere to go manage the Business; there is no
    * separate "finish onboarding" redirect step like Stripe's, the Business exists immediately.
    *
-   * `api_token_id` is deliberately NOT returned/persisted. It MAY be the Business's private_token -
-   * the key that signs its `request/do` callbacks - but that is an unmeasured hypothesis (only a
-   * validated Business can settle it), and storing an unidentified secret is worse than storing
-   * none. The key that verifies callbacks is entered by the association's payout manager instead
-   * (`PUT /api/associations/:id/lydia-business-key`, payments.md). Provider-signed calls
-   * (`business/addcashier`, etc.) use Canari's OWN provider private_token.
+   * `api_token_id` IS the Business private token (homologation 2026-10-30, lydia-api.md section 1),
+   * and it is answered ONCE. So it is captured here, but only after Lydia's own `auth/vendortoken`
+   * confirms it pairs with `api_token` (`verifyBusinessKey`): an unconfirmed value throws the typed
+   * `LYDIA_BUSINESS_KEY_UNVERIFIED` and the onboarding fails visibly, linking nothing - there is no
+   * path that links a Business without its key. It is returned to the controller for social-service
+   * to store encrypted, and never logged (`LYDIA_LOG_REDACT_KEYS`).
+   *
+   * `webhook` asks Lydia to POST the Business's validation events to `lydia-business-webhook`;
+   * that POST is unsigned and decides nothing (webhook.controller.ts).
    */
   async createOnboarding(params: OnboardingParams): Promise<OnboardingResult> {
     if (!this.providerToken) throw new BadRequestException('Lydia not configured');
@@ -434,19 +459,21 @@ export class LydiaPaymentProvider implements PaymentProvider {
       );
     }
 
-    const data = await this.postForm<{ api_token: string; dashboard_url: string }>(
-      '/api/business/create',
-      {
-        provider_token: this.providerToken,
-        name: profile.name,
-        address: profile.address,
-        zipcode: profile.zipcode,
-        city: profile.city,
-        country: profile.country,
-        business_email: profile.businessEmail,
-        business_phone: profile.businessPhone,
-      }
-    );
+    const data = await this.postForm<{
+      api_token: string;
+      api_token_id?: unknown;
+      dashboard_url: string;
+    }>('/api/business/create', {
+      provider_token: this.providerToken,
+      name: profile.name,
+      address: profile.address,
+      zipcode: profile.zipcode,
+      city: profile.city,
+      country: profile.country,
+      business_email: profile.businessEmail,
+      business_phone: profile.businessPhone,
+      webhook: this.businessWebhookUrl(),
+    });
     // `postForm` only throws on a recognized `error` field - a response with NEITHER an error
     // NOR the fields this call actually needs (observed in homologation: 200, no `error`, no
     // `api_token`/`dashboard_url` at all) fell through as a "success" with both fields undefined,
@@ -458,7 +485,47 @@ export class LydiaPaymentProvider implements PaymentProvider {
         'Lydia business/create answered with neither an error nor the expected api_token/dashboard_url - see the core-service log for the raw response'
       );
     }
-    return { url: data.dashboard_url, accountId: data.api_token };
+    const businessPrivateToken = typeof data.api_token_id === 'string' ? data.api_token_id : '';
+    await this.verifyBusinessKey(params.associationId, data.api_token, businessPrivateToken);
+    return { url: data.dashboard_url, accountId: data.api_token, businessPrivateToken };
+  }
+
+  /**
+   * Asks Lydia whether `businessPrivateToken` is the private token of `vendorToken`
+   * (`POST /api/auth/vendortoken`, fields `vendor_token` and `vendor_id`): `{status: "ok"}` for the
+   * pair, error 103 otherwise (homologation 2026-10-30). Anything but `ok` throws the typed
+   * `LYDIA_BUSINESS_KEY_UNVERIFIED`, logged at ERROR with the association - the Business then
+   * exists at Lydia under that legal name and is linked to nothing. Neither token is logged.
+   * A transport failure is rethrown by `postForm` as it is: not an answer about the key.
+   */
+  private async verifyBusinessKey(
+    associationId: string,
+    vendorToken: string,
+    businessPrivateToken: string
+  ): Promise<void> {
+    const refuse = (why: string): never => {
+      this.logger.error(
+        `[LYDIA] business/create for association ${associationId}: the Business private token ` +
+          `was NOT confirmed (${why}) - nothing linked; a Business now exists at Lydia unlinked`
+      );
+      throw new BadGatewayException({
+        code: LYDIA_BUSINESS_KEY_UNVERIFIED,
+        message: 'Lydia did not confirm the private token of the Business it created',
+      });
+    };
+    if (!businessPrivateToken) refuse('business/create answered no api_token_id');
+    const answer = await this.postForm<{ status?: unknown }>(
+      '/api/auth/vendortoken',
+      { vendor_token: vendorToken, vendor_id: businessPrivateToken },
+      [LYDIA_VENDOR_TOKEN_MISMATCH]
+    );
+    if (String(answer.error ?? '') === LYDIA_VENDOR_TOKEN_MISMATCH) {
+      refuse(`auth/vendortoken answered error ${LYDIA_VENDOR_TOKEN_MISMATCH}`);
+    }
+    if (answer.status !== 'ok') refuse('auth/vendortoken did not answer status ok');
+    this.logger.log(
+      `[LYDIA] business/create for association ${associationId}: private token confirmed by auth/vendortoken`
+    );
   }
 
   async getAccountStatus(_accountId: string): Promise<{ chargesEnabled: boolean }> {

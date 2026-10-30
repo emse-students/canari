@@ -599,11 +599,35 @@ and the column is mapped `select`/`insert`/`update: false` so no entity read can
 the Business clears it. The copies of production strip it (`copy-strips.sh`) and a local estate
 regenerates the secret (`env-from-prod.sh`), so a laptop with a dump cannot open one.
 
-**Why not capture it at `business/create`.** `business/create` answers `api_token`, `api_token_id` and
-`dashboard_url`; Lydia says each validated Business has a `private_token` in its console, "Mes
-informations". That `api_token_id` IS that private token is a hypothesis nobody has measured (it needs a
-validated Business's key to compare), and storing an unidentified secret is worse than storing none -
-so `api_token_id` stays unpersisted and redacted from logs.
+### The key is captured at `business/create` (enrolment lot 1)
+
+`api_token_id` IS the Business private token (`auth/vendortoken`, homologation 2026-10-30,
+[lydia-api](../../lydia-api.md#1-the-four-credentials-and-what-each-is-for)), and Lydia answers it once.
+So the onboarding (`POST /api/payments/onboarding`, core-service) now:
+
+1. **Refuses a re-run** while the association has a `lydiaAccountId`: a typed 409
+   `LYDIA_ACCOUNT_ALREADY_LINKED`, read BEFORE `business/create`; social-service's link is one
+   `UPDATE ... WHERE "lydiaAccountId" IS NULL`, so two concurrent onboardings cannot both link. The
+   screen maps the code (`lydiaOnboardingRefusal.ts`) and re-reads the payout account.
+2. **Proves the key** with `auth/vendortoken` (`vendor_token` + `vendor_id`). Anything but `status: "ok"`
+   (error 103, a missing `api_token_id`) is the typed 502 `LYDIA_BUSINESS_KEY_UNVERIFIED`, logged at
+   ERROR with the association: nothing is linked, and the Business exists at Lydia unlinked.
+3. **Links the Business WITH its key** (`POST associations/:id/lydia-account`, internal secret): the
+   same column, encryption and binding as a pasted key, in the same statement as the vendor token. A
+   failed link FAILS the onboarding (502) instead of answering a success with nothing stored. The
+   browser receives the public pair only; the key is never logged (`LYDIA_LOG_REDACT_KEYS`).
+
+**The webhook is a log line, by necessity.** `business/create` carries `webhook` =
+`/api/payments/lydia-business-webhook` (public, multer-bounded, nginx zone `lydia_callback`). Its body
+is unsigned and names a public vendor token, and Lydia has no read of a Business's validation state
+that is not a real `request/do` - so the route WRITES NOTHING: it reads which association holds the
+token (`internal/associations/lydia-business-of-vendor-token`, a SELECT) and logs
+`[LYDIA-BUSINESS-WEBHOOK]` at INFO for `BUSINESS_VALIDATED`, WARN for `BUSINESS_UNVALIDATED` or
+anything else, always answering 200. A global admin keeps "Valider l'onboarding". A spec drives every
+event, a forged "complete" field and an oversized body through it and asserts no write.
+
+**The paste field stays for now.** Associations linked before lot 1 hold no captured key; the
+`PUT lydia-business-key` route and its field are removed once production counts none of them.
 
 **No key yet: the designed state.** The Lydia panel shows "Non renseignee" and says callbacks cannot be
 verified yet. Every callback of that association is refused (400); a FORM payment is still confirmed
@@ -635,11 +659,13 @@ same day, two Businesses were created through the onboarding in production; neit
 - After `business/create` the card says "En attente" and offers "Ouvrir le tableau de bord Lydia", whose
   link answers 404 to anyone not signed in to Lydia's console. The manager is left with no next step.
 - The path to validation is Lydia's activation e-mail (sign in to the console with the Lydia Pro app,
-  upload documents, wait for Lydia); how a NEW Business's holder signs in is not known yet
-  ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+  upload documents, wait for Lydia); a NEW Business's holder reaches it once added by the
+  Provider-signed `business/addcashier` (measured in production 2026-10-30), which Canari does not call
+  yet - lot 3 ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
 - "Pending" cannot tell "waiting for Lydia" from "validated by Lydia, not yet marked here": the global
   admin's "Valider l'onboarding" is a declaration. Lydia's error 5 on `request/do` is the one measured
-  signal of a Business not yet validated.
+  signal of a Business not yet validated; the `BUSINESS_VALIDATED` webhook is now received and logged
+  (lot 1), but, unsigned, it marks nothing.
 
 ## A product checkout is a row, one per attempt (2026-10-21)
 

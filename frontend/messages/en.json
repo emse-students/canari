@@ -2239,6 +2239,8 @@
   "asso_lydia_validate_loading": "Validating…",
   "asso_lydia_validate_confirm": "Confirm that Lydia has accepted this club's application? Online payments via Lydia will be enabled for it.",
   "asso_lydia_validate_error": "Could not validate the Lydia onboarding.",
+  "asso_lydia_already_linked_error": "A Lydia Business is already linked to this space. Disconnect it first to create another one.",
+  "asso_lydia_key_unverified_error": "Lydia created the Business but did not confirm its private key, so nothing was linked. Contact a platform administrator before trying again.",
   "asso_lydia_intro_institution": "Enter the institution's legal information to create its Lydia Pro account. This information is sent directly to Lydia.",
   "asso_lydia_name_label_institution": "Institution's legal name",
   "asso_lydia_disconnect_confirm_institution": "Remove this institution's Lydia Pro account? The Lydia account itself is not deleted, but the institution will have to redo the whole setup to accept online payments via Lydia again.",

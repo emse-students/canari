@@ -2556,7 +2556,11 @@ export interface LydiaBusinessLegalProfile {
   businessPhone: string;
 }
 
-/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+/**
+ * Creates a Lydia Business for the association and returns its vendor token + Lydia console URL.
+ * A refusal is a {@link SocialApiError} typed at the throw: its `code` (`lydiaOnboardingRefusal.ts`)
+ * is what a screen reads - the 409 `LYDIA_ACCOUNT_ALREADY_LINKED` of a re-run among them.
+ */
 export async function startLydiaOnboarding(
   associationId: string,
   legalProfile: LydiaBusinessLegalProfile
@@ -2566,14 +2570,13 @@ export async function startLydiaOnboarding(
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
   });
+  if (!res.ok) throw await socialRefusal(res);
   // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
-  // an onboarding with no url. A refusal's body stays optional - it may carry a message, or nothing.
-  const body = res.ok
-    ? await readApiJson(res, 'POST /api/payments/onboarding')
-    : await res.json().catch(() => ({}));
+  // an onboarding with no url.
+  const body = await readApiJson(res, 'POST /api/payments/onboarding');
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
-  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+  if ((body as { ok?: boolean }).ok === false) {
     throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
   return body as { url: string; accountId: string };

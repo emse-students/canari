@@ -4136,7 +4136,7 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **Delivery in lots, each a pre-release on dev then a stable:** lot 1 - outgoing calls signed over encoded values, the key captured at creation, the webhook, re-run refused, existing Businesses migrated; lot 2 - the step-by-step screen; lot 3 - cashiers; lot 4 - refunds.
 
-**Owed first:** one production check that a cashier added by the API sees the Business in the Lydia Pro app (the 2026-10-23 blocker); approved by the user on 2026-10-30.
+**The production check is DONE (2026-10-30):** a cashier added by the Provider-signed `business/addcashier` gets Lydia's SMS and sees the Business in the Lydia Pro app - the 2026-10-23 blocker is lifted ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 

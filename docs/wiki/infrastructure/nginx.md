@@ -37,6 +37,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |
 | `/api/users/*` | `core-service:3012` | yes | User profiles, search |
 | `= /api/payments/lydia-request-callback` | `core-service:3012` | yes | Lydia's public callback, one of the three `limit_req` zones of this file (`lives_ingest`, `lives_segments`, `lydia_callback`): `lydia_callback`, 5 r/s burst 50 per client address on `POST`, answering 429 ([payments](../frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)) |
+| `= /api/payments/lydia-business-webhook` | `core-service:3012` | yes | Lydia's UNSIGNED `business/create` webhook, in the same `lydia_callback` zone; the route writes nothing ([payments](../frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) |
 | `/api/payments/*` | `core-service:3012` | yes | Lydia payments |
 | `/internal/auth/verify` | `core-service:3012` | internal | `auth_request` subrequest only — never public |
 | `/_app/immutable/*`, `/.well-known/*`, `*.mjs`, other assets | static | no | Served from `build/client` + `build/prerendered` inside the image |

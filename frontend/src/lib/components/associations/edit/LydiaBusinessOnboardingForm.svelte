@@ -8,6 +8,11 @@
     type Association,
     type AssociationPayoutAccount,
   } from '$lib/associations/api';
+  import {
+    LYDIA_ONBOARDING_REFUSAL,
+    lydiaOnboardingRefusalCode,
+    lydiaOnboardingRefusalText,
+  } from '$lib/associations/lydiaOnboardingRefusal';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
@@ -140,7 +145,15 @@
         lydiaOnboardingComplete: false,
       };
     } catch (err) {
-      error = err instanceof Error && err.message ? err.message : m.common_save_error();
+      const refusal = lydiaOnboardingRefusalCode(err);
+      console.error('[Lydia] Onboarding refused:', refusal ?? err);
+      if (refusal) {
+        error = lydiaOnboardingRefusalText(refusal);
+        // A Business is linked after all (another tab, another manager): show it, not the form.
+        if (refusal === LYDIA_ONBOARDING_REFUSAL.ALREADY_LINKED) void loadAccount();
+      } else {
+        error = err instanceof Error && err.message ? err.message : m.common_save_error();
+      }
     } finally {
       submitting = false;
     }

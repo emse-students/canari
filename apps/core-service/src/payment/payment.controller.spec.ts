@@ -1,7 +1,11 @@
 import axios from 'axios';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
-import { PaymentController, SESSION_ID_RE } from './payment.controller';
+import {
+  LYDIA_ACCOUNT_ALREADY_LINKED,
+  PaymentController,
+  SESSION_ID_RE,
+} from './payment.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
@@ -427,6 +431,97 @@ describe('PaymentController.createOnboarding - the check is not conditional on t
     await expect(controller.createOnboarding({ associationId: 'not-a-uuid' }, req)).rejects.toThrow(
       /Invalid associationId/
     );
+  });
+});
+
+describe('PaymentController.createOnboarding - one Business per association, its key captured', () => {
+  const id = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
+  const req = { headers: { 'x-user-id': 'treasurer' } } as unknown as Parameters<
+    PaymentController['createOnboarding']
+  >[1];
+  const legalProfile = {
+    name: 'BDE',
+    address: '1 rue',
+    zipcode: '42000',
+    city: 'SE',
+    country: 'France',
+    businessEmail: 'b@test.example',
+    businessPhone: '+33100000000',
+  };
+
+  /** social-service as core reads it: the manager check passes, the payout account is `linked`. */
+  function socialAnswers(linked: string | null) {
+    mockedAxios.get.mockImplementation(async (url: string) =>
+      url.endsWith('/manage-permission')
+        ? { status: 200, data: { ok: true } }
+        : { status: 200, data: { lydiaAccountId: linked } }
+    );
+  }
+
+  function makeController() {
+    const paymentService = {
+      isConfigured: jest.fn().mockResolvedValue(true),
+      createConnectOnboarding: jest.fn().mockResolvedValue({
+        url: 'https://lydia.example/console/1',
+        accountId: 'vendor-new',
+        businessPrivateToken: 'throwaway-private-key',
+      }),
+    };
+    return {
+      controller: new PaymentController(paymentService as unknown as PaymentService),
+      paymentService,
+    };
+  }
+
+  afterEach(() => jest.clearAllMocks());
+
+  it('refuses a re-run with the TYPED 409 and never calls business/create', async () => {
+    socialAnswers('vendor-already');
+    const { controller, paymentService } = makeController();
+    await expect(
+      controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_ACCOUNT_ALREADY_LINKED },
+    });
+    expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('links the Business WITH its key, and answers the browser the public pair only', async () => {
+    socialAnswers(null);
+    mockedAxios.post.mockResolvedValue({ status: 201, data: { ok: true } });
+    const { controller } = makeController();
+    const answer = await controller.createOnboarding({ associationId: id, legalProfile }, req);
+    expect(answer).toEqual({ url: 'https://lydia.example/console/1', accountId: 'vendor-new' });
+    expect(JSON.stringify(answer)).not.toContain('throwaway-private-key');
+    const [url, body] = mockedAxios.post.mock.calls[0];
+    expect(url).toMatch(new RegExp(`/associations/${id}/lydia-account$`));
+    expect(body).toEqual({
+      lydiaAccountId: 'vendor-new',
+      lydiaDashboardUrl: 'https://lydia.example/console/1',
+      businessPrivateToken: 'throwaway-private-key',
+    });
+  });
+
+  it('a link social-service refuses as already linked (a concurrent run) is the same typed 409', async () => {
+    socialAnswers(null);
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('conflict'), { response: { status: 409, data: {} } })
+    );
+    const { controller } = makeController();
+    await expect(
+      controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ACCOUNT_ALREADY_LINKED } });
+  });
+
+  it('a link that fails otherwise FAILS the onboarding instead of answering a success', async () => {
+    socialAnswers(null);
+    mockedAxios.post.mockRejectedValue(new Error('social unreachable'));
+    const { controller } = makeController();
+    await expect(
+      controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toMatchObject({ status: 502 });
   });
 });
 

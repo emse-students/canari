@@ -9,7 +9,7 @@ import {
   AssociationsController,
   LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE,
 } from './associations.controller';
-import { AssociationsService } from './associations.service';
+import { AssociationsService, LYDIA_ACCOUNT_ALREADY_LINKED } from './associations.service';
 import type { ProductsService } from './products.service';
 import type { PartnershipsService } from './partnerships.service';
 import type { FollowsService } from '../follows/follows.service';
@@ -26,7 +26,13 @@ const KEY_A = 'throwaway-business-key-of-a';
 const SECRET = 'throwaway-encryption-secret-0123456789abcdef';
 const INTERNAL = 'throwaway-internal-secret';
 
-type Row = { id: string; lydiaAccountId: string | null; sealed: string | null };
+type Row = {
+  id: string;
+  lydiaAccountId: string | null;
+  sealed: string | null;
+  dashboardUrl?: string | null;
+  complete?: boolean;
+};
 
 /** The association table as the raw SQL of `setLydiaBusinessKey` & co. reads and writes it. */
 function makeService(rows: Row[]) {
@@ -38,6 +44,20 @@ function makeService(rows: Row[]) {
       return row ? { id: row.id, lydiaAccountId: row.lydiaAccountId } : null;
     }),
     query: jest.fn(async (sql: string, params: string[]) => {
+      if (sql.startsWith('UPDATE associations') && sql.includes('SET "lydiaAccountId" = $2')) {
+        // The link: one statement, only onto a row with NO Business ([rows, count], as pg answers).
+        const row = byId(params[0]);
+        if (!row || row.lydiaAccountId !== null) return [[], 0];
+        row.lydiaAccountId = params[1];
+        row.dashboardUrl = params[2] ?? row.dashboardUrl ?? null;
+        row.sealed = params[3];
+        return [[{ id: row.id }], 1];
+      }
+      if (sql.startsWith('SELECT id, "lydiaOnboardingComplete" AS complete')) {
+        return table
+          .filter((r) => r.lydiaAccountId === params[0])
+          .map((r) => ({ id: r.id, complete: r.complete === true }));
+      }
       if (sql.startsWith('UPDATE associations SET "lydiaBusinessKeyCiphertext" = $1')) {
         byId(params[1])!.sealed = params[0];
         return [];
@@ -61,6 +81,7 @@ function makeService(rows: Row[]) {
   const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
     assoRepo,
     logger: new Logger('AssociationsService'),
+    redis: { deleteByPattern: jest.fn(async () => 0) },
   }) as unknown as AssociationsService;
   return { service, table };
 }
@@ -169,6 +190,91 @@ describe('AssociationsService - the Lydia Business key', () => {
     await service.setLydiaBusinessKey(ASSO_B, 'throwaway-business-key-of-b', 'u1');
     expect(table.every((r) => r.sealed)).toBe(true);
     await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-x')).toBeNull());
+  });
+});
+
+describe('AssociationsService.setLydiaAccountId - the key captured at business/create', () => {
+  it('links the Business and stores its key encrypted, opening for core, never logged', async () => {
+    const { service, table } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    const logs = await loggedDuring(() =>
+      service.setLydiaAccountId(ASSO_A, 'vendor-a', 'https://lydia.example/d', KEY_A)
+    );
+    expect(table[0]).toMatchObject({
+      lydiaAccountId: 'vendor-a',
+      dashboardUrl: 'https://lydia.example/d',
+    });
+    expect(table[0].sealed).toMatch(/^v1\./);
+    expect(table[0].sealed).not.toContain(KEY_A);
+    expect(logs).toContain('[AUDIT] Lydia Business linked');
+    expect(logs).not.toContain(KEY_A);
+    // The SAME storage as a pasted key: the callback lookup opens it.
+    await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-a')).toBe(KEY_A));
+  });
+
+  it('refuses a re-run with the TYPED 409 and leaves the linked Business and its key untouched', async () => {
+    const { service, table } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    await loggedDuring(() => service.setLydiaAccountId(ASSO_A, 'vendor-a', null, KEY_A));
+    const before = { ...table[0] };
+    await loggedDuring(async () =>
+      expect(
+        service.setLydiaAccountId(ASSO_A, 'vendor-b', null, 'throwaway-business-key-of-b')
+      ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ACCOUNT_ALREADY_LINKED } })
+    );
+    expect(table[0]).toEqual(before);
+  });
+
+  it('answers 404, not 409, for an association that does not exist', async () => {
+    const { service } = makeService([]);
+    await loggedDuring(async () =>
+      expect(service.setLydiaAccountId(ASSO_A, 'vendor-a', null, KEY_A)).rejects.toMatchObject({
+        status: 404,
+      })
+    );
+  });
+
+  it('refuses before writing: no key, a malformed key, no vendor token, no secret', async () => {
+    const { service, table } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    await loggedDuring(async () => {
+      for (const [vendor, key] of [
+        ['vendor-a', undefined],
+        ['vendor-a', 'short'],
+        ['vendor-a', 'has a space in it'],
+        ['', KEY_A],
+        [42, KEY_A],
+      ] as Array<[unknown, unknown]>) {
+        await expect(service.setLydiaAccountId(ASSO_A, vendor, null, key)).rejects.toMatchObject({
+          status: 400,
+        });
+      }
+      delete process.env[SECRET_BOX_ENV];
+      await expect(
+        service.setLydiaAccountId(ASSO_A, 'vendor-a', null, KEY_A)
+      ).rejects.toMatchObject({
+        status: 503,
+      });
+    });
+    expect(table[0]).toMatchObject({ lydiaAccountId: null, sealed: null });
+  });
+});
+
+describe('AssociationsService.lydiaBusinessOfVendorToken - a read for the unsigned webhook', () => {
+  it('names the holder, null for none and for two, and only ever SELECTs', async () => {
+    const { service } = makeService([
+      { id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null, complete: true },
+      { id: ASSO_B, lydiaAccountId: 'vendor-x', sealed: null },
+      { id: '0b7e1c52-6a0e-4a43-9a43-333333333333', lydiaAccountId: 'vendor-x', sealed: null },
+    ]);
+    const repo = (service as unknown as { assoRepo: { query: jest.Mock } }).assoRepo;
+    await expect(service.lydiaBusinessOfVendorToken('vendor-a')).resolves.toEqual({
+      associationId: ASSO_A,
+      onboardingComplete: true,
+    });
+    await expect(service.lydiaBusinessOfVendorToken('vendor-nobody')).resolves.toBeNull();
+    await expect(service.lydiaBusinessOfVendorToken('')).resolves.toBeNull();
+    await loggedDuring(async () =>
+      expect(await service.lydiaBusinessOfVendorToken('vendor-x')).toBeNull()
+    );
+    for (const [sql] of repo.query.mock.calls) expect(String(sql)).toMatch(/^SELECT /);
   });
 });
 
@@ -292,5 +398,23 @@ describe('POST /api/internal/associations/lydia-callback-key - core-service only
     expect(await hit.json()).toEqual({ businessPrivateToken: KEY_A });
     const miss = await ask('vendor-nobody', INTERNAL);
     expect(await miss.json()).toEqual({ businessPrivateToken: null });
+  });
+
+  it('answers the holder of a vendor token - and never its key - behind the internal secret', async () => {
+    const lookup = (secret?: string) =>
+      fetch(`${baseUrl}/api/internal/associations/lydia-business-of-vendor-token`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(secret ? { 'x-internal-secret': secret } : {}),
+        },
+        body: JSON.stringify({ vendorToken: 'vendor-a' }),
+      });
+    expect((await lookup()).status).toBe(403);
+    const hit = await lookup(INTERNAL);
+    expect(hit.status).toBe(200);
+    const text = await hit.text();
+    expect(JSON.parse(text)).toEqual({ associationId: ASSO_A, onboardingComplete: false });
+    expect(text).not.toContain(KEY_A);
   });
 });
