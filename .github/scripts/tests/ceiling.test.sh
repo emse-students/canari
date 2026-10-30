@@ -242,12 +242,13 @@ for c_case in "dependabot/docker_compose/infrastructure/authentik/postgres-18-al
   fi
 done
 
-# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries: the Android app module is compiled
-# only at release time. The JVM test project beside it is built by `test-android`, and is the one
-# Gradle directory let through - an allowlist, so a Gradle directory added later starts refused.
+# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries. The JVM test project is built by
+# `test-android` and the Android app module by `compile-android-app` (2026-10-30); those are the two
+# Gradle directories let through - an allowlist, so a Gradle directory added later starts refused.
 echo "a Gradle update is refused unless a pull-request job builds its tree:"
-for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|refused" \
-  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-dependencies-1a2b3c|refused" \
+for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|allowed" \
+  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-wrapper-9.7.1|allowed" \
+  "dependabot/gradle/frontend/src-tauri/gen/android-extra/junit-junit-4.13.3|refused" \
   "dependabot/gradle/some/new/directory/junit-junit-4.13.3|refused" \
   "dependabot/gradle/frontend/src-tauri/android-tests/junit-junit-4.13.3|allowed" \
   "dependabot/cargo/apps/chat-gateway/serde-1.0.5|allowed" \
@@ -261,6 +262,25 @@ for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.fireb
     failures=$((failures + 1))
   fi
 done
+
+# THE ALLOWANCE FOR `gen/android` IS ONLY AS GOOD AS THE JOB BEHIND IT. If `compile-android-app` or
+# its script is removed, the arm above would let a Gradle bump merge on a suite that never compiles
+# `:app` - the exact hole it was written to close - so the two are asserted to still exist.
+echo "the gen/android allowance has a gate behind it:"
+ci_yml="$(dirname "${BASH_SOURCE[0]}")/../../workflows/ci.yml"
+if grep -q '^  compile-android-app:' "$ci_yml"    && grep -q 'android-app-compile\.sh' "$ci_yml"    && grep -q 'compile-android-app' "$ci_yml"    && [ -x "$(dirname "${BASH_SOURCE[0]}")/../android-app-compile.sh" ]; then
+  echo "  ok   ci.yml carries compile-android-app and it runs android-app-compile.sh"
+else
+  echo "  FAIL ci.yml has no compile-android-app job running android-app-compile.sh, yet gen/android is allowed"
+  failures=$((failures + 1))
+fi
+# ...and it must be in the aggregate the ruleset requires, or its failure would block nothing.
+if sed -n '/^  ci-passed:/,$p' "$ci_yml" | grep -q 'compile-android-app'; then
+  echo "  ok   ci-passed needs compile-android-app"
+else
+  echo "  FAIL ci-passed does not need compile-android-app"
+  failures=$((failures + 1))
+fi
 
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a

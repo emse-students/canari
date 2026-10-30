@@ -1505,10 +1505,37 @@ what is deliberately not:
 
 | Tree | Dependabot | What gates an update |
 | --- | --- | --- |
-| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | **Nothing on a pull request**, so `ceiling_gate_for_ref` (`lib/ceiling.sh`) refuses every update there. The `:app` module cannot be configured without the generated, git-ignored `tauri.settings.gradle` and the `google-services.json` secret; only `android.yml` builds it, at release time. The refusal names the missing gate: a pull-request job that compiles `:app`. |
-| `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. The only Gradle directory the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which compiles `:app:compileArm64DebugKotlin`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
+| `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. With `gen/android` above, one of the two Gradle directories the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
 | `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
 | `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |
+
+**`compile-android-app`: how `:app` is configured on a pull request with no secret (2026-10-30).**
+`:app` could not be configured in CI for two reasons, and each has a replacement that reads nothing
+secret, so the job runs on a Dependabot pull request:
+
+- `tauri.settings.gradle` and `app/tauri.build.gradle.kts` are written by the app crate's
+  `build.rs` (`tauri_build::mobile::generate_gradle_files`) when `TAURI_ANDROID_PROJECT_PATH` is
+  set, from the `DEP_*_ANDROID_LIBRARY_PATH` each plugin's build script exports. A
+  `cargo check --target aarch64-linux-android` of the app crate is therefore the same generator
+  `tauri android build` runs, not a copy of it. `android.yml` has no separate generation step to
+  factor out - the files are a side effect of that command - so the whole sequence lives in
+  `.github/scripts/android-app-compile.sh` instead.
+- `google-services.json` is the `GOOGLE_SERVICES_JSON` secret, used by `android.yml` only. The job
+  copies `gen/android/ci/google-services.compile-stub.json` (fake values, same package name) to
+  the git-ignored path. It reaches no Firebase project.
+
+The script fails unless `:app:compileArm64DebugKotlin` actually executed, because a Gradle run
+matching no task exits 0. The job is path-filtered (`android_app` in `changes`: `gen/android`, the
+app crate's manifest, lock, `build.rs`, `tauri.conf.json`, the native plugins, the toolchain and the
+script) and is in `ci-passed`'s `needs`. **`ceiling.test.sh` asserts the job, the script and the
+`ci-passed` wiring still exist**, so deleting the gate re-closes the allowance instead of leaving
+an arm with nothing behind it. A Gradle directory added to `dependabot.yml` later is still refused.
+
+*Measured 2026-10-30 on a workstation, Gradle 9.1.0 baseline then the four open bumps together
+(`webkit` 1.18.0, `firebase-messaging-ktx` 24.1.2, `work-runtime-ktx` 2.12.0, wrapper 9.7.1):
+`:app:compileArm64DebugKotlin` succeeds on both. A compile is still not a run: neither bump has
+been read on a phone.*
 
 **Why the identity provider's file needed a ceiling change before it could be watched.** Its
 PostgreSQL ran 16 while production ran 18 (2026-10-23). Dependabot proposes the highest tag with the

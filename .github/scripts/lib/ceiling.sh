@@ -85,20 +85,24 @@ ceiling_compose_from_ref() { # <head ref>
 
 # A TREE NO PULL-REQUEST JOB BUILDS, named by the branch an update arrives on. Prints the missing
 # gate, or nothing. It is about the DIRECTORY, not the dependency, which is why it is apart from
-# `gate_for_dependency`: every name a Gradle update to the Android app carries is equally unseen.
+# `gate_for_dependency`: every name a Gradle update to a tree no job builds carries is equally unseen.
 #
-# `frontend/src-tauri/gen/android` is the Android app, and nothing on a pull request configures its
-# `:app` module: it applies `tauri.settings.gradle` (generated, git-ignored) and wants the
-# `google-services.json` secret, so it is compiled by `android.yml` at RELEASE time only. A green
-# suite on a Gradle bump there says nothing about the APK. `frontend/src-tauri/android-tests` is the
-# opposite case - a plain JVM project `test-android` builds and runs on every pull request that
-# touches it - so it is the ONE Gradle directory let through. An ALLOWLIST, so a Gradle directory
-# added to `dependabot.yml` later is refused until somebody shows a gate builds it.
+# TWO DIRECTORIES ARE LET THROUGH, and each because a pull-request job builds it - an ALLOWLIST, so a
+# Gradle directory added to `dependabot.yml` later is refused until somebody shows a gate builds it:
+#   - `frontend/src-tauri/android-tests`, a plain JVM project `test-android` builds and runs.
+#   - `frontend/src-tauri/gen/android`, the Android app. Until 2026-10-30 nothing on a pull request
+#     configured its `:app` module (it needs the generated, git-ignored `tauri.settings.gradle` and
+#     a `google-services.json`), so four bumps - the wrapper, AndroidX, Firebase - sat refused.
+#     `compile-android-app` in `ci.yml` now generates the first the way `tauri android build` does
+#     and uses a committed stub for the second, then compiles `:app`
+#     (`.github/scripts/android-app-compile.sh`). `ceiling.test.sh` asserts that job still exists,
+#     so removing it re-closes this arm instead of leaving an allowance with no gate behind it.
 ceiling_gate_for_ref() { # <head ref>
   case "${1:-}" in
     dependabot/gradle/frontend/src-tauri/android-tests/*) ;;
+    dependabot/gradle/frontend/src-tauri/gen/android/*) ;;
     dependabot/gradle/*)
-      echo "a pull-request job that configures and compiles the Android \`:app\` module (\`frontend/src-tauri/gen/android\`). Today only \`android.yml\` builds it, at RELEASE time, because configuring it needs the generated \`tauri.settings.gradle\` and the \`google-services.json\` secret (see \`frontend/src-tauri/android-tests/settings.gradle.kts\`); \`test-android\` compiles the JVM project \`android-tests\` and nothing else. So no gate here would see this Gradle update break the APK before a release did - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
+      echo "a pull-request job that compiles the Gradle tree this update is in. Only \`frontend/src-tauri/android-tests\` (\`test-android\`) and \`frontend/src-tauri/gen/android\` (\`compile-android-app\`) are built on a pull request; a Gradle directory added to dependabot.yml needs its own job, then an arm in \`ceiling_gate_for_ref\` - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
       ;;
     *) ;;
   esac
