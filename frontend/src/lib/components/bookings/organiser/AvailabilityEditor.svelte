@@ -35,6 +35,7 @@
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import StrandedBookings from './StrandedBookings.svelte';
   import WeekPainter from './WeekPainter.svelte';
+  import TemplatePicker from './TemplatePicker.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
@@ -121,29 +122,6 @@
   const week = $derived(fixedSlots ? weekSlotsOf(rows) : weekRunsOf(rows));
   /** What a painted cell opens on a fixed-slot space, said under the painter. */
   const slotLength = $derived(fixedSlots ? slotLengthFor(rows, slotMinutes) : null);
-
-  const TEMPLATES: { key: TemplateKey; name: () => string; sub: () => string }[] = [
-    {
-      key: 'always',
-      name: () => m.bookings_avail_tpl_always(),
-      sub: () => m.bookings_avail_tpl_always_sub(),
-    },
-    {
-      key: 'weekdays',
-      name: () => m.bookings_avail_tpl_weekdays(),
-      sub: () => m.bookings_avail_tpl_weekdays_sub(),
-    },
-    {
-      key: 'event',
-      name: () => m.bookings_avail_tpl_event(),
-      sub: () => m.bookings_avail_tpl_event_sub(),
-    },
-    {
-      key: 'empty',
-      name: () => m.bookings_avail_tpl_empty(),
-      sub: () => m.bookings_avail_tpl_empty_sub(),
-    },
-  ];
 
   /** A template replaces the week (the dated lines stay) - still a draft until it is saved. */
   function useTemplate(key: TemplateKey) {
@@ -275,24 +253,12 @@
   <h4 class="text-text-main text-sm font-bold">{m.bookings_avail_title()}</h4>
 
   <div class="space-y-2">
-    <p class="text-text-main text-sm font-semibold">{m.bookings_avail_templates_title()}</p>
-    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-      {#each TEMPLATES as tpl (tpl.key)}
-        <button
-          type="button"
-          data-template={tpl.key}
-          onclick={() => useTemplate(tpl.key)}
-          class="border-cn-border bg-cn-surface hover:border-cn-yellow/40 flex min-h-11 flex-col items-start rounded-xl border px-3 py-2 text-left transition-colors"
-        >
-          <span class="text-text-main text-sm font-bold">{tpl.name()}</span>
-          <span class="text-text-muted text-xs">{tpl.sub()}</span>
-        </button>
-      {/each}
-    </div>
+    <h5 class="text-text-main text-sm font-bold">{m.bookings_avail_templates_title()}</h5>
+    <TemplatePicker onPick={useTemplate} />
   </div>
 
   <div class="space-y-2">
-    <p class="text-text-main text-sm font-semibold">{m.bookings_avail_week_title()}</p>
+    <h5 class="text-text-main text-sm font-bold">{m.bookings_avail_week_title()}</h5>
     <WeekPainter
       {week}
       dayNames={weekdayNames}
@@ -361,7 +327,7 @@
     <button
       type="button"
       onclick={addDate}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+      class="bg-control-fill text-text-main hover:bg-cn-border/60 inline-flex min-h-10 items-center gap-1.5 rounded-xl px-4 text-sm font-semibold transition-colors"
     >
       <Plus size={14} />
       {m.bookings_avail_add_date()}
@@ -441,7 +407,7 @@
         closures.push({ fromDate: '', toDate: '' });
         touch();
       }}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+      class="bg-control-fill text-text-main hover:bg-cn-border/60 inline-flex min-h-10 items-center gap-1.5 rounded-xl px-4 text-sm font-semibold transition-colors"
     >
       <Plus size={14} />
       {m.bookings_avail_add_closure()}
