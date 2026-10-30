@@ -61,6 +61,14 @@ describe('the ongoing-call foreground service declaration', () => {
     }
   });
 
+  it('video calls add no camera foreground service: the camera is OFF while the app is hidden', () => {
+    // 1.5.2 ships video, and `CallService.installBackgroundHandler` turns the camera off on
+    // `visibilitychange` (capture stopped) and on again on return, so the service never holds the
+    // camera. A `camera` type would be a second Play declaration for a use the app does not make.
+    expect(declares(mainManifest, 'FOREGROUND_SERVICE_CAMERA')).toBe(false);
+    expect(mainManifest).not.toMatch(/foregroundServiceType="[^"]*camera/);
+  });
+
   it('the Android workflow reads the BUILT manifests and fails on a service where calls are not placed', () => {
     const workflow = read(resolve(here, '../../../../.github/workflows/android.yml'));
     expect(workflow).toContain(
