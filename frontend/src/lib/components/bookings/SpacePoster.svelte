@@ -24,15 +24,20 @@
     alt: string;
     /** A small square for a list row, decrypted only when near the viewport. */
     thumb?: boolean;
+    /**
+     * Fills a box the CALLER sizes (the banner of a space card, WP-R3b): cover-fitted, no border of
+     * its own, and decrypted only once near the viewport like a thumbnail.
+     */
+    cover?: boolean;
   }
 
-  let { poster, alt, thumb = false }: Props = $props();
+  let { poster, alt, thumb = false, cover = false }: Props = $props();
 
   let url = $state<string | null>(null);
   let failed = $state(false);
   /** A banner is wanted at once; a thumbnail once it is near the viewport. */
   let near = $state(false);
-  const wanted = $derived(!thumb || near);
+  const wanted = $derived(!(thumb || cover) || near);
   const ratio = $derived(
     poster.width && poster.height ? `${poster.width} / ${poster.height}` : '16 / 9'
   );
@@ -69,15 +74,15 @@
 
 <div
   use:nearViewport={{ onnear: () => (near = true) }}
-  class="border-cn-border/60 bg-cn-bg relative overflow-hidden rounded-xl border {thumb
-    ? 'size-12 shrink-0'
-    : 'max-h-80 w-full'}"
-  style:aspect-ratio={thumb ? undefined : ratio}
+  class="bg-cn-bg relative overflow-hidden {cover
+    ? 'h-full w-full'
+    : `border-cn-border/60 rounded-xl border ${thumb ? 'size-12 shrink-0' : 'max-h-80 w-full'}`}"
+  style:aspect-ratio={thumb || cover ? undefined : ratio}
 >
   {#if url}
     <img src={url} {alt} class="h-full w-full object-cover" />
   {:else if failed}
-    {#if thumb}
+    {#if thumb || cover}
       <div
         class="text-text-muted flex h-full w-full items-center justify-center"
         aria-hidden="true"

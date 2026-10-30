@@ -8,6 +8,7 @@
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { spaceDashboardHref, spaceEditorHref, spaceHref } from '$lib/bookings/routes';
   import Input from '$lib/components/ui/Input.svelte';
+  import Modal from '$lib/components/shared/Modal.svelte';
   import SpaceWizard from './SpaceWizard.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -36,6 +37,14 @@
   let creating = $state(false);
   /** The name the wizard opened with; null while the wizard is closed. */
   let wizardName = $state<string | null>(null);
+  /** The creation (name, then wizard) lives in a sheet opened by a button, not inline on the page. */
+  let creatorOpen = $state(false);
+
+  function closeCreator() {
+    creatorOpen = false;
+    wizardName = null;
+    newName = '';
+  }
 
   onMount(load);
 
@@ -90,46 +99,75 @@
 
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-4 shadow-sm sm:p-6">
   <div>
-    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
-      <CalendarClock size={20} />
-      {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
-    </h2>
+    <div class="flex items-center justify-between gap-3">
+      <h2 class="text-text-main flex min-w-0 items-center gap-2 text-lg font-bold tracking-tight">
+        <CalendarClock size={20} class="shrink-0" />
+        {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
+      </h2>
+      <button
+        type="button"
+        onclick={() => {
+          error = '';
+          creatorOpen = true;
+        }}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
+      >
+        <Plus size={16} />
+        {m.bookings_tab_new_button()}
+      </button>
+    </div>
     <p class="text-text-muted mt-1 text-sm">
       {personal ? m.bookings_personal_subtitle() : m.bookings_tab_subtitle()}
     </p>
   </div>
 
-  {#if wizardName !== null}
-    <SpaceWizard
-      {associationId}
-      initialName={wizardName}
-      onCreated={(id) => void openEditor(id)}
-      onSkip={(name) => void createByName(name)}
-      onCancel={() => (wizardName = null)}
-    />
-  {:else}
-    <form class="flex flex-col gap-3 sm:flex-row sm:items-end" onsubmit={create}>
-      <div class="min-w-0 flex-1">
-        <Input
-          id="bookings-new-space"
-          label={m.bookings_tab_new_label()}
-          placeholder={m.bookings_tab_new_placeholder()}
-          bind:value={newName}
-          maxlength={120}
+  {#if creatorOpen}
+    <Modal
+      open
+      title={m.bookings_tab_new_button()}
+      topAnchored={wizardName === null}
+      fullViewport={wizardName !== null}
+      onClose={closeCreator}
+    >
+      {#if wizardName !== null}
+        <SpaceWizard
+          {associationId}
+          initialName={wizardName}
+          onCreated={(id) => void openEditor(id)}
+          onSkip={(name) => void createByName(name)}
+          onCancel={() => (wizardName = null)}
         />
-      </div>
-      <button
-        type="submit"
-        disabled={!newName.trim() || creating}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <Plus size={16} />
-        {m.bookings_tab_create_button()}
-      </button>
-    </form>
+      {:else}
+        <form class="space-y-4" onsubmit={create}>
+          <Input
+            id="bookings-new-space"
+            label={m.bookings_tab_new_label()}
+            placeholder={m.bookings_tab_new_placeholder()}
+            bind:value={newName}
+            maxlength={120}
+          />
+          <button
+            type="submit"
+            disabled={!newName.trim() || creating}
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Plus size={16} />
+            {m.bookings_tab_create_button()}
+          </button>
+        </form>
+      {/if}
+      {#if error}
+        <p
+          class="border-red-err/30 bg-red-err/10 text-red-err mt-3 rounded-xl border px-4 py-3 text-sm"
+          role="alert"
+        >
+          {error}
+        </p>
+      {/if}
+    </Modal>
   {/if}
 
-  {#if error}
+  {#if error && !creatorOpen}
     <p
       class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm"
       role="alert"
