@@ -103,6 +103,7 @@ import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/out
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
+import { resetAnswerDecisionsSaid } from '$lib/utils/graine/frameHandler';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -281,6 +282,8 @@ export function useMessaging() {
     unregisterDeviceNotices();
     // And the join asks on screen: a member of the NEXT account must not answer them.
     resetJoinRequests();
+    // And what this device said about the history it withheld: the next account's asks are new.
+    resetAnswerDecisionsSaid();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */

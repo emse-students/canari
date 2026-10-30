@@ -239,6 +239,50 @@ already acked, on an adder that predates `admits`: the repair then costs one sel
 join, which heals, never a corruption. Pinned by `welcomeOwed.test.ts` and
 `initializeConnection.sync.test.ts`.
 
+### A further device asks once per epoch pair
+
+A further device of a member (the join answers `further_device`) can only be let in by a member's
+Add, so the seam sends it a `welcome_request`. On DEVREVOKE-KEYGROUP (`1.5.1-alpha.8`, 2026-10-29) a
+minted device sent one for each of its six conversations, then all six again 20 s later. Nothing had
+changed, and the owner's seat said the same decision twice for each.
+
+The second pass re-asked every group at once. Only `resetReAddCooldowns` clears every group's
+throttle, and its one caller is the session setup (`setupMessageHandler`). The requester's console
+was not kept, so this cause is read from the code and is not proven.
+
+**The ask is now recorded against the epoch pair `${baseEpoch}/${activeEpoch}` the pass read**
+(`memberApprovalAskedAt` in `recovery.ts`, keyed `userId:deviceId|groupId`):
+
+- The verdict is read off the tree of the published base. While the pair stands, that tree is
+  unchanged, so a later pass neither rebuilds the join nor re-asks. The throttle and the not-ready
+  marker stay armed.
+- The member's answer is an Add, which moves the pair. Any other commit moves it too. The first pass
+  after the pair moves logs `the group moved since a member's approval was asked`, decides the door
+  again and, if it is still a further device, asks once more.
+- `cancelReAdd` ends the record. `resetReAddCooldowns` does NOT end it: that reset is what the
+  second pass of 2026-10-29 points at.
+- A server that names no pair gets no record, so the device asks on every pass as before.
+
+**What keeps the device from being stranded.** A device with a `pending` seat is raised to every
+member again by their own pending-invitation sweep, from that durable row
+(`processPendingInvitations` -> `askAboutUnseenDevice`). A member who was offline at the ask is
+handed it when it connects (`pending_welcome_notify`). **A device with NO seat has neither.** Its ask
+lives only on the screens of the members who were online when it was sent. It is sent again when the
+pair moves or when this page starts again (the record is memory). That cost is accepted.
+
+**The member says its decision once.** `askAboutUnseenDevice` (`actions.ts`) logs
+`... is a device this one never saw ...` once per (group, `user:device`, key fingerprint, this
+device's epoch of the group). It stays silent only while the ask is still shown (`isDeviceAskShown`,
+`joinRequests.svelte.ts`). The ask itself is still raised on every request, because a pending sweep
+keeps only what it raised (`settleSweptJoinRequests`). A new epoch, another key, or an ask that left
+the screen decides again and logs again.
+
+**The answerer's withholding works the same way.** `utils/graine/frameHandler.ts` says
+`withholding N seed(s)` and `not answering ...'s history ask ...` once per asking device and key group
+(`sayAnswerDecisionOnce`). Each line is keyed on what it was decided on: which sessions were withheld
+and why. The answer itself is unchanged on every ask. Pinned by `recovery.test.ts`,
+`actions.admission.test.ts` and `frameHandler.test.ts`.
+
 ## Verification (tests + runtime)
 
 | Step | What must hold | How we check |

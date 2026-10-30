@@ -12,6 +12,7 @@ import {
   recoverForkedGroup,
   recoverRosterDisagreement,
   resetReAddCooldowns,
+  resetMemberApprovalAsks,
   isReAddDue,
   reAddIsInFlight,
 } from './recovery';
@@ -28,6 +29,8 @@ beforeEach(() => {
   if (typeof localStorage !== 'undefined') localStorage.clear();
   // The recovery cooldown is module-global - reset it so throttling never leaks between cases.
   resetReAddCooldowns();
+  // So is the record of an approval asked (it survives the cooldown reset on purpose).
+  resetMemberApprovalAsks();
   // External-join success reconciles the group; the coalescing window is module-global, so it is
   // reset between cases or the second case in a file would silently skip its ask.
   resetHistoryReconciliation();
@@ -442,6 +445,56 @@ describe('requestReAdd', () => {
       expect(deps.log).toHaveBeenCalledWith(
         expect.stringContaining("a further device of a member - a member's Add")
       );
+    });
+
+    it('a further device asks ONCE per epoch pair: a later pass on the same pair neither rebuilds nor re-asks', async () => {
+      // DEVREVOKE-KEYGROUP (2026-10-29): the same ask went out twice, 20 s apart, for six groups -
+      // and the second pass came after a session setup reset every throttle (`resetReAddCooldowns`).
+      const deps = makeDeps();
+      const meta = { groupId: 'g1', isGroup: true, deletedAt: null, baseEpoch: 4, activeEpoch: 4 };
+      deps.mlsService.getGroupMeta = vi.fn().mockResolvedValue(meta);
+      deps.mlsService.getDeviceMemberships = unadmitted();
+      deps.mlsService.externalJoin = vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'further_device' });
+
+      await requestReAdd('g1', deps);
+      resetReAddCooldowns();
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
+      expect(deps.log).toHaveBeenCalledWith(
+        expect.stringContaining("a member's approval is asked at 4/4")
+      );
+      // Still waiting on the watchdog's cadence: the marker stays.
+      expect(enumerateNotReadyGroups('user-a')).toContain('g1');
+
+      // The pair moved (a commit landed): the door is decided again, and asked again once.
+      deps.mlsService.getGroupMeta = vi
+        .fn()
+        .mockResolvedValue({ ...meta, activeEpoch: 5, baseEpoch: 5 });
+      resetReAddCooldowns();
+      await requestReAdd('g1', deps);
+      expect(deps.log).toHaveBeenCalledWith(
+        expect.stringContaining("since a member's approval was asked (4/4 -> 5/5)")
+      );
+      expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+    });
+
+    it('a server naming no epoch pair records nothing - the further device asks on every pass', async () => {
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = unadmitted();
+      deps.mlsService.externalJoin = vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'further_device' });
+
+      await requestReAdd('g1', deps);
+      resetReAddCooldowns();
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
     });
 
     it('a 1:1 peer or a demoted device joins by itself when the tree holds no other device of it', async () => {

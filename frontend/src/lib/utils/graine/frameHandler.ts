@@ -315,28 +315,80 @@ function seedOutsideScope(
 }
 
 /**
+ * What this device last SAID about a withheld answer, per line, per asking device and key group,
+ * keyed to the facts it was decided on.
+ *
+ * ONCE PER DECISION, NOT ONCE PER ASK (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`/`alpha.8`, 2026-10-29): a
+ * minted device asked for its community's history three times in 27 s, and each ask printed the same
+ * "withholding" and "not answering" pair against the same roster. The decision is still TAKEN on every
+ * ask - the answer is unchanged - only a repeat of the same decision is not said again. The value is
+ * the decision's own facts (the withheld sessions and why, the counts behind a refusal), so a salon
+ * registered meanwhile, a seed arriving or a roster change re-decides and re-logs; nothing is frozen,
+ * and no clock is involved.
+ */
+const answerDecisionsSaid = new Map<string, string>();
+
+/** The bound on {@link answerDecisionsSaid}: one slot per asking device and key group per line. */
+const ANSWER_DECISIONS_SAID_MAX = 2000;
+
+/**
+ * Runs `say` unless the same `decision` was the last one said in `slot`
+ * ({@link answerDecisionsSaid}). The oldest slot goes at the bound, which can only cost one repeated
+ * line, never a missing one.
+ */
+function sayAnswerDecisionOnce(
+  frame: DistributionFrame,
+  line: string,
+  decision: string,
+  say: () => void
+): void {
+  const slot = `${line}|${frame.sender}:${frame.senderDeviceId ?? '-'}|${frame.groupId}`;
+  if (answerDecisionsSaid.get(slot) === decision) return;
+  if (!answerDecisionsSaid.has(slot) && answerDecisionsSaid.size >= ANSWER_DECISIONS_SAID_MAX) {
+    const oldest = answerDecisionsSaid.keys().next().value;
+    if (oldest !== undefined) answerDecisionsSaid.delete(oldest);
+  }
+  answerDecisionsSaid.set(slot, decision);
+  say();
+}
+
+/** Forgets what was said about withheld answers (sign-out, tests): the next decision is said again. */
+export function resetAnswerDecisionsSaid(): void {
+  answerDecisionsSaid.clear();
+}
+
+/**
  * The held sessions that may answer a request on the key group of `frame`, and ONE line naming
- * how many were withheld and why - counts and the scope only, never a session's material.
+ * how many were withheld and why - counts and the scope only, never a session's material. The line
+ * is said once per decision ({@link sayAnswerDecisionOnce}), keyed on WHICH sessions were withheld
+ * and why.
  */
 function withinFrameScope(
   frame: DistributionFrame,
   held: StoredGraineSession[]
 ): StoredGraineSession[] {
   const kept: StoredGraineSession[] = [];
+  const withheld: string[] = [];
   let otherRoster = 0;
   let notListed = 0;
   for (const session of held) {
     const outside = seedOutsideScope(session.channelId, frame.scope);
-    if (outside === null) kept.push(session);
-    else if (outside === 'other-salon-group' || outside === 'private-salon') otherRoster++;
+    if (outside === null) {
+      kept.push(session);
+      continue;
+    }
+    withheld.push(`${session.sessionId}:${outside}`);
+    if (outside === 'other-salon-group' || outside === 'private-salon') otherRoster++;
     else notListed++;
   }
   if (otherRoster + notListed > 0) {
     // A decision, so at info like the history rule's refusals: an answer carries only the seeds of
     // the salons the asker's key group may read.
-    console.info(
-      `[GRAINE] withholding ${otherRoster + notListed} seed(s) from ${frame.sender} on ${scopeLabel(frame.scope)}: ` +
-        `${otherRoster} of a salon riding another key group, ${notListed} not listed on this device`
+    sayAnswerDecisionOnce(frame, 'scope', withheld.sort().join(','), () =>
+      console.info(
+        `[GRAINE] withholding ${otherRoster + notListed} seed(s) from ${frame.sender} on ${scopeLabel(frame.scope)}: ` +
+          `${otherRoster} of a salon riding another key group, ${notListed} not listed on this device`
+      )
     );
   }
   return kept;
@@ -817,9 +869,13 @@ async function seedsTheAskerMayRead(
 
   const { kept, withheld } = applyHistoryFloors(held, floors);
   if (withheld.length > 0) {
-    console.info(
-      `[GRAINE] withholding ${withheld.length} of ${held.length} seed(s) from ${frame.sender}: community ` +
-        `${frame.workspaceId.slice(0, 8)} is answered as 'joined' and they hold nothing that member may read`
+    // Once per decision: the same sessions withheld by the same floor are not said again.
+    const decision = `${[...withheld].sort().join(',')}/${held.length}`;
+    sayAnswerDecisionOnce(frame, 'floor', decision, () =>
+      console.info(
+        `[GRAINE] withholding ${withheld.length} of ${held.length} seed(s) from ${frame.sender}: community ` +
+          `${frame.workspaceId.slice(0, 8)} is answered as 'joined' and they hold nothing that member may read`
+      )
     );
   }
   return {
@@ -899,9 +955,13 @@ async function gatherCommunityHistory(
         outOfScope > 0 ? `${outOfScope} seed(s) withheld for their salon's roster` : null,
         truncated ? `more than ${GRAINE_HISTORY_BUNDLE_MAX_SEEDS} seed(s) in scope` : null,
       ].filter((reason): reason is string => reason !== null);
-      console.info(
-        `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
-          `${why.join(', ')} - not "I hold nothing"`
+      // Once per decision: a re-ask meeting the same roster and the same store is answered the same
+      // way, silently (the "withholding" line above names which sessions).
+      sayAnswerDecisionOnce(frame, 'history-refusal', `${held.length}|${why.join(', ')}`, () =>
+        console.info(
+          `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
+            `${why.join(', ')} - not "I hold nothing"`
+        )
       );
     }
   }

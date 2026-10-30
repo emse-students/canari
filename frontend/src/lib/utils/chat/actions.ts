@@ -54,7 +54,13 @@ import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isCommitRaceRefusal, refusedAdmits } from '$lib/mls-client/CommitRefusedError';
 import { AddAbortedError, rebuildOnRace } from './commitRace';
 import { readConfirmedTree, type TreeReading } from './confirmedTree';
-import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
+import {
+  canonicalUserId,
+  sameDeviceIdentity,
+  treeHoldsDevice,
+  treeHoldsUser,
+} from '$lib/mls-client/leafIdentity';
+import { isDeviceAskShown } from './joinRequests.svelte';
 import {
   DeviceTrustRefusedError,
   isDeviceTrustRefusal,
@@ -302,16 +308,30 @@ async function unseenDeviceKey(
 }
 
 /**
+ * The decision last SAID about an unseen device, per `group|user:device`: the key fingerprint and
+ * this device's epoch of the group it was taken against (`fingerprint@epoch`).
+ *
+ * THE SAME DECISION WAS SAID ONCE PER REQUEST (DEVREVOKE-KEYGROUP, `1.5.1-alpha.8`, 2026-10-29): a
+ * minted device's two passes of `welcome_request`, 20 s apart, made the owner's seat print the same
+ * `[WELCOME_REQ] ... is a device this one never saw` line twice for each of six conversations. What
+ * the decision rests on is the device, its key and the tree it was read from; while none of them
+ * moved and the ask is still shown, the line has nothing new to say. A new epoch (a roster change),
+ * another key, or an ask no longer on screen re-decides and says it again - never a clock.
+ */
+const unseenDeviceDecidedAt = new Map<string, string>();
+
+/**
  * Puts the ask about a DEVICE this device never saw, of a user already in the conversation, to this
  * device's member ({@link automaticAdmission}'s `unseen-device`) - in ANY conversation row, a 1:1
  * included: the answer adds or refuses the device (`memberDeviceAnswers.ts`) and touches no seat.
  * ONE ASK PER DEVICE, carrying its name and the fingerprint of the key its package names
  * ({@link unseenDeviceKey}), so the approval binds that key. A device this member declined in this
  * conversation is not asked about again there. No conversation row - a key group, a row not loaded
- * yet - asks nothing: the next sweep asks again once the row is there.
+ * yet - asks nothing: the next sweep asks again once the row is there. Said once per decision
+ * ({@link unseenDeviceDecidedAt}).
  */
 async function askAboutUnseenDevice(
-  mlsService: Pick<IMlsService, 'fetchUserDevices' | 'fetchDeviceKeyPackage'>,
+  mlsService: Pick<IMlsService, 'fetchUserDevices' | 'fetchDeviceKeyPackage' | 'getEpoch'>,
   conversations: ReadonlyMap<string, Conversation>,
   request: JoinApprovalRequest,
   tag: string,
@@ -333,9 +353,21 @@ async function askAboutUnseenDevice(
   }
   const key = await unseenDeviceKey(mlsService, requesterUserId, requesterDeviceId, tag, log);
   if (key === null) return;
-  log(
-    `${tag} ${device} is a device this one never saw, of a member of ${short}... - not added automatically, a member's approval of key ${key.fingerprint} is asked`
-  );
+  // ONCE PER DECISION ({@link unseenDeviceDecidedAt}): the same device, under the same key, against
+  // the same epoch of this group, while its ask is still on screen, is the decision already said.
+  // The ask is still RAISED every time - a sweep keeps what it raised (`settleSweptJoinRequests`) and
+  // the store's own raise is idempotent - only the line is not repeated.
+  const slot = `${groupId}|${canonicalUserId(requesterUserId)}:${requesterDeviceId}`;
+  const decidedAt = `${key.fingerprint}@${mlsService.getEpoch(groupId)}`;
+  const sameDecision =
+    unseenDeviceDecidedAt.get(slot) === decidedAt &&
+    isDeviceAskShown(groupId, requesterUserId, requesterDeviceId, key.fingerprint);
+  if (!sameDecision) {
+    unseenDeviceDecidedAt.set(slot, decidedAt);
+    log(
+      `${tag} ${device} is a device this one never saw, of a member of ${short}... - not added automatically, a member's approval of key ${key.fingerprint} is asked`
+    );
+  }
   onJoinApprovalRequested?.({
     ...request,
     kind: 'device',

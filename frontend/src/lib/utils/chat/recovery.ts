@@ -101,6 +101,46 @@ const lastReAddAt = new Map<string, number>();
  */
 const noRepairerAt = new Map<string, string>();
 
+/**
+ * Per `userId:deviceId|groupId`, the epoch pair (`${baseEpoch}/${activeEpoch}`) against which this
+ * device - a FURTHER DEVICE OF A MEMBER (`externalJoin` -> `further_device`) - asked a member to
+ * approve it.
+ *
+ * **THE ASK WAS SENT ONCE PER PASS, AND EACH PASS ASKED THE SAME QUESTION** (DEVREVOKE-KEYGROUP,
+ * `1.5.1-alpha.7`/`alpha.8`, 2026-10-29): a minted device sent a `welcome_request` for each of six
+ * conversations, then all six again 20 s later, and the owner's seat said its decision twice for each.
+ * The verdict is read off the tree of the published base, and the base and the group's epoch are the
+ * pair: while neither moves, the tree is the one the verdict was taken on, the member's answer is the
+ * only thing that can change it, and that answer is a member's Add - which MOVES the pair. So while
+ * the pair stands the pass neither rebuilds the join nor re-asks; the throttle and the not-ready
+ * marker stay armed, so the watchdog keeps reading `meta` on its cadence and the first pass after
+ * the pair moves decides again, and says so. Termination comes from that proof, never a clock.
+ *
+ * **NOTHING IS STRANDED BY NOT RE-ASKING.** A device with a `pending` seat is re-raised to every
+ * member by their own pending-invitation sweep from that durable row (`processPendingInvitations` ->
+ * `askAboutUnseenDevice`), and a member offline at the ask is handed it by the server when it
+ * connects (`pending_welcome_notify`). A device with NO seat at all has neither: its ask lives in the
+ * screens of the members online when it was sent, and is sent again only when the pair moves or
+ * this page starts again (this map is memory) - the cost named on `mls-recovery-ladder.md`.
+ *
+ * **NOT CLEARED BY {@link resetReAddCooldowns}**, unlike {@link noRepairerAt}: the second pass of
+ * 2026-10-29 re-asked all six conversations at once, which only a reset of every group's throttle
+ * does - and the session setup is the one caller of that reset (`setupMessageHandler`). The record
+ * is a proof about the SERVER's state, keyed by this account and device, so a new session of the same
+ * page has nothing to re-ask. {@link cancelReAdd} ends it (the group joined, or recovery ended).
+ */
+const memberApprovalAskedAt = new Map<string, string>();
+
+/** The {@link memberApprovalAskedAt} slot of `groupId` for this device. */
+function memberApprovalSlot(groupId: string, deps: RecoveryDeps): string {
+  return `${deps.userId}:${deps.mlsService.getDeviceId()}|${groupId}`;
+}
+
+/** Test seam: forgets every recorded approval ask ({@link memberApprovalAskedAt}). */
+export function resetMemberApprovalAsks(): void {
+  memberApprovalAskedAt.clear();
+}
+
 /** Groups whose "own KeyPackage not published" refusal was already logged, by the reason logged. */
 const ownKeyPackageLogged = new Map<string, string>();
 
@@ -530,6 +570,25 @@ export async function requestReAdd(
     noRepairerAt.delete(groupId);
   }
 
+  // A FURTHER DEVICE ALREADY ASKED A MEMBER AGAINST THIS VERY PAIR ({@link memberApprovalAskedAt}):
+  // the tree is the one its verdict was read off, so the join would answer `further_device` again
+  // and the ask would repeat a question already put. Nothing is rebuilt and nobody is asked; the
+  // throttle and the not-ready marker stay armed, so the next pass reads the pair again.
+  const approvalSlot = memberApprovalSlot(groupId, deps);
+  const askedAt = memberApprovalAskedAt.get(approvalSlot);
+  if (askedAt !== undefined && pair !== undefined && askedAt === pair) {
+    lastReAddAt.set(groupId, now);
+    markGroupNotReady(deps.userId, groupId);
+    return;
+  }
+  if (askedAt !== undefined) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... the group moved since a member's approval was asked ` +
+        `(${askedAt} -> ${pair ?? 'unknown'}) - deciding the door again`
+    );
+    memberApprovalAskedAt.delete(approvalSlot);
+  }
+
   // Commit to an attempt: arm the throttle and the persistent not-ready marker (the SYNC_WATCHDOG
   // enumerates it to drive the cadence).
   lastReAddAt.set(groupId, now);
@@ -935,12 +994,21 @@ export async function requestReAdd(
   }
 
   // A FURTHER DEVICE OF A MEMBER: its door is a member's Add, asked for here.
+  // ASKED ONCE PER PAIR ({@link memberApprovalAskedAt}): recorded against the pair this pass read,
+  // and a server that names no pair records nothing, so it is asked again on the next pass.
   if (outcome.reason === 'further_device') {
     await askAMemberToReAddUs(
       groupId,
       deps,
       "a further device of a member - a member's Add, not this device's own join"
     );
+    if (pair !== undefined) {
+      memberApprovalAskedAt.set(approvalSlot, pair);
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... a member's approval is asked at ${pair} - not asked again ` +
+          `until the group moves (the member's Add moves it)`
+      );
+    }
     return;
   }
   // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
@@ -1358,4 +1426,8 @@ export function cancelReAdd(groupId: string): void {
   // outlive the thing it describes. Every caller of this function reaches it because the group is
   // healthy again - a Welcome landed, an external join succeeded, or WASM already holds the tree.
   noRepairerAt.delete(groupId);
+  // Nor an approval asked for it: the ask is answered or the recovery is over, for every device.
+  for (const slot of memberApprovalAskedAt.keys()) {
+    if (slot.endsWith(`|${groupId}`)) memberApprovalAskedAt.delete(slot);
+  }
 }
