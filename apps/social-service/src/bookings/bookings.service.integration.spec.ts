@@ -1962,6 +1962,15 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         participantIds: [DAN],
       });
       expect(tos('booking_added')).toEqual([CAROL, DAN]);
+      expect(
+        told.every(
+          (t) =>
+            t.text === t.meta?.place &&
+            t.meta.word === '' &&
+            t.meta.startsAt === new Date(on('11:00')).toISOString() &&
+            t.meta.timeZone === 'UTC'
+        )
+      ).toBe(true);
     });
 
     it("the organiser's cancellation tells the holder and the participants still in, with its word", async () => {
@@ -1974,7 +1983,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       told.length = 0;
       await service.cancel(id, as(ORGA), NOW, 'Salle inondee');
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
-      // `text` is the word ALONE; the place, the slot's start and the space's zone ride `meta`.
+      // `text` is what it always was (the word, else the place) so an older client still names
+      // something; the client of this column reads place, slot, zone and word from `meta`.
       expect(
         told.every(
           (t) =>
@@ -1982,18 +1992,23 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
             t.actorName === 'Club Musique' &&
             typeof t.meta?.place === 'string' &&
             (t.meta.place as string).startsWith(space.name) &&
+            t.meta.word === 'Salle inondee' &&
             t.meta.startsAt === new Date(on('10:00')).toISOString() &&
             t.meta.timeZone === 'UTC'
         )
       ).toBe(true);
-      // Without a word the row's text is empty, never the place (no word replaces the space).
-      told.length = 0;
+      // Without a word, `text` is the place (as before this column) and `meta.word` is empty.
       const second = await book(space.id, resourceIds[0], '11:00', '11:30', ALICE);
       told.length = 0;
       await service.cancel(second.id, as(ORGA), NOW);
-      expect(told.map((t) => [t.text, t.meta?.startsAt])).toEqual([
-        ['', new Date(on('11:00')).toISOString()],
-      ]);
+      expect(told).toHaveLength(1);
+      expect(told[0].text.startsWith(space.name)).toBe(true);
+      expect(told[0].text).toBe(told[0].meta?.place);
+      expect(told[0].meta).toMatchObject({
+        word: '',
+        startsAt: new Date(on('11:00')).toISOString(),
+        timeZone: 'UTC',
+      });
     });
 
     it("the holder's cancellation tells the participants (Q-R2), and carries no word of theirs", async () => {
@@ -2016,6 +2031,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       told.length = 0;
       await service.withdraw(id, as(BOB), NOW);
       expect(told.map((t) => [t.type, t.to])).toEqual([['booking_withdrawn', ALICE]]);
+      expect(told[0].text).toBe(told[0].meta?.place);
+      expect(told[0].meta).toMatchObject({
+        word: '',
+        startsAt: new Date(on('10:00')).toISOString(),
+        timeZone: 'UTC',
+      });
     });
 
     it('a space reached by its link only is never named on a lock screen (Q-R5)', async () => {
@@ -2064,6 +2085,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           place: '',
           startsAt: new Date(on('10:00')).toISOString(),
           timeZone: 'UTC',
+          word: 'Le cabinet est ferme',
         }))
       );
 
@@ -2087,6 +2109,18 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await sent.mock.results[0].value;
       sent.mockRestore();
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
+      // The deleted space's SQL (`deletedBookingNotices`) carries the slot too, read before the
+      // delete: only the 10:00 booking is coming and live (the 11:00 one was cancelled).
+      expect(
+        told.every(
+          (t) =>
+            t.text === t.meta?.place &&
+            (t.meta.place as string).startsWith(space.name) &&
+            t.meta.word === '' &&
+            t.meta.startsAt === new Date(on('10:00')).toISOString() &&
+            t.meta.timeZone === 'UTC'
+        )
+      ).toBe(true);
     });
 
     it('THE REFERENCE: a reminder run twice sends once, to each person, at its instant', async () => {

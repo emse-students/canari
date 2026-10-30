@@ -57,23 +57,27 @@ export function noticePlace(facts: PlaceFacts): string {
 
 /**
  * THE STRUCTURED FACTS OF A BOOKING NOTICE, stored in `post_notifications.meta` (migration 117) so
- * the client names WHERE and WHEN in the reader's language without parsing `text`, which holds the
- * organiser's word alone: the place (empty on a space reached by its link only, Q-R5), the slot's
- * START as a UTC instant, and the space's IANA zone the client draws it in (D25). The push never
- * carries it. Kept 90 days with the row, after the space is deleted too (C17).
+ * the client names WHERE and WHEN in the reader's language without parsing `text`: the place
+ * (empty on a space reached by its link only, Q-R5), the slot's START as a UTC instant, the space's
+ * IANA zone the client draws it in (D25), and the organiser's word ('' when none). `text` KEEPS
+ * what it always was (the word, else the place), because every client older than this column - the
+ * native apps embed old frontends - draws it and nothing else. The push never carries `meta`.
+ * Kept 90 days with the row, after the space is deleted too (C17).
  */
 export interface BookingNoticeMeta extends Record<string, unknown> {
   place: string;
   startsAt: string;
   timeZone: string;
+  word: string;
 }
 
 export function bookingNoticeMeta(
   place: string,
   startsAt: Date,
-  timeZone: string
+  timeZone: string,
+  word = ''
 ): BookingNoticeMeta {
-  return { place, startsAt: startsAt.toISOString(), timeZone };
+  return { place, startsAt: startsAt.toISOString(), timeZone, word };
 }
 
 /** The reminder's line: the place and the start time on the space's clock, or the time alone. */
@@ -158,9 +162,9 @@ export class BookingNotificationsService {
         ctx.booking.id,
         people,
         actorId,
-        { row: word, push: linkOnly ? '' : word || ctx.place },
+        { row: word || ctx.place, push: linkOnly ? '' : word || ctx.place },
         await this.present(ctx.space, actorId, people),
-        ctx.meta
+        { ...ctx.meta, word }
       );
     });
   }
@@ -175,7 +179,7 @@ export class BookingNotificationsService {
         ctx.booking.id,
         [ctx.booking.holderId],
         participantId,
-        { row: '', push: ctx.place },
+        { row: ctx.place, push: ctx.place },
         {},
         ctx.meta
       );
@@ -193,7 +197,7 @@ export class BookingNotificationsService {
         ctx.booking.id,
         people,
         actorId,
-        { row: '', push: ctx.place },
+        { row: ctx.place, push: ctx.place },
         await this.present(ctx.space, actorId, people),
         ctx.meta
       );
@@ -227,7 +231,7 @@ export class BookingNotificationsService {
             notice.bookingId,
             notice.people,
             actorId,
-            { row: '', push: place },
+            { row: place, push: place },
             notice.people.includes(actorId) ? {} : presented,
             bookingNoticeMeta(place, notice.startsAt, space.timeZone)
           );
@@ -327,10 +331,10 @@ export class BookingNotificationsService {
 
   /**
    * One bell row and one push per recipient, the one who acted and a tombstoned account excepted.
-   * `text.row` is what the bell keeps (the organiser's word alone, or empty), `text.push` what a
-   * lock screen shows (the place, or the word; never the slot). They differ unless there is a word on
-   * a named space; then the row is written without its push and the push sent on its own, through the
-   * same pipeline. `meta` rides every bell row (never the push): the place, slot and zone.
+   * `text.row` is what the bell keeps (the word, else the place - what every older client draws),
+   * `text.push` what a lock screen shows: they differ only for an organiser's word on a link-only
+   * space (Q-R3 with Q-R5), and then the row is written without its push and the push sent on its own,
+   * through the same pipeline. `meta` rides every bell row (never the push): place, slot, zone, word.
    */
   private async send(
     type: BookingNoticeType,
@@ -381,7 +385,7 @@ export class BookingNotificationsService {
     }
     this.logger.log(
       `[BOOKINGS_NOTIFY] ${type} booking=${bookingId.slice(0, 8)} told=${written} ` +
-        `placeNamed=${text.push !== ''} wordInBellOnly=${text.row !== '' && text.row !== text.push}`
+        `placeNamed=${text.push !== ''} wordInBellOnly=${text.row !== text.push}`
     );
   }
 }

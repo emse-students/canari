@@ -3,12 +3,22 @@ import { formatNoticeSlot, readBookingNoticeMeta } from './noticeText';
 
 describe('readBookingNoticeMeta', () => {
   it('reads place, slot start and zone', () => {
-    const meta = { place: 'Salle', startsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Europe/Paris' };
+    const meta = {
+      place: 'Salle',
+      startsAt: '2026-11-03T09:00:00.000Z',
+      timeZone: 'Europe/Paris',
+      word: 'desole',
+    };
     expect(readBookingNoticeMeta(meta)).toEqual(meta);
   });
 
   it('accepts an empty place (link-only space)', () => {
-    const meta = { place: '', startsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Europe/Paris' };
+    const meta = {
+      place: '',
+      startsAt: '2026-11-03T09:00:00.000Z',
+      timeZone: 'Europe/Paris',
+      word: '',
+    };
     expect(readBookingNoticeMeta(meta)).toEqual(meta);
   });
 
@@ -18,7 +28,12 @@ describe('readBookingNoticeMeta', () => {
     expect(readBookingNoticeMeta('Salle')).toBeNull();
     expect(readBookingNoticeMeta({ place: 'x' })).toBeNull();
     expect(
-      readBookingNoticeMeta({ place: 'x', startsAt: 'not a date', timeZone: 'Europe/Paris' })
+      readBookingNoticeMeta({
+        place: 'x',
+        startsAt: 'not a date',
+        timeZone: 'Europe/Paris',
+        word: '',
+      })
     ).toBeNull();
   });
 });
@@ -35,6 +50,16 @@ describe('formatNoticeSlot', () => {
   it('moves the DAY with the zone when the instant crosses midnight there', () => {
     expect(formatNoticeSlot('2026-11-03T23:30:00.000Z', 'Europe/Paris')).toMatch(
       /^mer\.? 4 nov\.?,? 00:30$/
+    );
+  });
+
+  it('follows the DST transition of the space (spring forward, Paris 2026-03-29)', () => {
+    // 00:30Z is 01:30 CET; one hour later the clock has jumped: 01:30Z is 03:30 CEST (no 02:xx).
+    expect(formatNoticeSlot('2026-03-29T00:30:00.000Z', 'Europe/Paris')).toMatch(
+      /dim\.? 29 mars,? 01:30$/
+    );
+    expect(formatNoticeSlot('2026-03-29T01:30:00.000Z', 'Europe/Paris')).toMatch(
+      /dim\.? 29 mars,? 03:30$/
     );
   });
 

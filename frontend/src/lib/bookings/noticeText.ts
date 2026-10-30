@@ -8,21 +8,24 @@ export interface BookingNoticeMeta {
   startsAt: string;
   /** The space's IANA zone: the slot is drawn on ITS clock (D25), as the reminder is. */
   timeZone: string;
+  /** The organiser's word on a cancellation (Q-R3); empty when none. */
+  word: string;
 }
 
 /**
  * Reads a notice's `meta` as booking facts, or null when it is absent (a row written before the
  * column, every other type) or not of that shape - the caller then draws the row as it always did.
- * Nothing is ever read out of the row's `text`, which is the organiser's word alone.
+ * Nothing is ever read out of the row's `text` (the word, else the place: what older clients draw).
  */
 export function readBookingNoticeMeta(meta: unknown): BookingNoticeMeta | null {
   if (typeof meta !== 'object' || meta === null) return null;
-  const { place, startsAt, timeZone } = meta as Record<string, unknown>;
+  const { place, startsAt, timeZone, word } = meta as Record<string, unknown>;
   if (typeof place !== 'string' || typeof startsAt !== 'string' || typeof timeZone !== 'string') {
     return null;
   }
+  if (typeof word !== 'string') return null;
   if (Number.isNaN(new Date(startsAt).getTime())) return null;
-  return { place, startsAt, timeZone };
+  return { place, startsAt, timeZone, word };
 }
 
 /**

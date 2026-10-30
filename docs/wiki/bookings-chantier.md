@@ -443,16 +443,24 @@ same pull request.
   The organiser's default is a space setting (`reminderMinutes`).
 - **The bell row's place and slot** (cancellation, withdrawal, booking; fix of 2026-10-30, measured on
   dev `1.5.1-alpha.8`: the word had replaced the space's name and no row named the slot) ride a nullable
-  `post_notifications.meta` jsonb (**migration 117**, applied only after the owner's yes):
-  `{ place, startsAt, timeZone }` - the place (empty on a link-only space, Q-R5), the slot's START as a
-  UTC instant, the space's IANA zone. `text` is the organiser's word ALONE (or empty); nothing is ever
-  parsed out of it. The client (`lib/bookings/noticeText.ts`) draws the slot on the SPACE's clock in the
-  reader's language, as the reminder does. A row with null `meta` (every row before the migration)
-  renders exactly as before. **The push is unchanged** (place, or the word off a link-only space; never
-  the slot). C17 and the privacy policy's Reservations paragraph say it: the notice names the place and
-  the slot's start, kept 90 days, after the space is deleted too. The bell badge is the shared 60 s
-  `postNotifStore` poll for EVERY notification type; no type has a live signal, so a booking notice not
-  showing at once is the design, not an omission.
+  `post_notifications.meta` jsonb (**migration 117**, approved by the owner 2026-10-30, applied with the
+  1.5.2 deploy): `{ place, startsAt, timeZone, word }` - the place (empty on a link-only space, Q-R5),
+  the slot's START as a UTC instant, the space's IANA zone, the organiser's word ('' when none).
+  **`text` KEEPS what it always was - the word, else the place - because every client older than the
+  column draws `text` and nothing else, and the native apps embed old frontends** (a `text` of the word
+  alone showed them "X a annule votre reservation" with no place: review of #2707). Nothing is parsed out
+  of `text`; the new client (`lib/bookings/noticeText.ts`) reads `meta`, draws the slot on the SPACE's
+  clock in the reader's language, as the reminder does, and quotes the word through a Paraglide key. A
+  row with null `meta` (every row before the migration) renders exactly as before. **The push is
+  unchanged** (place, or the word off a link-only space; never the slot). C17 and the privacy policy's
+  Reservations paragraph say it: the notice names the place (the space AND the resource, which may bear a
+  person's name) and the slot's start, kept 90 days, after the space is deleted too. The bell badge is the
+  shared 60 s `postNotifStore` poll for EVERY notification type; no type has a live signal, so a booking
+  notice not showing at once is the design, not an omission.
+  **No deploy gap**: the entity selects `meta`, but `deploy-environment.sh` applies the migrations (after
+  starting only postgres) BEFORE it replaces any service, so new code never meets the old schema; only a
+  rollback meets old code on the newer schema, and old code ignores an additive nullable column
+  ([social-service](services/social-service.md#a-query-at-boot-runs-before-the-migration-that-adds-its-column-2026-10-02)).
 - **The client** knows the four types (`KNOWN_NOTIFICATION_TYPES`, `notificationHref` ->
   `/bookings`, `NotificationRow` sentences and glyphs), the `bookings` host, the `bookings`
   settings category, and the three native tables carry the four keys.

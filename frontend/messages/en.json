@@ -4634,6 +4634,7 @@
   "notif_booking_withdrawn_text": "left your booking",
   "notif_booking_added_text": "added you to a booking",
   "notif_booking_reminder_text": "Reminder: your booking starts soon",
+  "notif_booking_word_quoted": "\"{word}\"",
   "follow_requests_title": "Follow requests",
   "follow_requests_subtitle": "People asking to follow you. A refusal is not reported to anyone.",
   "follow_requests_empty": "No pending requests.",

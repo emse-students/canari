@@ -220,12 +220,13 @@ describe('NotificationRow sentence', () => {
   // The space and the slot are named, and the organiser's word is quoted on its own line.
   it('names the space and the slot of a booking notice, with the word apart', () => {
     const startsAt = '2026-11-03T09:00:00.000Z';
-    const meta = { place: 'Salle fermee', startsAt, timeZone: 'Europe/Paris' };
+    const meta = { place: 'Salle fermee', startsAt, timeZone: 'Europe/Paris', word: '' };
     const row = renderRow({
       ...postRow('booking_cancelled'),
       postId: 'b-1',
+      // The server keeps `text` as it always was (the word, else the place); the new client reads `meta`.
       text: 'desole A8 test',
-      meta,
+      meta: { ...meta, word: 'desole A8 test' },
     });
     const text = row.textContent ?? '';
     expect(text).toContain(m.notif_booking_cancelled_text());
@@ -233,7 +234,9 @@ describe('NotificationRow sentence', () => {
     // The slot is the SPACE's clock: 09:00 UTC is 10:00 in Paris.
     expect(text).toContain(formatNoticeSlot(startsAt, 'Europe/Paris')!);
     expect(text).toContain('10:00');
-    expect(row.querySelector('.block.italic')?.textContent).toBe('“desole A8 test”');
+    expect(row.querySelector('.block.italic')?.textContent).toBe(
+      m.notif_booking_word_quoted({ word: 'desole A8 test' })
+    );
     // The word never takes the space's place.
     expect(row.querySelectorAll('.italic')[0]?.textContent).toBe('Salle fermee');
 
@@ -242,7 +245,7 @@ describe('NotificationRow sentence', () => {
       ...postRow('booking_cancelled'),
       postId: 'b-1',
       text: 'ligne 1\nligne 2 <b>x</b>',
-      meta,
+      meta: { ...meta, word: 'ligne 1\nligne 2 <b>x</b>' },
     });
     const quote = multi.querySelector('.block.italic');
     expect(quote?.textContent).toContain('ligne 1\nligne 2 <b>x</b>');
@@ -253,7 +256,7 @@ describe('NotificationRow sentence', () => {
       ...postRow('booking_added'),
       postId: 'b-1',
       text: '',
-      meta: { ...meta, place: '' },
+      meta: { ...meta, place: '', word: '' },
     });
     expect(bare.querySelector('.italic')).toBeNull();
     expect(bare.textContent).toContain('10:00');
@@ -271,6 +274,20 @@ describe('NotificationRow sentence', () => {
     expect(legacy.querySelector('.italic')?.textContent).toBe('Salle de musique');
     expect(legacy.querySelector('.block')).toBeNull();
     expect(legacy.textContent).not.toMatch(/\d{2}:\d{2}/);
+  });
+
+  // OLD CLIENTS: a row the new server writes keeps `text` = the word, else the place, so a client
+  // that ignores `meta` (every native app embeds an old frontend) still names something. Drawn here
+  // with `meta` stripped, which is exactly what that rendering path sees.
+  it('draws a NEW row on the old path: text alone still names the place or the word', () => {
+    const startsAt = '2026-11-03T09:00:00.000Z';
+    const meta = { place: 'Salle fermee', startsAt, timeZone: 'Europe/Paris', word: '' };
+    for (const text of ['Salle fermee', 'desole A8 test']) {
+      const row = { ...postRow('booking_cancelled'), postId: 'b-1', text, meta };
+      const old = renderRow({ ...row, meta: undefined });
+      expect(old.textContent).toContain(m.notif_booking_cancelled_text());
+      expect(old.querySelector('.italic')?.textContent).toBe(text);
+    }
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.

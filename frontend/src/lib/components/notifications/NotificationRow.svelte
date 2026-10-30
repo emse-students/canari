@@ -463,8 +463,8 @@
           {#if bookingNotice.place}<span class="italic"
               ><EmojiText text={bookingNotice.place} /></span
             >{#if bookingSlot}&#32;&#183;&#32;{/if}{/if}{bookingSlot ?? ''}
-          {#if bodyText}<span class="mt-0.5 block whitespace-pre-line italic"
-              >&#8220;<EmojiText text={bodyText} />&#8221;</span
+          {#if bookingNotice.word}<span class="mt-0.5 block whitespace-pre-line italic"
+              ><EmojiText text={m.notif_booking_word_quoted({ word: bookingNotice.word })} /></span
             >{/if}
         {:else if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if isFollowNotif}
