@@ -51,8 +51,9 @@ export type { IncomingDeliveryMeta };
  * - `forwarded`: relayed to ONE online member (`target`), on that member's screen only - nothing
  *   keeps it once that member closes the app, so the requester keeps asking on its cadence.
  * - `stored`: no member was online (`no_peer_online`), so the server kept it for every member's next
- *   connection (`pending_welcome`, `pending_welcome_notify`, 24 h) and woke them by push - an ask
- *   that is put, and need not be repeated while nothing moves.
+ *   connection (`pending_welcome`, `pending_welcome_notify`, 24 h) and woke them by push - drained
+ *   to a member's screen at its next connection, and no more durable than a forwarded ask once
+ *   there, so the requester keeps asking on its cadence too.
  * - `null`: no answer - a transport failure, a non-2xx, or a body naming neither. Nothing is known
  *   to have been put.
  */
@@ -1673,7 +1674,7 @@ export interface IMlsService {
 
   /**
    * Asks a member of `groupId` to Welcome this device, and says what the server did with the ask
-   * ({@link WelcomeRequestAnswer}) - the requester records an ask as put only when it was STORED.
+   * ({@link WelcomeRequestAnswer}), which the requester logs - no answer makes the ask durable.
    */
   sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer>;
 

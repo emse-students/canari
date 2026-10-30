@@ -239,7 +239,7 @@ already acked, on an adder that predates `admits`: the repair then costs one sel
 join, which heals, never a corruption. Pinned by `welcomeOwed.test.ts` and
 `initializeConnection.sync.test.ts`.
 
-### A further device asks once per epoch pair
+### A further device's ask is decided once and asked on the cadence
 
 A further device of a member (the join answers `further_device`) can only be let in by a member's
 Add, so the seam sends it a `welcome_request`. On DEVREVOKE-KEYGROUP (`1.5.1-alpha.8`, 2026-10-29) a
@@ -250,35 +250,26 @@ The second pass re-asked every group at once. Only `resetReAddCooldowns` clears 
 throttle, and its one caller is the session setup (`setupMessageHandler`). The requester's console
 was not kept, so this cause is read from the code and is not proven.
 
-**The ask is now recorded against the epoch pair `${baseEpoch}/${activeEpoch}` the pass read**
-(`memberApprovalAskedAt` in `recovery.ts`, keyed `userId:deviceId|groupId`):
+**The requester asks on its cadence, about once a minute per group, and records nothing.**
+`sendWelcomeRequest` returns what the server did (`WelcomeRequestAnswer`) and `askAMemberToReAddUs`
+logs it, but no answer makes the ask durable:
 
-- The verdict is read off the tree of the published base. While the pair stands, that tree is
-  unchanged, so a later pass neither rebuilds the join nor re-asks. The throttle and the not-ready
-  marker stay armed.
-- The member's answer is an Add, which moves the pair. Any other commit moves it too. The first pass
-  after the pair moves logs `the group moved since a member's approval was asked`, decides the door
-  again and, if it is still a further device, asks once more.
-- `cancelReAdd` ends the record. `resetReAddCooldowns` does NOT end it: that reset is what the
-  second pass of 2026-10-29 points at.
-- A server that names no pair gets no record, so the device asks on every pass as before.
-- **Only an ask the server STORED is recorded.** `sendWelcomeRequest` returns what the server did
-  (`WelcomeRequestAnswer`). `stored` (`no_peer_online`) means the ask is kept for every member's next
-  connection (`pending_welcome`, `pending_welcome_notify`, 24 h). `forwarded` reaches one online
-  member's screen and nothing else, so it is not recorded and the device asks again on its cadence.
-  A failed send or no answer is not recorded either.
-- The record is cleared when a peer comes online (`forgetProvenDeadEnds`, the same edge as the
-  dead-end record) and at sign-out (`resetMemberApprovalAsks`, from `useMessaging`).
+- `forwarded` reaches one online member's screen and nothing else.
+- `stored` (`no_peer_online`) is kept for every member's next connection (`pending_welcome`,
+  `pending_welcome_notify`, 24 h), then drained to a member's screen - no more durable than a
+  forwarded ask once there.
+- A screen that reloads or closes before deciding loses the ask, and nothing on the requester can see
+  that. A record of "already asked against this epoch pair" was tried in review and REMOVED: in a
+  quiet group the pair never moves, and the presence edge does not watch group members, so the device
+  would wait for a reload.
 
-**What it costs, and what is not covered.** While a member is online, a further device's ask is
-forwarded on every cadence, about once a minute per group. The member says its decision once and
-counts the repeats (below), so the cost is requests, not noise. A stored ask is replayed to members
-by the server, but only for 24 h. A device with a `pending` seat is also re-raised by every member's
-own pending-invitation sweep from that durable row (`processPendingInvitations` ->
-`askAboutUnseenDevice`). **A device with NO seat has no durable ask.** It depends on its own cadence
-and on the 24 h store, and the record is memory, so a reload asks once more. The durable fix is on
-the [backlog](../backlog.md): store a further device's ask as a server row, as a link's ask is, and
-let members re-raise it.
+**What it costs.** While a member is online, a further device's ask is forwarded on every cadence.
+The member says its decision once and counts the repeats (below), so the cost is requests, not
+noise. A device with a `pending` seat is also re-raised by every member's own pending-invitation
+sweep from that durable row (`processPendingInvitations` -> `askAboutUnseenDevice`). **A device with
+NO seat has no durable ask** and depends on its own cadence. The durable fix is on the
+[backlog](../backlog.md): store a further device's ask as a server row, as a link's ask is, let
+members re-raise it, and let the requester stop asking once the row exists.
 
 **The member says its decision once and counts repeats.** `askAboutUnseenDevice` (`actions.ts`) logs
 `... is a device this one never saw ...` once per (group, `user:device`, key fingerprint, this
