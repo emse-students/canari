@@ -1600,7 +1600,7 @@ passed trivially and never been looked at again, the claim already on. So:
 
 | Read | Expected |
 | --- | --- |
-| Mi 9T report, both roles, iPhone and desktop as peers | `frames in` ~250 per side at 5 s, `E2E path check: no media around the transform`, `E2E proven` within a second of `connected` |
+| Mi 9T report, both roles, iPhone and desktop as peers | `frames in` ~250 per side at 5 s, `E2E path check: PASS - all media went through the E2E transform` (worded `no media around the transform` before 2026-10-30), `E2E proven` within a second of `connected` |
 | Mi 9T hearing the iPhone | no NetEq `Decode error` flood, concealed near 0 % (CALL-AUDIO-1 closes here or it was not this) |
 | iPhone hearing the Mi 9T | `decrypted audio` growing, `decrypt-failed` ~0, the voice audible |
 | desktop Chrome via `callpeer.mjs` | the same report as the Mi 9T |
@@ -2169,7 +2169,7 @@ answer, and the one every calling app holds.
 | The service | `CallForegroundService.kt` | type `microphone`; the ONGOING `CallStyle.forOngoingCall` notification (the peer's name, a chronometer from `CallService.connectedAt`, the system's own hang-up button, a tap brings the task forward with a launcher intent - never a deep link); the audio MODE set only when nobody set it before, and never restored from a saved value (see "The mode has another owner" below); a PARTIAL wake lock released by every end path, acquired for a 4 h period and renewed while the call is up (see "Every end path"); silent channel `canari_call_ongoing`, created on the first call so a build that places none never shows it |
 | The route | `CallAudio` in the same file, choice in `call/OngoingCall.kt` (`pickCallOutput`) | speaker on: the loudspeaker; off: the most personal output present - hearing aid, BLE then SCO headset, wired, USB, earpiece - re-chosen when a device comes or goes, logged only when the choice changes. API 28-30: `isSpeakerphoneOn` only (no Bluetooth SCO). Replaces the label-matched `setSinkId` on Android, which found no labelled output on the Mi 9T |
 | The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against the CALL ID in the foreground (null when none); every command is logged with its effect. A start of the running call is a refresh; a start of ANOTHER call while one runs takes the foreground over and logs an ERROR (the earlier call's stop was lost); an update or a stop of a call that is not the running one is an earlier call's command landing late, or one in flight when the service had left - EXPECTED, logged at INFO with that cause; a stop naming no call (the page gone, a new page) stops whatever runs; the notification's hang-up makes the service LEAVE THE FOREGROUND ITSELF and then tells the page, which ends the call - the service's end never waits on a page being there |
-| The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)` - the description plus the `callId` the page draws per call -, `stop(callId, reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `foreground`), every one naming its `callId`; the page DROPS an event of another call | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process. A `SecurityException` or `ForegroundServiceStartNotAllowedException` met while the app is NOT on screen (HOME pressed between the bridge's check and `startForeground` on the main thread) is `off-screen`, not `refused` (`classifyStartRefusal`). Every `stopSelf` names its `startId`, so a start delivered before a preceding stop was handled is not destroyed with it |
+| The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)` - the description plus the `callId` the page draws per call -, `stop(callId, reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `mute`, `foreground`), every one naming its `callId`; the page DROPS an event of another call | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process. A `SecurityException` or `ForegroundServiceStartNotAllowedException` met while the app is NOT on screen (HOME pressed between the bridge's check and `startForeground` on the main thread) is `off-screen`, not `refused` (`classifyStartRefusal`). Every `stopSelf` names its `startId`, so a start delivered before a preceding stop was handled is not destroyed with it |
 | The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. An `off-screen` refusal is a WARN and is asked ONCE more, with the call's current description, when native sends `foreground` (the activity resumed with that refusal pending) - an EVENT, never a clock; a second refusal, or any `refused`, is an ERROR and final for the call. A build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call. The speaker toggle is shown on Android only when the bridge exists - the route IS the service's - and is DISABLED, labelled "output unavailable for now", while a start waits for `foreground` and once the service is refused or gone for the call |
 | Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root during a call moves the task back on API 28-30 (API 31+ does that itself) |
 
@@ -2279,6 +2279,69 @@ services`. **The API 28-30 paths have NO bench device** - the Back `moveTaskToBa
 (Android 16, read 2026-10-20), so it exercises only the API 31+ paths.
 Log lines to read: `CallFgService`, `CallAudio`, `CallBridge` in `logcat`; `[Call] ongoing-call
 service ...` in the app log.
+
+#### A call behaves like a phone call (2026-10-30, after the owner's first production call)
+
+The owner's first production 1:1 audio call (Pixel 6a) worked, and was not a phone call: it started
+on the LOUDSPEAKER (the log: `speaker=true` at `connecting` and `live` - `CallOverlay` started every
+call there), the screen stayed lit against the cheek, the notification had no photo, and music kept
+playing. What changed:
+
+| Defect | Fix | Where |
+|---|---|---|
+| Every call started on the loudspeaker, and `pickCallOutput` never reads the headsets with the speaker on | The voice STARTS where `callStartsOnSpeaker(video)` says: a VIDEO call on the loudspeaker, an AUDIO call on the earpiece - or a connected headset, which `pickCallOutput` already prefers off the speaker. Decided when the call first holds the microphone (`CallService.hasVideo` is set before the stream is published), moved to the loudspeaker if video shows later; the user's tap on the toggle wins for the rest of the call | `androidCallService.ts`, `CallOverlay.svelte` |
+| The screen stayed on against the cheek | Android: `PROXIMITY_SCREEN_OFF_WAKE_LOCK` held while the output `CallAudio` APPLIED is the earpiece (`holdsProximityScreenOff`), released with `RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY` on a move to the speaker or a headset and on every end path; a device without the sensor says so once. iPhone: `UIDevice.proximityMonitoringEnabled` through the `canariProximity` message handler (`canari_ios.mm`), set while the call holds the microphone on the receiver (`iosCallProximity.ts`) | `CallForegroundService.kt`, `canari_ios.mm` |
+| No photo on the ongoing notification | The `CallStyle` person carries the peer's photo: `peerUserId` crosses the bridge, `CanariFirebaseMessagingService.callAvatar` - the SAME `fetchAvatar` every message notification uses (push-secret route, 24 h cache, remembered absence) - runs off the main thread, and the notification is re-posted when it lands; it is never held for the picture | `CallForegroundService.kt` |
+| Music kept playing | `CallAudio.open` requests `AUDIOFOCUS_GAIN_TRANSIENT` with `USAGE_VOICE_COMMUNICATION`; `close` abandons it. A refusal (a phone call holds the focus) is a WARN and the call goes on | `CallForegroundService.kt` |
+| No mute on the notification | A mute / unmute action (`notif_action_call_mute` / `_unmute`, the app's language) sends `ToggleMute` -> `ForwardMute` -> a `mute` event; the page toggles its microphone and its next `update` carries `muted`, so the label shows the CALL's state, never the one a press assumed | `OngoingCall.kt`, `androidCallService.ts` |
+
+**What the review of #2723 added (2026-10-30).**
+- **A headset beats the speaker DEFAULT.** The page sends `speakerChosen` (the user's tap, or only
+  the call's default); `pickCallOutput` prefers a connected headset over a default loudspeaker,
+  never over a tapped one. A video that shows mid-call moves the default to the loudspeaker
+  (`nextSpeakerDefault`), and never back.
+- **The proximity lock follows the screen** (Android): held only with the voice on the earpiece AND
+  the app on screen (`MainActivity` resume / pause re-decide it), renewed from a WANTED field, not
+  from `isHeld` - a lock that timed out at the renewal mark is re-taken.
+- **The iPhone arms the sensor on the RECEIVER route only**: the page asks, and native checks
+  `AVAudioSession.currentRoute.outputs` for `Receiver` on every ask and route change, logging the
+  port types (`outputs=[...] receiver=...`) - AirPods or a speaker the page did not choose keep the
+  screen lit. Every page boot posts `false` once (`releaseIosProximityOfPreviousPage`), so a reload
+  or a WebContent kill mid-call never leaves the sensor armed. The navigation delegate is wry's, so
+  no native hook on the WebContent kill was added.
+- **Audio focus changes are logged** (`audio focus LOSS_TRANSIENT for call=...`), never acted on;
+  holding or muting on a loss is a product decision ([backlog](../../backlog.md)).
+- The mute action draws a microphone, struck while muted.
+
+**The native incoming ring (item 4 of the study) is NOT in this change**: the in-app ring is still
+WebAudio tones at media volume with one 1.8 s vibration (`useNotifications.svelte.ts`), and the
+caller hears no ringback. It is owed as its own pull request ([backlog](../../backlog.md)).
+
+**What a gate holds, and what nothing does.** NO CI gate compiles `CallForegroundService.kt`,
+`CallBridge.kt` or `CanariFirebaseMessagingService.kt`: `android-tests` compiles only the pure
+packages (`call/`, `push/`, `gesture/`, `share/`), which is where `OngoingCallTest` holds
+`pickCallOutput`, `holdsProximityScreenOff` and the spec. The whole app's Kotlin was compiled by
+hand on 2026-10-30 (`:app:compileArm64DebugKotlin`, BUILD SUCCESSFUL); the Objective-C of
+`canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
+voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;
+a video call on the loudspeaker; (B) a wired, then a Bluetooth headset connected BEFORE the call:
+the voice starts there, a VIDEO call's too; (C) the screen goes dark at the cheek on the earpiece and stays lit on the
+speaker and in another app - Android `proximity screen-off held`, iPhone `call proximity (...): page=1 outputs=[Receiver] receiver=1 now=1`;
+(D) the caller's photo on the ongoing notification (`caller photo drawn on the call notification`),
+and the name alone for an account with none; (E) music playing before the call pauses for it and
+resumes after (`audio focus taken`); (F) the notification's mute: the peer stops hearing, the call
+screen shows muted, the action reads "Réactiver le micro", a second press undoes it.
+
+**Four log lines the same call's log misread, fixed with it.** (1) `audio_level_in` read `0.000` on
+4 ticks of 5 while 32-41 kbps of voice arrived: it was the INSTANTANEOUS `audioLevel`, one sample
+per 10 s tick, and the listening side is silent most of the time. `[CALL_REPORT]` now writes the RMS
+level OVER THE INTERVAL, `sqrt(dTotalAudioEnergy / dTotalSamplesDuration)` (both directions, `-`
+when the engine counts nothing); whether the Android WebView fills those counters is part of the
+next phone reading. (2) The ICE line listed the first TWO urls, and TURN is last: it now lists
+every url (no query). (3) The E2E success line said `no media around the transform`, which reads
+as a failure; it says `PASS - all media went through the E2E transform`. (4) An answered call
+ended `outcome=answered-or-unrung`; with no typed outcome the line now names which: `answered`, or
+`unrung` for a ring that never left.
 
 ## Responsibilities
 

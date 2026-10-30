@@ -975,7 +975,7 @@ describe('the E2E worker report (2026-10-19)', () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (5 s after connected): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+      '[Call] E2E path check (5 s after connected): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=0)'
     );
     expect(get(service.callState)).toBe('incall');
 
@@ -1086,7 +1086,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     pc.videoInboundPackets = 400;
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+      '[Call] E2E path check (re-check): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=400)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -1111,7 +1111,7 @@ describe('the E2E worker report (2026-10-19)', () => {
       pc.videoInboundPackets = 400;
       await vi.advanceTimersByTimeAsync(5_000);
       expect(lines()).toContain(
-        '[Call] E2E path check (after a new video m-line): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+        '[Call] E2E path check (after a new video m-line): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=400)'
       );
       expect(get(service.callState)).toBe('incall');
       const shown = get(service.remoteStream)?.getTracks() ?? [];
@@ -1208,7 +1208,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     camTrack.onunmute?.();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the camera unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after the camera unmuted): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.e2eProven)).toBe(true);
   });
@@ -1255,7 +1255,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     mic.onunmute?.();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the local audio unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after the local audio unmuted): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
   });
 
@@ -1313,7 +1313,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     (pc.onsignalingstatechange as unknown as () => void)();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after signalling reached stable): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after signalling reached stable): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -1964,7 +1964,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     workerAnswers.report = { sender: 500, receiver: 501 };
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+      '[Call] E2E path check (re-check): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=0)'
     );
     expect(get(service.e2eProven)).toBe(true);
   });

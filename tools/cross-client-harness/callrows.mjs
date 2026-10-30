@@ -290,7 +290,7 @@ const CONNECTED = [
   at(L, String.raw`\[Call\] E2E sender audio #${N}: ${N} frame\(s\), not-opus=0 repeated-ts=0 own-iv=0 .+`),
   // `decrypt-failed=0` and `no-key=0` ARE THE ASSERTION: a report with a failure stays dirt.
   at(L, String.raw`\[Call\] E2E worker report \((${N} s after connected|call end, call=${H})\): .+ decrypt-failed=0 short=${N} \(empty ${N}\) no-key=0 .+`),
-  at(L, String.raw`\[Call\] E2E path check \(${N} s after connected\): no media around the transform \(packets sent audio=${N} video=0 received audio=${N} video=0\)`),
+  at(L, String.raw`\[Call\] E2E path check \(${N} s after connected\): PASS - all media went through the E2E transform \(packets sent audio=${N} video=0 received audio=${N} video=0\)`),
   // `checking` TOO: gathering ends when TURN answers, and on a fast host pair that can be before the
   // checks conclude (CALL-WEB-2, 2026-10-27). It is the CALL-GATHER-0 diagnostic, written once per
   // peer connection. `failed`, `disconnected` and `closed` stay dirt - each is a call in trouble.
@@ -338,7 +338,7 @@ const ENDING = (state, outcome, ends) =>
   at(L, String.raw`\[Call\] ending call ${H} state=${state} outcome=${outcome} notify=${ends} remote=${!ends}`);
 const RECORDED = (outcome) => at(L, String.raw`\[CallRecord\] ${H} finalized as ${outcome}`);
 /** The end of an answered call, on the side that ended it (`ends`) or the side told of it. */
-const ANSWERED_END = (ends) => [ENDING('incall', 'answered-or-unrung', ends), RECORDED('answered')];
+const ANSWERED_END = (ends) => [ENDING('incall', 'answered', ends), RECORDED('answered')];
 const UNANSWERED = at(L, String.raw`\[Call\] ring window \(60000 ms\) closed unanswered - call=${H}`);
 // THE PRIMING play() OF A RING SCREEN THAT LEFT BEFORE ANY STREAM: `primeVoice` logs its rejection
 // on purpose ("expected and only logged"); this is the rejection of an element unmounted under it,
@@ -367,7 +367,7 @@ export function callNarration(row, seat) {
       return [
         ...caller,
         at(L, String.raw`\[Call\] the other party left the call room`),
-        at(L, String.raw`\[Call\] ending call ${H} state=incall outcome=answered-or-unrung notify=false remote=false`),
+        at(L, String.raw`\[Call\] ending call ${H} state=incall outcome=answered notify=false remote=false`),
         RECORDED('answered'),
       ];
     if (scenario === 'callee-hangup') return [...caller, ...ANSWERED_END(false)];

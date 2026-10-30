@@ -7,7 +7,9 @@ vi.mock('$lib/utils/sessionLog', () => ({
 
 import {
   NATIVE_CALL_EVENT,
+  callStartsOnSpeaker,
   hasAndroidCallService,
+  nextSpeakerDefault,
   ongoingCallSpec,
   openAndroidCallSession,
   parseNativeCallEvent,
@@ -48,53 +50,137 @@ function host(withBridge = true) {
 const CALL = 'call-1';
 
 /** A session for {@link CALL}. */
-function open(h: AndroidCallHost, onHangUp = () => {}, onRoute: (a: boolean) => void = () => {}) {
-  return openAndroidCallSession(h, onHangUp, onRoute, CALL);
+function open(
+  h: AndroidCallHost,
+  onHangUp = () => {},
+  onRoute: (a: boolean) => void = () => {},
+  onMute = () => {}
+) {
+  return openAndroidCallSession(h, { onHangUp, onRoute, onMute }, CALL);
 }
 
 const SPEC: OngoingCallSpec = {
   title: 'Bob',
   text: 'Appel audio',
   connectedAtMs: 1_000,
-  speaker: true,
+  speaker: false,
+  peerUserId: 'user-bob',
+  muted: false,
+  speakerChosen: false,
 };
+
+/** The page's facts about a call with Bob. */
+function facts(
+  connectedAtMs: number | null,
+  speaker: boolean,
+  muted = false,
+  speakerChosen = false
+) {
+  return { title: 'Bob', peerUserId: 'user-bob', connectedAtMs, speaker, speakerChosen, muted };
+}
 
 beforeEach(() => {
   logs.length = 0;
 });
 
+describe('callStartsOnSpeaker - where the voice starts', () => {
+  it('an audio call starts on the earpiece (or a headset), a video call on the loudspeaker', () => {
+    expect(callStartsOnSpeaker(false)).toBe(false);
+    expect(callStartsOnSpeaker(true)).toBe(true);
+  });
+});
+
+describe('nextSpeakerDefault - the default as the call goes on', () => {
+  it('starts where callStartsOnSpeaker says', () => {
+    expect(nextSpeakerDefault(null, false)).toBe(false);
+    expect(nextSpeakerDefault(null, true)).toBe(true);
+  });
+
+  it('moves to the loudspeaker when video shows mid-call, and never back when it stops', () => {
+    expect(nextSpeakerDefault(false, true)).toBe(true);
+    expect(nextSpeakerDefault(true, false)).toBe(true);
+    expect(nextSpeakerDefault(false, false)).toBe(false);
+  });
+});
+
+describe('speakerChosen - a default and a tap are told apart natively', () => {
+  it('crosses the bridge as given, so a default yields to a headset and a tap does not', () => {
+    expect(ongoingCallSpec('live', true, facts(42, true))?.speakerChosen).toBe(false);
+    expect(ongoingCallSpec('live', true, facts(42, true, false, true))?.speakerChosen).toBe(true);
+  });
+});
+
 describe('ongoingCallSpec - when the service holds the call', () => {
   it('starts nothing before the microphone is held: the grant prompt of a first call comes after the tap', () => {
-    expect(ongoingCallSpec('ringing', false, 'Bob', null, true)).toBeNull();
-    expect(ongoingCallSpec('connecting', false, 'Bob', null, true)).toBeNull();
+    expect(ongoingCallSpec('ringing', false, facts(null, false))).toBeNull();
+    expect(ongoingCallSpec('connecting', false, facts(null, false))).toBeNull();
   });
 
   it("describes the caller's ring and the callee's connecting, with no chronometer yet", () => {
-    expect(ongoingCallSpec('ringing', true, 'Bob', null, true)).toMatchObject({
+    expect(ongoingCallSpec('ringing', true, facts(null, true))).toMatchObject({
       title: 'Bob',
       connectedAtMs: null,
     });
-    expect(ongoingCallSpec('connecting', true, 'Bob', null, false)).toMatchObject({
+    expect(ongoingCallSpec('connecting', true, facts(null, false))).toMatchObject({
       connectedAtMs: null,
       speaker: false,
     });
   });
 
+  it('carries the peer, whose photo the notification draws, and the mute its action shows', () => {
+    expect(ongoingCallSpec('live', true, facts(42, false, true))).toMatchObject({
+      peerUserId: 'user-bob',
+      muted: true,
+    });
+  });
+
   it('carries connectedAt as the chronometer base once live, and while reconnecting', () => {
-    expect(ongoingCallSpec('live', true, 'Bob', 42, true)?.connectedAtMs).toBe(42);
-    expect(ongoingCallSpec('reconnecting', true, 'Bob', 42, true)?.connectedAtMs).toBe(42);
+    expect(ongoingCallSpec('live', true, facts(42, true))?.connectedAtMs).toBe(42);
+    expect(ongoingCallSpec('reconnecting', true, facts(42, true))?.connectedAtMs).toBe(42);
   });
 
   it('holds nothing while ringing in, once ended, or idle', () => {
     for (const kind of ['incoming', 'ended', 'idle'] as const) {
-      expect(ongoingCallSpec(kind, true, 'Bob', 42, true)).toBeNull();
+      expect(ongoingCallSpec(kind, true, facts(42, true))).toBeNull();
     }
   });
 
   it('never puts the running timer in the text: the chronometer is native, and the text changes only with the state', () => {
-    const a = ongoingCallSpec('live', true, 'Bob', 42, true);
-    const b = ongoingCallSpec('live', true, 'Bob', 42, true);
+    const a = ongoingCallSpec('live', true, facts(42, true));
+    const b = ongoingCallSpec('live', true, facts(42, true));
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+describe('the notification mute', () => {
+  it('toggles the microphone of the running call and leaves the service in place', () => {
+    const { h, calls } = host();
+    const onMute = vi.fn();
+    const session = open(
+      h,
+      () => {},
+      () => {},
+      onMute
+    );
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'mute' });
+    session.publish({ ...SPEC, muted: true }, 'muted');
+    expect(onMute).toHaveBeenCalledTimes(1);
+    expect(calls.map((c) => c.method)).toEqual(['start', 'update']);
+    expect(JSON.parse(calls[1].arg).muted).toBe(true);
+  });
+
+  it('a mute with no service started does nothing', () => {
+    const { h } = host();
+    const onMute = vi.fn();
+    open(
+      h,
+      () => {},
+      () => {},
+      onMute
+    );
+    h.emit({ kind: 'mute' });
+    expect(onMute).not.toHaveBeenCalled();
   });
 });
 
@@ -116,7 +202,7 @@ describe('openAndroidCallSession - the bridge', () => {
     session.publish({ ...SPEC, connectedAtMs: null }, 'ringing');
     session.publish({ ...SPEC, connectedAtMs: null }, 'ringing again');
     session.publish(SPEC, 'live');
-    session.publish({ ...SPEC, speaker: false }, 'earpiece');
+    session.publish({ ...SPEC, speaker: true }, 'loudspeaker');
     session.publish(null, 'ended');
     expect(calls.map((c) => c.method)).toEqual(['start', 'update', 'update', 'stop']);
     expect(JSON.parse(calls[0].arg)).toEqual({ ...SPEC, connectedAtMs: null, callId: CALL });
@@ -161,7 +247,7 @@ describe('openAndroidCallSession - the bridge', () => {
     session.publish(SPEC, 'live');
     h.emit({ kind: 'failed', code: 'refused', reason: 'start: RECORD_AUDIO is not granted' });
     h.emit({ kind: 'foreground' });
-    session.publish({ ...SPEC, speaker: false }, 'earpiece');
+    session.publish({ ...SPEC, speaker: true }, 'loudspeaker');
     session.publish(null, 'ended');
     expect(calls.map((c) => c.method)).toEqual(['start']);
     expect(
@@ -193,7 +279,7 @@ describe('openAndroidCallSession - the bridge', () => {
     h.emit({ kind: 'foreground' });
     h.emit({ kind: 'failed', code: 'off-screen', reason: 'b' });
     h.emit({ kind: 'foreground' });
-    session.publish({ ...SPEC, speaker: false }, 'earpiece');
+    session.publish({ ...SPEC, speaker: true }, 'loudspeaker');
     session.publish(null, 'ended');
     expect(calls.map((c) => c.method)).toEqual(['start', 'start']);
     expect(logs.some((l) => l.includes('ERROR ongoing-call service refused: b'))).toBe(true);
@@ -295,10 +381,11 @@ describe('the page-load release and the speaker route', () => {
 });
 
 describe('parseNativeCallEvent', () => {
-  it('reads the five kinds the Kotlin side sends and nothing else', () => {
+  it('reads the six kinds the Kotlin side sends and nothing else', () => {
     const c = { callId: 'c' };
     expect(parseNativeCallEvent({ ...c, kind: 'started' })).toEqual({ ...c, kind: 'started' });
     expect(parseNativeCallEvent({ ...c, kind: 'hangup' })).toEqual({ ...c, kind: 'hangup' });
+    expect(parseNativeCallEvent({ ...c, kind: 'mute' })).toEqual({ ...c, kind: 'mute' });
     expect(parseNativeCallEvent({ ...c, kind: 'foreground' })).toEqual({
       ...c,
       kind: 'foreground',

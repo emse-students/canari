@@ -394,6 +394,8 @@ class MainActivity : TauriActivity() {
         // A call service start refused while the activity was not resumed may be asked again now.
         // AFTER `isInForeground = true` above: the OffScreenGate's contract (call/OngoingCall.kt).
         CallBridge.onActivityResumed()
+        // The call's proximity lock darkens only the call's own screen (AFTER the flag above).
+        CallForegroundService.appOnScreenChanged(true)
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after
         // FCM registration (store_push_secret writes the file during the live session;
@@ -409,6 +411,7 @@ class MainActivity : TauriActivity() {
         super.onPause()
         isInForeground = false
         pushForeground(false)
+        CallForegroundService.appOnScreenChanged(false)
         Log.d("MainActivity", "onPause: isInForeground=false")
         CookieManager.getInstance().flush()
     }

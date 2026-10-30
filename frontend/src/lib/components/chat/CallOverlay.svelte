@@ -48,10 +48,12 @@
   import { m } from '$lib/paraglide/messages';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
+    nextSpeakerDefault,
     hasAndroidCallService,
     ongoingCallSpec,
     openAndroidCallSession,
   } from '$lib/mobile/androidCallService';
+  import { callHoldsProximity, setIosProximityMonitoring } from '$lib/mobile/iosCallProximity';
   import { callVideoAvailable } from '$lib/utils/callsAvailability';
   import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
@@ -182,8 +184,29 @@
     return () => window.removeEventListener('pointerdown', retry, { capture: true });
   });
 
+  /**
+   * Where the voice goes BY DEFAULT ({@link nextSpeakerDefault}): decided when the call first holds
+   * the microphone - `CallService.hasVideo` is set before the stream is published - and moved to the
+   * loudspeaker when video shows later. Null until the microphone is held.
+   */
+  let speakerDefault = $state<boolean | null>(null);
+  /** The user's own choice on the toggle, which wins over the default for the rest of the call. */
+  let speakerChoice = $state<boolean | null>(null);
+  $effect(() => {
+    if (!call.localStream) return;
+    const video = callService.hasVideo || videoShowing;
+    const next = nextSpeakerDefault(speakerDefault, video);
+    if (next === speakerDefault) return;
+    const first = speakerDefault === null;
+    speakerDefault = next;
+    appendLog(
+      first
+        ? `[Call] voice starts on the ${next ? 'loudspeaker' : 'earpiece or a headset'} (${video ? 'video' : 'audio'} call)`
+        : `[Call] video showed - the default moves to the loudspeaker (user choice=${speakerChoice ?? 'none'})`
+    );
+  });
   /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
-  let isSpeakerOn = $state(true);
+  let isSpeakerOn = $derived(speakerChoice ?? speakerDefault ?? false);
   let speakerSupported = $derived(
     typeof navigator !== 'undefined' &&
       'mediaDevices' in navigator &&
@@ -261,20 +284,38 @@
   // notification and owns the audio route. Opened once per call (this component lives exactly as
   // long as one call); its hang-up ends the call like the in-app button.
   const androidCall = isAndroidTauriRuntime()
-    ? openAndroidCallSession(
-        window,
-        () => callService.endCall(),
-        (available) => (androidRouteAvailable = available)
-      )
+    ? openAndroidCallSession(window, {
+        onHangUp: () => callService.endCall(),
+        onMute: () => callService.toggleMute(),
+        onRoute: (available) => (androidRouteAvailable = available),
+      })
     : null;
   $effect(() => () => androidCall?.dispose());
   $effect(() => {
     if (!androidCall) return;
-    const title = primary?.displayName || m.call_label();
     androidCall.publish(
-      ongoingCallSpec(call.kind, !!call.localStream, title, call.connectedAt, isSpeakerOn),
+      ongoingCallSpec(call.kind, !!call.localStream, {
+        title: primary?.displayName || m.call_label(),
+        peerUserId: primary?.userId ?? null,
+        connectedAtMs: call.connectedAt,
+        speaker: isSpeakerOn,
+        // A default yields to a connected headset natively; the user's tap does not.
+        speakerChosen: speakerChoice !== null,
+        muted: call.isMuted,
+      }),
       `kind=${call.kind}`
     );
+  });
+
+  // -- iOS: the screen goes dark against the cheek while the voice is on the receiver ---------
+  // Android holds its proximity lock natively, from the output its service applied.
+  $effect(() => {
+    if (!isIosTauriRuntime()) return;
+    const held = callHoldsProximity(call.kind, !!call.localStream, isSpeakerOn);
+    setIosProximityMonitoring(held, `kind=${call.kind} speaker=${isSpeakerOn}`);
+  });
+  $effect(() => () => {
+    if (isIosTauriRuntime()) setIosProximityMonitoring(false, 'the call surface closed');
   });
 
   /**
@@ -741,7 +782,7 @@
                   ? m.call_speaker_label()
                   : m.call_earpiece_label(),
               isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
-              () => (isSpeakerOn = !isSpeakerOn),
+              () => (speakerChoice = !isSpeakerOn),
               isSpeakerOn ? 'on' : 'neutral',
               speakerIcon,
               speakerDisabled

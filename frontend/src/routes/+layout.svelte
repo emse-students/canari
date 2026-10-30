@@ -18,6 +18,7 @@
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -147,6 +148,8 @@
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
     if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
+    // Its iOS twin: the proximity sensor a reloaded page may have left armed.
+    if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
