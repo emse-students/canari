@@ -37,8 +37,9 @@ usage() {
   exit 1
 }
 
-# Sets VERSION, CORE, RANK and VERSION_CODE from one argument. Exits on anything it cannot parse:
-# a bump that guesses is worse than a release that fails at its first step.
+# Sets VERSION, CORE, RANK and VERSION_CODE from one argument. Fails (return 1, every caller then
+# exits) on anything it cannot parse: a bump that guesses is worse than a release that fails at its
+# first step. A return and not an exit so `--codes` can skip an unparseable tag in one process.
 parse_version() {
   local raw="${1#v}"
   local core suffix rank major minor patch
@@ -52,17 +53,17 @@ parse_version() {
     rank="$((10#$suffix))"
     if [ "$rank" -lt 1 ] || [ "$rank" -gt 98 ]; then
       echo "Invalid pre-release counter: $1 (alpha.N must be 1..98; 99 is reserved for the stable)" >&2
-      exit 1
+      return 1
     fi
   else
     echo "Invalid version: $1 (expected major.minor.patch or major.minor.patch-alpha.N)" >&2
-    exit 1
+    return 1
   fi
 
   IFS='.' read -r major minor patch <<< "$core"
   if [ "$minor" -gt 999 ] || [ "$patch" -gt 999 ]; then
     echo "Invalid version: $1 (minor and patch must each stay under 1000 for the versionCode band)" >&2
-    exit 1
+    return 1
   fi
 
   VERSION="$raw"
@@ -71,7 +72,7 @@ parse_version() {
   VERSION_CODE="$(( (major * 1000000 + minor * 1000 + patch) * 100 + rank ))"
   if [ "$VERSION_CODE" -gt 2100000000 ]; then
     echo "versionCode $VERSION_CODE exceeds the 2100000000 Play allows" >&2
-    exit 1
+    return 1
   fi
 }
 
@@ -393,14 +394,28 @@ discover_cargo_files() {
 # restating the formula - a second copy of it is how the two would one day disagree.
 if [ "${1:-}" = '--code' ]; then
   [ -n "${2:-}" ] || usage
-  parse_version "$2"
+  parse_version "$2" || exit 1
   echo "$VERSION_CODE"
+  exit 0
+fi
+
+# `--codes` is the same band for MANY versions in one process: versions on stdin, `<band> <version>`
+# on stdout for each one the band parses, and nothing for the others (a tag the band cannot parse
+# never reached a store). The release preflight orders every `v*` tag of the repository with it
+# (`classify_prerelease_currency`); one process per tag (400+ of them) took minutes under Git Bash.
+if [ "${1:-}" = '--codes' ]; then
+  while IFS= read -r raw; do
+    raw="${raw%$'\r'}"
+    [ -n "$raw" ] || continue
+    parse_version "$raw" 2>/dev/null || continue
+    printf '%s %s\n' "$VERSION_CODE" "$raw"
+  done
   exit 0
 fi
 
 RAW_VERSION="${1:-}"
 [ -n "$RAW_VERSION" ] || usage
-parse_version "$RAW_VERSION"
+parse_version "$RAW_VERSION" || exit 1
 
 # A LANDING: THE CHANGELOG HALF OF A STABLE, APPLIED TO A `main` THAT HAS MOVED ON. A stable is
 # built from the latest pre-release's commit on `release/vX.Y.Z`, so the notes it folded and the

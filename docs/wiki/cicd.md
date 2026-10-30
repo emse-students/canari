@@ -916,8 +916,23 @@ bump pushed there; with no push, `classify_main_position` (and its read of the r
 version, through `node`) is deleted and gate 2 is `classify_on_main`: containment. Its intent -
 the commit reached the trunk through a pull request - is unchanged, and containment now equals
 containment at the cut because `main` is never force-pushed. Gate 3 is untouched: `CI passed` on
-that exact commit. **No bypass input and no skip flag were added**; the refusal that went away was
-never a safety property, it was a consequence of where the bump pushed.
+that exact commit. **No bypass input and no skip flag were added.**
+
+**But the dropped half refused a STALE pre-release by accident, so that is now asked on purpose.**
+Found by the adversarial review of #2715: anything older than the newest release was behind
+`main`, so "`main` still points at it" refused it. Without that, `v1.5.1-alpha.5` refused at gate 3,
+then `alpha.6` cut and shipped, then a `gh run rerun` of alpha.5 (which this page recommends for
+gate 3) would pass every gate, force `release/v1.5.1` back to alpha.5's bump, redeploy older code to
+dev and move `dev-deployed` back, and upload store build `..05` after `..06` - App Store Connect
+refuses a `CFBundleVersion` that does not rise, Play a rollout that blocks upgrades - and the next
+stable would then be refused at gate 4 (`diverged`). So a pre-release also answers
+`classify_prerelease_currency`: every `v*` tag (`matching-refs/tags/v`) is ordered by the store band
+(`bump-app-version.sh --codes`, the one implementation; a tag the band cannot parse never reached a
+store and orders nothing), and the release is refused when the latest pre-release of its version,
+or any tag at all, carries a higher build number - including this version's own stable. **A rerun
+therefore rescues gate 3 only while nothing newer shipped**; after that the refusal says to cut a
+new pre-release at the current head, numbered above the newest. A stable does not ask it: it
+resolves the latest pre-release of its version itself.
 
 **What `main` still owes, and why it is landed rather than dropped.** The earlier record named the
 cost of this move: `main`'s manifests would stop naming the version. They are kept accurate by the
@@ -942,9 +957,10 @@ it fast-forwards, else to the branch* - two paths for one fact, a fallback by co
 (4) *A pre-release tag moved to its bump commit, as the stable's is* - the bump commit carries no
 `CI passed`, so a stable resolving from it would be refused by gate 3.
 
-Tests: `release-preflight.test.sh` (gate 2's containment, `main` moving on refuses nothing),
-`land-release.test.sh` (pre-release landing forward-only and idempotent, the stable fold),
-`bump-version.test.sh` (`--code`), `release-chain.test.sh` (no release step pushes `HEAD:main`; the
+Tests: `release-preflight.test.sh` (gate 2's containment, `main` moving on refuses nothing; a stale
+or superseded pre-release is refused, the latest passes),
+`land-release.test.sh` (pre-release landing forward-only, idempotent and retried after a lost race;
+the stable fold), `bump-version.test.sh` (`--code`, `--codes`), `release-chain.test.sh` (no release step pushes `HEAD:main`; the
 `land` job runs for every release).
 
 ## GitHub Secrets

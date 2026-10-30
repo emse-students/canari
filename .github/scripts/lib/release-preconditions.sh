@@ -138,3 +138,64 @@ latest_prerelease_tag() {
   [ "${#tags[@]}" -eq 0 ] && return 0
   printf '%s\n' "${tags[@]}" | sort -V | tail -1
 }
+
+# IS THIS PRE-RELEASE STILL THE NEWEST RELEASE? Gate 2's second question, pre-releases only
+# (2026-10-30).
+#
+# Until 2026-10-30 gate 2 also asked whether `main` still POINTED at the commit, and that refused a
+# stale pre-release by accident: anything older than the newest release was behind `main`. With the
+# bump off `main` that half went, so a `gh run rerun` of a refused `alpha.5` after `alpha.6` shipped
+# would pass every gate, force `release/vX.Y.Z` back to its own bump, redeploy older code to dev,
+# move `dev-deployed` back, and upload store build ..05 after ..06 - which App Store Connect refuses
+# (CFBundleVersion must rise) and Play refuses as a rollout that blocks upgrades. It is asked on
+# purpose now, from the tags, before anything moves.
+#
+# THE ORDER IS THE STORE BAND, read from `bump-app-version.sh --code`/`--codes` - the one implementation of it,
+# never restated here. A tag the band cannot parse never reached a store, so it orders nothing.
+#
+# args:   <version being released>  <path to bump-app-version.sh>
+# stdin:  every `v*` tag name, one per line
+# stdout: `current`                  no tag carries a higher store build number
+#         `stale <tag>`              a later pre-release of THIS version exists - the common case
+#         `superseded <tag>`         a release of another version (or this version's stable) is higher
+#         `undecidable <why>`        no evidence either way, which is not permission
+classify_prerelease_currency() {
+  local want="${1#v}" bump="${2-}"
+  local own tag code best_code=0 best_tag='' latest latest_code
+  local -a tags=()
+
+  if [ -z "$want" ] || [ -z "$bump" ]; then
+    printf 'undecidable no version or no bump script was passed\n'
+    return 0
+  fi
+  own="$(bash "$bump" --code "$want" 2>/dev/null)" || {
+    printf 'undecidable %s has no store band\n' "$want"
+    return 0
+  }
+  while IFS= read -r tag; do
+    tag="${tag%$'\r'}"
+    [ -n "$tag" ] && tags+=("$tag")
+  done
+  # The release's own tag is in this list whenever it was published, so an empty one is an
+  # unreadable answer, never a repository with nothing in it.
+  if [ "${#tags[@]}" -eq 0 ]; then
+    printf 'undecidable no tag was listed\n'
+    return 0
+  fi
+
+  # ONE process for every tag (`--codes`), never one per tag.
+  latest="$(printf '%s\n' "${tags[@]}" | latest_prerelease_tag "${want%%-*}")"
+  latest_code=0
+  while IFS=' ' read -r code tag; do
+    if [ "$code" -gt "$best_code" ]; then best_code="$code"; best_tag="$tag"; fi
+    [ "$tag" = "$latest" ] && latest_code="$code"
+  done < <(printf '%s\n' "${tags[@]}" | bash "$bump" --codes)
+
+  if [ "$latest_code" -gt "$own" ]; then
+    printf 'stale %s\n' "$latest"
+  elif [ "$best_code" -gt "$own" ]; then
+    printf 'superseded %s\n' "$best_tag"
+  else
+    printf 'current\n'
+  fi
+}

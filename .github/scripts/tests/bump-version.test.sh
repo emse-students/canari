@@ -223,6 +223,14 @@ else
   ok "--code refuses a version it cannot parse"
 fi
 
+printf '\n--codes BANDS MANY VERSIONS IN ONE PROCESS AND SKIPS WHAT IT CANNOT PARSE\n'
+# The release preflight orders every `v*` tag with it; an unparseable tag never reached a store.
+assert_eq "--codes prints <band> <version> for each parseable line, nothing for the others" \
+  "$(printf 'v0.15.0-alpha.2\nv0.15.0-beta.1\n\nv0.15.0\r\nnot-a-version\n' \
+    | bash "$SANDBOX/run/scripts/bump-app-version.sh" --codes | tr '\n' ' ')" \
+  "1500002 v0.15.0-alpha.2 1500099 v0.15.0 "
+assert_eq "--codes leaves every manifest alone" "$(read_json frontend/package.json .version)" "0.0.0"
+
 printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf '%d assertion(s) FAILED (%d passed)\n' "$failures" "$checks"

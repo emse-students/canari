@@ -12,7 +12,9 @@
 #
 #   1. Is the version a version?          - a typo must not reach a store band computation
 #   2. Is the released commit on `main`?  - it reached the trunk through a pull request; where
-#                                           `main` points NOW is not asked (nothing pushes there)
+#                                           `main` points NOW is not asked (nothing pushes there);
+#                                           a pre-release must also be the newest release
+#                                           (a rerun of a stale alpha would move dev back)
 #   3. Did the tests pass ON THAT COMMIT? - "if the tests are green" was written nowhere at all
 #   4. Has dev already served it?         - stable releases only, and the reason this file exists
 #   5. Are the release notes written?     - stable releases only; Apple REFUSES a submission
@@ -95,6 +97,30 @@ case "$ON_MAIN" in
     hint 'problem, and no release should be started on a guess.'
     ;;
 esac
+
+# Gate 2's second question, pre-releases only: nothing newer has already shipped. The `main still
+# points at it` half used to refuse a stale pre-release by accident; `classify_prerelease_currency`
+# carries why it is now asked on purpose (a rerun of a refused alpha after a later one shipped).
+if [ "$KIND" = 'prerelease' ]; then
+  CURRENCY="$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v" --jq '.[].ref | sub("^refs/tags/"; "")' 2>/dev/null \
+    | classify_prerelease_currency "$VERSION" "$HERE/../../scripts/bump-app-version.sh")"
+  case "$CURRENCY" in
+    current)
+      ok "no release carries a higher store build number than $VERSION"
+      ;;
+    'stale '*|'superseded '*)
+      refuse "${CURRENCY#* } is newer than $VERSION and has already been released"
+      hint 'Shipping this one now would move release/v'"${VERSION%%-*}"' and dev-deployed BACK to older'
+      hint 'code, and both stores refuse a build number lower than one they already took. A rerun'
+      hint 'of this run re-reads the same tag and is refused again: cut a NEW pre-release at the'
+      hint "current head of main, numbered above ${CURRENCY#* } (gh release create vX.Y.Z-alpha.N --prerelease)."
+      ;;
+    *)
+      refuse "could not tell whether a newer release exists - ${CURRENCY#undecidable }"
+      hint 'An unreadable answer is not permission.'
+      ;;
+  esac
+fi
 
 # -- 3 -------------------------------------------------------------------------------------------
 step "the tests passed on that commit - $REQUIRED_CHECK"

@@ -11,6 +11,8 @@
 #                          alpha to production.
 #   classify_on_main       gate 2: the commit is on `main` - containment only, since no release
 #                          pushes to `main` any more (2026-10-30).
+#   classify_prerelease_currency  gate 2 for a pre-release: nothing with a higher store build
+#                          number was released already - a rerun of a stale alpha would move dev back.
 #   classify_dev_coverage  whether the dev estate has already served the commit being shipped. An
 #                          inverted reading here reports a lagging estate as healthy, which is the
 #                          one thing the check exists to prevent.
@@ -177,6 +179,45 @@ check_latest v1.0.1-alpha.10 1.0.1 v1.0.1-alpha.2 v1.0.1-alpha.10 v1.0.1-alpha.9
 check_latest v1.0.1-alpha.2 1.0.1 v1.0.1-alpha.2 v1.0.2-alpha.7 v1.0.10-alpha.1 v1.0.1
 check_latest '' 1.0.1 v1.0.2-alpha.1 v1.0.1 v1.0.11-alpha.1
 check_latest '' 1.0.1
+
+printf '\na pre-release older than one already released is refused, not redeployed\n'
+# =================================================================================================
+# THE GAP THE OLD GATE 2 CLOSED BY ACCIDENT. `main still points at it` refused any stale alpha; with
+# the bump off `main` (2026-10-30) a rerun of a refused `alpha.5` after `alpha.6` shipped would move
+# `release/vX.Y.Z` and `dev-deployed` back and upload a lower store build. The order is the store
+# band, read from the real `bump-app-version.sh --code`.
+BUMP_SCRIPT="$HERE/../../../scripts/bump-app-version.sh"
+currency() {
+  local want="$1" ver="$2" what="$3"; shift 3
+  local got; got="$(printf '%s\n' "$@" | classify_prerelease_currency "$ver" "$BUMP_SCRIPT")"
+  if [ "$got" = "$want" ]; then pass "$what"; else fail "$what - expected '$want', got '$got'"; fi
+}
+currency 'stale v1.5.1-alpha.6' 1.5.1-alpha.5 \
+  'a rerun of alpha.5 after alpha.6 shipped is refused' \
+  v1.5.0 v1.5.1-alpha.4 v1.5.1-alpha.5 v1.5.1-alpha.6 dev-deployed
+currency 'current' 1.5.1-alpha.6 'the latest alpha of the newest version passes' \
+  v1.5.0 v1.5.1-alpha.4 v1.5.1-alpha.5 v1.5.1-alpha.6
+currency 'stale v1.5.1-alpha.10' 1.5.1-alpha.9 'alpha.10 ranks above alpha.9 (band order, not text)' \
+  v1.5.1-alpha.9 v1.5.1-alpha.10
+currency 'superseded v1.5.2-alpha.1' 1.5.1-alpha.6 \
+  'a higher store number on ANOTHER version refuses it too' \
+  v1.5.1-alpha.6 v1.5.2-alpha.1
+currency 'superseded v1.5.1' 1.5.1-alpha.6 "and so does this version's own stable" \
+  v1.5.1-alpha.6 v1.5.1
+currency 'current' 1.5.2-alpha.1 'a tag the band cannot parse orders nothing' \
+  v1.5.1 v1.5.2-alpha.1 v9.9.9-beta.1 vNOT
+currency 'undecidable no tag was listed' 1.5.2-alpha.1 'an empty tag list is unreadable, never permission'
+currency 'undecidable 1.5.2-rc.1 has no store band' 1.5.2-rc.1 'a version with no store band is refused' \
+  v1.5.2-rc.1
+# And the gate is WIRED: a classifier nobody calls protects nothing.
+GATE2B="$(sed -n "/^if \[ \"\$KIND\" = 'prerelease' \]; then/,/^fi/p" "$HERE/../release-preflight.sh")"
+for needle in 'matching-refs/tags/v' 'classify_prerelease_currency' 'scripts/bump-app-version.sh' 'cut a NEW pre-release'; do
+  if printf '%s' "$GATE2B" | grep -qF "$needle"; then
+    pass "the preflight's pre-release currency check carries: $needle"
+  else
+    fail "the preflight's pre-release currency check no longer carries: $needle"
+  fi
+done
 
 # THE EMERGENCY PATH IS WORDED WHERE SOMEBODY REACHING FOR IT WILL READ IT. `gh pr merge --admin`
 # skips `CI passed` on the pull request, and gate 3 then refuses until main's own CI has run on the

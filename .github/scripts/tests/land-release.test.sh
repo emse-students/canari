@@ -114,6 +114,15 @@ expect 'the first push lost and the landing started again' grep -q 'starting aga
 git fetch -q origin main
 expect 'and landed on the second attempt' grep -q '^## \[1.0.1\]' <(git show origin/main:CHANGELOG.md)
 
+printf '\na pre-release landing that loses the race is retried too\n'
+# The pre-release landing is the one that runs on EVERY release, so it is the one that meets a merge
+# most often. Re-arm the hook: the next push is refused once more.
+rm -f "$TMP/refused-once"
+out="$(ATTEMPTS=3 bash .github/scripts/land-release.sh 1.0.2-alpha.1 "$SECOND" 2>&1)"
+expect 'the first push lost and the landing started again' grep -q 'starting again' <<<"$out"
+expect 'and main names 1.0.2-alpha.1 after the second attempt' test "$(main_version)" = '1.0.2-alpha.1'
+expect 'the changelog the stable landed is kept' grep -q '^## \[1.0.1\]' <(git show origin/main:CHANGELOG.md)
+
 printf '\nanything that is not a version is refused before main is touched\n'
 before="$(git rev-parse origin/main)"
 if bash .github/scripts/land-release.sh not-a-version "$SECOND" >/dev/null 2>&1; then
