@@ -330,6 +330,8 @@ export class PostNotificationsService {
     associationLogoMediaId?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
+    /** Structured facts stored on each row (never in the push), see `PostNotification.meta`. */
+    meta?: Record<string, unknown>;
     /**
      * In-app rows only, no push - a type that is deliberately never pushed (the answer to a
      * republication request, D38b) rather than one `pushContent` forgot.
@@ -350,6 +352,7 @@ export class PostNotificationsService {
           associationId: data.associationId ?? null,
           associationLogoUrl: data.associationLogoUrl ?? null,
           text: data.text,
+          meta: data.meta ?? null,
           actorName,
         })
       )

@@ -144,7 +144,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
         "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
-        "associationLogoUrl" varchar, text varchar NOT NULL, read boolean NOT NULL DEFAULT false,
+        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, read boolean NOT NULL DEFAULT false,
         "createdAt" timestamp NOT NULL DEFAULT clock_timestamp());
     `);
     for (const id of PEOPLE) {

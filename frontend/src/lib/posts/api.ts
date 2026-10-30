@@ -646,6 +646,8 @@ export interface PostNotification {
   associationId?: string | null;
   associationLogoUrl?: string | null;
   text: string;
+  /** Structured facts a client draws itself (a booking notice's place, slot and zone); null on older rows. */
+  meta?: Record<string, unknown> | null;
   read: boolean;
   createdAt: string;
 }
