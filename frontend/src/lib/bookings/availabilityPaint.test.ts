@@ -20,6 +20,7 @@ import {
   slotLengthOf,
   slotStep,
   weekSlotsOf,
+  templatePreview,
   templateWeek,
   weekRunsOf,
 } from './availabilityPaint';
@@ -395,6 +396,22 @@ describe('fixed slots (owner, 2026-10-29): whole slots, never merged', () => {
       '5 23:30-24:00',
       '6 00:00-00:30',
     ]);
+  });
+});
+
+describe('templatePreview', () => {
+  it('draws exactly what the template opens', () => {
+    expect(templatePreview('always')).toHaveLength(7);
+    expect(templatePreview('always').every((b) => b.from === 0 && b.to === 1)).toBe(true);
+    const weekdays = templatePreview('weekdays');
+    expect(weekdays.map((b) => b.day)).toEqual([0, 1, 2, 3, 4]);
+    expect(weekdays[0].from).toBeCloseTo(8 / 24);
+    expect(weekdays[0].to).toBeCloseTo(20 / 24);
+  });
+
+  it('shows a window on two days for an event, and nothing for the empty week', () => {
+    expect(templatePreview('event').map((b) => b.day)).toEqual([3, 4]);
+    expect(templatePreview('empty')).toEqual([]);
   });
 });
 

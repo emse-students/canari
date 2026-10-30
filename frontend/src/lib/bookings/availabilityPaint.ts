@@ -235,6 +235,27 @@ export function templateWeek(key: TemplateKey): WeekRuns {
   }
 }
 
+/** One bar of a template's miniature week: a day, and where it starts and ends as 0..1 of the day. */
+export interface PreviewBar {
+  day: number;
+  from: number;
+  to: number;
+}
+
+/**
+ * The miniature week a template card draws (the mockup's mini bars): what `templateWeek` opens, so
+ * the card cannot disagree with what it does. `event` opens nothing weekly, so it shows the one
+ * thing it adds - a short window on two days.
+ */
+export function templatePreview(key: TemplateKey): PreviewBar[] {
+  if (key === 'event') {
+    return [3, 4].map((day) => ({ day, from: 14 / 24, to: 18 / 24 }));
+  }
+  return templateWeek(key).flatMap((runs, day) =>
+    runs.map(([start, end]) => ({ day, from: start / DAY_MIN, to: end / DAY_MIN }))
+  );
+}
+
 /**
  * The rows after a template: the week is replaced by it, the dated lines stay. `event` leaves the
  * week empty and, when there is no dated line yet, adds one for the organiser to date.

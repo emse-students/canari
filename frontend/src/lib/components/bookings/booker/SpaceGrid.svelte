@@ -226,7 +226,7 @@
   const folded = (day: DayColumn) => mode === 'week' && day.state === 'closed';
   /** Open days share the width, a folded one is a strip; an open day never gets narrower than a label. */
   const columns = $derived(
-    `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(5.5rem, 1fr)')).join(' ')}`
+    `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(4.25rem, 1fr)')).join(' ')}`
   );
 
   /** A slot is booked whole, so its start is what names it; a step's start is the row's. */
@@ -243,6 +243,13 @@
         : 'bg-cn-border/40 text-text-main border-cn-border';
     }
     if (unit.state === 'blocked') return 'bg-red-err/10 text-red-err border-red-err/30';
+    // The organiser's dashboard draws what is NOT taken as quiet ground (the mockup's grey closed
+    // cells, empty free ones), so the bookings and blocks are what the eye finds.
+    if (blockMode) {
+      return closed
+        ? 'bg-control-fill/50 border-transparent'
+        : 'border-transparent hover:bg-red-err/10 hover:border-red-err/30';
+    }
     if (closed) return 'bg-cn-bg text-text-muted/60 border-cn-border/60 hover:bg-cn-border/20';
     return 'bg-green-ok/10 text-green-ok border-green-ok/30 hover:bg-green-ok/20';
   }
@@ -357,7 +364,7 @@
                   : 'bg-cn-yellow/40 text-text-main border-cn-yellow'
                 : cellClass(unit, cell.closed)}"
             >
-              {joinedAbove ? '' : unitText(unit, cell.text)}
+              {joinedAbove || (blockMode && unit.state === 'free') ? '' : unitText(unit, cell.text)}
             </button>
           {/each}
         </div>
@@ -366,8 +373,9 @@
   </div>
 </div>
 
-{#if unitLimit > 1}
+<!-- The dashboard says its drag above the grid (manage page), where it is read first. -->
+{#if unitLimit > 1 && !blockMode}
   <p class="text-text-muted text-2xs px-1 pt-1">
-    {blockMode ? m.bookings_grid_block_hint() : m.bookings_grid_drag_hint()}
+    {m.bookings_grid_drag_hint()}
   </p>
 {/if}
