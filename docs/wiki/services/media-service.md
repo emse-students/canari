@@ -405,7 +405,11 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   only when its class is `chat-reel` AND its `ownerId` is the caller. A feed photo, a vault document, a
   feed reel, an unclassified blob, an object with no recorded owner or somebody else's reel are `403`.
   Allowed here and refused for ordinary media because a reel message cannot be forwarded, so no other
-  conversation can cite the blob.
+  conversation can cite the blob. **Since the owner's decision of 2026-10-30 one take may be sent to
+  several conversations - and published on the feed - as ONE file**, so the reason now reads "no
+  other PERSON's message cites it": every citation is the sender's own. The object then carries
+  reference-counted holds (`post`, `chat`) and this `DELETE` releases the `chat` hold; the salon purge
+  must also prove the moderator's salon names the file ([reels-in-chat section 15](../frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built), RC-14, not built).
 - **Account deletion takes it** (not `survivesAccountDeletion`).
 - **Stats**: `GET internal/storage-stats` gains `chatReelCount`, `chatReelBytes`,
   `chatReelOverdueCount`, `chatReelOverdueBytes` and `chatReelRetentionMs`; an overdue figure that does
