@@ -20,9 +20,11 @@
   } from '$lib/bookings/availability';
   import {
     applyTemplate,
+    editRun,
     paintRows,
     weekRunsOf,
     type PaintMode,
+    type SelectedRun,
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
   import {
@@ -143,6 +145,14 @@
   function paint(dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) {
     const next = paintRows(draft.rows, dayA, dayB, slotA, slotB, mode);
     if (next !== draft.rows) draft.rows = [...next];
+  }
+
+  /** The painter's exact hours of a run: the wizard's week is always runs (a step space). */
+  function editRunOf(run: SelectedRun, start: number, end: number): boolean {
+    const next = editRun(draft.rows, run.day, [run.start, run.end], start, end);
+    if (next === null) return false;
+    if (next !== draft.rows) draft.rows = [...next];
+    return true;
   }
 
   function hoursProblem(): string {
@@ -364,7 +374,14 @@
           {/each}
         </ul>
       {:else}
-        <WeekPainter {week} {dayNames} {shortDayNames} onPaint={paint} />
+        <WeekPainter
+          {week}
+          {dayNames}
+          {shortDayNames}
+          onPaint={paint}
+          step={timeStep}
+          onEdit={editRunOf}
+        />
       {/if}
       <p class={CONTROL_HINT_CLASS}>{m.bookings_wizard_when_hint()}</p>
 

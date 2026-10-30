@@ -329,7 +329,7 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
   against seven returns, not two sweeps.
 - **The switch: OFF in production until the amount format is measured** (decided 2026-10-27).
   `LYDIA_RECONCILE_ENABLED`, social-service, COMPUTED by `render-env.sh`
-  (`compute_lydia_reconcile_enabled`) like `LIVE_ENABLED`: `true` on dev, `false` on production, `true`
+  (`compute_lydia_reconcile_enabled`), as `LIVE_ENABLED` was until 2026-10-30: `true` on dev, `false` on production, `true`
   on a local estate. Anything but exactly `true` is OFF: no row is selected, Lydia is not called, and the
   only trace is ONE startup line (`[RECONCILE] Lydia reconciliation sweep OFF ...`); the hourly line is
   not written. Production is turned on by a commit changing that function, after the measurement below.

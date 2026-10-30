@@ -9,7 +9,43 @@ import {
   settlementVerdict,
   tierRelation,
   tierRelationOf,
+  rankPriceCents,
 } from './tier-pricing';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+/** The vector the client's `tierRankCents` test reads too (tools/tier-rank-vector.json). */
+const RANK_VECTOR: {
+  name: string;
+  variantKey: string | null;
+  amountCents: number | null;
+  priceMatrix: unknown;
+  allowCustomAmount: boolean;
+  rank: number | null;
+}[] = JSON.parse(
+  readFileSync(resolve(process.cwd(), '../../tools/tier-rank-vector.json'), 'utf-8')
+);
+
+describe('rankPriceCents - the shared rank vector', () => {
+  it.each(RANK_VECTOR.map((v) => [v.name, v] as const))('%s', (_name, v) => {
+    expect(rankPriceCents(v)).toBe(v.rank);
+  });
+
+  it('refuses a rise from a free-amount base as unranked, and keeps a 0-cent base ranked', () => {
+    const free = {
+      variantKey: null,
+      amountCents: null,
+      priceMatrix: null,
+      allowCustomAmount: true,
+    };
+    const zero = { variantKey: null, amountCents: 0, priceMatrix: null, allowCustomAmount: false };
+    const avec = { variantKey: 'avec', amountCents: 3000, priceMatrix: null };
+    const held = (t: typeof free) => ({ variantKey: t.variantKey, product: t });
+    expect(tierRelation(avec, held(free))).toBe('unranked');
+    expect(tierRefusal(tierRelation(avec, held(free)))?.code).toBe('TIER_NOT_RANKABLE');
+    expect(tierRelation(avec, held(zero))).toBe('higher');
+  });
+});
 
 describe('tierRelation - a tier is ranked by its PRODUCT price, against the tier held', () => {
   const sans = { variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null };
@@ -72,6 +108,43 @@ describe('tierRelationOf - a tier among SEVERAL held is held, whichever one rank
   });
 });
 
+describe('tierRelation - an unpriced BASE tier ranks lowest among the priced ones', () => {
+  const base = { variantKey: null, amountCents: null, priceMatrix: null };
+  const sans = { variantKey: 'sans', amountCents: 1500, priceMatrix: null };
+  const avec = { variantKey: 'avec', amountCents: 3000, priceMatrix: null };
+  const held = (t: {
+    variantKey: string | null;
+    amountCents: number | null;
+    priceMatrix: unknown;
+  }) => ({
+    variantKey: t.variantKey,
+    product: t,
+  });
+
+  it('is a rise to any priced tier from the unpriced base', () => {
+    expect(tierRelation(sans, held(base))).toBe('higher');
+    expect(tierRelation(avec, held(base))).toBe('higher');
+  });
+
+  it('is never a rise over a priced tier, so a holder of one is refused the base', () => {
+    expect(tierRelation(base, held(sans))).toBe('lower');
+    expect(tierRelation(base, held(avec))).toBe('lower');
+    expect(tierRefusal(tierRelation(base, held(sans)))?.code).toBe('TIER_NOT_A_RISE');
+  });
+
+  it('is held for itself, and a NAMED unpriced tier stays unranked', () => {
+    expect(tierRelation(base, held(base))).toBe('held');
+    const named = { variantKey: 'libre', amountCents: null, priceMatrix: null };
+    expect(tierRelation(named, held(base))).toBe('unranked');
+    expect(tierRelation(base, held(named))).toBe('unranked');
+  });
+
+  it('keeps a gridded base unranked', () => {
+    const grid = { variantKey: null, amountCents: null, priceMatrix: { dimensions: [] } };
+    expect(tierRelation(sans, held(grid))).toBe('unranked');
+  });
+});
+
 describe('pickHeldTier - one held tier, whatever order the tags were read in', () => {
   const t = (variantKey: string | null, amountCents: number | null) => ({
     variantKey,
@@ -93,7 +166,12 @@ describe('pickHeldTier - one held tier, whatever order the tags were read in', (
   });
 
   it('picks an unrankable held tier first, so the sale is refused rather than ranked', () => {
-    expect(pickHeldTier([t('avec', 3000), t(null, null)])?.variantKey).toBeNull();
+    expect(pickHeldTier([t('avec', 3000), t('libre', null)])?.variantKey).toBe('libre');
+  });
+
+  it('ranks an unpriced BASE tier lowest: the priced tier is the one ranked against', () => {
+    expect(pickHeldTier([t('avec', 3000), t(null, null)])?.variantKey).toBe('avec');
+    expect(pickHeldTier([t(null, null), t('avec', 3000)])?.variantKey).toBe('avec');
   });
 });
 

@@ -1,4 +1,5 @@
 import type { AssociationProduct } from '$lib/associations/api';
+import { tierRankCents } from '$lib/associations/cotisationTiers';
 import { customAmountLabel } from '$lib/associations/customAmountLabel';
 import { formatAmount } from '$lib/forms/fillAnswers';
 import { m } from '$lib/paraglide/messages';
@@ -153,10 +154,11 @@ export function memberOfferLabel(
   const amount = formatAmount(member, product.currency);
   if (!product.memberPriceTag) return m.shop_member_offer_cotisants({ amount });
   const tier = linkedTier(product, siblings);
-  // A linked tier with no single price (unpriced, or gridded) cannot be ranked (`hasFixedPrice` in
+  // A linked tier that cannot be ranked (a grid, or a named tier with no price - `rankPriceCents` in
   // social-service `tier-pricing.ts`): its holders are refused every rise as `unranked`, so nobody
-  // can ever pay this member price and announcing it would be false.
-  if (tier === null || tier.priceMatrix != null || tier.amountCents === null) return null;
+  // can ever pay this member price and announcing it would be false. An unpriced BASE tier ranks
+  // lowest and IS rankable.
+  if (tier === null || tierRankCents(tier) === null) return null;
   return m.shop_member_offer_tier({ amount, tier: tier.name });
 }
 

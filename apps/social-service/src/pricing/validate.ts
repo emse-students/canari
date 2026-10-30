@@ -120,6 +120,27 @@ function assertSellsCotisation(ctx: CriteriaContext, where: string): void {
   }
 }
 
+/**
+ * The `code` of the 400 a condition gets when it names a cotisation both as held (`cotisation`) and
+ * as not held (`notCotisation`). Worded by the client through Paraglide (`paymentRefusal.ts`).
+ */
+export const AUDIENCE_COTISATION_BOTH_MODES = 'AUDIENCE_COTISATION_BOTH_MODES';
+
+/**
+ * A cotisation criterion, held (`cotisation`) or not held (`notCotisation`): one shape, one check,
+ * so the two modes cannot come to accept different tiers.
+ */
+function parseCotisationCriterion(
+  raw: unknown,
+  ctx: CriteriaContext,
+  where: string
+): NonNullable<AudienceCondition['cotisation']> {
+  const c = asRecord(raw, where);
+  assertSellsCotisation(ctx, where);
+  if (c.anyTier === true) return { anyTier: true };
+  return { variantKeys: asTierKeys(c.variantKeys, `${where}.variantKeys`, ctx) };
+}
+
 /** Validates and normalises one condition - a question's visibility, or who may submit. */
 export function parseAudienceCondition(
   raw: unknown,
@@ -129,14 +150,28 @@ export function parseAudienceCondition(
   const doc = asRecord(raw, where);
   const condition: AudienceCondition = {};
 
+  // One cotisation criterion per condition, held OR not held. Both at once is either a contradiction
+  // (`anyTier` on one side matches nobody) or a roundabout spelling of one of them, and the editor
+  // offers a single mode - so a pair it could not show is refused rather than stored. Typed, because
+  // the one editor that sends it is an older one (it spreads `notCotisation` through and adds
+  // `cotisation` beside it): a newer client words the code, an older one shows the sentence.
+  if (doc.cotisation !== undefined && doc.notCotisation !== undefined) {
+    throw new BadRequestException({
+      code: AUDIENCE_COTISATION_BOTH_MODES,
+      message:
+        `${where} both requires and excludes a cotisation: keep one of the two ` +
+        '(update the app to edit a "does not hold" condition).',
+    });
+  }
   if (doc.cotisation !== undefined) {
-    const c = asRecord(doc.cotisation, `${where}.cotisation`);
-    assertSellsCotisation(ctx, `${where}.cotisation`);
-    if (c.anyTier === true) condition.cotisation = { anyTier: true };
-    else
-      condition.cotisation = {
-        variantKeys: asTierKeys(c.variantKeys, `${where}.cotisation.variantKeys`, ctx),
-      };
+    condition.cotisation = parseCotisationCriterion(doc.cotisation, ctx, `${where}.cotisation`);
+  }
+  if (doc.notCotisation !== undefined) {
+    condition.notCotisation = parseCotisationCriterion(
+      doc.notCotisation,
+      ctx,
+      `${where}.notCotisation`
+    );
   }
   if (doc.promo !== undefined) {
     const p = asRecord(doc.promo, `${where}.promo`);

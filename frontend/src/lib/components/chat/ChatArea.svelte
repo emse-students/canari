@@ -1113,7 +1113,7 @@
    * l'interface"*).
    *
    * AN OBSERVER, NOT A TIMER. Every trigger is the change itself, so there is nothing to tune and
-   * nothing that fires when nothing happened; `shouldFollowThreadBottom` holds the judgement and is
+   * nothing that fires when nothing happened; `threadGrowthResponse` holds the judgement and is
    * tested on its own. `isNearBottom` is read as it stood BEFORE the growth, which is what it is:
    * nothing recomputes it without a scroll event, and content growing under a stationary reader
    * fires none.
