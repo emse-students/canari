@@ -19,7 +19,7 @@ both in one commit**; `lives_mode` is from then on the only switch that closes l
 | --- | --- | --- | --- |
 | 1 | **Client build constant** `LIVE_ENABLED` - was `deployEnvironment() === 'development'`, so a production binary drew no card, chip or viewer and asked `/api/lives` nothing | `frontend/src/lib/features.ts`, read only through `livesAvailable` (`utils/livesAvailability.ts`) | `true` in every build (`features.test.ts`). Reaches the web on the stable's deploy, the phones through the store binaries of that stable |
 | 2 | **Server env** `LIVE_ENABLED` - ONE variable read by social-service (`LiveEnabledGuard` on both live controllers: lives, chat, staff routes; the follower push in `LiveAnnouncer`) and media-service (`isLiveEnabled`: the internal segment ingest and the public segment `GET`). Not exactly `true` -> a bare `404`, kept 10 s by nginx's `live_segments` cache | `infrastructure/deploy/env-manifest.tsv` (`literal:true` on both estates; was computed `false` on production by `compute_live_enabled`, now deleted), rendered into the estate's `.env` by `render-env.sh`, passed by both composes (default `false`) | `true` on both estates (`deploy-env.test.sh` on the rendered files). Applied by the stable's production deploy - no secret, no host change |
-| 3 | **Runtime kill switch** `platform_config.lives_mode` (core-service migration 015), read on every request by social-service's guard and, through `GET /api/internal/lives/mode`, by media-service; published by `/api/version` so the client hides what would be refused | `/admin/platform` (a global admin) | **already `on` in production** (owner, before 2026-10-30) - so **lives open the moment the stable deploys**. Set it `off` before that deploy to open them by hand later |
+| 3 | **Runtime kill switch** `platform_config.lives_mode` (core-service migration 015), read on every request by social-service's guard and, through `GET /api/internal/lives/mode`, by media-service; published by `/api/version` so the client hides what would be refused | `/admin/platform` (a global admin) | **`on` in production, and it STAYS on (owner, 2026-10-30)** - so **lives open the moment the `1.5.2` stable deploys**, discreetly (section 3, step 8). `off` is the rollback, never a gate held before the deploy |
 | 4 | **The two secrets** `LIVE_KEY_ENCRYPTION_SECRET` (a live's key sealed at rest; unset -> every start `503`) and `LIVE_REPORT_SIGNING_KEY` (a reported chat line; unset -> `503`) | GitHub secrets, `required` in the manifest | present: the render refuses a production deploy without them or under 32 characters, and production `1.5.1` deployed. Nothing to set |
 | 5 | **nginx** - the `/api/lives/` location (`client_max_body_size 5m`, the `lives_ingest` rate) and the `^~ /api/media/public/live/` segment cache | `infrastructure/local/Dockerfile.frontend`, the same image on both estates | no switch of its own; read P5 below |
 | 6 | **The media store** - segments under `live/<liveId>/` in Garage, deleted at the end | media-service | no switch of its own |
@@ -41,10 +41,11 @@ first-live rules gate a first start; a suspended or withdrawn broadcaster's star
 own screen (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`); the three
 broadcaster pushes and bell rows exist. **Not built, client side:** the LIFT of a withdrawal in
 `/admin/moderation` (`DELETE /api/lives/broadcasters/:userId/withdrawal` has no button); the pre-live
-screen reading `GET /api/lives/standing` (a suspended member learns it only at Start); and **a
-`live_chat` report row in `/admin/moderation`** - `ContentReport['contentType']` is post, comment, user and live,
-so the queue knows no `live_chat` row: neither the kept line nor its integrity is drawn for a
-moderator (G6 (f)). The server keeps the line and the `[LIVE_REPORT_AGE]` alarm counts it.
+screen reading `GET /api/lives/standing` (a suspended member learns it only at Start). **A reported
+chat line was always LISTED** in `/admin/moderation`, with its text as the preview when the server
+verified it; what it lacked - its type label, a sentence saying why an `altered`, `key-rotated` or
+`unverifiable` line shows no text, and the live it was written in - came with the flip pull request
+(`ModerationChatLineBlock`; the live is a copyable id, since no route opens one live) (G6 (f)).
 
 ## 2. The gates, each with its evidence
 
@@ -58,7 +59,7 @@ estate; `owed` = not done. A gate closes only when its last column is true.
 | G3 | **The signing secrets** `LIVE_REPORT_SIGNING_KEY` and `DEV_LIVE_REPORT_SIGNING_KEY` (REQUIRED in both estates: a deploy without them is refused by `render-env.sh`) | **set** - both names listed by `gh secret list`, 2026-10-21 05:56 UTC (names only; the values were not read, and their length is checked by the deploy) | done; the first production deploy carrying #2172 proves it |
 | G4 | **The 24 h commitment, measured** (`[LIVE_REPORT_AGE]`, hourly, `error` past 24 working hours) | **built** (#2189); one reading of the line on dev **owed** | the line read in dev's social-service log |
 | G5 | **WP-L8 client**: the viewer's report control, the cut screens, the `live_cut` bell row, the admin queue's live row with its cut button, the rules sheet | **built** (dev builds) | G9's readings |
-| G6 | **WP-L8b client**: (a) the three pushes and two bell rows - **built** (#2192); (b) the admin standing on a live report and the withdraw button - **built** (#2190); (c) the five reaction kinds, the posts' rules on the sheet, reporting ONE chat line - **built** (`LiveChatReportDialog`, read 2026-10-30); (d) the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) - **built** (`LiveBroadcaster`); `GET /api/lives/standing` on the pre-live screen - **owed**; (e) the LIFT of a withdrawal in `/admin/moderation` (the endpoint exists, no control) - **owed**; (f) the `live_chat` report row showing its integrity (`altered` / `key-rotated` / `unverifiable` with one weight) - **owed: the admin queue has no `live_chat` type** (read 2026-10-30) | mostly built | (d)(e)(f) built, each with its test |
+| G6 | **WP-L8b client**: (a) the three pushes and two bell rows - **built** (#2192); (b) the admin standing on a live report and the withdraw button - **built** (#2190); (c) the five reaction kinds, the posts' rules on the sheet, reporting ONE chat line - **built** (`LiveChatReportDialog`, read 2026-10-30); (d) the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) - **built** (`LiveBroadcaster`); `GET /api/lives/standing` on the pre-live screen - **owed**; (e) the LIFT of a withdrawal in `/admin/moderation` (the endpoint exists, no control) - **owed**; (f) the `live_chat` report row showing its integrity (`altered` / `key-rotated` / `unverifiable` with one weight) - **built** in the flip pull request (`ModerationChatLineBlock.svelte.test.ts`) | mostly built | (d)(e) built, each with its test |
 | G7 | **Crypto reviews**: the segment seal v1 and the chat seal C12, each "owed an adversarial crypto review" ([live](live.md#the-segment-seal-format-v1), [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6)) | **owed** (no review is on record on either page) | one adversarial review each, its verdict written where the format is |
 | G8 | **WP-L6 load**: several dev viewers chatting while a broadcaster sends segments (the chat shares the live's row lock with the ingest; nothing measured that contention) | **owed** | one dev reading, numbers on [lives](../../services/lives.md#the-row-lock-extended) |
 | G9 | **Phone readings**: check Y (watching) and LIVE-B1 (broadcasting) of [device-verification](../../device-verification.md#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both) on the Mi 9T and the iPhone 12; the moderation screens; the chat panel and the floating reactions; the three pushes once a store build carries their strings | **owed as rows** - read 2026-10-29/30 short of them: the iPhone broadcast flow on TestFlight `1.5.1-alpha.8`/`.9`, and the web rig's LIVE-WEB-2 and LIVE-STALL-1 `PASS` on `1.5.1-alpha.9` (#2705); check Y and LIVE-B1 stay owed row by row on both phones | the board rows `PASS`, never `PASS-DIRTY` |
@@ -66,7 +67,7 @@ estate; `owed` = not done. A gate closes only when its last column is true.
 | G11 | **The privacy policy and the register, together** (CLAUDE.md: the policy is the register's public face) - `/legal/privacy` gains its lives paragraphs and C19/C20 point at them | **merged with G10 (a) (#2698)**; C19/C20 dropped "switched OFF on production" in the flip pull request | the owner's yes on the wording; the pull request merged before or with the flip |
 | G12 | **The stores (WP-L9)**: the review notes ([draft](../../store-ugc-answers.md#what-to-write-in-the-review-notes-draft-english)) re-read against Apple 1.2 and Play UGC as published that day; **the review VIDEO** showing a report and a staff cut on a running live (L7); the App Privacy labels and Play Data safety re-read for live video and chat; the camera and microphone purpose strings (name lives since the flip pull request, asserted by `livePurposeStrings.test.ts`) | **owed**, the purpose strings done | the video recorded FROM a pre-release run (never staged after), the notes and labels the owner approved |
 | G13 | **A global stop that is not a release** (see section 1): a runtime switch read by the live guard, as calls got `platform_config.calls_mode` (B12 of [calls](calls.md#the-blockers-each-with-its-evidence)) | **built** - `platform_config.lives_mode` (2026-10-21) | done |
-| G14 | **Two questions to the school IT department, asked before the first public live** (asking is a question, not a change): whether the host's CrowdSec reads a lecture hall behind one campus address (~10-20 requests a second) as a crawl; and the link's real speed and Canari's share (Q3), which sets the cap | **owed** | their written answers, recorded in the private operations notes, the cap figure on this page |
+| G14 | **Two questions to the school IT department, asked before the first public live** (asking is a question, not a change): whether the host's CrowdSec reads a lecture hall behind one campus address (~10-20 requests a second) as a crawl; and the link's real speed and Canari's share (Q3), which sets the cap | **CrowdSec: measured read-only 2026-10-30** - a request from a server inside the school network and one from the student-residence server both reach Canari from addresses the host's CrowdSec whitelists cover (the school's network ranges and the private ranges), so a lecture hall on the school network cannot get the campus address banned. **Not measured:** whether student Wi-Fi leaves by another path than those servers. **The link speed (Q3): owed** | their written answers, recorded in the private operations notes, the cap figure on this page |
 | G15 | **The production preflight** (section 4), read-only | **written below; owed** | every line read |
 | G16 | P3 met by the server review: a seat taken AFTER an end's release outlives the end by up to its 30 s lease ([backlog](../../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19)) | **owed**, NOT a blocker (it costs a refusal for 30 s, never a byte or a key) | its fix, whenever |
 
@@ -78,7 +79,7 @@ estate; `owed` = not done. A gate closes only when its last column is true.
 3. **Pre-releases and phone readings** - each piece reaches the bench through an ordinary
    `vX.Y.Z-alpha.N` (dev + testers); G9 is read there. **The App Review video is recorded from
    these runs.**
-4. **The owner's texts** - G10, G11's yes, G12's labels; the two G14 questions sent.
+4. **The owner's texts** - G10, G11's yes, G12's labels; G14: CrowdSec measured 2026-10-30, the link-speed question still to send.
 5. **The production preflight** (section 4), read-only.
 6. **THE FLIP, ONE COMMIT, ONE PR**, carrying G11's policy and register change (or after it).
    **Written 2026-10-30 on `feat/lives-production`** at the owner's request (production in `1.5.2`),
@@ -97,11 +98,12 @@ estate; `owed` = not done. A gate closes only when its last column is true.
    production or dev (and so whether testers see production lives) is _(unverified here: read the
    pre-release build's `VITE_DEPLOY_ENVIRONMENT` before relying on it)_. The submission goes out with
    G12's notes and video.
-8. **The stable** -> production, once both stores took it. **The first production live is an
-   announced one, with a moderator on duty**, and its readings are: `X-Canari-Cache: HIT` from the
-   second viewer, the seat count against the cap, `[LIVE_REPORT_AGE] pending=0` the next hour, the
-   host's egress during the live (read-only), and the sweep deleting the live's rows and segments
-   after its end.
+8. **The stable** -> production, once both stores took it. **Lives open DISCREETLY with the
+   `1.5.2` stable (owner, 2026-10-30)**: no announced first live and no moderator on duty for it.
+   The owner is the moderator; reports reach the `/admin/moderation` queue and the hourly
+   `[LIVE_REPORT_AGE]` report. The readings of the first production lives, whenever they come:
+   `X-Canari-Cache: HIT` from the second viewer, the seat count against the cap, the host's egress
+   during a live (read-only), and the sweep deleting a live's rows and segments after its end.
 9. **Afterwards**: `minClientVersion` is NOT raised for lives - an old build simply never draws
    them - unless the owner decides otherwise.
 
@@ -210,7 +212,7 @@ to the owner as it is.
 | D-2 | **The privacy and terms text of section 5** (now on the pages, draft pull request) | approve, correct or strike each point of section 5's list |
 | D-3 | **The terms' lives paragraph and the filtering statement** (G10) | the statement as drafted in [store-ugc-answers](../../store-ugc-answers.md#what-to-write-in-the-review-notes-draft-english); the paragraph is written (section 5), the owner rereads it |
 | D-4 | **Open production at 24 viewers** (S0) rather than wait for any step of section 6 | **Yes** - the cap is a refusal with a clear screen, never a failure, and every later step needs production readings anyway |
-| D-5 | **Ask the school IT department the two G14 questions now** | **Yes**, they gate S2 and the first public live, and their answer takes time |
+| D-5 | **Ask the school IT department the two G14 questions now** | **Half answered**: CrowdSec measured read-only 2026-10-30 (G14); the link speed still gates S2, not the opening (lives open with `1.5.2`, owner 2026-10-30) |
 | D-6 | **Whether viewers see a viewer count**, and whether the policy says the broadcaster gets no viewer list | **decided 2026-10-21: the exact count to everyone watching**; the policy says no feature shows the list (section 5) |
 | D-7 | **`minClientVersion` for lives** | **No raise** - an old build never draws a live |
 

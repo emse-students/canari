@@ -38,8 +38,8 @@ below is what closes lives now.
 **Turning lives on in production, as it was done.** One pull request moved both deploy-time locks
 (this variable and the client's `LIVE_ENABLED` in `features.ts`) and the camera and microphone
 purpose strings; the release that carries it opens the routes the moment it deploys, so **what decides
-whether production members see lives is `lives_mode` at that moment** - set it `off` at
-`/admin/platform` before the stable deploys to open them later by hand. The gates, the readings and
+whether production members see lives is `lives_mode` at that moment** - `on` in production, and
+kept on by the owner's decision of 2026-10-30, so lives open discreetly with the `1.5.2` stable. The gates, the readings and
 the order are on [live-production](../frontend/modules/live-production.md), the only copy.
 
 **The runtime kill switch, `platform_config.lives_mode`** (owner, 2026-10-21: lives get a switch
