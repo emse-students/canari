@@ -138,7 +138,9 @@ Reworked on 2026-10-26 after the user found the screen "pas clair du tout". Thre
   server update, rather than letting it create a base tier.
 - **The order is visible**: tiers are listed cheapest first, numbered (`tiersInPriceOrder` in
   `frontend/src/lib/associations/cotisationTiers.ts`) - the product price is what a rise is ranked
-  by. A gridded or unpriced tier cannot be ranked and is listed last.
+  by. A gridded tier, or a NAMED tier with no price, cannot be ranked and is listed last; the BASE
+  tier with no price at all (how every association gets it) ranks LOWEST (`tierRankCents`, the
+  twin of the server's `rankPriceCents`).
 - **A rise is a sentence**: "Un detenteur de [tier] qui passe a X paie [15] EUR au lieu de 30 EUR",
   edited by `TierRiseEditor.svelte` over the unchanged stored pair `memberPriceTag` +
   `amountCentsMember`, with a preview of the sentence and of the line the member reads in the shop.
@@ -366,7 +368,10 @@ public page view.
 **What the server refuses (`assertTierIsARise`, on every `membership` checkout).** Rank comes from
 DATA with no stored ordinal and no migration: `variantLevel` is null in production and only ever
 sorted the shop. `tierRelation` compares the target's PRODUCT price (`amountCents`, never what the
-holder paid) with the held tier's. A buyer holding several tier tags is ranked against ONE of them,
+holder paid) with the held tier's, through ONE function, `rankPriceCents` (`tier-pricing.ts`): an
+unpriced BASE tier (no amount, no grid) ranks LOWEST, as 0 - a rise to any priced tier, never a rise
+over one (a holder of a priced tier asking for it gets `TIER_NOT_A_RISE`); a named unpriced tier or a
+grid stays unrankable. No amount charged changes. A buyer holding several tier tags is ranked against ONE of them,
 picked deterministically by `pickHeldTier`: an unrankable one first, else the dearest, ties broken
 by key (named tiers in code-point order, the base tier last). The verdict is taken BEFORE the
 purchase records are read, so the code does not depend on how the held tier was obtained:

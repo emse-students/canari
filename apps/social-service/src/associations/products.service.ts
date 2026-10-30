@@ -247,6 +247,7 @@ const TIER_RANK_COLUMNS = {
   variantKey: true,
   amountCents: true,
   priceMatrix: true,
+  allowCustomAmount: true,
 } as const;
 
 /** What `preparePurchase` fetched from other services, for `decidePurchase` to use under the lock. */
@@ -3291,7 +3292,7 @@ export class ProductsService {
    *
    * - `held` -> `PRODUCT_ALREADY_PURCHASED`;
    * - `lower` (cheaper or equally priced) -> `TIER_NOT_A_RISE`;
-   * - `unranked` (the held tier or the target has no fixed price) -> `TIER_NOT_RANKABLE`;
+   * - `unranked` (the held tier or the target has no rankable price: a grid, a free amount, a named tier with none - `rankPriceCents`) -> `TIER_NOT_RANKABLE`;
    * - `none` and `higher` pass, at `fixedPriceFor`'s amount.
    */
   private assertTierIsARise(
@@ -3728,7 +3729,7 @@ export class ProductsService {
    * - `target-held` / `not-a-rise` / `not-comparable`: ranked like a checkout (`tierRelationOf`, on
    *   the product prices) against what the buyer holds now: `held` is a renewal the payment did not
    *   buy - unless that tag is this payment's delivery (`deliveryOf`), which closes as `granted`
-   *   with `deliveredTagId` set - `lower` would move the buyer down, `unranked` (a grid or a free amount on either side)
+   *   with `deliveredTagId` set - `lower` would move the buyer down, `unranked` (a grid, a free amount or a named tier with no price on either side)
    *   cannot be told from a move down. `none` and `higher` grant.
    * - `held-tier-deleted`: `unranked` because the tier held is the tag of a DELETED tier (an orphan,
    *   no product): told apart from `not-comparable` because a repair exists - a roster grant of the

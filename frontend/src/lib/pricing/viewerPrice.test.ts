@@ -140,6 +140,13 @@ describe('memberOfferLabel', () => {
     expect(memberOfferLabel(linked, gridded)).toBeNull();
   });
 
+  it('still announces it when the linked tier is an unpriced BASE tier (ranks lowest)', () => {
+    const unpricedBase = [{ ...base, variantKey: null, amountCents: null } as AssociationProduct];
+    expect(memberOfferLabel(etudiant({ memberPriceTierKey: null }), unpricedBase)).toBe(
+      m.shop_member_offer_tier({ amount: formatAmount(500, 'eur'), tier: 'Cotisation' })
+    );
+  });
+
   it('words a price with no linked tier as the cotisant price', () => {
     expect(memberOfferLabel(etudiant({ memberPriceTag: null }), siblings)).toBe(
       m.shop_member_offer_cotisants({ amount: formatAmount(500, 'eur') })
