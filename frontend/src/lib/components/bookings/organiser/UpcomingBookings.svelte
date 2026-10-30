@@ -149,7 +149,11 @@
       ></div>
     </div>
   {:else if !loading && items.length === 0 && !error}
-    <p class="text-text-muted py-8 text-center text-sm">{m.bookings_upcoming_empty()}</p>
+    <p
+      class="border-cn-border text-text-muted rounded-2xl border border-dashed p-6 text-center text-sm"
+    >
+      {m.bookings_upcoming_empty()}
+    </p>
   {:else}
     {#each days as day (day.date)}
       <div class="space-y-2">
@@ -157,7 +161,7 @@
         <ul class="space-y-2">
           {#each day.items as booking (booking.id)}
             {@const underWay = Date.parse(booking.startsAt) <= nowMs}
-            <li class="border-cn-border bg-cn-surface rounded-xl border px-4 py-3">
+            <li class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0 flex-1 space-y-0.5">
                   <p class="text-text-main text-sm font-semibold tabular-nums">

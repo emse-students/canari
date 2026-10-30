@@ -245,6 +245,8 @@
         onSelect={chooseDate}
         onPrevious={() => moveWeek(-1)}
         onNext={() => moveWeek(1)}
+        away={date !== today}
+        onToday={() => chooseDate(today)}
       />
     {:else}
       <WeekBar

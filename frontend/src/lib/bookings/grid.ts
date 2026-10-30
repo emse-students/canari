@@ -57,7 +57,7 @@ export function formatDay(date: string, withYear = false): string {
 }
 
 /** A calendar date, short: "sam. 7 nov.". */
-function formatShortDay(date: string): string {
+export function formatShortDay(date: string): string {
   const [y, mo, d] = date.split('-').map(Number);
   return new Intl.DateTimeFormat(intlLocale(), {
     timeZone: 'UTC',

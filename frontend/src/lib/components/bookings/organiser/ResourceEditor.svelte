@@ -142,7 +142,7 @@
   }
 </script>
 
-<article class="border-cn-border space-y-4 rounded-2xl border p-3 sm:p-4">
+<article class="border-cn-border space-y-4 rounded-2xl border p-4">
   {#if !hidden}
     <div class="flex items-start gap-2">
       <div class="min-w-0 flex-1">

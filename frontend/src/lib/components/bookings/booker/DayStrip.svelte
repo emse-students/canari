@@ -18,9 +18,22 @@
     onSelect: (date: string) => void;
     onPrevious: () => void;
     onNext: () => void;
+    /** False while the DAY shown is today: there is nowhere to go back to. */
+    away?: boolean;
+    onToday?: () => void;
   }
 
-  let { days, date, today, label, onSelect, onPrevious, onNext }: Props = $props();
+  let {
+    days,
+    date,
+    today,
+    label,
+    onSelect,
+    onPrevious,
+    onNext,
+    away = false,
+    onToday,
+  }: Props = $props();
 
   const stateText = (state: DayColumn['state']) =>
     state === 'open'
@@ -43,6 +56,17 @@
       <ChevronLeft size={20} />
     </button>
     <h2 class="text-text-main min-w-0 grow truncate text-center text-sm font-bold">{label}</h2>
+    {#if onToday}
+      <!-- Aligned with the label, same pill as the desktop bar's: dimmed while this week holds today. -->
+      <button
+        type="button"
+        class="border-cn-border text-text-main hover:bg-cn-border/30 shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+        disabled={!away}
+        onclick={onToday}
+      >
+        {m.bookings_week_today()}
+      </button>
+    {/if}
     <button
       type="button"
       class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"

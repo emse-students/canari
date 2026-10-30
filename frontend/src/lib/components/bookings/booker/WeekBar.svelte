@@ -28,32 +28,35 @@
   ];
 </script>
 
-<div class="flex flex-wrap items-center gap-2">
+<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+  <!-- A calendar app's order: the way back to today first, an outlined pill that is always drawn
+       (dimmed while the week shown holds today), then the arrows, then the week. -->
   <button
     type="button"
-    class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-    aria-label={m.bookings_week_previous()}
-    onclick={onPrevious}
+    class="border-cn-border text-text-main hover:bg-cn-border/30 rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+    disabled={!away}
+    onclick={onToday}
   >
-    <ChevronLeft size={20} />
+    {m.bookings_week_today()}
   </button>
-  <button
-    type="button"
-    class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-    aria-label={m.bookings_week_next()}
-    onclick={onNext}
-  >
-    <ChevronRight size={20} />
-  </button>
-  {#if away}
+  <div class="flex items-center">
     <button
       type="button"
-      class="text-xs font-semibold text-amber-700 hover:underline dark:text-amber-400"
-      onclick={onToday}
+      class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
+      aria-label={m.bookings_week_previous()}
+      onclick={onPrevious}
     >
-      {m.bookings_week_today()}
+      <ChevronLeft size={20} />
     </button>
-  {/if}
+    <button
+      type="button"
+      class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
+      aria-label={m.bookings_week_next()}
+      onclick={onNext}
+    >
+      <ChevronRight size={20} />
+    </button>
+  </div>
   <h2 class="text-text-main min-w-0 grow text-sm font-bold">{label}</h2>
   <ul class="text-text-muted flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
     {#each keys as key (key.swatch)}
