@@ -4,9 +4,8 @@ import { answerJoinRequest, type JoinRequest } from './joinRequests.svelte';
 import { undoMemberDeviceDecline } from './memberDeviceAnswers';
 
 /**
- * A member's answer to a new person asking to join, from either place the ask is shown - the global
- * banner and the card in the conversation (`JoinRequestBanner`, `JoinRequestRow`). One path, so the
- * two cannot disagree about what a failed answer says: the ask stays on screen and a toast tells the
+ * A member's answer to a new person asking to join, from the line the ask is drawn as in its
+ * conversation (`JoinRequestRow`). One path, so a failed answer always says the same thing: the ask stays on screen and a toast tells the
  * member it did not go through (`answerJoinRequest` names why in the log).
  *
  * A DECLINED UNSEEN DEVICE (`kind: 'device'`) is offered an Undo: the decline holds for the session

@@ -1090,15 +1090,24 @@ user who holds none is a new person, and is not added (`automaticAdmission` in `
 `MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
 proves no membership, so nothing is added (it used to fall through to the Add).
 
-Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
-(`JoinRequestBanner` for a PERSON's ask in the conversations not on screen - a `kind: 'device'` ask is never drawn there, owner 2026-10-30, only in its own conversation - and `JoinRequestRow` - a card at the end of
-the thread - for the one that is, user decision 2026-10-24: in the conversation, any member may
-accept; `joinRequests.svelte.ts`). The card FOLLOWS the store and is not a persisted system row: a
-stored row would outlive the ask and keep Add and Decline on screen for someone another member
+Instead, the ask is put to a member as **a discreet system line at the end of the conversation it
+concerns** (owner, 2026-10-30, replacing the app-wide banner, which is deleted): **"X veut rejoindre
+la conversation par lien - Accepter / Refuser"** (`join_request_row_text`), the same muted pill as
+the other notices ("X added Y"), two small inline answers, never full-width colour. `JoinRequestRow`
+draws it (user decision 2026-10-24: in the conversation, any member may accept;
+`joinRequests.svelte.ts`). The line FOLLOWS the store and is not a persisted system row: a
+stored row would outlive the ask and keep Accept and Decline on screen for someone another member
 already admitted. Both answer through one path (`answerJoinRequestOrToast`). Add is the member's own Add (`inviteMembersToGroup`,
 signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
 stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
 completed sweep replaces the asks on screen.
+
+**After the answer (2026-10-30).** An accept needs no new line: the Add writes the ordinary
+`memberAdded` notice ("Y a ajouté X au groupe", `sendVisibleNotice`) on every member's device. A
+DECLINE has no frame at all, so the member who declined sees "Vous avez refusé la demande de X" and
+no other member does - a session-only line (`declinedJoinRequests`), deliberately not a stored row.
+A pending ask is not reflected in the conversation list (preview, unread badge): it is seen only on
+opening the conversation.
 
 **Every online member sees the ask at once, and sees it go at once (2026-10-25).** A
 `welcome_request` reaches ONE elected device, so every other member used to learn of an ask only at
@@ -1200,7 +1209,7 @@ server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pe
 read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
 is not flagged - a member's invite between its roster write and its Add, a seat written before
 migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
-invitation-link ask"). A member's own invite brings such a person in. The banner shows an ask only
+invitation-link ask"). A member's own invite brings such a person in. The line shows an ask only
 while the chat page that answers it is mounted (`canAnswerJoinRequests`).
 
 **An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
@@ -1349,10 +1358,10 @@ machinery is kept, behind that one rule, for the device a signature will vouch f
 below), and its tests run under an explicit stand-in rule (`admit_as_if_vouched`).
 
 **One entry per device, bound to its key.** The ask (`kind: 'device'` on `JoinApprovalRequest` and
-`JoinRequest`) is one entry PER DEVICE, beside any ask of the same person, drawn ONLY as the
-in-conversation card (`JoinRequestRow`) since 2026-10-30 - the app-wide banner skips device asks
-(owner: too intrusive), and its `find` skips them so one never hides a person's ask - with its own words (`join_request_device_body`, or `join_request_device_body_own` for the
-signed-in account's own device, `isOwnDeviceAsk`). It shows the device's name - the server's, a hint
+`JoinRequest`) is one entry PER DEVICE, beside any ask of the same person, drawn as the same
+discreet line (`JoinRequestRow`; the app-wide banner no longer exists, owner 2026-10-30) with its own words
+(`join_request_device_row_text` - "Nouvel appareil de X", Ajouter / Refuser - or `join_request_device_row_text_own` for the
+signed-in account's own device, `isOwnDeviceAsk`). The fingerprint is not inline: it sits behind a "Details" disclosure. It shows the device's name - the server's, a hint
 only - and the fingerprint of the signature key its KeyPackage carries, in groups of four
 (`deviceAskDetail`). The key is read once per session from one fetched package
 (`keyPackageSignatureKey`, a parse of the RFC 9420 layout held to the real WASM build by
