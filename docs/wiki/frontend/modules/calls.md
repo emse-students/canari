@@ -517,7 +517,7 @@ missing until 2026-10-30: the secrets were rendered but never forwarded, so the 
 `APNS_VOIP_* is not configured` and a locked iPhone on dev was not rung; `compose-wiring.test.sh` no
 longer allowlists it) and both serve workflows, and the
 three production secrets (repository secrets, set 2026-07-23 - names read, never values). **What is
-missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads must EXIST as repository secrets (absent on 2026-10-22; a missing secret makes dev warn and not ring), and any proof that the production key still signs (no VoIP push was ever
+missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads exist as repository secrets since 2026-10-23 (a missing one makes dev warn and not ring), and any proof that the production key still signs (no VoIP push was ever
 sent). A key is team-wide: no VoIP certificate is needed with token auth. **`APNS_VOIP_SANDBOX`
 stays unset on dev too**: a TestFlight build is signed `aps-environment production` and its tokens
 belong to the production gateway; only an Xcode debug build needs the sandbox.
