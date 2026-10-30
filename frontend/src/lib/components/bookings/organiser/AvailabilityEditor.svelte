@@ -24,7 +24,6 @@
     type Closure,
     type EditorLine,
     type StoredLine,
-    type Weekday,
   } from '$lib/bookings/availability';
   import { setAvailability } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
@@ -40,11 +39,11 @@
 
   /**
    * One resource's availability (D11, D49): a template to start from, the typical week PAINTED
-   * (`WeekPainter`), the same week as lines to read and to type exact times in, the dated ranges of
-   * a one-off event, and closures. A range is edited as the organiser thinks of it - "Friday 22:00
-   * to 02:00" is ONE range - and written as the stored lines by `toStoredLines` (WP-B2: a window
-   * crossing midnight is two lines). The painter, the templates and the lines all edit the SAME
-   * `rows`, so they can never disagree. Saved on its own: the server replaces the whole
+   * (`WeekPainter`, the one editor of the week), the dated ranges of a one-off event, and
+   * closures. A range is edited as the organiser thinks of it - "Friday 22:00 to 02:00" is ONE
+   * range - and written as the stored lines by `toStoredLines` (WP-B2: a window crossing midnight
+   * is two lines). The painter, the templates and the dated lines all edit the SAME `rows`, so
+   * they can never disagree. Saved on its own: the server replaces the whole
    * availability, and refuses a change that strands a coming booking (D29), naming them: they are
    * listed under the button, each with its cancel.
    */
@@ -108,14 +107,8 @@
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
   const step = $derived(stepMinutes && 60 % stepMinutes === 0 ? stepMinutes : 15);
 
-  /** Monday..Sunday in the reader's language, capitalised as a choice. */
+  /** Monday..Sunday in the reader's language. */
   const weekdayNames = $derived(weekdayNamesIn(locale, 'long'));
-  const weekdayOptions = $derived(
-    weekdayNames.map((name, i) => ({
-      value: String(i + 1),
-      label: name.charAt(0).toUpperCase() + name.slice(1),
-    }))
-  );
   const shortDayNames = $derived(weekdayNamesIn(locale, 'short'));
   /** The week as the painter draws it, always read from the lines: slots apart, hours merged. */
   const week = $derived(fixedSlots ? weekSlotsOf(rows) : weekRunsOf(rows));
@@ -223,16 +216,6 @@
     error = '';
   }
 
-  function addLine() {
-    const last = rows.filter((r) => r.kind === 'weekly').at(-1);
-    rows.push(
-      last
-        ? { ...last, weekday: ((last.weekday % 7) + 1) as Weekday }
-        : { kind: 'weekly', weekday: 1, start: '09:00', end: '18:00' }
-    );
-    touch();
-  }
-
   function addDate() {
     rows.push({ kind: 'dated', date: '', start: '14:00', end: '18:00' });
     touch();
@@ -295,31 +278,6 @@
         {m.bookings_avail_lines_cap({ count: capNotice.count, max: MAX_AVAILABILITY_LINES })}
       </p>
     {/if}
-  </div>
-
-  <div class="space-y-3">
-    <div>
-      <p class="text-text-main text-sm font-semibold">{m.bookings_avail_clear_title()}</p>
-      <p class="text-text-muted text-xs">{m.bookings_avail_clear_hint()}</p>
-    </div>
-    {#if rows.length === 0}
-      <p class="text-text-muted text-sm">{m.bookings_avail_empty()}</p>
-    {/if}
-    <ul class="space-y-3">
-      {#each rows as row, i (i)}
-        {#if row.kind === 'weekly'}
-          {@render lineRow(row, i)}
-        {/if}
-      {/each}
-    </ul>
-    <button
-      type="button"
-      onclick={addLine}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
-    >
-      <Plus size={14} />
-      {m.bookings_avail_add_line()}
-    </button>
   </div>
 
   <div class="space-y-3">
@@ -464,18 +422,7 @@
   <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border p-3">
     <div class="flex items-start gap-2">
       <div class="min-w-0 flex-1">
-        {#if row.kind === 'weekly'}
-          <Select
-            id="avail-{resourceId}-{i}-day"
-            label={m.bookings_avail_day()}
-            value={String(row.weekday)}
-            options={weekdayOptions}
-            onValueChange={(v) => {
-              rows[i] = { ...row, weekday: Number(v) as Weekday };
-              touch();
-            }}
-          />
-        {:else}
+        {#if row.kind === 'dated'}
           <div>
             <span class={CONTROL_LABEL_CLASS}>{m.bookings_avail_date()}</span>
             <DateTimeField

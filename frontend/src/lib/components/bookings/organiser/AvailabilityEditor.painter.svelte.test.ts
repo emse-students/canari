@@ -129,8 +129,6 @@ describe('AvailabilityEditor - the painted week', () => {
     drag(5, 0, 5, 3); // Saturday 00:00 to 02:00
     const lines = await saved();
     expect(times(lines)).toEqual(['5 22:00-24:00', '6 00:00-02:00']);
-    // ONE editor line in the typed list: the evening ending the next morning.
-    expect(document.body.textContent).toContain('Finit le lendemain');
   });
 
   it('a press without a move paints its one cell, and marks the editor dirty', async () => {

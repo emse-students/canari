@@ -13,8 +13,7 @@
    * THE TYPICAL WEEK, TO PAINT (D49): seven columns, a row per 30 minutes (Q-R11). Press and drag
    * a rectangle: starting on a closed cell OPENS it, starting on an open one CLOSES it - one
    * gesture, no brush to choose. A finger paints at once and the painter does not scroll the page
-   * under it (`touch-action: none`), as decided; the precise way, and the keyboard's, is the lines
-   * below it. The open hours are drawn as RUNS, so an edge typed off the grain (18:45) is drawn
+   * under it (`touch-action: none`), as decided. The open hours are drawn as RUNS, so an edge typed off the grain (18:45) is drawn
    * where it is. Letting go calls `onPaint`; the parent owns the lines and what they mean.
    */
   interface Props {

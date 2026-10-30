@@ -211,9 +211,9 @@ in its row; a space with no poster fetches nothing and keeps a glyph. Control: w
 
 Front only: the painter writes the same `PUT resources/:id/availability`, the stored lines are
 unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint (`WeekPainter`),
-"En clair" (the weekly lines, to read and to type exact times in), the dated lines apart, closures.
+the dated lines apart, closures. **"En clair" (the weekly lines typed by hand) was REMOVED on 2026-10-30** at the owner's request: it duplicated the painted week and was impractical. The painted week is the ONE editor of the week; what that makes impossible is below.
 
-- **One model: the editor's `rows`.** The painter, the templates and the typed lines all edit the
+- **One model: the editor's `rows`.** The painter, the templates and the dated lines all edit the
   same `rows`, so they cannot disagree and the save, the dirty flag, the 24/7 warning and the D29
   refusal (`StrandedBookings`, each booking with its cancel) are untouched. The painter reads
   `weekRunsOf(rows)` and writes `paintRows(...)`.
@@ -223,13 +223,17 @@ unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint
   `fromStoredLines`, so Friday 22:00-24:00 plus Saturday 00:00-02:00 is ONE line again; the days are
   written Monday last because Monday's morning is Sunday night's tail.
 - **One gesture, no brush**: pressing a closed cell opens the rectangle, pressing an open one closes
-  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); the keyboard and
-  screen readers use the typed lines, and each day column is named with its hours.
+  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); each day column is
+  named with its hours (there is no typed route any more, so no keyboard route either).
 - **A line the editor refuses** (a start equal to its end) is not drawn as a run and is never
-  normalised by a paint or a template: it stays in the typed lines, flagged, until fixed. The
+  normalised by a paint or a template: it is not drawn (and, the typed lines being gone, cannot be edited: see below). The
   painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
-  its height is clamped (30 to 40 rem). **The keyboard's route is the typed lines below**, said in
-  the hint under the painter.
+  its height is clamped (30 to 40 rem). 
+- **Removed 2026-10-30, what became impossible:** a weekly edge off the 30-min grain (18:45) can no
+  longer be TYPED (an existing one is still kept and drawn, and survives a paint elsewhere, but only
+  the grain can be created); a keyboard or screen-reader route to the week; fixing or deleting a
+  weekly line the editor refuses (start = end) other than by a template. Smallest cover: a
+  "from / to" pair of selects (on the space's step) shown under a clicked run in the painter.
 - **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
   Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
   Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
