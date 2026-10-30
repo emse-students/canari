@@ -656,7 +656,9 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
     device until a reload. Stopping the re-ask waits for the server row below.
     Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
 
-## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built)
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built) - SUPERSEDED
+
+**Superseded the same day: a device of a member enters by itself, so it asks nobody and this row is moot - see [the 2026-10-30 decision](#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built).** The reasoning below is kept for the ask that still exists in 1.5.2.
 
 - Today a further device of a member with no seat has no durable ask. The requester re-asks on its
   cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
@@ -664,30 +666,38 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   and let every member's pending sweep re-raise it. The requester then stops asking once the row
   exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
 
-## A new device of a member is admitted by ONE approval per device, account-wide and durable (owner, 2026-10-30, not built)
+## A new device of a member ENTERS BY ITSELF, with a history and a visible trace (owner, 2026-10-30, the WhatsApp model, not built)
 
-Guided by the owner's rule "le moins d'actions possible pour les utilisateurs". Two parts:
+Final decision of 2026-10-30, guided by "je ne veux pas importuner les utilisateurs du tout". It
+SUPERSEDES both the 2026-10-27 interim gate (the mandatory tap) and the "one approval per device"
+decision recorded earlier the same day. Planned for the release after 1.5.2.
 
-- **(a) One prompt, one tap, every conversation.** When an account signs in on a new device, its
-  other devices show one prompt: "Nouvel appareil : c'est toi ?". One tap approves that device under
-  its key for EVERY conversation of the account - not only the approving device's own. The approval
-  is durable, not per-session; today the answers in `memberDeviceAnswers.ts` live for the session only.
-- **(b) The owner has no other device: a durable server row.** The ask is stored as a row, as a
-  link's ask is (`GroupMember.awaitingAdmission`), and every member's sweep re-raises it; the device
-  enters on any member's tap at that member's next launch, with no action from the owner. This MERGES
-  with [the server-row P2 above](#p2---a-further-devices-ask-is-memory-on-the-requester-and-24-h-on-the-server-make-it-a-server-row-decided-in-review-2026-10-30-not-built) - build one, not two.
+1. **Entry.** A new device of a person who is already a member enters by itself. No tap and no ask,
+   from anyone: not the owner's other devices, not contacts.
+2. **History.** That device receives the whole history its person was entitled to, filtered on that
+   person's own presence windows: the existing addressed-answer rule, rule 2, "a new device of a
+   continuous member", in [history-answer-addressing](protocols/history-answer-addressing.md).
+3. **Visibility.**
+   - A silent system line, "X a ajouté un appareil", in each of X's conversations: no notification
+     and no unread count.
+   - A discreet alert, "Nouvel appareil connecté", on X's other devices, with "Ce n'est pas moi",
+     which revokes that device.
+   - This is what makes a device added through a compromised login visible. **Accepted residual
+     risk, stated plainly:** such a device reads new messages and history until X reacts.
+4. **New persons are unchanged.** The 2026-10-21 decision stands: a newcomer receives nothing from
+   before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
+   Add (decided 2026-10-23).
+5. **Delivery.** Step A of history addressing (built, draft PR) ships TOGETHER with this model, in
+   the release after 1.5.2.
+6. **Interim in 1.5.2.** Device asks leave the global banner and stay only as the in-conversation
+   row (a separate PR).
 
-**Rejected:**
+**Rejected earlier the same day:** one approval per device (a tap, account-wide and durable, plus a
+durable server row when the owner has no other device) - replaced by self-entry; self-entry on
+revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK,
+[mls-protocol](protocols/mls-protocol.md) shape B), which costs users an action.
 
-- **Self-entry on revoking old devices**: it reopens the stolen-session lock-in (a thief revokes the
-  victim's devices and enters alone). It also does not work today: a revoked leaf stays in the tree
-  until a member's `removeStrayLeaves` collects it.
-- **An account recovery key (USK, [mls-protocol](protocols/mls-protocol.md) shape B)**: a LATER option
-  only, since it costs users an action. The owner's worry is the single-lost-device case; the answer
-  is that the history comes back from the members once a member adds the device. A conversation with
-  no member ever online has no reader and no holder of its history, whatever we build.
-
-Mechanism and the interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
+Mechanism and the superseded interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
