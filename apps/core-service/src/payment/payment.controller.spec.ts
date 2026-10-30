@@ -1,8 +1,13 @@
 import axios from 'axios';
-import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
-import { PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
+import { BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  LYDIA_BUSINESS_CREATED_UNLINKED,
+  LYDIA_ORPHAN_LOG_TAG,
+  PAYMENT_PROVIDER_REFUSED,
+} from './lydia-payment-provider';
 import {
   LYDIA_ACCOUNT_ALREADY_LINKED,
+  PAYOUT_ACCOUNT_UNREADABLE,
   PaymentController,
   SESSION_ID_RE,
 } from './payment.controller';
@@ -504,24 +509,93 @@ describe('PaymentController.createOnboarding - one Business per association, its
     });
   });
 
-  it('a link social-service refuses as already linked (a concurrent run) is the same typed 409', async () => {
+  /** Every ERROR line the run produced, joined: where the orphan's record must be. */
+  async function errorsDuring(run: () => Promise<unknown>): Promise<string> {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      await run();
+      return error.mock.calls.flat().map(String).join(' | ');
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+
+  it('a link refused WITH the already-linked code is the 409, and the orphan is still logged', async () => {
     socialAnswers(null);
     mockedAxios.post.mockRejectedValue(
-      Object.assign(new Error('conflict'), { response: { status: 409, data: {} } })
+      Object.assign(new Error('conflict'), {
+        response: { status: 409, data: { code: LYDIA_ACCOUNT_ALREADY_LINKED } },
+      })
     );
     const { controller } = makeController();
-    await expect(
-      controller.createOnboarding({ associationId: id, legalProfile }, req)
-    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ACCOUNT_ALREADY_LINKED } });
+    const logged = await errorsDuring(() =>
+      expect(
+        controller.createOnboarding({ associationId: id, legalProfile }, req)
+      ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ACCOUNT_ALREADY_LINKED } })
+    );
+    expect(logged).toContain(`${LYDIA_ORPHAN_LOG_TAG} association ${id}`);
+    expect(logged).toContain('vendor_token=vendor-new');
+    expect(logged).not.toContain('throwaway-private-key');
   });
 
-  it('a link that fails otherwise FAILS the onboarding instead of answering a success', async () => {
-    socialAnswers(null);
-    mockedAxios.post.mockRejectedValue(new Error('social unreachable'));
-    const { controller } = makeController();
-    await expect(
-      controller.createOnboarding({ associationId: id, legalProfile }, req)
-    ).rejects.toMatchObject({ status: 502 });
+  it.each([
+    ['a 409 WITHOUT the code', { response: { status: 409, data: {} } }],
+    ['a 500', { response: { status: 500, data: { message: 'boom' } } }],
+    ['no answer', {}],
+  ])(
+    'a link failing with %s is the ONE typed 502 LYDIA_BUSINESS_CREATED_UNLINKED, orphan logged',
+    async (_label, shape) => {
+      socialAnswers(null);
+      mockedAxios.post.mockRejectedValue(Object.assign(new Error('link failed'), shape));
+      const { controller } = makeController();
+      const logged = await errorsDuring(() =>
+        expect(
+          controller.createOnboarding({ associationId: id, legalProfile }, req)
+        ).rejects.toMatchObject({
+          status: 502,
+          response: { code: LYDIA_BUSINESS_CREATED_UNLINKED },
+        })
+      );
+      expect(logged).toContain(LYDIA_ORPHAN_LOG_TAG);
+      expect(logged).toContain('vendor_token=vendor-new');
+      expect(logged).not.toContain('throwaway-private-key');
+    }
+  );
+
+  it('an unreadable payout account is a typed 503 and never reaches business/create', async () => {
+    for (const read of [
+      async () => ({ status: 500, data: {} }),
+      async () => {
+        throw new Error('ECONNREFUSED');
+      },
+    ]) {
+      mockedAxios.get.mockImplementation(async (url: string) =>
+        url.endsWith('/manage-permission') ? { status: 200, data: { ok: true } } : read()
+      );
+      const { controller, paymentService } = makeController();
+      await errorsDuring(() =>
+        expect(
+          controller.createOnboarding({ associationId: id, legalProfile }, req)
+        ).rejects.toMatchObject({ status: 503, response: { code: PAYOUT_ACCOUNT_UNREADABLE } })
+      );
+      expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an unknown association is a 404 and never reaches business/create', async () => {
+    mockedAxios.get.mockImplementation(async (url: string) =>
+      url.endsWith('/manage-permission')
+        ? { status: 200, data: { ok: true } }
+        : { status: 404, data: {} }
+    );
+    const { controller, paymentService } = makeController();
+    await errorsDuring(() =>
+      expect(
+        controller.createOnboarding({ associationId: id, legalProfile }, req)
+      ).rejects.toMatchObject({ status: 404 })
+    );
+    expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
   });
 });
 

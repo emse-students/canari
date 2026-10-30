@@ -2259,7 +2259,7 @@
   "asso_lydia_validate_confirm": "Confirmer que Lydia a accepté le dossier de cette association ? Les paiements en ligne via Lydia seront activés pour elle.",
   "asso_lydia_validate_error": "Impossible de valider l'onboarding Lydia.",
   "asso_lydia_already_linked_error": "Un compte Lydia Business est déjà relié. Déconnectez-le d'abord pour en créer un autre.",
-  "asso_lydia_key_unverified_error": "Lydia a créé le compte Business sans confirmer sa clé privée : rien n'a été relié. Contactez un administrateur de la plateforme avant de réessayer.",
+  "asso_lydia_created_unlinked_error": "Lydia a créé le compte Business, mais il n'a pas pu être relié ici. Ne réessayez pas : cela en créerait un second. Contactez un administrateur de la plateforme.",
   "asso_lydia_intro_institution": "Renseignez les informations légales de l'institution pour créer son compte Lydia Pro. Ces informations sont transmises directement à Lydia.",
   "asso_lydia_name_label_institution": "Nom légal de l'institution",
   "asso_lydia_disconnect_confirm_institution": "Retirer le compte Lydia Pro de cette institution ? Le compte Lydia lui-même n'est pas supprimé, mais l'institution devra refaire toute la configuration pour accepter à nouveau les paiements en ligne via Lydia.",

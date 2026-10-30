@@ -955,6 +955,7 @@ server {\n\
     # The public Lydia callback, rate-limited at the edge (zone lydia_callback); otherwise /api/payments.\n\
     location = /api/payments/lydia-request-callback {\n\
     limit_req zone=lydia_callback burst=50 nodelay;\n\
+    client_max_body_size 16k;\n\
     limit_req_status 429;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
@@ -978,6 +979,7 @@ server {\n\
     # The public, UNSIGNED business/create webhook: same zone as the callback; it writes nothing (payments.md).\n\
     location = /api/payments/lydia-business-webhook {\n\
     limit_req zone=lydia_callback burst=50 nodelay;\n\
+    client_max_body_size 16k;\n\
     limit_req_status 429;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\

@@ -2,6 +2,7 @@ import { Logger, Module, ParseUUIDPipe, type INestApplication } from '@nestjs/co
 import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { NestFactory } from '@nestjs/core';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { SECRET_BOX_ENV } from '../common/secret-box';
 import { InternalLydiaKeyController } from '../internal/internal-lydia-key.controller';
 import { AssociationsController, LYDIA_KEY_PASTE_RETIRED } from './associations.controller';
@@ -275,12 +276,23 @@ describe('AssociationsController - the retired paste route and the status route'
     }
   );
 
-  it('answers the typed 410 LYDIA_KEY_PASTE_RETIRED, writes nothing, and logs no key', async () => {
+  it('the paste shim keeps the old route throttle', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      Object.getOwnPropertyDescriptor(
+        AssociationsController.prototype,
+        'retiredLydiaBusinessKeyPaste'
+      )?.value as object
+    ) as unknown[];
+    expect(guards).toContain(UserResourceThrottlerGuard);
+  });
+
+  it('answers a manager the typed 410 LYDIA_KEY_PASTE_RETIRED, writes nothing, and logs no key', async () => {
     const { controller, service } = makeController(true);
     let thrown: unknown;
     const logs = await loggedDuring(async () => {
       try {
-        controller.retiredLydiaBusinessKeyPaste('treasurer', ASSO_A);
+        await controller.retiredLydiaBusinessKeyPaste('treasurer', undefined, ASSO_A);
       } catch (e: unknown) {
         thrown = e;
       }
@@ -291,7 +303,22 @@ describe('AssociationsController - the retired paste route and the status route'
     );
     expect(logs).toContain('old client');
     expect(logs).not.toContain(KEY_A);
-    for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled();
+    expect(service.isLydiaBusinessKeySet).not.toHaveBeenCalled();
+    expect(service.setLydiaAccountId).not.toHaveBeenCalled();
+  });
+
+  it('answers anyone but a manager the 403 they always got, and no old-client WARN', async () => {
+    const { controller } = makeController(false);
+    let thrown: unknown;
+    const logs = await loggedDuring(async () => {
+      try {
+        await controller.retiredLydiaBusinessKeyPaste('member', undefined, ASSO_A);
+      } catch (e: unknown) {
+        thrown = e;
+      }
+    });
+    expect(thrown).toMatchObject({ status: 403 });
+    expect(logs).not.toContain('old client');
   });
 
   it('the status route still answers a manager `{ set }` and refuses anyone else', async () => {

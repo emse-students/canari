@@ -10,8 +10,8 @@
   } from '$lib/associations/api';
   import {
     LYDIA_ONBOARDING_REFUSAL,
+    lydiaOnboardingErrorText,
     lydiaOnboardingRefusalCode,
-    lydiaOnboardingRefusalText,
   } from '$lib/associations/lydiaOnboardingRefusal';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -144,14 +144,12 @@
         lydiaOnboardingComplete: false,
       };
     } catch (err) {
-      const refusal = lydiaOnboardingRefusalCode(err);
-      console.error('[Lydia] Onboarding refused:', refusal ?? err);
-      if (refusal) {
-        error = lydiaOnboardingRefusalText(refusal);
-        // A Business is linked after all (another tab, another manager): show it, not the form.
-        if (refusal === LYDIA_ONBOARDING_REFUSAL.ALREADY_LINKED) void loadAccount();
-      } else {
-        error = err instanceof Error && err.message ? err.message : m.common_save_error();
+      // The detail goes to the log; the screen shows a Paraglide sentence, never the server's prose.
+      console.error('[Lydia] Onboarding refused:', err);
+      error = lydiaOnboardingErrorText(err);
+      // A Business is linked after all (another tab, another manager): show it, not the form.
+      if (lydiaOnboardingRefusalCode(err) === LYDIA_ONBOARDING_REFUSAL.ALREADY_LINKED) {
+        void loadAccount();
       }
     } finally {
       submitting = false;

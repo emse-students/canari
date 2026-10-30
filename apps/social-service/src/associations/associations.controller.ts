@@ -91,6 +91,12 @@ const LOGO_UPLOAD_MB = 2;
  */
 export const LYDIA_KEY_PASTE_RETIRED = 'LYDIA_KEY_PASTE_RETIRED';
 
+/**
+ * Per user and association, the retired paste route's throttle - the one the live route had, so a
+ * stuck old screen retrying cannot flood the WARN its hits are counted by.
+ */
+export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
+
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
 export class AssociationsController {
@@ -568,14 +574,19 @@ export class AssociationsController {
    * longer stored. A SHIM kept for the store builds that still show the paste field
    * (legacy-compatibility.md): it reads no body, writes nothing and answers the typed 410
    * `LYDIA_KEY_PASTE_RETIRED`, which those screens show as their own "could not save" line. The
-   * hit is logged at WARN - an old client in use - with the association and never a value.
+   * hit is logged at WARN - an old client in use - with the association and never a value. It keeps
+   * the old route's throttle and MANAGE_PAYOUT_ACCOUNT check, so the WARN counts the managers still on
+   * an old build and not anonymous noise: anyone else gets the 403 they always got.
    */
-  @UseGuards(NginxAuthGuard)
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: LYDIA_KEY_PASTE_SHIM_PER_MINUTE, ttl: 60_000 } })
   @Put(':id/lydia-business-key')
-  retiredLydiaBusinessKeyPaste(
+  async retiredLydiaBusinessKeyPaste(
     @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Param('id', ParseUUIDPipe) id: string
-  ): never {
+  ): Promise<never> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'retired Business key paste');
     this.logger.warn(
       `[LYDIA] retired key paste refused on association ${sanitizeLog(id)} by ${sanitizeLog(userId)} - an old client in use`
     );

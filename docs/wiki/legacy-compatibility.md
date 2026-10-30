@@ -168,7 +168,9 @@ paste field is gone from the app. An APK or IPA older than that release EMBEDS t
 `GET` status (kept, so the panel still shows "set" or "not set") and may `PUT` a key. The `PUT` writes
 nothing and answers `410` with the code `LYDIA_KEY_PASTE_RETIRED`; the old field shows its own "could not
 save" line for any refusal (it never reads the body), so a bare status is enough there. Each hit is
-logged at WARN, naming the association and never a value: the count of old clients still using it.
+logged at WARN, naming the association and never a value: the count of old clients still using it. The
+shim keeps the old route's throttle and `MANAGE_PAYOUT_ACCOUNT` check, so a non-manager gets the `403`
+it always got and only a manager's hit is counted.
 **The cost while it stands:** none - nothing is written; an old screen shows a save error.
 **Removal condition:** `minClientVersion` past the first build without the field, on BOTH stores. Then
 delete both routes, `isLydiaBusinessKeySet`, their spec block, and this entry.

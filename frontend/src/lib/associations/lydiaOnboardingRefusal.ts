@@ -9,8 +9,13 @@ import { SocialApiError } from './api';
 export const LYDIA_ONBOARDING_REFUSAL = {
   /** 409: a Business is already linked - a second `business/create` would replace it silently. */
   ALREADY_LINKED: 'LYDIA_ACCOUNT_ALREADY_LINKED',
-  /** 502: Lydia created the Business but did not confirm its private token; nothing was linked. */
-  KEY_UNVERIFIED: 'LYDIA_BUSINESS_KEY_UNVERIFIED',
+  /**
+   * 502: Lydia created the Business but nothing linked it (its key unconfirmed, Lydia or
+   * social-service unreachable). A retry would create a SECOND Business, so the text says not to.
+   */
+  CREATED_UNLINKED: 'LYDIA_BUSINESS_CREATED_UNLINKED',
+  /** 503: the payout account could not be read first; nothing was created, a retry is safe. */
+  PAYOUT_ACCOUNT_UNREADABLE: 'PAYOUT_ACCOUNT_UNREADABLE',
 } as const;
 
 export type LydiaOnboardingRefusalCode =
@@ -31,7 +36,18 @@ export function lydiaOnboardingRefusalText(code: LydiaOnboardingRefusalCode): st
   switch (code) {
     case LYDIA_ONBOARDING_REFUSAL.ALREADY_LINKED:
       return m.asso_lydia_already_linked_error();
-    case LYDIA_ONBOARDING_REFUSAL.KEY_UNVERIFIED:
-      return m.asso_lydia_key_unverified_error();
+    case LYDIA_ONBOARDING_REFUSAL.CREATED_UNLINKED:
+      return m.asso_lydia_created_unlinked_error();
+    case LYDIA_ONBOARDING_REFUSAL.PAYOUT_ACCOUNT_UNREADABLE:
+      return m.asso_lydia_account_error();
   }
+}
+
+/**
+ * The sentence for ANY onboarding failure: a known code's own text, else the generic Paraglide
+ * save error - never the server's prose, which is English and written for a log.
+ */
+export function lydiaOnboardingErrorText(err: unknown): string {
+  const code = lydiaOnboardingRefusalCode(err);
+  return code === null ? m.common_save_error() : lydiaOnboardingRefusalText(code);
 }

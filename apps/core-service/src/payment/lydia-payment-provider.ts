@@ -65,12 +65,42 @@ export function lydiaAmountString(cents: number): string {
 }
 
 /**
- * The `code` of an onboarding that created a Business whose `api_token_id` Lydia's own
- * `auth/vendortoken` did not confirm as its private token (error 103, or an answer that is not
- * `status: "ok"`). Nothing is linked and nothing stored: a key Lydia does not recognise would
- * refuse every callback of that association.
+ * The ONE `code` (502) of an onboarding that failed AFTER `business/create` succeeded: the Business
+ * exists at Lydia and is linked to nothing. Whatever came next - no `api_token_id`, `auth/vendortoken`
+ * answering 103, another code, a 5xx or nothing at all, or the link to social-service failing - the
+ * outcome for the association is the same, and so is what a human does about it (payments.md, "An
+ * orphan Business"). A retry WOULD create a second Business (nothing is linked), so the client says
+ * not to retry and to contact an admin.
  */
-export const LYDIA_BUSINESS_KEY_UNVERIFIED = 'LYDIA_BUSINESS_KEY_UNVERIFIED';
+export const LYDIA_BUSINESS_CREATED_UNLINKED = 'LYDIA_BUSINESS_CREATED_UNLINKED';
+
+/**
+ * The tag of the ERROR line that is the durable record of an orphan Business: it names the
+ * association and the Business's `vendor_token`, which is what Lydia's support needs to delete it.
+ */
+export const LYDIA_ORPHAN_LOG_TAG = '[LYDIA-ORPHAN]';
+
+/**
+ * Logs an orphan Business at ERROR - association, `vendor_token` (public, see `LYDIA_LOG_REDACT_KEYS`)
+ * and why - and returns the typed `LYDIA_BUSINESS_CREATED_UNLINKED` 502 to throw. The private token
+ * never reaches this line.
+ */
+export function businessCreatedUnlinked(
+  logger: Logger,
+  associationId: string,
+  vendorToken: string,
+  why: string
+): BadGatewayException {
+  logger.error(
+    `${LYDIA_ORPHAN_LOG_TAG} association ${associationId}: Business vendor_token=${vendorToken} ` +
+      `was created at Lydia and is NOT linked (${why}) - Lydia's support deletes it, then the ` +
+      `association re-enrols`
+  );
+  return new BadGatewayException({
+    code: LYDIA_BUSINESS_CREATED_UNLINKED,
+    message: 'The Lydia Business was created but could not be linked; do not retry',
+  });
+}
 
 /** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
 const LYDIA_VENDOR_TOKEN_MISMATCH = '103';
@@ -95,11 +125,12 @@ const LYDIA_REQUEST_STATES: Readonly<Record<string, CheckoutRequestStateKind>> =
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` IS the Business's own private
  * token (`auth/vendortoken`, homologation 2026-10-30; `createOnboarding` stores it encrypted), and
- * `api_token` is the Business's vendor token, which `business/create` answers with and which was
- * logged in clear until 2026-10-07. `signature` is the value Lydia's `request/state` answers with
- * (and the callbacks carry): the proof the whole confirmation rests on, never a log field.
+ * `signature` is the value Lydia's `request/state` answers with (and the callbacks carry): the proof
+ * the whole confirmation rests on. `api_token`, the Business's `vendor_token`, is NOT secret - it
+ * travels in every `request/do` and names the Business in every callback (lydia-api.md section 1) -
+ * so a server log may carry it; it is what identifies an orphan Business to Lydia's support.
  */
-const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'api_token', 'signature']);
+const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'signature']);
 
 /** The public origin Lydia calls back on: nginx, the single entry point, from `FRONTEND_URL`. */
 function publicApiBase(): string {
@@ -434,9 +465,9 @@ export class LydiaPaymentProvider implements PaymentProvider {
    *
    * `api_token_id` IS the Business private token (homologation 2026-10-30, lydia-api.md section 1),
    * and it is answered ONCE. So it is captured here, but only after Lydia's own `auth/vendortoken`
-   * confirms it pairs with `api_token` (`verifyBusinessKey`): an unconfirmed value throws the typed
-   * `LYDIA_BUSINESS_KEY_UNVERIFIED` and the onboarding fails visibly, linking nothing - there is no
-   * path that links a Business without its key. It is returned to the controller for social-service
+   * confirms it pairs with `api_token` (`verifyBusinessKey`): anything else throws the typed
+   * `LYDIA_BUSINESS_CREATED_UNLINKED` and the onboarding fails visibly, linking nothing - there is
+   * no path that links a Business without its key. It is returned to the controller for social-service
    * to store encrypted, and never logged (`LYDIA_LOG_REDACT_KEYS`).
    *
    * `webhook` asks Lydia to POST the Business's validation events to `lydia-business-webhook`;
@@ -493,36 +524,40 @@ export class LydiaPaymentProvider implements PaymentProvider {
   /**
    * Asks Lydia whether `businessPrivateToken` is the private token of `vendorToken`
    * (`POST /api/auth/vendortoken`, fields `vendor_token` and `vendor_id`): `{status: "ok"}` for the
-   * pair, error 103 otherwise (homologation 2026-10-30). Anything but `ok` throws the typed
-   * `LYDIA_BUSINESS_KEY_UNVERIFIED`, logged at ERROR with the association - the Business then
-   * exists at Lydia under that legal name and is linked to nothing. Neither token is logged.
-   * A transport failure is rethrown by `postForm` as it is: not an answer about the key.
+   * pair, error 103 otherwise (homologation 2026-10-30). EVERY other outcome - no token to check,
+   * 103, another code, an HTTP refusal, a 5xx or no answer - is the one typed
+   * `LYDIA_BUSINESS_CREATED_UNLINKED`: the Business exists and nothing will link it. The private
+   * token is never logged.
    */
   private async verifyBusinessKey(
     associationId: string,
     vendorToken: string,
     businessPrivateToken: string
   ): Promise<void> {
-    const refuse = (why: string): never => {
-      this.logger.error(
-        `[LYDIA] business/create for association ${associationId}: the Business private token ` +
-          `was NOT confirmed (${why}) - nothing linked; a Business now exists at Lydia unlinked`
+    const orphan = (why: string) =>
+      businessCreatedUnlinked(this.logger, associationId, vendorToken, why);
+    if (!businessPrivateToken) throw orphan('business/create answered no api_token_id');
+    let answer: { status?: unknown; error?: string };
+    try {
+      answer = await this.postForm<{ status?: unknown }>(
+        '/api/auth/vendortoken',
+        { vendor_token: vendorToken, vendor_id: businessPrivateToken },
+        [LYDIA_VENDOR_TOKEN_MISMATCH]
       );
-      throw new BadGatewayException({
-        code: LYDIA_BUSINESS_KEY_UNVERIFIED,
-        message: 'Lydia did not confirm the private token of the Business it created',
-      });
-    };
-    if (!businessPrivateToken) refuse('business/create answered no api_token_id');
-    const answer = await this.postForm<{ status?: unknown }>(
-      '/api/auth/vendortoken',
-      { vendor_token: vendorToken, vendor_id: businessPrivateToken },
-      [LYDIA_VENDOR_TOKEN_MISMATCH]
-    );
-    if (String(answer.error ?? '') === LYDIA_VENDOR_TOKEN_MISMATCH) {
-      refuse(`auth/vendortoken answered error ${LYDIA_VENDOR_TOKEN_MISMATCH}`);
+    } catch (err: unknown) {
+      const providerCode = (err as { getResponse?: () => unknown })?.getResponse?.() as
+        | { providerCode?: unknown }
+        | undefined;
+      throw orphan(
+        providerCode?.providerCode !== undefined
+          ? `auth/vendortoken refused it: ${String(providerCode.providerCode)}`
+          : `auth/vendortoken gave no answer: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
-    if (answer.status !== 'ok') refuse('auth/vendortoken did not answer status ok');
+    if (String(answer.error ?? '') === LYDIA_VENDOR_TOKEN_MISMATCH) {
+      throw orphan(`auth/vendortoken answered error ${LYDIA_VENDOR_TOKEN_MISMATCH}`);
+    }
+    if (answer.status !== 'ok') throw orphan('auth/vendortoken did not answer status ok');
     this.logger.log(
       `[LYDIA] business/create for association ${associationId}: private token confirmed by auth/vendortoken`
     );

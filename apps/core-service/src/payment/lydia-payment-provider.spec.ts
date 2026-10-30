@@ -6,7 +6,8 @@ import {
   LYDIA_CALL_TIMEOUT_MS,
   LYDIA_MAX_AMOUNT_CENTS,
   LYDIA_MIN_AMOUNT_CENTS,
-  LYDIA_BUSINESS_KEY_UNVERIFIED,
+  LYDIA_BUSINESS_CREATED_UNLINKED,
+  LYDIA_ORPHAN_LOG_TAG,
   LydiaPaymentProvider,
   PAYMENT_PROVIDER_REFUSED,
 } from './lydia-payment-provider';
@@ -482,13 +483,31 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
     expect(checked.get('vendor_id')).toBe('throwaway-private-key');
   });
 
+  const httpError = (status: number) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), {
+      response: { status },
+    });
   it.each([
-    ['error 103 from auth/vendortoken', { error: '103', message: 'Le token id ne correspond pas' }],
-    ['an answer that is not status ok', { status: 'maybe' }],
+    ['error 103', () => Promise.resolve({ data: { error: '103', message: 'Le token id' } })],
+    ['an answer that is not status ok', () => Promise.resolve({ data: { status: 'maybe' } })],
+    [
+      'another Lydia code',
+      () => Promise.resolve({ data: { error: '10', message: 'Non autorise' } }),
+    ],
+    ['an HTTP 400 refusal', () => Promise.reject(httpError(400))],
+    ['an HTTP 500', () => Promise.reject(httpError(500))],
+    [
+      'no answer at all',
+      () =>
+        Promise.reject(
+          Object.assign(new Error('timeout of 60000ms exceeded'), { code: 'ECONNABORTED' })
+        ),
+    ],
   ])(
-    'refuses with the TYPED LYDIA_BUSINESS_KEY_UNVERIFIED on %s, returning no key',
-    async (_l, check) => {
+    'auth/vendortoken with %s is the ONE typed LYDIA_BUSINESS_CREATED_UNLINKED, the orphan logged',
+    async (_label, check) => {
       const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       mockedAxios.post
         .mockResolvedValueOnce({
           data: {
@@ -498,7 +517,7 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
             dashboard_url: 'https://lydia-app.com/console/xyz',
           },
         })
-        .mockResolvedValueOnce({ data: check });
+        .mockImplementationOnce(check as never);
       await expect(
         makeProvider().createOnboarding({
           associationId: 'assoc-1',
@@ -506,11 +525,14 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
           returnUrl: 'u',
           legalProfile,
         })
-      ).rejects.toMatchObject({ status: 502, response: { code: LYDIA_BUSINESS_KEY_UNVERIFIED } });
+      ).rejects.toMatchObject({ status: 502, response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
       const logged = error.mock.calls.flat().map(String).join(' | ');
+      // The durable record of the orphan: its tag, the association and the PUBLIC vendor token.
+      expect(logged).toContain(LYDIA_ORPHAN_LOG_TAG);
       expect(logged).toContain('assoc-1');
+      expect(logged).toContain('vendor_token=vendor-token-xyz');
       expect(logged).not.toContain('throwaway-wrong-key');
-      error.mockRestore();
+      jest.restoreAllMocks();
     }
   );
 
@@ -526,7 +548,7 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
         returnUrl: 'u',
         legalProfile,
       })
-    ).rejects.toMatchObject({ response: { code: LYDIA_BUSINESS_KEY_UNVERIFIED } });
+    ).rejects.toMatchObject({ response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
     expect(mockedAxios.post.mock.calls).toHaveLength(1);
     error.mockRestore();
   });
@@ -640,7 +662,7 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     expect(logged).not.toContain('SIGNATURESECRET');
   });
 
-  it('never logs the api_token or api_token_id of a freshly created business', async () => {
+  it('never logs the api_token_id (the private token) of a freshly created business', async () => {
     const lines: string[] = [];
     const sink = (m: unknown) => void lines.push(String(m));
     jest.spyOn(Logger.prototype, 'log').mockImplementation(sink);
@@ -671,6 +693,7 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     });
     const logged = lines.join(' | ');
     expect(logged).toContain('business/create');
-    expect(logged).not.toMatch(/VENDORSECRET|PRIVATESECRET/);
+    // The private token never; the vendor token is public (lydia-api.md section 1) and may be logged.
+    expect(logged).not.toContain('PRIVATESECRET');
   });
 });

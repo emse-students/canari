@@ -610,13 +610,43 @@ So the onboarding (`POST /api/payments/onboarding`, core-service) now:
    `LYDIA_ACCOUNT_ALREADY_LINKED`, read BEFORE `business/create`; social-service's link is one
    `UPDATE ... WHERE "lydiaAccountId" IS NULL`, so two concurrent onboardings cannot both link. The
    screen maps the code (`lydiaOnboardingRefusal.ts`) and re-reads the payout account.
-2. **Proves the key** with `auth/vendortoken` (`vendor_token` + `vendor_id`). Anything but `status: "ok"`
-   (error 103, a missing `api_token_id`) is the typed 502 `LYDIA_BUSINESS_KEY_UNVERIFIED`, logged at
-   ERROR with the association: nothing is linked, and the Business exists at Lydia unlinked.
+2. **Proves the key** with `auth/vendortoken` (`vendor_token` + `vendor_id`). Only `status: "ok"` goes on.
 3. **Links the Business WITH its key** (`POST associations/:id/lydia-account`, internal secret): the
-   same column, encryption and binding as a pasted key, in the same statement as the vendor token. A
-   failed link FAILS the onboarding (502) instead of answering a success with nothing stored. The
-   browser receives the public pair only; the key is never logged (`LYDIA_LOG_REDACT_KEYS`).
+   same column, encryption and binding as a pasted key, in the same statement as the vendor token. The
+   browser receives the public pair only.
+
+The payout account is read first, before anything is created: a 404 is an unknown association (refused,
+nothing created) and a 5xx or a transport failure is the typed 503 `PAYOUT_ACCOUNT_UNREADABLE` - never
+read as "not linked", which would invite a second `business/create`. A link refused with the body code
+`LYDIA_ACCOUNT_ALREADY_LINKED` (a concurrent run won) is the same 409, classified on the code and not
+on the status.
+
+**What may be logged:** the `vendor_token` (`api_token`) is PUBLIC - it names a payment destination,
+it is in every callback and on the manager's screen - so an ERROR line may carry it, and the orphan's
+must. The Business private key (`api_token_id`, `vendor_id`) and every signature are secret and never
+logged (`LYDIA_LOG_REDACT_KEYS` in `lydia-payment-provider.ts`).
+
+#### An orphan Business: ONE typed outcome, and what an admin does
+
+Every failure AFTER a successful `business/create` - `auth/vendortoken` unreachable or 5xx, error 103 or
+any other Lydia code, a missing `api_token_id`, a link that fails for any reason but a concurrent run -
+is ONE answer: the typed 502 `LYDIA_BUSINESS_CREATED_UNLINKED`. The Business exists at Lydia, Canari
+links nothing, and the line logged at ERROR is
+
+```
+[LYDIA-ORPHAN] association <id>: Business vendor_token=<token> was created at Lydia and is NOT linked (<why>) ...
+```
+
+(a concurrent run that lost the link logs the same line before its 409: its Business is an orphan too).
+The screen branches on the code and says not to retry and to contact a platform administrator.
+**A retry can still create a second Business** - the association is not linked, so the 409 guard does
+not stop it; the no-retry message and the admin path below are the mitigation, not a lock.
+
+What the admin does: find the `[LYDIA-ORPHAN]` line for the association in core-service's log; give its
+`vendor_token` to Lydia's support and ask them to delete that Business (the API has no delete call);
+then let the association enrol again from its settings. Nothing is stored in Canari for an orphan, so
+there is nothing to clean here. **No report scans these lines today** (the hourly reports read
+databases, not core-service's log); a report that should would grep the tag `[LYDIA-ORPHAN]`.
 
 **The webhook is a log line, by necessity.** `business/create` carries `webhook` =
 `/api/payments/lydia-business-webhook` (public, multer-bounded, nginx zone `lydia_callback`). Its body
@@ -629,7 +659,8 @@ event, a forged "complete" field and an oversized body through it and asserts no
 
 **The paste field is gone** (production has no linked Business without a stored key, counted
 2026-10-30). Old store builds still embed it, so `PUT lydia-business-key` stays as a shim: a typed
-`410 LYDIA_KEY_PASTE_RETIRED`, nothing written, a WARN per hit; the `GET` status those builds read stays
+`410 LYDIA_KEY_PASTE_RETIRED`, nothing written, a WARN per hit - behind the old route's throttle and
+`MANAGE_PAYOUT_ACCOUNT` check, so the WARN counts managers on an old build and not anonymous noise; the `GET` status those builds read stays
 too ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)).
 
 **No key: no longer a reachable state** for a Business linked by the onboarding (lot 1 links it with
