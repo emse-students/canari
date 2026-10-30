@@ -1099,7 +1099,7 @@ user who holds none is a new person, and is not added (`automaticAdmission` in `
 proves no membership, so nothing is added (it used to fall through to the Add).
 
 Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
-(`JoinRequestBanner` for the conversations not on screen, and `JoinRequestRow` - a card at the end of
+(`JoinRequestBanner` for a PERSON's ask in the conversations not on screen - a `kind: 'device'` ask is never drawn there, owner 2026-10-30, only in its own conversation - and `JoinRequestRow` - a card at the end of
 the thread - for the one that is, user decision 2026-10-24: in the conversation, any member may
 accept; `joinRequests.svelte.ts`). The card FOLLOWS the store and is not a persisted system row: a
 stored row would outlive the ask and keep Add and Decline on screen for someone another member
@@ -1359,8 +1359,9 @@ machinery is kept, behind that one rule, for the device a signature will vouch f
 below), and its tests run under an explicit stand-in rule (`admit_as_if_vouched`).
 
 **One entry per device, bound to its key.** The ask (`kind: 'device'` on `JoinApprovalRequest` and
-`JoinRequest`) is one entry PER DEVICE, beside any ask of the same person, in the same banner and
-thread card with its own words (`join_request_device_body`, or `join_request_device_body_own` for the
+`JoinRequest`) is one entry PER DEVICE, beside any ask of the same person, drawn ONLY as the
+in-conversation card (`JoinRequestRow`) since 2026-10-30 - the app-wide banner skips device asks
+(owner: too intrusive), and its `find` skips them so one never hides a person's ask - with its own words (`join_request_device_body`, or `join_request_device_body_own` for the
 signed-in account's own device, `isOwnDeviceAsk`). It shows the device's name - the server's, a hint
 only - and the fingerprint of the signature key its KeyPackage carries, in groups of four
 (`deviceAskDetail`). The key is read once per session from one fetched package
