@@ -46,7 +46,7 @@ targets:
         # the background modes and the microphone string together). Others - CFBundleURLTypes,
         # BGTaskSchedulerPermittedIdentifiers, ... - are NOT mirrored, so xcodegen must not
         # regenerate the plist: it would drop them.
-        UIBackgroundModes: [remote-notification, processing, fetch, audio]
+        UIBackgroundModes: [remote-notification, processing, fetch, voip, audio]
         NSCameraUsageDescription: Canari utilise l'appareil photo pour vos appels vidéo, pour prendre des photos à partager dans vos conversations, des photos et vidéos pour vos publications, pour filmer vos CanaReels et pour diffuser vos directs.
         NSMicrophoneUsageDescription: Canari utilise le microphone pour vos appels audio et vidéo, pour enregistrer des messages vocaux, le son des vidéos que vous filmez pour vos publications et vos CanaReels, et le son de vos directs.
         NSPhotoLibraryUsageDescription: Canari accède à vos photos pour les partager dans vos conversations.

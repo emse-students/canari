@@ -160,6 +160,22 @@ describe(`the native ring's four switches agree with CALLS_NATIVE_RING_COMPILED 
     expect(backgroundModes().includes('voip'), 'Info.plist UIBackgroundModes voip').toBe(RING);
   });
 
+  it('the voip background mode in project.yml too, which an xcodegen run writes the plist from', () => {
+    const projectYml = read(resolve(APPLE, 'project.yml'));
+    const list = captured(
+      projectYml,
+      /UIBackgroundModes: \[([^\]]*)\]/,
+      'UIBackgroundModes in project.yml'
+    );
+    expect(
+      list
+        .split(',')
+        .map((s) => s.trim())
+        .includes('voip'),
+      'project.yml UIBackgroundModes voip'
+    ).toBe(RING);
+  });
+
   it('the USE_FULL_SCREEN_INTENT permission', () => {
     const declared = permissionTags().some((t) => t.includes('USE_FULL_SCREEN_INTENT'));
     expect(declared, 'AndroidManifest.xml USE_FULL_SCREEN_INTENT').toBe(RING);

@@ -714,8 +714,14 @@ describe('CallsService', () => {
 
       const sent = (token: string) =>
         fcmSend.mock.calls.map((c) => c[0]).find((m) => m.token === token);
-      // Android keeps the names its native layer reads.
-      expect(sent('fcm-a').data).toHaveProperty('callerName');
+      // Android is handed ids only: its ring names the caller from the phone's own copy (decision 6).
+      expect(sent('fcm-a').data).toEqual({
+        type: 'call_ring',
+        groupId: 'group-1',
+        callId: 'call-1',
+        callerId: 'caller',
+        hasVideo: 'false',
+      });
       // The iPhone is told only that a call is coming, in its own language (base locale when unknown).
       expect(sent('fcm-c').apns.payload.aps.alert).toEqual({
         title: 'Canari',
@@ -739,7 +745,7 @@ describe('CallsService', () => {
       // Android's ttl is the same window and carries no APNs header.
       expect(sent('fcm-a').android.ttl).toBe(60_000);
       // Neither the data nor the APNs payload keys carry a name: FCM merges the first into the second.
-      for (const token of ['fcm-c', 'fcm-d']) {
+      for (const token of ['fcm-a', 'fcm-c', 'fcm-d']) {
         const message = sent(token);
         for (const key of ['callerName', 'senderName', 'groupName']) {
           expect(message.data).not.toHaveProperty(key);

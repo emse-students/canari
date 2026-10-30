@@ -12,11 +12,6 @@
 /* A mention token in a decrypted body: the one user the extension can name, and everybody else. */
 "notif.mention.you" = "vous";
 "notif.mention.someone" = "quelqu'un";
-/* The legacy MLS call invite: only pre-WP-XP-5 callers send it as an alert push, and this process
-   is the one that renders it when the app is killed. The emoji stays in the code - it is not a
-   translation. */
-"notif.call.incoming" = "Appel entrant";
-"notif.call.incoming_video" = "Appel vidéo entrant";
 
 /* Server-composed pushes, moved here 2026-08-19: social-service sends a `contentKey` and at most a
    name and one fragment, and this process writes the sentence in the language chosen in the app. */
