@@ -851,7 +851,7 @@
     setControlRetryExecutor((refusal) => messaging.retryRefusedControl(refusal, msgCtx()));
     return () => setControlRetryExecutor(null);
   });
-  // A member's answer to a new person asking to join (`JoinRequestBanner`), run with the context of
+  // A member's answer to a new person asking to join (`JoinRequestRow`), run with the context of
   // the tap: admitting is this device's own Add, declining removes the roster row.
   onMount(() => {
     setJoinRequestHandlers({

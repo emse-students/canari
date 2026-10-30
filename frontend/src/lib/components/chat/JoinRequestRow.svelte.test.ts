@@ -64,7 +64,7 @@ describe('JoinRequestRow', () => {
 
     expect(target.querySelector('[data-join-request="carol"]')).not.toBeNull();
     expect(target.textContent).toContain('Name(carol)');
-    expect(button('Ajouter') ?? button('Add')).toBeDefined();
+    expect(button('Accepter') ?? button('Accept')).toBeDefined();
     expect(button('Refuser') ?? button('Decline')).toBeDefined();
   });
 
@@ -89,7 +89,7 @@ describe('JoinRequestRow', () => {
     raiseJoinRequest(ask('carol'));
     render();
 
-    (button('Ajouter') ?? button('Add'))!.click();
+    (button('Accepter') ?? button('Accept'))!.click();
     await tick();
     await tick();
 
@@ -120,7 +120,7 @@ describe('JoinRequestRow', () => {
     raiseJoinRequest(ask('carol'));
     render();
 
-    (button('Ajouter') ?? button('Add'))!.click();
+    (button('Accepter') ?? button('Accept'))!.click();
     await tick();
     await tick();
 
@@ -135,5 +135,60 @@ describe('JoinRequestRow', () => {
     render();
 
     expect(target.querySelectorAll('[data-join-request]')).toHaveLength(1);
+  });
+
+  it('words a person ask as a discreet line, never a banner', () => {
+    setJoinRequestHandlers({ approve: vi.fn(), decline: vi.fn() });
+    raiseJoinRequest(ask('carol'));
+    render();
+
+    expect(target.textContent).toContain('Name(carol) veut rejoindre la conversation par lien');
+    expect(target.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('draws a device ask as the same line, its key behind Details', () => {
+    setJoinRequestHandlers({ approve: vi.fn(), decline: vi.fn() });
+    raiseJoinRequest({
+      ...ask('dave', 'g1', 'dev1'),
+      kind: 'device',
+      keyFingerprint: 'abcd1234',
+      deviceLabel: 'Phone',
+    });
+    render();
+
+    expect(target.textContent).toContain('Nouvel appareil de Name(dave)');
+    expect(button('Ajouter')).toBeDefined();
+    const details = target.querySelector('details');
+    expect(details).not.toBeNull();
+    expect(details!.textContent).toContain('abcd 1234');
+    // The fingerprint is not inline: it lives only inside the disclosure.
+    expect(target.textContent!.replace(details!.textContent!, '')).not.toContain('abcd');
+  });
+
+  it('leaves a line for the member who declined, and none after an Accept', async () => {
+    const decline = vi.fn(async () => ({ done: true as const }));
+    const approve = vi.fn(async () => ({ done: true as const }));
+    setJoinRequestHandlers({ approve, decline });
+    raiseJoinRequest(ask('carol'));
+    raiseJoinRequest(ask('erin'));
+    render();
+
+    (
+      target.querySelector(
+        '[data-join-request="carol"] [data-join-answer="decline"]'
+      ) as HTMLElement
+    ).click();
+    (
+      target.querySelector('[data-join-request="erin"] [data-join-answer="approve"]') as HTMLElement
+    ).click();
+    await tick();
+    await tick();
+
+    expect(target.querySelector('[data-join-request]')).toBeNull();
+    expect(target.querySelector('[data-join-declined="carol"]')!.textContent).toContain(
+      'Vous avez refusé la demande de Name(carol)'
+    );
+    // An accepted ask is followed by the ordinary memberAdded notice, written by the Add itself.
+    expect(target.querySelector('[data-join-declined="erin"]')).toBeNull();
   });
 });

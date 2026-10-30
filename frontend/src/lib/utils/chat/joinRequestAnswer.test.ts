@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { deviceAskDetail } from './joinRequestAnswer';
-import type { JoinRequest } from './joinRequests.svelte';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { deviceAskDetail, pendingAskPreview } from './joinRequestAnswer';
+import { raiseJoinRequest, resetJoinRequests, type JoinRequest } from './joinRequests.svelte';
+
+vi.mock('$lib/utils/users/displayName', () => ({
+  getUserDisplayNameSync: (id: string) => `Name(${id})`,
+}));
 
 const deviceAsk = (deviceLabel?: string): JoinRequest => ({
   groupId: 'g1',
@@ -29,5 +33,37 @@ describe('deviceAskDetail - the key first, the server-given name after it', () =
     expect(
       deviceAskDetail({ groupId: 'g1', userId: 'peer', deviceIds: ['d1'] } as JoinRequest)
     ).toBeNull();
+  });
+});
+
+describe('pendingAskPreview - the conversation list says what the thread will', () => {
+  beforeEach(() => {
+    resetJoinRequests();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  it('is null while nothing is pending in that conversation', () => {
+    raiseJoinRequest({ groupId: 'other', requesterUserId: 'carol', requesterDeviceId: 'd1' });
+    expect(pendingAskPreview('g1', 'me')).toBeNull();
+  });
+
+  it('names a person asking to join by link', () => {
+    raiseJoinRequest({ groupId: 'g1', requesterUserId: 'carol', requesterDeviceId: 'd1' });
+    expect(pendingAskPreview('g1', 'me')).toBe(
+      'Name(carol) veut rejoindre la conversation par lien'
+    );
+  });
+
+  it('names an unseen device, and goes back to null once the ask is gone', () => {
+    raiseJoinRequest({
+      groupId: 'g1',
+      requesterUserId: 'dave',
+      requesterDeviceId: 'd9',
+      kind: 'device',
+      keyFingerprint: 'abcd',
+    });
+    expect(pendingAskPreview('g1', 'me')).toBe('Nouvel appareil de Name(dave)');
+    resetJoinRequests();
+    expect(pendingAskPreview('g1', 'me')).toBeNull();
   });
 });
