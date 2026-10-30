@@ -664,6 +664,31 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   and let every member's pending sweep re-raise it. The requester then stops asking once the row
   exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
 
+## A new device of a member is admitted by ONE approval per device, account-wide and durable (owner, 2026-10-30, not built)
+
+Guided by the owner's rule "le moins d'actions possible pour les utilisateurs". Two parts:
+
+- **(a) One prompt, one tap, every conversation.** When an account signs in on a new device, its
+  other devices show one prompt: "Nouvel appareil : c'est toi ?". One tap approves that device under
+  its key for EVERY conversation of the account - not only the approving device's own. The approval
+  is durable, not per-session; today the answers in `memberDeviceAnswers.ts` live for the session only.
+- **(b) The owner has no other device: a durable server row.** The ask is stored as a row, as a
+  link's ask is (`GroupMember.awaitingAdmission`), and every member's sweep re-raises it; the device
+  enters on any member's tap at that member's next launch, with no action from the owner. This MERGES
+  with [the server-row P2 above](#p2---a-further-devices-ask-is-memory-on-the-requester-and-24-h-on-the-server-make-it-a-server-row-decided-in-review-2026-10-30-not-built) - build one, not two.
+
+**Rejected:**
+
+- **Self-entry on revoking old devices**: it reopens the stolen-session lock-in (a thief revokes the
+  victim's devices and enters alone). It also does not work today: a revoked leaf stays in the tree
+  until a member's `removeStrayLeaves` collects it.
+- **An account recovery key (USK, [mls-protocol](protocols/mls-protocol.md) shape B)**: a LATER option
+  only, since it costs users an action. The owner's worry is the single-lost-device case; the answer
+  is that the history comes back from the members once a member adds the device. A conversation with
+  no member ever online has no reader and no holder of its history, whatever we build.
+
+Mechanism and the interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
+
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
 - On the owner seat (W1), same console as the item above. Two lines repeat together at 12:14:44,
@@ -4135,6 +4160,8 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 **Delivery in lots, each a pre-release on dev then a stable:** lot 1 - outgoing calls signed over encoded values, the key captured at creation, the webhook, re-run refused, existing Businesses migrated; lot 2 - the step-by-step screen; lot 3 - cashiers; lot 4 - refunds.
 
 **Owed first:** one production check that a cashier added by the API sees the Business in the Lydia Pro app (the 2026-10-23 blocker); approved by the user on 2026-10-30.
+
+**Lot 2 storage, confirmed by the owner directly on 2026-10-30:** the Responsable's phone is stored sealed, only `phoneEnd` readable, with a migration, an Art. 30 register entry and a privacy policy update together in the same lot.
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 
