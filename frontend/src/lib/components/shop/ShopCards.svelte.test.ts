@@ -143,6 +143,62 @@ describe('MembershipCard', () => {
   });
 });
 
+// Owner review of 1.5.1-alpha.7: the Etudiant tier's 5 EUR member price was shown nowhere. The
+// label logic is covered in `viewerPrice.test.ts`; this mounts the row, so the MARKUP that renders
+// it (`data-member-offer` in `ProductPrice.svelte`) is covered too.
+describe('MembershipCard member offer on a tier row', () => {
+  const base = product({
+    id: 'base',
+    name: 'Cotisation',
+    type: 'membership',
+    variantKey: 'cercle',
+    amountCents: 300,
+    viewerTierRelation: 'lower',
+  });
+  const etudiant = (over: Partial<AssociationProduct> = {}) =>
+    product({
+      id: 'etu',
+      name: 'Etudiant',
+      type: 'membership',
+      variantKey: 'etudiant',
+      amountCents: 1000,
+      amountCentsMember: 500,
+      memberPriceTag: 'cotisant:cercle',
+      memberPriceTierKey: 'cercle',
+      viewerTierRelation: 'higher',
+      viewerDueCents: 1000,
+      ...over,
+    });
+
+  it('shows what holders of the linked tier pay to a viewer who does NOT qualify', () => {
+    const tier = etudiant();
+    cmp = mount(MembershipCard, {
+      target: document.body,
+      props: { tiers: [tier], allProducts: [base, tier] },
+    });
+    flushSync();
+    const row = document.querySelector('[data-tier-row]')!;
+    expect(row.querySelector('[data-member-offer]')?.textContent).toBe(
+      m.shop_member_offer_tier({ amount: formatAmount(500, 'eur'), tier: 'Cotisation' })
+    );
+    expect(row.querySelector('[data-due]')?.textContent).toBe(formatAmount(1000, 'eur'));
+    expect(row.querySelector('[data-struck]')).toBeNull();
+  });
+
+  it('shows no offer to a viewer who qualifies: the due price and the struck full price instead', () => {
+    const tier = etudiant({ viewerDueCents: 500 });
+    cmp = mount(MembershipCard, {
+      target: document.body,
+      props: { tiers: [tier], allProducts: [base, tier] },
+    });
+    flushSync();
+    const row = document.querySelector('[data-tier-row]')!;
+    expect(row.querySelector('[data-member-offer]')).toBeNull();
+    expect(row.querySelector('[data-due]')?.textContent).toBe(formatAmount(500, 'eur'));
+    expect(row.querySelector('[data-struck]')?.textContent).toBe(formatAmount(1000, 'eur'));
+  });
+});
+
 describe('ProductCard', () => {
   it('shows a localized label for the top-up, never the snake_case key, and the locale price', () => {
     cmp = mount(ProductCard, {

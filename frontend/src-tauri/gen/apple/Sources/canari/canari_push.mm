@@ -2812,8 +2812,8 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
   if (callId.length == 0) {
     return;
   }
-  // The switch is checked here, at the FCM `call_ring`'s ring: a peer on an older build can still ring this device, and raising a system call UI
-  // for a call the webview will refuse to join is worse than no ring at all.
+  // The switch is checked here, at the FCM `call_ring`'s ring: raising a system call UI for a
+  // call the webview will refuse to join is worse than no ring at all.
   if (!kCanariCallsEnabled) {
     NSLog(@"[CanariCallKit] calls disabled - not reporting incoming call %@", callId);
     return;

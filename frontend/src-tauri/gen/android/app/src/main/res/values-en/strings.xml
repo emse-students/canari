@@ -11,6 +11,8 @@
     <string name="notif_channel_calls_desc">Incoming calls (ringtone)</string>
     <string name="notif_channel_call_ongoing_name">Ongoing call</string>
     <string name="notif_channel_call_ongoing_desc">The notification shown during a call, with the button to hang up</string>
+    <string name="notif_action_call_mute">Mute</string>
+    <string name="notif_action_call_unmute">Unmute</string>
     <string name="notif_channel_mentions_name">Canari mentions</string>
     <string name="notif_channel_mentions_desc">Messages that mention you (@)</string>
     <string name="notif_channel_reactions_name">Reactions to your messages</string>
