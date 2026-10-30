@@ -37,6 +37,13 @@ If cash payment:
   -> Association admin validates/cancels via EditFormsTab
 ```
 
+## The server validates the item model, not only the frontend
+
+A form or booking space is written through `FormItemDto` (`apps/social-service/src/forms/dto/form.dto.ts`, reused by `space.dto.ts`). Two write-side bounds live there:
+
+- **The question type must be one of `SUPPORTED_QUESTION_TYPES`** (`forms/dto/question-types.ts`) - the backend mirror of the canonical `QUESTION_TYPES` in `src/lib/forms/questionTypes.ts`. An unlisted type (the dev-only junk `text`/`select` a hand-posted call once sent) is now rejected with a 400. The `single` alias is read by `FormQuestion.svelte` for old rows but never written, so it is deliberately absent from the write allowlist. The two lists cannot share a module across the package boundary, so a drift test (`forms/dto/form.dto.spec.ts`) reads the frontend source and fails when they differ.
+- **`basePrice` is integer CENTS** (`@IsInt`), so a fractional cent is rejected; the client sends `Math.round(euros * 100)`.
+
 ## The fill page is three reusable pieces and its own payment logic (2026-09-30)
 
 `routes/forms/[id]/+page.svelte` was ~1300 lines holding everything; what any page filling a form

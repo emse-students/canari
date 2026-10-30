@@ -22,6 +22,7 @@ import {
   FILE_RETENTION_MIN_DAYS,
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
+import { SUPPORTED_QUESTION_TYPES } from './question-types';
 
 /** Max keys per answers record - prevents oversized payloads. */
 const ANSWERS_MAX_KEYS = 50;
@@ -90,8 +91,12 @@ export class FormItemDto {
   @IsBoolean()
   required: boolean;
 
-  @IsString()
-  @IsNotEmpty()
+  /**
+   * The question's kind, one of {@link SUPPORTED_QUESTION_TYPES} - the backend mirror of the
+   * frontend's canonical `QUESTION_TYPES` (`frontend/src/lib/forms/questionTypes.ts`). The `single`
+   * alias is read but never written, so it is not accepted here.
+   */
+  @IsIn(SUPPORTED_QUESTION_TYPES)
   type: string;
 
   @IsArray()
@@ -168,7 +173,9 @@ export class CreateFormDto {
   @IsOptional()
   description?: string;
 
-  @IsNumber()
+  /** The form's base price in CENTS (the client sends `Math.round(euros * 100)`, the service prices
+   * `baseCents: form.basePrice`), so a fractional value would be a fractional cent - integer only. */
+  @IsInt()
   @Min(0)
   basePrice: number;
 
