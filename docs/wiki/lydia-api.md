@@ -29,7 +29,7 @@ No token, signature or key value appears in this repository, on this page or any
   a callback verifying with it. **Canari captures it at creation** (enrolment lot 1): the onboarding
   sends the pair to `auth/vendortoken`, and only an `ok` links the Business, the key stored encrypted
   exactly as a pasted one; a 103 links nothing ([payments](frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)).
-  The paste field of PR #1940 stays until the associations linked before lot 1 hold a key.
+  The paste field of PR #1940 is gone; its route answers a typed 410 to old store builds.
 - Lydia can regenerate a Business private token; the old one is invalid at once (csm, 2026-10-20). Nothing
   here regenerates it.
 - Lydia asked that the `vendor_token_id` stay strictly private in the backend (csm).

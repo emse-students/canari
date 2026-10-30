@@ -2468,31 +2468,6 @@ export async function getAssociationPayoutAccount(
 }
 
 /**
- * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
- * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
- * callbacks are refused and a payment is confirmed only when the payer returns to the app.
- */
-export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
-  );
-}
-
-/**
- * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
- * server; replaces any key already stored. Answers `{ set: true }` and never the value.
- */
-export async function setLydiaBusinessKey(
-  associationId: string,
-  businessPrivateToken: string
-): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
-    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
-  );
-}
-
-/**
  * Unlinks the association's Lydia Business from Canari (MANAGE_PAYOUT_ACCOUNT).
  * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
  */

@@ -2,13 +2,9 @@ import { Logger, Module, ParseUUIDPipe, type INestApplication } from '@nestjs/co
 import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { NestFactory } from '@nestjs/core';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { SECRET_BOX_ENV } from '../common/secret-box';
 import { InternalLydiaKeyController } from '../internal/internal-lydia-key.controller';
-import {
-  AssociationsController,
-  LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE,
-} from './associations.controller';
+import { AssociationsController, LYDIA_KEY_PASTE_RETIRED } from './associations.controller';
 import { AssociationsService, LYDIA_ACCOUNT_ALREADY_LINKED } from './associations.service';
 import type { ProductsService } from './products.service';
 import type { PartnershipsService } from './partnerships.service';
@@ -34,7 +30,7 @@ type Row = {
   complete?: boolean;
 };
 
-/** The association table as the raw SQL of `setLydiaBusinessKey` & co. reads and writes it. */
+/** The association table as the raw SQL of `setLydiaAccountId` & co. reads and writes it. */
 function makeService(rows: Row[]) {
   const table = rows.map((r) => ({ ...r }));
   const byId = (id: string) => table.find((r) => r.id === id);
@@ -57,10 +53,6 @@ function makeService(rows: Row[]) {
         return table
           .filter((r) => r.lydiaAccountId === params[0])
           .map((r) => ({ id: r.id, complete: r.complete === true }));
-      }
-      if (sql.startsWith('UPDATE associations SET "lydiaBusinessKeyCiphertext" = $1')) {
-        byId(params[1])!.sealed = params[0];
-        return [];
       }
       if (sql.startsWith('UPDATE associations SET "lydiaBusinessKeyCiphertext" = NULL')) {
         byId(params[0])!.sealed = null;
@@ -108,23 +100,11 @@ afterAll(() => {
   else process.env[SECRET_BOX_ENV] = previousSecret;
 });
 
-describe('AssociationsService - the Lydia Business key', () => {
-  it('stores ciphertext only, logs an audit line without the value, and opens for core', async () => {
-    const { service, table } = makeService([
-      { id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null },
-    ]);
-    const logs = await loggedDuring(() => service.setLydiaBusinessKey(ASSO_A, ` ${KEY_A} `, 'u1'));
-    expect(table[0].sealed).toMatch(/^v1\./);
-    expect(table[0].sealed).not.toContain(KEY_A);
-    expect(logs).toContain('[AUDIT] Lydia Business key SET');
-    expect(logs).not.toContain(KEY_A);
-    await expect(service.isLydiaBusinessKeySet(ASSO_A)).resolves.toBe(true);
-    const lookupLogs = await loggedDuring(async () =>
-      expect(await service.lydiaCallbackKey('vendor-a')).toBe(KEY_A)
-    );
-    expect(lookupLogs).not.toContain(KEY_A);
-  });
+/** Links `id` to `vendor` with `key`, the one way a key is stored since enrolment lot 1. */
+const link = (service: AssociationsService, id: string, vendor: string, key: string) =>
+  loggedDuring(() => service.setLydiaAccountId(id, vendor, null, key));
 
+describe('AssociationsService - the Lydia Business key', () => {
   it('answers null alike for an unknown vendor token and a Business with no key', async () => {
     const { service } = makeService([{ id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null }]);
     await expect(service.lydiaCallbackKey('vendor-a')).resolves.toBeNull();
@@ -134,45 +114,21 @@ describe('AssociationsService - the Lydia Business key', () => {
 
   it('a ciphertext copied to another association, or kept across a new Business, does not open', async () => {
     const { service, table } = makeService([
-      { id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null },
+      { id: ASSO_A, lydiaAccountId: null, sealed: null },
       { id: ASSO_B, lydiaAccountId: 'vendor-b', sealed: null },
     ]);
-    await service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1');
+    await link(service, ASSO_A, 'vendor-a', KEY_A);
     table[1].sealed = table[0].sealed;
-    table[0].sealed = null;
     await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-b')).toBeNull());
     // Re-onboarded: the vendor token changed, the old ciphertext stays bound to the old one.
     table[1].sealed = null;
-    await service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1');
     table[0].lydiaAccountId = 'vendor-a2';
     await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-a2')).toBeNull());
   });
 
-  it('refuses a malformed key, an association with no Business, and a server with no secret', async () => {
-    const { service, table } = makeService([
-      { id: ASSO_A, lydiaAccountId: null, sealed: null },
-      { id: ASSO_B, lydiaAccountId: 'vendor-b', sealed: null },
-    ]);
-    await loggedDuring(async () => {
-      for (const bad of ['', 'short', 'has a space in it', 'x'.repeat(257), 42, null]) {
-        await expect(service.setLydiaBusinessKey(ASSO_B, bad, 'u1')).rejects.toMatchObject({
-          status: 400,
-        });
-      }
-      await expect(service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1')).rejects.toMatchObject({
-        status: 400,
-      });
-      delete process.env[SECRET_BOX_ENV];
-      await expect(service.setLydiaBusinessKey(ASSO_B, KEY_A, 'u1')).rejects.toMatchObject({
-        status: 503,
-      });
-    });
-    expect(table.every((r) => r.sealed === null)).toBe(true);
-  });
-
   it('THROWS a 503 when the server lost its encryption secret - a config failure, not a null verdict', async () => {
-    const { service } = makeService([{ id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null }]);
-    await service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1');
+    const { service } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    await link(service, ASSO_A, 'vendor-a', KEY_A);
     delete process.env[SECRET_BOX_ENV];
     const logs = await loggedDuring(async () =>
       expect(service.lydiaCallbackKey('vendor-a')).rejects.toMatchObject({ status: 503 })
@@ -183,11 +139,11 @@ describe('AssociationsService - the Lydia Business key', () => {
 
   it('refuses rather than guesses when two associations hold a key for one vendor token', async () => {
     const { service, table } = makeService([
-      { id: ASSO_A, lydiaAccountId: 'vendor-x', sealed: null },
-      { id: ASSO_B, lydiaAccountId: 'vendor-x', sealed: null },
+      { id: ASSO_A, lydiaAccountId: null, sealed: null },
+      { id: ASSO_B, lydiaAccountId: null, sealed: null },
     ]);
-    await service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1');
-    await service.setLydiaBusinessKey(ASSO_B, 'throwaway-business-key-of-b', 'u1');
+    await link(service, ASSO_A, 'vendor-x', KEY_A);
+    await link(service, ASSO_B, 'vendor-x', 'throwaway-business-key-of-b');
     expect(table.every((r) => r.sealed)).toBe(true);
     await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-x')).toBeNull());
   });
@@ -207,8 +163,9 @@ describe('AssociationsService.setLydiaAccountId - the key captured at business/c
     expect(table[0].sealed).not.toContain(KEY_A);
     expect(logs).toContain('[AUDIT] Lydia Business linked');
     expect(logs).not.toContain(KEY_A);
-    // The SAME storage as a pasted key: the callback lookup opens it.
+    // The column the callback lookup opens, and the status the old screens read.
     await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-a')).toBe(KEY_A));
+    await expect(service.isLydiaBusinessKeySet(ASSO_A)).resolves.toBe(true);
   });
 
   it('refuses a re-run with the TYPED 409 and leaves the linked Business and its key untouched', async () => {
@@ -278,12 +235,17 @@ describe('AssociationsService.lydiaBusinessOfVendorToken - a read for the unsign
   });
 });
 
-describe('AssociationsController - the Business key routes are MANAGE_PAYOUT_ACCOUNT and write-only', () => {
+/**
+ * THE PASTE ROUTE IS A SHIM FOR OLD STORE BUILDS (legacy-compatibility.md): they still show the
+ * paste field, so `PUT :id/lydia-business-key` answers a typed 410 and writes nothing. The GET
+ * status route stays for those same screens.
+ */
+describe('AssociationsController - the retired paste route and the status route', () => {
   function makeController(allowed: boolean) {
     const service = {
       canManagePayoutAccount: jest.fn(() => Promise.resolve(allowed)),
-      setLydiaBusinessKey: jest.fn(() => Promise.resolve()),
       isLydiaBusinessKeySet: jest.fn(() => Promise.resolve(true)),
+      setLydiaAccountId: jest.fn(() => Promise.resolve()),
     };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
@@ -297,7 +259,7 @@ describe('AssociationsController - the Business key routes are MANAGE_PAYOUT_ACC
     return { controller, service };
   }
 
-  it.each(['setLydiaBusinessKey', 'lydiaBusinessKeyStatus'] as const)(
+  it.each(['retiredLydiaBusinessKeyPaste', 'lydiaBusinessKeyStatus'] as const)(
     '%s is behind the sign-in guard and parses :id as a UUID',
     (handler) => {
       const guards = Reflect.getMetadata(
@@ -313,38 +275,35 @@ describe('AssociationsController - the Business key routes are MANAGE_PAYOUT_ACC
     }
   );
 
-  it('throttles the key WRITE per user and association', () => {
-    const guards = Reflect.getMetadata(
-      GUARDS_METADATA,
-      (AssociationsController.prototype as unknown as Record<string, object>).setLydiaBusinessKey
-    ) as unknown[];
-    expect(guards).toEqual([NginxAuthGuard, UserResourceThrottlerGuard]);
-    expect(LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE).toBeGreaterThanOrEqual(1);
-    expect(LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE).toBeLessThanOrEqual(10);
-  });
-
-  it('refuses a non-manager with a 403, and the service is never asked to write or read', async () => {
-    const { controller, service } = makeController(false);
-    await expect(
-      controller.setLydiaBusinessKey('member', undefined, ASSO_A, { businessPrivateToken: KEY_A })
-    ).rejects.toMatchObject({ status: 403 });
-    await expect(
-      controller.lydiaBusinessKeyStatus('member', undefined, ASSO_A)
-    ).rejects.toMatchObject({ status: 403 });
-    expect(service.setLydiaBusinessKey).not.toHaveBeenCalled();
-    expect(service.isLydiaBusinessKeySet).not.toHaveBeenCalled();
-  });
-
-  it('answers a manager `{ set }` and nothing else - never the value', async () => {
+  it('answers the typed 410 LYDIA_KEY_PASTE_RETIRED, writes nothing, and logs no key', async () => {
     const { controller, service } = makeController(true);
-    const written = await controller.setLydiaBusinessKey('treasurer', undefined, ASSO_A, {
-      businessPrivateToken: KEY_A,
+    let thrown: unknown;
+    const logs = await loggedDuring(async () => {
+      try {
+        controller.retiredLydiaBusinessKeyPaste('treasurer', ASSO_A);
+      } catch (e: unknown) {
+        thrown = e;
+      }
     });
-    const read = await controller.lydiaBusinessKeyStatus('treasurer', undefined, ASSO_A);
-    expect(written).toEqual({ set: true });
-    expect(read).toEqual({ set: true });
-    expect(JSON.stringify([written, read])).not.toContain(KEY_A);
-    expect(service.setLydiaBusinessKey).toHaveBeenCalledWith(ASSO_A, KEY_A, 'treasurer');
+    expect(thrown).toMatchObject({ status: 410, response: { code: LYDIA_KEY_PASTE_RETIRED } });
+    expect(JSON.stringify((thrown as { getResponse(): unknown }).getResponse())).not.toContain(
+      KEY_A
+    );
+    expect(logs).toContain('old client');
+    expect(logs).not.toContain(KEY_A);
+    for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled();
+  });
+
+  it('the status route still answers a manager `{ set }` and refuses anyone else', async () => {
+    const allowed = makeController(true);
+    await expect(
+      allowed.controller.lydiaBusinessKeyStatus('treasurer', undefined, ASSO_A)
+    ).resolves.toEqual({ set: true });
+    const refused = makeController(false);
+    await expect(
+      refused.controller.lydiaBusinessKeyStatus('member', undefined, ASSO_A)
+    ).rejects.toMatchObject({ status: 403 });
+    expect(refused.service.isLydiaBusinessKeySet).not.toHaveBeenCalled();
   });
 });
 
@@ -356,8 +315,8 @@ describe('POST /api/internal/associations/lydia-callback-key - core-service only
   beforeAll(async () => {
     process.env.INTERNAL_SECRET = INTERNAL;
     process.env[SECRET_BOX_ENV] = SECRET;
-    const { service } = makeService([{ id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null }]);
-    await service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1');
+    const { service } = makeService([{ id: ASSO_A, lydiaAccountId: null, sealed: null }]);
+    await link(service, ASSO_A, 'vendor-a', KEY_A);
     @Module({
       controllers: [InternalLydiaKeyController],
       providers: [{ provide: AssociationsService, useValue: service }],

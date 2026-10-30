@@ -588,7 +588,8 @@ back to `disabled`.
 - **While live**, anything unexpected is reported at once: a payment request nobody launched, an
   association other than the test one holding a Business, any callback arriving.
 
-**Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
+**Where the key came from until enrolment lot 1: the payout manager typed it** (now captured at
+`business/create`, [below](#the-key-is-captured-at-businesscreate-enrolment-lot-1)). `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
 `associations."lydiaBusinessKeyCiphertext"` (migration 100): AES-256-GCM (`common/secret-box.ts`)
 under a key derived by HKDF from `LYDIA_KEY_ENCRYPTION_SECRET`, with `<associationId>:<vendorToken>` as
@@ -626,14 +627,14 @@ token (`internal/associations/lydia-business-of-vendor-token`, a SELECT) and log
 anything else, always answering 200. A global admin keeps "Valider l'onboarding". A spec drives every
 event, a forged "complete" field and an oversized body through it and asserts no write.
 
-**The paste field stays for now.** Associations linked before lot 1 hold no captured key; the
-`PUT lydia-business-key` route and its field are removed once production counts none of them.
+**The paste field is gone** (production has no linked Business without a stored key, counted
+2026-10-30). Old store builds still embed it, so `PUT lydia-business-key` stays as a shim: a typed
+`410 LYDIA_KEY_PASTE_RETIRED`, nothing written, a WARN per hit; the `GET` status those builds read stays
+too ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)).
 
-**No key yet: the designed state.** The Lydia panel shows "Non renseignee" and says callbacks cannot be
-verified yet. Every callback of that association is refused (400); a FORM payment is still confirmed
-when the payer comes back (`confirm-payment`). Nothing checks a key when it is saved - a wrong one shows
-only at the first refused callback - so the panel says so, and the PUT is throttled per user and
-association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard`).
+**No key: no longer a reachable state** for a Business linked by the onboarding (lot 1 links it with
+its key or not at all). Were one keyless anyway, every callback of that association is refused (400)
+and a FORM payment is still confirmed when the payer comes back (`confirm-payment`).
 
 **The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
 without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32

@@ -3001,9 +3001,9 @@ ${rejectionReason}`
   /**
    * Links the Business `business/create` just made to an association: its vendor_token, its
    * dashboard URL and its private token, each handed out ONCE by Lydia (core-service has already
-   * had the token confirmed by Lydia's `auth/vendortoken`). The private token is stored exactly as
-   * a pasted one (`setLydiaBusinessKey`): encrypted, bound to this association and this vendor
-   * token, never logged.
+   * had the token confirmed by Lydia's `auth/vendortoken`). The private token is stored encrypted
+   * (`secret-box.ts`), bound to this association and this vendor token, never logged - the one way
+   * a key is written since the paste route was retired.
    *
    * ONE statement, and only onto an association with NO Business linked: a second onboarding is a
    * typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED`, never a silent replacement - and being one UPDATE, two
@@ -3140,54 +3140,6 @@ ${rejectionReason}`
       `[AUDIT] Lydia Business key cleared on association ${sanitizeLog(id)} (unlink)`
     );
     await this.invalidatePostListCaches();
-  }
-
-  /**
-   * Stores the association's Lydia Business private token, ENCRYPTED and bound to the association
-   * and its current vendor token (`secret-box.ts`), so its callbacks can be verified. WRITE-ONLY:
-   * nothing ever answers the value to a browser, and nothing logs it - the audit line names the
-   * association and the actor, never the token. The caller checks MANAGE_PAYOUT_ACCOUNT.
-   *
-   * Refused while no Business is linked (there is no vendor token to bind it to), and refused with
-   * a 503 when the server has no encryption secret, BEFORE anything is written.
-   */
-  async setLydiaBusinessKey(id: string, rawKey: unknown, actorId: string): Promise<void> {
-    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
-    if (!LYDIA_BUSINESS_KEY_RE.test(key)) {
-      this.logger.warn(
-        `[LYDIA] Business key refused on association ${sanitizeLog(id)}: not a token shape`
-      );
-      throw new BadRequestException('Invalid Lydia Business private token');
-    }
-    if (!isSecretBoxConfigured()) {
-      this.logger.error(
-        `[LYDIA] Business key refused on association ${sanitizeLog(id)}: LYDIA_KEY_ENCRYPTION_SECRET is not configured`
-      );
-      throw new ServiceUnavailableException('Business key storage is not configured');
-    }
-    const asso = await this.assoRepo.findOne({
-      where: { id },
-      select: { id: true, lydiaAccountId: true },
-    });
-    if (!asso) throw new NotFoundException('Association not found');
-    if (!asso.lydiaAccountId) {
-      this.logger.warn(
-        `[LYDIA] Business key refused on association ${sanitizeLog(id)}: no Business linked`
-      );
-      throw new BadRequestException('No Lydia Business is linked to this association');
-    }
-    const sealed = sealSecret(
-      LYDIA_BUSINESS_KEY_PURPOSE,
-      lydiaBusinessKeyContext(id, asso.lydiaAccountId),
-      key
-    );
-    await this.assoRepo.query(
-      `UPDATE associations SET "lydiaBusinessKeyCiphertext" = $1 WHERE id = $2`,
-      [sealed, id]
-    );
-    this.logger.log(
-      `[AUDIT] Lydia Business key SET on association ${sanitizeLog(id)} by ${sanitizeLog(actorId)}`
-    );
   }
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */

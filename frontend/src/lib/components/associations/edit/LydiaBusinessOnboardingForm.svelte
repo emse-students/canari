@@ -19,7 +19,6 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import Input from '$lib/components/ui/Input.svelte';
-  import LydiaBusinessKeyField from './LydiaBusinessKeyField.svelte';
 
   interface Props {
     asso: Association;
@@ -201,7 +200,6 @@
     <p class="text-text-muted text-xs">
       {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{account.lydiaAccountId}</span>
     </p>
-    <LydiaBusinessKeyField associationId={asso.id} />
     <div class="flex flex-wrap items-center gap-2">
       {#if account.lydiaDashboardUrl}
         {@const dashboardUrl = account.lydiaDashboardUrl}
