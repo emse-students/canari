@@ -19,8 +19,8 @@
    * THE TYPICAL WEEK, TO PAINT (D49): seven columns, a row per 30 minutes (Q-R11). Press and drag
    * a rectangle: starting on a closed cell OPENS it, starting on an open one CLOSES it - one
    * gesture, no brush to choose. A finger paints at once and the painter does not scroll the page
-   * under it (`touch-action: none`), as decided. The open hours are drawn as RUNS, so an edge typed off the grain (18:45) is drawn
-   * where it is. Letting go calls `onPaint`; the parent owns the lines and what they mean.
+   * under it (`touch-action: none`), as decided. The open hours are drawn as RUNS, so an edge off the grain (18:45) is drawn where
+   * it is, and each run has a pencil for its exact hours. Letting go calls `onPaint`; the parent owns the lines and what they mean.
    */
   interface Props {
     week: WeekRuns;
@@ -45,13 +45,17 @@
   /** The run whose exact hours are being edited (its pencil was pressed), drawn with a ring. */
   let picked = $state<SelectedRun | null>(null);
   /** Said under the run's hours when a change could not be applied, until the next one. */
-  let refused = $state(false);
-  /** The picked run only while it is still drawn: a paint or a template may have removed it. */
-  const selected = $derived(
-    picked && week[picked.day]?.some(([s, e]) => s === picked!.start && e === picked!.end)
-      ? picked
-      : null
-  );
+  let refused = $state<'order' | 'refused' | null>(null);
+  /**
+   * The drawn run holding the picked hours, with ITS edges: an edit that merged the run with a
+   * neighbour is still the picked one (the panel stays), and a paint or a template that removed it
+   * leaves nothing selected.
+   */
+  const selected = $derived.by<SelectedRun | null>(() => {
+    if (!picked) return null;
+    const run = week[picked.day]?.find(([s, e]) => s <= picked!.start && e >= picked!.end);
+    return run ? { day: picked.day, start: run[0], end: run[1] } : null;
+  });
   const dayLabel = (day: number) => {
     const name = dayNames[day] ?? '';
     return name.charAt(0).toUpperCase() + name.slice(1);
@@ -61,16 +65,17 @@
 
   function select(run: SelectedRun) {
     Log.d('BOOKINGS', `painter run picked day=${run.day} ${run.start}-${run.end}`);
-    refused = false;
+    refused = null;
     picked = run;
   }
 
   function edit(start: number, end: number) {
     if (!selected || (start === selected.start && end === selected.end)) return;
-    const applied = onEdit(selected, start, end);
-    refused = !applied;
-    if (applied) picked = { day: selected.day, start, end };
-    else Log.i('BOOKINGS', 'painter run edit refused by the parent');
+    // A range that ends before it starts is refused HERE, said aloud, and never reaches the parent.
+    const verdict = end <= start ? 'order' : onEdit(selected, start, end) ? null : 'refused';
+    refused = verdict;
+    if (verdict === null) picked = { day: selected.day, start, end };
+    else Log.i('BOOKINGS', `painter run edit refused (${verdict}) ${start}-${end}`);
   }
 
   interface Drag {
@@ -214,7 +219,7 @@
               <button
                 type="button"
                 data-run-edit
-                class="bg-cn-surface border-cn-border text-text-main absolute top-0 right-0 flex size-5 items-center justify-center rounded border"
+                class="ui-icon-button ui-icon-button--sm bg-cn-surface border-cn-border text-text-main absolute top-0 right-0 z-10 rounded border"
                 aria-label={m.bookings_avail_run_aria({
                   day: dayLabel(day),
                   from: timeOfMinutes(start),
@@ -270,7 +275,9 @@
         />
       </div>
       {#if refused}
-        <p class="text-red-err text-xs" role="alert">{m.bookings_avail_run_refused()}</p>
+        <p class="text-red-err text-xs" role="alert">
+          {refused === 'order' ? m.bookings_avail_problem_order() : m.bookings_avail_run_refused()}
+        </p>
       {/if}
       <button
         type="button"

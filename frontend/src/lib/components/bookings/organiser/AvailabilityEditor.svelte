@@ -8,6 +8,7 @@
     paintRows,
     paintSlotRows,
     slotLengthFor,
+    slotStep,
     weekRunsOf,
     weekSlotsOf,
     type PaintMode,
@@ -110,6 +111,8 @@
   const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
   const step = $derived(stepMinutes && 60 % stepMinutes === 0 ? stepMinutes : 15);
+  /** What the painter's exact-hours pickers sit on: the step, or what the slots' edges need. */
+  const runStep = $derived(fixedSlots ? slotStep(rows, slotMinutes) : step);
 
   /** Monday..Sunday in the reader's language. */
   const weekdayNames = $derived(weekdayNamesIn(locale, 'long'));
@@ -295,7 +298,7 @@
       dayNames={weekdayNames}
       {shortDayNames}
       onPaint={paint}
-      {step}
+      step={runStep}
       onEdit={editRunOf}
       hint={slotLength === null
         ? undefined

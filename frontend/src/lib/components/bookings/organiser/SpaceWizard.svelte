@@ -150,6 +150,7 @@
   /** The painter's exact hours of a run: the wizard's week is always runs (a step space). */
   function editRunOf(run: SelectedRun, start: number, end: number): boolean {
     const next = editRun(draft.rows, run.day, [run.start, run.end], start, end);
+    if (next === null) return false;
     if (next !== draft.rows) draft.rows = [...next];
     return true;
   }

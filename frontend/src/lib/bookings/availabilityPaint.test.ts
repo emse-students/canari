@@ -18,6 +18,7 @@ import {
   rowsOfWeek,
   slotLengthFor,
   slotLengthOf,
+  slotStep,
   weekSlotsOf,
   templateWeek,
   weekRunsOf,
@@ -164,14 +165,15 @@ describe('painting a rectangle', () => {
 describe('editing the exact edges of a run (the keyboard and the off-grain route)', () => {
   it('moves an edge off the grain and keeps it', () => {
     const rows = [weekly(1, '10:00', '12:00')];
-    const next = editRun(rows, 0, [600, 720], 600, 735);
+    const next = editRun(rows, 0, [600, 720], 600, 735)!;
     expect(stored(next)).toEqual(['1 10:00-12:15']);
   });
 
-  it('merges with the run it now touches, and ignores a non-range', () => {
+  it('merges with the run it now touches, and refuses a non-range', () => {
     const rows = [weekly(1, '08:00', '10:00'), weekly(1, '11:00', '12:00')];
-    expect(stored(editRun(rows, 0, [480, 600], 480, 660))).toEqual(['1 08:00-12:00']);
-    expect(editRun(rows, 0, [480, 600], 600, 600)).toBe(rows);
+    expect(stored(editRun(rows, 0, [480, 600], 480, 660)!)).toEqual(['1 08:00-12:00']);
+    expect(editRun(rows, 0, [480, 600], 600, 600)).toBeNull();
+    expect(editRun(rows, 0, [480, 600], 700, 650)).toBeNull();
   });
 
   it('a slot keeps its neighbours separate, and is refused on an overlap', () => {
@@ -181,6 +183,13 @@ describe('editing the exact edges of a run (the keyboard and the off-grain route
       '1 14:30-15:00',
     ]);
     expect(editSlot(rows, 0, [840, 870], 840, 880)).toBeNull();
+    expect(editSlot(rows, 0, [840, 870], 860, 860)).toBeNull();
+  });
+
+  it('a fixed-slot space picks hours on the step its slots need', () => {
+    expect(slotStep([weekly(1, '14:00', '14:30')], 30)).toBe(30);
+    expect(slotStep([weekly(1, '14:25', '14:50')], 25)).toBe(5);
+    expect(slotStep([], null)).toBe(60);
   });
 });
 

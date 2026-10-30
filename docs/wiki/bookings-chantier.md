@@ -237,7 +237,11 @@ the dated lines apart, closures. **"En clair" (the weekly lines typed by hand) w
   says so when it would overlap another or is a night split in two lines (`editSlot`). The wizard
   has the same. A weekly line the editor refuses (start = end) is not drawn, so it is LISTED under
   the painter ("Plages à corriger") with its remove button: never an invisible blocker. Still not
-  possible: creating an off-grain edge from nothing (edit a painted run after).
+  possible: creating an off-grain edge from nothing (edit a painted run after). A fixed-slot
+  space's pickers sit on the step its slots need (`slotStep`: 60/30/20/15/10, else 5), so 14:25 is
+  reachable; an end at or before the start is refused aloud, and a pencil is a 28 px
+  `ui-icon-button--sm` at the run's top right: on touching 30-min slots it overlaps the next
+  slot's, the later one winning, so a run that short is reached by keyboard or its upper part.
 - **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
   Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
   Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
