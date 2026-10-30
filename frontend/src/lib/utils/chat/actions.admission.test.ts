@@ -290,6 +290,49 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     });
   });
 
+  it('says the ask about an unseen device ONCE per decision, and again when the epoch, the key or the shown ask moves', async () => {
+    // DEVREVOKE-KEYGROUP (2026-10-29): two passes of the same request printed the same decision twice.
+    resetJoinRequests();
+    const lines: string[] = [];
+    const log = (msg: string) => lines.push(msg);
+    const onJoinApprovalRequested = vi.fn((ask: JoinApprovalRequest) => raiseJoinRequest(ask));
+    const mlsService = serverVouches({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'peer:old-phone']),
+    });
+    const asked = () => lines.filter((l) => l.includes('is a device this one never saw')).length;
+
+    await run('g-adm-once', mlsService, 'peer', { onJoinApprovalRequested, log });
+    await run('g-adm-once', mlsService, 'peer', { onJoinApprovalRequested, log });
+    expect(asked()).toBe(1);
+    // Still RAISED every time: a sweep keeps only what it raised.
+    expect(onJoinApprovalRequested).toHaveBeenCalledTimes(2);
+    expect(pendingJoinRequests()).toHaveLength(1);
+
+    // A roster change moved the epoch: decided again, said again.
+    vi.mocked(mlsService.getEpoch).mockReturnValue(4);
+    await run('g-adm-once', mlsService, 'peer', { onJoinApprovalRequested, log });
+    expect(asked()).toBe(2);
+
+    // The ask left the screen (answered elsewhere, a sweep, a reset): never stranded, asked again.
+    resetJoinRequests();
+    await run('g-adm-once', mlsService, 'peer', { onJoinApprovalRequested, log });
+    expect(asked()).toBe(3);
+    expect(pendingJoinRequests()).toHaveLength(1);
+    resetJoinRequests();
+  });
+
+  it('forgets the decisions said about unseen devices at sign-out', async () => {
+    // The record is the leaving account's: the next account's first decision must be said in full.
+    // `useMessaging` resets it next to its other leaving-account records.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(
+      join(process.cwd(), 'src', 'lib', 'composables', 'useMessaging.svelte.ts'),
+      'utf8'
+    );
+    expect(src).toContain('resetUnseenDeviceDecisions();');
+  });
+
   it("asks about the account's OWN unseen device the same way", async () => {
     const onJoinApprovalRequested = vi.fn();
     const mlsService = serverVouches({
