@@ -262,26 +262,38 @@ was not kept, so this cause is read from the code and is not proven.
 - `cancelReAdd` ends the record. `resetReAddCooldowns` does NOT end it: that reset is what the
   second pass of 2026-10-29 points at.
 - A server that names no pair gets no record, so the device asks on every pass as before.
+- **Only an ask the server STORED is recorded.** `sendWelcomeRequest` returns what the server did
+  (`WelcomeRequestAnswer`). `stored` (`no_peer_online`) means the ask is kept for every member's next
+  connection (`pending_welcome`, `pending_welcome_notify`, 24 h). `forwarded` reaches one online
+  member's screen and nothing else, so it is not recorded and the device asks again on its cadence.
+  A failed send or no answer is not recorded either.
+- The record is cleared when a peer comes online (`forgetProvenDeadEnds`, the same edge as the
+  dead-end record) and at sign-out (`resetMemberApprovalAsks`, from `useMessaging`).
 
-**What keeps the device from being stranded.** A device with a `pending` seat is raised to every
-member again by their own pending-invitation sweep, from that durable row
-(`processPendingInvitations` -> `askAboutUnseenDevice`). A member who was offline at the ask is
-handed it when it connects (`pending_welcome_notify`). **A device with NO seat has neither.** Its ask
-lives only on the screens of the members who were online when it was sent. It is sent again when the
-pair moves or when this page starts again (the record is memory). That cost is accepted.
+**What it costs, and what is not covered.** While a member is online, a further device's ask is
+forwarded on every cadence, about once a minute per group. The member says its decision once and
+counts the repeats (below), so the cost is requests, not noise. A stored ask is replayed to members
+by the server, but only for 24 h. A device with a `pending` seat is also re-raised by every member's
+own pending-invitation sweep from that durable row (`processPendingInvitations` ->
+`askAboutUnseenDevice`). **A device with NO seat has no durable ask.** It depends on its own cadence
+and on the 24 h store, and the record is memory, so a reload asks once more. The durable fix is on
+the [backlog](../backlog.md): store a further device's ask as a server row, as a link's ask is, and
+let members re-raise it.
 
-**The member says its decision once.** `askAboutUnseenDevice` (`actions.ts`) logs
+**The member says its decision once and counts repeats.** `askAboutUnseenDevice` (`actions.ts`) logs
 `... is a device this one never saw ...` once per (group, `user:device`, key fingerprint, this
-device's epoch of the group). It stays silent only while the ask is still shown (`isDeviceAskShown`,
-`joinRequests.svelte.ts`). The ask itself is still raised on every request, because a pending sweep
-keeps only what it raised (`settleSweptJoinRequests`). A new epoch, another key, or an ask that left
-the screen decides again and logs again.
+device's epoch of the group), while the ask is still shown (`isDeviceAskShown`,
+`joinRequests.svelte.ts`). A repeat of the same decision is not silent: it is counted and said at its
+1st, 10th and 100th occurrence (`DecisionLog`, `utils/decisionLog.ts`, the client twin of the
+server's `RepeatCounter`). The record is bounded (2000 slots) and reset at sign-out. The ask itself is
+still raised on every request, because a pending sweep keeps only what it raised
+(`settleSweptJoinRequests`). A new epoch, another key, or an ask that left the screen decides again.
 
 **The answerer's withholding works the same way.** `utils/graine/frameHandler.ts` says
 `withholding N seed(s)` and `not answering ...'s history ask ...` once per asking device and key group
-(`sayAnswerDecisionOnce`). Each line is keyed on what it was decided on: which sessions were withheld
-and why. The answer itself is unchanged on every ask. Pinned by `recovery.test.ts`,
-`actions.admission.test.ts` and `frameHandler.test.ts`.
+(`sayAnswerDecisionOnce`, same `DecisionLog`), with repeats counted at 1, 10 and 100. Each line is
+keyed on what it was decided on: which sessions were withheld and why. Pinned by `recovery.test.ts`,
+`decisionLog.test.ts`, `actions.admission.test.ts` and `frameHandler.test.ts`.
 
 ## Verification (tests + runtime)
 

@@ -116,7 +116,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       isDistributionGroup: vi.fn().mockReturnValue(false),
       getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
       registerDistributionGroup: vi.fn(),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       getUserGroups: vi.fn().mockResolvedValue([
         { groupId: 'g-in-wasm', name: 'InWasm', isGroup: true },
         { groupId: 'g-not-in-wasm', name: 'NotInWasm', isGroup: true },
@@ -221,7 +221,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       forgetGroup: vi.fn(),
       // Asked by the audit, which never owes one for a distribution group.
       isDistributionGroup: vi.fn().mockReturnValue(false),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       getUserGroups: vi.fn().mockResolvedValue([
         {
           groupId: 'g-deleted',
@@ -272,7 +272,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue([]),
       forgetGroup: vi.fn(),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       getUserGroups: vi
         .fn()
         .mockResolvedValue([{ groupId: 'g-live', name: 'Live', isGroup: true }]),

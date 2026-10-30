@@ -61,6 +61,7 @@ import {
   treeHoldsUser,
 } from '$lib/mls-client/leafIdentity';
 import { isDeviceAskShown } from './joinRequests.svelte';
+import { DecisionLog } from '$lib/utils/decisionLog';
 import {
   DeviceTrustRefusedError,
   isDeviceTrustRefusal,
@@ -316,9 +317,17 @@ async function unseenDeviceKey(
  * `[WELCOME_REQ] ... is a device this one never saw` line twice for each of six conversations. What
  * the decision rests on is the device, its key and the tree it was read from; while none of them
  * moved and the ask is still shown, the line has nothing new to say. A new epoch (a roster change),
- * another key, or an ask no longer on screen re-decides and says it again - never a clock.
+ * another key, or an ask no longer on screen re-decides and says it again - never a clock. A REPEAT
+ * of the same decision is still counted and said at its 1st, 10th, 100th... occurrence
+ * ({@link DecisionLog}): a device asking again and again against one state is evidence. Bounded, and
+ * reset at sign-out ({@link resetUnseenDeviceDecisions}).
  */
-const unseenDeviceDecidedAt = new Map<string, string>();
+const unseenDeviceDecidedAt = new DecisionLog(2000);
+
+/** Forgets every decision said about an unseen device (sign-out, tests). */
+export function resetUnseenDeviceDecisions(): void {
+  unseenDeviceDecidedAt.reset();
+}
 
 /**
  * Puts the ask about a DEVICE this device never saw, of a user already in the conversation, to this
@@ -359,13 +368,18 @@ async function askAboutUnseenDevice(
   // the store's own raise is idempotent - only the line is not repeated.
   const slot = `${groupId}|${canonicalUserId(requesterUserId)}:${requesterDeviceId}`;
   const decidedAt = `${key.fingerprint}@${mlsService.getEpoch(groupId)}`;
-  const sameDecision =
-    unseenDeviceDecidedAt.get(slot) === decidedAt &&
-    isDeviceAskShown(groupId, requesterUserId, requesterDeviceId, key.fingerprint);
-  if (!sameDecision) {
-    unseenDeviceDecidedAt.set(slot, decidedAt);
+  // An ask no longer on screen is decided again, whatever was said before.
+  if (!isDeviceAskShown(groupId, requesterUserId, requesterDeviceId, key.fingerprint)) {
+    unseenDeviceDecidedAt.forget(slot);
+  }
+  const noted = unseenDeviceDecidedAt.note(slot, decidedAt);
+  if (noted?.say === 'decision') {
     log(
       `${tag} ${device} is a device this one never saw, of a member of ${short}... - not added automatically, a member's approval of key ${key.fingerprint} is asked`
+    );
+  } else if (noted?.say === 'repeat') {
+    log(
+      `${tag} ${device} asked again in ${short}... against the same key and epoch, repeat ${noted.nth} (said at 1, 10, 100...)`
     );
   }
   onJoinApprovalRequested?.({

@@ -171,6 +171,7 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  WelcomeRequestAnswer,
   DistributionGapListener,
   DistributionGapVerdict,
   DistributionGroupStore,
@@ -2931,13 +2932,26 @@ export abstract class BaseMlsService implements IMlsService {
   // All methods below are pure pass-throughs to this.delivery. Both Web and Tauri
   // implementations were 100% identical, so they live here once.
 
-  /** Announces to group members that this device needs a Welcome. */
-  async sendWelcomeRequest(groupId: string): Promise<void> {
-    await this.delivery.deliveryPost('welcome-request', {
+  /**
+   * Asks a member to Welcome this device, and reads what the server did with the ask
+   * ({@link WelcomeRequestAnswer}): `forwarded` to one online member, `stored` for every member's
+   * next connection, or `null` when no answer said either - said here, since no answer is not a
+   * statement that the ask was put.
+   */
+  async sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer> {
+    const answer = await this.delivery.deliveryPost('welcome-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    if (answer?.status === 'forwarded' && typeof answer.target === 'string') {
+      return { status: 'forwarded', target: answer.target };
+    }
+    if (answer?.status === 'no_peer_online') return { status: 'stored' };
+    console.warn(
+      `[MLS] welcome_request for ${groupId.slice(0, 8)}... got no answer naming what was done with it (status ${answer === null ? 'none' : String(answer.status)})`
+    );
+    return null;
   }
 
   /**

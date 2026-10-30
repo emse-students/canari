@@ -593,6 +593,17 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - The requester now asks once per epoch pair (`memberApprovalAskedAt` in `recovery.ts`). The member
     says its decision once per (group, device, key, epoch) while the ask is shown (`actions.ts`).
     Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-device-asks-once-per-epoch-pair).
+  - Review of #2718: the pair is recorded only when the server STORED the ask (no member online).
+    A `forwarded` ask is put again on the cadence. The record is cleared when a peer comes online
+    and at sign-out. Repeats of the same decision are counted and said at 1, 10 and 100.
+
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built)
+
+- Today a further device of a member with no seat has no durable ask. The requester re-asks on its
+  cadence, the server keeps a stored ask for 24 h, and a reload asks once more.
+- The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
+  and let every member's pending sweep re-raise it. The requester then stops asking once the row
+  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-device-asks-once-per-epoch-pair).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 

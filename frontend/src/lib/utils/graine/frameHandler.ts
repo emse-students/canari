@@ -6,6 +6,7 @@ import { decodeAppMessage, encodeAppMessage, mkGraineBundle } from '$lib/proto/c
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { toBase64 } from '$lib/utils/hex';
+import { DecisionLog } from '$lib/utils/decisionLog';
 import {
   announceGraineRepair,
   cacheGraineSession,
@@ -324,17 +325,15 @@ function seedOutsideScope(
  * ask - the answer is unchanged - only a repeat of the same decision is not said again. The value is
  * the decision's own facts (the withheld sessions and why, the counts behind a refusal), so a salon
  * registered meanwhile, a seed arriving or a roster change re-decides and re-logs; nothing is frozen,
- * and no clock is involved.
+ * and no clock is involved. A REPEAT IS STILL COUNTED, and said at its 1st, 10th, 100th...
+ * occurrence ({@link DecisionLog}): an asker that keeps asking against the same state is evidence.
+ * One slot per asking device and key group per line, bounded.
  */
-const answerDecisionsSaid = new Map<string, string>();
-
-/** The bound on {@link answerDecisionsSaid}: one slot per asking device and key group per line. */
-const ANSWER_DECISIONS_SAID_MAX = 2000;
+const answerDecisionsSaid = new DecisionLog(2000);
 
 /**
- * Runs `say` unless the same `decision` was the last one said in `slot`
- * ({@link answerDecisionsSaid}). The oldest slot goes at the bound, which can only cost one repeated
- * line, never a missing one.
+ * Runs `say` when `decision` is new for its slot ({@link answerDecisionsSaid}), and says the count of
+ * a repeat of the same decision at its 1st, 10th, 100th... occurrence.
  */
 function sayAnswerDecisionOnce(
   frame: DistributionFrame,
@@ -342,19 +341,19 @@ function sayAnswerDecisionOnce(
   decision: string,
   say: () => void
 ): void {
-  const slot = `${line}|${frame.sender}:${frame.senderDeviceId ?? '-'}|${frame.groupId}`;
-  if (answerDecisionsSaid.get(slot) === decision) return;
-  if (!answerDecisionsSaid.has(slot) && answerDecisionsSaid.size >= ANSWER_DECISIONS_SAID_MAX) {
-    const oldest = answerDecisionsSaid.keys().next().value;
-    if (oldest !== undefined) answerDecisionsSaid.delete(oldest);
+  const asker = `${frame.sender}:${frame.senderDeviceId ?? '-'}`;
+  const noted = answerDecisionsSaid.note(`${line}|${asker}|${frame.groupId}`, decision);
+  if (noted?.say === 'decision') say();
+  else if (noted?.say === 'repeat') {
+    console.info(
+      `[GRAINE] ${frame.groupId.slice(0, 8)}... the same ${line} decision for ${frame.sender.slice(0, 8)}'s device, repeat ${noted.nth} (said at 1, 10, 100...)`
+    );
   }
-  answerDecisionsSaid.set(slot, decision);
-  say();
 }
 
 /** Forgets what was said about withheld answers (sign-out, tests): the next decision is said again. */
 export function resetAnswerDecisionsSaid(): void {
-  answerDecisionsSaid.clear();
+  answerDecisionsSaid.reset();
 }
 
 /**

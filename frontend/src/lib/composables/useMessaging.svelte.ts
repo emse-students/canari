@@ -104,6 +104,8 @@ import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 import { resetAnswerDecisionsSaid } from '$lib/utils/graine/frameHandler';
+import { resetUnseenDeviceDecisions } from '$lib/utils/chat/actions';
+import { resetMemberApprovalAsks } from '$lib/utils/chat/recovery';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -284,6 +286,9 @@ export function useMessaging() {
     resetJoinRequests();
     // And what this device said about the history it withheld: the next account's asks are new.
     resetAnswerDecisionsSaid();
+    // And what it decided and asked about unseen devices: the leaving account's records, both.
+    resetUnseenDeviceDecisions();
+    resetMemberApprovalAsks();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */

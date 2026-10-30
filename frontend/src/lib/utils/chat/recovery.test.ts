@@ -63,7 +63,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // this group becomes routable at that instant.
     notifyConversationAvailable: vi.fn(),
     getLocalGroups: vi.fn().mockReturnValue([]),
-    sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    sendWelcomeRequest: vi.fn().mockResolvedValue(null),
     sendBaseRefreshRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     // A reconciliation waits for this device's own inbound queue before asking anybody anything;
@@ -457,6 +457,8 @@ describe('requestReAdd', () => {
       deps.mlsService.externalJoin = vi
         .fn()
         .mockResolvedValue({ joined: false, reason: 'further_device' });
+      // STORED: no member online, so the server keeps the ask for every member's next connection.
+      deps.mlsService.sendWelcomeRequest = vi.fn().mockResolvedValue({ status: 'stored' });
 
       await requestReAdd('g1', deps);
       resetReAddCooldowns();
@@ -481,6 +483,82 @@ describe('requestReAdd', () => {
       );
       expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
       expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+    });
+
+    describe('only an ask the server STORED is recorded (review of #2718)', () => {
+      const furtherOnPair = (answer: unknown) => {
+        const deps = makeDeps();
+        deps.mlsService.getGroupMeta = vi.fn().mockResolvedValue({
+          groupId: 'g1',
+          isGroup: true,
+          deletedAt: null,
+          baseEpoch: 4,
+          activeEpoch: 4,
+        });
+        deps.mlsService.getDeviceMemberships = unadmitted();
+        deps.mlsService.externalJoin = vi
+          .fn()
+          .mockResolvedValue({ joined: false, reason: 'further_device' });
+        deps.mlsService.sendWelcomeRequest =
+          answer instanceof Error
+            ? vi.fn().mockRejectedValue(answer)
+            : vi.fn().mockResolvedValue(answer);
+        return deps;
+      };
+      const twoPasses = async (deps: ReturnType<typeof makeDeps>) => {
+        await requestReAdd('g1', deps);
+        resetReAddCooldowns();
+        await requestReAdd('g1', deps);
+      };
+
+      it('a failed send records nothing: the next pass asks again', async () => {
+        const deps = furtherOnPair(new Error('401'));
+        await twoPasses(deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+        expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('welcome_request failed'));
+        expect(deps.log).not.toHaveBeenCalledWith(expect.stringContaining('approval is asked at'));
+      });
+
+      it('no answer records nothing either', async () => {
+        const deps = furtherOnPair(null);
+        await twoPasses(deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+      });
+
+      it("a FORWARDED ask lives on one member's screen, so it is put again on the cadence", async () => {
+        const deps = furtherOnPair({ status: 'forwarded', target: 'user-b:web-b' });
+        await twoPasses(deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+        expect(deps.log).toHaveBeenCalledWith(
+          expect.stringContaining('forwarded to one online member')
+        );
+      });
+
+      it('a peer coming online clears a stored ask, and so does sign-out', async () => {
+        const deps = furtherOnPair({ status: 'stored' });
+        await requestReAdd('g1', deps);
+        forgetProvenDeadEnds(deps.log);
+        expect(deps.log).toHaveBeenCalledWith(
+          expect.stringContaining('1 stored approval ask(s) will be put again')
+        );
+        resetReAddCooldowns();
+        await requestReAdd('g1', deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+
+        // Sign-out: `useMessaging` calls the reset next to its other leaving-account records.
+        resetMemberApprovalAsks();
+        resetReAddCooldowns();
+        await requestReAdd('g1', deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(3);
+        const { readFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const src = readFileSync(
+          join(process.cwd(), 'src', 'lib', 'composables', 'useMessaging.svelte.ts'),
+          'utf8'
+        );
+        expect(src).toContain('resetMemberApprovalAsks();');
+        expect(src).toContain('resetUnseenDeviceDecisions();');
+      });
     });
 
     it('a server naming no epoch pair records nothing - the further device asks on every pass', async () => {

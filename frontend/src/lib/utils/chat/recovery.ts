@@ -4,6 +4,7 @@ import type {
   IMlsService,
   UserGroupRow,
   DeviceMembershipRow,
+  WelcomeRequestAnswer,
 } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
@@ -128,6 +129,16 @@ const noRepairerAt = new Map<string, string>();
  * does - and the session setup is the one caller of that reset (`setupMessageHandler`). The record
  * is a proof about the SERVER's state, keyed by this account and device, so a new session of the same
  * page has nothing to re-ask. {@link cancelReAdd} ends it (the group joined, or recovery ended).
+ *
+ * **WRITTEN ONLY FOR AN ASK THE SERVER STORED** (`no_peer_online`: kept for every member's next
+ * connection). An ask `forwarded` to one online member lives on that member's screen alone, and a
+ * failed one nowhere, so neither is recorded and the next pass asks again. **And cleared by the two
+ * edges that make a stored ask worth putting again**: a peer coming online
+ * ({@link forgetProvenDeadEnds} - the stored ask is drained to it, but it may not be the member who
+ * decides) and sign-out ({@link resetMemberApprovalAsks}).
+ *
+ * MEMORY, AND THAT IS ITS COST: a reload re-asks once. The durable shape - a further device's ask as a
+ * server row, like a link's ask, re-raised by every member's sweep - is on the backlog.
  */
 const memberApprovalAskedAt = new Map<string, string>();
 
@@ -136,7 +147,10 @@ function memberApprovalSlot(groupId: string, deps: RecoveryDeps): string {
   return `${deps.userId}:${deps.mlsService.getDeviceId()}|${groupId}`;
 }
 
-/** Test seam: forgets every recorded approval ask ({@link memberApprovalAskedAt}). */
+/**
+ * Forgets every recorded approval ask ({@link memberApprovalAskedAt}) - at sign-out, since the record
+ * is the leaving account's, and between tests.
+ */
 export function resetMemberApprovalAsks(): void {
   memberApprovalAskedAt.clear();
 }
@@ -189,6 +203,15 @@ export function resetReAddCooldowns(): void {
  * locked-out group into a pass per edge.
  */
 export function forgetProvenDeadEnds(log: (msg: string) => void): void {
+  // The stored approval asks go on the same edge ({@link memberApprovalAskedAt}): a member came
+  // online, and the one who decides may be that member or another, so the ask is put again once.
+  if (memberApprovalAskedAt.size > 0) {
+    log(
+      `[READD] a peer came back online - ${memberApprovalAskedAt.size} stored approval ask(s) will be ` +
+        `put again on the next pass`
+    );
+    memberApprovalAskedAt.clear();
+  }
   if (noRepairerAt.size === 0) return;
   log(
     `[READD] a peer came back online - ${noRepairerAt.size} group(s) recorded as unrepairable will ` +
@@ -994,15 +1017,17 @@ export async function requestReAdd(
   }
 
   // A FURTHER DEVICE OF A MEMBER: its door is a member's Add, asked for here.
-  // ASKED ONCE PER PAIR ({@link memberApprovalAskedAt}): recorded against the pair this pass read,
-  // and a server that names no pair records nothing, so it is asked again on the next pass.
+  // ASKED ONCE PER PAIR ({@link memberApprovalAskedAt}), AND ONLY ONCE THE ASK IS HELD: the server
+  // STORED it for every member's next connection. A `forwarded` ask lives on one member's screen,
+  // and a failed one nowhere, so neither is recorded and the next pass asks again. A server that
+  // names no pair records nothing either.
   if (outcome.reason === 'further_device') {
-    await askAMemberToReAddUs(
+    const answer = await askAMemberToReAddUs(
       groupId,
       deps,
       "a further device of a member - a member's Add, not this device's own join"
     );
-    if (pair !== undefined) {
+    if (pair !== undefined && answer?.status === 'stored') {
       memberApprovalAskedAt.set(approvalSlot, pair);
       deps.log(
         `[READD] ${groupId.slice(0, 8)}... a member's approval is asked at ${pair} - not asked again ` +
@@ -1258,16 +1283,26 @@ async function askAMemberToReAddUs(
   groupId: string,
   deps: RecoveryDeps,
   context: string
-): Promise<void> {
-  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest… (${context})`);
-  await deps.mlsService
-    .sendWelcomeRequest(groupId)
-    .catch((e) =>
-      deps.log(`[READD] welcome_request failed for ${groupId.slice(0, 8)}...: ${String(e)}`)
-    );
+): Promise<WelcomeRequestAnswer> {
+  const short = groupId.slice(0, 8);
+  deps.log(`[READD] ${short}... sendWelcomeRequest… (${context})`);
+  let answer: WelcomeRequestAnswer;
+  try {
+    answer = await deps.mlsService.sendWelcomeRequest(groupId);
+  } catch (e) {
+    deps.log(`[READD] welcome_request failed for ${short}...: ${String(e)}`);
+    return null;
+  }
+  // WHAT THE SERVER DID, NOT "SENT": a request that reached nobody used to read exactly like one a
+  // member holds, and the record that stops a further device's re-ask was written on either.
   deps.log(
-    `[READD] welcome_request sent for ${groupId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+    !answer
+      ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
+      : answer.status === 'stored'
+        ? `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
+        : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
+  return answer ?? null;
 }
 
 /**
