@@ -1,4 +1,5 @@
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { MlsDeliveryApi } from './mlsDeliveryApi';
 import { ADDRESSED_HISTORY_CAPABILITY } from './frameDelivery';
 
@@ -28,6 +29,22 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     a.deviceId = 'd1';
     return a;
   };
+
+  // Review of #2726: the pull tells the store when it gets NO answer, so it must also tell it when
+  // it gets one - the raw fetch reaches no `trackedFetch`, and a flag only ever set would hold every
+  // later mailbox barrier after a long outage.
+  it('clears a known-down link the moment a page is answered, whatever its status', async () => {
+    connectivity.reset();
+    connectivity.isOnline = true;
+    connectivity.notifyServerUnreachable();
+    expect(connectivity.isOffline).toBe(true);
+    const fetchFn = vi.fn().mockResolvedValueOnce(new Response('busy', { status: 503 }));
+
+    await api(fetchFn).pullPendingMessagesJson();
+
+    expect(connectivity.isOffline).toBe(false);
+    connectivity.reset();
+  });
 
   it('hands every page to onPage as it lands, and follows the createdAt cursor', async () => {
     const fetchFn = vi

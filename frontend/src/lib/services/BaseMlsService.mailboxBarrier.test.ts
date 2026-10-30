@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import {
   noteUnackedFrame,
   refusedBacklogIsQueued,
@@ -553,6 +554,20 @@ describe('the mailbox barrier on a link known down', () => {
     connectivity.notifyServerReachable();
     pullPendingMessagesJson.mockResolvedValue(undefined);
 
+    await svc.waitForMessageQueueIdle('archive replay', null);
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
+  });
+
+  // Review of #2726: a deadline (the token refresh's, say) is already counted by `trackedFetch`
+  // towards STALLS_BEFORE_UNREACHABLE; marking the server unreachable on it would skip that count.
+  it('does not mark the server unreachable on a DEADLINE, and the next barrier pulls again', async () => {
+    pullPendingMessagesJson.mockRejectedValue(
+      new RequestDeadlineError('read', 30_000, 'POST', '/api/auth/refresh', 0)
+    );
+
+    await svc.waitForMessageQueueIdle('archive replay', null);
+    expect(connectivity.isOffline).toBe(false);
     await svc.waitForMessageQueueIdle('archive replay', null);
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);

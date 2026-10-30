@@ -11,6 +11,8 @@
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
@@ -53,8 +55,13 @@ function mls(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function restore(conversations: SvelteMap<string, Conversation>, service: ReturnType<typeof mls>) {
+function restore(
+  conversations: SvelteMap<string, Conversation>,
+  service: ReturnType<typeof mls>,
+  onArchiveReplaysSkipped: (ids: string[]) => void = vi.fn()
+) {
   return loadExistingConversations({
+    onArchiveReplaysSkipped,
     storage: {
       getConversations: vi.fn(async () => [
         { id: 'g-1', name: 'Equipe', lifecycle: 'active' },
@@ -82,21 +89,34 @@ describe('the restore against a server that got no answer', () => {
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     replay.mockClear();
+    connectivity.reset();
     warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
-  afterEach(() => warn.mockRestore());
+  afterEach(() => {
+    warn.mockRestore();
+    connectivity.reset();
+  });
 
-  it('skips every archive replay when the batch got no answer, and says so once', async () => {
+  /** What the real delivery API does on no answer: tells the store, then throws (typed). */
+  const noAnswer = (e: unknown) => {
+    connectivity.notifyServerUnreachable();
+    throw e;
+  };
+
+  it('skips every archive replay when the batch got no answer, says so once, and hands them on', async () => {
     const conversations = new SvelteMap<string, Conversation>();
     const service = mls({
-      fetchHistoryBatch: vi.fn(async () => {
-        throw new TransportFailureError(new TypeError('Failed to fetch'));
-      }),
+      fetchHistoryBatch: vi.fn(async () =>
+        noAnswer(new TransportFailureError(new TypeError('Failed to fetch')))
+      ),
     });
+    const skipped = vi.fn();
 
-    await restore(conversations, service);
+    await restore(conversations, service, skipped);
 
     expect(replay).not.toHaveBeenCalled();
+    // Owed to the next reconnect - the restore does not run again on its own.
+    expect(skipped).toHaveBeenCalledExactlyOnceWith(['g-1', 'g-2']);
     // The local half still ran: the stored page is on the row.
     expect(conversations.get('g-1')?.messages.map((m) => m.id)).toEqual(['stored-1']);
     const lines = warn.mock.calls.map((c: unknown[]) => String(c[0]));
@@ -108,9 +128,9 @@ describe('the restore against a server that got no answer', () => {
   it('does not even send the batch when the group list got no answer', async () => {
     const conversations = new SvelteMap<string, Conversation>();
     const service = mls({
-      getUserGroups: vi.fn(async () => {
-        throw new TransportFailureError('error sending request for url (...)');
-      }),
+      getUserGroups: vi.fn(async () =>
+        noAnswer(new TransportFailureError('error sending request for url (...)'))
+      ),
     });
 
     await restore(conversations, service);
@@ -131,6 +151,25 @@ describe('the restore against a server that got no answer', () => {
       'g-1',
       'g-2',
     ]);
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('[CATCHUP] the server'));
+  });
+
+  // Review of #2726: ONE deadline on a slow but working link is not a link known down, and skipping
+  // every replay on it would be a regression against the per-group path.
+  it('keeps the per-group replay when the batch hit a deadline on a link not known down', async () => {
+    const conversations = new SvelteMap<string, Conversation>();
+    const service = mls({
+      fetchHistoryBatch: vi.fn(async () => {
+        throw new RequestDeadlineError('read', 30_000, 'POST', '/api/mls/history/batch', 0);
+      }),
+    });
+    const skipped = vi.fn();
+    expect(connectivity.isOffline).toBe(false);
+
+    await restore(conversations, service, skipped);
+
+    expect(replay).toHaveBeenCalledTimes(2);
+    expect(skipped).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('[CATCHUP] the server'));
   });
 });

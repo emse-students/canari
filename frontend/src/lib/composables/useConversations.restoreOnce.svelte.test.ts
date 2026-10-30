@@ -29,6 +29,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 const { useConversations } = await import('./useConversations.svelte');
 const { reportRejectionOnce } = await import('$lib/utils/reportRejectionOnce');
+const { connectivity } = await import('$lib/stores/connectivity.svelte');
 
 function makeCtx(userId = 'u1') {
   const mls = {
@@ -260,5 +261,73 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     await convs.loadAndRestoreConversations(makeCtx());
     await convs.loadAndRestoreConversations(makeCtx());
     expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * THE ARCHIVES A RESTORE SKIPPED ON A LINK KNOWN DOWN ARE REPLAYED ON THE NEXT RECONNECT, ONCE.
+ * The restore runs at boot and on a Welcome only; without this a skipped archive waited for the
+ * conversation's next open (review of #2726).
+ */
+describe('archive replays a restore skipped on a link known down', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    // Node's `navigator` has no `onLine`, which `reset` reads as "no network": start online.
+    connectivity.isOnline = true;
+  });
+  afterEach(() => connectivity.reset());
+
+  /** A restore that seeds `g-1` and reports its archive replay skipped. */
+  function restoreThatSkips() {
+    loadExistingConversations.mockImplementation(
+      async (args: {
+        conversations: Map<string, unknown>;
+        onArchiveReplaysSkipped?: (ids: string[]) => void;
+      }) => {
+        args.conversations.set('g-1', { id: 'g-1', messages: [] });
+        args.onArchiveReplaysSkipped?.(['g-1']);
+      }
+    );
+  }
+
+  const replayLines = (ctx: never) =>
+    (ctx as unknown as { log: ReturnType<typeof vi.fn> }).log.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((l: string) => l.includes('[CATCHUP] link back'));
+
+  it('replays them at the first reconnect the server answers, and only then', async () => {
+    restoreThatSkips();
+    const convs = useConversations();
+    const ctx = makeCtx();
+    connectivity.notifyServerUnreachable();
+
+    await convs.loadAndRestoreConversations(ctx);
+    expect(replayLines(ctx)).toEqual([]);
+
+    connectivity.notifyServerReachable();
+    await settle();
+    expect(replayLines(ctx)).toEqual([
+      '[CATCHUP] link back - replaying 1 archive(s) skipped while it was down',
+    ]);
+
+    // ONCE: a later edge owes nothing.
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await settle();
+    expect(replayLines(ctx)).toHaveLength(1);
+  });
+
+  it('drops what a sign-out left owed', async () => {
+    restoreThatSkips();
+    const convs = useConversations();
+    const ctx = makeCtx();
+    connectivity.notifyServerUnreachable();
+    await convs.loadAndRestoreConversations(ctx);
+
+    convs.invalidateRestores();
+    connectivity.notifyServerReachable();
+    await settle();
+
+    expect(replayLines(ctx)).toEqual([]);
   });
 });

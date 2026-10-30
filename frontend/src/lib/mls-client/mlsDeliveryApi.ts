@@ -9,6 +9,7 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import {
   assertAnsweredByApi,
@@ -1152,6 +1153,11 @@ export class MlsDeliveryApi {
         }
         throw e;
       }
+      // AN ANSWER, WHATEVER ITS STATUS, PROVES THE SERVER REACHABLE - and this route is the one that
+      // tells the store when it got none (`BaseMlsService.fetchPendingMessages`), so it must also be
+      // the one that clears it: the raw fetch reaches no `trackedFetch`, and a flag only ever set
+      // would hold every later barrier, and demote every later gateway fault, after a long outage.
+      connectivity.notifyServerReachable();
       // THE 401 RULE, OUTSIDE THE LADDER: whatever the renewal or the resend throws (a dead cookie, a
       // refresh nobody answered, a renewed token refused) is thrown as itself, never read as a page
       // too big, and the resend has its own stall timer.
@@ -2311,6 +2317,8 @@ export class MlsDeliveryApi {
           })),
         }),
       });
+      // An answer, whatever its status: the link is up (this route reaches no `trackedFetch`).
+      connectivity.notifyServerReachable();
       const contentType = res.headers.get('content-type') ?? '';
       if (!res.ok || !contentType.toLowerCase().includes('application/json')) {
         console.error(
@@ -2328,7 +2336,10 @@ export class MlsDeliveryApi {
       }
     } catch (e) {
       // Not logged here: the caller's line names the consequence (the catch-up stops), one line for
-      // the whole batch rather than one per chunk.
+      // the whole batch rather than one per chunk. NO ANSWER is told to the connectivity store, which
+      // the caller reads to decide whether the link is known down; a deadline is not - one expiry
+      // is a slow moment (`STALLS_BEFORE_UNREACHABLE` counts those where they are tracked).
+      if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
       if (isTransportFailure(e)) throw e;
       console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
