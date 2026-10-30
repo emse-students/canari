@@ -760,7 +760,7 @@ export class UserTagService {
     manager: EntityManager
   ): Promise<TierRelation> {
     const priced: RankedTier[] = await manager.query(
-      `SELECT "variantKey", "amountCents", "priceMatrix" FROM association_products
+      `SELECT "variantKey", "amountCents", "priceMatrix", "allowCustomAmount" FROM association_products
         WHERE "associationId" = $1 AND type = 'membership'`,
       [assocId]
     );
