@@ -80,6 +80,37 @@ export function bookingNoticeMeta(
   return { place, startsAt: startsAt.toISOString(), timeZone, word };
 }
 
+/** The association a reminder row draws the logo of; null draws the platform's neutral avatar. */
+export type ReminderAssociation = { id: string; name: string; logoUrl: string | null } | null;
+
+/**
+ * THE ASSOCIATION A REMINDER SHOWS (owner, 2026-10-30): the owner of the booked space, so the bell
+ * row carries its logo. Nobody on a space reached by its LINK ONLY (Q-R5): the association's name
+ * or logo would say what the space is, exactly as `present` refuses for the other notices. A
+ * personal space, or an association row that is gone, has none either.
+ */
+export function reminderAssociation(facts: {
+  discoverability: string;
+  associationId?: string | null;
+  associationName?: string | null;
+  associationLogoUrl?: string | null;
+}): ReminderAssociation {
+  // The name is null only when the LEFT JOIN found no association row; an empty one is still a row.
+  if (
+    facts.discoverability === 'link' ||
+    !facts.associationId ||
+    facts.associationName === null ||
+    facts.associationName === undefined
+  ) {
+    return null;
+  }
+  return {
+    id: facts.associationId,
+    name: facts.associationName,
+    logoUrl: facts.associationLogoUrl ?? null,
+  };
+}
+
 /** The reminder's line: the place and the start time on the space's clock, or the time alone. */
 export function reminderLine(facts: PlaceFacts, startsAt: Date, timeZone: string): string {
   const time = localTime(startsAt.getTime(), timeZone).slice(0, 5);
@@ -245,13 +276,22 @@ export class BookingNotificationsService {
   }
 
   /** The reminder of ONE person, once the scheduler has CLAIMED it (`BookingReminderScheduler`). */
-  async remind(recipientId: string, bookingId: string, line: string): Promise<void> {
+  async remind(
+    recipientId: string,
+    bookingId: string,
+    line: string,
+    association: ReminderAssociation = null
+  ): Promise<void> {
     await this.notifications.createNotification({
       recipientId,
       type: 'booking_reminder',
       postId: bookingId,
       actorId: SYSTEM_ACTOR_ID,
-      actorName: SYSTEM_ACTOR_NAME,
+      actorName: association?.name ?? SYSTEM_ACTOR_NAME,
+      ...(association && {
+        associationId: association.id,
+        associationLogoUrl: association.logoUrl,
+      }),
       text: line,
       pushData: { target: BOOKINGS_TARGET },
     });
