@@ -4182,7 +4182,7 @@
   "bookings_avail_tpl_empty_sub": "I paint it myself",
   "bookings_avail_week_title": "The typical week",
   "bookings_avail_painter_label": "The typical week, to paint: drag to open, or start on an open cell to close.",
-  "bookings_avail_paint_hint": "Drag to open, start on a green area to close. A stroke is {grain} min. For an exact time, or by keyboard, use the pencil of a green range.",
+  "bookings_avail_paint_hint": "Drag to open, start on a yellow area to close. A stroke is {grain} min. For an exact time, or by keyboard, use the pencil of a yellow range.",
   "bookings_avail_paint_slots_hint": "Fixed slots: press a closed cell to open a {minutes}-min slot, press a slot to close it whole. Slots are never merged.",
   "bookings_avail_run_aria": "{day} {from}-{to}",
   "bookings_avail_run_edit_title": "Hours of the range: {day}",

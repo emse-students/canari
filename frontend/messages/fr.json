@@ -4182,7 +4182,7 @@
   "bookings_avail_tpl_empty_sub": "Je peins moi-même",
   "bookings_avail_week_title": "La semaine type",
   "bookings_avail_painter_label": "La semaine type, à peindre : glissez pour ouvrir, ou partez d'une case ouverte pour fermer.",
-  "bookings_avail_paint_hint": "Glissez pour ouvrir, partez d'une zone verte pour fermer. Un trait fait {grain} min. Pour une heure exacte, ou au clavier, utilisez le crayon d'une plage verte.",
+  "bookings_avail_paint_hint": "Glissez pour ouvrir, partez d'une zone jaune pour fermer. Un trait fait {grain} min. Pour une heure exacte, ou au clavier, utilisez le crayon d'une plage jaune.",
   "bookings_avail_paint_slots_hint": "Créneaux fixes : appuyez sur une case fermée pour ouvrir un créneau de {minutes} min, sur un créneau pour le fermer en entier. Les créneaux ne sont jamais fusionnés.",
   "bookings_avail_run_aria": "{day} {from}-{to}",
   "bookings_avail_run_edit_title": "Horaires de la plage : {day}",

@@ -73,12 +73,10 @@
   {#snippet header()}
     {#if step !== undefined}
       <span
-        class="bg-control-fill text-text-main grid size-7 shrink-0 place-items-center rounded-full text-sm font-bold tabular-nums"
+        class="bg-control-fill text-text-main grid size-7 shrink-0 place-items-center rounded-full text-sm font-bold tabular-nums before:content-[attr(data-step)]"
         data-step={step}
         aria-hidden="true"
-      >
-        {step}
-      </span>
+      ></span>
     {:else if SectionIcon}
       <span class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
         <SectionIcon size={20} />
