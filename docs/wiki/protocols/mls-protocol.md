@@ -1443,7 +1443,9 @@ otherwise, a contact's in each conversation they share - where it used to join b
 unhonoured seats (the P1 of 2026-09-03). Where the tree holds no other device of its user, it still
 joins by itself. A leaf of the user's own OLD device that stopped running counts as another device:
 a user whose only other leaf is that dead device waits for a contact's tap, and with no contact
-online, waits, for as long as that leaf stays in the tree. The owner's other devices no longer serve it from a push, so the local notification
+online, waits, for as long as that leaf stays in the tree. (Decided 2026-10-30, not built: one
+account-wide durable approval per device, and a durable server row for the waiting case, in
+[backlog](../backlog.md#a-new-device-of-a-member-is-admitted-by-one-approval-per-device-account-wide-and-durable-owner-2026-10-30-not-built).) The owner's other devices no longer serve it from a push, so the local notification
 "a device was added to your account" follows the foreground Add. The rate is owed from production:
 device ids first seen per week, and how many belong to an account that already had one. **This
 reverses part of the 2026-10-22 decision "no mandatory approval of a new device"
