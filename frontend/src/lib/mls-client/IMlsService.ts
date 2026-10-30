@@ -10,6 +10,7 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
+import type { WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
 import type {
   AdmitRefusalReason,
   GroupExclusions,
@@ -134,6 +135,13 @@ export type ExternalJoinOutcome =
    * member says as one nobody made. Its door is a member's Add; the caller asks for it.
    */
   | { joined: false; reason: 'further_device' }
+  /**
+   * NOT ATTEMPTED (`welcomeOwed: 'ask'`): read AFTER the base this attempt would build on, this
+   * device's own seat says somebody else's Welcome is its door - `welcome-queued`, `add-in-flight`,
+   * `awaiting-admission` - or could not be read (`null`). Building on that base would write this
+   * device's leaf a second time over the Add that base carries (channel-encryption section 20).
+   */
+  | { joined: false; reason: 'welcome_owed'; reading: WelcomeOwedReading | null }
   /**
    * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
    * Nothing is claimed about membership; nothing else this account commits is accepted for
@@ -1145,6 +1153,13 @@ export interface IMlsService {
        * leaves it unset.
        */
       asAFurtherDevice?: 'ask';
+      /**
+       * `ask` for a KEY GROUP, which an admitter may Welcome this device into: this device's seat is
+       * read AFTER each attempt's base, and an owed Welcome stands the join down
+       * ({@link ExternalJoinOutcome} `welcome_owed`). Read before the base, the answer can predate
+       * the Add the base carries.
+       */
+      welcomeOwed?: 'ask';
     }
   ): Promise<ExternalJoinOutcome>;
   /**

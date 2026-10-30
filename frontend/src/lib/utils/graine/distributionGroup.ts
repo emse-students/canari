@@ -298,32 +298,35 @@ async function joinDistributionGroup(
 
   // A SEAT FOR A DEVICE THAT HOLDS NOTHING MAY BE A WELCOME ON ITS WAY, AND THEN THE WELCOME IS THE
   // DOOR. Since 2026-09-27 the client that ADDS somebody to a community or a private salon Welcomes
-  // their devices (channel-encryption section 20), and `sendWelcome` writes this device's `pending`
-  // row as it queues the Welcome. Joining by external commit on top of it would write this
-  // device's leaf a second time - the GRP-4 duplicate-leaf race conversations closed on
-  // 2026-08-26 - so the same reading decides here: owed means wait, anything else means the
-  // external commit is this device's own door. Asked only when the server names a seat, so the
-  // ordinary first join (a share link, a public salon) costs nothing extra.
-  if (!holdsTheGroup && Array.isArray(roster) && roster.includes(mlsService.getDeviceId())) {
-    const reading = await readWelcomeOwedForThisDevice(mlsService, ref.groupId, scope, log);
-    if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
-      log(
-        reading === null
-          ? `[GRAINE] ${scopeLabel(scope)}: this device has a seat but whether a Welcome is owed could not be read - joining nothing this pass, so two doors are never opened at once`
-          : isWelcomeOwed(reading)
-            ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (${reading}) - not joining by external commit, the admitter's Welcome is the door`
-            : `[GRAINE] ${scopeLabel(scope)}: this device's seat waits for a member's admission - not joining by external commit, a member's Add is the door`
-      );
-      return false;
-    }
-  }
-
+  // their devices (channel-encryption section 20). Joining by external commit on top of that Add
+  // writes this device's leaf a second time - the GRP-4 duplicate-leaf race conversations closed on
+  // 2026-08-26 - so owed means wait, anything else means the external commit is this device's own
+  // door.
+  //
+  // THE QUESTION IS ASKED INSIDE THE JOIN, AFTER THE BASE IT BUILDS ON (`welcomeOwed: 'ask'`), and
+  // no longer here. Here it was asked of `ref` - a roster read BEFORE the join fetched its base - and
+  // only when that roster already named this device. An Add accepted between the two reads stored
+  // the base the join then used, and the roster read had not seen its seat: the device joined over
+  // the Add, and the admitter's Welcome arrived for a group it had just built (11 of 11 kept rig
+  // consoles with `already held - redelivered Welcome ignored`, 2026-10-25..29).
   const outcome = await mlsService.ensureDistributionGroup(scope, ref);
 
   // THE TREE MOVED, SO THE DISK MOVES WITH IT - on the failing outcome as much as the happy one.
   // See {@link persistDistributionTreeChange}: the checkpoint is what makes the difference between
   // a failed re-join this device retries on its next load and one it is stranded by for ever.
   if (staleForgotten || outcome.joined) await persistDistributionTreeChange(mlsService, scope, log);
+
+  if (!outcome.joined && outcome.reason === 'welcome_owed') {
+    const { reading } = outcome;
+    log(
+      reading === null
+        ? `[GRAINE] ${scopeLabel(scope)}: whether a Welcome is owed to this device could not be read - joining nothing this pass, so two doors are never opened at once`
+        : isWelcomeOwed(reading)
+          ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (${reading}) - not joining by external commit, the admitter's Welcome is the door`
+          : `[GRAINE] ${scopeLabel(scope)}: this device's seat waits for a member's admission - not joining by external commit, a member's Add is the door`
+    );
+    return false;
+  }
 
   if (!outcome.joined) {
     // NAMING THE RECOVERY, because this line used to be the last thing said about a salon that then

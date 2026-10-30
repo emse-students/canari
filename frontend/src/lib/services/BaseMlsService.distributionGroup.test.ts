@@ -312,7 +312,8 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
 
     expect(await ensure(ctx, WS, REF_PUBLISHED)).toEqual({ joined: true });
-    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
+    // Asking whether a Welcome is owed AFTER the base it builds on (channel-encryption section 20).
+    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1', { welcomeOwed: 'ask' });
     expect(ctx.createGroup).not.toHaveBeenCalled();
   });
 
@@ -334,7 +335,7 @@ describe('joining on first use', () => {
     // Keeping it would fork the community: two MLS groups under one id, each holding half the
     // seeds, with nothing on either side ever reporting it.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1', 0);
-    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
+    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1', { welcomeOwed: 'ask' });
   });
 
   it('discards a group whose base could not be published at all', async () => {

@@ -3243,7 +3243,7 @@ phone processes it in the background with the app shut; a community newcomer now
 | Welcome authorization | `sendWelcome` in `apps/chat-delivery-service/src/services/messaging.service.ts`, through `memberOfGroupKind` | It asked `dm_group_members`, which names nobody for a key group (section 16), so every such Welcome would have been a 403. Now an ACTIVE device row - the one helper the replay (`getCommitsSince`) also uses |
 | The newcomer, foreground | `handleDistributionWelcome` in `setupMessageHandler.ts` | `getGroupMeta` names the kind (it now carries `distributionWorkspaceId` / `distributionChannelId`); registers the seed carrier BEFORE installing, installs, promotes the row. No conversation row. A failed install is ACKed and nothing else: the queued Welcome is gone, so the device's own load joins |
 | The newcomer, app killed | `processReceivedWelcomeBackground` (Android, unchanged) | Installs the Welcome and calls `membership-active` |
-| One door at a time | `ensureDistributionGroupFor` + `readWelcomeOwedFromRow` (`utils/chat/welcomeOwed.ts`, shared with `requestReAdd`) | A device holding nothing whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining; an unreadable seat opens neither door this pass |
+| One door at a time | `externalJoin(groupId, { welcomeOwed: 'ask' })` from `ensureDistributionGroup` + `readWelcomeOwedFromRow` (`utils/chat/welcomeOwed.ts`, shared with `requestReAdd`); `ensureDistributionGroupFor` logs the `welcome_owed` outcome | The seat is read on EVERY attempt, AFTER the base that attempt builds on. A device whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining; an unreadable seat opens neither door this pass |
 
 **Why two admitters, or an admitter and the newcomer's own join, cannot both land.** Two admitters
 are serialised by the add-lock, taken before the tree is read. The external commit takes no lock and
@@ -3254,6 +3254,20 @@ writes their `pending` seats in the same transaction as the epoch advance, befor
 base can be minted - so a newcomer that reads that base also reads a seat, with `addInFlight` while
 the admitter holds the lock through its Welcomes, and waits. The same record makes the newcomer a
 recipient of every frame sealed from that epoch on (below).
+
+**That holds only if the seat is read AFTER the base, and until 2026-10-30 it was read before.**
+`ensureDistributionGroupFor` asked the seat question of its `ref` - the roster social-service served
+before the join - and only when that roster already named the device; `externalJoin` then fetched
+the base again and built on it. An Add accepted between the two reads stored the base the join used
+while the roster it was judged on predated the Add's seat, so the device joined over the Add: its
+external commit replaced the leaf the Add had written (`removes=1` on every member), and the
+admitter's Welcome, arriving tens of milliseconds later, found the group built and was logged
+`[WELCOME] key group <kg>... already held - redelivered Welcome ignored (idempotent)`. It was never
+a redelivery and never a second mint: on 11 of 11 kept rig consoles (RM-4, RM-4b, RM-5,
+SALON-REVOKE-COMMIT, 2026-10-25..29) the Welcome's `qId` appears once, and `externalJoin succeeded`
+for the same group follows within 200 ms. The question now lives inside the join
+(`welcomeOwed: 'ask'`), after each attempt's base; the idempotent drop stays as the witness that
+would show it again.
 
 **When the admitter's Add is the one refused, it is rebuilt - on a proof (NOTIF-21, 2026-09-28).**
 The first run measured the losing side: the newcomer's two live web clients joined by their own

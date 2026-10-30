@@ -188,6 +188,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
+import { readWelcomeOwedFromRow, type WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
 import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 import {
   CommitRefusedError,
@@ -6791,6 +6792,32 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * This device's own seat in `groupId`, read as the one-door question ({@link readWelcomeOwedFromRow}):
+   * is somebody else's Welcome its door? `null` when it could not be answered - the read failed, or a
+   * `pending` row lacks the two facts every deployed server writes - and the caller then opens no
+   * door this attempt. Both are said here, the anomaly at a level that accuses.
+   */
+  private async readOwnWelcomeOwed(groupId: string): Promise<WelcomeOwedReading | null> {
+    const short = groupId.slice(0, 8);
+    let rows: DeviceMembershipRow[];
+    try {
+      rows = await this.getDeviceMemberships(this.userId, this.deviceId);
+    } catch (e) {
+      console.warn(
+        `[MLS] externalJoin ${short}... this device's seat could not be read: ${String(e).slice(0, 120)}`
+      );
+      return null;
+    }
+    const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
+    if (reading === null) {
+      console.error(
+        `[MLS] externalJoin ${short}... this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
+      );
+    }
+    return reading;
+  }
+
+  /**
    * Attempts to (re)join `groupId` via an external commit built from the server-stored GroupInfo,
    * WITHOUT a peer Welcome. This is the self-service recovery seam (Phase 4): a member with no local
    * MLS state fetches the published base, builds an external commit, and submits it under the strict
@@ -6821,7 +6848,7 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async externalJoin(
     groupId: string,
-    opts: { asAFurtherDevice?: 'ask' } = {}
+    opts: { asAFurtherDevice?: 'ask'; welcomeOwed?: 'ask' } = {}
   ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
@@ -6936,6 +6963,22 @@ export abstract class BaseMlsService implements IMlsService {
               `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
             );
             return { joined: false, reason: 'further_device' };
+          }
+        }
+
+        // ONE DOOR AT A TIME, ASKED OF THE BASE IN HAND (key groups, channel-encryption section 20).
+        // An admitter's Add writes this device's `pending` seat and stores the base for the epoch it
+        // creates in ONE transaction, and holds the add lock until its Welcomes are queued - so a seat
+        // read AFTER this base says whether the base already carries our leaf. The caller's own read
+        // came BEFORE it: on 11 of 11 kept rig consoles (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT,
+        // 2026-10-25..29) a device whose roster read predated the Add joined on the base the Add
+        // stored, the admitter's Welcome then landed on the group that join had just built
+        // (`already held - redelivered Welcome ignored`), and the external commit replaced the leaf
+        // the Add wrote. One Welcome, never a redelivery - two doors opened on one seat.
+        if (opts.welcomeOwed === 'ask') {
+          const reading = await this.readOwnWelcomeOwed(groupId);
+          if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
+            return { joined: false, reason: 'welcome_owed', reading };
           }
         }
 
@@ -7193,7 +7236,7 @@ export abstract class BaseMlsService implements IMlsService {
     if (holdsGroupState(this, groupId)) return { joined: true };
 
     if (ref.groupInfo !== null) {
-      return this.externalJoin(groupId);
+      return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     }
 
     console.log(
@@ -7238,7 +7281,7 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(
         `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
       );
-      return this.externalJoin(groupId);
+      return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     } finally {
       this.unsettledDistributionGroups.delete(groupId);
     }
