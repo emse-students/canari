@@ -1679,6 +1679,12 @@ experiment rows of the rig (below) settle it on Chrome 155:
   follows `canari:foreground` too, and a camera the OS ends while the app is OFF SCREEN is the same
   background pause, resumed at the return; one ended on screen (another app took it) stays off.
   Pinned by `CallService.p2p.test.ts` ("on Android, where the WebView stays visible").
+  **Two races closed with it (re-review of #2711):** only a camera HEADED ON is paused
+  (`cameraHeadedOn`: the running operation's target unless an off is queued, else the state), so an
+  off the user tapped - in flight, or queued behind an opening camera - never comes back at the
+  return; and Android's CAMERA permission dialog pauses the activity, so the pause's off queued
+  behind the FIRST camera-on is cancelled at the return instead of turning the camera off right
+  after the grant. A return while the pause's own off still runs is applied when that off ends.
 - **720p at 30 fps at most, moved by a quality ladder** since 2026-10-21 (it was a fixed 640x480,
   700 kb/s): [the quality ladder](#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop).
   The rung is on the SENDER's encodings, so it survives a switch.

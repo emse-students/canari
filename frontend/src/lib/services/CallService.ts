@@ -3228,16 +3228,39 @@ export class CallService {
     this.backgroundUnsubscribe = onAppScreenChange((onScreen) => {
       if (!this.localStream) return;
       if (!onScreen) {
-        if (get(this.isVideoOff) && !this.cameraBusy) return; // camera already off - nothing to pause
+        // Only a camera HEADED ON is paused: one the user turned off (an off in flight, or an off
+        // queued behind an opening camera) must never come back at the return.
+        if (!this.cameraHeadedOn()) return;
         this.videoPausedByBackground = true;
         appendLog('[Call] backgrounded - camera off until the app returns (audio continues)');
         void this.cameraOff('app in the background');
-      } else if (this.videoPausedByBackground) {
-        this.videoPausedByBackground = false;
-        appendLog('[Call] foregrounded - camera on again');
-        void this.cameraOn();
+        return;
       }
+      if (!this.videoPausedByBackground) return;
+      if (this.cameraBusy && this.cameraOpTarget === 'on' && this.offPending) {
+        // The pause's own off is still queued behind a camera that is opening - on Android, the
+        // permission dialog itself pauses the activity. Cancel it: the opening camera is the answer.
+        this.offPending = false;
+        this.videoPausedByBackground = false;
+        appendLog('[Call] foregrounded - the queued background off is cancelled, the camera opens');
+        return;
+      }
+      if (this.cameraBusy && this.cameraOpTarget === 'off') {
+        // The pause's off is still running: its end turns the camera on again (`cameraOff`).
+        appendLog('[Call] foregrounded - camera on again once the running off ends');
+        return;
+      }
+      this.videoPausedByBackground = false;
+      appendLog('[Call] foregrounded - camera on again');
+      void this.cameraOn();
     });
+  }
+
+  /** Where the camera is going: the running operation's target unless an off is queued, else its state. */
+  private cameraHeadedOn(): boolean {
+    return this.cameraBusy
+      ? this.cameraOpTarget === 'on' && !this.offPending
+      : !get(this.isVideoOff);
   }
 
   private removeBackgroundHandler() {
@@ -3694,6 +3717,12 @@ export class CallService {
       await this.sendNoCamera(why);
     } finally {
       this.cameraBusy = false;
+      // A background pause whose return came while this off was still running: resume now.
+      if (this.videoPausedByBackground && isAppOnScreen() && this.callUp()) {
+        this.videoPausedByBackground = false;
+        appendLog('[Call] foregrounded during the background off - camera on again');
+        void this.cameraOn();
+      }
     }
   }
 

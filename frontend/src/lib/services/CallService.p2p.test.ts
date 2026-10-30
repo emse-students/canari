@@ -1537,6 +1537,8 @@ describe('the E2E worker report (2026-10-19)', () => {
         expect(get(service.isVideoOff)).toBe(false);
       } finally {
         delete (document as unknown as { visibilityState?: string }).visibilityState;
+        // Ended, so its listener cannot answer a later test's `canari:foreground` with a camera.
+        service.endCall();
       }
     });
 
@@ -1548,12 +1550,21 @@ describe('the E2E worker report (2026-10-19)', () => {
         win.__canariForeground = foreground;
         window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
       };
+      // Each test's call is ENDED: a call left up keeps its window listener, and its camera would
+      // answer the next test's `canari:foreground` into the shared `cameras` list.
+      const live: CallService[] = [];
+      const androidCall = async () => {
+        const c = await connectedCall();
+        live.push(c.service);
+        return c;
+      };
       afterEach(() => {
+        for (const s of live.splice(0)) s.endCall();
         delete win.__canariForeground;
       });
 
       it('canari:foreground false turns the camera OFF, true turns it ON again', async () => {
-        const { service, pc, lines } = await connectedCall();
+        const { service, pc, lines } = await androidCall();
         const first = await turnCameraOn(service);
         const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
 
@@ -1574,7 +1585,7 @@ describe('the E2E worker report (2026-10-19)', () => {
       });
 
       it('a camera the OS ends while the app is off screen comes back at the return', async () => {
-        const { service, pc, lines } = await connectedCall();
+        const { service, pc, lines } = await androidCall();
         const first = await turnCameraOn(service);
         const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
 
@@ -1596,8 +1607,102 @@ describe('the E2E worker report (2026-10-19)', () => {
         expect(t.sender.track).toBe(back);
       });
 
+      /** The sender's next `replaceTrack` waits for `release()`: an OFF still in flight. */
+      function holdNextReplace(sender: {
+        replaceTrack: (t: { kind: string } | null) => Promise<void>;
+      }) {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        const real = sender.replaceTrack;
+        sender.replaceTrack = async (t) => {
+          sender.replaceTrack = real;
+          await gate;
+          return real(t);
+        };
+        return release;
+      }
+
+      it('the permission dialog pauses the activity: the first camera still ends ON', async () => {
+        const { service, pc, lines } = await androidCall();
+        const release = holdNextCapture();
+        const opening = service.toggleVideo(); // the dialog is up
+        announce(false); // MainActivity.onPause - the pause's off is queued behind the ON
+        await settle();
+        announce(true); // granted: onResume
+        await settle();
+        expect(lines()).toContain(
+          '[Call] foregrounded - the queued background off is cancelled, the camera opens'
+        );
+        release();
+        await opening;
+        await settle();
+        const cam = cameras[cameras.length - 1];
+        const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+        expect(t?.sender.track).toBe(cam);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('an OFF in flight, then the background and the return: the camera stays OFF', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const release = holdNextReplace(t.sender);
+        const off = service.toggleVideo(); // the user's off, waiting on replaceTrack(null)
+        await settle();
+        announce(false); // backgrounded while the user's off still runs
+        await settle();
+        release();
+        await off;
+        await settle();
+        announce(true); // the return, the off long done
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+        // No capture came back into THIS call (the shared `cameras` list also sees other tests').
+        const own = service as unknown as { localStream: { getVideoTracks(): unknown[] } };
+        expect(own.localStream.getVideoTracks()).toHaveLength(0);
+      });
+
+      it('an OFF tapped while an ON opens, then the background and the return: stays OFF', async () => {
+        const { service, pc } = await androidCall();
+        const release = holdNextCapture();
+        const opening = service.toggleVideo();
+        await service.toggleVideo(); // off, queued behind the opening ON
+        announce(false);
+        await settle();
+        release(); // the ON ends, the user's queued off applies - all while off screen
+        await opening;
+        await settle();
+        announce(true);
+        await settle();
+        const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+        expect(t?.sender.track ?? null).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+      });
+
+      it('the return while the background off still runs: the camera comes back when it ends', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const release = holdNextReplace(t.sender);
+        announce(false); // the pause's off, held on replaceTrack(null)
+        await settle();
+        announce(true);
+        await settle();
+        expect(lines()).toContain(
+          '[Call] foregrounded - camera on again once the running off ends'
+        );
+        release();
+        await settle();
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
       it('a camera the OS ends ON screen stays off (another app took it)', async () => {
-        const { service, pc } = await connectedCall();
+        const { service, pc } = await androidCall();
         const first = await turnCameraOn(service);
         const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
         first.onended?.();
