@@ -1712,7 +1712,9 @@ A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) start
 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
 system as Back: the page saw only `touchstart > touchcancel`, 8 of 8 (class B of the 2026-10-21
 camera-swipe matrix, `<harness-dir>/a1-bench/camera-swipe-r1021/`). Owner decision 2026-10-21:
-exclude the left edge over the feed, with the mechanism of the right edge above.
+exclude the left edge over the feed, with the mechanism of the right edge above. Re-confirmed by the
+owner 2026-10-30 (the two backlog rows asking for that decision are closed; the mechanism was
+already built, #2184, and only the Mi 9T reading below is owed).
 
 - **One mechanism, two edges.** The `canariGestures` bridge gained `setLeftBand` / `clearLeftBand`;
   `MainActivity.applyEdgeExclusions` holds one span per edge and hands BOTH bands to
