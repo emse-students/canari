@@ -381,10 +381,20 @@ class CallForegroundService : Service() {
         }, "canari-call-avatar").start()
     }
 
-    /** The output [CallAudio] just applied: the proximity lock follows it. */
+    /**
+     * The output [CallAudio] just applied: the proximity lock follows it, and the page is told, so its
+     * speaker toggle shows the route APPLIED - a loudspeaker default that yielded to a headset must not
+     * read "speaker on". Null (the platform routes) is sent as unknown.
+     */
     private fun onOutput(output: CallOutput?) {
         this.output = output
         applyProximity("voice -> $output")
+        val call = callId
+        if (call == null) {
+            Log.w(TAG, "voice -> $output with no call in the foreground - the page is not told")
+            return
+        }
+        CallBridge.emit("output", call, speaker = output?.let { it == CallOutput.SPEAKER })
     }
 
     /**
