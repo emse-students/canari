@@ -473,7 +473,8 @@ things read it, and they converge on ONE reset ([auth](frontend/modules/auth.md#
 owner → reset if it is this one`, `[SECURITY] Revoked-device reset starting.`, `[RESET] done - nothing
 of this device remains`, and on the live variant also `revocation check: the server ended this
 session BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
-`the server disagrees`, and no `Gateway inaccessible` after it.
+`the server disagrees`, and no `[WS] Gateway connection failed` after it (`Gateway inaccessible`
+before 2026-10-30).
 
 **Designed outcomes of that end, and how they log (2026-10-26).** The reset's own `clearAuth` IS the
 device's one sign-out: `endExpiredSession` (the session-expired handler's decision) skips its own

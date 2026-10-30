@@ -1,4 +1,8 @@
-import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsService';
+import type {
+  DeviceMembershipRow,
+  DistributionSeat,
+  UserGroupRow,
+} from '$lib/mls-client/IMlsService';
 
 /**
  * What this device's membership row says about the ONE question that picks a door into a group:
@@ -39,8 +43,11 @@ export type WelcomeOwedReading =
   | 'unhonoured-seat'
   | 'not-pending';
 
+/** The readings in which somebody else's Welcome is the door - what {@link isWelcomeOwed} narrows to. */
+export type OwedWelcomeReading = Extract<WelcomeOwedReading, 'welcome-queued' | 'add-in-flight'>;
+
 /** The readings in which somebody else's Welcome is the door, so the device joins nothing itself. */
-export function isWelcomeOwed(reading: WelcomeOwedReading): boolean {
+export function isWelcomeOwed(reading: WelcomeOwedReading): reading is OwedWelcomeReading {
   return reading === 'welcome-queued' || reading === 'add-in-flight';
 }
 
@@ -73,6 +80,24 @@ export function readWelcomeOwedFromRow(
   if (row.welcomeQueued === true && !opts.ignoreQueuedWelcome) return 'welcome-queued';
   if (row.addInFlight === true) return 'add-in-flight';
   return 'unhonoured-seat';
+}
+
+/**
+ * Classifies a key-group seat served WITH its base ({@link DistributionSeat}) in the same terms as
+ * {@link readWelcomeOwedFromRow}. PURE.
+ *
+ * `null` when there is nothing to read: no seat served, or a `pending` seat whose add lock could not
+ * be read (`addInFlight` absent). That is "unknown", and it opens no door - reading it as
+ * `unhonoured-seat` would let a device join over an Add in flight.
+ */
+export function readWelcomeOwedFromSeat(
+  seat: DistributionSeat | undefined
+): WelcomeOwedReading | null {
+  if (!seat) return null;
+  if (seat.status !== 'pending') return 'not-pending';
+  if (seat.welcomeQueued) return 'welcome-queued';
+  if (seat.addInFlight === undefined) return null;
+  return seat.addInFlight ? 'add-in-flight' : 'unhonoured-seat';
 }
 
 /**

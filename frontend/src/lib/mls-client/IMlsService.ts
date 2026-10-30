@@ -10,6 +10,7 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
+import type { OwedWelcomeReading } from '$lib/utils/chat/welcomeOwed';
 import type {
   AdmitRefusalReason,
   GroupExclusions,
@@ -46,6 +47,19 @@ export type { DistributionScope };
 export type { IncomingDeliveryMeta };
 
 /**
+ * One device's seat in a key group, served by chat-delivery WITH the group's base and read AFTER it
+ * (`GET internal/mls/distribution-groups/:scope/:scopeId?deviceId=`). The order is the guarantee: an
+ * Add stores the base for its epoch and its newcomers' `pending` seats in one transaction and holds
+ * the add lock until its Welcomes are queued, so a base that carries an Add always comes with that
+ * Add's seat (channel-encryption section 20, one door at a time). `addInFlight` is ABSENT when the
+ * lock could not be read - unknown, never `false`. A key group has no invitation-link seat, so there
+ * is no `awaitingAdmission` here.
+ */
+export type DistributionSeat =
+  | { status: 'none' | 'active' }
+  | { status: 'pending'; welcomeQueued: boolean; addInFlight?: boolean };
+
+/**
  * Where a distribution-group GroupInfo is fetched from and published to.
  *
  * INJECTED RATHER THAN IMPORTED, for one reason: this transport is social-service, and the MLS
@@ -59,10 +73,19 @@ export interface DistributionGroupInfoTransport {
    * `activeEpoch` travels with it because the two can disagree PERMANENTLY, and only the server
    * knows both: a base behind the group's epoch is refused by the commit gate every time, so a
    * joiner handed one must be able to tell that apart from a fresh base before it builds anything.
+   *
+   * `seat` is `deviceId`'s own seat, read by the server AFTER the base in the same request - see
+   * {@link DistributionSeat}. Absent when the server served none.
    */
   fetch(
-    scope: DistributionScope
-  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
+    scope: DistributionScope,
+    deviceId: string
+  ): Promise<{
+    groupInfo: string;
+    baseEpoch: number;
+    activeEpoch: number;
+    seat?: DistributionSeat;
+  } | null>;
   /**
    * Publishes a committed base. Monotonic on the far side: `stored: false` is a base that was not
    * newer, or a first publish lost to a concurrent one - legitimate outcomes, not errors.
@@ -134,6 +157,19 @@ export type ExternalJoinOutcome =
    * member says as one nobody made. Its door is a member's Add; the caller asks for it.
    */
   | { joined: false; reason: 'further_device' }
+  /**
+   * NOT ATTEMPTED (`welcomeOwed: 'ask'`): the seat served WITH the base this attempt would build on
+   * says somebody else's Welcome is this device's door - `welcome-queued` or `add-in-flight`.
+   * Building on that base would write this device's leaf a second time over the Add that base
+   * carries (channel-encryption section 20).
+   */
+  | { joined: false; reason: 'welcome_owed'; reading: OwedWelcomeReading }
+  /**
+   * NOT ATTEMPTED (`welcomeOwed: 'ask'`): the base came WITHOUT a seat this device can read - the
+   * server did not serve one, or the add lock could not be read. Not a statement that a Welcome is
+   * owed: nothing is known, so no door opens this pass, and the caller's cadence asks again.
+   */
+  | { joined: false; reason: 'seat_unreadable' }
   /**
    * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
    * Nothing is claimed about membership; nothing else this account commits is accepted for
@@ -1064,7 +1100,10 @@ export interface IMlsService {
   ): Promise<import('./historyTypes').HistoryPage>;
   /**
    * Fetches the first page of history for multiple groups in one HTTP round-trip.
-   * Groups the caller cannot read return an empty page.
+   * Groups the caller cannot read return an empty page; a chunk the server refuses is left out.
+   *
+   * @throws a transport failure (`isTransportFailure`) when a chunk got no answer: the server is
+   *   unreachable, so the caller stops its catch-up rather than asking each group on its own
    */
   fetchHistoryBatch?(
     groups: Array<{ groupId: string; afterStreamId?: string }>
@@ -1145,6 +1184,13 @@ export interface IMlsService {
        * leaves it unset.
        */
       asAFurtherDevice?: 'ask';
+      /**
+       * `ask` for a KEY GROUP, which an admitter may Welcome this device into: each attempt reads
+       * this device's seat from the SAME answer as its base ({@link DistributionSeat}), and an owed
+       * Welcome stands the join down ({@link ExternalJoinOutcome} `welcome_owed`; no readable seat
+       * is `seat_unreadable`). A seat read before the base can predate the Add the base carries.
+       */
+      welcomeOwed?: 'ask';
     }
   ): Promise<ExternalJoinOutcome>;
   /**
