@@ -381,6 +381,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
                 }
                 activeCallRings.clear()
+                CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
             } catch (e: Exception) {
@@ -1050,18 +1051,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
 
-            // Answer = deep link into the conversation carrying EVERY fact the join needs (the
-            // conversation, the call, video, the caller): the frontend joins on them once the user
-            // has unlocked (PIN) and its socket is up. It never waits for the caller's MLS invite,
-            // a transport frame the server skipped while this phone was closed (calls.md, "An
+            // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
+            // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
+            // pending accept from the facts recorded here. The webview joins on those facts once
+            // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
             // answer from the ring joins on the ring's facts").
-            val videoFlag = if (hasVideo) 1 else 0
+            val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
             val answerIntent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
-                setData(Uri.parse(
-                    "fr.emse.canari://chat/$groupId?acceptCall=${Uri.encode(callId)}" +
-                        "&video=$videoFlag&caller=${Uri.encode(callerId)}"
-                ))
+                setData(Uri.parse("fr.emse.canari://chat/$groupId"))
+                CallRingAnswer.putAnswer(this, callId, answerNonce)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
             val answerPending = PendingIntent.getActivity(
@@ -1208,6 +1207,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Stops an active ring (answered elsewhere, caller hung up, timeout, or user declined). */
         internal fun cancelIncomingCallNotification(context: Context, callId: String) {
             if (callId.isEmpty()) return
+            // The answer record dies with the ring, whether or not this process still shows it.
+            CallRingAnswer.forget(context, callId)
             if (!activeCallRings.remove(callId)) return
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(callNotifId(callId))

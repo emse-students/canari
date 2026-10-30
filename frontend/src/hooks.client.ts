@@ -176,24 +176,13 @@ if (isTauriRuntime()) {
             // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
             if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
-              // WP-XP-5: the user answered an incoming call from a system surface (Android
-              // ring / iOS CallKit). Record the intent; CallService joins on it once the session's
-              // socket is up - from the ring's own facts, never waiting for the MLS invite.
-              const acceptCallId = u.searchParams.get('acceptCall');
-              if (groupId && acceptCallId) {
-                import('$lib/stores/pendingCallAccept')
-                  .then(({ setPendingCallAccept }) =>
-                    setPendingCallAccept({
-                      groupId,
-                      callId: acceptCallId,
-                      hasVideo: u.searchParams.get('video') === '1',
-                      callerId: u.searchParams.get('caller') || null,
-                      acceptedAt: Date.now(),
-                    })
-                  )
-                  .catch((e: unknown) =>
-                    console.error('[hooks] the call answer could not be recorded:', e)
-                  );
+              // A LINK NAVIGATES, IT NEVER ANSWERS A CALL. The native answer is carried by a
+              // private intent (`pending_call_accept.json`, `$lib/stores/pendingCallAccept`); a
+              // parameter of this URL is never read as one, whoever opened it.
+              if (u.searchParams.has('acceptCall')) {
+                console.warn(
+                  '[hooks] a chat link carried acceptCall - ignored, links never answer'
+                );
               }
               if (groupId) {
                 Promise.all([

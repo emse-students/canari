@@ -2760,6 +2760,36 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   });
 }
 
+/// Removes the pending accept the CallKit answer wrote, when it names `callId` (an End after the
+/// answer). Read before the removal, so the answer of another call is never the one dropped.
+static void CanariCancelPendingCallAccept(NSString *callId) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil || callId.length == 0) {
+    NSLog(@"[CanariCallKit] ERROR cancel of the answer of call=%@: no data dir or call", callId);
+    return;
+  }
+  NSString *path = [dir stringByAppendingPathComponent:kPendingCallAcceptFileName];
+  NSData *data = [NSData dataWithContentsOfFile:path];
+  if (data == nil) {
+    NSLog(@"[CanariCallKit] answer of call=%@ ended - no pending accept left to cancel", callId);
+    return;
+  }
+  id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  id pendingCall = [json isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)json)[@"callId"] : nil;
+  if (![pendingCall isKindOfClass:[NSString class]] || ![pendingCall isEqualToString:callId]) {
+    NSLog(@"[CanariCallKit] answer of call=%@ ended - the pending accept names another call, kept",
+          callId);
+    return;
+  }
+  NSError *err = nil;
+  if (![[NSFileManager defaultManager] removeItemAtPath:path error:&err]) {
+    NSLog(@"[CanariCallKit] ERROR the pending accept of call=%@ could not be removed: %@", callId,
+          CanariErrorReason(err));
+    return;
+  }
+  NSLog(@"[CanariCallKit] answer of call=%@ cancelled by the End - pending accept removed", callId);
+}
+
 @interface CanariCallProviderDelegate : NSObject <CXProviderDelegate>
 @end
 
@@ -2812,12 +2842,8 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   // Best-effort foreground: works when the app is unlocked/active contexts allow it; from the
   // lock screen the user lands in the app via the CallKit UI's app button instead.
   if (groupId.length > 0) {
-    NSCharacterSet *allowed = [NSCharacterSet URLQueryAllowedCharacterSet];
-    NSString *link = [NSString
-        stringWithFormat:@"fr.emse.canari://chat/%@?acceptCall=%@&video=%d&caller=%@", groupId,
-                         [callId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
-                         hasVideo ? 1 : 0,
-                         [callerId stringByAddingPercentEncodingWithAllowedCharacters:allowed]];
+    // NAVIGATION ONLY: the answer is the private file above, never a parameter of a link.
+    NSString *link = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
     NSURL *url = [NSURL URLWithString:link];
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -2827,11 +2853,15 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   }
 }
 
-/// The user ended the call on the system UI. While it RINGS that is a decline, and the decline
-/// reaches the caller (`CanariSendCallDecline`: the in-app Decline's hangup), so its ring ends at
-/// once instead of after its whole window. Calls are 1:1 (calls.md, lot 1), so declining and ending
-/// the caller's ring are one act. An end AFTER the answer is not a decline: the webview owns that call
-/// and its hangup, and nothing is sent from here.
+/// The user ended the call on the system UI, and the caller is told (`CanariSendCallDecline`: the
+/// in-app Decline's hangup), so its ring ends at once instead of after its whole window. Calls are
+/// 1:1 (calls.md, lot 1), so declining and ending the caller's ring are one act.
+///
+/// AN END AFTER THE ANSWER CANCELS THE ANSWER. The answer wrote `pending_call_accept.json` for the
+/// webview; ended now, that file is removed (`CanariCancelPendingCallAccept`), or an unlock in the
+/// next minutes would join a call the user hung up. Nothing can be held in the webview's memory yet:
+/// it drains the file only once the app is active, and becoming active ends this CallKit call, so no
+/// End can follow a drain. The caller is told as for a decline - this device never joined.
 - (void)provider:(CXProvider *)provider performEndCallAction:(CXEndCallAction *)action {
   (void)provider;
   NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
@@ -2844,7 +2874,10 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   }
   [g_ringingCallInfo removeObjectForKey:action.callUUID.UUIDString];
   [action fulfill];
-  if (!answered && info != nil) {
+  if (answered) {
+    CanariCancelPendingCallAccept(callId);
+  }
+  if (info != nil) {
     UIApplication *app = [UIApplication sharedApplication];
     __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
     task = [app beginBackgroundTaskWithName:@"canari-call-decline"

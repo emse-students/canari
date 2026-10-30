@@ -728,8 +728,9 @@ export class CallService {
    * permission, blocks) and is applied AGAIN by the room token this join asks for - a closed window
    * or a block set since is its `410`/`403`, an answer, not a guess.
    *
-   * Called when an intent is recorded and when the session's socket comes up; whichever comes
-   * second finds both, and the intent is taken once ({@link takePendingCallAccept}).
+   * Called by `pendingCallAccept.ts` once BOTH an intent is held and the session's socket has
+   * caught up (`ConnectionDeps.onCaughtUp`), whichever comes second; the intent is taken once
+   * ({@link takePendingCallAccept}).
    *
    * @param why What called it, for the log.
    */
@@ -738,6 +739,12 @@ export class CallService {
     const intent = takePendingCallAccept();
     if (!intent) return;
     const state = get(this.callState);
+    if (state !== 'idle' && state !== 'incoming' && this.currentCallId === intent.callId) {
+      // This answer's call is already being joined, held, or just ended here: a second answer of
+      // it is a duplicate - no warning, no second setup, and never a rejoin of a call ended.
+      console.debug(`[Call] system-surface answer of call=${intent.callId} - already ${state}`);
+      return;
+    }
     appendLog(
       `[Call] system-surface answer of call=${intent.callId} (${why}) meets state=${state} call=${this.currentCallId}`
     );

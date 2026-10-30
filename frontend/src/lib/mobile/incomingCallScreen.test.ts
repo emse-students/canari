@@ -213,29 +213,50 @@ describe('the ring and its photo', () => {
   });
 });
 
-describe('an answer from the ring carries every fact the join needs', () => {
-  // The webview joins on these facts alone: the caller's MLS invite is a transport frame the
-  // server skips for a closed phone (calls.md, "An answer from the ring joins on the ring's facts").
-  it('Android: the answer link names the call, video and the caller', () => {
+describe('the native answer is a private intent carrying every fact the join needs', () => {
+  // The webview joins on these facts alone (calls.md, "An answer from the ring joins on the ring's
+  // facts"), and they reach it through a private file, never a parameter of a public link.
+  const answer = read('android/app/src/main/java/fr/emse/canari/CallRingAnswer.kt');
+  const main = read('android/app/src/main/java/fr/emse/canari/MainActivity.kt');
+
+  it('Android: the answer link only navigates; the answer rides extras checked by a per-ring nonce', () => {
     const show = between(
       push,
       'internal fun showIncomingCallNotification(',
       'private fun buildIncomingCallNotification(',
       'showIncomingCallNotification'
     );
-    expect(show).toMatch(/acceptCall=\$\{Uri\.encode\(callId\)\}/);
-    expect(show).toMatch(/&video=\$videoFlag&caller=\$\{Uri\.encode\(callerId\)\}/);
+    expect(push).not.toContain('acceptCall');
+    expect(show).toContain('setData(Uri.parse("fr.emse.canari://chat/$groupId"))');
+    expect(show).toMatch(
+      /CallRingAnswer\.record\(context, groupId, callId, callerId, hasVideo\)[\s\S]*?CallRingAnswer\.putAnswer\(this, callId, answerNonce\)/
+    );
+    // The pending accept is written from the RECORDED facts, only for the nonce its ring issued.
+    const take = between(answer, 'fun takeAnswer(', 'private fun prefs(', 'takeAnswer');
+    expect(take).toMatch(/entry\.optString\("nonce"\) != nonce[\s\S]*?return false/);
+    expect(take).toContain('.put("groupId", entry.optString("groupId"))');
+    expect(take).toContain('.put("acceptedAt", System.currentTimeMillis())');
+    // Both doors of MainActivity hand the intent over, and the record dies with its ring.
+    expect([...main.matchAll(/CallRingAnswer\.takeAnswer\(this, intent\)/g)]).toHaveLength(2);
+    const cancel = between(
+      push,
+      'internal fun cancelIncomingCallNotification(',
+      'Log.d(TAG, "cancelIncomingCallNotification',
+      'cancelIncomingCallNotification'
+    );
+    expect(cancel).toContain('CallRingAnswer.forget(context, callId)');
   });
 
-  it('iOS: the CallKit answer writes the caller into the pending accept and the link', () => {
-    const answer = between(
+  it('iOS: the CallKit answer writes the caller into the pending accept; its link only navigates', () => {
+    const answerMm = between(
       pushMm,
       'performAnswerCallAction:(CXAnswerCallAction *)action {',
       'performEndCallAction:',
       'performAnswerCallAction'
     );
-    expect(answer).toContain('@"callerId" : callerId,');
-    expect(answer).toContain('&caller=%@');
+    expect(answerMm).toContain('@"callerId" : callerId,');
+    expect(answerMm).toContain('@"fr.emse.canari://chat/%@", groupId');
+    expect(pushMm).not.toContain('acceptCall');
     // Both rings record the caller for it.
     expect([...pushMm.matchAll(/@"callerId" : callerId \?: @"",/g)]).toHaveLength(2);
   });
@@ -279,14 +300,23 @@ describe('a decline on the ring reaches the caller', () => {
     );
   });
 
-  it('iOS: the CallKit Decline sends it, and an end after the answer does not', () => {
+  it('iOS: the CallKit End sends it, and an End after the answer also cancels that answer', () => {
     const end = between(
       pushMm,
       'performEndCallAction:(CXEndCallAction *)action {',
       '@end',
       'performEndCallAction'
     );
-    expect(end).toMatch(/if \(!answered && info != nil\) \{[\s\S]*?CanariSendCallDecline\(/);
+    expect(end).toMatch(/if \(answered\) \{\s*CanariCancelPendingCallAccept\(callId\);\s*\}/);
+    expect(end).toMatch(/if \(info != nil\) \{[\s\S]*?CanariSendCallDecline\(/);
+    const cancel = between(
+      pushMm,
+      'static void CanariCancelPendingCallAccept(',
+      '\n}\n',
+      'CanariCancelPendingCallAccept'
+    );
+    // Only the answer of THIS call is removed.
+    expect(cancel).toMatch(/isEqualToString:callId[\s\S]*?removeItemAtPath/);
     const answer = between(
       pushMm,
       'performAnswerCallAction:(CXAnswerCallAction *)action {',
