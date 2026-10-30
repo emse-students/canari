@@ -95,15 +95,20 @@ ceiling_compose_from_ref() { # <head ref>
 #     a `google-services.json`), so four bumps - the wrapper, AndroidX, Firebase - sat refused.
 #     `compile-android-app` in `ci.yml` now generates the first the way `tauri android build` does
 #     and uses a committed stub for the second, then compiles `:app`
-#     (`.github/scripts/android-app-compile.sh`). `ceiling.test.sh` asserts that job still exists,
-#     so removing it re-closes this arm instead of leaving an allowance with no gate behind it.
+#     (`.github/scripts/android-app-compile.sh`). `ceiling.test.sh` asserts that job, its trigger and its
+#     wiring into `ci-passed` still exist, so a pull request that removes or disables the gate
+#     FAILS `test-ci-scripts` instead of silently leaving an allowance with nothing behind it.
 ceiling_gate_for_ref() { # <head ref>
+  local missing
+  missing="a pull-request job that compiles the Gradle tree this update is in. Only \`frontend/src-tauri/android-tests\` (\`test-android\`) and \`frontend/src-tauri/gen/android\` (\`compile-android-app\`) are built on a pull request; a Gradle directory added to dependabot.yml needs its own job, then an arm in \`ceiling_gate_for_ref\` - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
   case "${1:-}" in
+    # DEPENDABOT'S DIRECT SHAPE ONLY: `gen/android/<dependency>-<version>`. A branch one directory
+    # deeper is not a shape Dependabot writes for this block, so it is not the update this job was
+    # written to judge, and it is refused rather than trusted by prefix.
+    dependabot/gradle/frontend/src-tauri/gen/android/*/*) echo "$missing" ;;
     dependabot/gradle/frontend/src-tauri/android-tests/*) ;;
     dependabot/gradle/frontend/src-tauri/gen/android/*) ;;
-    dependabot/gradle/*)
-      echo "a pull-request job that compiles the Gradle tree this update is in. Only \`frontend/src-tauri/android-tests\` (\`test-android\`) and \`frontend/src-tauri/gen/android\` (\`compile-android-app\`) are built on a pull request; a Gradle directory added to dependabot.yml needs its own job, then an arm in \`ceiling_gate_for_ref\` - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
-      ;;
+    dependabot/gradle/*) echo "$missing" ;;
     *) ;;
   esac
 }

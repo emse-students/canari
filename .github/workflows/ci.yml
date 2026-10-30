@@ -326,11 +326,21 @@ jobs:
 
           # -- Android `:app` compile --
           # What `compile-android-app` reads: the Android project itself, and whatever feeds the
-          # generation of its `tauri.settings.gradle` (the app crate's `build.rs` run by cargo, so
-          # the manifest, the lock, the toolchain and the native plugins it names), plus its own
-          # script. Narrower than `android` above on purpose: `android-tests` is a JVM project this
-          # job does not build, and it pays minutes of Rust.
-          if has '^frontend/src-tauri/gen/android/' || has '^frontend/src-tauri/Cargo\.(toml|lock)$' ||              has '^frontend/src-tauri/build\.rs$' || has '^frontend/src-tauri/tauri\.conf\.json$' ||              has '^frontend/src-tauri/(plugins|patches)/' || has '^rust-toolchain\.toml$' ||              has '^\.github/scripts/android-app-compile\.sh$'; then
+          # generation of its `tauri.settings.gradle` AND the Rust it checks for the Android target
+          # (the app crate's `build.rs` runs under cargo, so the manifest, the lock, the toolchain,
+          # the crate's sources, `mls-core` it depends on by path, and the native plugins it names),
+          # plus its own script. This is the ONLY pull-request compile for an Android Rust target,
+          # which is why `src/` is here. Narrower than `android` above on purpose: `android-tests`
+          # is a JVM project this job does not build, and it pays minutes of Rust.
+          if has '^frontend/src-tauri/gen/android/' || \
+             has '^frontend/src-tauri/src/' || \
+             has '^frontend/src-tauri/Cargo\.(toml|lock)$' || \
+             has '^frontend/src-tauri/build\.rs$' || \
+             has '^frontend/src-tauri/tauri\.conf\.json$' || \
+             has '^frontend/src-tauri/(plugins|patches)/' || \
+             has '^frontend/mls-core/' || \
+             has '^rust-toolchain\.toml$' || \
+             has '^\.github/scripts/android-app-compile\.sh$'; then
             echo "android_app=true" >> "$GITHUB_OUTPUT"
           else
             echo "android_app=false" >> "$GITHUB_OUTPUT"
@@ -1263,10 +1273,17 @@ jobs:
     needs: [changes]
     if: ${{ needs.changes.outputs.run-android-app == 'true' }}
     runs-on: ubuntu-24.04
+    # The repository default is write; this job reads a checkout and nothing else.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+
+      # THE WRAPPER JAR IS BINARY CODE a bump of the wrapper replaces (#2564), and this job runs it.
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
 
       - name: Setup JDK
         uses: actions/setup-java@v6
@@ -1274,13 +1291,19 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # `rustflags: ''` for the reason `build-mls-wasm` gives: this action exports its default
-      # `-D warnings` into every later step of the job, and a vendored path dependency would then
-      # compile under our lint bar.
+      # NO `toolchain:` - the action reads `rust-toolchain.toml` (1.97.0), the same compiler every
+      # other job here uses. `rustflags: ''` for the reason `build-mls-wasm` gives: this action
+      # exports its default `-D warnings` into every later step of the job, and a vendored path
+      # dependency would then compile under our lint bar.
+      #
+      # ITS OWN CACHE, AND THAT IS NOT AN OVERSIGHT. `test-rust` caches the repository-root
+      # `target` (which `frontend/src-tauri` does not even build into) keyed on every lock, for
+      # host-triple artefacts that cannot serve an `aarch64-linux-android` check. Reusing that key
+      # would restore a large directory this job never reads. The Swatinem cache this action
+      # carries is scoped to `frontend/src-tauri`, and it keys on the target and the lock.
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
           target: aarch64-linux-android
           cache-workspaces: frontend/src-tauri
           rustflags: ''

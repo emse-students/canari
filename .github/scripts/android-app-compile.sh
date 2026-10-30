@@ -19,19 +19,32 @@
 #
 # THE RUN IS NOT THE ASSERTION. A Gradle invocation that matches no task exits 0 having built
 # nothing (the same trap `android-unit-tests.sh` documents), so this reads the output and fails
-# unless `:app:compileArm64DebugKotlin` actually executed.
+# unless EACH of the three tasks below actually executed. They are where a dependency bump breaks:
+#   - `checkArm64DebugAarMetadata`   an AndroidX release demanding a newer compileSdk or AGP;
+#   - `processArm64DebugMainManifest` a manifest merge conflict between the app and a library;
+#   - `compileArm64DebugKotlin`       an API a library removed.
+#
+# THE REAL `google-services.json` IS NEVER OVERWRITTEN. A developer's copy of that git-ignored file
+# is not recoverable from git, so this refuses to run when one is present that is not the stub.
+#
+# THE NDK IS THE RUNNER'S: `android.yml` pins none either - `tauri android build` reads the
+# ANDROID_NDK_HOME the runner image provides - so there is no second version to read and no
+# fallback variable here; an unset ANDROID_NDK_HOME is an error.
+#
+# `ANDROID_GRADLE_DIR` and `CARGO` exist for `tests/android-app-compile.test.sh` and nothing else.
 #
 # Needs: a JDK 21, rustup with the aarch64-linux-android target, the Android SDK and NDK
 # (ANDROID_HOME, ANDROID_NDK_HOME). Usage: bash .github/scripts/android-app-compile.sh
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-android="$root/frontend/src-tauri/gen/android"
+android="${ANDROID_GRADLE_DIR:-$root/frontend/src-tauri/gen/android}"
+cargo_bin="${CARGO:-cargo}"
 log="$(mktemp)"
 
 : "${ANDROID_HOME:?ANDROID_HOME is not set - the Android SDK is required}"
-ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
-[ -n "$ndk" ] || { echo "::error::ANDROID_NDK_HOME is not set - the C build scripts of the crates need the NDK toolchain"; exit 1; }
+: "${ANDROID_NDK_HOME:?ANDROID_NDK_HOME is not set - the C build scripts of the crates need the NDK toolchain}"
+ndk="$ANDROID_NDK_HOME"
 bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
 echo "== 1. generate tauri.settings.gradle with the app crate's own build script"
@@ -49,7 +62,7 @@ mkdir -p "$root/frontend/build"
   export CC_aarch64_linux_android="$bin/aarch64-linux-android24-clang"
   export AR_aarch64_linux_android="$bin/llvm-ar"
   export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android24-clang"
-  cargo check --locked --lib --target aarch64-linux-android
+  "$cargo_bin" check --locked --lib --target aarch64-linux-android
 )
 for f in tauri.settings.gradle app/tauri.build.gradle.kts; do
   [ -s "$android/$f" ] || { echo "::error::$f was not generated - the Rust build script did not run for the Android target"; exit 1; }
@@ -58,14 +71,24 @@ grep -q "tauri-plugin-" "$android/tauri.settings.gradle" \
   || { echo "::error::tauri.settings.gradle lists no plugin - the DEP_*_ANDROID_LIBRARY_PATH variables were not seen"; exit 1; }
 
 echo "== 2. stub google-services.json (fake values, never the secret)"
-cp "$android/ci/google-services.compile-stub.json" "$android/app/google-services.json"
-
-echo "== 3. compile :app"
-(cd "$android" && ./gradlew --no-daemon --console=plain :app:compileArm64DebugKotlin) 2>&1 | tee "$log"
-
-if ! grep -qE '^> Task :app:compileArm64DebugKotlin( |$)' "$log" \
-   || grep -qE '^> Task :app:compileArm64DebugKotlin (NO-SOURCE|SKIPPED)' "$log"; then
-  echo "::error:::app:compileArm64DebugKotlin did not execute - a green build that compiled nothing is not a gate"
+stub="$android/ci/google-services.compile-stub.json"
+target="$android/app/google-services.json"
+if [ -e "$target" ] && ! cmp -s "$stub" "$target"; then
+  echo "::error::$target exists and is not the compile stub. It may be the real file, which is not in git and which this script will not overwrite. Move it aside and run again."
   exit 1
 fi
-echo "OK :app:compileArm64DebugKotlin ran and succeeded"
+cp "$stub" "$target"
+
+tasks=(:app:checkArm64DebugAarMetadata :app:processArm64DebugMainManifest :app:compileArm64DebugKotlin)
+echo "== 3. configure and run ${tasks[*]}"
+(cd "$android" && ./gradlew --no-daemon --console=plain "${tasks[@]}") 2>&1 | tee "$log"
+
+for t in "${tasks[@]}"; do
+  # `> Task :app:x` alone means it executed; UP-TO-DATE, FROM-CACHE, NO-SOURCE and SKIPPED each
+  # follow it on the same line and each means nothing was checked by THIS run.
+  if ! grep -qE "^> Task ${t}$" "$log"; then
+    echo "::error::${t} did not execute - a green build that did not run it is not a gate"
+    exit 1
+  fi
+done
+echo "OK ${tasks[*]} ran and succeeded"

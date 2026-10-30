@@ -1505,7 +1505,7 @@ what is deliberately not:
 
 | Tree | Dependabot | What gates an update |
 | --- | --- | --- |
-| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which compiles `:app:compileArm64DebugKotlin`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which runs `:app:checkArm64DebugAarMetadata`, `:app:processArm64DebugMainManifest` and `:app:compileArm64DebugKotlin`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
 | `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. With `gen/android` above, one of the two Gradle directories the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
 | `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
 | `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |
@@ -1525,12 +1525,26 @@ secret, so the job runs on a Dependabot pull request:
   copies `gen/android/ci/google-services.compile-stub.json` (fake values, same package name) to
   the git-ignored path. It reaches no Firebase project.
 
-The script fails unless `:app:compileArm64DebugKotlin` actually executed, because a Gradle run
-matching no task exits 0. The job is path-filtered (`android_app` in `changes`: `gen/android`, the
-app crate's manifest, lock, `build.rs`, `tauri.conf.json`, the native plugins, the toolchain and the
-script) and is in `ci-passed`'s `needs`. **`ceiling.test.sh` asserts the job, the script and the
-`ci-passed` wiring still exist**, so deleting the gate re-closes the allowance instead of leaving
-an arm with nothing behind it. A Gradle directory added to `dependabot.yml` later is still refused.
+The script fails unless each of the three tasks actually executed (a Gradle run matching no task
+exits 0): metadata and manifest merge are where an AndroidX bump breaks, the Kotlin compile where a
+removed API does. It refuses to run if `app/google-services.json` exists and is not the stub, so a
+developer's real file is never overwritten, and it takes the NDK from the runner's
+`ANDROID_NDK_HOME` with no fallback (`android.yml` pins none either). The job reads
+`rust-toolchain.toml`, validates the Gradle wrapper jar, and holds `contents: read` only. It keeps
+its own Rust cache: `test-rust` caches the repository-root `target`, which `frontend/src-tauri`
+does not build into, with host-triple artefacts an `aarch64-linux-android` check cannot use.
+
+It is path-filtered (`android_app` in `changes`: `gen/android`, the app crate's sources, manifest,
+lock, `build.rs`, `tauri.conf.json`, `mls-core`, the native plugins, the toolchain and the script;
+the crate's `src/` is there because this is the only pull-request Rust compile for an Android
+target) and is in `ci-passed`'s `needs`. **`ceiling.test.sh` evaluates that guard**: the job exists
+and runs the script, its `if:` reads `run-android-app`, the filter fires for `gen/android` (run
+against real paths, not grepped), and `ci-passed` needs it. A pull request that removes, disables
+or narrows the gate therefore fails `test-ci-scripts`; the guard makes the removal visible, it does
+not restore the gate. The ceiling allows only Dependabot's direct `gen/android/<branch>` shape, and
+a Gradle directory added to `dependabot.yml` later is still refused. This is evidence about the
+Kotlin and the dependency metadata, not a signed release build: a wrapper bump still wants a
+release-shaped build before it ships.
 
 *Measured 2026-10-30 on a workstation, Gradle 9.1.0 baseline then the four open bumps together
 (`webkit` 1.18.0, `firebase-messaging-ktx` 24.1.2, `work-runtime-ktx` 2.12.0, wrapper 9.7.1):

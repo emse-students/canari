@@ -248,7 +248,7 @@ done
 echo "a Gradle update is refused unless a pull-request job builds its tree:"
 for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|allowed" \
   "dependabot/gradle/frontend/src-tauri/gen/android/gradle-wrapper-9.7.1|allowed" \
-  "dependabot/gradle/frontend/src-tauri/gen/android-extra/junit-junit-4.13.3|refused" \
+  "dependabot/gradle/frontend/src-tauri/gen/android-extra/junit-junit-4.13.3|refused"   "dependabot/gradle/frontend/src-tauri/gen/android/sub/directory/junit-junit-4.13.3|refused"   "dependabot/gradle/frontend/src-tauri/gen/android/production-dependencies-25cde2b0f9|allowed" \
   "dependabot/gradle/some/new/directory/junit-junit-4.13.3|refused" \
   "dependabot/gradle/frontend/src-tauri/android-tests/junit-junit-4.13.3|allowed" \
   "dependabot/cargo/apps/chat-gateway/serde-1.0.5|allowed" \
@@ -263,24 +263,50 @@ for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.fireb
   fi
 done
 
-# THE ALLOWANCE FOR `gen/android` IS ONLY AS GOOD AS THE JOB BEHIND IT. If `compile-android-app` or
-# its script is removed, the arm above would let a Gradle bump merge on a suite that never compiles
-# `:app` - the exact hole it was written to close - so the two are asserted to still exist.
+# THE ALLOWANCE FOR `gen/android` IS ONLY AS GOOD AS THE JOB BEHIND IT. If `compile-android-app` is
+# removed, disabled (`if: false`), narrowed so it no longer sees `gen/android`, or dropped from
+# `ci-passed`, the arm above would let a Gradle bump merge on a suite that never compiles `:app` -
+# the exact hole it was written to close. A pull request that does any of that FAILS HERE, in
+# `test-ci-scripts`; the guard makes the removal visible, it cannot restore the gate.
 echo "the gen/android allowance has a gate behind it:"
-ci_yml="$(dirname "${BASH_SOURCE[0]}")/../../workflows/ci.yml"
-if grep -q '^  compile-android-app:' "$ci_yml"    && grep -q 'android-app-compile\.sh' "$ci_yml"    && grep -q 'compile-android-app' "$ci_yml"    && [ -x "$(dirname "${BASH_SOURCE[0]}")/../android-app-compile.sh" ]; then
-  echo "  ok   ci.yml carries compile-android-app and it runs android-app-compile.sh"
-else
-  echo "  FAIL ci.yml has no compile-android-app job running android-app-compile.sh, yet gen/android is allowed"
-  failures=$((failures + 1))
-fi
+tests_dir="$(dirname "${BASH_SOURCE[0]}")"
+ci_yml="$tests_dir/../../workflows/ci.yml"
+ok_or_fail() { # <description> <exit status of the check>
+  if [ "$2" -eq 0 ]; then echo "  ok   $1"; else echo "  FAIL $1"; failures=$((failures + 1)); fi
+}
+# The job's own text: from its key to the next job key at the same indentation.
+job_block="$(awk '/^  compile-android-app:/{f=1; print; next} f && /^  [a-zA-Z0-9_-]+:/{exit} f{print}' "$ci_yml")"
+[ -n "$job_block" ]; ok_or_fail "ci.yml carries a compile-android-app job" $?
+grep -qE '^    if: \$\{\{ needs\.changes\.outputs\.run-android-app == .true. \}\}$' <<<"$job_block"
+ok_or_fail "the job runs when the android_app filter says so, and not under some other condition" $?
+grep -qE '^        run: bash \.github/scripts/android-app-compile\.sh$' <<<"$job_block"
+ok_or_fail "the job runs android-app-compile.sh" $?
+[ -x "$tests_dir/../android-app-compile.sh" ]; ok_or_fail "android-app-compile.sh is executable" $?
+# The filter itself is EVALUATED, not grepped: the `if has ...` of the `android_app` block is run
+# against a real path of the tree this job exists to watch, and against one it must not fire on.
+filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^          if has/{c=1} c{print} c && /; then$/{exit}' "$ci_yml")"
+filter_fires() { # <path>: does the android_app filter fire for a change to that single path?
+  (
+    CHANGED="$1"
+    has() { echo "$CHANGED" | grep -qE "$1"; }
+    eval "$filter_if
+      exit 0
+    else
+      exit 1
+    fi"
+  )
+}
+filter_fires "frontend/src-tauri/gen/android/app/build.gradle.kts"
+ok_or_fail "the filter fires for a change to gen/android" $?
+filter_fires "frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties"
+ok_or_fail "the filter fires for the Gradle wrapper (the #2564 case)" $?
+filter_fires "frontend/src-tauri/src/lib.rs"
+ok_or_fail "the filter fires for the app crate's Rust, the only Android-target compile on a pull request" $?
+filter_fires "apps/core-service/src/main.ts"
+[ $? -ne 0 ]; ok_or_fail "the filter stays quiet for an unrelated change" $?
 # ...and it must be in the aggregate the ruleset requires, or its failure would block nothing.
-if sed -n '/^  ci-passed:/,$p' "$ci_yml" | grep -q 'compile-android-app'; then
-  echo "  ok   ci-passed needs compile-android-app"
-else
-  echo "  FAIL ci-passed does not need compile-android-app"
-  failures=$((failures + 1))
-fi
+sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep -q 'compile-android-app'
+ok_or_fail "ci-passed needs compile-android-app" $?
 
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
