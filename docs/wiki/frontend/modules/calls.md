@@ -339,10 +339,11 @@ flip's alpha stays with internal testers ([mobile](../mobile.md#where-the-submis
 bracketed parts are filled at submission; credentials go in the Sign-In Information fields, never in
 this repository.
 
-> Canari is the messaging app of the Mines Saint-Etienne student community. This version adds
-> one-to-one AUDIO calls between two members who share a direct conversation. Calls are end-to-end
-> encrypted: the audio goes directly between the two devices, relayed through Cloudflare's TURN
-> service only when no direct path exists, and our servers never receive it.
+> Canari is the messaging app of the Mines Saint-Etienne student community. This version offers
+> one-to-one AUDIO and VIDEO calls between two members who share a direct conversation. Calls are
+> end-to-end encrypted: the sound and the picture go directly between the two devices, relayed
+> through Cloudflare's TURN service only when no direct path exists, and our servers never receive
+> them. Nothing is recorded.
 >
 > To test: (1) on the sign-in screen, choose "Connexion externe (service-account)" and sign in with
 > the account given in Sign-In Information; (2) open the direct conversation with [second account];
@@ -352,9 +353,22 @@ this repository.
 > call, lock the screen: the call continues. That is what the `audio` background mode is used for -
 > an ongoing call keeps its microphone while the screen is locked.
 >
+> For a VIDEO call, tap the video-call button in the conversation header [confirm the control's
+> label on the review build]: iOS asks for the camera, and
+> the request names video calls. The camera runs only during the call; the member can turn it off
+> or switch between the front and back cameras from the call screen, and it is turned off while the
+> app is in the background (the audio continues) and back on when the app returns.
+>
 > This version declares no `voip` background mode and uses neither CallKit nor PushKit: a call rings
-> only while the app is open. Video calls are not offered. From the conversation, a member can
-> report and block the other; a blocked member cannot call.
+> only while the app is open. From the conversation, a member can report and block the other; a
+> blocked member cannot call.
+
+**When these notes apply (1.5.2).** The review build talks to PRODUCTION, so the video paragraph is
+true only while `calls_mode` is `audio_video`. If production is still at `audio` when 1.5.2 is
+submitted, the video paragraph is replaced by "Video calls are built in this version and are being
+opened in stages: the camera string names them, and the video-call button appears once the server
+enables them" - never left claiming a button the reviewer cannot find (2.5.4 refused a declared
+feature it could not locate on 2026-08-31).
 
 **3. The demo pair - owed, and one fact is not known.** The reviewers' way in is the existing
 "Connexion externe (service-account)" sign-in ([ecosystem-convergence](../../ecosystem-convergence.md),
@@ -429,10 +443,10 @@ Every stable up to 1.5.1 has `CALLS_VIDEO_ENABLED = false` (B0, #2171). Against 
   shows, and nothing says the peer is audio only (no capability is exchanged). Accepted until the
   floor rises; recorded here so it is not reported as a defect.
 
-**So `audio_video` opens only when ONE of these holds**: CALL-L1 row 13 reads `PASS` with a 1.5.1
-STORE build as the audio-only side, on the iPhone AND on the Mi 9T; or `minClientVersion` has been
-raised to 1.5.2 (after BOTH stores serve it, as Q3 did for audio). The first is the expected route;
-the second is the owner's production change.
+**DECIDED (2026-10-30): `audio_video` opens only when ONE of these holds** - `minClientVersion` has
+been raised to 1.5.2, once BOTH stores serve it (as Q3 did for audio); or VID-6 (CALL-L1 row 13)
+reads `PASS` against a 1.5.1 STORE build as the audio-only side, on the iPhone AND on the Mi 9T.
+Either way, the readings VID-1..VID-5, VID-7 and VID-8 below pass first. Not to be re-opened.
 
 ### The readings owed before `audio_video` opens
 
@@ -450,17 +464,25 @@ BOTH phones, logs of both ends read, bar `PASS`, never `PASS-DIRTY`:
 | VID-7 | **The quality ladder** (VQ, [measuring it](#measuring-it-on-the-phones-owed-device-verification-vq)) | the climb to 720p and the drop under throttle; the phone cost per rung recorded |
 | VID-8 | **The camera prompt** on a fresh iPhone install | the system prompt shows the new `NSCameraUsageDescription` naming video calls |
 
-**Also owed before `audio_video`, and NOT done in this commit** (text changes for the owner, never
-invented here):
+**The texts, written 2026-10-30** (the owner delegated the legal texts: written against the code,
+claiming nothing it does not do): `/legal/privacy` ("Appels audio et vidéo", `updated` 30/10/2026)
+and register row C21 changed together - the picture E2E like the sound, the camera only inside a
+call and off in the background, nothing recorded, `hasVideo` read at the ring and passed in the push
+but never stored, the video figures of `[CALL_REPORT]`. The review notes above cover video, with
+the rule for a submission made while production is still at `audio`.
 
-- **The privacy policy and the register do not declare video.** `/legal/privacy` says "Appels audio"
-  and "Le son d'un appel est chiffré de bout en bout"; register row C21 is "Audio calls". Video adds
-  the camera as a source and the picture as E2E media (same keys, same server and Cloudflare view;
-  a relayed video call shows Cloudflare a larger volume). Both change together, worded with the owner
-  (as Q5 was for audio).
-- **The store answers (B14) for 1.5.2**: the review-notes draft above says "Video calls are not
-  offered"; the App Store privacy labels and Play Data safety re-read for the camera in calls. No
-  store-notes text is written now (owner, 2026-10-30).
+**Still owed to the store consoles (the owner's clicks; nothing changed there)** - re-read against
+the forms as published that day:
+
+- **App Store Connect > App Privacy**: "Photos or Videos" (is call video, E2E and never stored,
+  "collected" under Apple's definition? - the same question as the audio row of the table above,
+  now for the picture); "Audio Data" (the same, for call sound); "Other User Content" if the current
+  label lists camera content only for posts and reels; "Product Interaction" (call metadata,
+  unchanged by video).
+- **Play Console > Data safety**: "Photos and videos" (call video, E2E: the encrypted-in-transit and
+  E2E exemption read as it stands); "Audio > Voice or sound recordings" (call sound, the same);
+  "App activity > Other actions" (call metadata, unchanged). No new permission: `CAMERA` is already
+  declared, so no Play permission declaration moves.
 
 ## The native ring on the iPhone - PushKit and CallKit (WP-C6, owner 2026-10-22)
 
