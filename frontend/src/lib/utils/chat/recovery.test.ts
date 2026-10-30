@@ -60,7 +60,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // this group becomes routable at that instant.
     notifyConversationAvailable: vi.fn(),
     getLocalGroups: vi.fn().mockReturnValue([]),
-    sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    sendWelcomeRequest: vi.fn().mockResolvedValue(null),
     sendBaseRefreshRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     // A reconciliation waits for this device's own inbound queue before asking anybody anything;
@@ -442,6 +442,72 @@ describe('requestReAdd', () => {
       expect(deps.log).toHaveBeenCalledWith(
         expect.stringContaining("a further device of a member - a member's Add")
       );
+    });
+
+    describe('a further device asks on the cadence, whatever the server did with the ask (review of #2718)', () => {
+      // DEVREVOKE-KEYGROUP (2026-10-29): the same ask went out twice, 20 s apart, for six groups.
+      // No answer makes the ask durable - a forwarded one lives on one member's screen, a stored one
+      // is drained to a member's screen at its next connection - so a record of "already asked" would
+      // strand the device in a quiet group. The member side says its decision once instead.
+      const furtherOnPair = (answer: unknown) => {
+        const deps = makeDeps();
+        deps.mlsService.getGroupMeta = vi.fn().mockResolvedValue({
+          groupId: 'g1',
+          isGroup: true,
+          deletedAt: null,
+          baseEpoch: 4,
+          activeEpoch: 4,
+        });
+        deps.mlsService.getDeviceMemberships = unadmitted();
+        deps.mlsService.externalJoin = vi
+          .fn()
+          .mockResolvedValue({ joined: false, reason: 'further_device' });
+        deps.mlsService.sendWelcomeRequest =
+          answer instanceof Error
+            ? vi.fn().mockRejectedValue(answer)
+            : vi.fn().mockResolvedValue(answer);
+        return deps;
+      };
+      const twoPasses = async (deps: ReturnType<typeof makeDeps>) => {
+        await requestReAdd('g1', deps);
+        resetReAddCooldowns();
+        await requestReAdd('g1', deps);
+      };
+
+      it('a STORED ask is put again on the next pass, on the same epoch pair', async () => {
+        const deps = furtherOnPair({ status: 'stored' });
+        await twoPasses(deps);
+        expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+        expect(deps.log).toHaveBeenCalledWith(
+          expect.stringContaining("stored for every member's next connection")
+        );
+        // Still waiting on the watchdog's cadence: the marker stays.
+        expect(enumerateNotReadyGroups('user-a')).toContain('g1');
+      });
+
+      it("a FORWARDED ask lives on one member's screen, so it is put again on the cadence", async () => {
+        const deps = furtherOnPair({ status: 'forwarded', target: 'user-b:web-b' });
+        await twoPasses(deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+        expect(deps.log).toHaveBeenCalledWith(
+          expect.stringContaining('forwarded to one online member')
+        );
+      });
+
+      it('a failed send is said and asked again on the next pass', async () => {
+        const deps = furtherOnPair(new Error('401'));
+        await twoPasses(deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+        expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('welcome_request failed'));
+      });
+
+      it('no answer is said and asked again too', async () => {
+        const deps = furtherOnPair(null);
+        await twoPasses(deps);
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+        expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('got no answer'));
+      });
     });
 
     it('a 1:1 peer or a demoted device joins by itself when the tree holds no other device of it', async () => {

@@ -76,7 +76,7 @@
       <ChevronRight size={20} />
     </button>
   </div>
-  <div class="grid grid-cols-7 gap-1" role="group" aria-label={m.bookings_strip_label()}>
+  <div class="grid grid-cols-7" role="group" aria-label={m.bookings_strip_label()}>
     {#each days as day (day.date)}
       {@const head = formatDayHead(day.date)}
       <button
@@ -84,15 +84,19 @@
         aria-pressed={day.date === date}
         aria-label={`${formatDay(day.date)} : ${stateText(day.state)}`}
         onclick={() => onSelect(day.date)}
-        class="flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl border px-0.5 py-1 text-xs transition-colors {day.date ===
-        date
-          ? 'bg-cn-yellow text-cn-ink border-cn-yellow font-bold'
-          : day.date === today
-            ? 'border-cn-yellow bg-cn-surface text-text-muted'
-            : 'border-cn-border bg-cn-surface text-text-muted hover:bg-cn-border/30'}"
+        class="text-text-muted flex min-h-14 flex-col items-center justify-center gap-0.5 px-0.5 py-1 text-xs"
       >
         <span class="first-letter:uppercase">{head.weekday}</span>
-        <span class="text-sm font-bold">{head.num}</span>
+        <span
+          class="flex size-8 items-center justify-center rounded-full text-sm font-bold transition-colors {day.date ===
+          date
+            ? 'bg-cn-yellow text-cn-ink'
+            : day.date === today
+              ? 'border-cn-yellow text-text-main border'
+              : 'text-text-main'}"
+        >
+          {head.num}
+        </span>
         <span class="h-1.5 w-1.5 rounded-full {dot(day.state)}" aria-hidden="true"></span>
       </button>
     {/each}

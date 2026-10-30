@@ -642,6 +642,27 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
   same device), and make the request depend on a durable "already asked for this device and key",
   not on the read.
+- MEMBER SIDE FIXED in `fix/join-request-once` (2026-10-30), not shipped; the requester's re-ask
+  closes with the server row below. Delete this entry when both have shipped.
+  - The second pass (re-read on alpha.8, 23:14:42 then 23:15:02) re-asked all six conversations at
+    once. Only a reset of every group's throttle does that, and its one caller is the session setup
+    (`resetReAddCooldowns` in `setupMessageHandler`). The requester's console was not kept, so this
+    is read from the code, not proven.
+  - The member says its decision once per (group, device, key, epoch) while the ask is shown
+    (`actions.ts`), and counts repeats at 1, 10 and 100. The requester still asks on its cadence,
+    about once a minute per group, and logs what the server did with each ask.
+  - Review of #2718: a requester record of "already asked against this epoch pair" was tried and
+    REMOVED. No server answer makes the ask durable, so in a quiet group the record stranded the
+    device until a reload. Stopping the re-ask waits for the server row below.
+    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built)
+
+- Today a further device of a member with no seat has no durable ask. The requester re-asks on its
+  cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
+- The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
+  and let every member's pending sweep re-raise it. The requester then stops asking once the row
+  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -654,6 +675,9 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   per-read class: no budget in the rig.
 - Owed: say the withholding once per roster state (keyed on what it was decided on), and answer a
   repeat of the same ask with that one decision.
+- FIXED in `fix/join-request-once` (2026-10-30), not shipped; delete this entry at the stable. Each
+  line is said once per asking device and key group, keyed on what it was decided on: which sessions
+  were withheld and why (`sayAnswerDecisionOnce` in `utils/graine/frameHandler.ts`).
 
 ## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
 

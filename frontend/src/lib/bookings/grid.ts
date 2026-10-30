@@ -150,6 +150,15 @@ export function windowRefusal(
   );
 }
 
+/**
+ * A unit that is over on the device's clock. The grid DIMS it and says nothing in it: "not
+ * bookable" is news only for a unit that is still to come, and repeating it down every past cell
+ * of the week buried the cells that were still worth reading.
+ */
+export function isPastUnit(unit: { endMs: number }, nowMs: number): boolean {
+  return unit.endMs <= nowMs;
+}
+
 /** Days of one week on the booker's page. */
 export const WEEK_DAYS = 7;
 
