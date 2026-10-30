@@ -177,6 +177,20 @@ pub enum MlsError {
     /// classifying (Mi 9T, 2026-09-28).
     #[error("KEYSTORE_KEY_UNAVAILABLE: {0}")]
     KeystoreKeyUnavailable(String),
+    /// An EXTERNAL commit whose Remove proposals reach beyond the joiner's own prior leaf, refused
+    /// before it merged (RFC 9420 section 12.4.3.2; `messaging.rs`, `refuse_foreign_external_remove`).
+    ///
+    /// Permanent for these bytes: the commit was processed at exactly our epoch, and the tree it
+    /// was judged against cannot change. So it is a same-epoch refusal for every caller - typed here
+    /// for [`MlsError::decrypt_kind`], and carrying that marker in its text for the two FFI
+    /// boundaries that classify on it (`classifyIncomingDecryptError`), so it is ACKed and never
+    /// queued or answered with a heal.
+    ///
+    /// The payload is `group=<id> removed_leaf=<n>` and nothing else: the identities are bytes the
+    /// committer chose, and a substring classifier reading them could be steered to another kind.
+    /// They go to the ERROR line only.
+    #[error("FOREIGN_EXTERNAL_REMOVE: same-epoch refusal {0}")]
+    ForeignExternalRemove(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on
@@ -255,6 +269,7 @@ impl MlsError {
         match self {
             MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,
             MlsError::Evicted(_) => DecryptErrorKind::Evicted,
+            MlsError::ForeignExternalRemove(_) => DecryptErrorKind::SameEpochRefusal,
             MlsError::OpenMls(s) if s.contains("SecretReuseError") => DecryptErrorKind::SecretReuse,
             // Before the generic `Process error:` arm: a too-far-ahead generation IS a process
             // error, and reading it as a retryable ratchet gap is what queued a frame that could

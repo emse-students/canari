@@ -48,8 +48,10 @@ import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
   mlsFrameEpoch,
+  isPublicMlsFrame,
   readCommitFrame,
 } from '../utils/mls-frame-epoch';
+import { groupInfoLeafIdentity } from '../utils/mls-group-info';
 import {
   askDepartureOutcome,
   type DepartureOutcome,
@@ -125,6 +127,8 @@ import {
   sanitizeStringIdList,
   assertCallerOwnsUserId,
   isUnresolvedIdentity,
+  canonicalDeviceKey,
+  canonicalLeafIdentity,
 } from '../utils/sanitize';
 import {
   HISTORY_STREAM_MAXLEN,
@@ -540,7 +544,7 @@ export function readAddressedDevices(body: SendMessageBody): Set<string> | null 
     ) {
       throw new BadRequestException('recipientDevices contains a key that is not userId:deviceId');
     }
-    keys.add(`${key.slice(0, at).toLowerCase()}:${key.slice(at + 1)}`);
+    keys.add(canonicalDeviceKey(key.slice(0, at), key.slice(at + 1)));
   }
   return keys;
 }
@@ -594,6 +598,7 @@ export type ClientSendRefusal =
   | { error: 'send_body_invalid'; status: 400; detail: string }
   | { error: 'send_field_refused'; status: 400; detail: string }
   | { error: 'proto_required'; status: 400; detail: string }
+  | { error: 'public_frame_refused'; status: 400; detail: string }
   | { error: 'sender_mismatch'; status: 403; detail: string };
 
 /**
@@ -603,6 +608,8 @@ export type ClientSendRefusal =
  *   here (the recipient set from the membership table, a commit by `POST /mls/commit`).
  * - A `proto`: the pre-MLS content path is retired (measured unused 2026-10-22,
  *   `docs/wiki/legacy-compatibility.md`).
+ * - A PRIVATE frame: the send route relays only private (application) frames; a public handshake
+ *   frame goes through the commit route, whose gate reads it ({@link isPublicMlsFrame}).
  * - The caller as sender, with a device: a frame is attributed to its sender by every reader of the
  *   group's log, and the membership gate below is keyed on that device.
  *
@@ -621,6 +628,9 @@ export function clientSendRefusal(body: unknown, caller: string): ClientSendRefu
   const { proto, senderId, senderDeviceId } = body as SendMessageBody;
   if (typeof proto !== 'string' || proto.length === 0) {
     return { error: 'proto_required', status: 400, detail: 'no proto' };
+  }
+  if (isPublicMlsFrame(proto)) {
+    return { error: 'public_frame_refused', status: 400, detail: 'wire_format=public_message' };
   }
   if (
     typeof senderId !== 'string' ||
@@ -1763,7 +1773,7 @@ export class MessagingService {
         // outside the group. Measured on production 2026-10-12, an answer to one seed request was
         // queued for every seat of a 112-seat key group (`prod-queue-and-epoch-audit-2026-10-12`).
         const targets = addressed
-          ? members.filter((m) => addressed.has(`${m.userId.toLowerCase()}:${m.deviceId}`))
+          ? members.filter((m) => addressed.has(canonicalDeviceKey(m.userId, m.deviceId)))
           : members;
         if (addressed) {
           this.logger.log(
@@ -2267,6 +2277,9 @@ export class MessagingService {
         error: 'commit_identity_mismatch',
         message: 'this commit is not accepted',
       });
+    }
+    if (frame.external && frame.removedLeaves.length > 0) {
+      await this.assertExternalRemoveIsOwnPriorLeaf(groupId, frame, traceId);
     }
     const committerClaim = await this.assertCommitterMayCommit(
       groupId,
@@ -3403,6 +3416,66 @@ export class MessagingService {
       refusals.push({ userId: c.userId, deviceId: c.deviceId, reason });
       return false;
     });
+  }
+
+  /**
+   * Refuses an external commit whose Remove proposals reach beyond the joiner's own prior leaf -
+   * RFC 9420 section 12.4.3.2, enforced by every receiver in `mls-core`
+   * (`refuse_foreign_external_remove`) and checked here too, before the epoch moves.
+   *
+   * At most one Remove, and the leaf it names must carry the joiner's own identity - the identity
+   * the gate has already held to `committer:deviceId`, compared in {@link canonicalDeviceKey} form
+   * as `mls-core`'s `same_identity` does. The commit names the leaf by INDEX, so its identity is
+   * read from the tree of the stored base ({@link groupInfoLeafIdentity}): the GroupInfo this server
+   * served the joiner. Bases are strictly monotonic, one per epoch ({@link putGroupInfo}): with no
+   * base at or past the commit's epoch the leaf cannot be named and the commit is refused; a base
+   * PAST it means the commit lost a race, and the epoch gate answers it (see the body).
+   */
+  private async assertExternalRemoveIsOwnPriorLeaf(
+    groupId: string,
+    frame: { epoch: number; leafIdentity: string; removedLeaves: number[] },
+    traceId: string
+  ): Promise<void> {
+    const refuse: (why: string) => never = (why) => {
+      this.logger.error(
+        `[COMMIT][${traceId}] REJECT external_remove_foreign group=${groupId} ` +
+          `joiner=${sanitizeLeafLogValue(frame.leafIdentity)} removes=[${frame.removedLeaves.join(',')}] ${why}`
+      );
+      throw new ForbiddenException({
+        error: 'commit_identity_mismatch',
+        message: 'this commit is not accepted',
+      });
+    };
+    if (frame.removedLeaves.length > 1) refuse('more than one Remove');
+    const base = await this.groupInfoRepo.findOne({ where: { groupId } });
+    if (!base || base.baseEpoch < frame.epoch) {
+      refuse(`no base at epoch ${frame.epoch} (stored=${base?.baseEpoch ?? 'none'})`);
+    }
+    if (base.baseEpoch > frame.epoch) {
+      // A COMMIT BUILT ON A BASE THE GROUP HAS ALREADY LEFT IS THE EPOCH GATE'S TO ANSWER, not this
+      // one's: a legitimate resync that lost a race reads `epoch_mismatch` (or its own earlier
+      // acceptance) and rebuilds, where a 403 here would end its retry. That holds only while the
+      // GROUP is past the commit's epoch too - `activeEpoch` never moves back, so the strict gate is
+      // then certain to refuse it. A base ahead of a group still at the commit's epoch proves
+      // nothing about the tree the commit names, so that case is refused.
+      const group = await this.groupRepo.findOne({
+        where: { id: groupId },
+        select: { id: true, activeEpoch: true },
+      });
+      if ((group?.activeEpoch ?? -1) > frame.epoch) {
+        this.logger.log(
+          `[COMMIT][${traceId}] external Remove on a superseded base group=${groupId} ` +
+            `epoch=${frame.epoch} base=${base.baseEpoch} - left to the epoch gate`
+        );
+        return;
+      }
+      refuse(`base ${base.baseEpoch} is ahead of the group at ${group?.activeEpoch ?? 'none'}`);
+    }
+    const removed = groupInfoLeafIdentity(base.groupInfo, frame.removedLeaves[0]);
+    const removedKey = canonicalLeafIdentity(removed);
+    if (removedKey === null || removedKey !== canonicalLeafIdentity(frame.leafIdentity)) {
+      refuse(`removed=${sanitizeLeafLogValue(removed, 'unreadable')}`);
+    }
   }
 
   /**
