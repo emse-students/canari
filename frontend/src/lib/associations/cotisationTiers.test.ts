@@ -24,6 +24,7 @@ function tier(id: string, name: string, cents: number | null, grid = false): Tie
       ? ({ dimensions: [], cells: [] } as unknown as TierLike['priceMatrix'])
       : null,
     grantedTagName: `cotisant:cercle-${id}`,
+    variantKey: id === 'base' ? null : id,
   };
 }
 
@@ -55,6 +56,17 @@ describe('tiersInPriceOrder', () => {
     expect(
       tiersInPriceOrder([grid, avecAlcool, unpriced, sansAlcool, twin]).map((t) => t.id)
     ).toEqual(['twin', 'sans', 'avec', 'grid', 'none']);
+  });
+
+  it('ranks an unpriced BASE tier lowest, ahead of every priced tier', () => {
+    const base = tier('base', 'Zzz base', null);
+    const named = tier('none', 'A libre', null);
+    expect(tiersInPriceOrder([avecAlcool, named, sansAlcool, base]).map((t) => t.id)).toEqual([
+      'base',
+      'sans',
+      'avec',
+      'none',
+    ]);
   });
 
   it('does not reorder the array it was given', () => {
