@@ -16,8 +16,8 @@ import { PRODUCT_ALREADY_PURCHASED, TIER_NOT_A_RISE, TIER_NOT_RANKABLE } from '.
  * - `higher`: a rise - its product price is strictly greater than the held tier's - sold.
  * - `lower`: NOT a rise - its product price is lower than or EQUAL to the held tier's - refused, since
  *   the sibling XOR would replace the held tier.
- * - `unranked`: a tier is held, but it or the target has no fixed price (a grid, a free amount, a tag
- *   whose tier product is gone), so no rank can be defended - refused rather than guessed.
+ * - `unranked`: a tier is held, but it or the target has no rankable price (a grid, a free amount, a
+ *   named tier with no price, a tag whose tier product is gone - see `rankPriceCents`), so no rank can be defended - refused rather than guessed.
  */
 export type TierRelation = 'none' | 'held' | 'higher' | 'lower' | 'unranked';
 
@@ -26,6 +26,8 @@ export interface RankedTier {
   variantKey: string | null;
   amountCents: number | null;
   priceMatrix?: unknown;
+  /** A pay-what-you-want product: its `amountCents` is not a price, so it is never ranked. */
+  allowCustomAmount?: boolean | null;
 }
 
 /**
@@ -43,10 +45,11 @@ export interface HeldTier {
  * tier (`variantKey` null) that carries no price at all - no grid, no amount, which is how every
  * association gets it when it enables cotisations - ranks LOWEST of the association, as 0: it is the
  * entry level, so every priced tier is a rise over it and it is never a rise over anything. A named
- * tier with no price, a grid, or a missing product stays unrankable.
+ * tier with no price, a grid, a free amount (`allowCustomAmount`) or a missing product stays
+ * unrankable.
  */
 export function rankPriceCents(t: RankedTier | null): number | null {
-  if (t === null || t.priceMatrix != null) return null;
+  if (t === null || t.priceMatrix != null || t.allowCustomAmount) return null;
   if (t.amountCents !== null) return t.amountCents;
   return t.variantKey === null ? 0 : null;
 }

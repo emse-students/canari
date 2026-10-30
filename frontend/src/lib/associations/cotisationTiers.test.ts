@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import { formatAmount } from '$lib/forms/fillAnswers';
@@ -10,6 +12,7 @@ import {
   riseSentence,
   riseSourceTier,
   riseSources,
+  tierRankCents,
   tiersInPriceOrder,
   type TierLike,
 } from './cotisationTiers';
@@ -25,8 +28,18 @@ function tier(id: string, name: string, cents: number | null, grid = false): Tie
       : null,
     grantedTagName: `cotisant:cercle-${id}`,
     variantKey: id === 'base' ? null : id,
+    allowCustomAmount: false,
   };
 }
+
+describe('tierRankCents - the shared rank vector', () => {
+  const vector = JSON.parse(
+    readFileSync(resolve(process.cwd(), '../tools/tier-rank-vector.json'), 'utf-8')
+  ) as (TierLike & { rank: number | null })[];
+  it.each(vector.map((v) => [v.name, v] as const))('%s', (_name, v) => {
+    expect(tierRankCents(v)).toBe(v.rank);
+  });
+});
 
 const sansAlcool = tier('sans', 'Cotisation', 1500);
 const avecAlcool = tier('avec', 'Cotisation Alcool', 3000);
