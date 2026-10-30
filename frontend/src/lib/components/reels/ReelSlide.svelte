@@ -110,6 +110,8 @@
   /** As on the post card: "Republie par X" beside the time (user, 2026-10-24). */
   const republished = $derived(republishedByText(post.republishedBy));
 
+  /** The rail's reaction drawer is open: the tap-outside layer below is drawn. */
+  let railDrawerOpen = $state(false);
   /** The caption unfolded in place ("Voir plus"); folded again when the reel leaves the screen. */
   let expanded = $state(false);
   let textEl = $state<HTMLDivElement | undefined>();
@@ -334,10 +336,30 @@
           onSend={rail?.onSend}
           tools={page === 'reel' ? railTools : undefined}
           sound={page === 'reel'}
+          bind:drawerOpen={railDrawerOpen}
         />
       </div>
     {/if}
   </ReelFrame>
+
+  {#if railDrawerOpen}
+    <!-- TAP OUTSIDE RETRACTS THE REACTION DRAWER, AND ONLY THAT (owner, 2026-10-30). Here and not
+         in the rail: `fixed` inside the viewer's transformed track is laid out against the track,
+         so it covered the first slide's place and a later reel's tap went to the video. A button,
+         so the viewer's swipe and the double tap leave it alone; above the caption (`z-20`), under
+         the rail (`z-30`) whose drawer must stay tappable. -->
+    <button
+      type="button"
+      class="absolute inset-0 z-25 cursor-default"
+      tabindex="-1"
+      aria-hidden="true"
+      onclick={() => {
+        console.debug('[reel-slide] tap outside the reaction drawer closes it');
+        railDrawerOpen = false;
+      }}
+      data-reel-rail-drawer-dismiss
+    ></button>
+  {/if}
 
   {#if expanded}
     <!-- TAP OUTSIDE FOLDS THE TEXT - anywhere on the slide, the letterbox bands included, not only
