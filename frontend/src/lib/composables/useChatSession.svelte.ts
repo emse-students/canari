@@ -19,7 +19,11 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
-import { setPendingCallAcceptHandler, setSessionCaughtUp } from '$lib/stores/pendingCallAccept';
+import {
+  markConnectionCaughtUp,
+  setPendingCallAcceptHandler,
+  setSessionCaughtUp,
+} from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
@@ -197,7 +201,7 @@ export function useChatSession() {
       // A socket that closed has nothing caught up: a native answer waits for the next catch-up.
       if (!v) setSessionCaughtUp(false);
     },
-    onConnectionCaughtUp: () => setSessionCaughtUp(true),
+    onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected),
     getLoginError: () => loginError,
     setLoginError: (v) => {
       loginError = v;

@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  markConnectionCaughtUp,
   parsePendingCallAccept,
   setPendingCallAccept,
   setPendingCallAcceptHandler,
@@ -52,6 +53,38 @@ describe('a native answer is acted on once the session has caught up', () => {
     setSessionCaughtUp(false);
     setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('a catch-up that ended on a dropped socket is no catch-up, nor a stale one', () => {
+    const handler = vi.fn();
+    setPendingCallAcceptHandler(handler);
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+
+    // The socket dropped during the fetch: the catch-up's end must not act, nor leave the flag
+    // true for the reconnect to inherit.
+    markConnectionCaughtUp(false);
+    expect(handler).not.toHaveBeenCalled();
+
+    // The reconnect's own catch-up decides.
+    markConnectionCaughtUp(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale true flag is cleared by a catch-up on a dropped socket', () => {
+    const handler = vi.fn();
+    setPendingCallAcceptHandler(handler);
+    setSessionCaughtUp(true);
+    markConnectionCaughtUp(false);
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('the session reports the socket state at the end of the catch-up, not a constant', () => {
+    const session = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../composables/useChatSession.svelte.ts'),
+      'utf8'
+    );
+    expect(session).toContain('onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected)');
   });
 
   it('drops an answer recorded too long ago', () => {

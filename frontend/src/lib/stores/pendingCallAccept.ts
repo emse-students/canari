@@ -73,6 +73,20 @@ export function setSessionCaughtUp(value: boolean): void {
   if (value) actIfReady('the session caught up');
 }
 
+/**
+ * The end of a post-connect catch-up (`ConnectionDeps.onCaughtUp`). Caught up only if the socket is
+ * STILL open: a socket that dropped during the fetch has caught up nothing, and a flag set true then
+ * would stay true through the reconnect and act on an intent before that reconnect caught up.
+ */
+export function markConnectionCaughtUp(socketOpen: boolean): void {
+  if (!socketOpen) {
+    appendLog(
+      '[CallAccept] catch-up ended on a closed socket - not caught up, the next one decides'
+    );
+  }
+  setSessionCaughtUp(socketOpen);
+}
+
 /** Records an accept intent drained from the native handler, and acts on it if the session is ready. */
 export function setPendingCallAccept(intent: PendingCallAccept): void {
   pending = intent;

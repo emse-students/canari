@@ -38,8 +38,14 @@ internal object CallRingAnswer {
             .put("callerId", callerId)
             .put("hasVideo", hasVideo)
             .put("rungAt", System.currentTimeMillis())
-        prefs(context).edit().putString(callId, entry.toString()).apply()
-        Log.d(TAG, "record: ring call=$callId recorded for its answer")
+        // commit(), not apply(): the record must be on disk before the ring shows - a process killed
+        // before an async flush would leave a cold-start Answer with no record to check. One
+        // synchronous write per ring.
+        if (!prefs(context).edit().putString(callId, entry.toString()).commit()) {
+            Log.e(TAG, "record: ring call=$callId NOT written - its Answer will find no record")
+        } else {
+            Log.d(TAG, "record: ring call=$callId recorded for its answer")
+        }
         return nonce
     }
 
