@@ -4333,6 +4333,7 @@
   "bookings_spaces_search_placeholder": "Rechercher un espace",
   "bookings_row_resources": "{count} ressources",
   "bookings_row_with": "avec {names}",
+  "bookings_row_reminder": "Rappel",
   "bookings_spaces_no_match": "Aucun espace ne correspond à cette recherche.",
   "bookings_upcoming_cancel_message_label": "Message pour {name} (facultatif)",
   "bookings_upcoming_cancel_notified": "{name} et ses participants seront prévenus.",

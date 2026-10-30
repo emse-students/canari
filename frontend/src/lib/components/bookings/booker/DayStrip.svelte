@@ -18,7 +18,7 @@
     onSelect: (date: string) => void;
     onPrevious: () => void;
     onNext: () => void;
-    /** False while the week shown holds today: there is nowhere to go back to. */
+    /** False while the DAY shown is today: there is nowhere to go back to. */
     away?: boolean;
     onToday?: () => void;
   }

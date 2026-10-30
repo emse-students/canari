@@ -58,11 +58,6 @@
   /** "Je regle tout moi-meme": the space by its name alone, every setting at its default. */
   async function createByName(name: string) {
     if (creating) return;
-    if (!name) {
-      // "Je regle tout moi-meme" with no name typed yet: the wizard's first step asks for it.
-      error = m.bookings_problem_required();
-      return;
-    }
     creating = true;
     error = '';
     try {

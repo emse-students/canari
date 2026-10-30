@@ -83,9 +83,9 @@
   {:else if bell}
     <span
       class="bg-cn-border/40 text-text-main inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums"
-      title={m.bookings_reminder_label()}
     >
       <Bell size={14} aria-hidden="true" />
+      <span class="sr-only">{m.bookings_row_reminder()}</span>
       {bell}
     </span>
   {/if}
