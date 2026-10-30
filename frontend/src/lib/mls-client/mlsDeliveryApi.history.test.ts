@@ -166,6 +166,39 @@ describe('MlsDeliveryApi.fetchHistoryBatch', () => {
     warn.mockRestore();
     error.mockRestore();
   });
+
+  // WHO ANSWERED decides whether the link is proven up: a captive portal's 2xx HTML page must not
+  // clear `isOffline` (it would un-hold every barrier), the gateway's JSON - whatever its status - does.
+  it('clears isOffline on the gateway answer only, never on a portal page', async () => {
+    const { connectivity } = await import('$lib/stores/connectivity.svelte');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const api = (res: Response) =>
+      new MlsDeliveryApi({
+        historyUrl: 'https://example.test',
+        getToken: async () => 'token',
+        fetchImpl: vi.fn().mockResolvedValue(res),
+      });
+    connectivity.reset();
+    connectivity.isOnline = true;
+    connectivity.notifyServerUnreachable();
+    expect(connectivity.isOffline).toBe(true);
+
+    await api(
+      new Response('<html>portal</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
+    ).fetchHistoryBatch([{ groupId: 'g1' }]);
+    expect(connectivity.isOffline).toBe(true);
+
+    await api(
+      new Response('{"message":"busy"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ).fetchHistoryBatch([{ groupId: 'g1' }]);
+    expect(connectivity.isOffline).toBe(false);
+
+    connectivity.reset();
+    error.mockRestore();
+  });
 });
 
 describe('MlsDeliveryApi.fetchHistory', () => {

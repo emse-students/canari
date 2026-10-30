@@ -1190,21 +1190,42 @@ export function useConversations() {
     });
   }
 
-  /** Replays each owed archive in turn - serialised, as the restore's own phase 2 is. */
+  /**
+   * Replays each owed archive in turn - serialised, as the restore's own phase 2 is.
+   *
+   * A LINK THAT DROPS AGAIN MID-REPLAY RE-OWES WHAT IS LEFT: each id is checked against
+   * `connectivity.isOffline` before its read, and the remainder goes back to
+   * {@link oweArchiveReplays} for the next answered reconnect, said once. Without it every remaining
+   * id would send its probe into the dead link, and `loadHistoryForConversation` - to which an
+   * unanswered read is an empty page, not a throw - would drop each one silently.
+   */
   async function replayOwedArchives(
     gen: RestoreGeneration,
     ctx: ConversationContext,
     ids: string[]
   ): Promise<void> {
     ctx.log(`[CATCHUP] link back - replaying ${ids.length} archive(s) skipped while it was down`);
-    for (const id of ids) {
+    for (let i = 0; i < ids.length; i++) {
       if (gen.retired) return;
+      if (connectivity.isOffline) {
+        const rest = ids.slice(i);
+        ctx.log(
+          `[CATCHUP] the link dropped again - ${rest.length} archive replay(s) owed to the next reconnect`
+        );
+        oweArchiveReplays(gen, ctx, rest);
+        return;
+      }
+      const id = ids[i];
       // Left since (a leave, a delete): nothing to replay into.
       if (!conversations.has(id)) continue;
       try {
         await loadHistoryForConversation(id, id, ctx);
       } catch (e) {
-        // Every swallowed branch logs: this archive waits for the conversation's next open.
+        // REACHABLE, AND NOT FROM THE NETWORK: the replay's own failures are caught and logged
+        // inside, but its fast path (the stream cursor read from `localStorage`, the stored page
+        // read and drawn) runs outside that catch and throws out. Logged, and the loop goes on - this
+        // runs under `void`, so an escape would be an unhandled rejection that ends the replay of
+        // every id after it. This archive waits for the conversation's next open.
         ctx.log(`[CATCHUP] owed archive replay of ${id.slice(0, 8)} failed: ${String(e)}`);
       }
     }

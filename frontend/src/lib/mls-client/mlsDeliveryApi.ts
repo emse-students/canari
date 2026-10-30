@@ -2317,8 +2317,11 @@ export class MlsDeliveryApi {
           })),
         }),
       });
-      // An answer, whatever its status: the link is up (this route reaches no `trackedFetch`).
-      connectivity.notifyServerReachable();
+      // THE GATEWAY'S answer, whatever its status, proves the link up (this route reaches no
+      // `trackedFetch`). WHO ANSWERED is read from the head first: a captive portal's 2xx HTML page
+      // is an answer from the wrong party, and clearing `isOffline` on it would un-hold every barrier
+      // while the server is still out of reach.
+      if (responseOrigin(res) === 'gateway') connectivity.notifyServerReachable();
       const contentType = res.headers.get('content-type') ?? '';
       if (!res.ok || !contentType.toLowerCase().includes('application/json')) {
         console.error(
