@@ -35,6 +35,15 @@ the bench build is [mobile](frontend/mobile.md#a-build-for-the-phone-on-the-benc
 WKWebView is inspectable; a store build is not), `python tools/ios-device/wda-daemon.py`,
 `pymobiledevice3 webinspector cdp --port 9444`, then `bun phone.mjs`-style arming through `--device I1`.
 
+**On a STORE build the app's own log is still readable, and one WDA query HANGS the daemon doing it**
+(Tier A E6, `1.5.1-alpha.8`, 2026-10-30). The route: Settings > About > the save-the-log button writes
+the file to Files ("On my iPhone"); open it there, tap Quick Look's search, `ios.mjs type` the
+query, and read the hit with `ios.mjs shot`. **Never `tree`, `find`, `flat` or a `value` read while
+Quick Look shows a large log**: WDA serialises the whole text view, the call never returns and every
+later call queues behind it - the daemon must be stopped and restarted (`wda-daemon.py`), and a
+blind recovery tap can land on the home button. The search plus a screenshot reads the same line in
+seconds. That is how E6's receive half was read from the iPhone's own `CALL_REPORT`.
+
 ## C1 - the input seam (DONE)
 
 `cdp.mjs`, `chat.mjs`, `comm.mjs`, `pin.mjs` and the rows type with `Input.insertText` and click with
