@@ -657,6 +657,65 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
 **Still open:** `didInvalidatePushToken` tells the server nothing (the next APNs `410` clears it);
 a VoIP-pushed ring is announced as audio (`hasVideo = NO`) until the video lot decides otherwise.
 
+### An answer from the ring joins on the ring's facts (2026-10-30)
+
+**The defect (1.5.2-alpha.1, Mi 9T, K7 killed and K8 locked).** The ring rang, Answer opened the
+app, and the call never connected: both sides ended on "Appel sans réponse". The caller's MLS
+`call_invite` is a TRANSPORT frame, and chat-delivery hands a transport frame only to a device online
+when it is sent (`TRANSPORT_SKIPPED_OFFLINE`: no row, no push). A phone the native ring reached was
+closed by construction, so the invite never reached it - and the answer waited for that invite
+(`consumePendingCallAccept`, read only on the invite path) until its 2 min expiry. The iPhone's
+CallKit answer took the same path.
+
+**The design: the answer is the whole answer.** Nothing the invite carries is needed to join:
+- the conversation, the call, video and the caller came with the server's `call_ring`, and ride the
+  answer (`?acceptCall=&video=&caller=` on Android, `pending_call_accept.json` + the same link on iOS);
+- every rule the invite's admission applies in the app (`calls_mode`, the conversation's permission,
+  blocks) the server applied before it rang;
+- the room token `acceptCall` asks for first applies them AGAIN and is the authority on lateness: a
+  closed window is its `410`, a block set since its refusal - an answer from the server, not a guess.
+
+So `CallService.answerFromSystemSurface` takes the intent once and joins: already ringing the same
+call (the invite did arrive) - accept it; the ENDED summary - cleared first; in another call - dropped,
+logged WARN (only the user may drop a live call); otherwise the call's facts are set, the state is
+`incoming`, and `acceptCall` runs. It is called from the two places whichever comes second finds both:
+the intent being recorded (a listener `useChatSession` registers) and the session's socket coming up
+(`setIsWsConnected(true)`). An invite that does arrive afterwards meets the call it already is
+(`yieldToOrAnswerBusy`: same callId, ignored). No clock decides anything; the 2 min bound on an
+intent only drops a tap that never found a session.
+
+**Two shapes rejected.**
+- *The answering device asks the still-ringing caller to resend the invite.* A new proto frame, a
+  round trip before the join, and callers on any earlier build never answer it - for an invite whose
+  content the callee already holds.
+- *The server keeps the invite for exactly the devices it rang.* The server would have to classify a
+  ciphertext as an invite (it cannot read it) or take a new per-device durability flag, and a stored
+  invite outlives its call unless something else expires it - a second ledger for what the ring
+  already said.
+
+**Covered by** `CallService.answerFromRing.test.ts` (no invite ever delivered, and the join happens;
+it fails on the code before, which had no such path) and the text pins in
+`incomingCallScreen.test.ts` (both answers carry the caller).
+
+### A decline on the ring reaches the caller (2026-10-30)
+
+The native Decline (`CanariNotificationActionReceiver.handleCallDecline`, which `IncomingCallActivity`
+fires too, and CallKit's `performEndCallAction`) only stopped the local ring: the caller rang its whole
+minute. It now sends the frame the in-app Decline sends - `CallMsg { hangup, end_reason = DECLINED }`
+(`build_call_hangup_app_message`, `proto_fields.rs`), encrypted by the background MLS path and posted
+ONCE (`sendTransportFrameNow` / `CanariSendCallDecline`): silent, not durable, never through the
+outbox mirror, because a hangup replayed after its call ended means nothing. A failure is logged and
+the caller rings out, as before. Calls are 1:1 (lot 1), so declining and ending the caller's ring are
+one act. On iOS an end AFTER the answer is not a decline: the answer marks the CallKit call
+`answered`, and only an unanswered end sends anything.
+
+**Not covered:** the callee's OTHER devices still ringing natively keep ringing to the window
+(`ring-end` needs a session token a receiver does not hold); an in-app sibling stops on the hangup.
+
+**Owed on hardware:** K7/K8 Answer joins on the Mi 9T and on the iPhone (CallKit); Decline from the
+Android ring and from CallKit ends the caller's ring at once and files "declined". The Objective-C
+is uncompiled here (the iOS CI job is its first compiler).
+
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
 **What it is.** The user's 2026-10-16 decision made concrete: a 1:1 call goes DIRECT between the
@@ -2496,8 +2555,8 @@ When the app is killed, CallKit is the only way to show an incoming call UI. The
 1. Caller's client → `POST /api/calls/ring`
 2. Backend sends **direct APNs VoIP push** to iOS devices with a `voipToken` (ES256 JWT, topic `<bundle>.voip`), ids only, while the ring is live.
 3. `PKPushRegistry` delivers the VoIP push → `CanariReportVoipCall` reports a CallKit call. The design, the rules and what is owed: [the native ring on the iPhone](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
-4. User answers → writes `pending_call_accept.json` → fires accept deep link.
-5. App unlocks → TS store drains `pendingCallAccept` → `CallService` auto-accepts when the matching MLS invite arrives over WS.
+4. User answers → writes `pending_call_accept.json` (group, call, caller, video) → fires accept deep link.
+5. App unlocks → TS store drains `pendingCallAccept` → `CallService.answerFromSystemSurface` joins on those facts once the socket is up, with no invite awaited ([an answer from the ring joins on the ring's facts](#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30)).
 6. CallKit session ended on `didBecomeActive` (handed over to in-app WebRTC).
 
 VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/push/register` (`voipToken` field).
@@ -2511,7 +2570,7 @@ VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/
 - Full-screen intent (`USE_FULL_SCREEN_INTENT`) = `IncomingCallActivity`, a screen that asks - never the answer itself
 - `FLAG_INSISTENT` looping ringtone
 - 60 s timeout (`setTimeoutAfter`)
-- Answer = deep link (after the keyguard, from the call screen); decline = local dismiss
+- Answer = deep link carrying group, call, video and caller (after the keyguard, from the call screen); Decline = the ring stops and the in-app hangup (`DECLINED`) reaches the caller ([the decline reaches the caller](#a-decline-on-the-ring-reaches-the-caller-2026-10-30))
 - Caller named from `display_names.json`, photo from the avatar cache first, the network on a miss ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30))
 
 ## Ring-end (stop ringing)

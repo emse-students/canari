@@ -19,6 +19,7 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
+import { setPendingCallAcceptListener } from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
@@ -193,6 +194,7 @@ export function useChatSession() {
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {
       isWsConnected = v;
+      if (v) callService?.answerFromSystemSurface('the socket connected');
     },
     getLoginError: () => loginError,
     setLoginError: (v) => {
@@ -436,6 +438,11 @@ export function useChatSession() {
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
       callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
+      // An answer given on the ring joins as soon as the socket is up, whichever of the two comes
+      // second (calls.md, "An answer from the ring joins on the ring's facts").
+      setPendingCallAcceptListener(() => {
+        if (isWsConnected) callService?.answerFromSystemSurface('the answer was recorded');
+      });
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */
     ensureMls,

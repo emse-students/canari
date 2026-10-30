@@ -169,6 +169,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
         const val ACTION_CALL_DECLINE = "fr.emse.canari.ACTION_CALL_DECLINE"
         const val EXTRA_CALL_ID       = "callId"
+        /** `CallEndReason.CALL_END_REASON_DECLINED` in libs/proto/canari.proto: the callee refused the ring. */
+        const val CALL_END_REASON_DECLINED = 2
 
         /**
          * Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
@@ -1048,12 +1050,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
 
-            // Answer = deep link into the conversation with an accept marker: the frontend
-            // auto-accepts the call once the user has unlocked (PIN) and the invite arrived via WS.
+            // Answer = deep link into the conversation carrying EVERY fact the join needs (the
+            // conversation, the call, video, the caller): the frontend joins on them once the user
+            // has unlocked (PIN) and its socket is up. It never waits for the caller's MLS invite,
+            // a transport frame the server skipped while this phone was closed (calls.md, "An
+            // answer from the ring joins on the ring's facts").
             val videoFlag = if (hasVideo) 1 else 0
             val answerIntent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
-                setData(Uri.parse("fr.emse.canari://chat/$groupId?acceptCall=$callId&video=$videoFlag"))
+                setData(Uri.parse(
+                    "fr.emse.canari://chat/$groupId?acceptCall=${Uri.encode(callId)}" +
+                        "&video=$videoFlag&caller=${Uri.encode(callerId)}"
+                ))
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
             val answerPending = PendingIntent.getActivity(
@@ -1333,6 +1341,44 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             synchronized(OUTBOX_LOCK) {
                 rewriteOutboxMirror(context, readOutboxMirror(context) + entry)
             }
+        }
+
+        /**
+         * Encrypts ONE transport frame and posts it now, WITHOUT the outbox mirror. Returns true
+         * when the server took it.
+         *
+         * For a frame that means something only at this moment - the native ring's Decline, which
+         * ends a ring that lasts a minute. The mirror is a durable queue: an entry that failed there
+         * would be retried, or adopted by the app at its next login, and a hangup delivered after its
+         * call ended is noise at best and, sent under a later call's id, wrong. So it is sent once,
+         * `silent` (it must never notify) and not `durable` (no copy in the shared log, exactly as the
+         * in-app `DELIVERY.transport` send), and a failure is logged and dropped: the caller then
+         * rings out its window, as it did before this existed.
+         *
+         * Under [OUTBOX_LOCK] so it never interleaves with a drain of this process.
+         */
+        internal fun sendTransportFrameNow(
+            context: Context,
+            service: CanariFirebaseMessagingService,
+            ctx: PushContext,
+            groupId: String,
+            messageId: String,
+            protoB64: String,
+        ): Boolean = synchronized(OUTBOX_LOCK) {
+            val secret = retrievePushSecret(context)
+            if (secret == null) {
+                Log.w(TAG, "sendTransportFrameNow: pushSecret absent -> frame id=${messageId.take(8)} not sent")
+                return@synchronized false
+            }
+            val entry = OutboxMirrorEntry(messageId, groupId, protoB64, System.currentTimeMillis(), silent = true, durable = false)
+            val ciphertext = encryptQueuedMessages(context, service, ctx, listOf(entry))?.get(messageId)
+            if (ciphertext == null) {
+                Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${groupId.take(8)} -> not sent")
+                return@synchronized false
+            }
+            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false)
+            Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${groupId.take(8)} sent=$sent")
+            sent
         }
 
         /** The body of [drainOutboxBackground]; the caller holds [OUTBOX_LOCK]. */
@@ -2677,6 +2723,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * and unfixably. Returns "" only if the JVM could not allocate the string.
      */
     external fun nativeBuildReadWatermarkProto(at: Long): String
+
+    /**
+     * Builds the plaintext call hangup (base64) the native ring's Decline sends - the same
+     * `CallMsg { hangup, end_reason }` the in-app Decline sends. [endReason] is the wire value of
+     * `CallEndReason` ([CALL_END_REASON_DECLINED]). Returns "" on failure.
+     */
+    external fun nativeBuildCallHangupProto(
+        messageId: String,
+        sentAt: Long,
+        callId: String,
+        deviceId: String,
+        endReason: Int,
+    ): String
 
     /**
      * A refused push frame leaves the state behind: the worker retries it on the next cycle. One

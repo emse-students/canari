@@ -177,8 +177,8 @@ if (isTauriRuntime()) {
             if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
               // WP-XP-5: the user answered an incoming call from a system surface (Android
-              // CallStyle notification / iOS CallKit). Record the intent; CallService
-              // auto-accepts once the MLS invite arrives over WS (post-unlock).
+              // ring / iOS CallKit). Record the intent; CallService joins on it once the session's
+              // socket is up - from the ring's own facts, never waiting for the MLS invite.
               const acceptCallId = u.searchParams.get('acceptCall');
               if (groupId && acceptCallId) {
                 import('$lib/stores/pendingCallAccept')
@@ -187,10 +187,13 @@ if (isTauriRuntime()) {
                       groupId,
                       callId: acceptCallId,
                       hasVideo: u.searchParams.get('video') === '1',
+                      callerId: u.searchParams.get('caller') || null,
                       acceptedAt: Date.now(),
                     })
                   )
-                  .catch(() => {});
+                  .catch((e: unknown) =>
+                    console.error('[hooks] the call answer could not be recorded:', e)
+                  );
               }
               if (groupId) {
                 Promise.all([
