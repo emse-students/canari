@@ -3,12 +3,16 @@
   import { MoonStar, Plus, Save, TriangleAlert, X } from '@lucide/svelte';
   import {
     applyTemplate,
+    editRun,
+    editSlot,
     paintRows,
     paintSlotRows,
     slotLengthFor,
     weekRunsOf,
     weekSlotsOf,
     type PaintMode,
+    type Run,
+    type SelectedRun,
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
   import {
@@ -177,6 +181,28 @@
   const timeOptions = (asEnd: boolean, current: string) =>
     timeChoices(step, asEnd, current).map((t) => ({ value: t, label: t }));
 
+  /** The painter changed the exact hours of a run: applied to the rows, false when it cannot be. */
+  function editRunOf(run: SelectedRun, start: number, end: number): boolean {
+    const edges: Run = [run.start, run.end];
+    const next = fixedSlots
+      ? editSlot(rows, run.day, edges, start, end)
+      : editRun(rows, run.day, edges, start, end);
+    Log.d('BOOKINGS', `availability run edit day=${run.day} ${start}-${end} fixed=${fixedSlots}`);
+    if (next === null) return false;
+    if (next !== rows) {
+      rows = [...next];
+      touch();
+    }
+    return true;
+  }
+
+  /** The weekly lines the save would refuse: not drawn, so listed here to be removed. */
+  const invalidWeekly = $derived(
+    rows.flatMap((row, index) =>
+      row.kind === 'weekly' && lineProblem(row) !== null ? [{ row, index }] : []
+    )
+  );
+
   /** The days the 24/7 warning names, in the reader's words. */
   const wholeDays = $derived(
     wholeDaysInARow(rows).map((key) =>
@@ -269,6 +295,8 @@
       dayNames={weekdayNames}
       {shortDayNames}
       onPaint={paint}
+      {step}
+      onEdit={editRunOf}
       hint={slotLength === null
         ? undefined
         : m.bookings_avail_paint_slots_hint({ minutes: slotLength })}
@@ -279,6 +307,41 @@
       </p>
     {/if}
   </div>
+
+  {#if invalidWeekly.length}
+    <div class="space-y-2" data-invalid-weekly>
+      <div>
+        <p class="text-red-err text-sm font-semibold">{m.bookings_avail_invalid_title()}</p>
+        <p class="text-text-muted text-xs">{m.bookings_avail_invalid_hint()}</p>
+      </div>
+      <ul class="space-y-2">
+        {#each invalidWeekly as { row, index } (index)}
+          {#if row.kind === 'weekly'}
+            <li
+              class="border-red-err/30 bg-red-err/10 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"
+            >
+              <span class="text-text-main min-w-0 flex-1">
+                {weekdayNames[row.weekday - 1]}
+                {row.start}-{row.end} :
+                <span class="text-red-err">{problemText(lineProblem(row))}</span>
+              </span>
+              <button
+                type="button"
+                class="ui-icon-button text-text-muted hover:text-red-err shrink-0 rounded-full"
+                aria-label={m.bookings_avail_remove_aria()}
+                onclick={() => {
+                  rows.splice(index, 1);
+                  touch();
+                }}
+              >
+                <X size={18} />
+              </button>
+            </li>
+          {/if}
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   <div class="space-y-3">
     <div>

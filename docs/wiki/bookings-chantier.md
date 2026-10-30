@@ -229,11 +229,15 @@ the dated lines apart, closures. **"En clair" (the weekly lines typed by hand) w
   normalised by a paint or a template: it is not drawn (and, the typed lines being gone, cannot be edited: see below). The
   painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
   its height is clamped (30 to 40 rem). 
-- **Removed 2026-10-30, what became impossible:** a weekly edge off the 30-min grain (18:45) can no
-  longer be TYPED (an existing one is still kept and drawn, and survives a paint elsewhere, but only
-  the grain can be created); a keyboard or screen-reader route to the week; fixing or deleting a
-  weekly line the editor refuses (start = end) other than by a template. Smallest cover: a
-  "from / to" pair of selects (on the space's step) shown under a clicked run in the painter.
+- **Removed 2026-10-30, and what covers it:** the typed weekly lines are gone, so the painter
+  itself carries the exact route. Each drawn run has a focusable pencil button named "Lundi
+  10:00-12:00" (a press on the run paints, hence a button of its own, outside the gesture); it opens
+  from / to pickers on the space's step, an off-step edge already there being kept. A step space
+  merges the edited run with what it touches (`editRun`); a fixed-slot space edits that one slot and
+  says so when it would overlap another or is a night split in two lines (`editSlot`). The wizard
+  has the same. A weekly line the editor refuses (start = end) is not drawn, so it is LISTED under
+  the painter ("Plages à corriger") with its remove button: never an invisible blocker. Still not
+  possible: creating an off-grain edge from nothing (edit a painted run after).
 - **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
   Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
   Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
