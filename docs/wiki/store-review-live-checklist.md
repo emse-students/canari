@@ -6,10 +6,10 @@ Apple guideline 1.2. **The requirements and what the app has are on [store-ugc-a
 guideline text is _(unverified against today's text)_: re-read
 [Apple 1.2](https://developer.apple.com/app-store/review/guidelines/#user-generated-content) before sending.
 
-**Nothing here has been recorded or run.** The phones were not touched writing it. Lives are behind
-`LIVE_ENABLED` (`deployEnvironment() === 'development'`, `frontend/src/lib/features.ts`), so **a review
-build must be a build that carries them** - a pre-release for TestFlight external testers, or a stable
-after the flip; a current stable shows the reviewer no live at all.
+**Nothing here has been recorded or run.** The phones were not touched writing it. Lives are compiled
+into every build since the production flip of 2026-10-30 (`LIVE_ENABLED`, `frontend/src/lib/features.ts`),
+so **a review build is any build from that commit on** - a stable before it shows the reviewer no live
+at all - and the estate it talks to must have `lives_mode` `on`.
 
 ## 1. The reviewer's checklist
 

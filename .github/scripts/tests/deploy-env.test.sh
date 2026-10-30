@@ -225,15 +225,16 @@ for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
   fi
 done
 
-# THE LIVE SWITCH IS CLOSED ON PRODUCTION AND OPEN ON DEV, read from the RENDERED files for the reason
-# the ports are: the template says `false`, so a dev render that forgot to override would look right
-# in every file but the one the estate reads (docs/wiki/services/lives.md).
+# THE LIVE SWITCH IS OPEN ON BOTH ESTATES since the production flip (owner, 2026-10-30), read from
+# the RENDERED files for the reason the ports are: the compose default is `false`, so a render that
+# dropped the key would look right in every file but the one the estate reads. What closes lives on
+# an estate is the runtime `platform_config.lives_mode` (docs/wiki/services/lives.md).
 live_prod="$(port_of "$TMP/ports-prod.env" LIVE_ENABLED)"
 live_dev="$(port_of "$TMP/ports-dev.env" LIVE_ENABLED)"
-if [ "$live_prod" = "false" ] && [ "$live_dev" = "true" ]; then
-  pass "LIVE_ENABLED renders false on production and true on dev"
+if [ "$live_prod" = "true" ] && [ "$live_dev" = "true" ]; then
+  pass "LIVE_ENABLED renders true on production and on dev"
 else
-  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - production must be false, dev true"
+  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - both estates must be true (lives_mode is the runtime switch)"
 fi
 
 # THE LYDIA RECONCILIATION SWITCH, by the same rule: production asks Lydia nothing on its own until

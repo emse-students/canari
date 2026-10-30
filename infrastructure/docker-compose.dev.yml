@@ -346,7 +346,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -481,7 +481,7 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
       # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on

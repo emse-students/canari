@@ -181,14 +181,6 @@ compute_garage_admin_host_port() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf '19101'; else printf '19011'; fi
 }
 
-# THE LIVE SWITCH (docs/wiki/services/lives.md): the live routes open on dev, where the chantier is
-# built and read on phones, and stay closed on production until the user decides otherwise - so a
-# stable release reaches no live route whatever client calls it. Computed rather than a template
-# default, for the reason the ports above are: one place decides, per estate.
-compute_live_enabled() {
-  if [ "$ENVIRONMENT" = "dev" ]; then printf 'true'; else printf 'false'; fi
-}
-
 # The Lydia reconciliation sweep (docs/wiki/lydia-api.md section 7): ON on dev, OFF on production
 # until the amount format Lydia signs in a request/state answer is measured on a sandbox Business.
 compute_lydia_reconcile_enabled() {
@@ -271,7 +263,6 @@ while IFS=$'\t' read -r key prod dev source note; do
     FRONTEND_HOST_PORT) value="$(compute_frontend_host_port)" ;;
     GARAGE_API_HOST_PORT) value="$(compute_garage_api_host_port)" ;;
     GARAGE_ADMIN_HOST_PORT) value="$(compute_garage_admin_host_port)" ;;
-    LIVE_ENABLED) value="$(compute_live_enabled)" ;;
     LYDIA_RECONCILE_ENABLED) value="$(compute_lydia_reconcile_enabled)" ;;
     *)
       printf 'render-env: %s is marked computed and nothing computes it\n' "$key" >&2

@@ -1229,8 +1229,8 @@ both clicks - the one case worth a detector change, and only once it is seen wit
 
 **Proves** [the live viewer](frontend/modules/live.md#the-viewer-as-built-2026-10-19) in the app's
 own WebViews, which no gate here runs: the tests drive fake MSE objects, and WP-L1 measured the
-bench page, not this player. **Precondition:** a DEV build carrying the viewer (`LIVE_ENABLED` is on
-for dev builds only), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
+bench page, not this player. **Precondition:** a build carrying the viewer (`LIVE_ENABLED` is on
+in every build since 2026-10-30; a dev pre-release until a stable carries it), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
 (the app's own broadcaster on the other phone - run with [LIVE-B1](#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both);
 the WP-L1 bench's own `live-bench` seal reads "Live indisponible" here, by design), and the console over CDP or the WebKit bridge for the `[LIVE]` lines.
 
@@ -1612,8 +1612,8 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 
 ## LIVE-B1. The broadcaster on both bench phones - owed on BOTH
 
-The broadcaster of WP-L5 ([live](frontend/modules/live.md#the-broadcaster-as-built)), on dev builds
-only (`LIVE_ENABLED = deployEnvironment() === 'development'`; dev's server has `LIVE_ENABLED` on).
+The broadcaster of WP-L5 ([live](frontend/modules/live.md#the-broadcaster-as-built)), in every build
+since the production flip of 2026-10-30 (`LIVE_ENABLED` in `features.ts`; both estates' servers open, `lives_mode` the runtime switch).
 Every test of it runs on fakes: none of the readings below has been taken. Written 2026-10-19.
 
 **Preconditions - each a reading:** both phones on a PRE-RELEASE build carrying the broadcaster

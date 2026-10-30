@@ -38,7 +38,8 @@ export const LIVE_SEGMENT_PUBLIC_PREFIX = '/api/media/public/live/';
 
 /**
  * THE SERVER-SIDE SWITCH OF THE LIVE FEATURE, the same variable social-service reads:
- * `LIVE_ENABLED=true` and nothing else opens the live routes; production renders `false`.
+ * `LIVE_ENABLED=true` and nothing else opens the live routes; both estates render `true` since the
+ * production flip (2026-10-30), and `lives_mode` is what closes them at runtime.
  */
 export function isLiveEnabled(): boolean {
   return process.env.LIVE_ENABLED === 'true';

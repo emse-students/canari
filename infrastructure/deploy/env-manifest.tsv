@@ -108,5 +108,5 @@ DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two
 FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx publishes - 8080 prod, 3080 dev; both estates share one machine so they may never agree
 GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev
 GARAGE_ADMIN_HOST_PORT	computed	computed	computed	garage's admin API on 127.0.0.1 - 19011 prod, 19101 dev
-LIVE_ENABLED	computed	computed	computed	the live routes (docs/wiki/services/lives.md) - true on dev, false on production, so a stable release serves no live
+LIVE_ENABLED	literal	literal	literal:true	the live routes (docs/wiki/services/lives.md) - true on both estates since the production flip (2026-10-30); platform_config.lives_mode closes them at runtime
 LYDIA_RECONCILE_ENABLED	computed	computed	computed	the Lydia reconciliation sweep (docs/wiki/lydia-api.md) - true on dev, false on production until the signed amount format is measured, so a stable release asks Lydia nothing on its own
