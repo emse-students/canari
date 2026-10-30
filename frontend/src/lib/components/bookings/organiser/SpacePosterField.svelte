@@ -44,11 +44,26 @@
     onBusy?.(busy);
   });
 
-  async function picked(event: Event & { currentTarget: HTMLInputElement }) {
+  /** A file dragged over the zone, so it can show it will take it. */
+  let over = $state(false);
+
+  /** The input's choice: the click and keyboard route to the same upload as a drop. */
+  function picked(event: Event & { currentTarget: HTMLInputElement }) {
     const input = event.currentTarget;
-    const picked = input.files?.[0];
+    const file = input.files?.[0];
     input.value = '';
-    if (!picked || busy) return;
+    if (file) void upload(file);
+  }
+
+  function dropped(event: DragEvent) {
+    event.preventDefault();
+    over = false;
+    const file = event.dataTransfer?.files?.[0];
+    if (file) void upload(file);
+  }
+
+  async function upload(picked: File) {
+    if (busy) return;
     Log.d('BOOKINGS', `poster picked: ${picked.type || 'no type'}, ${picked.size} B`);
     error = '';
     if (!(POSTER_MIME_TYPES as readonly string[]).includes(picked.type)) {
@@ -119,14 +134,35 @@
 
 <div class="space-y-2">
   <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_poster()}</span>
-  {#if poster}
-    <SpacePoster {poster} alt={m.bookings_poster_alt({ name: spaceName })} />
-  {/if}
-  <div class="flex flex-wrap items-center gap-2">
+  <!-- The zone takes a dropped file, a click and the keyboard (the file input inside the label is
+       focusable, its focus ring drawn on the zone), whether or not a poster is already set. -->
+  <div
+    role="presentation"
+    ondragover={(e) => {
+      e.preventDefault();
+      over = true;
+    }}
+    ondragleave={(e) => {
+      // Crossing onto a child (the icon, the text) fires a leave on the zone too: only a pointer
+      // that really left it ends the highlight.
+      const into = e.relatedTarget;
+      if (!(into instanceof Node && e.currentTarget.contains(into))) over = false;
+    }}
+    ondrop={dropped}
+    class="space-y-2"
+  >
+    {#if poster}
+      <SpacePoster {poster} alt={m.bookings_poster_alt({ name: spaceName })} />
+    {/if}
     <label
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors {busy
-        ? 'cursor-not-allowed opacity-40'
-        : ''}"
+      data-poster-zone
+      class="text-text-main focus-within:ring-cn-yellow flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed text-sm font-semibold transition-colors focus-within:ring-2 {poster
+        ? 'bg-control-fill hover:bg-cn-border/60 border-transparent px-4 py-2.5'
+        : 'bg-cn-yellow/5 hover:bg-cn-yellow/10 min-h-32 flex-col px-4 py-6 text-center'} {over
+        ? 'border-cn-yellow bg-cn-yellow/15'
+        : poster
+          ? ''
+          : 'border-cn-yellow/50'} {busy ? 'cursor-not-allowed opacity-40' : ''}"
     >
       <input
         type="file"
@@ -135,7 +171,7 @@
         disabled={busy}
         onchange={picked}
       />
-      <ImagePlus size={16} />
+      <ImagePlus size={poster ? 16 : 24} class={poster ? '' : 'text-text-muted'} />
       {busy
         ? m.bookings_poster_saving()
         : poster
@@ -147,7 +183,7 @@
         type="button"
         onclick={remove}
         disabled={busy}
-        class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors disabled:opacity-40"
+        class="text-text-muted hover:text-red-err inline-flex min-h-10 items-center gap-2 rounded-xl px-2 text-sm font-semibold transition-colors disabled:opacity-40"
       >
         <Trash2 size={16} />
         {m.bookings_poster_remove()}

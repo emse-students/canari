@@ -17,7 +17,12 @@
     /** Section heading. */
     title: string;
     /** Lucide icon shown in the yellow tile. */
-    icon: Component;
+    icon?: Component;
+    /**
+     * The section's place in a numbered list (the bookings editor's five questions): a numbered disc
+     * replaces the icon tile, and the summary lines up under the title. Omit for an icon section.
+     */
+    step?: number;
     /** Small pill on the right of the header, e.g. a question count. */
     badge?: string;
     /**
@@ -38,6 +43,7 @@
   let {
     title,
     icon: SectionIcon,
+    step,
     badge,
     summary,
     collapsible = false,
@@ -65,9 +71,17 @@
     : 'p-4'}"
 >
   {#snippet header()}
-    <span class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
-      <SectionIcon size={20} />
-    </span>
+    {#if step !== undefined}
+      <span
+        class="bg-control-fill text-text-main grid size-7 shrink-0 place-items-center rounded-full text-sm font-bold tabular-nums before:content-[attr(data-step)]"
+        data-step={step}
+        aria-hidden="true"
+      ></span>
+    {:else if SectionIcon}
+      <span class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
+        <SectionIcon size={20} />
+      </span>
+    {/if}
     <span class="text-text-main min-w-0 flex-1 basis-0 text-lg font-bold break-words">{title}</span>
     {#if badge}
       <span
@@ -98,7 +112,14 @@
       </button>
     </h2>
     {#if summary}
-      <p id={summaryId} class="text-text-muted mt-2 text-xs break-words">{summary}</p>
+      <p
+        id={summaryId}
+        class="text-text-muted text-xs break-words {step !== undefined
+          ? 'ms-[2.375rem] mt-1'
+          : 'mt-2'}"
+      >
+        {summary}
+      </p>
     {/if}
   {:else}
     <div class="mb-4 sm:mb-5">
@@ -106,7 +127,14 @@
         {@render header()}
       </h2>
       {#if summary}
-        <p id={summaryId} class="text-text-muted mt-2 text-xs break-words">{summary}</p>
+        <p
+          id={summaryId}
+          class="text-text-muted text-xs break-words {step !== undefined
+            ? 'ms-[2.375rem] mt-1'
+            : 'mt-2'}"
+        >
+          {summary}
+        </p>
       {/if}
     </div>
   {/if}

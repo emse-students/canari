@@ -78,3 +78,12 @@ it('wires tab and panel ids only when asked', () => {
   expect(tabs()[1].id).toBe('tab-b');
   expect(tabs()[1].getAttribute('aria-controls')).toBe('tabpanel-b');
 });
+
+it('underline variant keeps the tablist contract: roving tabindex, aria-controls, arrow keys', () => {
+  const { target, tabs, onSelect } = render({ variant: 'underline', idPrefix: 'dash-' });
+  expect(target.querySelector('[role="tablist"]')!.getAttribute('data-variant')).toBe('underline');
+  expect(tabs().map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+  expect(tabs()[1].getAttribute('aria-controls')).toBe('dash-tabpanel-b');
+  tabs()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  expect(onSelect).toHaveBeenCalledWith('b');
+});

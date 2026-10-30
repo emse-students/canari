@@ -1,12 +1,20 @@
 <script lang="ts">
   import { internalPath } from '$lib/utils/internalPath';
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { page } from '$app/state';
   import { resolve } from '$app/paths';
-  import { CalendarDays, Download, ListChecks, Settings } from '@lucide/svelte';
+  import {
+    Ban,
+    CalendarDays,
+    Columns3,
+    Download,
+    Eye,
+    MousePointerClick,
+    Plus,
+    Settings,
+  } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import EmptyState from '$lib/components/shared/EmptyState.svelte';
   import SpaceWeek from '$lib/components/bookings/booker/SpaceWeek.svelte';
   import UpcomingBookings from '$lib/components/bookings/organiser/UpcomingBookings.svelte';
@@ -14,6 +22,9 @@
   import { downloadSpaceExport } from '$lib/bookings/bookingActions';
   import { columnsHidden } from '$lib/bookings/columns';
   import { hoursOf, weekCounters, type WeekCounters } from '$lib/bookings/dashboard';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import { gridDragHint } from '$lib/bookings/gridHint';
+  import { gridUnitLimit } from '$lib/bookings/grid';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import {
@@ -23,6 +34,7 @@
     spaceHref,
   } from '$lib/bookings/routes';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
+  import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -49,6 +61,13 @@
   let exportError = $state('');
   let upcoming = $state<{ reload: () => Promise<boolean> } | null>(null);
   let week = $state<{ reread: () => Promise<void> } | null>(null);
+
+  /** Whether the reader's primary pointer is a finger: the hint names only the gesture that applies. */
+  let coarse = $state(isCoarsePointerDevice());
+  onMount(() => {
+    coarse = isCoarsePointerDevice();
+    return onCoarsePointerChange((value) => (coarse = value));
+  });
 
   const oneColumn = $derived(space ? columnsHidden(space.name, space.resources) : false);
 
@@ -106,8 +125,9 @@
     }
   }
 
+  /** The mockup's header buttons: filled, the icon always and the word from `sm` up. */
   const actionClass =
-    'ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg';
+    'bg-control-fill text-text-main hover:bg-cn-border/60 inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold transition-colors disabled:opacity-40 sm:min-h-10';
 </script>
 
 <PageContainer width="tool">
@@ -124,14 +144,15 @@
   >
     {#snippet actions()}
       {#if space?.canManage}
-        <div class="flex items-center gap-1">
+        <div class="flex flex-wrap items-center gap-2">
           <a
             href={resolve(internalPath(spaceHref(space.id)))}
             class={actionClass}
             aria-label={m.bookings_dashboard_view_page()}
             title={m.bookings_dashboard_view_page()}
           >
-            <CalendarDays size={18} />
+            <Eye size={18} />
+            <span class="max-sm:sr-only">{m.bookings_dashboard_view_page_short()}</span>
           </a>
           <button
             type="button"
@@ -142,6 +163,7 @@
             onclick={() => void exportXlsx()}
           >
             <Download size={18} />
+            <span class="max-sm:sr-only">{m.bookings_dashboard_export_short()}</span>
           </button>
           <a
             href={resolve(internalPath(spaceEditorHref(space.id)))}
@@ -150,6 +172,7 @@
             title={m.bookings_dashboard_settings()}
           >
             <Settings size={18} />
+            <span class="max-sm:sr-only">{m.bookings_dashboard_settings_short()}</span>
           </a>
         </div>
       {/if}
@@ -191,53 +214,74 @@
       {/if}
 
       {#if counters}
-        <!-- The mockup's pills: one line of the week's numbers above everything else. -->
-        <dl class="flex flex-wrap gap-2" aria-label={m.bookings_dashboard_counters_label()}>
-          {#each [{ label: m.bookings_dashboard_count_bookings(), value: String(counters.bookings) }, { label: m.bookings_dashboard_count_hours(), value: m.bookings_dashboard_hours_of( { booked: hoursOf(counters.bookedMinutes), offered: hoursOf(counters.offeredMinutes) } ) }, { label: m.bookings_dashboard_count_blocks(), value: String(counters.blocks) }] as pill (pill.label)}
-            <div
-              class="border-cn-border bg-cn-surface inline-flex items-baseline gap-1.5 rounded-full border px-3 py-1"
-            >
-              <dt class="text-text-muted text-xs">{pill.label}</dt>
-              <dd class="text-text-main text-sm font-bold tabular-nums">{pill.value}</dd>
-            </div>
-          {/each}
-        </dl>
+        <!-- The mockup's pills: one line of the week's numbers above everything else, filled, the
+             blocks one tinted when the week holds any. -->
+        <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <dl class="flex flex-wrap gap-2" aria-label={m.bookings_dashboard_counters_label()}>
+            {#each [{ label: m.bookings_dashboard_count_bookings(), value: String(counters.bookings), tint: false }, { label: m.bookings_dashboard_count_hours(), value: m.bookings_dashboard_hours_of( { booked: hoursOf(counters.bookedMinutes), offered: hoursOf(counters.offeredMinutes) } ), tint: false }, { label: m.bookings_dashboard_count_blocks(), value: String(counters.blocks), tint: counters.blocks > 0 }] as pill (pill.label)}
+              <div
+                class="inline-flex items-baseline gap-1.5 rounded-full px-3 py-1 {pill.tint
+                  ? 'bg-amber-warn/15 text-amber-warn'
+                  : 'bg-control-fill text-text-main'}"
+              >
+                {#if pill.tint}<Ban size={13} class="self-center" aria-hidden="true" />{/if}
+                <dt class="text-xs {pill.tint ? '' : 'text-text-muted'}">{pill.label}</dt>
+                <dd class="text-sm font-bold tabular-nums">{pill.value}</dd>
+              </div>
+            {/each}
+          </dl>
+          <!-- The drag that blocks, said in the words of the pointer the reader has. -->
+          {#if gridUnitLimit(space, true) > 1}
+            <p class="text-text-muted flex items-center gap-1.5 text-xs">
+              <MousePointerClick size={14} aria-hidden="true" />
+              {gridDragHint(true, coarse)}
+            </p>
+          {/if}
+        </div>
       {/if}
 
       {#if oneColumn}
         <div
-          class="border-cn-border bg-cn-bg flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
+          class="border-cn-border bg-cn-surface flex flex-wrap items-center gap-3 rounded-2xl border p-4"
         >
+          <Columns3 size={20} class="text-text-muted shrink-0" aria-hidden="true" />
           <div class="min-w-0 flex-[1_1_16rem]">
             <p class="text-text-main text-sm font-semibold">{m.bookings_columns_hidden_title()}</p>
             <p class="text-text-muted text-xs">{m.bookings_columns_hidden_hint()}</p>
           </div>
           <a
             href={resolve(internalPath(spaceEditorHref(space.id)))}
-            class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+            class="bg-control-fill text-text-main hover:bg-cn-border/60 inline-flex min-h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold transition-colors"
           >
+            <Plus size={16} />
             {m.bookings_resource_add_button()}
           </a>
         </div>
       {/if}
 
       <!-- Two columns side by side from lg (the mockup's desktop); below it, one at a time. -->
-      <div class="lg:hidden">
-        <SegmentedControl
-          items={[
-            { key: 'upcoming', label: m.bookings_dashboard_tab_upcoming(), icon: ListChecks },
-            { key: 'planning', label: m.bookings_dashboard_tab_planning(), icon: CalendarDays },
-          ]}
-          value={tab}
-          onSelect={(key: Tab) => (tab = key)}
-          label={m.bookings_dashboard_title()}
-        />
-      </div>
+      <SegmentedControl
+        class="lg:hidden"
+        variant="underline"
+        idPrefix="dashboard-"
+        items={[
+          { key: 'upcoming', label: m.bookings_dashboard_tab_upcoming() },
+          { key: 'planning', label: m.bookings_dashboard_tab_planning() },
+        ]}
+        value={tab}
+        onSelect={(key: Tab) => (tab = key)}
+        label={m.bookings_dashboard_title()}
+      />
 
       <!-- Both stay mounted: the counters come from the week's read, the list from its own. -->
       {#key space.id}
         <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6">
-          <div class={tab !== 'planning' ? 'max-lg:hidden' : ''}>
+          <div
+            id="dashboard-tabpanel-planning"
+            role="tabpanel"
+            aria-labelledby="dashboard-tab-planning"
+            class={tab !== 'planning' ? 'max-lg:hidden' : ''}
+          >
             <SpaceWeek
               bind:this={week}
               {space}
@@ -247,7 +291,12 @@
               onChanged={() => void upcoming?.reload()}
             />
           </div>
-          <aside class={tab !== 'upcoming' ? 'max-lg:hidden' : ''}>
+          <div
+            id="dashboard-tabpanel-upcoming"
+            role="tabpanel"
+            aria-labelledby="dashboard-tab-upcoming"
+            class={tab !== 'upcoming' ? 'max-lg:hidden' : ''}
+          >
             <h2 class="text-text-main mb-3 hidden text-sm font-bold lg:block">
               {m.bookings_dashboard_tab_upcoming()}
             </h2>
@@ -257,7 +306,7 @@
               {nowMs}
               onChanged={() => void week?.reread()}
             />
-          </aside>
+          </div>
         </div>
       {/key}
     </div>

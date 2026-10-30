@@ -400,6 +400,18 @@ export function dragRange(
   return { first: Math.min(anchor, last), count: Math.abs(last - anchor) + 1 };
 }
 
+/**
+ * How many units one drag over the grid may select: a block's length on the organiser's dashboard
+ * (`blockMode`), else what one booking may cover. Above 1, a drag means something, so the screen
+ * says it; the grid and the dashboard read it from here and cannot disagree.
+ */
+export function gridUnitLimit(
+  space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>,
+  blockMode: boolean
+): number {
+  return blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space);
+}
+
 /** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */
 export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>): number {
   return space.slotMode === 'slots' ? 1 : Math.max(1, space.maxSteps ?? 1);

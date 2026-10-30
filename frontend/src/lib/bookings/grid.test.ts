@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import type { SlotUnit } from './api';
 import {
+  BLOCK_LENGTH_CHOICES,
   bookingUnitLimit,
+  gridUnitLimit,
   dragRange,
   formatTimeRange,
   formatDayHead,
@@ -358,6 +360,14 @@ describe('dragRange', () => {
     expect(dragRange(column, 3, 5, 4).count).toBe(0);
     expect(dragRange([null, unit('09:00', 30)], 0, 1, 4).count).toBe(0);
     expect(dragRange(column, 0, 2, 0).count).toBe(0);
+  });
+});
+
+describe('gridUnitLimit', () => {
+  it('is a block length on the dashboard (slots mode included), a booking length otherwise', () => {
+    expect(gridUnitLimit({ slotMode: 'slots', maxSteps: null }, true)).toBe(BLOCK_LENGTH_CHOICES);
+    expect(gridUnitLimit({ slotMode: 'slots', maxSteps: null }, false)).toBe(1);
+    expect(gridUnitLimit({ slotMode: 'step', maxSteps: 4 }, false)).toBe(4);
   });
 });
 

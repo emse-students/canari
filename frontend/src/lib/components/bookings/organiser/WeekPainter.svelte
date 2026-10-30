@@ -208,8 +208,8 @@
               selected.start === start &&
               selected.end === end}
             <div
-              class="bg-green-ok/25 border-green-ok/50 absolute inset-x-0 rounded-md border {isSelected
-                ? 'ring-cn-yellow ring-2'
+              class="bg-cn-yellow/30 border-cn-yellow/60 absolute inset-x-0 rounded-md border {isSelected
+                ? 'ring-text-main ring-2'
                 : ''}"
               style:top="{(start / dayMin) * 100}%"
               style:height="{((end - start) / dayMin) * 100}%"
