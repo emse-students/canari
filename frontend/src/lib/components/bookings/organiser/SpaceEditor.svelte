@@ -358,7 +358,7 @@
     <p class="text-text-muted text-sm">{m.bookings_resource_none()}</p>
   {/if}
   {#if hidden}
-    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-3 sm:p-4">
+    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-4">
       <Columns3 size={18} class="text-text-muted mt-0.5 shrink-0" />
       <!-- A basis, so a phone wraps the button below the hint rather than crushing the hint. -->
       <div class="min-w-0 flex-1 basis-56">

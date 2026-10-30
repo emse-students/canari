@@ -105,8 +105,8 @@ describe('SpaceList - the poster as a thumbnail', () => {
   it('says nothing of columns for a one-column space, and counts them from two', async () => {
     await open([space('a', false), { ...space('b', false), resourceCount: 3 }]);
     const line = (id: string) => document.querySelector(`a[data-hub-row="${id}"]`)!.textContent;
-    expect(line('a')).not.toContain(m.bookings_tab_resources_count({ count: 1 }));
-    expect(line('b')).toContain(m.bookings_tab_resources_count({ count: 3 }));
+    expect(line('a')).not.toMatch(/ressource|resource/i);
+    expect(line('b')).toContain(m.bookings_row_resources({ count: 3 }));
   });
 
   it('is a real link to the space, named by its name', async () => {
@@ -133,11 +133,9 @@ describe('SpaceList - the poster as a thumbnail', () => {
     expect(document.querySelector('a[data-hub-row="b"]')).not.toBeNull();
   });
 
-  it('draws no search for a short list, and names the way into each space', async () => {
+  it('draws no search for a short list, and says who runs the space under its name', async () => {
     await open([space('a', false)]);
     expect(document.querySelector('input[type="search"]')).toBeNull();
-    expect(document.querySelector('a[data-hub-row="a"]')!.textContent).toContain(
-      m.bookings_space_open_planning()
-    );
+    expect(document.querySelector('a[data-hub-row="a"]')!.textContent).toContain('BDA');
   });
 });

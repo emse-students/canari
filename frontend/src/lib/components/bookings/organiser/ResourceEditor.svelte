@@ -144,9 +144,7 @@
 
 <!-- A column has its own card. The one HIDDEN column (D44) has none: its hours lead (the mockup's
      "Horaires d'ouverture"), then the account that may block, in a card each. -->
-<article
-  class="flex flex-col gap-4 {hidden ? '' : 'border-cn-border rounded-2xl border p-3 sm:p-4'}"
->
+<article class="flex flex-col gap-4 {hidden ? '' : 'border-cn-border rounded-2xl border p-4'}">
   {#if !hidden}
     <div class="flex items-start gap-2">
       <div class="min-w-0 flex-1">

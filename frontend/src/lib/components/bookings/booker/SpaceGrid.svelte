@@ -13,6 +13,9 @@
     type WeekLayout,
   } from '$lib/bookings/grid';
   import { localTime } from '$lib/bookings/zonedTime';
+  import { onMount } from 'svelte';
+  import { gridDragHint } from '$lib/bookings/gridHint';
+  import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -49,6 +52,13 @@
   }
 
   let { space, resource, layout, mode, blockMode = false, nowMs, onPick }: Props = $props();
+
+  /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
+  let coarse = $state(isCoarsePointerDevice());
+  onMount(() => {
+    coarse = isCoarsePointerDevice();
+    return onCoarsePointerChange((value) => (coarse = value));
+  });
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
   const HOLD_MS = 250;
@@ -376,6 +386,6 @@
 <!-- The dashboard says its drag above the grid (manage page), where it is read first. -->
 {#if unitLimit > 1 && !blockMode}
   <p class="text-text-muted text-2xs px-1 pt-1">
-    {m.bookings_grid_drag_hint()}
+    {gridDragHint(blockMode, coarse)}
   </p>
 {/if}
