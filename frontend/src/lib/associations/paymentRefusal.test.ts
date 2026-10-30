@@ -118,6 +118,12 @@ describe('providerRefusalMessage', () => {
     );
   });
 
+  it('words a condition both requiring and excluding a cotisation from its code', () => {
+    expect(
+      providerRefusalMessage(new SocialApiError('x', 'AUDIENCE_COTISATION_BOTH_MODES', 400))
+    ).toBe(m.form_condition_cotisation_both_modes());
+  });
+
   it("words a guest's ceiling of waiting answers from its code, never the server English", () => {
     const err = new SocialApiError(
       'This visitor already has 3 answers waiting for payment on this form.',

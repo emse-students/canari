@@ -487,6 +487,49 @@ describe('FormsService - cotisation configuration and granting', () => {
       );
     });
 
+    // Owner, 2026-10-30: nobody pays a cotisation twice. Admitted at submit as a non-holder, the
+    // submitter bought the tier in the shop before the form's payment landed: granting would RENEW
+    // it and take its price twice, so nothing is granted and the money is marked for a refund.
+    describe('a form for people who do NOT hold the tier it sells', () => {
+      const notHeld = {
+        id: 'f1',
+        title: 'Cotisation BDE',
+        associationId: 'asso1',
+        grantsCotisation: true,
+        cotisationVariantKey: null,
+        submitCondition: { notCotisation: { variantKeys: [null] } },
+      };
+
+      it('grants nothing and records paid_not_granted when the payer holds it by then', async () => {
+        const { service, userTagService, purchaseRecordService } = makeService({
+          submission: { ...paid },
+          form: notHeld,
+          heldTiers: [null],
+        });
+
+        await service.markPaid('s1', 'cs_test_1');
+
+        expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
+        expect(purchaseRecordService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'paid_not_granted', amountCents: 1500 })
+        );
+      });
+
+      it('CONTROL: grants and records paid when the payer still does not hold it', async () => {
+        const { service, userTagService, purchaseRecordService } = makeService({
+          submission: { ...paid },
+          form: notHeld,
+        });
+
+        await service.markPaid('s1');
+
+        expect(userTagService.grantCotisantIfARise).toHaveBeenCalled();
+        expect(purchaseRecordService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'paid' })
+        );
+      });
+    });
+
     it('CONTROL: a granted tier is recorded paid', async () => {
       const { service, purchaseRecordService } = makeService({
         submission: { ...paid },

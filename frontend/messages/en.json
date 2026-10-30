@@ -3648,6 +3648,7 @@
   "form_error_audience_empty": "The access restriction has no criterion: tick one or switch it off.",
   "form_error_question_condition_empty": "The display condition of question \"{label}\" has no criterion: tick one or switch it off.",
   "form_condition_cotisation_label": "Membership required",
+  "form_condition_cotisation_both_modes": "A condition cannot both require and exclude a membership: keep one of the two.",
   "form_condition_cotisation_mode_label": "Membership",
   "form_condition_cotisation_mode_holds": "Holds the membership",
   "form_condition_cotisation_mode_not_holds": "Does not hold the membership",

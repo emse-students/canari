@@ -62,6 +62,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === FORM_NOT_OPEN_TO_YOU) {
     return m.form_view_not_open_to_you_title();
   }
+  if (err instanceof SocialApiError && err.code === AUDIENCE_COTISATION_BOTH_MODES) {
+    return m.form_condition_cotisation_both_modes();
+  }
   if (err instanceof SocialApiError && err.code === PAYMENT_ROUTING_CHANGED) {
     return m.shop_payment_routing_changed();
   }
@@ -141,6 +144,13 @@ export const FORM_COTISATION_HELD = 'FORM_COTISATION_HELD';
 
 /** The body `code` of the same 403 for any other criterion of the form's `submitCondition`. */
 export const FORM_NOT_OPEN_TO_YOU = 'FORM_NOT_OPEN_TO_YOU';
+
+/**
+ * The body `code` of social-service's 400 when a saved condition names a cotisation both as held
+ * and as not held (`pricing/validate.ts`) - what an older editor sends after ticking a held tier on
+ * a "ne detient pas" condition; this editor moves the tiers instead.
+ */
+export const AUDIENCE_COTISATION_BOTH_MODES = 'AUDIENCE_COTISATION_BOTH_MODES';
 
 /**
  * The body `code` of social-service's 409 when the association's payment account changed while

@@ -363,6 +363,16 @@ cotisation" / "Ne detient pas la cotisation" (`cotisationModeOf` / `withCotisati
   `notCotisation` first, and `matchesCondition` is `failedCriterion(...) === null`. The check carries
   the same code as `refusalCode`, which is how the fill page says "Vous detenez deja cette cotisation"
   rather than "Ce formulaire ne vous est pas destine".
+- **Re-judged when the money lands, on a form that GRANTS a cotisation** (`excludedCotisationHeldAtPayment`
+  in `fulfilPayment`, online and cash alike): someone admitted at submit who bought the tier in the
+  shop before paying would otherwise have it RENEWED and pay twice. Nothing is granted, the purchase
+  is recorded `paid_not_granted` (the existing refund-owed marker the purchases tab and the hourly
+  report already show, closed by a manager - no new mechanism), ERROR line naming
+  `FORM_COTISATION_HELD`. A form that grants nothing keeps the seat it sold.
+- **A 1.5.1 editor sends both keys** when a manager ticks a held tier on a "ne detient pas"
+  condition (it spreads `notCotisation` through and adds `cotisation`): refused
+  `400 { code: 'AUDIENCE_COTISATION_BOTH_MODES' }`, worded by a newer client through Paraglide; the
+  older one shows the English sentence, which says to update the app.
 - **Old forms are unchanged**: an absent key is no constraint, and no stored row carries it.
 - Booking spaces share the editor and the predicate, so a space's audience gets the mode too.
 

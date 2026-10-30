@@ -938,6 +938,7 @@ export class FormsService {
         grantsCotisation: true,
         cotisationVariantKey: true,
         associationId: true,
+        submitCondition: true,
       },
     });
     if (!form) {
@@ -963,6 +964,11 @@ export class FormsService {
               'grants a cotisation: there is no account to grant it to - nothing granted'
           );
         }
+      } else if (await this.excludedCotisationHeldAtPayment(form, submission)) {
+        // Admitted at submit, a holder by the time the money landed (a shop purchase in between):
+        // granting would RENEW the tier they hold and take its price twice. Nothing is granted, and
+        // the purchase is recorded `paid_not_granted` below - the marker a refund is owed on.
+        grant = 'not-granted';
       } else {
         const granted = await this.grantCotisationIfConfigured(
           form,
@@ -1007,6 +1013,37 @@ export class FormsService {
   }
 
   /**
+   * Whether a payment that just landed on a cotisation-GRANTING form comes from someone its
+   * `notCotisation` criterion now excludes - `FORM_COTISATION_HELD`, re-judged at payment because
+   * `submit` judged it before the money, and a tier bought in the shop meanwhile would otherwise be
+   * renewed and paid twice (owner, 2026-10-30: nobody pays a cotisation twice). Only that criterion
+   * is re-judged: it is the only one a person can change between the two, by paying.
+   *
+   * A form that grants nothing takes no cotisation's price, so its seat stands whatever is held.
+   */
+  private async excludedCotisationHeldAtPayment(
+    form: Pick<Form, 'id' | 'grantsCotisation' | 'associationId' | 'submitCondition'>,
+    submission: Pick<Submission, 'id' | 'userId'>
+  ): Promise<boolean> {
+    const excluded = form.submitCondition?.notCotisation;
+    if (!form.grantsCotisation || !excluded || !submission.userId) return false;
+    const facts = await this.pricingFacts.build({
+      userId: submission.userId,
+      associationId: form.associationId,
+      needProfile: false,
+    });
+    if (submitRefusalCode({ notCotisation: excluded }, facts) !== FORM_COTISATION_HELD) {
+      return false;
+    }
+    this.logger.error(
+      `[Forms] submission ${submission.id} on form ${form.id}: ${FORM_COTISATION_HELD} at payment - ` +
+        'the payer now holds a cotisation this form is for people without; nothing granted, ' +
+        'recorded paid_not_granted, a refund is owed'
+    );
+    return true;
+  }
+
+  /**
    * Whether the tier a paid form grants was delivered, as its purchase record must say
    * (`receivedStatus`). `grant` is the decision THIS call took, when it took one. When it took none -
    * a replay whose grant was claimed by an earlier run, or a late payment that landed with no seat
@@ -1025,7 +1062,8 @@ export class FormsService {
   ): Promise<boolean> {
     if (!form.grantsCotisation || !form.associationId || !submission.userId) return true;
     if (grant === 'granted') return true;
-    // Refused as not a rise: `grantCotisantIfARise` logged it at ERROR already.
+    // Refused as not a rise (`grantCotisantIfARise`), or the payer already holds a tier the form
+    // excludes (`excludedCotisationHeldAtPayment`): each logged it at ERROR already.
     if (grant === 'not-granted') return false;
     const tier = form.cotisationVariantKey ?? 'base';
     if (!seatGiven) {

@@ -3648,6 +3648,7 @@
   "form_error_audience_empty": "La restriction d'accès n'a aucun critère : cochez-en un ou désactivez-la.",
   "form_error_question_condition_empty": "La condition d'affichage de la question \"{label}\" n'a aucun critère : cochez-en un ou désactivez-la.",
   "form_condition_cotisation_label": "Cotisation exigée",
+  "form_condition_cotisation_both_modes": "Une condition ne peut pas à la fois exiger et exclure une cotisation : gardez l'une des deux.",
   "form_condition_cotisation_mode_label": "Cotisation",
   "form_condition_cotisation_mode_holds": "Détient la cotisation",
   "form_condition_cotisation_mode_not_holds": "Ne détient pas la cotisation",

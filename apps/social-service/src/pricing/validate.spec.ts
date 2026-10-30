@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  AUDIENCE_COTISATION_BOTH_MODES,
   FIRST_PROMO_YEAR,
   parseAudienceCondition,
   parsePriceMatrix,
@@ -89,10 +90,19 @@ describe('criteria validation', () => {
     });
 
     // One criterion, one mode: the pair is a contradiction or a roundabout spelling of one side.
-    it('refuses it beside a cotisation that must be held', () => {
-      expect(() =>
-        parse({ cotisation: { anyTier: true }, notCotisation: { variantKeys: ['bde'] } })
-      ).toThrow(/both as held and as not held/);
+    // What a 1.5.1 editor sends when a manager ticks a held tier on a "does not hold" condition: it
+    // spreads `notCotisation` through and adds `cotisation`. Refused with a CODE, never prose only.
+    it('refuses it beside a cotisation that must be held, typed', () => {
+      let thrown: unknown;
+      try {
+        parse({ cotisation: { anyTier: true }, notCotisation: { variantKeys: ['bde'] } });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(BadRequestException);
+      expect((thrown as BadRequestException).getResponse()).toMatchObject({
+        code: AUDIENCE_COTISATION_BOTH_MODES,
+      });
     });
   });
 
