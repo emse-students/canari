@@ -7,7 +7,10 @@
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
   import DeviceNoticeRow from '$lib/components/notifications/DeviceNoticeRow.svelte';
-  import { pendingDeviceNotices } from '$lib/utils/chat/deviceNotices.svelte';
+  import {
+    markDeviceNoticesRead,
+    pendingDeviceNotices,
+  } from '$lib/utils/chat/deviceNotices.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import {
@@ -57,6 +60,22 @@
   let pendingRequests = $state(0);
   /** How many follow requests wait on this reader (WP-F4), drawn the same way. */
   let pendingFollowRequests = $state(0);
+
+  /**
+   * The device alerts unread when this view opened - the same snapshot idea as `unreadAtOpen`: opening
+   * reads them (badge cleared, persisted) but the dot is drawn from what was unread at open. The rows
+   * stay until "Got it", "Not me" or the devices link.
+   */
+  let deviceUnreadAtOpen = $state<ReadonlySet<string>>(new Set());
+
+  onMount(() => {
+    deviceUnreadAtOpen = new Set(
+      pendingDeviceNotices()
+        .filter((n) => !n.read)
+        .map((n) => n.key)
+    );
+    markDeviceNoticesRead();
+  });
 
   onMount(() => {
     countMyRepublicationRequests()
@@ -183,7 +202,7 @@
   {#if deviceNotices.length > 0}
     <ul class="mb-2 flex flex-col" data-device-notices>
       {#each deviceNotices as notice (notice.key)}
-        <li><DeviceNoticeRow {notice} /></li>
+        <li><DeviceNoticeRow {notice} unread={deviceUnreadAtOpen.has(notice.key)} /></li>
       {/each}
     </ul>
   {/if}

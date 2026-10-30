@@ -1050,7 +1050,9 @@ that consumes them next.
   date bands) since 2026-10-30; the app-wide `NewDeviceBanner` is deleted (owner decision: no
   banner for device notices). It is a LOCAL entry - built on this device from a signed commit, never
   sent to the server, never a push - and it counts in the bell's unread badge
-  (`postNotifStore.unread` adds `pendingDeviceNotices()`). The row carries the device's name when the
+  (`postNotifStore.unread` adds `unreadDeviceNoticeCount()`). Opening `/notifications` READS it, as
+  for every other notification (`markDeviceNoticesRead`, persisted as `read` next to the notice): the
+  badge and the dot clear, the row stays until acted on. The row carries the device's name when the
   device list has one, when this device learned of it, a link to `/settings/security`, "Not me"
   (confirm, then `revokeNoticedDevice`; the toasts are kept) and "Got it". Durable per account
   (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the last 256 announced keys) until dismissed,

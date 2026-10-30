@@ -11,9 +11,11 @@
   interface Props {
     /** The alert, built on this device from a signed commit (`deviceNotices.svelte.ts`). */
     notice: OwnDeviceNotice;
+    /** Draw the amber dot: unread when the list opened (the live flag clears at once). */
+    unread: boolean;
   }
 
-  let { notice }: Props = $props();
+  let { notice, unread }: Props = $props();
 
   /**
    * "A new device was added to your account" as a row of the notification list (owner decision
@@ -55,7 +57,7 @@
     <MonitorSmartphone size={24} />
   </span>
   <div class="min-w-0 flex-1">
-    <p class="text-text-main text-sm leading-snug">
+    <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
       <span class="font-semibold">{m.device_notice_title()}</span>
       {notice.label
         ? m.device_notice_body_named({ label: notice.label, when })
@@ -83,5 +85,7 @@
       >
     </div>
   </div>
-  <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+  {#if unread}
+    <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+  {/if}
 </div>

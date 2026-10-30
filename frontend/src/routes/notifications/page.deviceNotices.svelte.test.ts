@@ -14,6 +14,7 @@ import {
   loadDeviceNotices,
   noteRefusedOwnDevices,
   pendingDeviceNotices,
+  unreadDeviceNoticeCount,
 } from '$lib/utils/chat/deviceNotices.svelte';
 import { flushMacrotask } from '../../test/flush';
 
@@ -101,6 +102,30 @@ describe('/notifications, the new-device alert', () => {
     expect(row?.querySelector('[data-device-notice-not-me]')).not.toBeNull();
     // The list is not "empty" while an alert waits.
     expect(target.textContent).not.toContain(m.notif_empty_message());
+  });
+
+  it('opening the list reads it: badge cleared and persisted, dot drawn from the snapshot, row kept', async () => {
+    seed();
+    expect(unreadDeviceNoticeCount()).toBe(1);
+    const target = await render();
+    expect(unreadDeviceNoticeCount()).toBe(0);
+    expect(target.querySelector('[data-device-notice]')).not.toBeNull();
+    expect(target.querySelector('[data-device-notice] .bg-amber-500')).not.toBeNull();
+    expect(
+      JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}')
+    ).toMatchObject({
+      pending: [{ key: 'alice:laptop-9|cc', read: true }],
+    });
+    // After a reload it is still listed, read: no badge, no dot.
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    expect(pendingDeviceNotices()).toHaveLength(1);
+    expect(unreadDeviceNoticeCount()).toBe(0);
+    mounted.splice(0).forEach((f) => f());
+    document.body.innerHTML = '';
+    const again = await render();
+    expect(again.querySelector('[data-device-notice]')).not.toBeNull();
+    expect(again.querySelector('[data-device-notice] .bg-amber-500')).toBeNull();
   });
 
   it('draws nothing when no device was added', async () => {

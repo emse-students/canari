@@ -12,7 +12,7 @@ import {
 } from '$lib/posts/api';
 import type { PostNotification } from '$lib/posts/api';
 import { isTransportFailure } from '$lib/utils/transportFailure';
-import { pendingDeviceNotices } from '$lib/utils/chat/deviceNotices.svelte';
+import { unreadDeviceNoticeCount } from '$lib/utils/chat/deviceNotices.svelte';
 
 let notifications = $state<PostNotification[]>([]);
 let loading = $state(false);
@@ -29,7 +29,7 @@ export const postNotifStore = {
    * them (owner decision 2026-10-30). Counted here so every badge reads one number.
    */
   get unread(): number {
-    return notifications.filter((n) => !n.read).length + pendingDeviceNotices().length;
+    return notifications.filter((n) => !n.read).length + unreadDeviceNoticeCount();
   },
   get loading(): boolean {
     return loading;

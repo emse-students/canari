@@ -68,6 +68,8 @@ export interface OwnDeviceNotice {
   at: number;
   /** The name the account gave the device, when the device list knows it. */
   label?: string;
+  /** The owner opened the notifications list: no badge, no dot - the row stays until acted on. */
+  read?: boolean;
 }
 
 /**
@@ -225,7 +227,8 @@ function isNotice(v: unknown): v is OwnDeviceNotice {
     typeof n.key === 'string' &&
     typeof n.deviceId === 'string' &&
     typeof n.at === 'number' &&
-    (n.label === undefined || typeof n.label === 'string')
+    (n.label === undefined || typeof n.label === 'string') &&
+    (n.read === undefined || typeof n.read === 'boolean')
   );
 }
 
@@ -350,6 +353,28 @@ export function forgetDeviceNotices(): void {
 /** The alerts not yet seen, oldest first. Reactive. */
 export function pendingDeviceNotices(): OwnDeviceNotice[] {
   return [...pending.values()];
+}
+
+/** How many alerts are still unread - what the bell's badge adds. Reactive. */
+export function unreadDeviceNoticeCount(): number {
+  return [...pending.values()].filter((n) => !n.read).length;
+}
+
+/**
+ * Opening the notifications list reads every alert, as it does the server's: they leave the badge
+ * and lose their dot, and stay in the list until dismissed. Persisted next to the notice.
+ */
+export function markDeviceNoticesRead(): void {
+  if (!boundAccount) return;
+  let changed = false;
+  for (const n of pending.values()) {
+    if (n.read) continue;
+    pending.set(n.key, { ...n, read: true });
+    changed = true;
+  }
+  if (!changed) return;
+  console.log('[DEVICE_NOTICE] new-device alert(s) read');
+  writeStored(boundAccount);
 }
 
 /** The user has seen the alert: it goes, and its device stays announced. */
