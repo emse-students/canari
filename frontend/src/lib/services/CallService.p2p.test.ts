@@ -4315,3 +4315,82 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
     ]);
   });
 });
+
+/**
+ * AN ANSWER ON THE NATIVE RING JOINS WITH NO INVITE (calls.md, "An answer from the ring joins on the
+ * ring's facts"). Driven through the real `pendingCallAccept` gate and the real `acceptCall`: the
+ * room token is the authority, and nothing happens before the session's catch-up is done.
+ */
+describe('an answer on the native ring, no invite ever delivered', () => {
+  const RING_ANSWER = {
+    groupId: 'group-1',
+    callId: 'room-1',
+    hasVideo: false,
+    callerId: 'peer@example.org',
+  };
+
+  afterEach(async () => {
+    const gate = await import('$lib/stores/pendingCallAccept');
+    gate.setSessionCaughtUp(false);
+    gate.takePendingCallAccept();
+    gate.setPendingCallAcceptHandler(null);
+  });
+
+  async function answeredOnTheRing(service: CallService) {
+    const gate = await import('$lib/stores/pendingCallAccept');
+    gate.setPendingCallAcceptHandler((why) => service.answerFromSystemSurface(why));
+    gate.setPendingCallAccept({ ...RING_ANSWER, acceptedAt: Date.now() });
+    return gate;
+  }
+
+  it('waits for the catch-up, then asks the room token and joins', async () => {
+    const service = new CallService(fakeMls);
+    order.length = 0;
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const gate = await answeredOnTheRing(service);
+    await settle();
+    // The socket is not caught up yet: nothing asked, nothing sent.
+    expect(order).toHaveLength(0);
+    expect(get(service.callState)).toBe('idle');
+
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    expect(sentCallFrames().some((c) => c.answered)).toBe(true);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(service.incomingCallerId).toBe('peer@example.org');
+  });
+
+  it('joins nothing when the room token says the ring is over (410)', async () => {
+    server.roomTokenStatus = 410;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+  });
+
+  it('a second answer of the call being joined starts nothing and accuses nothing', async () => {
+    const service = new CallService(fakeMls);
+    const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
+    await settle();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    order.length = 0;
+
+    gate.setPendingCallAccept({ ...RING_ANSWER, acceptedAt: Date.now() });
+    await settle();
+
+    expect(order).toHaveLength(0);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('WARN'))).toBe(false);
+  });
+});

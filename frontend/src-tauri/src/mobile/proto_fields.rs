@@ -659,24 +659,35 @@ pub fn build_text_app_message(message_id: &str, sent_at: i64, content: &str) -> 
     wrap_app_message(1, &text_msg, message_id, sent_at)
 }
 
-/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`
-/// proto for the "mark as read" notification quick action, and for a quick reply - which means the
-/// same thing, since a user who answered a conversation has read it.
+/// Builds a plaintext `AppMessage{ call: CallMsg{ call_id, device_id, hangup, end_reason } }`
+/// proto: the hangup a callee sends when it refuses a ring, built for the Decline button of the
+/// NATIVE ring (Android's CallStyle notification and call screen), which runs with no webview.
 ///
-/// AN INSTANT, NOT A LIST OF IDS, and that is the whole point of this function. The id-based
-/// `read_receipt` this replaces was read out of `fcm_message_cache.ndjson`, which the app CLEARS at
-/// every boot (`consumeFcmCache`), so "mark as read" from the shade sent nothing at all whenever
-/// the app had been opened since the notification arrived - silently, because an empty id list is
-/// indistinguishable from a conversation with nothing to acknowledge.
+/// It is byte-for-byte what the in-app Decline sends (`mkCallHangup(callId, deviceId, 'declined')`
+/// through `sendMlsNotification`, which sets `message_id` and `sent_at` on the envelope): the
+/// caller's client reads one frame for both, ends its ring at once and files the call as declined,
+/// where before the native Decline sent nothing and the caller rang out its whole window.
 ///
-/// `at` MUST be the sender's `sent_at` for the message the notification is about, carried down from
-/// the push, and never this device's clock: watermarks merge by `max` across devices, so a phone
-/// whose clock runs fast would mark future messages read permanently and unfixably. That is the
-/// same rule `watermarkAfterReading` (readState.ts) states for the foreground path.
-///
-/// `message_id`/`sent_at` on the envelope are left unset like every other control event
-/// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
-/// caller, so it reaches peers and our own other devices without ringing any of them.
+/// `end_reason` is the wire value of `CallEndReason` (DECLINED = 2); 0 is left off, as proto3 does.
+pub fn build_call_hangup_app_message(
+    message_id: &str,
+    sent_at: i64,
+    call_id: &str,
+    device_id: &str,
+    end_reason: u32,
+) -> Vec<u8> {
+    let mut call = Vec::with_capacity(call_id.len() + device_id.len() + 12);
+    write_string_field(&mut call, 1, call_id);
+    write_tag(&mut call, 5, 0);
+    write_varint(&mut call, 1);
+    write_string_field(&mut call, 8, device_id);
+    if end_reason != 0 {
+        write_tag(&mut call, 10, 0);
+        write_varint(&mut call, end_reason as u64);
+    }
+    wrap_app_message(7, &call, message_id, sent_at)
+}
+
 /// Builds a `GraineMsg` body: channel 1, session 2, seed 3, created_at 5.
 ///
 /// TEST-ONLY, AND SHARED, because `background.rs` proves the same seed over a REAL MLS frame and a
@@ -747,6 +758,24 @@ pub(crate) fn build_graine_v2_app_message(
     msg
 }
 
+/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`
+/// proto for the "mark as read" notification quick action, and for a quick reply - which means the
+/// same thing, since a user who answered a conversation has read it.
+///
+/// AN INSTANT, NOT A LIST OF IDS, and that is the whole point of this function. The id-based
+/// `read_receipt` this replaces was read out of `fcm_message_cache.ndjson`, which the app CLEARS at
+/// every boot (`consumeFcmCache`), so "mark as read" from the shade sent nothing at all whenever
+/// the app had been opened since the notification arrived - silently, because an empty id list is
+/// indistinguishable from a conversation with nothing to acknowledge.
+///
+/// `at` MUST be the sender's `sent_at` for the message the notification is about, carried down from
+/// the push, and never this device's clock: watermarks merge by `max` across devices, so a phone
+/// whose clock runs fast would mark future messages read permanently and unfixably. That is the
+/// same rule `watermarkAfterReading` (readState.ts) states for the foreground path.
+///
+/// `message_id`/`sent_at` on the envelope are left unset like every other control event
+/// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
+/// caller, so it reaches peers and our own other devices without ringing any of them.
 pub fn build_read_watermark_app_message(at: i64) -> Vec<u8> {
     let data = serde_json::json!({ "at": at }).to_string();
     let mut system_msg = Vec::with_capacity(data.len() + 24);
@@ -1432,5 +1461,27 @@ mod tests {
         let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["type"], "call_control");
         assert_eq!(info["callEnded"], true);
+    }
+
+    #[test]
+    fn native_decline_builds_the_hangup_the_in_app_decline_sends() {
+        // The native ring's Decline: CallMsg { call_id, hangup, device_id, end_reason=DECLINED },
+        // in an envelope with message_id and sent_at, as `sendMlsNotification` sends it.
+        let msg = build_call_hangup_app_message("mid-1", 1_700_000_000_000, "room-1", "dev-9", 2);
+
+        let call = find_length_delimited_field(&msg, 7).expect("a CallMsg in field 7");
+        assert_eq!(find_length_delimited_field(&call, 1).unwrap(), b"room-1");
+        assert_eq!(find_varint_field(&call, 5), Some(1));
+        assert_eq!(find_length_delimited_field(&call, 8).unwrap(), b"dev-9");
+        assert_eq!(find_varint_field(&call, 10), Some(2));
+        assert_eq!(find_length_delimited_field(&msg, 6).unwrap(), b"mid-1");
+        assert_eq!(find_varint_field(&msg, 8), Some(1_700_000_000_000));
+
+        // And every native reader of it sees the call end, never a preview.
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["type"], "call_control");
+        assert_eq!(info["callId"], "room-1");
+        assert_eq!(info["callEnded"], true);
+        assert_eq!(info["text"], "");
     }
 }

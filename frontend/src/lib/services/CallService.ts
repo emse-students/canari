@@ -17,7 +17,7 @@ import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/utils/sessionLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
-import { consumePendingCallAccept } from '$lib/stores/pendingCallAccept';
+import { takePendingCallAccept } from '$lib/stores/pendingCallAccept';
 import { getToken } from '$lib/stores/auth';
 import {
   buildCallAudioConstraints,
@@ -709,16 +709,68 @@ export class CallService {
       }
       this.callState.set('incoming');
       this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
-
-      // WP-XP-5: the user may have ALREADY answered this call on a system surface (Android
-      // CallStyle notification deep link / iOS CallKit) before the app was unlocked and the
-      // invite reached us over WS. Consume the recorded intent and auto-accept.
-      const pendingAccept = consumePendingCallAccept(callMsg.callId);
-      if (pendingAccept) {
-        appendLog(`[Call] auto-accepting call ${callMsg.callId} (system-surface answer)`);
-        void this.acceptCall(groupId, callMsg.callId);
-      }
+      // An answer already given on a system surface is not looked for here: it joins on its own
+      // facts the moment the session can ({@link answerFromSystemSurface}), and this invite, if it
+      // arrives after, meets that call as its own redelivery.
     }
+  }
+
+  /**
+   * JOINS A CALL THE USER ANSWERED ON A SYSTEM SURFACE (the Android ring, iOS CallKit), from the
+   * facts that answer carries - never from the caller's MLS `call_invite`.
+   *
+   * That invite is a TRANSPORT frame: the server hands it only to a device online when it is sent
+   * (`TRANSPORT_SKIPPED_OFFLINE`), and a phone the native ring reached was, by construction, closed.
+   * Waiting for it made every answer from a closed phone ring out its window into "missed" on both
+   * sides (1.5.2-alpha.1, Mi 9T). Nothing the invite carries is needed to join: the conversation,
+   * the call and whether it is video came with the ring, and every rule the invite's admission
+   * applies here was applied by the server before it rang (calls_mode, the conversation's
+   * permission, blocks) and is applied AGAIN by the room token this join asks for - a closed window
+   * or a block set since is its `410`/`403`, an answer, not a guess.
+   *
+   * Called by `pendingCallAccept.ts` once BOTH an intent is held and the session's socket has
+   * caught up (`ConnectionDeps.onCaughtUp`), whichever comes second; the intent is taken once
+   * ({@link takePendingCallAccept}).
+   *
+   * @param why What called it, for the log.
+   */
+  public answerFromSystemSurface(why: string): void {
+    if (!CALLS_ENABLED) return;
+    const intent = takePendingCallAccept();
+    if (!intent) return;
+    const state = get(this.callState);
+    if (state !== 'idle' && state !== 'incoming' && this.currentCallId === intent.callId) {
+      // This answer's call is already being joined, held, or just ended here: a second answer of
+      // it is a duplicate - no warning, no second setup, and never a rejoin of a call ended.
+      console.debug(`[Call] system-surface answer of call=${intent.callId} - already ${state}`);
+      return;
+    }
+    appendLog(
+      `[Call] system-surface answer of call=${intent.callId} (${why}) meets state=${state} call=${this.currentCallId}`
+    );
+    if (state === 'incoming' && this.currentCallId === intent.callId) {
+      // The invite did reach this device (it was online when it left): the same call, answered.
+      void this.acceptCall(intent.groupId, intent.callId);
+      return;
+    }
+    if (state === 'ended') this.cleanup();
+    if (get(this.callState) !== 'idle') {
+      // In another call: the answer cannot be honoured without dropping that one, which only the
+      // user decides. Its ring rings out; said, never silent.
+      appendLog(
+        `[Call] WARN system-surface answer of call=${intent.callId} dropped - this device is in call=${this.currentCallId}`
+      );
+      return;
+    }
+    this.currentCallId = intent.callId;
+    this.currentGroupId = intent.groupId;
+    this.incomingCallerId = intent.callerId ? intent.callerId.toLowerCase() : null;
+    this.incomingHasVideo = CALLS_VIDEO_ENABLED && intent.hasVideo;
+    this.callState.set('incoming');
+    appendLog(
+      `[Call] joining call=${intent.callId} from the system-surface answer - no invite awaited`
+    );
+    void this.acceptCall(intent.groupId, intent.callId);
   }
 
   /**

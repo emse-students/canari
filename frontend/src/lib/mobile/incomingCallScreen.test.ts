@@ -213,6 +213,129 @@ describe('the ring and its photo', () => {
   });
 });
 
+describe('the native answer is a private intent carrying every fact the join needs', () => {
+  // The webview joins on these facts alone (calls.md, "An answer from the ring joins on the ring's
+  // facts"), and they reach it through a private file, never a parameter of a public link.
+  const answer = read('android/app/src/main/java/fr/emse/canari/CallRingAnswer.kt');
+  const main = read('android/app/src/main/java/fr/emse/canari/MainActivity.kt');
+
+  it('Android: the answer link only navigates; the answer rides extras checked by a per-ring nonce', () => {
+    const show = between(
+      push,
+      'internal fun showIncomingCallNotification(',
+      'private fun buildIncomingCallNotification(',
+      'showIncomingCallNotification'
+    );
+    expect(push).not.toContain('acceptCall');
+    expect(show).toContain('setData(Uri.parse("fr.emse.canari://chat/$groupId"))');
+    expect(show).toMatch(
+      /CallRingAnswer\.record\(context, groupId, callId, callerId, hasVideo\)[\s\S]*?CallRingAnswer\.putAnswer\(this, callId, answerNonce\)/
+    );
+    // The pending accept is written from the RECORDED facts, only for the nonce its ring issued.
+    const take = between(answer, 'fun takeAnswer(', 'private fun prefs(', 'takeAnswer');
+    expect(take).toMatch(/entry\.optString\("nonce"\) != nonce[\s\S]*?return false/);
+    expect(take).toContain('.put("groupId", entry.optString("groupId"))');
+    expect(take).toContain('.put("acceptedAt", System.currentTimeMillis())');
+    // Both doors of MainActivity hand the intent over, and the record dies with its ring.
+    expect([...main.matchAll(/CallRingAnswer\.takeAnswer\(this, intent\)/g)]).toHaveLength(2);
+    const cancel = between(
+      push,
+      'internal fun cancelIncomingCallNotification(',
+      'Log.d(TAG, "cancelIncomingCallNotification',
+      'cancelIncomingCallNotification'
+    );
+    expect(cancel).toContain('CallRingAnswer.forget(context, callId)');
+  });
+
+  it('iOS: the CallKit answer writes the caller into the pending accept; its link only navigates', () => {
+    const answerMm = between(
+      pushMm,
+      'performAnswerCallAction:(CXAnswerCallAction *)action {',
+      'performEndCallAction:',
+      'performAnswerCallAction'
+    );
+    expect(answerMm).toContain('@"callerId" : callerId,');
+    expect(answerMm).toContain('@"fr.emse.canari://chat/%@", groupId');
+    expect(pushMm).not.toContain('acceptCall');
+    // Both rings record the caller for it.
+    expect([...pushMm.matchAll(/@"callerId" : callerId \?: @"",/g)]).toHaveLength(2);
+  });
+});
+
+describe('a decline on the ring reaches the caller', () => {
+  const receiver = read(
+    'android/app/src/main/java/fr/emse/canari/CanariNotificationActionReceiver.kt'
+  );
+
+  it('Android: Decline sends the in-app hangup, once, never through the outbox mirror', () => {
+    const decline = between(
+      receiver,
+      'private fun handleCallDecline(',
+      '\n    }\n}',
+      'handleCallDecline'
+    );
+    expect(decline).toContain('nativeBuildCallHangupProto(');
+    expect(decline).toContain('CALL_END_REASON_DECLINED');
+    expect(decline).toContain('sendTransportFrameNow(');
+    expect(decline).not.toContain('enqueueOutboxMirror');
+    // The ring stops before anything is sent.
+    expect(decline.indexOf('cancelIncomingCallNotification')).toBeLessThan(
+      decline.indexOf('sendTransportFrameNow(')
+    );
+    const send = between(
+      push,
+      'internal fun sendTransportFrameNow(',
+      '/** The body of [drainOutboxBackground]',
+      'sendTransportFrameNow'
+    );
+    expect(send).toContain('silent = true, durable = false');
+    expect(send).not.toContain('rewriteOutboxMirror');
+  });
+
+  it("Android: the call screen's Decline fires the same intent", () => {
+    // The screen is handed the notification's own decline PendingIntent and only sends it.
+    expect(push).toMatch(/IncomingCallActivity\.intentFor\([^)]*answerPending, declinePending\)/);
+    expect(screen).toMatch(
+      /private fun onDecline\(decline: PendingIntent\) \{[\s\S]*?decline\.send\(\)/
+    );
+  });
+
+  it('iOS: the CallKit End sends it, and an End after the answer also cancels that answer', () => {
+    const end = between(
+      pushMm,
+      'performEndCallAction:(CXEndCallAction *)action {',
+      '@end',
+      'performEndCallAction'
+    );
+    expect(end).toMatch(/if \(answered\) \{\s*CanariCancelPendingCallAccept\(callId\);\s*\}/);
+    expect(end).toMatch(/if \(info != nil\) \{[\s\S]*?CanariSendCallDecline\(/);
+    const cancel = between(
+      pushMm,
+      'static void CanariCancelPendingCallAccept(',
+      '\n}\n',
+      'CanariCancelPendingCallAccept'
+    );
+    // Only the answer of THIS call is removed.
+    expect(cancel).toMatch(/isEqualToString:callId[\s\S]*?removeItemAtPath/);
+    const answer = between(
+      pushMm,
+      'performAnswerCallAction:(CXAnswerCallAction *)action {',
+      'performEndCallAction:',
+      'performAnswerCallAction'
+    );
+    expect(answer).toContain('answered[@"answered"] = @YES;');
+    const send = between(
+      pushMm,
+      'static void CanariSendCallDecline(',
+      '\n}\n',
+      'CanariSendCallDecline'
+    );
+    expect(send).toContain('canari_native_build_call_hangup_proto(');
+    expect(send).toContain('entry.durable = NO;');
+    expect(send).not.toContain('CanariRewriteOutboxMirror');
+  });
+});
+
 describe('Answer may start the app from the call screen', () => {
   it('sends with a background-start mode chosen by SDK level', () => {
     const send = between(

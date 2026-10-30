@@ -32,6 +32,13 @@ export interface ConnectionDeps {
   deviceKeyB64: string;
   scheduleReconnect: () => void;
   setIsWsConnected: (value: boolean) => void;
+  /**
+   * Called once per opened socket, AFTER the post-connect catch-up (`settleUnresolvedCommits`, then
+   * `fetchPendingMessages`). The signal a call answered on the native ring waits for: joined
+   * earlier, its `exportSecret` and its answered notice would run at an epoch the pending frames
+   * are about to move (calls.md, "An answer from the ring joins on the ring's facts").
+   */
+  onCaughtUp: () => void;
   setReconnectAttempts: (value: number) => void;
   processDeviceInvitationsLocally: () => Promise<void>;
   log: (msg: string) => void;
@@ -196,6 +203,9 @@ export async function openGatewayConnection(
     } catch (e) {
       log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
     }
+    // THE CATCH-UP IS DONE (attempted, each failure said above): the groups are at the epoch the
+    // server holds, so a call joined from here derives its keys and sends its notices there.
+    deps.onCaughtUp();
 
     if (typeof window !== 'undefined') {
       // The `disconnect` control frame is the ONLY departure signal, and it is deliberately the

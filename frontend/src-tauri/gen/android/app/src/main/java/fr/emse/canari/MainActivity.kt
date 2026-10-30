@@ -103,6 +103,9 @@ class MainActivity : TauriActivity() {
         if (savedInstanceState == null && !fromHistory && IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
+        // An Answer on the native ring: written for the page to drain at mount, BEFORE onResume
+        // ends the rings (and their records) - see CallRingAnswer.
+        if (savedInstanceState == null && !fromHistory) CallRingAnswer.takeAnswer(this, intent)
 
         // Request the notification permission natively on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -362,6 +365,8 @@ class MainActivity : TauriActivity() {
         if (IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
+        // Taken here, before onResume: the page drains it on that resume (ChatBackgroundService).
+        CallRingAnswer.takeAnswer(this, intent)
     }
 
     /**

@@ -78,6 +78,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'p',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
@@ -139,6 +140,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'pin1',
       scheduleReconnect,
       setIsWsConnected,
+      onCaughtUp: vi.fn(),
       setReconnectAttempts,
       processDeviceInvitationsLocally: sync,
       log,
@@ -190,6 +192,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'pin1',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
@@ -205,6 +208,42 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     // `{ once: true }` - a second unload event must not announce a departure twice.
     window.dispatchEvent(new Event('beforeunload'));
     expect(mls.sendDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The signal a call answered on the native ring waits for: AFTER the commits are settled and the
+   * pending frames fetched, so the call's keys and its answered notice run at the current epoch.
+   */
+  it('says it caught up only after the commits are settled and the pending frames fetched', async () => {
+    const steps: string[] = [];
+    const mls = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+      socketFence: () => 0,
+      settleUnresolvedCommits: vi.fn(async () => {
+        steps.push('settle');
+      }),
+      fetchPendingMessages: vi.fn(async () => {
+        steps.push('fetch');
+      }),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+    };
+    await openGatewayConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: (v: boolean) => steps.push(`connected=${v}`),
+      onCaughtUp: () => steps.push('caught-up'),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    expect(steps).toEqual(['connected=true', 'settle', 'fetch', 'caught-up']);
   });
 
   it('purges WASM and notifies for deleted groups (deletedAt)', async () => {
@@ -243,6 +282,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'pin1',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
@@ -289,6 +329,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'pin1',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
@@ -324,6 +365,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'p',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
@@ -360,6 +402,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       mlsService: mls as any,
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       log,
     } as any);
@@ -408,6 +451,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       deviceKeyB64: 'p',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),

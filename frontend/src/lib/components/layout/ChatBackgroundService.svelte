@@ -1766,8 +1766,9 @@
     w.wasm_bindings_log = (level: string, msg: string) => appendLog(`[RUST::${level}] ${msg}`);
 
     globalSession.initServices(appendLog);
-    // WP-XP-5: a CallKit answer may predate this cold start (app launched from the call UI).
-    // Drain it before login so the auto-accept fires as soon as the invite arrives over WS.
+    // WP-XP-5: an answer on the native ring (Android or CallKit) may predate this cold start - the
+    // answer is what launched the app. Held now, it is joined from its own facts once the login's
+    // socket has caught up; no invite is awaited (`pendingCallAccept.ts`).
     void drainNativePendingCallAccept();
     void startLoginFlow();
 
@@ -1812,6 +1813,11 @@
           .finally(() => invokeNative('pause_mls_foreground'));
         return;
       }
+      if (document.visibilityState === 'visible' && !globalSession.isLoggedIn) {
+        // A warm app still at its PIN gate: an answer given on the native ring meanwhile is held
+        // now, and joined once the login's socket has caught up (`pendingCallAccept.ts`).
+        void drainNativePendingCallAccept();
+      }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
         const { deviceKeyB64, storage } = globalSession;
         // Ordered resume sequence. C2 first: reload mls.bin into the warm engine BEFORE anything
@@ -1849,8 +1855,8 @@
           stepDone('key-group-joins');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           stepDone('outbox');
-          // WP-XP-5: the user may have answered a CallKit ring while we were away - record
-          // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
+          // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the
+          // reconnect, it is joined once that socket has caught up (`pendingCallAccept.ts`).
           await drainNativePendingCallAccept();
           stepDone('call');
           // WHAT THE SHADE DID WHILE WE WERE AWAY IS MERGED BEFORE THE SOCKET OPENS, in the order

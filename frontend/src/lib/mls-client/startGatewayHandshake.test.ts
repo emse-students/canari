@@ -79,6 +79,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
     deviceKeyB64: 'k',
     scheduleReconnect: vi.fn(),
     setIsWsConnected,
+    onCaughtUp: vi.fn(),
     setReconnectAttempts,
     processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
     log: vi.fn(),
