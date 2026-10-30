@@ -238,24 +238,21 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
 /**
  * Binds the new-device notices to the signed-in account and makes them the consumer of the MLS
  * layer's device events - which also drains whatever the sealed state already holds - and the
- * listener of the refusals this device records (`refusedDevices.ts`), so a refused device of the
- * account's own is told to its owner.
+ * listener of the refusals this device records (`refusedDevices.ts`), which a refused device of the
+ * account's own is logged from (it is shown nowhere).
  */
 export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSession): void {
   loadDeviceNotices(session.getUserId());
   registeredMls = mls;
   registeredSession = session;
   const onPhone = isMobileTauriRuntime();
-  const refusedCtx = () => ({
-    ownUserId: session.getUserId(),
-    deviceLabel: (deviceId: string) => deviceLabelOf(mls, session.getUserId(), deviceId),
-  });
-  // The refusals this device already remembers, then each new one as it is recorded.
-  void noteRefusedOwnDevices(
+  const refusedCtx = () => ({ ownUserId: session.getUserId() });
+  // The refusals this device already remembers, then each new one as it is recorded - logged only.
+  noteRefusedOwnDevices(
     listRefusedDevices({ userId: session.getUserId(), deviceId: session.getMyDeviceId() }),
     refusedCtx()
   );
-  setRefusedDeviceListener((identity) => void noteRefusedOwnDevices([identity], refusedCtx()));
+  setRefusedDeviceListener((identity) => noteRefusedOwnDevices([identity], refusedCtx()));
   if (onPhone) void preclaimOldOwnDevices(mls, session.getUserId(), session.getMyDeviceId());
   // The account whose state this consumer drains, fixed now: an account switch re-registers, and the
   // events of a delivery it overtakes are still this account's.
