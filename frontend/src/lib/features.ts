@@ -27,8 +27,8 @@ import { deployEnvironment } from '$lib/utils/deployEnvironment';
  * **ON since the flip PR (owner, 2026-10-22: calls reach production fast; 1:1 audio, in-app).** The
  * flip moved the `audio` mode, the microphone service and the purpose strings in one commit; the
  * native ring did NOT move with it. What keeps the surface closed in production is the server's
- * kill switch (`platform_config.calls_mode`, `off` at deploy), not this constant. Video stays dev
- * only ({@link CALLS_VIDEO_ENABLED}).
+ * kill switch (`platform_config.calls_mode`, `off` at deploy), not this constant. Video follows it
+ * since 1.5.2 ({@link CALLS_VIDEO_ENABLED}), held shut by the same switch's `audio_video`.
  *
  * **Turn it off again only** together with the `audio` mode, the microphone service and the purpose
  * strings: `callsCompiled.test.ts` and `androidCallServiceManifest.test.ts` fail on a partial move.
@@ -66,49 +66,45 @@ export const CALLS_NATIVE_RING_COMPILED = true;
  * the invite rings an OPEN app over the chat socket; a killed or backgrounded phone is rung by the
  * native ring, which is {@link CALLS_NATIVE_RING_COMPILED}'s (on since 2026-10-30).
  *
- * **A dev build keeps its own clause** only for video ({@link CALLS_VIDEO_ENABLED}); for audio the
- * expression is now `CALLS_COMPILED` alone in effect.
+ * The expression is `CALLS_COMPILED` alone in effect; video follows it ({@link CALLS_VIDEO_ENABLED}).
  */
 export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development';
 
 /**
  * Video in a call: the video-call button and the camera controls inside a call.
  *
- * **ON FOR A DEV BUILD ONLY, AND IT DOES NOT FOLLOW {@link CALLS_COMPILED}.** Since 2026-10-20 (lot
- * 2) the E2E transform frames video per codec - VP8's payload header in clear and bound as AES-GCM
- * additional data, the rest encrypted - and every video m-line is held to VP8, the codec it frames
- * (`utils/callVideoFrame.ts`, `utils/callVideo.ts`). H.264, which WebKit would otherwise offer
- * first, cannot be packetised once encrypted whole and is never negotiated. Measured Chrome to
- * Chrome in the rig (docs/wiki/frontend/modules/calls.md, "Video, measured").
+ * **FOLLOWS {@link CALLS_ENABLED} SINCE 1.5.2 (owner, 2026-10-30: 1:1 video ships in 1.5.2).** Since
+ * 2026-10-20 (lot 2) the E2E transform frames video per codec - VP8's payload header in clear and
+ * bound as AES-GCM additional data, the rest encrypted - and every video m-line is held to VP8, the
+ * codec it frames (`utils/callVideoFrame.ts`, `utils/callVideo.ts`). H.264, which WebKit would
+ * otherwise offer first, cannot be packetised once encrypted whole and is never negotiated.
  *
- * **Why it is not `CALLS_ENABLED`** (the owner, 2026-10-21): the first public build with calls is
- * AUDIO 1:1 ONLY; video follows later. Written as `CALLS_ENABLED` it would have gone to production
- * with the flip of {@link CALLS_COMPILED}, unread on any phone.
+ * **What keeps production shut is the server, not this constant**: the video button and the camera
+ * control need `platform_config.calls_mode = audio_video` (`callVideoAvailable`), and `ring` refuses
+ * a video ring under `audio`. The owner opens `audio_video` only after the Tier A video readings
+ * pass on the Mi 9T and the iPhone 12 (docs/wiki/frontend/modules/calls.md, "Turning video on in
+ * production"). From 2026-10-21 to 1.5.1 it was dev only, so the first calls stable was audio only.
  *
- * **Turns on for production when** the video readings of the calls page (both bench phones, both
- * directions, camera on/off and switch) have passed and the owner opens video - its own commit,
- * after the audio stable.
+ * **Turn it off again only** together with the camera purpose strings, which name calls exactly
+ * when a production binary carries video (`callsCompiled.test.ts`).
  */
-export const CALLS_VIDEO_ENABLED = deployEnvironment() === 'development';
+export const CALLS_VIDEO_ENABLED = CALLS_ENABLED;
 
 /**
  * Lives, client side - ONE switch for both halves of WP-L5: watching (the LIVE card at the top of
  * the feed, the full-screen viewer) and broadcasting (the composer's "Live" chip, the pre-live and
  * broadcast screens) - `components/live/`, `lib/live/`.
  *
- * **ON FOR A DEV BUILD ONLY (2026-10-19)**, by the same test as {@link CALLS_ENABLED}: a build made
- * for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build never
- * does, so a production binary asks `/api/lives` nothing and draws nothing. The server answers every
- * `/api/lives` route `404` on production anyway (its own `LIVE_ENABLED`, docs/wiki/services/lives.md)
- * - two locks, one per side - and the server's RUNTIME kill switch (`platform_config.lives_mode`,
- * published by `/api/version`) closes lives without a release: read this constant through
- * `livesAvailable` (`utils/livesAvailability.ts`), never alone, for any surface. It is off there because **any member may broadcast** (decision D3) and
- * moderation - report a live, the staff cut, block (WP-L8) - is not built: a live nobody can cut is
- * not shipped.
+ * **ON IN EVERY BUILD since the production flip (owner, 2026-10-30: lives in production in 1.5.2).**
+ * It was dev-only from 2026-10-19 until the moderation of WP-L8 existed - a live report, the staff
+ * cut, the first-live rules, the strike ladder and a reported chat line are built, server and client
+ * (docs/wiki/frontend/modules/live-production.md lists what is not). The server opened in the same
+ * commit (`LIVE_ENABLED=true` on both estates, `infrastructure/deploy/env-manifest.tsv`).
  *
- * **Turns on for production when** WP-L8 is built, the store answers (WP-L9) are in, the viewer and
- * broadcaster readings of docs/wiki/device-verification.md (checks Y and LIVE-B1) have passed on the
- * Mi 9T and the iPhone 12, and the server's `LIVE_ENABLED` turns on in the same release
- * (docs/wiki/frontend/modules/live.md).
+ * **What closes lives now is the server's RUNTIME kill switch**, `platform_config.lives_mode`,
+ * published by `/api/version` and moved by a global admin at `/admin/platform` without a release:
+ * read this constant through `livesAvailable` (`utils/livesAvailability.ts`), never alone, for any
+ * surface. This constant is what the binary CAN do; it goes off again only if a build must never
+ * carry lives at all, with the server's `LIVE_ENABLED` in the same commit.
  */
-export const LIVE_ENABLED = deployEnvironment() === 'development';
+export const LIVE_ENABLED = true;

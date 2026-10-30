@@ -20,9 +20,11 @@
   } from '$lib/bookings/availability';
   import {
     applyTemplate,
+    editRun,
     paintRows,
     weekRunsOf,
     type PaintMode,
+    type SelectedRun,
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
   import {
@@ -145,6 +147,14 @@
     if (next !== draft.rows) draft.rows = [...next];
   }
 
+  /** The painter's exact hours of a run: the wizard's week is always runs (a step space). */
+  function editRunOf(run: SelectedRun, start: number, end: number): boolean {
+    const next = editRun(draft.rows, run.day, [run.start, run.end], start, end);
+    if (next === null) return false;
+    if (next !== draft.rows) draft.rows = [...next];
+    return true;
+  }
+
   function hoursProblem(): string {
     switch (problems.hours) {
       case 'line':
@@ -185,6 +195,20 @@
     }
   }
 
+  /**
+   * "Je regle tout moi-meme": hands the name back. Without one it is the wizard's own name field
+   * that complains - back on the first step, where the field is - never a banner under it.
+   */
+  function skip() {
+    const name = draft.name.trim();
+    if (!name) {
+      step = 1;
+      tried = true;
+      return;
+    }
+    onSkip(name);
+  }
+
   async function create() {
     const payload = wizardPayload(draft);
     if (posterBusy) return;
@@ -221,7 +245,7 @@
     </h3>
     <button
       type="button"
-      onclick={() => onSkip(draft.name.trim())}
+      onclick={skip}
       disabled={creating}
       class="text-text-muted hover:text-text-main text-sm font-semibold underline underline-offset-2 disabled:opacity-40"
     >
@@ -350,7 +374,14 @@
           {/each}
         </ul>
       {:else}
-        <WeekPainter {week} {dayNames} {shortDayNames} onPaint={paint} />
+        <WeekPainter
+          {week}
+          {dayNames}
+          {shortDayNames}
+          onPaint={paint}
+          step={timeStep}
+          onEdit={editRunOf}
+        />
       {/if}
       <p class={CONTROL_HINT_CLASS}>{m.bookings_wizard_when_hint()}</p>
 

@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
  * | `CALLS_COMPILED` | `features.ts` | - | the app: in-app calls and the call kept alive in the background |
  * | `audio` | `canari_iOS/Info.plist` `UIBackgroundModes` | `CALLS_COMPILED` | WKWebView (it mutes a hidden page's microphone without it) and App Review |
  * | the microphone purpose string | `Info.plist`, `fr.lproj`, `en.lproj` | `CALLS_COMPILED` | App Review: it must name calls exactly when the binary can place one |
+ * | the camera purpose string | `Info.plist`, `fr.lproj`, `en.lproj`, `project.yml` | `CALLS_VIDEO_ENABLED` in a store binary (1.5.2) | App Review: it must name calls exactly when a call can open the camera |
  * | `CALLS_NATIVE_RING_COMPILED` | `features.ts` | - | the ring of an app that is closed or in the background |
  * | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | the ring | the Android push service (`showIncomingCallNotification`) |
  * | `kCanariCallsEnabled` | `canari_push.mm` | the ring | the PushKit registry and the CallKit provider, installed at process start |
@@ -65,6 +66,24 @@ const RING =
     /export const CALLS_NATIVE_RING_COMPILED = (true|false);/,
     'CALLS_NATIVE_RING_COMPILED'
   ) === 'true';
+/**
+ * Whether a STORE binary carries video. `CALLS_VIDEO_ENABLED` is an expression, not a literal: it
+ * is `CALLS_ENABLED` since 1.5.2 (a production build then carries video exactly when it can call),
+ * and was `deployEnvironment() === 'development'` before (dev only, so never a store binary). Any
+ * other expression fails here rather than being guessed at.
+ */
+const VIDEO = (() => {
+  const expression = captured(
+    features,
+    /export const CALLS_VIDEO_ENABLED = ([^;]+);/,
+    'CALLS_VIDEO_ENABLED'
+  ).trim();
+  if (expression === 'CALLS_ENABLED') return COMPILED;
+  expect(expression, 'CALLS_VIDEO_ENABLED is an expression this test cannot read').toBe(
+    "deployEnvironment() === 'development'"
+  );
+  return false;
+})();
 
 /** The <string> entries of the UIBackgroundModes array, without the comments around them. */
 function backgroundModes(): string[] {
@@ -84,27 +103,26 @@ function permissionTags(): string[] {
   return tags;
 }
 
-/** The microphone purpose string in the base Info.plist and in each localized InfoPlist.strings. */
-function microphonePurposes(): { where: string; text: string }[] {
+/** A purpose string in the base Info.plist and in each localized InfoPlist.strings. */
+function purposes(key: string): { where: string; text: string }[] {
   const base = captured(
     infoPlist,
-    /<key>NSMicrophoneUsageDescription<\/key>\s*<string>([^<]*)<\/string>/,
-    'NSMicrophoneUsageDescription in Info.plist'
+    new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`),
+    `${key} in Info.plist`
   );
   const out = [{ where: 'Info.plist', text: base }];
   for (const lang of ['fr', 'en']) {
     const strings = read(resolve(APPLE, `canari_iOS/${lang}.lproj/InfoPlist.strings`));
     out.push({
       where: `${lang}.lproj`,
-      text: captured(
-        strings,
-        /"NSMicrophoneUsageDescription"\s*=\s*"([^"]*)";/,
-        `NSMicrophoneUsageDescription in ${lang}.lproj`
-      ),
+      text: captured(strings, new RegExp(`"${key}"\\s*=\\s*"([^"]*)";`), `${key} in ${lang}.lproj`),
     });
   }
   return out;
 }
+
+const microphonePurposes = () => purposes('NSMicrophoneUsageDescription');
+const cameraPurposes = () => purposes('NSCameraUsageDescription');
 
 describe('the two facts', () => {
   it('never ring a phone whose binary cannot answer: the native ring implies CALLS_COMPILED', () => {
@@ -164,6 +182,23 @@ describe(`in-app calls and the background follow CALLS_COMPILED (= ${COMPILED})`
         /\b(appels?|calls?)\b/i.test(text),
         `NSMicrophoneUsageDescription (${where}): "${text}"`
       ).toBe(COMPILED);
+    }
+  });
+});
+
+describe(`video calls follow CALLS_VIDEO_ENABLED in a store binary (= ${VIDEO})`, () => {
+  it('never compiles video into a binary that cannot call', () => {
+    expect(!VIDEO || COMPILED).toBe(true);
+  });
+
+  it('the camera purpose string names calls exactly when a store binary carries video', () => {
+    // App Review reads a purpose string as the list of uses (5.1.1): a camera opened by a call must
+    // be named, and one that no call can open must not be.
+    for (const { where, text } of cameraPurposes()) {
+      expect(
+        /\b(appels?|calls?)\b/i.test(text),
+        `NSCameraUsageDescription (${where}): "${text}"`
+      ).toBe(VIDEO);
     }
   });
 });
@@ -286,6 +321,15 @@ describe('project.yml repeats the plist declarations, so an xcodegen run cannot 
       'NSMicrophoneUsageDescription in project.yml'
     );
     expect(text.trim()).toBe(microphonePurposes()[0].text);
+  });
+
+  it('the same camera purpose string', () => {
+    const text = captured(
+      projectYml,
+      /NSCameraUsageDescription: (.*)\r?\n/,
+      'NSCameraUsageDescription in project.yml'
+    );
+    expect(text.trim()).toBe(cameraPurposes()[0].text);
   });
 });
 

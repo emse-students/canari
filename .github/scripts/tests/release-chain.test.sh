@@ -945,10 +945,25 @@ if grep -q 'refs/heads/release/v' "$WF/release.yml" && grep -q 'refs/tags/v' "$W
 else
   fail 'the stable is not pushed to its release branch, or its tag does not move'
 fi
-if grep -qE '^  land:' "$WF/release.yml" && grep -q 'land-release-changelog.sh' "$WF/release.yml"; then
-  pass 'a land job carries the changelog onto main'
+if grep -qE '^  land:' "$WF/release.yml" && grep -q 'land-release.sh' "$WF/release.yml"; then
+  pass 'a land job carries the release onto main'
 else
   fail 'no land job - the stable changelog would never reach main and be folded twice'
+fi
+
+printf '\na pre-release is pinned on its release branch, so main may move on (2026-10-30)\n'
+# `v1.5.1-alpha.3` (gate 2) and `v1.5.1-alpha.5` (the push) died because the bump pushed to `main`
+# while pull requests merged. Nothing in the critical path may push there again.
+if grep -qE 'git push[^#]*HEAD:main' "$WF/release.yml"; then
+  fail 'release.yml pushes HEAD:main - a merge during the release would refuse or reject it again'
+else
+  pass 'no release step pushes HEAD:main'
+fi
+LAND_JOB="$(sed -n '/^  land:/,/^  [a-z][a-z-]*:$/p' "$WF/release.yml")"
+if printf '%s\n' "$LAND_JOB" | grep -qE '^    if:'; then
+  fail 'the land job is conditional - a pre-release version would never reach main'
+else
+  pass 'the land job runs for every release, pre-releases included'
 fi
 for f in serve-dev.yml serve-prod.yml; do
   if grep -q 'git fetch origin main' "$WF/$f"; then

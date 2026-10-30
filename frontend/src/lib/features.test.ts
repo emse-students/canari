@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * Calls are compiled into every build since the flip of 2026-10-22 (audio 1:1, in-app); production
  * is held shut by the server's `calls_mode`, not here. What still depends on the variable the
  * pipelines write (`VITE_DEPLOY_ENVIRONMENT=development` for dev.canari-emse.fr and every
- * pre-release app, unset for production) is VIDEO, which stays dev only.
+ * pre-release app, unset for production) is nothing of calls since 1.5.2: video follows calls, and
+ * the server's `calls_mode = audio_video` is what opens it. Lives are compiled into every build
+ * since 2026-10-30, held by the server's `lives_mode` the same way.
  */
 
 async function load() {
@@ -48,24 +50,49 @@ describe('CALLS_ENABLED', () => {
     expect((await load()).CALLS_COMPILED).toBe(true);
   });
 
-  it('carries video on a dev build, never production (lot 2)', async () => {
+  it('carries video on a dev build AND a production build (1.5.2, owner 2026-10-30)', async () => {
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
     expect((await load()).CALLS_VIDEO_ENABLED).toBe(true);
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
-    expect((await load()).CALLS_VIDEO_ENABLED).toBe(false);
+    expect((await load()).CALLS_VIDEO_ENABLED).toBe(true);
   });
 });
 
-describe('the first production calls are AUDIO ONLY (owner, 2026-10-21)', () => {
-  // The flip moved CALLS_COMPILED and nothing else here. Video must not ride along: it is
-  // read from the expression, because CALLS_COMPILED is a constant this suite cannot stub.
-  it('video does not follow CALLS_COMPILED', async () => {
+describe('LIVE_ENABLED - lives in every build (the production flip, owner 2026-10-30)', () => {
+  it('is on for a production build, which sets nothing', async () => {
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
+    expect((await load()).LIVE_ENABLED).toBe(true);
+  });
+
+  it('is on for a dev build', async () => {
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
+    expect((await load()).LIVE_ENABLED).toBe(true);
+  });
+
+  it('no longer reads the deploy environment: the server kill switch is what closes lives', () => {
+    // A production binary that tested `deployEnvironment()` again would draw no live whatever
+    // `platform_config.lives_mode` said - the state 1.5.1 shipped in.
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'features.ts'),
+      'utf8'
+    );
+    const expression = source.match(/export const LIVE_ENABLED = ([^;]+);/);
+    expect(expression, 'LIVE_ENABLED was renamed or removed').not.toBeNull();
+    expect(expression![1]).not.toMatch(/deployEnvironment/);
+  });
+});
+
+describe('video follows the calls switch, and production is held by the server (1.5.2)', () => {
+  // Read from the expression, because CALLS_COMPILED is a constant this suite cannot stub: video
+  // must never be compiled into a binary that cannot call, and never carry a clause of its own
+  // that a production build reads differently from a dev one.
+  it('CALLS_VIDEO_ENABLED is CALLS_ENABLED', async () => {
     const source = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), 'features.ts'),
       'utf8'
     );
     const expression = source.match(/export const CALLS_VIDEO_ENABLED = ([^;]+);/);
     expect(expression, 'CALLS_VIDEO_ENABLED was renamed or removed').not.toBeNull();
-    expect(expression![1]).not.toMatch(/CALLS_COMPILED|CALLS_ENABLED/);
+    expect(expression![1].trim()).toBe('CALLS_ENABLED');
   });
 });
