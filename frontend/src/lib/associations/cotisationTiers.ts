@@ -25,7 +25,13 @@ export function mayCreateTier(
 /** The columns of a tier product the editor reads. */
 export type TierLike = Pick<
   AssociationProduct,
-  'id' | 'name' | 'amountCents' | 'priceMatrix' | 'grantedTagName'
+  | 'id'
+  | 'name'
+  | 'amountCents'
+  | 'priceMatrix'
+  | 'grantedTagName'
+  | 'variantKey'
+  | 'allowCustomAmount'
 >;
 
 /** A tier's one price for everybody, or null when a grid prices it or no price is set. */
@@ -36,14 +42,29 @@ export function singlePriceCents(
 }
 
 /**
+ * A tier's rank in cents, or null when it cannot be ranked - the client twin of `rankPriceCents` in
+ * social-service `tier-pricing.ts`, so the order read here is the order the checkout enforces. The
+ * BASE tier (`variantKey` null) with no price and no grid ranks LOWEST, as 0; a named tier with no
+ * price, a grid, or a free amount (`allowCustomAmount`) is unrankable. Both sides read the shared
+ * vector `tools/tier-rank-vector.json`, so they cannot drift.
+ */
+export function tierRankCents(
+  tier: Pick<TierLike, 'amountCents' | 'priceMatrix' | 'variantKey' | 'allowCustomAmount'>
+): number | null {
+  if (tier.priceMatrix || tier.allowCustomAmount) return null;
+  if (tier.amountCents !== null && tier.amountCents !== undefined) return tier.amountCents;
+  return tier.variantKey === null ? 0 : null;
+}
+
+/**
  * Tiers in their reading order, cheapest first - the order the checkout ranks a rise by (product
- * price). A tier with no single price (a grid, or none set) cannot be ranked and goes last; ties
- * fall back to the label so the order never depends on the API's.
+ * price). An unpriced base tier ranks lowest; a tier with no rankable price (a grid, or a named tier
+ * with none set) goes last; ties fall back to the label so the order never depends on the API's.
  */
 export function tiersInPriceOrder<T extends TierLike>(tiers: readonly T[]): T[] {
   return [...tiers].sort((a, b) => {
-    const pa = singlePriceCents(a);
-    const pb = singlePriceCents(b);
+    const pa = tierRankCents(a);
+    const pb = tierRankCents(b);
     if (pa !== pb) {
       if (pa === null) return 1;
       if (pb === null) return -1;
@@ -102,7 +123,7 @@ export function defaultRiseSource<T extends TierLike>(
 ): T | null {
   if (fullCents !== null) {
     const below = sources.filter((t) => {
-      const price = singlePriceCents(t);
+      const price = tierRankCents(t);
       return price !== null && price < fullCents;
     });
     if (below.length > 0) return below[below.length - 1];
