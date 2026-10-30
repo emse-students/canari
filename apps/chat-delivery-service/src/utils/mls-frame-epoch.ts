@@ -46,7 +46,9 @@ export function mlsFrameEpoch(protoBase64: string): number | null {
  * `proposals<V> || optional<UpdatePath>` - and RFC 9420 section 12.4.3.2 makes the path mandatory
  * there, so the joiner's `LeafNode`, and the BasicCredential identity in it, is readable without a
  * key (`leafIdentity`). An external commit with no path, or a non-basic credential, is refused:
- * no conforming client sends one.
+ * no conforming client sends one. Its proposals are in the clear too, and the index of every
+ * Remove among them is read (`removedLeaves`), because RFC 9420 lets an external commit remove only
+ * the joiner's own prior leaf; anything but an inline ExternalInit or Remove is refused.
  *
  * WHAT IT PROVES AND WHAT IT DOES NOT: the bytes CLAIM a shape; this server holds no key to check
  * the signature. The commit gate pairs the claim with who may commit, the leaf identity with the
@@ -70,6 +72,8 @@ export function readCommitFrame(protoBase64: string): CommitFrame | null {
   // committer's new LeafNode.
   const proposals = readMlsOpaque(bytes, offset + 1);
   if (!proposals) return null;
+  const removedLeaves = readExternalCommitRemovals(proposals.bytes);
+  if (!removedLeaves) return null;
   if (bytes.length < proposals.next + 1 || bytes.readUInt8(proposals.next) !== 1) return null;
   const leaf = readLeafNodeHead(bytes, proposals.next + 1);
   if (!leaf) return null;
@@ -78,16 +82,65 @@ export function readCommitFrame(protoBase64: string): CommitFrame | null {
     epoch: header.epoch,
     external: true,
     leafIdentity: leaf.identity,
+    removedLeaves,
   };
+}
+
+/** RFC 9420 `ProposalOrRefType.proposal` - an inline proposal. */
+const PROPOSAL_INLINE = 1;
+/** RFC 9420 `ProposalType.remove`. */
+const PROPOSAL_REMOVE = 3;
+/** RFC 9420 `ProposalType.external_init`. */
+const PROPOSAL_EXTERNAL_INIT = 6;
+
+/**
+ * The leaf indices an external commit's Remove proposals name, read from its `proposals<V>`
+ * contents - or null for any proposal a Canari external commit never carries.
+ *
+ * A Canari external commit holds one inline ExternalInit (`kem_output<V>`) and, when the joiner is
+ * replacing its own prior leaf, one inline Remove (`removed`, a u32) - OpenMLS's external-commit
+ * builder adds nothing else. A pre-shared key, a proposal by reference or any other type is
+ * therefore not the shape this estate sends, and it is refused like every other malformed commit.
+ */
+function readExternalCommitRemovals(proposals: Buffer): number[] | null {
+  const removed: number[] = [];
+  let offset = 0;
+  while (offset < proposals.length) {
+    if (proposals.length < offset + 3 || proposals.readUInt8(offset) !== PROPOSAL_INLINE) {
+      return null;
+    }
+    const type = proposals.readUInt16BE(offset + 1);
+    offset += 3;
+    if (type === PROPOSAL_EXTERNAL_INIT) {
+      const kemOutput = readMlsOpaque(proposals, offset);
+      if (!kemOutput) return null;
+      offset = kemOutput.next;
+    } else if (type === PROPOSAL_REMOVE) {
+      if (proposals.length < offset + 4) return null;
+      removed.push(proposals.readUInt32BE(offset));
+      offset += 4;
+    } else {
+      return null;
+    }
+  }
+  return removed;
 }
 
 /**
  * A commit's clear header, as `readCommitFrame` reads it. Only an external commit carries
- * `leafIdentity`: a member commit is a `PrivateMessage`, whose content this server cannot read.
+ * `leafIdentity` and `removedLeaves`: a member commit is a `PrivateMessage`, whose content this
+ * server cannot read. `removedLeaves` is the leaf index of every Remove the commit carries - empty
+ * for a first join, one index for a joiner replacing its own prior leaf.
  */
 export type CommitFrame =
   | { groupId: string; epoch: number; external: false }
-  | { groupId: string; epoch: number; external: true; leafIdentity: string };
+  | {
+      groupId: string;
+      epoch: number;
+      external: true;
+      leafIdentity: string;
+      removedLeaves: number[];
+    };
 
 /** The wire format of a framed MLS 1.0 message - `PublicMessage` (1) or `PrivateMessage` (2) - or null. */
 function framedWireFormat(bytes: Buffer): 1 | 2 | null {

@@ -72,6 +72,16 @@ describe('classifyIncomingDecryptError', () => {
     ).toBe('same-epoch-refusal');
   });
 
+  it('lit un commit externe refuse par la regle RFC 9420 12.4.3.2 comme un refus a sa propre epoque', () => {
+    // `MlsError::ForeignExternalRemove`'s Display, as both FFI boundaries surface it: permanent for
+    // these bytes, so ACKed, never queued and never answered with a heal.
+    expect(
+      classifyIncomingDecryptError(
+        'FOREIGN_EXTERNAL_REMOVE: same-epoch refusal group=g joiner=u:d removed_leaf=1 removed=Ok("v:d")'
+      )
+    ).toBe('same-epoch-refusal');
+  });
+
   it('ne lit pas un refus a sa propre epoque comme un gap, meme enveloppe par le natif', () => {
     // `SenderRatchetGap` is the native catch-all, so it wraps this refusal in `GAP_QUEUED` and
     // writes a retry row for it. Read as an epoch gap on the web, it goes through a commit replay

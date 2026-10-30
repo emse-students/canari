@@ -40,25 +40,40 @@ export function externalCommitFrame(
   groupId: string,
   epoch: bigint,
   leafIdentity = 'user-1:device-1',
-  prefixBytes: 1 | 2 | 4 = 1
+  prefixBytes: 1 | 2 | 4 = 1,
+  removedLeaves: number[] = []
 ) {
   return mlsFrame(1, groupId, epoch, prefixBytes, [
     4,
     0x00,
     3,
-    ...externalCommitBody(leafIdentity),
+    ...externalCommitBody(leafIdentity, removedLeaves),
   ]);
 }
 
-/** The `Commit` of an external join whose path leaf names `leafIdentity` (`externalCommitFrame`). */
-export function externalCommitBody(leafIdentity: string): number[] {
+/**
+ * The `Commit` of an external join whose path leaf names `leafIdentity` (`externalCommitFrame`),
+ * with an inline Remove of each of `removedLeaves` after its ExternalInit.
+ */
+export function externalCommitBody(leafIdentity: string, removedLeaves: number[] = []): number[] {
   const key = (fill: number) => [32, ...Array.from({ length: 32 }, () => fill)];
   // ProposalOrRef: type proposal (1), proposal_type external_init (6), kem_output<V>.
   const externalInit = [1, 0x00, 0x06, ...key(0x11)];
+  // ProposalOrRef: type proposal (1), proposal_type remove (3), removed (u32).
+  const removes = removedLeaves.flatMap((leaf) => [
+    1,
+    0x00,
+    0x03,
+    (leaf >>> 24) & 0xff,
+    (leaf >>> 16) & 0xff,
+    (leaf >>> 8) & 0xff,
+    leaf & 0xff,
+  ]);
+  const proposals = [...externalInit, ...removes];
   const identity = [...Buffer.from(leafIdentity, 'utf8')];
   return [
-    externalInit.length,
-    ...externalInit,
+    proposals.length,
+    ...proposals,
     1, // optional<UpdatePath>: present
     ...key(0x22), // encryption_key<V>
     ...key(0x33), // signature_key<V>

@@ -50,6 +50,7 @@ import {
   mlsFrameEpoch,
   readCommitFrame,
 } from '../utils/mls-frame-epoch';
+import { groupInfoLeafIdentity } from '../utils/mls-group-info';
 import {
   askDepartureOutcome,
   type DepartureOutcome,
@@ -2268,6 +2269,9 @@ export class MessagingService {
         message: 'this commit is not accepted',
       });
     }
+    if (frame.external && frame.removedLeaves.length > 0) {
+      await this.assertExternalRemoveIsOwnPriorLeaf(groupId, frame, traceId);
+    }
     const committerClaim = await this.assertCommitterMayCommit(
       groupId,
       committer,
@@ -3403,6 +3407,49 @@ export class MessagingService {
       refusals.push({ userId: c.userId, deviceId: c.deviceId, reason });
       return false;
     });
+  }
+
+  /**
+   * Refuses an external commit whose Remove proposals reach beyond the joiner's own prior leaf -
+   * RFC 9420 section 12.4.3.2, enforced by every receiver in `mls-core`
+   * (`refuse_foreign_external_remove`) and checked here too, before the epoch moves.
+   *
+   * At most one Remove, and the leaf it names must carry the joiner's own identity - the identity
+   * the gate has already held to `committer:deviceId`, compared with the user half ignoring ASCII
+   * case as `mls-core`'s `same_identity` does. The commit names the leaf by INDEX, so its identity is
+   * read from the tree of the stored base ({@link groupInfoLeafIdentity}): the GroupInfo this server
+   * served the joiner. A base at another epoch than the commit is not the one it was built on (bases
+   * are strictly monotonic, one per epoch - {@link putGroupInfo}), so the leaf cannot be named and
+   * the commit is refused rather than judged against another tree.
+   */
+  private async assertExternalRemoveIsOwnPriorLeaf(
+    groupId: string,
+    frame: { epoch: number; leafIdentity: string; removedLeaves: number[] },
+    traceId: string
+  ): Promise<void> {
+    const refuse: (why: string) => never = (why) => {
+      this.logger.error(
+        `[COMMIT][${traceId}] REJECT external_remove_foreign group=${groupId} ` +
+          `joiner=${sanitizeLeafLogValue(frame.leafIdentity)} removes=[${frame.removedLeaves.join(',')}] ${why}`
+      );
+      throw new ForbiddenException({
+        error: 'commit_identity_mismatch',
+        message: 'this commit is not accepted',
+      });
+    };
+    if (frame.removedLeaves.length > 1) refuse('more than one Remove');
+    const base = await this.groupInfoRepo.findOne({ where: { groupId } });
+    if (!base || base.baseEpoch !== frame.epoch) {
+      refuse(`no base at epoch ${frame.epoch} (stored=${base?.baseEpoch ?? 'none'})`);
+    }
+    const removed = groupInfoLeafIdentity(base.groupInfo, frame.removedLeaves[0]);
+    const canonical = (identity: string) => {
+      const at = identity.indexOf(':');
+      return at < 0 ? null : `${identity.slice(0, at).toLowerCase()}${identity.slice(at)}`;
+    };
+    if (removed === null || canonical(removed) !== canonical(frame.leafIdentity)) {
+      refuse(`removed=${sanitizeLeafLogValue(removed, 'unreadable')}`);
+    }
   }
 
   /**
