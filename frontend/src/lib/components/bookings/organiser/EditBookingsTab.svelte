@@ -3,11 +3,10 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { CalendarClock, CalendarDays, LayoutDashboard, Pencil, Plus } from '@lucide/svelte';
+  import { CalendarClock, LayoutDashboard, Plus, Settings } from '@lucide/svelte';
   import { createSpace, listManagedSpaces, type ManagedSpaceRow } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { spaceDashboardHref, spaceEditorHref, spaceHref } from '$lib/bookings/routes';
-  import Input from '$lib/components/ui/Input.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import SpaceWizard from './SpaceWizard.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -33,17 +32,12 @@
   let spaces = $state<ManagedSpaceRow[]>([]);
   let loading = $state(true);
   let error = $state('');
-  let newName = $state('');
   let creating = $state(false);
-  /** The name the wizard opened with; null while the wizard is closed. */
-  let wizardName = $state<string | null>(null);
-  /** The creation (name, then wizard) lives in a sheet opened by a button, not inline on the page. */
+  /** The creation is the wizard, opened by the button, whose first step asks for the name. */
   let creatorOpen = $state(false);
 
   function closeCreator() {
     creatorOpen = false;
-    wizardName = null;
-    newName = '';
   }
 
   onMount(load);
@@ -61,22 +55,12 @@
     }
   }
 
-  /** The name is typed: the wizard takes it from here. */
-  function create(event: SubmitEvent) {
-    event.preventDefault();
-    const name = newName.trim();
-    if (!name || creating) return;
-    error = '';
-    wizardName = name;
-  }
-
   /** "Je regle tout moi-meme": the space by its name alone, every setting at its default. */
   async function createByName(name: string) {
     if (creating) return;
     if (!name) {
-      // The wizard's name was emptied: back to the form, which asks for one.
-      Log.d('BOOKINGS', 'wizard skipped with an empty name: back to the name form');
-      wizardName = null;
+      // "Je regle tout moi-meme" with no name typed yet: the wizard's first step asks for it.
+      error = m.bookings_problem_required();
       return;
     }
     creating = true;
@@ -97,65 +81,36 @@
   }
 </script>
 
-<div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-4 shadow-sm sm:p-6">
-  <div>
-    <div class="flex items-center justify-between gap-3">
-      <h2 class="text-text-main flex min-w-0 items-center gap-2 text-lg font-bold tracking-tight">
-        <CalendarClock size={20} class="shrink-0" />
-        {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
-      </h2>
-      <button
-        type="button"
-        onclick={() => {
-          error = '';
-          creatorOpen = true;
-        }}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
-      >
-        <Plus size={16} />
-        {m.bookings_tab_new_button()}
-      </button>
-    </div>
-    <p class="text-text-muted mt-1 text-sm">
-      {personal ? m.bookings_personal_subtitle() : m.bookings_tab_subtitle()}
-    </p>
+<div class="space-y-3">
+  <div class="flex items-center justify-between gap-3">
+    <h2 class="text-text-main min-w-0 text-lg font-bold tracking-tight">
+      {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
+    </h2>
+    <button
+      type="button"
+      onclick={() => {
+        error = '';
+        creatorOpen = true;
+      }}
+      class="bg-cn-border/40 text-text-main hover:bg-cn-border/70 inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-semibold transition-colors"
+    >
+      <Plus size={16} aria-hidden="true" />
+      {m.bookings_tab_new_button()}
+    </button>
   </div>
+  {#if !personal}
+    <p class="text-text-muted text-sm">{m.bookings_tab_subtitle()}</p>
+  {/if}
 
   {#if creatorOpen}
-    <Modal
-      open
-      title={m.bookings_tab_new_button()}
-      topAnchored={wizardName === null}
-      fullViewport={wizardName !== null}
-      onClose={closeCreator}
-    >
-      {#if wizardName !== null}
-        <SpaceWizard
-          {associationId}
-          initialName={wizardName}
-          onCreated={(id) => void openEditor(id)}
-          onSkip={(name) => void createByName(name)}
-          onCancel={() => (wizardName = null)}
-        />
-      {:else}
-        <form class="space-y-4" onsubmit={create}>
-          <Input
-            id="bookings-new-space"
-            label={m.bookings_tab_new_label()}
-            placeholder={m.bookings_tab_new_placeholder()}
-            bind:value={newName}
-            maxlength={120}
-          />
-          <button
-            type="submit"
-            disabled={!newName.trim() || creating}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Plus size={16} />
-            {m.bookings_tab_create_button()}
-          </button>
-        </form>
-      {/if}
+    <Modal open title={m.bookings_tab_new_button()} fullViewport onClose={closeCreator}>
+      <SpaceWizard
+        {associationId}
+        initialName=""
+        onCreated={(id) => void openEditor(id)}
+        onSkip={(name) => void createByName(name)}
+        onCancel={closeCreator}
+      />
       {#if error}
         <p
           class="border-red-err/30 bg-red-err/10 text-red-err mt-3 rounded-xl border px-4 py-3 text-sm"
@@ -183,50 +138,56 @@
       ></div>
     </div>
   {:else if spaces.length === 0}
-    <p class="text-text-muted py-6 text-center text-sm">
+    <p class="text-text-muted py-2 text-sm">
       {personal ? m.bookings_personal_empty() : m.bookings_tab_empty()}
     </p>
   {:else}
-    <ul class="space-y-3">
+    <!-- The same rows as the list of spaces to book: the row opens the space, and the two icons
+         on the right are the organiser's - its dashboard and its settings. -->
+    <ul
+      class="border-cn-border bg-cn-surface divide-cn-border divide-y overflow-hidden rounded-2xl border shadow-sm"
+    >
       {#each spaces as space (space.id)}
-        <li
-          class="border-cn-border/70 bg-cn-bg flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
-        >
-          <div class="min-w-0 flex-1">
-            <p class="text-text-main truncate text-sm font-semibold">{space.name}</p>
-            <p class="text-text-muted mt-0.5 text-xs">
-              <!-- One column is, since WP-R1, the space's hidden one (D44): no count to read. -->
-              {#if space.resourceCount !== 1}
-                {m.bookings_tab_resources_count({ count: space.resourceCount })} ·
-              {/if}
-              {space.discoverability === 'link'
-                ? m.bookings_discoverability_link()
-                : m.bookings_discoverability_listed()}
-            </p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <a
-              href={resolve(internalPath(spaceHref(space.id)))}
-              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+        <li class="flex items-center">
+          <a
+            href={resolve(internalPath(spaceHref(space.id)))}
+            class="text-text-main hover:bg-cn-border/20 flex min-w-0 flex-1 items-center gap-3 p-4 transition-colors"
+          >
+            <span
+              class="bg-cn-yellow/15 text-text-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
+              aria-hidden="true"
             >
-              <CalendarDays size={12} />
-              {m.bookings_tab_open_action()}
-            </a>
-            <a
-              href={resolve(internalPath(spaceDashboardHref(space.id)))}
-              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
-            >
-              <LayoutDashboard size={12} />
-              {m.bookings_dashboard_title()}
-            </a>
-            <a
-              href={resolve(internalPath(spaceEditorHref(space.id)))}
-              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
-            >
-              <Pencil size={12} />
-              {m.bookings_tab_edit_action()}
-            </a>
-          </div>
+              <CalendarClock size={22} />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-base font-semibold">{space.name}</span>
+              <span class="text-text-muted block truncate text-sm">
+                <!-- One column is, since WP-R1, the space's hidden one (D44): no count to read. -->
+                {#if space.resourceCount !== 1}
+                  {m.bookings_row_resources({ count: space.resourceCount })} ·
+                {/if}
+                {space.discoverability === 'link'
+                  ? m.bookings_discoverability_link()
+                  : m.bookings_discoverability_listed()}
+              </span>
+            </span>
+          </a>
+          <a
+            href={resolve(internalPath(spaceDashboardHref(space.id)))}
+            class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
+            aria-label={m.bookings_dashboard_title()}
+            title={m.bookings_dashboard_title()}
+          >
+            <LayoutDashboard size={18} />
+          </a>
+          <a
+            href={resolve(internalPath(spaceEditorHref(space.id)))}
+            class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 me-2 rounded-lg"
+            aria-label={m.bookings_tab_edit_action()}
+            title={m.bookings_tab_edit_action()}
+          >
+            <Settings size={18} />
+          </a>
         </li>
       {/each}
     </ul>

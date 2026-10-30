@@ -22,7 +22,7 @@
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * ONE OF THE READER'S BOOKINGS on the Reservations page: where and when (in the space's zone,
+   * THE DETAIL OF ONE OF THE READER'S BOOKINGS, opened from its row (`MyBookingRow`) on Reservations: where and when (in the space's zone,
    * D25), the reader's part in it, its private texts while it is live (D32), and - while it is to
    * come - cancel (the holder), leave (a participant), "Add to my calendar" (D13) and, while the
    * notices are live, the reader's OWN reminder delay (Q-R1), saved as soon as it is picked.
@@ -86,7 +86,7 @@
   }
 </script>
 
-<article class="border-cn-border bg-cn-surface space-y-2 rounded-2xl border p-4 shadow-sm">
+<article class="space-y-3">
   <div class="flex items-start justify-between gap-3">
     <div class="min-w-0">
       <p class="text-text-main text-base font-bold first-letter:uppercase">

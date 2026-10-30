@@ -1,3 +1,3 @@
-### Changed - bookings: "Aujourd'hui" is a visible pill, the drag hint names only the pointer you have, one card padding
+### Changed - bookings: the Reservations home as divider rows (as the mockup), a visible Today pill on phone and desktop, a drag hint that names only the pointer you have
 
-The week bar leads with an outlined "Aujourd'hui" pill, the grid hint says either "Glissez..." (mouse) or "Appui long, puis glissez..." (touch), and cards share one padding ([bookings-chantier](docs/wiki/bookings-chantier.md#the-bookings-polish-pass-2026-10-30)).
+Bookings and spaces are rows in one card each, cancel lives in the booking's detail, "Creer un espace" opens the wizard, and one card padding runs through the module ([bookings-chantier](docs/wiki/bookings-chantier.md#the-bookings-polish-pass-2026-10-30)).
