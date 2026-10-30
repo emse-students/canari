@@ -162,12 +162,13 @@ import {
 } from '$lib/utils/hex';
 import { m } from '$lib/paraglide/messages';
 import { showPinnedToast } from '$lib/stores/toast.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
   MAX_REFUSED_ROTATION_RELOADS,
   REFUSED_ROTATION_RELOADS_KEY,
   forgetRefusedRotationReloads,
 } from '$lib/mls-client/refusedRotationReloads';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
@@ -1657,7 +1658,8 @@ export abstract class BaseMlsService implements IMlsService {
    * together with `isWsOpen()`, never alone: a socket that has since dropped means frames may have
    * been queued while this device was unreachable, and the pull that covers them is the reconnect's
    * (`initializeConnection` runs one immediately after every `connect`). Cleared at the start of
-   * each pull, so a pull that failed half-way leaves it false and the next barrier pulls again.
+   * each pull, so a pull that failed half-way leaves it false and the next barrier pulls again -
+   * unless the link is known down, when the pull is the reconnect's ({@link settleBarrier}).
    */
   private mailboxEmptiedByAPull = false;
 
@@ -1990,11 +1992,31 @@ export abstract class BaseMlsService implements IMlsService {
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
       this.userId !== UNRESOLVED_USER_ID
     ) {
+      // A LINK KNOWN DOWN OWES ITS PULL TO THE RECONNECT, NOT TO EVERY BARRIER. With the socket
+      // closed and the server known unreachable (a request - this device's last pull included - got
+      // no answer, or the browser reports no network), a pull here can only fail, and every barrier
+      // took one: measured on production (`1.5.1`, a phone at a cold start with no network), 327
+      // `[PENDING] ... got no answer` lines, one per conversation the catch-up settled. The pull the
+      // mailbox is owed is the reconnect's (`initializeConnection` pulls after every connect), and
+      // the first answered request clears `isOffline` - an event, not a clock - so a barrier taken
+      // after it pulls again. Said once per spell, not once per barrier.
+      if (!this.isWsOpen() && connectivity.isOffline) {
+        if (!this.barrierPullHeldSaid) {
+          this.barrierPullHeldSaid = true;
+          console.info(
+            "[PENDING] mailbox barrier: no pull while the link is down (socket closed, server unreachable) - the reconnect's pull covers the mailbox"
+          );
+        }
+        return this.settleMailbox();
+      }
       // Ends by awaiting `settleMailbox` itself, so this is the whole barrier and not a step of it.
       return this.fetchPendingMessages().catch(() => {});
     }
     return this.settleMailbox();
   }
+
+  /** Whether {@link settleBarrier} already said, this spell, that it holds its pull for the reconnect. */
+  private barrierPullHeldSaid = false;
 
   /**
    * The wait alone: whatever pull is in flight has landed, and the scheduler has applied it.
@@ -2706,6 +2728,9 @@ export abstract class BaseMlsService implements IMlsService {
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
     // this one has not started. A pull that dies half-way therefore leaves it false.
     this.mailboxEmptiedByAPull = false;
+    // A pull is being made, so the barrier's "held for the reconnect" spell is over: the next one
+    // that holds says so again.
+    this.barrierPullHeldSaid = false;
     /** The refusals this pull is certain to list: every one marked before it started. */
     const refusalsCovered = refusedBacklogMark();
 
@@ -2780,6 +2805,13 @@ export abstract class BaseMlsService implements IMlsService {
           console.warn(
             `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
           );
+          // THE CONNECTIVITY STORE IS TOLD: this route reads the raw fetch (it applies the 401 rule
+          // itself), so nothing else records that it got no answer. It is the fact the barrier reads
+          // to hold its pull for the reconnect, and the store's probe announces the link's return.
+          // NOT for a deadline (`RequestDeadlineError`, e.g. the token refresh's): `trackedFetch`
+          // already counts that one towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow
+          // moment, not a dead link. The page itself answering clears it (`pullPendingMessagesJson`).
+          if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
         } else {
           console.error(
             `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,
@@ -6546,6 +6578,16 @@ export abstract class BaseMlsService implements IMlsService {
       // seed did not land, and acknowledging would drop key material nobody can ask for again.
       // Redelivery is exactly the right outcome - including after a logout, where the session this
       // handler needs is gone by construction.
+      //
+      // BY CLASS: a handler that could not REACH the server (it asks the delivery service, which got
+      // no answer - `DeliveryUnreachableError`) refused nothing about the frame. That is the expected
+      // state of an absent link, said as what is owed next; anything else is a defect and accuses.
+      if (isTransportFailure(e)) {
+        console.warn(
+          `[GRAINE] frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} not handled - the server got no answer; not acknowledged, so the next pull redelivers it: ${String(e)}`
+        );
+        return false;
+      }
       console.error(
         `[GRAINE] handler refused a frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} - not acknowledged:`,
         String(e)

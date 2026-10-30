@@ -5,8 +5,9 @@
 **Service**: `src/lib/services/CallService.ts`
 
 > **SINCE THE FLIP PR (2026-10-22): IN-APP 1:1 AUDIO IS COMPILED INTO EVERY BUILD, PEER TO PEER** -
-> `CALLS_COMPILED = true`; production is held shut by the server's `calls_mode` (`off` at deploy), and
-> video stays dev-only. See [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) and
+> `CALLS_COMPILED = true`; production is held shut by the server's `calls_mode` (`off` at deploy).
+> **Video follows calls since 1.5.2** (`CALLS_VIDEO_ENABLED = CALLS_ENABLED`), held shut by
+> `calls_mode = audio_video` until its readings pass - [turning video on](#turning-video-on-in-production---11-video-in-152-owner-2026-10-30). See [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) and
 > [the flip](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21). What this banner says
 > of the whole surface being held off still holds for **the native ring** (`CALLS_NATIVE_RING_COMPILED
 > = false`) and for the history it records.
@@ -266,7 +267,8 @@ below), and every hardware reading (B8-B10) - each is its own blocker.
   `CALLS_ENABLED = false`, so none ever placed or answered a call. The wire changes of B3 matter
   between dev builds only.
 - **The first calls stable must ignore `hasVideo`** (B0): a later build with video will send video
-  invites to it, and it answers them as audio.
+  invites to it, and it answers them as audio. That later build is 1.5.2, and what an audio-only
+  stable does against it is [below](#a-15x-audio-only-client-against-a-152-client-with-video).
 - **A callee on an older stable cannot answer, and sees this**: the in-app invite is dropped and
   logged (`calls disabled - ignoring signal`); an older Android logs `calls disabled` and rings
   nothing; an older iPhone gets the FCM ALERT of B2' - generic since the flip, but a build before the flip has NO `call_ring` case in its notification extension, so there the alert goes down the MESSAGE ladder (the encrypted-message fallback and message buttons replace "Appel entrant") until `minClientVersion` rises past it. The caller sees the call
@@ -282,7 +284,8 @@ below), and every hardware reading (B8-B10) - each is its own blocker.
   `audio` is the mode Apple names for a call's audio in the background; 2.5.4 asks that the reviewer
   can SEE it used - the refusal of 2026-08-31 was a `voip` mode it could not locate.
 - `NSMicrophoneUsageDescription` names calls (base, `fr`, `en`), asserted by `callsCompiled.test.ts`.
-  `NSCameraUsageDescription` does not change (no video).
+  `NSCameraUsageDescription` did not change for the audio stable; it names video calls since 1.5.2
+  ([turning video on](#turning-video-on-in-production---11-video-in-152-owner-2026-10-30)).
 - **Review notes and demo accounts**: two PRODUCTION accounts sharing a direct conversation, call
   permission allowed, no block. A reviewer has one device: a team member answers the second account
   in a stated window, and the notes say how to reach the call screen. They say what `audio` is for:
@@ -321,7 +324,10 @@ whole-word match (`appels?` / `calls?`) is what holds it:
 | `Info.plist` (base, French) and `fr.lproj` | `Canari utilise le microphone pour vos appels audio, pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.` |
 | `en.lproj` | `Canari uses the microphone for your audio calls, to record voice messages and the sound of the videos you film for your posts and CanaReels.` |
 
-No other key moves: `NSCameraUsageDescription` keeps its text (no video), and the app declares no
+(Since 1.5.2 both read "audio and video calls" / "appels audio et vidéo", and the camera string names
+video calls too: [turning video on](#turning-video-on-in-production---11-video-in-152-owner-2026-10-30).)
+
+No other key moved for the audio stable: `NSCameraUsageDescription` kept its text (no video), and the app declares no
 `NSLocalNetworkUsageDescription` in a store build (the local-bench patch of `ios.yml` is
 pre-release only). Android has no purpose string for `RECORD_AUDIO`; its runtime prompt is the
 system's own. **A gap on the PRE-release side**: a pre-release build calls (and, on dev, offers
@@ -333,10 +339,11 @@ flip's alpha stays with internal testers ([mobile](../mobile.md#where-the-submis
 bracketed parts are filled at submission; credentials go in the Sign-In Information fields, never in
 this repository.
 
-> Canari is the messaging app of the Mines Saint-Etienne student community. This version adds
-> one-to-one AUDIO calls between two members who share a direct conversation. Calls are end-to-end
-> encrypted: the audio goes directly between the two devices, relayed through Cloudflare's TURN
-> service only when no direct path exists, and our servers never receive it.
+> Canari is the messaging app of the Mines Saint-Etienne student community. This version offers
+> one-to-one AUDIO and VIDEO calls between two members who share a direct conversation. Calls are
+> end-to-end encrypted: the sound and the picture go directly between the two devices, relayed
+> through Cloudflare's TURN service only when no direct path exists, and our servers never receive
+> them. Nothing is recorded.
 >
 > To test: (1) on the sign-in screen, choose "Connexion externe (service-account)" and sign in with
 > the account given in Sign-In Information; (2) open the direct conversation with [second account];
@@ -346,9 +353,22 @@ this repository.
 > call, lock the screen: the call continues. That is what the `audio` background mode is used for -
 > an ongoing call keeps its microphone while the screen is locked.
 >
+> For a VIDEO call, tap the video-call button in the conversation header [confirm the control's
+> label on the review build]: iOS asks for the camera, and
+> the request names video calls. The camera runs only during the call; the member can turn it off
+> or switch between the front and back cameras from the call screen, and it is turned off while the
+> app is in the background (the audio continues) and back on when the app returns.
+>
 > This version declares no `voip` background mode and uses neither CallKit nor PushKit: a call rings
-> only while the app is open. Video calls are not offered. From the conversation, a member can
-> report and block the other; a blocked member cannot call.
+> only while the app is open. From the conversation, a member can report and block the other; a
+> blocked member cannot call.
+
+**When these notes apply (1.5.2).** The review build talks to PRODUCTION, so the video paragraph is
+true only while `calls_mode` is `audio_video`. If production is still at `audio` when 1.5.2 is
+submitted, the video paragraph is replaced by "Video calls are built in this version and are being
+opened in stages: the camera string names them, and the video-call button appears once the server
+enables them" - never left claiming a button the reviewer cannot find (2.5.4 refused a declared
+feature it could not locate on 2026-08-31).
 
 **3. The demo pair - owed, and one fact is not known.** The reviewers' way in is the existing
 "Connexion externe (service-account)" sign-in ([ecosystem-convergence](../../ecosystem-convergence.md),
@@ -377,6 +397,92 @@ neither form is in this repository - and decide together with B5's wording, so t
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts
 ([store-listings](../../store-listings.md#2-the-current-play-texts-and-what-is-stale-2026-10-09)).
+
+## Turning video on in production - 1:1 video in 1.5.2 (owner, 2026-10-30)
+
+**The decision.** 1:1 VIDEO calls ship in 1.5.2, and production is opened to them
+(`calls_mode = audio_video`, the owner's action at `/admin/platform`) only after the Tier A video
+readings below pass on the Mi 9T AND the iPhone 12. Until then production stays at `audio`
+(or `off`), and every 1.5.2 binary carries video that nothing on screen offers.
+
+**What moved, in one commit** (draft PR on `feat/calls-video-production`):
+
+| Moves | File | Asserted by |
+| --- | --- | --- |
+| `CALLS_VIDEO_ENABLED = CALLS_ENABLED` (it was `deployEnvironment() === 'development'`): a production build carries video exactly when it can call | `frontend/src/lib/features.ts` | `features.test.ts` (the expression, and the value on a dev AND a production build) |
+| the camera purpose string names video calls ("pour vos appels vidéo" / "for your video calls"), the microphone one "audio and video calls" | `Info.plist`, `fr.lproj` and `en.lproj` `InfoPlist.strings`, `project.yml` | `callsCompiled.test.ts`: the camera string names calls exactly when a STORE binary carries video, and `project.yml` repeats it |
+| **no** Android change: `CAMERA` is already declared (reels, lives); no `camera` foreground-service type, because `installBackgroundHandler` turns the camera OFF when the app leaves the screen (capture stopped) and on again on return, so the microphone service never holds the camera. **Fixed in this PR for Android**: the handler read only `visibilitychange`, which the Android WebView never fires; it now reads `canari:foreground` too ([video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) | `AndroidManifest.xml` | `androidCallServiceManifest.test.ts` (no `FOREGROUND_SERVICE_CAMERA`, no `camera` type) |
+| **no** server change: `ring` already refuses a ring declaring video under `audio` (403 `CALLS_VIDEO_DISABLED`) and allows it under `audio_video` | `calls.service.ts` | `calls.service.spec.ts` ("audio refuses a ring asking for video", "audio_video rings a video call") |
+
+**The client's two locks are unchanged**: the video button and the in-call camera-on control need
+`callVideoAvailable(serverCallsMode())`, i.e. the build AND `audio_video`. Under `audio`, a 1.5.2
+client places and answers audio calls only. The limit recorded under
+[the kill switch](#the-kill-switch---platform_configcalls_mode) still holds: the server judges only
+the ring's DECLARED `hasVideo`; an invite carrying `hasVideo` from a modified client is answered with
+the camera by a 1.5.2 callee whatever the mode (the camera-off control stays on screen while it
+runs).
+
+### A 1.5.x audio-only client against a 1.5.2 client with video
+
+Every stable up to 1.5.1 has `CALLS_VIDEO_ENABLED = false` (B0, #2171). Against a 1.5.2 peer, once
+`audio_video` is open:
+
+- **1.5.2 calls 1.5.1 with video**: the ring is allowed; 1.5.1 rings it as AUDIO (`invite ... asks for
+  video - this build is audio only, it rings as audio`), answers without a camera, and answers the
+  video m-line `recvonly`. The 1.5.2 caller sends its camera and sees the peer's avatar.
+- **1.5.1 calls 1.5.2, or the 1.5.2 side turns its camera on mid-call**: the renegotiated video
+  m-line is answered `recvonly` by 1.5.1, its frames are DECRYPTED under the receiver transform and
+  never shown (`the peer sends video - this build is audio only, it is received and not shown`).
+- **The audio is unchanged in both cases - IF the engine feeds a receiver transform whose track has
+  no sink.** If it does not, 1.5.1's E2E path check reads video packets with no frame as media AROUND
+  the transform and ENDS the call (`CallE2eBypassedError`). Pinned in the unit suite ("judges the
+  peer's HIDDEN video"), **unproven on WebKit and on Android System WebView**: that is CALL-L1 row 13
+  (readings V2), and it decides the order below. 1.5.1 cannot be changed; only a reading or the floor
+  answers for it.
+- **What the 1.5.2 user is not told**: the peer does not see them. Their camera is on, their self view
+  shows, and nothing says the peer is audio only (no capability is exchanged). Accepted until the
+  floor rises; recorded here so it is not reported as a defect.
+
+**DECIDED (2026-10-30): `audio_video` opens only when ONE of these holds** - `minClientVersion` has
+been raised to 1.5.2, once BOTH stores serve it (as Q3 did for audio); or VID-6 (CALL-L1 row 13)
+reads `PASS` against a 1.5.1 STORE build as the audio-only side, on the iPhone AND on the Mi 9T.
+Either way, the readings VID-1..VID-5, VID-7 and VID-8 below pass first. Not to be re-opened.
+
+### The readings owed before `audio_video` opens
+
+On a 1.5.2 pre-release (dev + testers; `CALLS_VIDEO_ENABLED` is true on both ends), each read on
+BOTH phones, logs of both ends read, bar `PASS`, never `PASS-DIRTY`:
+
+| # | Reading | Expected |
+| --- | --- | --- |
+| VID-1 | **K2, Tier A for video**: a 1:1 video call E4<->E1, E6<->E1 and E6<->E4 (Mi 9T app, desktop Chrome, iPhone app), each side dialling once | `video ... VP8`, ~30 fps, freezes 0, `not-vp8=0`, `decrypt-failed=0` both ways, `E2E proven`; the iPhone lists VP8 and has `setCodecPreferences` (else the camera stays off, said) - the "Owed on the phones" table of [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver), readings V3 |
+| VID-2 | **K3**: an audio call, then the camera on (renegotiation), each phone being the side that turns it on | the picture appears on the peer, audio uninterrupted, the new m-line's path check conclusive |
+| VID-3 | **Camera switch** front/back during a call, on each phone | `replaceTrack` on the same sender; the back camera is not mirrored; a switch that fails turns the camera OFF, said - never a frozen picture |
+| VID-4 | **Mute video** (camera off, then on) on each phone | the peer sees the avatar (`remote track muted`), then the picture again; the camera light goes out while off |
+| VID-5 | **Background / foreground** mid video call (home, lock), on each phone | `backgrounded - camera off until the app returns (audio continues)`, the voice still carried (B8/B9), `foregrounded - camera on again`, the picture back |
+| VID-6 | **Mixed versions** (CALL-L1 row 13, V2): a 1.5.2 build with its camera on against a 1.5.1 STORE build, once with each phone on the 1.5.1 side | 1.5.1 shows no video and the call goes past 30 s; no `CallE2eBypassedError` - or `minClientVersion` raised to 1.5.2 instead (above) |
+| VID-7 | **The quality ladder** (VQ, [measuring it](#measuring-it-on-the-phones-owed-device-verification-vq)) | the climb to 720p and the drop under throttle; the phone cost per rung recorded |
+| VID-8 | **The camera prompt** on a fresh iPhone install | the system prompt shows the new `NSCameraUsageDescription` naming video calls |
+
+**The texts, written 2026-10-30** (the owner delegated the legal texts: written against the code,
+claiming nothing it does not do): `/legal/privacy` ("Appels audio et vidéo", `updated` 30/10/2026)
+and register row C21 changed together - the picture E2E like the sound, the camera only inside a
+call and off in the background, nothing recorded, `hasVideo` read at the ring and passed in the push
+but never stored, the video figures of `[CALL_REPORT]`. The review notes above cover video, with
+the rule for a submission made while production is still at `audio`.
+
+**Still owed to the store consoles (the owner's clicks; nothing changed there)** - re-read against
+the forms as published that day:
+
+- **App Store Connect > App Privacy**: "Photos or Videos" (is call video, E2E and never stored,
+  "collected" under Apple's definition? - the same question as the audio row of the table above,
+  now for the picture); "Audio Data" (the same, for call sound); "Other User Content" if the current
+  label lists camera content only for posts and reels; "Product Interaction" (call metadata,
+  unchanged by video).
+- **Play Console > Data safety**: "Photos and videos" (call video, E2E: the encrypted-in-transit and
+  E2E exemption read as it stands); "Audio > Voice or sound recordings" (call sound, the same);
+  "App activity > Other actions" (call metadata, unchanged). No new permission: `CAMERA` is already
+  declared, so no Play permission declaration moves.
 
 ## The native ring on the iPhone - PushKit and CallKit (WP-C6, owner 2026-10-22)
 
@@ -499,7 +605,7 @@ class `onUndecryptable` reports. Calls are dev builds only, and that is accepted
 | `CALLS_COMPILED` | `true` (since the flip PR, 2026-10-22) | the store binaries' calling WITHOUT the native ring (since 2026-10-21, B2'): in-app calls, `audio` (since 2026-10-20), the microphone purpose strings, the Android microphone foreground service. The committed plist carries `audio` since the flip and `ios.yml`'s pre-release patch is deleted. `callsCompiled.test.ts` asserts its switches agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)) |
 | `CALLS_NATIVE_RING_COMPILED` | `false` | the NATIVE RING of an app closed or in the background (since 2026-10-21, B2'): `voip`, `USE_FULL_SCREEN_INTENT`, the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`. The owner's decision of 2026-10-21 ships the first production calls WITHOUT it; it turns on with WP-C5 + WP-C6 and their K6/K7/K8 readings, and never while `CALLS_COMPILED` is off (asserted) |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
-| `CALLS_VIDEO_ENABLED` | `deployEnvironment() === 'development'` (since 2026-10-21; `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; dev builds only, and it does NOT follow `CALLS_COMPILED`: the first production calls are audio only ([the audio enablement](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
+| `CALLS_VIDEO_ENABLED` | `CALLS_ENABLED` (since 1.5.2, owner 2026-10-30; `deployEnvironment() === 'development'` from 2026-10-21 to 1.5.1, `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; in production behind `calls_mode = audio_video` ([turning video on](#turning-video-on-in-production---11-video-in-152-owner-2026-10-30), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
 
 `VITE_DEPLOY_ENVIRONMENT=development` is written by `build.yml` for the dev web estate and by
 `android.yml` / `ios.yml` for every pre-release - and those pipelines refuse a pre-release whose
@@ -1566,6 +1672,22 @@ experiment rows of the rig (below) settle it on Chrome 155:
 - **The background turns the camera OFF for real** (the same `cameraOff`: capture stopped, peer
   sees the avatar) and the return turns it ON again; never `track.enabled = false`, which kept the
   capture open and sent black frames. A button tap meanwhile cancels the automatic resume.
+  **Read from BOTH signals since 1.5.2** (`onAppScreenChange`, `utils/appForeground.ts`): until
+  then it listened to `visibilitychange` alone, which an Android WebView never fires - it reports
+  `visible` in the background - so on Android the OS took the camera, `onended` turned it off as
+  `ended by the system` and nothing turned it back on (found in the review of #2711). It now
+  follows `canari:foreground` too, and a camera the OS ends while the app is OFF SCREEN is the same
+  background pause, resumed at the return; one ended on screen (another app took it) stays off.
+  Pinned by `CallService.p2p.test.ts` ("on Android, where the WebView stays visible").
+  **Two races closed with it (re-review of #2711):** only a camera HEADED ON is paused
+  (`cameraHeadedOn`: the running operation's target unless an off is queued, else the state), so an
+  off the user tapped - in flight, or queued behind an opening camera - never comes back at the
+  return; and Android's CAMERA permission dialog pauses the activity, so the pause's off queued
+  behind the FIRST camera-on is cancelled at the return instead of turning the camera off right
+  after the grant. A return while the pause's own off still runs is applied when that off ends. A
+  camera the OS ends off screen is a pause only when it was headed on, too. And a camera operation
+  that outlives its call (hung up mid-operation, another call begun) releases nothing of the next
+  call: `endCameraOp` and `cameraOff` act only for the call their token names.
 - **720p at 30 fps at most, moved by a quality ladder** since 2026-10-21 (it was a fixed 640x480,
   700 kb/s): [the quality ladder](#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop).
   The rung is on the SENDER's encodings, so it survives a switch.

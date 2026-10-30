@@ -19,6 +19,7 @@
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
+  import ModerationChatLineBlock from '$lib/components/moderation/ModerationChatLineBlock.svelte';
   import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
   import { liveStateLabels } from '$lib/moderation/liveState';
   import { createLatestOnly } from '$lib/utils/latestOnly';
@@ -366,6 +367,7 @@
     comment: m.moderation_comment(),
     user: m.moderation_user(),
     live: m.moderation_type_live(),
+    live_chat: m.moderation_type_live_chat(),
   });
 
   const liveStateLabel = $derived(liveStateLabels());
@@ -539,6 +541,11 @@
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
               />
+            {/if}
+
+            <!-- The reported chat line: its integrity, and the live it was written in -->
+            {#if report.contentType === 'live_chat'}
+              <ModerationChatLineBlock line={report.liveChat ?? null} />
             {/if}
 
             <!-- Content preview -->

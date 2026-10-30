@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import {
+  EXCLUDED_TIER_HELD,
   TAG_HELD_BY_ANOTHER_ISSUER,
   TAG_NOT_ISSUER_TIER,
   TagHeldByAnotherIssuerError,
@@ -593,29 +594,118 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.delete).not.toHaveBeenCalled();
     });
 
-    it('renews the dearer of two held tiers, and swaps the cheaper one out', async () => {
+    // The very tier held is NOT renewed (review of #2713): a paid form that renewed it took its
+    // price twice - from a holder who bought it in the shop while the form's payment was in flight
+    // (the lock makes that settlement visible here), or a holder of two legacy tags.
+    it('refuses to renew the tier held, even the dearer of two, and writes nothing', async () => {
       const { service, repo } = makeService();
       mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
-      repo.findOne.mockResolvedValue({ expiresAt: null });
+      repo.findOne.mockResolvedValue({ expiresAt: null, metadata: { productId: 'p1' } });
 
-      const outcome = await service.grantCotisantIfARise(
-        'asso1',
-        'user1',
-        'system',
-        'avec-alcool',
-        {}
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'avec-alcool', {
+          submissionId: 's1',
+        })
+      ).toEqual({ refused: 'held' });
+      expect(repo.query).not.toHaveBeenCalled();
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('a shop grant committed during the payment is seen under the lock: not renewed', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      // Read AFTER the lock: the settlement that waited on it has committed the tier.
+      holding(repo, 'cotisant:cercle-sans-alcool');
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {
+          submissionId: 's1',
+        })
+      ).toEqual({ refused: 'held' });
+      expect(repo.manager.query.mock.calls[0][0]).toMatch(/pg_advisory_xact_lock/);
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    // A replay whose grant committed before its claim was released: the held tag IS this answer's
+    // delivery, so it is answered granted and nothing is written - a replay, never a renewal.
+    it("answers granted, writing nothing, when the held tag is this answer's own delivery", async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
+        Promise.resolve(
+          where.tagName === 'cotisant:cercle-sans-alcool'
+            ? { tagName: where.tagName, expiresAt: null, metadata: { submissionId: 's1' } }
+            : null
+        )
       );
 
-      expect(outcome).toHaveProperty('granted');
-      expect(repo.delete).toHaveBeenCalledWith({
-        userId: 'user1',
-        tagName: 'cotisant:cercle-sans-alcool',
-        issuingAssocId: 'asso1',
-      });
-      // Partial on purpose: a delete of the renewed tier is a failure whatever else it names.
-      expect(repo.delete).not.toHaveBeenCalledWith(
-        expect.objectContaining({ tagName: 'cotisant:cercle-avec-alcool' })
-      );
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {
+          submissionId: 's1',
+        })
+      ).toHaveProperty('granted');
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    // Owner, 2026-10-30: a form for people WITHOUT a tier refuses, under the lock, a payer who holds it.
+    it('refuses a held tier of the excluded set, EXCLUDED_TIER_HELD, and writes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-sans-alcool');
+
+      expect(
+        await service.grantCotisantIfARise(
+          'asso1',
+          'user1',
+          'system',
+          'avec-alcool',
+          {},
+          {
+            variantKeys: ['sans-alcool'],
+          }
+        )
+      ).toEqual({ refused: EXCLUDED_TIER_HELD });
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('anyTier excludes a held tag of a DELETED tier too', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+      ]);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantIfARise(
+          'asso1',
+          'user1',
+          'system',
+          'sans-alcool',
+          {},
+          {
+            anyTier: true,
+          }
+        )
+      ).toEqual({ refused: EXCLUDED_TIER_HELD });
+    });
+
+    it('CONTROL: grants when no excluded tier is held', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantIfARise(
+          'asso1',
+          'user1',
+          'system',
+          'sans-alcool',
+          {},
+          {
+            variantKeys: ['avec-alcool'],
+          }
+        )
+      ).toHaveProperty('granted');
     });
 
     // The paid form's pre-check, before any payment request: the same rank, no lock, no write.

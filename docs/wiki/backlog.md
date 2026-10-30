@@ -27,6 +27,50 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P2 - `trackedFetch` counts an edge page (a portal's 511, the WAF's HTML 403) as proof the server is reachable, for every REST call and the probe
+
+**The rule it breaks:** a captive portal must never prove reachability. `trackedFetch` calls
+`answered()` on ANY response, so a portal's `511` or the WAF's HTML `403` clears `isOffline`,
+fires the reconnect listeners (outbox flush, owed archive replays) and ends the reachability
+probe, all on the say-so of something that is not the server.
+
+**Why the pull alone was not changed further:** the pending pull and the history batch now clear
+`isOffline` only on the gateway's answer, and leave it as it was on an edge page
+([section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+Making the pull also MARK the server down on an edge page would flip-flop: the probe, which goes
+through `trackedFetch`, would get the same edge page, call it reachable, and undo the mark, with a
+reconnect edge each round.
+
+**Fix shape:** require a gateway answer (`responseOrigin(res) === 'gateway'`) in `trackedFetch` and
+in the probe, in ONE change, so that every route reads an edge page the same way. Measure it on
+dev, because it changes reachability for the whole app.
+
+## The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)
+
+One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). The
+catch-up fan-out and the transport failures logged as errors are fixed on
+`fix/catchup-transport-failure` ([offline-and-weak-network section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+These are the lines of the same log that fix does NOT cover, each with its count:
+
+- **P2 - `[QUEUE] delivery ... arrived twice` is back: 31 lines** (`BaseMlsService.ts`, `REPEAT_MEANS`,
+  ~line 2219). The ack-before-pull ordering (`ackInFlight`, CHANGELOG) was recorded as closing it; on
+  this log the ack landed before the pull and the pull still listed the row. Read which cell of
+  `REPEAT_MEANS` the 31 lines are (`pull`/`socket` x `queued`/`done`) before anything else - a `done`
+  cell means the server listed a row it had recorded acknowledged, which is the server's to explain.
+- **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
+  ([architecture](frontend/architecture.md)) reached from the salon send path: a `$derived` read
+  after its owner was destroyed. Name the component whose effect outlives the send first.
+- **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
+  600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
+  rejection says why, read it from the log line before touching the code.
+- **P3 - `playWhileVisible play() refused AbortError` at WARN: 37 lines** (`playWhileVisible.ts:41`).
+  An `AbortError` from `play()` is a pause or a source change interrupting it - the page's own
+  decision, not a refusal. Classify it at the catch (by `name`, a DOMException field, not prose)
+  and say it at the level of what it is; any other rejection keeps the warn.
+- **Raised to P2: the boot restore's absent-conversation refusals** - see
+  [the item below](#p2---the-boot-restore-opens-the-frame-pipeline-before-any-conversation-row-exists-a-queued-frame-for-a-stored-conversation-is-refused-absent-conversation-not-acked-and-re-pulled-found-by-the-141-dev-campaign-decided-to-defer):
+  **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
+
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
 
 **Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
@@ -1355,7 +1399,12 @@ then hands it to `retireIfEvicted` rather than to rung 2. Gated on proof because
 destructive: the roster 403 is not the device's own membership (`ExclusionsRefusedError` records that
 trap), so the decision must read the server's own eviction evidence, not the status alone. Not built.
 
-## P3 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+## P2 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+
+**RAISED FROM P3 ON PRODUCTION NUMBERS (2026-10-30).** One `1.5.1` log of the owner's Pixel: **425
+absent-conversation refusals, and up to 124 unacked frames in ONE boot** - every one a second
+handling, and the gap healer holding later frames of its group until the re-pull lands. Not a dev
+campaign's corner any more: the size of the cost is the size of the backlog a phone comes back to.
 
 **Deferred past 1.4.1 on purpose.** The fix reorders Welcome and commit handling relative to the
 restore; a hang there would stop a device receiving anything, so it needs its own plan, review and
@@ -2801,6 +2850,12 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 ## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
+
+## "Envoyer à..." from the camera tab, several targets, one shared file - decided by the owner on 2026-10-30
+
+**The decision, relayed in French:** depuis la caméra ouverte par le swipe à gauche, après une prise, le bouton principal est « Envoyer à... » ; il ouvre une liste dont la PREMIÈRE ligne est « Publier sur CanaReels » (comme « My Story » de Snapchat), puis les conversations, les groupes et les salons de communauté, avec une recherche ; on peut cocher PLUSIEURS cibles et envoyer en une fois. Stockage : UN SEUL fichier partagé pour toutes les cibles (un upload, une clé de contenu portée dans le message chiffré de chaque conversation), choisi en sachant qu'une suppression par un modérateur l'efface alors partout. **And the same day, for a take published on CanaReels AND sent to conversations, verbatim:** *"Un seul fichier. Il faut réduire au max la charge serveur quand on le peut je pense ;)"* - one stored file for the feed and the chats.
+
+**Designed, not built** - the flow, the one-take-N-sends outbox, per-object holds so the file lives as long as its longest reference (the post, the 30-day chat hold), a moderator's purge erasing it everywhere (feed or salon), the purge allowlist that still names one salon, the tombstone a shared file needs, and the key: a published take's chat copies carry the post's key, so they are not end-to-end secret (acceptable only because the post's audience sees the same video). **Every question answered by the owner on 2026-10-30, the recommended option each time:** "Supprimer pour tout le monde" in one conversation deletes only that conversation's message, and the file only if that was the last send, with "Supprimer partout" offered separately on the sending device; the author's delete of the feed post leaves the chat copies in place until their 30 days, "Supprimer partout" remaining the gesture that ends everything; a photo taken in the camera tab also goes through "Envoyer à..." (an ordinary post and/or ordinary images in chats). **The additive migration is APPROVED (owner, 2026-10-30, "Oui")**: the salon message row records the reel's `mediaId` so a moderator only deletes what is in their salon. [reels-in-chat section 15](frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built). New packages RC-12 (the sheet), RC-13 (the multi-target outbox, **before** the writer switch) and RC-14 (server holds and purge, the approved migration), about 15 engineer-days with the RC-6/RC-9 amendments ([order](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
 
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 
@@ -4390,3 +4445,7 @@ on production. If it is 0, delete this section; otherwise a backfill migration t
 - **P2 - two shop/form facts from the owner's review of `1.5.1-alpha.7` (found 2026-10-29), not fixed**: (a) the base tier every association gets when it enables cotisations is created UNPRICED (`amountCents` null), so `tier-pricing.ts` cannot rank it (`hasFixedPrice`) and a holder of it is refused EVERY rise as `unranked` - a tier whose preferential price is linked to the base tier (dev's "Etudiant", 5 EUR for holders of "Cotisation") is therefore never sold at that price to the people it names. The shop now hides the unpriced tier itself (#2546, [cotisations](cotisations.md)); whether an unpriced base tier ranks lowest, or must be priced before a sibling may link to it, is the owner's call. (b) `FormItemDto.type` is any non-empty string and `basePrice` any number >= 0: a form written straight to the API with an item type `text` (the editor writes `short_text`) and a `basePrice` of `10` meaning euros (the wire unit is CENTS, the editor multiplies by 100) is stored as is, and the fill page then reads "Type de question non pris en charge : text" and "Payer 0,10 EUR" - the rendering is right, the row is wrong. Owed: an allowlist of item types and `@IsInt()` on `basePrice` at the DTO, with a spec each.
 
 - **P3 - the shop's amount keypad takes no physical keyboard (found 2026-10-29, #2546 review)**: `AmountPicker.svelte`'s "Autre montant" keypad is driven by its on-screen keys only, so a desktop user cannot type digits, a decimal separator or Backspace. Not cheap to do right: a window-level `keydown` would feed EVERY open picker on a page (the association page and a membership card can each hold one), so it needs the keypad to take focus (a focusable group with its own `onkeydown` mapping to the existing `applyAmountKey`) and a test that two open pickers do not both receive a key.
+
+## P3 - one-shot actions near the copy helper that were not audited for feedback (2026-10-30)
+
+The copy and share-sheet paths now confirm through one helper ([sharing](frontend/sharing.md#one-copy-helper-one-share-failure-path-2026-10-30)). The same class of "a tap that visibly does nothing" was NOT checked on: save to gallery (`ReelSaveButton`, `reels/gallery.ts`), file downloads (`fileDownload`, `FormSubmissionsTable`, `AssociationDocumentManager`, `agendaExport`, `QrCodeModal`) and booking actions (`bookings/bookingActions.ts`). Audit each for a success and a failure confirmation; fix with a shared helper only where it clearly fits.

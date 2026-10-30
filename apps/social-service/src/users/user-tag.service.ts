@@ -75,16 +75,35 @@ export interface GrantTagData {
 }
 
 /**
- * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted - for `none`,
- * `higher`, or `held` (a renewal of the very tier held) - or refused because the tier is not a rise
- * over the one the user holds (`lower`, `unranked`), so a paid grant never swaps out a dearer tier
- * by the XOR, or because the user holds the tag's name under another issuer
- * (`TAG_HELD_BY_ANOTHER_ISSUER`). Not a boutique settlement's rule: a settlement decides on the tier
- * its checkout froze (`settlementVerdict`) and never grants a tier already held.
+ * The refusal of a ranked grant whose payer holds, under the tier lock, a tier the paid form is
+ * reserved to people WITHOUT (`notCotisation`, owner 2026-10-30): granting would take a second
+ * cotisation's price from a holder. The caller records the payment `paid_not_granted`.
+ */
+export const EXCLUDED_TIER_HELD = 'EXCLUDED_TIER_HELD';
+
+/**
+ * The tiers a paid grant must find NOT held (a form's `notCotisation`): `anyTier` for any tier of
+ * the association, a deleted tier's tag included (as `unless-holding-any` counts it), else the
+ * listed keys, `null` being the base tier.
+ */
+export interface ExcludedTiers {
+  anyTier?: boolean;
+  variantKeys?: (string | null)[];
+}
+
+/**
+ * What a RANKED tier grant (`grantCotisantIfARise`, a paid form's grant) did: granted - for `none`
+ * or `higher` - or refused: `held` (the very tier is held already - renewing it would take its price
+ * twice; the form's submit refuses the same case as `FORM_TIER_ALREADY_HELD`, and this is that rule
+ * judged again under the lock, when the money lands), `lower` / `unranked` (not a rise, so a paid
+ * grant never swaps out a dearer tier by the XOR), `EXCLUDED_TIER_HELD` (a tier the form excludes is
+ * held), or `TAG_HELD_BY_ANOTHER_ISSUER`. A boutique settlement never grants a tier already held
+ * either (`settlementVerdict`); the one exception here is the held tag that IS this answer's own
+ * delivery (its `metadata.submissionId`), answered `granted` without writing - a replay, not a renewal.
  */
 export type RankedGrantOutcome =
   | { granted: UserTag }
-  | { refused: TierRelation | typeof TAG_HELD_BY_ANOTHER_ISSUER };
+  | { refused: TierRelation | typeof TAG_HELD_BY_ANOTHER_ISSUER | typeof EXCLUDED_TIER_HELD };
 
 /** How `grantCotisantLocked` treats a tier the user may already hold. */
 type GrantRule = 'manual' | 'unless-holding-any' | 'only-a-rise';
@@ -487,17 +506,19 @@ export class UserTagService {
 
   /**
    * `grantCotisant` for a PAID grant that is not a manager's decision (a form that grants a tier):
-   * ranked under the buyer's tier lock (`rankTier`, on the tiers' product prices), so it grants
-   * only `none`, `held` (a renewal) or `higher`, and refuses `lower` and `unranked` - the XOR would otherwise replace a
-   * dearer tier the user paid for. A refusal grants nothing and changes nothing; the caller records
-   * the payment as paid but not granted.
+   * judged under the buyer's tier lock, so a shop settlement committed meanwhile is seen. Refuses a
+   * held tier of `excluded` (the form's `notCotisation`), then ranks (`rankTier`, on the tiers'
+   * product prices) and grants only `none` or `higher`: `held` would renew the tier and take its
+   * price twice, `lower` and `unranked` would let the XOR replace a dearer tier. A refusal grants
+   * nothing and changes nothing; the caller records the payment as paid but not granted.
    */
   async grantCotisantIfARise(
     assocId: string,
     userId: string,
     grantedBy: string,
     variantKey: string | null,
-    metadata: Record<string, unknown>
+    metadata: Record<string, unknown>,
+    excluded: ExcludedTiers | null = null
   ): Promise<RankedGrantOutcome> {
     const outcome = await this.grantCotisantLocked(
       assocId,
@@ -505,7 +526,9 @@ export class UserTagService {
       grantedBy,
       { variantKey },
       metadata,
-      'only-a-rise'
+      'only-a-rise',
+      undefined,
+      excluded
     );
     if (!outcome) throw new Error('grantCotisantIfARise: a ranked grant is never skipped');
     return outcome;
@@ -576,7 +599,8 @@ export class UserTagService {
     tier: { variantKey: string | null } | { tagName: string },
     metadata: Record<string, unknown>,
     rule: GrantRule,
-    expiresAtOverride?: Date
+    expiresAtOverride?: Date,
+    excluded: ExcludedTiers | null = null
   ): Promise<RankedGrantOutcome | null> {
     return this.repo.manager.transaction((manager) =>
       this.grantCotisantIn(
@@ -587,7 +611,8 @@ export class UserTagService {
         tier,
         metadata,
         rule,
-        expiresAtOverride
+        expiresAtOverride,
+        excluded
       )
     );
   }
@@ -631,7 +656,8 @@ export class UserTagService {
     tier: { variantKey: string | null } | { tagName: string },
     metadata: Record<string, unknown>,
     rule: GrantRule,
-    expiresAtOverride?: Date
+    expiresAtOverride?: Date,
+    excluded: ExcludedTiers | null = null
   ): Promise<RankedGrantOutcome | null> {
     await lockBuyerTiers(manager, assocId, userId);
     const rows: { slug: string; cotisationMode: CotisationMode | null }[] = await manager.query(
@@ -694,7 +720,36 @@ export class UserTagService {
       return null;
     }
     if (rule === 'only-a-rise') {
+      if (excluded && (await this.holdsExcludedTier(userId, assocId, tiers, excluded, manager))) {
+        this.logger.error(
+          `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
+            `refused for user=${userId.slice(0, 8)}: ${EXCLUDED_TIER_HELD} - a tier the form is for ` +
+            'people without was already held when the payment landed; nothing granted, a refund is owed'
+        );
+        return { refused: EXCLUDED_TIER_HELD };
+      }
       const relation = await this.rankTier(assocId, userId, variantKey, tiers, manager);
+      if (relation === 'held') {
+        // The held tag is this very answer's delivery (a replay whose claim was released after the
+        // grant committed): already delivered, nothing written. Any other holder would pay twice.
+        const own = await manager
+          .getRepository(UserTag)
+          .findOne({ where: { userId, tagName, issuingAssocId: assocId } });
+        const answer = metadata.submissionId;
+        if (own && answer != null && own.metadata?.submissionId === answer) {
+          this.logger.debug(
+            `[UserTag] paid grant of tier ${variantKey ?? 'base'}: already delivered by answer ` +
+              `${String(answer).slice(0, 8)} - nothing written`
+          );
+          return { granted: own };
+        }
+        this.logger.error(
+          `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
+            `refused for user=${userId.slice(0, 8)}: already held when the payment landed - nothing ` +
+            'renewed, a refund is owed'
+        );
+        return { refused: relation };
+      }
       if (relation === 'lower' || relation === 'unranked') {
         this.logger.error(
           `[UserTag] paid grant of tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} ` +
@@ -719,6 +774,28 @@ export class UserTagService {
     }
     await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
     return { granted: tag };
+  }
+
+  /**
+   * Whether the user holds a tier of `excluded`, read through `manager` under the buyer's tier lock.
+   * `anyTier` counts a deleted tier's tag too, as `unless-holding-any` does.
+   */
+  private async holdsExcludedTier(
+    userId: string,
+    assocId: string,
+    tiers: CotisationTierInfo[],
+    excluded: ExcludedTiers,
+    manager: EntityManager
+  ): Promise<boolean> {
+    const held = await this.heldVariantKeys(userId, assocId, tiers, manager);
+    if (excluded.anyTier) {
+      return (
+        held.length > 0 ||
+        (await this.heldOrphanTierTags(userId, assocId, tiers, manager)).length > 0
+      );
+    }
+    const keys = excluded.variantKeys ?? [];
+    return held.some((k) => keys.includes(k));
   }
 
   /**
@@ -760,7 +837,7 @@ export class UserTagService {
     manager: EntityManager
   ): Promise<TierRelation> {
     const priced: RankedTier[] = await manager.query(
-      `SELECT "variantKey", "amountCents", "priceMatrix" FROM association_products
+      `SELECT "variantKey", "amountCents", "priceMatrix", "allowCustomAmount" FROM association_products
         WHERE "associationId" = $1 AND type = 'membership'`,
       [assocId]
     );
@@ -811,6 +888,31 @@ export class UserTagService {
     variantKey: string | null
   ): Promise<boolean> {
     return this.holdsOneOfTiers(userId, assocId, variantKey, false);
+  }
+
+  /**
+   * Whether the user holds `assocId`'s tier `variantKey` AS THE DELIVERY of form answer
+   * `submissionId`: its active tag names that answer in `metadata.submissionId`, which a paid form's
+   * grant writes. The durable answer a replayed purchase record reads - a tier merely held (bought
+   * elsewhere, so the grant refused to renew it) is not this answer's, and its refund stays owed.
+   */
+  async holdsTierDeliveredBy(
+    userId: string,
+    assocId: string,
+    variantKey: string | null,
+    submissionId: string
+  ): Promise<boolean> {
+    const tier = (await this.listCotisationTiers(assocId)).find((t) => t.variantKey === variantKey);
+    if (!tier) return false;
+    const tag = await this.repo.findOne({
+      where: { userId, tagName: tier.tagName, issuingAssocId: assocId },
+    });
+    const delivered = isActive(tag) && tag.metadata?.submissionId === submissionId;
+    this.logger.debug(
+      `[UserTag] tier ${variantKey ?? 'base'} of assoc=${assocId.slice(0, 8)} delivered by answer ` +
+        `${submissionId.slice(0, 8)}: ${delivered}`
+    );
+    return delivered;
   }
 
   /**

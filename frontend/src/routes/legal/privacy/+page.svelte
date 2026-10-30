@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="29/10/2026"
+  updated="30/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -221,28 +221,33 @@
         </dd>
       </div>
       <div>
-        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dt>Appels audio et vidéo (quand la fonction est ouverte)</dt>
         <dd>
-          Le son d'un appel est chiffré de bout en bout entre les deux appareils : ni notre serveur
-          ni Cloudflare ne peuvent l'écouter, et aucun appel n'est enregistré. Notre serveur connaît
-          en revanche l'appel lui-même : la conversation, qui appelle, qui décroche et depuis quel
-          appareil, l'heure et la durée. Il garde l'état d'un appel 4 heures au plus après son
-          début, et ses journaux techniques en gardent la trace pendant la durée indiquée en section
-          6. Une fois l'appel décroché,
+          Le son et l'image d'un appel sont chiffrés de bout en bout entre les deux appareils : ni
+          notre serveur ni Cloudflare ne peuvent les écouter ou les voir, et aucun appel n'est
+          enregistré, ni le son ni l'image. La caméra ne s'allume que pendant un appel : quand vous
+          passez ou acceptez un appel vidéo, ou quand vous l'allumez pendant l'appel. Elle s'éteint
+          quand vous la coupez, quand l'appel se termine et tant que l'application est en
+          arrière-plan (elle se rallume à votre retour si elle était allumée). Notre serveur connaît
+          en revanche l'appel lui-même : la conversation, qui appelle, si l'appel est demandé en
+          vidéo (sans le conserver), qui décroche et depuis quel appareil, l'heure et la durée. Il
+          garde l'état d'un appel 4 heures au plus après son début, et ses journaux techniques en
+          gardent la trace pendant la durée indiquée en section 6. Une fois l'appel décroché,
           <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
           serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
           IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau
           de l'École). Chaque appareil contacte aussi les serveurs de connexion de Cloudflare, qui voient
-          son adresse IP et l'heure ; quand la connexion directe est impossible, le son, toujours chiffré,
-          passe par le relais de Cloudflare (section 4). Un appel que vous ne décrochez pas ne transmet
-          votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez refuser les appels dans chaque
-          conversation, et aucun appel n'est possible entre deux membres dont l'un a bloqué l'autre. La
-          conversation garde une ligne « appel » (heure, durée), chiffrée comme vos messages. Pour un
-          appel, notre serveur envoie aussi un avis d'appel entrant à chaque appareil d'un membre qui
-          accepte les appels dans cette conversation, même si l'application est fermée : il contient en
-          clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un groupe, et les identifiants
-          techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée est générique, « Appel entrant
-          », sans nom). Dans cette version, un appel ne sonne que dans l'application ouverte.
+          son adresse IP et l'heure ; quand la connexion directe est impossible, le son et l'image, toujours
+          chiffrés, passent par le relais de Cloudflare (section 4), qui en voit le volume. Un appel que
+          vous ne décrochez pas ne transmet votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez
+          refuser les appels dans chaque conversation, et aucun appel n'est possible entre deux membres
+          dont l'un a bloqué l'autre. La conversation garde une ligne « appel » (heure, durée), chiffrée
+          comme vos messages. Pour un appel, notre serveur envoie aussi un avis d'appel entrant à chaque
+          appareil d'un membre qui accepte les appels dans cette conversation, même si l'application est
+          fermée : il contient en clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un
+          groupe, et les identifiants techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée
+          est générique, « Appel entrant », sans nom), et sur les deux s'il s'agit d'un appel vidéo. Dans
+          cette version, un appel ne sonne que dans l'application ouverte.
         </dd>
       </div>
       <div>

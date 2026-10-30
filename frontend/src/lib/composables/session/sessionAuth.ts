@@ -2128,7 +2128,7 @@ export async function loginImpl(
 
     // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
-    // there is no network, and it logs "Gateway inaccessible" for a device that never had one.
+    // there is no network, and it logs "[WS] Gateway connection failed" for a device that never had one.
     let gatewayIsOpen = false;
     if (offlineSession) {
       cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');

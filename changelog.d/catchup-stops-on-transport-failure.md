@@ -1,0 +1,3 @@
+### Fixed - a catch-up that gets no answer stops, instead of asking every conversation again
+
+On a lost link, the history batch's failure sent each of 125 conversations to its own history read and its own mailbox pull (633 failing requests in a second on a production phone). On a link known down the pass now skips its archive replays and replays them at the next reconnect, and the mailbox barrier leaves the pull to the reconnect ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).

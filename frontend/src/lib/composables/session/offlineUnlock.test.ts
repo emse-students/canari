@@ -488,7 +488,7 @@ describe('the gateway handshake is held across the MLS state load', () => {
 
   it('opens no socket at all on an offline session', () => {
     // There is no token to carry and no server to reach; the attempt would cost a timeout and log
-    // `Gateway inaccessible` for a device that never had a gateway.
+    // `[WS] Gateway connection failed` for a device that never had a gateway.
     expect(loginImplBody).toContain('const startedHandshake = offlineSession\n      ? null');
   });
 

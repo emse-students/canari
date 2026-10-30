@@ -8,8 +8,9 @@ half, [below](#the-push-to-the-followers-wp-l7-server-half), 2026-10-19), and th
 floating reactions ([WP-L6](#live-chat-and-floating-reactions-wp-l6), 2026-10-19, draft). The moderation of a live - a report, a staff
 cut, the first-live rules - is WP-L8's server half ([below](#moderation-wp-l8-server-half), 2026-10-19), and the strike ladder and the reported chat line are WP-L8b's ([below](#the-strike-ladder-wp-l8b), 2026-10-21). WP-L2 and WP-L3 were built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
 decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q4**, durable end
-**Q5**, retention **Q10**. **No client calls any of it yet** (WP-L5), and **it is switched OFF on
-production** (below).
+**Q5**, retention **Q10**. The client (WP-L5) is built, and **since the production flip of
+2026-10-30 the deploy lock is open on both estates**: production serves lives from the stable that
+carries it, whenever `platform_config.lives_mode` says `on` (below).
 
 Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-seats.ts`,
 `live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`, `live-report-age.scheduler.ts`), migrations `091_lives.sql`,
@@ -26,9 +27,20 @@ BOTH switches are open** - the nginx segment location included, since what it ca
 media-service's answer (a 404, kept 10 s). The answer is the same whichever switch is closed.
 
 **The deploy lock, `LIVE_ENABLED`** (`live-enabled.guard.ts`, `isLiveEnabled` in media-service):
-open only when exactly `true`. `render-env.sh` computes it per estate (`compute_live_enabled`):
-**`true` on dev, `false` on production**, asserted on the rendered files by `deploy-env.test.sh`. The
-local compose defaults it to `true`. Moving it takes a deploy.
+open only when exactly `true`. **The literal `true` on both estates since the production flip
+(owner, 2026-10-30)** - a `literal:true` row of `infrastructure/deploy/env-manifest.tsv` that
+`render-env.sh` writes into each estate's `.env` and both services read (the compose default stays
+`false`, so a render that lost the key fails closed); asserted on the rendered files by
+`deploy-env.test.sh`. Until then it was computed per estate, `true` on dev and `false` on production.
+The local compose defaults it to `true`. Moving it takes a deploy, which is why the runtime switch
+below is what closes lives now.
+
+**Turning lives on in production, as it was done.** One pull request moved both deploy-time locks
+(this variable and the client's `LIVE_ENABLED` in `features.ts`) and the camera and microphone
+purpose strings; the release that carries it opens the routes the moment it deploys, so **what decides
+whether production members see lives is `lives_mode` at that moment** - `on` in production, and
+kept on by the owner's decision of 2026-10-30, so lives open discreetly with the `1.5.2` stable. The gates, the readings and
+the order are on [live-production](../frontend/modules/live-production.md), the only copy.
 
 **The runtime kill switch, `platform_config.lives_mode`** (owner, 2026-10-21: lives get a switch
 the server holds BEFORE they open in production, exactly like calls - once the client lock is in a
@@ -492,8 +504,8 @@ keeps only `"liveKeyCiphertext"` + `"liveKeyVersion"`:
   (unwatchable through it) and answers a chat-line report **`400 LIVE_CHAT_REPORT_MISMATCH`** (the
   line does not open with a null key). The new sweep seals lives ALREADY OPEN too, not only new
   ones, so this reaches a live that was on air before the deploy. Nothing to undo in the schema, and
-  a plaintext is never restored. Dev only today: `LIVE_ENABLED` is false in production, so no live
-  is open there for either release to serve.
+  a plaintext is never restored. Production met none of it: `LIVE_ENABLED` was false there until the
+  flip of 2026-10-30, so no live was open on production for either release to serve.
 - **What it does not protect**: social-service still holds the key (C12: the seal protects against
   the store and the database's readers, never against social-service), and a database copy taken
   WITH the environment opens everything. The previous plaintext column is dropped once production
@@ -1011,7 +1023,7 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | **The pipeline** | `PostNotificationsService.pushNotice`: the same content mapping, icon rule (the association's logo, the member's face), mute and bounded per-recipient fan-out as `createNotifications`, sharing one private `fanOutPush`, but **no `post_notifications` row** - a live is deleted at its end (L3), so a bell row would be a 404 for ever after. |
 | **Language** | Composed ON THE DEVICE from `contentKey`, as every social push since 2026-08-19: `notif_social_live_started_*` (Android, fr + en) and `notif.social.live_started.*` (iOS app and NSE, fr + en) - FR "X est en live" / "Appuyez pour regarder", EN "X is live" / "Tap to watch". The server's French `title`/`body` ride along for builds older than the key. Pinned by `push-content.spec.ts` and `nativeStrings.test.ts`. |
 | **Payload** | `{ type: 'social', liveId, associationId?, deepLink: 'fr.emse.canari://live/<liveId>', contentKey, actorName, contentArg: '', iconUserId or iconMediaId }` - `socialDeepLink` writes the link. |
-| **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): **off on production**. |
+| **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): open on both estates since the production flip of 2026-10-30, and the ingest that claims also sits behind `lives_mode`. |
 
 Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`.
 
