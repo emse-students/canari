@@ -296,6 +296,26 @@ async function expectDeliveredOnce(w: World, l: ReturnType<typeof life>) {
 
 const PARTS = Math.ceil((20 + PREPARED.length + 16) / PART);
 
+/**
+ * Makes the PUT of one part hang, and gives back what to wait for: the request HAS reached the
+ * fault (`hit()`). The count of parts the server holds is NOT that signal: it reads N the moment part
+ * N-1 lands, before the next PUT is even sent, so a test that waited on it went on (cleared the
+ * fault, started a second life) while the first life was still uploading - two lives racing, and
+ * `partsReceived()` landing on 3 or 4 instead of the 2 asserted (the intermittent 'KILL MID-UPLOAD').
+ */
+function hangPart(w: World, index: number, onHit: () => void = () => undefined) {
+  let hit = false;
+  w.server.fault = (method, path) => {
+    if (method === 'PUT' && path.endsWith(`/parts/${index}`)) {
+      hit = true;
+      onHit();
+      return 'hang';
+    }
+    return undefined;
+  };
+  return { hit: () => expect(hit).toBe(true) };
+}
+
 beforeEach(() => {
   connectivity.reset();
 });
@@ -403,15 +423,10 @@ describe('a chat reel through the outbox (RC-5)', () => {
   it('KILL MID-UPLOAD (part 3 of 4 in flight): the next life sends ONLY the parts the server lacks', async () => {
     const w = world();
     const first = life(w);
-    w.server.fault = (method, path) => {
-      if (method === 'PUT' && path.endsWith('/parts/2')) {
-        first.kill();
-        return 'hang';
-      }
-      return undefined;
-    };
+    const hung = hangPart(w, 2, () => first.kill());
     await first.outbox.enqueue(rawTakeEntry());
-    await vi.waitFor(() => expect(w.server.partsReceived()).toBe(2));
+    await vi.waitFor(hung.hit);
+    expect(w.server.partsReceived()).toBe(2);
     w.server.fault = () => undefined;
 
     const second = life(w);
@@ -490,10 +505,9 @@ describe('a chat reel through the outbox (RC-5)', () => {
   it('a cancel DURING THE UPLOAD releases the session on the server (its budget is given back)', async () => {
     const w = world();
     const l = life(w);
-    w.server.fault = (method, path) =>
-      method === 'PUT' && path.endsWith('/parts/1') ? 'hang' : undefined;
+    const hung = hangPart(w, 1);
     await l.outbox.enqueue(rawTakeEntry());
-    await vi.waitFor(() => expect(w.server.partsReceived()).toBe(1));
+    await vi.waitFor(hung.hit);
     expect(await l.outbox.cancelPending(ID)).toBe(true);
     await vi.waitFor(() => expect(w.server.seen.some((r) => r.method === 'DELETE')).toBe(true));
     expect([...w.server.sessions.values()][0].closed).toBe(true);
@@ -584,15 +598,9 @@ describe('a chat reel through the outbox (RC-5)', () => {
   it('a cancel AFTER A RELAUNCH, before any transfer restarted, releases the session the row recorded', async () => {
     const w = world();
     const first = life(w);
-    w.server.fault = (method, path) => {
-      if (method === 'PUT' && path.endsWith('/parts/2')) {
-        first.kill();
-        return 'hang';
-      }
-      return undefined;
-    };
+    const hung = hangPart(w, 2, () => first.kill());
     await first.outbox.enqueue(rawTakeEntry());
-    await vi.waitFor(() => expect(w.server.partsReceived()).toBe(2));
+    await vi.waitFor(hung.hit);
     // The second life may start its own flush as it is created: whatever it sends never lands, so
     // the parts and the object counted below are the first life's. Only the release is served.
     w.server.fault = (method) => (method === 'DELETE' ? undefined : 'hang');
@@ -609,10 +617,9 @@ describe('a chat reel through the outbox (RC-5)', () => {
   it('a TEARDOWN (the app killed mid-upload) never releases the session: the next life resumes it', async () => {
     const w = world();
     const first = life(w);
-    w.server.fault = (method, path) =>
-      method === 'PUT' && path.endsWith('/parts/2') ? 'hang' : undefined;
+    const hung = hangPart(w, 2);
     await first.outbox.enqueue(rawTakeEntry());
-    await vi.waitFor(() => expect(w.server.partsReceived()).toBe(2));
+    await vi.waitFor(hung.hit);
     // dispose() aborts the transfer with the same reason a cancel uses.
     first.outbox.dispose();
     await vi.waitFor(() => expect(w.settled).toBe(1));
