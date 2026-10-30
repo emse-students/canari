@@ -40,6 +40,31 @@ describe('ChannelService - the distribution group-info transport reads who answe
     expect(failure).toBeInstanceOf(NotFromApiError);
   });
 
+  it('names the asking device and passes back the seat served with the base', async () => {
+    const svc = new ChannelService();
+    const fetchWithAuth = vi
+      .spyOn(
+        svc as unknown as { fetchWithAuth: (url: string) => Promise<Response> },
+        'fetchWithAuth'
+      )
+      .mockImplementation(async () =>
+        Response.json({
+          groupId: 'g',
+          groupInfo: 'AA==',
+          baseEpoch: 6,
+          activeEpoch: 6,
+          seat: { status: 'pending', welcomeQueued: true, addInFlight: false },
+        })
+      );
+
+    const ref = await svc.getDistributionGroup(scope, 'web-dev-1');
+
+    expect(String(fetchWithAuth.mock.calls[0][0])).toMatch(
+      /\/distribution-group\?deviceId=web-dev-1$/
+    );
+    expect(ref.seat).toEqual({ status: 'pending', welcomeQueued: true, addInFlight: false });
+  });
+
   it("the service's JSON is still its verdict", async () => {
     const svc = serviceAnswering(() => Response.json({ stored: false }));
     await expect(svc.publishDistributionGroupInfo(scope, 'AAAA', 3, 'd1')).resolves.toEqual({

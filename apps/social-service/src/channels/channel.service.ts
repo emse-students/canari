@@ -2251,17 +2251,22 @@ export class ChannelService implements OnApplicationBootstrap {
    * is the one that creates it and publishes back through
    * {@link publishDistributionGroupInfoForMember}. That is a state the client must be able to act
    * on, which is why it is a null field and not an error.
+   *
+   * `deviceId`, when given, asks chat-delivery for that device's own seat in the same answer
+   * ({@link DistributionGroupRef.seat}), read after the base.
    */
   async getDistributionGroupForMember(
     workspaceId: string,
-    userId: string
+    userId: string,
+    deviceId?: string
   ): Promise<DistributionGroupRef> {
     await this.assertWorkspaceMember(workspaceId, userId);
 
     const ref = await readDistributionGroup(
       this.internalSecret,
       workspaceScope(workspaceId),
-      userId
+      userId,
+      deviceId
     );
     if (!ref) {
       // Every community created since WP-21 has one, and the clean cut leaves no older population.
@@ -2277,7 +2282,7 @@ export class ChannelService implements OnApplicationBootstrap {
     }
 
     this.logger.log(
-      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'}`
+      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'} seat=${ref.seat?.status ?? 'unasked'}`
     );
     return ref;
   }
@@ -2367,11 +2372,17 @@ export class ChannelService implements OnApplicationBootstrap {
    */
   async getChannelDistributionGroupForMember(
     channelId: string,
-    userId: string
+    userId: string,
+    deviceId?: string
   ): Promise<DistributionGroupRef> {
     await this.assertPrivateChannelReader(channelId, userId);
 
-    const ref = await readDistributionGroup(this.internalSecret, channelScope(channelId), userId);
+    const ref = await readDistributionGroup(
+      this.internalSecret,
+      channelScope(channelId),
+      userId,
+      deviceId
+    );
     if (!ref) {
       // Every private salon is given one at birth and cannot be created without it, so this is not
       // a state to repair silently: it is a salon that cannot carry seeds.
@@ -2385,7 +2396,7 @@ export class ChannelService implements OnApplicationBootstrap {
     }
 
     this.logger.log(
-      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'}`
+      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'} seat=${ref.seat?.status ?? 'unasked'}`
     );
     return ref;
   }

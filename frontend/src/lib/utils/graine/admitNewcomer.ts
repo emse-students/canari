@@ -95,8 +95,11 @@ export function devicesToAdmit(input: {
  *   commit and joins on top of it. That base cannot exist before their `pending` seat does: the
  *   commit carries the devices it adds (`admits`, written in the SAME transaction as the epoch
  *   advance), and the base for that epoch is stored in that same transaction. From then until the
- *   lock is released below - after every Welcome - `ensureDistributionGroupFor` reads that seat
- *   with `addInFlight` (`readWelcomeOwedFromRow`) and waits for the Welcome instead of joining.
+ *   lock is released below - after every Welcome - the newcomer's join reads that seat with
+ *   `addInFlight` (`readWelcomeOwedFromRow`) and waits for the Welcome instead of joining. It reads
+ *   the seat AFTER the base it would build on (`externalJoin`'s `welcomeOwed: 'ask'`): a seat read
+ *   before the base can predate this Add, which is how a newcomer joined over it on every kept rig
+ *   console of 2026-10-25..29 and took the Welcome for a redelivery.
  *
  * NEVER THROWS: it runs after an invitation the server has already accepted, and a failure here
  * must not report the invitation as failed. Every outcome is logged and returned.

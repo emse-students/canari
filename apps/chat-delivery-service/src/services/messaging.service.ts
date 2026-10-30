@@ -75,7 +75,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -4521,17 +4521,19 @@ export class MessagingService {
       select: { status: true },
     });
     if (seat?.status === 'pending') {
-      const { welcomed, locked } = await readPendingMembershipFacts(
+      const facts = await readPendingMembershipFacts(
         this.queuedMessageRepo,
         this.redis,
         deviceId,
         [groupId],
         this.logger
       );
-      if (welcomed.has(groupId) || locked.has(groupId)) {
+      const addInFlight = addInFlightOf(facts, groupId);
+      // An UNREAD add lock is not "no Add": no base is served on it, as on an owed Welcome.
+      if (facts.welcomed.has(groupId) || addInFlight !== false) {
         this.logger.log(
           `[KEY_GROUP_PUSH_JOIN][${traceId}] WELCOME OWED group=${groupId} device=${cutUserId(userId)}:${deviceId} ` +
-            `welcomeQueued=${welcomed.has(groupId)} addInFlight=${locked.has(groupId)} - no base served`
+            `welcomeQueued=${facts.welcomed.has(groupId)} addInFlight=${addInFlight ?? 'unknown'} - no base served`
         );
         return { scope, welcomeOwed: true, base: null };
       }

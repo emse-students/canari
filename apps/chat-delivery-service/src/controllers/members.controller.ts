@@ -29,7 +29,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { activeRevocationWhere } from '../utils/revocation';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
@@ -102,7 +102,8 @@ export const REVOKED_LEAVES_LIMIT_PER_MINUTE = 600;
 interface DeviceSeatFacts {
   status: 'pending' | 'active';
   welcomeQueued: boolean;
-  addInFlight: boolean;
+  /** Unknown (`undefined`) when the add locks could not be read - never a `false` it cannot prove. */
+  addInFlight: boolean | undefined;
   admitted: boolean;
   /** The user's seat awaits a member's admission (an invitation link's - migration 038). */
   awaitingAdmission: boolean;
@@ -421,7 +422,7 @@ export class MembersController {
       where: { userId, deviceId: safeDeviceId, groupId: In(groupIds) },
     });
     const pending = rows.filter((r) => r.status === 'pending').map((r) => r.groupId);
-    const { welcomed, locked } = await readPendingMembershipFacts(
+    const facts = await readPendingMembershipFacts(
       this.queuedMessageRepo,
       this.redis,
       safeDeviceId,
@@ -431,8 +432,8 @@ export class MembersController {
     for (const r of rows) {
       out.set(r.groupId, {
         status: r.status,
-        welcomeQueued: welcomed.has(r.groupId),
-        addInFlight: locked.has(r.groupId),
+        welcomeQueued: facts.welcomed.has(r.groupId),
+        addInFlight: addInFlightOf(facts, r.groupId),
         // A commit admitted this device at an epoch and its Welcome is owed (`admittedAtEpoch` is
         // cleared by every transition): the window between the commit and the Welcome, which the
         // add lock does not cover on every path.
@@ -445,7 +446,7 @@ export class MembersController {
       ([, v]) =>
         v.status === 'pending' &&
         !v.welcomeQueued &&
-        !v.addInFlight &&
+        v.addInFlight === false &&
         !v.admitted &&
         !v.awaitingAdmission
     ).length;

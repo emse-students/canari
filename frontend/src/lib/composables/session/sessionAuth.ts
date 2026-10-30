@@ -1911,10 +1911,15 @@ export async function loginImpl(
     // communities API.
     const distributionChannels = new ChannelService();
     mlsService.setDistributionGroupInfoTransport({
-      fetch: async (scope) => {
-        const ref = await distributionChannels.getDistributionGroup(scope);
+      fetch: async (scope, deviceId) => {
+        const ref = await distributionChannels.getDistributionGroup(scope, deviceId);
         return ref.groupInfo !== null && ref.baseEpoch !== null
-          ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch, activeEpoch: ref.activeEpoch }
+          ? {
+              groupInfo: ref.groupInfo,
+              baseEpoch: ref.baseEpoch,
+              activeEpoch: ref.activeEpoch,
+              ...(ref.seat ? { seat: ref.seat } : {}),
+            }
           : null;
       },
       publish: (scope, groupInfo, baseEpoch, deviceId) =>

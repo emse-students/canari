@@ -172,6 +172,7 @@ import { isTransportFailure, TransportFailureError } from '$lib/utils/transportF
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  DistributionSeat,
   DistributionGapListener,
   DistributionGapVerdict,
   DistributionGroupStore,
@@ -189,6 +190,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
+import { isWelcomeOwed, readWelcomeOwedFromSeat } from '$lib/utils/chat/welcomeOwed';
 import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 import {
   CommitRefusedError,
@@ -6722,7 +6724,13 @@ export abstract class BaseMlsService implements IMlsService {
    * problem and send the next reader to entirely the wrong place.
    */
   protected groupInfoChannel(groupId: string): {
-    fetch(): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
+    /** `seat` is served by a key group's transport only - see {@link DistributionSeat}. */
+    fetch(): Promise<{
+      groupInfo: string;
+      baseEpoch: number;
+      activeEpoch: number;
+      seat?: DistributionSeat;
+    } | null>;
     publish(groupInfoBase64: string, baseEpoch: number): Promise<{ stored: boolean }>;
   } {
     const scope = this.distributionScopeByGroup.get(groupId);
@@ -6750,7 +6758,7 @@ export abstract class BaseMlsService implements IMlsService {
       );
     }
     return {
-      fetch: () => transport.fetch(scope),
+      fetch: () => transport.fetch(scope, this.deviceId),
       publish: (gi, epoch) => transport.publish(scope, gi, epoch, this.deviceId),
     };
   }
@@ -6863,7 +6871,7 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async externalJoin(
     groupId: string,
-    opts: { asAFurtherDevice?: 'ask' } = {}
+    opts: { asAFurtherDevice?: 'ask'; welcomeOwed?: 'ask' } = {}
   ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
@@ -6978,6 +6986,29 @@ export abstract class BaseMlsService implements IMlsService {
               `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
             );
             return { joined: false, reason: 'further_device' };
+          }
+        }
+
+        // ONE DOOR AT A TIME, ASKED OF THE BASE IN HAND (key groups, channel-encryption section 20).
+        // An admitter's Add writes this device's `pending` seat and stores the base for the epoch it
+        // creates in ONE transaction, and holds the add lock until its Welcomes are queued - so the
+        // seat the server read AFTER this base, in the same answer, says whether the base already
+        // carries our leaf. The caller's own roster read came BEFORE it: on 11 of 11 kept rig
+        // consoles (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT, 2026-10-25..29) a device whose roster
+        // read predated the Add joined on the base the Add stored, the admitter's Welcome then landed
+        // on the group that join had just built (`already held - redelivered Welcome ignored`), and
+        // the external commit replaced the leaf the Add wrote. One Welcome, never a redelivery - two
+        // doors opened on one seat. Served WITH the base: one read, no extra round trip.
+        if (opts.welcomeOwed === 'ask') {
+          const reading = readWelcomeOwedFromSeat(gi.seat);
+          if (reading === null) {
+            console.warn(
+              `[MLS] externalJoin ${short}... base ${gi.baseEpoch} came without a readable seat (${gi.seat ? 'add lock unread' : 'none served'}) - not built this pass`
+            );
+            return { joined: false, reason: 'seat_unreadable' };
+          }
+          if (isWelcomeOwed(reading)) {
+            return { joined: false, reason: 'welcome_owed', reading };
           }
         }
 
@@ -7235,7 +7266,7 @@ export abstract class BaseMlsService implements IMlsService {
     if (holdsGroupState(this, groupId)) return { joined: true };
 
     if (ref.groupInfo !== null) {
-      return this.externalJoin(groupId);
+      return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     }
 
     console.log(
@@ -7280,7 +7311,7 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(
         `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
       );
-      return this.externalJoin(groupId);
+      return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     } finally {
       this.unsettledDistributionGroups.delete(groupId);
     }

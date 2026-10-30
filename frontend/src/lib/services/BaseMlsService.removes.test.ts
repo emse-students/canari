@@ -192,7 +192,7 @@ describe('BaseMlsService - the departed-member removal reads the base through th
 
     await remove(ctx, 'kg-1');
 
-    expect(ctx.transport.fetch).toHaveBeenCalledWith(scope);
+    expect(ctx.transport.fetch.mock.calls[0][0]).toEqual(scope);
     expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
     expect(ctx.stageRemoveMembers).toHaveBeenCalledOnce();
   });
@@ -267,7 +267,7 @@ describe('BaseMlsService - a revoked device of a member who stays, on a key grou
       'bob:web-1',
       'bob:lost-phone',
     ]);
-    expect(transport.fetch).toHaveBeenCalledWith(scope);
+    expect(transport.fetch.mock.calls[0][0]).toEqual(scope);
     expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
     expect(ctx.stageRemoveMembersByDevice).toHaveBeenCalledWith(
       'kg-1',

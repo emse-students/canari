@@ -144,14 +144,22 @@ export class ChannelsController {
    * membership, which only lives here; chat-delivery's own MLS routes gate on a `dm_group_members`
    * row, and a distribution group has none by construction. See
    * `docs/wiki/protocols/channel-encryption.md`.
+   *
+   * `?deviceId=` asks for that device's OWN seat in the same answer, read after the base, so a
+   * joiner never judges a base against a seat older than it (section 20, one door at a time).
    */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/:workspaceId/distribution-group')
   getDistributionGroup(
     @Headers('x-user-id') xUserId: string,
-    @Param('workspaceId') workspaceId: string
+    @Param('workspaceId') workspaceId: string,
+    @Query('deviceId') deviceId?: string
   ) {
-    return this.service.getDistributionGroupForMember(workspaceId, xUserId.trim().toLowerCase());
+    return this.service.getDistributionGroupForMember(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      deviceId
+    );
   }
 
   /** Publishes the GroupInfo a member just committed on the community's distribution group. */
@@ -190,16 +198,19 @@ export class ChannelsController {
    *
    * A public salon is refused here rather than answered with the community's group: it has none of
    * its own, on purpose, and pretending otherwise would hide the distinction from the client.
+   * `?deviceId=` as on the workspace route.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/distribution-group')
   getChannelDistributionGroup(
     @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string
+    @Param('channelId') channelId: string,
+    @Query('deviceId') deviceId?: string
   ) {
     return this.service.getChannelDistributionGroupForMember(
       channelId,
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      deviceId
     );
   }
 

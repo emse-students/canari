@@ -1,4 +1,44 @@
-import { isStrandedSeat, isWelcomeOwed, readWelcomeOwedFromRow } from './welcomeOwed';
+import {
+  isStrandedSeat,
+  isWelcomeOwed,
+  readWelcomeOwedFromRow,
+  readWelcomeOwedFromSeat,
+} from './welcomeOwed';
+
+/**
+ * A key-group seat served WITH its base (channel-encryption section 20). Unknown is never "nothing
+ * owed": a seat that is absent, or whose add lock was not read, opens no door.
+ */
+describe('readWelcomeOwedFromSeat', () => {
+  it.each([
+    ['nothing served', undefined, null],
+    ['no seat', { status: 'none' as const }, 'not-pending'],
+    ['an active seat', { status: 'active' as const }, 'not-pending'],
+    [
+      'a queued Welcome',
+      { status: 'pending' as const, welcomeQueued: true, addInFlight: false },
+      'welcome-queued',
+    ],
+    [
+      'a queued Welcome, lock unread',
+      { status: 'pending' as const, welcomeQueued: true },
+      'welcome-queued',
+    ],
+    [
+      'an Add in flight',
+      { status: 'pending' as const, welcomeQueued: false, addInFlight: true },
+      'add-in-flight',
+    ],
+    [
+      'a seat nothing follows',
+      { status: 'pending' as const, welcomeQueued: false, addInFlight: false },
+      'unhonoured-seat',
+    ],
+    ['an unread add lock', { status: 'pending' as const, welcomeQueued: false }, null],
+  ])('reads %s', (_label, seat, reading) => {
+    expect(readWelcomeOwedFromSeat(seat)).toBe(reading);
+  });
+});
 
 /**
  * The one reading that picks a door into a group - shared by conversation recovery and, since

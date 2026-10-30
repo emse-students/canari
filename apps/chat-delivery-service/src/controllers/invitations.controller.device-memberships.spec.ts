@@ -186,15 +186,18 @@ describe('InvitationsController - getDeviceMemberships', () => {
     expect(redis.mget).not.toHaveBeenCalled();
   });
 
-  it('reports no add lock rather than failing when Redis cannot answer', async () => {
-    // FAIL TOWARDS THE OLD BEHAVIOUR. `addInFlight: false` can only ever make the client ask a
-    // member, which is what it did before this endpoint carried anything - so a Redis outage
-    // degrades to the previous behaviour instead of breaking the sidebar.
+  it('reports the add lock as UNKNOWN, not absent, when Redis cannot answer', async () => {
+    // NOT FALSE (2026-10-30). `addInFlight: false` now also opens a key group's external-join door
+    // (`externalJoin`'s `welcomeOwed: 'ask'`), so an unread lock read as "no Add" would let a device
+    // join over an Add in flight. Left out, the client's reading is `null` and it opens no door; the
+    // answer itself still arrives, so the sidebar does not break.
     deviceGroupRepo.find.mockResolvedValue([row('g1', 'pending')]);
     redis.mget.mockRejectedValue(new Error('redis down'));
 
     const answer = await ask();
 
-    expect(answer[0]).toMatchObject({ welcomeQueued: false, addInFlight: false });
+    expect(answer[0]).toMatchObject({ welcomeQueued: false });
+    expect(answer[0].addInFlight).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(answer[0]))).not.toHaveProperty('addInFlight');
   });
 });
