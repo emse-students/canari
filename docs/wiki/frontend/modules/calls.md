@@ -411,7 +411,7 @@ readings below pass on the Mi 9T AND the iPhone 12. Until then production stays 
 | --- | --- | --- |
 | `CALLS_VIDEO_ENABLED = CALLS_ENABLED` (it was `deployEnvironment() === 'development'`): a production build carries video exactly when it can call | `frontend/src/lib/features.ts` | `features.test.ts` (the expression, and the value on a dev AND a production build) |
 | the camera purpose string names video calls ("pour vos appels vidéo" / "for your video calls"), the microphone one "audio and video calls" | `Info.plist`, `fr.lproj` and `en.lproj` `InfoPlist.strings`, `project.yml` | `callsCompiled.test.ts`: the camera string names calls exactly when a STORE binary carries video, and `project.yml` repeats it |
-| **no** Android change: `CAMERA` is already declared (reels, lives); no `camera` foreground-service type, because `installBackgroundHandler` turns the camera OFF on `visibilitychange` (capture stopped) and on again on return, so the microphone service never holds the camera | `AndroidManifest.xml` | `androidCallServiceManifest.test.ts` (no `FOREGROUND_SERVICE_CAMERA`, no `camera` type) |
+| **no** Android change: `CAMERA` is already declared (reels, lives); no `camera` foreground-service type, because `installBackgroundHandler` turns the camera OFF when the app leaves the screen (capture stopped) and on again on return, so the microphone service never holds the camera. **Fixed in this PR for Android**: the handler read only `visibilitychange`, which the Android WebView never fires; it now reads `canari:foreground` too ([video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) | `AndroidManifest.xml` | `androidCallServiceManifest.test.ts` (no `FOREGROUND_SERVICE_CAMERA`, no `camera` type) |
 | **no** server change: `ring` already refuses a ring declaring video under `audio` (403 `CALLS_VIDEO_DISABLED`) and allows it under `audio_video` | `calls.service.ts` | `calls.service.spec.ts` ("audio refuses a ring asking for video", "audio_video rings a video call") |
 
 **The client's two locks are unchanged**: the video button and the in-call camera-on control need
@@ -1672,6 +1672,13 @@ experiment rows of the rig (below) settle it on Chrome 155:
 - **The background turns the camera OFF for real** (the same `cameraOff`: capture stopped, peer
   sees the avatar) and the return turns it ON again; never `track.enabled = false`, which kept the
   capture open and sent black frames. A button tap meanwhile cancels the automatic resume.
+  **Read from BOTH signals since 1.5.2** (`onAppScreenChange`, `utils/appForeground.ts`): until
+  then it listened to `visibilitychange` alone, which an Android WebView never fires - it reports
+  `visible` in the background - so on Android the OS took the camera, `onended` turned it off as
+  `ended by the system` and nothing turned it back on (found in the review of #2711). It now
+  follows `canari:foreground` too, and a camera the OS ends while the app is OFF SCREEN is the same
+  background pause, resumed at the return; one ended on screen (another app took it) stays off.
+  Pinned by `CallService.p2p.test.ts` ("on Android, where the WebView stays visible").
 - **720p at 30 fps at most, moved by a quality ladder** since 2026-10-21 (it was a fixed 640x480,
   700 kb/s): [the quality ladder](#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop).
   The rung is on the SENDER's encodings, so it survives a switch.

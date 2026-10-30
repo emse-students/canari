@@ -230,9 +230,9 @@
           quand vous la coupez, quand l'appel se termine et tant que l'application est en
           arrière-plan (elle se rallume à votre retour si elle était allumée). Notre serveur connaît
           en revanche l'appel lui-même : la conversation, qui appelle, si l'appel est demandé en
-          vidéo, qui décroche et depuis quel appareil, l'heure et la durée. Il garde l'état d'un
-          appel 4 heures au plus après son début, et ses journaux techniques en gardent la trace
-          pendant la durée indiquée en section 6. Une fois l'appel décroché,
+          vidéo (sans le conserver), qui décroche et depuis quel appareil, l'heure et la durée. Il
+          garde l'état d'un appel 4 heures au plus après son début, et ses journaux techniques en
+          gardent la trace pendant la durée indiquée en section 6. Une fois l'appel décroché,
           <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
           serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
           IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau

@@ -1515,7 +1515,10 @@ describe('the E2E worker report (2026-10-19)', () => {
       const first = await turnCameraOn(service);
       const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
       let hidden = true;
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => (hidden ? 'hidden' : 'visible'),
+      });
       try {
         document.dispatchEvent(new Event('visibilitychange'));
         await settle();
@@ -1533,8 +1536,79 @@ describe('the E2E worker report (2026-10-19)', () => {
         expect(t.direction).toBe('sendrecv');
         expect(get(service.isVideoOff)).toBe(false);
       } finally {
-        delete (document as unknown as { hidden?: boolean }).hidden;
+        delete (document as unknown as { visibilityState?: string }).visibilityState;
       }
+    });
+
+    describe('on Android, where the WebView stays "visible" in the background', () => {
+      // MainActivity writes `window.__canariForeground` and dispatches `canari:foreground`; the
+      // document never changes (utils/appForeground.ts). The camera must follow THAT signal.
+      const win = window as unknown as { __canariForeground?: boolean };
+      const announce = (foreground: boolean) => {
+        win.__canariForeground = foreground;
+        window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
+      };
+      afterEach(() => {
+        delete win.__canariForeground;
+      });
+
+      it('canari:foreground false turns the camera OFF, true turns it ON again', async () => {
+        const { service, pc, lines } = await connectedCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+
+        announce(false);
+        await settle();
+        expect(first.stop).toHaveBeenCalled();
+        expect(t.sender.track).toBeNull();
+        expect(lines()).toContain(
+          '[Call] backgrounded - camera off until the app returns (audio continues)'
+        );
+
+        announce(true);
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('a camera the OS ends while the app is off screen comes back at the return', async () => {
+        const { service, pc, lines } = await connectedCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+
+        // The OS wins the race: the flag is already false, the event not yet delivered.
+        win.__canariForeground = false;
+        first.onended?.();
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(lines()).toContain(
+          '[Call] the system ended the camera of a backgrounded app - on again at return'
+        );
+
+        announce(false); // the late event finds the camera off and changes nothing
+        await settle();
+        announce(true);
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+      });
+
+      it('a camera the OS ends ON screen stays off (another app took it)', async () => {
+        const { service, pc } = await connectedCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        first.onended?.();
+        await settle();
+        announce(false);
+        await settle();
+        announce(true);
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+      });
     });
 
     describe('the quality ladder (utils/callVideoQuality.ts)', () => {

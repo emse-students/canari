@@ -43,6 +43,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
+import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -441,8 +442,8 @@ export class CallService {
   public incomingHasVideo = false;
 
   private callHasVideo = false;
-  /** `visibilitychange` listener installed during a call; removed on cleanup. */
-  private backgroundVisibilityHandler: (() => void) | null = null;
+  /** Unsubscribes the on-screen listener installed during a call (`onAppScreenChange`); cleanup calls it. */
+  private backgroundUnsubscribe: (() => void) | null = null;
   /** True while the camera was auto-paused because the tab/app went to the background. */
   private videoPausedByBackground = false;
   /**
@@ -3216,12 +3217,17 @@ export class CallService {
    * keeps the capture open and sends black frames the peer cannot tell from a camera). The peer
    * sees the avatar meanwhile; the audio goes on. A phone's OS stops a hidden page's capture
    * anyway, so this is what the peer would get - said instead of frozen.
+   *
+   * **Both signals, through `onAppScreenChange`**: `visibilitychange` on web, desktop and iOS, and
+   * `canari:foreground` on Android, whose WebView reports `visible` in the background and fires no
+   * visibility event at all (MainActivity.kt, `utils/appForeground.ts`). Listening to the first
+   * alone left an Android camera to the OS, which ended it as `ended by the system` with no resume.
    */
   private installBackgroundHandler() {
-    if (typeof document === 'undefined' || this.backgroundVisibilityHandler) return;
-    const handler = () => {
+    if (this.backgroundUnsubscribe) return;
+    this.backgroundUnsubscribe = onAppScreenChange((onScreen) => {
       if (!this.localStream) return;
-      if (document.hidden) {
+      if (!onScreen) {
         if (get(this.isVideoOff) && !this.cameraBusy) return; // camera already off - nothing to pause
         this.videoPausedByBackground = true;
         appendLog('[Call] backgrounded - camera off until the app returns (audio continues)');
@@ -3231,16 +3237,12 @@ export class CallService {
         appendLog('[Call] foregrounded - camera on again');
         void this.cameraOn();
       }
-    };
-    document.addEventListener('visibilitychange', handler);
-    this.backgroundVisibilityHandler = handler;
+    });
   }
 
   private removeBackgroundHandler() {
-    if (this.backgroundVisibilityHandler && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', this.backgroundVisibilityHandler);
-    }
-    this.backgroundVisibilityHandler = null;
+    this.backgroundUnsubscribe?.();
+    this.backgroundUnsubscribe = null;
     this.videoPausedByBackground = false;
   }
 
@@ -3512,6 +3514,14 @@ export class CallService {
     track.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
     track.onended = () => {
       if (!this.localStream?.getVideoTracks().some((t) => t === track)) return;
+      if (!isAppOnScreen()) {
+        // The OS took the camera of an app already off screen, before the background handler
+        // could: the same pause as the handler's, so the return turns it on again.
+        this.videoPausedByBackground = true;
+        appendLog('[Call] the system ended the camera of a backgrounded app - on again at return');
+        void this.cameraOff('app in the background');
+        return;
+      }
       appendLog('[Call] WARN the system ended the camera - turning it off');
       void this.cameraOff('ended by the system');
     };
