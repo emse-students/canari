@@ -9,6 +9,7 @@ import fr.emse.canari.call.SpecResult
 import fr.emse.canari.call.StartRefusal
 import fr.emse.canari.call.classifyStartRefusal
 import fr.emse.canari.call.decide
+import fr.emse.canari.call.holdsProximityScreenOff
 import fr.emse.canari.call.pickCallOutput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -111,18 +112,40 @@ class OngoingCallTest {
 
     @Test
     fun `a description that crossed the bridge is validated and a refusal names the field`() {
-        assertEquals(SpecResult.Valid(spec), OngoingCallSpec.of("Bob", "Appel audio", 1_000L, true))
+        assertEquals(SpecResult.Valid(spec), OngoingCallSpec.of("Bob", "Appel audio", 1_000L, true, null, false))
         assertEquals(
-            SpecResult.Valid(OngoingCallSpec("Bob", "Connexion...", null, false)),
-            OngoingCallSpec.of("Bob", "Connexion...", null, false),
+            SpecResult.Valid(OngoingCallSpec("Bob", "Connexion...", null, false, "user-b", true)),
+            OngoingCallSpec.of("Bob", "Connexion...", null, false, "user-b", true),
         )
-        assertEquals(SpecResult.Refused("title is empty"), OngoingCallSpec.of(" ", "x", null, true))
-        assertEquals(SpecResult.Refused("text is missing"), OngoingCallSpec.of("Bob", null, null, true))
+        assertEquals(SpecResult.Refused("title is empty"), OngoingCallSpec.of(" ", "x", null, true, null, false))
+        assertEquals(SpecResult.Refused("text is missing"), OngoingCallSpec.of("Bob", null, null, true, null, false))
         assertEquals(
             SpecResult.Refused("connectedAtMs=0 is not an instant"),
-            OngoingCallSpec.of("Bob", "x", 0L, true),
+            OngoingCallSpec.of("Bob", "x", 0L, true, null, false),
         )
-        assertEquals(SpecResult.Refused("speaker is missing"), OngoingCallSpec.of("Bob", "x", null, null))
+        assertEquals(SpecResult.Refused("speaker is missing"), OngoingCallSpec.of("Bob", "x", null, null, null, false))
+        assertEquals(SpecResult.Refused("muted is missing"), OngoingCallSpec.of("Bob", "x", null, true, null, null))
+    }
+
+    @Test
+    fun `a blank peer id names nobody, so no photo is fetched for it`() {
+        val valid = OngoingCallSpec.of("Bob", "x", null, false, "  ", false) as SpecResult.Valid
+        assertNull(valid.spec.peerUserId)
+    }
+
+    @Test
+    fun `the notification's mute goes to the running call, and with none there is nothing to act on`() {
+        assertEquals(CallServiceEffect.ForwardMute("A"), decide("A", CallServiceCommand.ToggleMute))
+        assertTrue(decide(null, CallServiceCommand.ToggleMute) is CallServiceEffect.Ignore)
+    }
+
+    @Test
+    fun `the screen goes dark against the cheek on the earpiece only`() {
+        assertTrue(holdsProximityScreenOff(CallOutput.EARPIECE))
+        for (output in CallOutput.values().filter { it != CallOutput.EARPIECE }) {
+            assertFalse("$output", holdsProximityScreenOff(output))
+        }
+        assertFalse(holdsProximityScreenOff(null))
     }
 
     @Test

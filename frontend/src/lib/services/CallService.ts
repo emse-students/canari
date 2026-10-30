@@ -441,6 +441,13 @@ export class CallService {
   public incomingHasVideo = false;
 
   private callHasVideo = false;
+  /**
+   * Whether this call carries VIDEO: set with the microphone (before `localStreamStore` publishes it,
+   * so a reader woken by the stream sees it already), and true once the camera joined mid-call.
+   */
+  public get hasVideo(): boolean {
+    return this.callHasVideo;
+  }
   /** `visibilitychange` listener installed during a call; removed on cleanup. */
   private backgroundVisibilityHandler: (() => void) | null = null;
   /** True while the camera was auto-paused because the tab/app went to the background. */
@@ -1026,8 +1033,12 @@ export class CallService {
         : wasCalling && this.inviteSent && !this.peerArrived
           ? (reason ?? (notify ? 'cancelled' : 'not-answered'))
           : undefined;
+    // No typed outcome is one of TWO facts, and the log names which: a ring that never left (a
+    // call that failed before its invite: still `calling`, nobody arrived) rang nobody; anything
+    // else was ANSWERED. One label for both read as a doubt on every answered call (#2706).
+    const ended = outcome ?? (wasCalling && !this.peerArrived ? 'unrung' : 'answered');
     appendLog(
-      `[Call] ending call ${callId} state=${state} outcome=${outcome ?? 'answered-or-unrung'} notify=${notify} remote=${remoteOrigin}`
+      `[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`
     );
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
@@ -1428,9 +1439,11 @@ export class CallService {
       credential: s.credential,
     }));
 
+    // EVERY url, not a preview: the relay is listed LAST, so a cut at two hid it, and a reading of a
+    // call could not tell "no TURN configured" from "TURN configured and unused". The query
+    // (`?transport=`) is dropped; no credential is in a url.
     const urlPreview = mapped
       .flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]))
-      .slice(0, 2)
       .map((u) => (typeof u === 'string' ? u.split('?')[0] : u))
       .join(', ');
     appendLog(
@@ -2668,7 +2681,11 @@ export class CallService {
       this.e2eRechecks = 0;
       this.e2ePathInconclusive = false;
       this.e2eLastUnjudged = '';
-      appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+      // THE SUCCESS LINE, worded as what it proved: every packet counted on every side carried a
+      // frame through the transform (the bypass check above found none around it).
+      appendLog(
+        `[Call] E2E path check (${why}): PASS - all media went through the E2E transform (${counts})`
+      );
       // A call carrying video says, at each conclusive check, whether the picture DECODES - an
       // encrypted frame can reach the decoder and still never show (frame rate, freezes, PLIs).
       if (stats && packets.sent.video + packets.received.video > 0) {

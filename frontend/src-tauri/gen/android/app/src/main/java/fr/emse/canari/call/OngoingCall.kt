@@ -21,26 +21,41 @@ package fr.emse.canari.call
  * @property connectedAtMs the epoch ms of the first `connected` (`CallService.connectedAt`), the
  *   chronometer's base; null while the call has not connected, and then no chronometer is drawn.
  * @property speaker true routes the voice to the loudspeaker, false to the earpiece or a headset.
+ * @property peerUserId the other party's user id, whose photo becomes the CallStyle person's icon;
+ *   null when the page names no single other party (the icon is then the platform's default).
+ * @property muted the user's own microphone mute, drawn as the notification's mute / unmute action.
  */
 data class OngoingCallSpec(
     val title: String,
     val text: String,
     val connectedAtMs: Long?,
     val speaker: Boolean,
+    val peerUserId: String? = null,
+    val muted: Boolean = false,
 ) {
     companion object {
         /**
          * Validates what crossed the bridge. A refusal names the field: the web wrote it from its own
          * typed state, so a bad value is a defect on that side, never something to repair here.
          */
-        fun of(title: String?, text: String?, connectedAtMs: Long?, speaker: Boolean?): SpecResult {
+        fun of(
+            title: String?,
+            text: String?,
+            connectedAtMs: Long?,
+            speaker: Boolean?,
+            peerUserId: String?,
+            muted: Boolean?,
+        ): SpecResult {
             if (title.isNullOrBlank()) return SpecResult.Refused("title is empty")
             if (text == null) return SpecResult.Refused("text is missing")
             if (connectedAtMs != null && connectedAtMs <= 0L) {
                 return SpecResult.Refused("connectedAtMs=$connectedAtMs is not an instant")
             }
             if (speaker == null) return SpecResult.Refused("speaker is missing")
-            return SpecResult.Valid(OngoingCallSpec(title, text, connectedAtMs, speaker))
+            if (muted == null) return SpecResult.Refused("muted is missing")
+            // A blank id names nobody: the same as none, never a fetch of an empty path.
+            val peer = peerUserId?.takeIf { it.isNotBlank() }
+            return SpecResult.Valid(OngoingCallSpec(title, text, connectedAtMs, speaker, peer, muted))
         }
     }
 }
@@ -66,6 +81,8 @@ sealed class CallServiceCommand {
     data class Stop(val callId: String?, val reason: String) : CallServiceCommand()
     /** The hang-up action of the ongoing notification. */
     object HangUp : CallServiceCommand()
+    /** The mute / unmute action of the ongoing notification. */
+    object ToggleMute : CallServiceCommand()
 }
 
 /** What the service does. Exactly one per command, so every command is logged with its effect. */
@@ -86,6 +103,12 @@ sealed class CallServiceEffect {
     /** Leave the foreground, then hand the hang-up of [callId] to the page, which ends the call. */
     data class ForwardHangUp(val callId: String) : CallServiceEffect()
     /**
+     * Hand the mute toggle of [callId] to the page, which owns the microphone. The service stays in
+     * the foreground; the page's next `update` carries the new `muted`, which redraws the action - so
+     * the notification shows the state the CALL is in, never the one a press assumed.
+     */
+    data class ForwardMute(val callId: String) : CallServiceEffect()
+    /**
      * Nothing to do, and the reason says why. Every case reaching it is EXPECTED - a page command in
      * flight when the service had already left (the user hung up from the notification, the start was
      * refused, the page has not received that event yet) - so it is logged at INFO with that cause.
@@ -104,7 +127,8 @@ sealed class CallServiceEffect {
  *   an earlier call's, landing late.
  * - A STOP of the running call, or one naming no call (from the app itself), leaves; any other stop is
  *   an earlier call's.
- * - A HANG-UP with no call has nothing to act on: a notification press that raced the call's end.
+ * - A HANG-UP or a MUTE with no call has nothing to act on: a notification press that raced the
+ *   call's end.
  */
 fun decide(current: String?, command: CallServiceCommand): CallServiceEffect = when (command) {
     is CallServiceCommand.Start -> when (current) {
@@ -129,6 +153,9 @@ fun decide(current: String?, command: CallServiceCommand): CallServiceEffect = w
     CallServiceCommand.HangUp ->
         if (current != null) CallServiceEffect.ForwardHangUp(current)
         else CallServiceEffect.Ignore("hang-up pressed as the call ended - nothing in the foreground")
+    CallServiceCommand.ToggleMute ->
+        if (current != null) CallServiceEffect.ForwardMute(current)
+        else CallServiceEffect.Ignore("mute pressed as the call ended - nothing in the foreground")
 }
 
 /** Why a start was refused, as the page reads it (`NativeCallRefusal` in `androidCallService.ts`). */
@@ -221,6 +248,14 @@ fun pickCallOutput(available: List<CallOutput>, speaker: Boolean): CallOutput? {
     if (speaker) return CallOutput.SPEAKER.takeIf { it in available }
     return PERSONAL_OUTPUTS.firstOrNull { it in available }
 }
+
+/**
+ * Whether the screen goes dark against the cheek: true only while the voice is on the EARPIECE, the
+ * one output held to the face. On the loudspeaker or a headset the phone is looked at or pocketed, and
+ * a screen that turned off when a hand passed over the sensor would hide the call's own controls. Null
+ * (the platform routes) holds nothing: what it chose is not known here.
+ */
+fun holdsProximityScreenOff(output: CallOutput?): Boolean = output == CallOutput.EARPIECE
 
 private val PERSONAL_OUTPUTS = listOf(
     CallOutput.HEARING_AID,

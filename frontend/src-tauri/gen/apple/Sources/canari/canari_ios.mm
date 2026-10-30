@@ -386,6 +386,39 @@ static void CanariObserveTheme(void) {
   NSLog(@"[CanariIOS] listening for the app theme");
 }
 
+/// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
+/// near the face only while `UIDevice.proximityMonitoringEnabled` is set, and a WebView never sets it.
+/// The page posts a boolean through `webkit.messageHandlers.canariProximity` (`iosCallProximity.ts`):
+/// true while a call holds the microphone with the voice on the receiver, false on the loudspeaker and
+/// at the call's end. Anything but a boolean is logged and ignored.
+@interface CanariProximityHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariProximityHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  if (![message.body isKindOfClass:[NSNumber class]]) {
+    NSLog(@"[CanariIOS] proximity ignored, the page posted something that is not a boolean");
+    return;
+  }
+  BOOL enabled = [(NSNumber *)message.body boolValue];
+  UIDevice *device = UIDevice.currentDevice;
+  device.proximityMonitoringEnabled = enabled;
+  // Read back: a device without a sensor leaves it NO, and that is what the reading should show.
+  NSLog(@"[CanariIOS] call proximity monitoring asked=%d now=%d", enabled, device.proximityMonitoringEnabled);
+}
+@end
+
+static void CanariObserveCallProximity(void) {
+  static CanariProximityHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariProximityHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariProximity"];
+  NSLog(@"[CanariIOS] listening for the call proximity");
+}
+
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
 /// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
 /// place this is decided").
@@ -753,6 +786,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
+  CanariObserveCallProximity();
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();

@@ -33,6 +33,29 @@ export interface OngoingCallSpec {
   connectedAtMs: number | null;
   /** The loudspeaker (true) or the earpiece / a headset (false). */
   speaker: boolean;
+  /** The other party's user id: its photo is the CallStyle person's icon. Null when there is none. */
+  peerUserId: string | null;
+  /** The user's own microphone mute: the notification's mute action shows the way back. */
+  muted: boolean;
+}
+
+/**
+ * WHERE A CALL'S VOICE STARTS: on the loudspeaker for a VIDEO call (the phone is held in front of
+ * the face), on the earpiece - or a headset, which the native route prefers when one is connected -
+ * for an AUDIO call, held to the ear like a phone call. The owner's first production audio call
+ * started on the loudspeaker (`speaker=true` at connecting and live), which no phone dialler does.
+ */
+export function callStartsOnSpeaker(video: boolean): boolean {
+  return video;
+}
+
+/** What {@link ongoingCallSpec} describes, besides the state: the page's facts about the call. */
+export interface OngoingCallFacts {
+  title: string;
+  peerUserId: string | null;
+  connectedAtMs: number | null;
+  speaker: boolean;
+  muted: boolean;
 }
 
 /**
@@ -61,6 +84,7 @@ export type NativeCallEvent = { callId: string } & (
   | { kind: 'failed'; code: NativeCallRefusal; reason: string }
   | { kind: 'stopped'; reason: string }
   | { kind: 'hangup' }
+  | { kind: 'mute' }
   | { kind: 'foreground' }
 );
 
@@ -79,6 +103,8 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
       return { callId, kind: 'started' };
     case 'hangup':
       return { callId, kind: 'hangup' };
+    case 'mute':
+      return { callId, kind: 'mute' };
     case 'foreground':
       return { callId, kind: 'foreground' };
     case 'failed':
@@ -104,20 +130,20 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
 export function ongoingCallSpec(
   kind: CallStatusKind,
   micHeld: boolean,
-  title: string,
-  connectedAtMs: number | null,
-  speaker: boolean
+  facts: OngoingCallFacts
 ): OngoingCallSpec | null {
   if (!micHeld) return null;
+  const { title, peerUserId, connectedAtMs, speaker, muted } = facts;
+  const base = { title, peerUserId, speaker, muted };
   switch (kind) {
     case 'ringing':
-      return { title, text: m.call_ringing_label(), connectedAtMs: null, speaker };
+      return { ...base, text: m.call_ringing_label(), connectedAtMs: null };
     case 'connecting':
-      return { title, text: m.call_connecting_label(), connectedAtMs: null, speaker };
+      return { ...base, text: m.call_connecting_label(), connectedAtMs: null };
     case 'live':
-      return { title, text: m.call_audio_only_label(), connectedAtMs, speaker };
+      return { ...base, text: m.call_audio_only_label(), connectedAtMs };
     case 'reconnecting':
-      return { title, text: m.call_reconnecting(), connectedAtMs, speaker };
+      return { ...base, text: m.call_reconnecting(), connectedAtMs };
     case 'idle':
     case 'incoming':
     case 'ended':
@@ -158,19 +184,30 @@ export interface AndroidCallSession {
   dispose(): void;
 }
 
-/**
- * Opens the session for one call. `onHangUp` is what the notification's button does: the service has
- * already left the foreground, and the page ends the call. `onRoute` is told whether the service can
- * route the audio right now: false while a start waits for the app to come back on screen, and once
- * the service is refused or gone for this call - the speaker toggle reads it, so it is never a button
- * that does nothing. `callId` names this call on the bridge; drawn per session.
- */
+/** What the notification and the service hand back to the call ({@link openAndroidCallSession}). */
+export interface AndroidCallHandlers {
+  /** The notification's hang-up: the service has already left the foreground, the page ends the call. */
+  onHangUp: () => void;
+  /**
+   * The notification's mute action: the page toggles its microphone, and the next `publish` carries
+   * the new `muted`, which redraws the action from the call's own state.
+   */
+  onMute?: () => void;
+  /**
+   * Whether the service can route the audio right now: false while a start waits for the app to come
+   * back on screen, and once the service is refused or gone for this call - the speaker toggle reads
+   * it, so it is never a button that does nothing.
+   */
+  onRoute?: (available: boolean) => void;
+}
+
+/** Opens the session for one call. `callId` names this call on the bridge; drawn per session. */
 export function openAndroidCallSession(
   host: AndroidCallHost,
-  onHangUp: () => void,
-  onRoute: (available: boolean) => void = () => {},
+  handlers: AndroidCallHandlers,
   callId: string = crypto.randomUUID()
 ): AndroidCallSession {
+  const { onHangUp, onMute = () => {}, onRoute = () => {} } = handlers;
   const bridge = host.canariCall;
   if (!bridge) {
     appendLog(
@@ -200,7 +237,7 @@ export function openAndroidCallSession(
     if (json === lastSent) return;
     lastSent = json;
     const payload = JSON.stringify({ ...spec, callId });
-    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker}`;
+    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker} muted=${spec.muted} peer=${spec.peerUserId !== null}`;
     if (!started) {
       started = true;
       appendLog(`[Call] ongoing-call service start (${facts})`);
@@ -276,6 +313,17 @@ export function openAndroidCallSession(
         over = true;
         appendLog('[Call] hang-up from the ongoing-call notification');
         onHangUp();
+        return;
+      case 'mute':
+        // The service stays: only the microphone changes, and the next publish redraws the action.
+        if (!started) {
+          appendLog(
+            '[Call] mute from the ongoing-call notification with no service started - ignored'
+          );
+          return;
+        }
+        appendLog('[Call] microphone toggled from the ongoing-call notification');
+        onMute();
         return;
     }
   };

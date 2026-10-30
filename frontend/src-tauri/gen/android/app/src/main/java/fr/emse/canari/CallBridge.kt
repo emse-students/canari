@@ -30,7 +30,8 @@ import org.json.JSONObject
  * Up: every outcome reaches the page as ONE DOM event, `canari:call-native`, whose `detail` names the
  * call it is about (`callId`) and whose `kind` is `started`, `failed` (with a `code`, [StartRefusal]),
  * `stopped` (the service left on its own, unexpectedly), `hangup` (the notification's button - the
- * service has ALREADY left the foreground, the page ends the call) or `foreground` (the activity
+ * service has ALREADY left the foreground, the page ends the call), `mute` (the notification's mute
+ * action - the page toggles its microphone and its next `update` redraws the action) or `foreground` (the activity
  * resumed while a start refused for being off screen was pending: the page may ask once more). The
  * page drops an event of another call.
  *
@@ -221,6 +222,8 @@ object CallBridge {
                         text = if (o.has("text")) o.getString("text") else null,
                         connectedAtMs = if (o.isNull("connectedAtMs")) null else o.getLong("connectedAtMs"),
                         speaker = if (o.has("speaker")) o.getBoolean("speaker") else null,
+                        peerUserId = if (o.isNull("peerUserId")) null else o.getString("peerUserId"),
+                        muted = if (o.has("muted")) o.getBoolean("muted") else null,
                     )
                 }
             } catch (e: JSONException) {
