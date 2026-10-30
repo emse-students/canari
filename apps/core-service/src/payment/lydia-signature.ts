@@ -5,6 +5,12 @@ import { createHash, timingSafeEqual } from 'crypto';
  * "key=value" pairs with "&", followed by "&" and the business/provider private token.
  * The field set to sign is call-specific (see each endpoint's "signature" parameter description in
  * the Lydia API doc) - `fields` must already contain exactly those fields, never the "sig" key itself.
+ *
+ * The values are joined RAW, because this verifies what LYDIA signs: its callbacks are signed over
+ * the raw values (an `order_ref` with `:` verified that way on the sandbox and in production). A
+ * request Canari SENDS is checked by Lydia over the URL-ENCODED values instead (PHP `urlencode`,
+ * measured 2026-10-30), so it must not be signed with this as-is - see docs/wiki/lydia-api.md
+ * section 5b. No outgoing call is signed today.
  */
 export function signLydiaParams(fields: Record<string, string>, privateToken: string): string {
   const sortedKeys = Object.keys(fields).sort();

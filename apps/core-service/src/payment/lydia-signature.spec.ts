@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { signLydiaParams, verifyLydiaSignature } from './lydia-signature';
 
 describe('signLydiaParams', () => {
@@ -15,6 +16,15 @@ describe('signLydiaParams', () => {
     const a = signLydiaParams({ b: '2', a: '1' }, 'secret');
     const b = signLydiaParams({ a: '1', b: '2' }, 'secret');
     expect(a).toBe(b);
+  });
+
+  it('signs RAW values, as Lydia signs its callbacks (an order_ref with ":" verified this way)', () => {
+    // Independent of the implementation: the literal raw string, never `%3A`. URL-encoding here
+    // would refuse every callback (docs/wiki/lydia-api.md section 3 and 5b).
+    const raw = 'amount=12.50&order_ref=form:abc:0123abcd&KEY';
+    expect(signLydiaParams({ order_ref: 'form:abc:0123abcd', amount: '12.50' }, 'KEY')).toBe(
+      createHash('md5').update(raw).digest('hex')
+    );
   });
 });
 
