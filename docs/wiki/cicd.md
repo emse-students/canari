@@ -413,8 +413,8 @@ gap between the bump resolving the commit and the box resolving `main` again is:
 | `v0.16.6-alpha.4` (dev) | 12:45:11  | 12:50:47   | 5 min 36 s      |
 
 Auto-merge lands pull requests unattended throughout. Both boxes now reset to `inputs.sha`; the
-released commit is always an ancestor of `main` because the ruleset forbids a force-push, so
-fetching the branch makes it reachable and the reset fails loudly if it somehow does not.
+released commit is the bump on `release/vX.Y.Z` (every release since 2026-10-30), fetched by sha,
+and the reset fails loudly if it somehow is not there.
 
 **THE TEST WRITTEN TO CATCH THIS PASSED ON THE MARKER.** The assertion was `grep -q 'inputs.sha'`
 over the file, and the line satisfying it was the line making the false claim. It now derives the
@@ -758,7 +758,8 @@ It stages `git add -u`, so whatever the bump script writes is what gets committe
 #### The push this workflow makes is the ONE push to `main` that is not a pull request, and the ruleset refused it (measured 2026-09-03)
 
 **The first real release found this, and nothing before it could have.** `main` carries ruleset
-`22152902`: no direct push, `CI passed` required. The bump ends in `git push origin HEAD:main`, and
+`22152902`: no direct push, `CI passed` required. The bump then ended in `git push origin HEAD:main`
+(since 2026-10-30 it is the `land` job that pushes to `main`; the bump pushes a release branch), and
 with `GITHUB_TOKEN` that push is made by `github-actions[bot]`, which is not a bypass actor. So the
 push was refused, the run went red, and **nothing downstream started** — every arm needed the bump.
 Fail-safe, and a chain that does not run. **That accident is now the design**: the preflight sits in
@@ -867,7 +868,7 @@ asserts the ordering directly (31 assertions).
 
 ### A stable ships the latest pre-release, and `main` may move on (2026-10-02)
 
-**A PRE-RELEASE tag is still refused when `main` moved past its sha between the head read and the tag, and a rerun re-reads the same tag and cannot rescue it; a stable is immune** (it ships the latest alpha, #1367).
+**Since 2026-10-30 a pre-release is immune too** - see the next section.
 
 A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
 moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
@@ -880,15 +881,91 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   asking it); 3 reads `CI passed` on it; 4 and 5 are unchanged.
 - **Bump.** The bump runs on that commit, whose `changelog.d/` holds exactly the entries it
   contains, and pushes to **`release/vX.Y.Z`** (force: a re-run rewrites it), never to `main`. The
-  stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs. Pre-releases
-  are unchanged: bump pushed to `main`.
+  stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs.
 - **Hosts** fetch the released commit BY NAME (`git fetch origin <sha>`), not `main`, since the
   shipped commit is on the release branch.
 - **Land.** The `land` job, parallel with the arms and blocking nothing, runs
-  `.github/scripts/land-release-changelog.sh`: on `main`'s head it folds ONLY the fragments the
+  `.github/scripts/land-release.sh`: on `main`'s head it folds ONLY the fragments the
   shipped commit carried, touches NO manifest (main's version is its latest pre-release's), and
   retries the push when a merge wins the race. Idempotent; a red `land` is re-run, it never holds
-  production back. Test: `land-release-changelog.test.sh`.
+  production back. Test: `land-release.test.sh`.
+
+### A pre-release is pinned on its release branch (decided 2026-10-30)
+
+**The decision.** A pre-release's bump is pushed to **`release/vX.Y.Z`** (the version without its
+suffix, force: the next alpha of that version replaces it, and the stable replaces the latest
+alpha's bump with its own, built from the same commit), exactly as a stable's has been since
+2026-10-02. **Nothing in a release's critical path pushes to `main` any more.** The pre-release tag
+stays on the commit it was cut at (on `main`, where `CI passed` ran), so a stable still resolves
+its commit from the latest pre-release tag and gates 3 and 4 read the same facts as before.
+
+**Why now - the trigger the earlier record named was met.** The section "A pre-release tag can
+still race a merge" below closed this on 2026-10-09 at ONE refusal in 108 alphas, with "reopen if
+it recurs". Measured 2026-10-30 over `gh run list --workflow release.yml`: of the last 8 release
+runs 3 failed, and two of them were exactly this - `v1.5.1-alpha.3` refused by gate 2 (`main has
+moved past 239873d0`), and `v1.5.1-alpha.5` passed the preflight and was then rejected at the push
+(`! [rejected] HEAD -> main (fetch first)`), one minute later, which no gate can see. (The third,
+2026-10-27, was an iOS build step.) The merge rate is what changed: auto-merge drains the queue
+while a release runs, which is the working rhythm, not an accident. A `durable-rules` entry asked
+humans to hold arming during the bump; a rule that asks the queue to stop is the cost being paid
+by hand.
+
+**What gate 2 keeps, and what it drops.** Gate 2 asked two things: the commit is on `main`, and
+`main` still points at it (so the bump could fast-forward). The second existed ONLY because the
+bump pushed there; with no push, `classify_main_position` (and its read of the released tree's
+version, through `node`) is deleted and gate 2 is `classify_on_main`: containment. Its intent -
+the commit reached the trunk through a pull request - is unchanged, and containment now equals
+containment at the cut because `main` is never force-pushed. Gate 3 is untouched: `CI passed` on
+that exact commit. **No bypass input and no skip flag were added.**
+
+**But the dropped half refused a STALE pre-release by accident, so that is now asked on purpose.**
+Found by the adversarial review of #2715: anything older than the newest release was behind
+`main`, so "`main` still points at it" refused it. Without that, `v1.5.1-alpha.5` refused at gate 3,
+then `alpha.6` cut and shipped, then a `gh run rerun` of alpha.5 (which this page recommends for
+gate 3) would pass every gate, force `release/v1.5.1` back to alpha.5's bump, redeploy older code to
+dev and move `dev-deployed` back, and upload store build `..05` after `..06` - App Store Connect
+refuses a `CFBundleVersion` that does not rise, Play a rollout that blocks upgrades - and the next
+stable would then be refused at gate 4 (`diverged`). So a pre-release also answers
+`classify_prerelease_currency`: every `v*` tag (`matching-refs/tags/v`) is ordered by the store band
+(`bump-app-version.sh --codes`, the one implementation; a tag the band cannot parse never reached a
+store and orders nothing), and the release is refused when the latest pre-release of its version,
+or any tag at all, carries a higher build number - including this version's own stable (the
+refusal then names the next patch's `alpha.1`). **A partial list is refused, never classified**:
+refs come back in name order, so `v1.10.*` precedes `v1.5.*` and a lost page can hold the higher
+release - the listing's exit is read (the script has no `set -e`, a pipe would hide it) and a list
+missing the release's own tag is `undecidable`. **A rerun
+therefore rescues gate 3 only while nothing newer shipped**; after that the refusal says to cut a
+new pre-release at the current head, numbered above the newest. A stable does not ask it: it
+resolves the latest pre-release of its version itself.
+
+**What `main` still owes, and why it is landed rather than dropped.** The earlier record named the
+cost of this move: `main`'s manifests would stop naming the version. They are kept accurate by the
+`land` job, which now runs for every release: a pre-release lands its version on `main`'s head
+through the same `bump-app-version.sh` that wrote it on the branch, **forward only** (the store
+band, `bump-app-version.sh --code`, orders every version; a landing re-run after a later release
+landed changes nothing), and retries a lost race; a stable lands its changelog as before. A red
+`land` is a job to re-run and holds back nothing - dev, the testers and both stores are already
+served by then.
+
+**What `dev-deployed` names.** The marker is written at the BUMP commit, which now lives on the
+release branch. Gate 4 reads containment (`compare target...dev-deployed`), so the marker one bump
+past the stable's commit still covers it (`ahead 1`). Dev serving an OLDER pre-release now reads
+`diverged` rather than `behind`; both refuse, and the refusal text says which.
+
+**Refuted alternatives.** (1) *Rebase the bump onto `main` and retry the push* - that builds and
+ships a tree `CI passed` never ran on, the fallback the earlier record forbade. (2) *Let the
+gesture name "the release" and the machine take `main` HEAD at preflight time* - the earlier
+record's suggestion; it narrows the window from minutes to the one between the preflight and the
+push (exactly where `alpha.5` died) and does nothing for a rerun. (3) *Keep pushing to `main` when
+it fast-forwards, else to the branch* - two paths for one fact, a fallback by construction.
+(4) *A pre-release tag moved to its bump commit, as the stable's is* - the bump commit carries no
+`CI passed`, so a stable resolving from it would be refused by gate 3.
+
+Tests: `release-preflight.test.sh` (gate 2's containment, `main` moving on refuses nothing; a stale
+or superseded pre-release is refused, the latest passes),
+`land-release.test.sh` (pre-release landing forward-only, idempotent and retried after a lost race;
+the stable fold), `bump-version.test.sh` (`--code`, `--codes`), `release-chain.test.sh` (no release step pushes `HEAD:main`; the
+`land` job runs for every release).
 
 ## GitHub Secrets
 
@@ -1066,7 +1143,8 @@ gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gestur
   '- Release (release.yml), ONE run
        |
        |- preflight   five gates; a refusal ends it here, having moved nothing
-       |- bump        writes the version into 18 files, commits, pushes to main, outputs the SHA
+       |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
+       |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
        |- THE FORK, and there is only one: prerelease -> estate = dev | production
        |
@@ -2234,6 +2312,9 @@ Two specimens of a squash-merged branch still on the remote: #341 (2026-09-03, p
 **GitHub re-creates a branch when something pushes to it**, so nothing failed to delete anything: the branch was deleted on merge and a workstation pushed it back (which also explains #341). The cost is not untidiness: the commit pushed there was a CHANGELOG shortening the user had asked for that evening, and it never travelled to `main` (a merged pull request does not carry another commit). **Work pushed to a merged branch is committed, pushed and unshipped, and nothing says so** - `git status` is clean and the push succeeds. The prevention is the `git branch -D` at the end of THE DEVELOPMENT CYCLE in `CLAUDE.md`: a local branch kept past its merge is the only thing that can be pushed back.
 
 ### A pre-release tag can still race a merge, between the head read and the tag
+
+**SUPERSEDED 2026-10-30: the trigger below recurred (`v1.5.1-alpha.3`, `v1.5.1-alpha.5`) and the
+bump moved off `main` - [A pre-release is pinned on its release branch](#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30).** Kept as the record of why it waited.
 
 Gate 2 of `.github/scripts/release-preflight.sh` refuses an alpha whose sha `main` has moved past, and a rerun re-reads the SAME tag, so it cannot rescue one. The stable half closed with #1367 (a stable ships the latest pre-release of its version on `release/vX.Y.Z` and the tag moves, see above). **Measured 2026-10-09 over every alpha `release.yml` ever ran (108, since 2026-09-03): ONE was refused for it** (`v0.18.22-alpha.3`, 2026-09-24, `main has moved past 774e1455`, which the refusal reported before anything moved, so the cost was one more alpha), and none in the fifteen days since - the other two failed alphas died of a docker build and of the iOS WASM check. The window is only preflight to the bump push (about a minute), and the refusal is clean and names its remedy, so nothing here is broken enough to re-architect: moving an alpha off `main` would change what `main` carries (the manifests' version) for a 1 in 100 refusal. **Reopen if it recurs, with `gh run list --workflow release.yml` showing a second one**, and then: let the gesture name "the release" and the machine take `main` HEAD, never a sha a human read seconds earlier - and never a rebase or a lenient gate 4, which are fallbacks.
 
