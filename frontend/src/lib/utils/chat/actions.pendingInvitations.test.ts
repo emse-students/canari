@@ -474,7 +474,7 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
         ]),
       // Present and live on the server: the group exists, we simply hold nothing for it.
       getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'g1', deletedAt: null }]),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
     });
   }
