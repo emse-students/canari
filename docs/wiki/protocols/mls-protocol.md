@@ -1114,8 +1114,9 @@ completed sweep replaces the asks on screen.
 `memberAdded` notice ("Y a ajouté X au groupe", `sendVisibleNotice`) on every member's device. A
 DECLINE has no frame at all, so the member who declined sees "Vous avez refusé la demande de X" and
 no other member does - a session-only line (`declinedJoinRequests`), deliberately not a stored row.
-A pending ask is not reflected in the conversation list (preview, unread badge): it is seen only on
-opening the conversation.
+While an ask is pending, the conversation-list preview reads the same words ("X veut rejoindre la
+conversation par lien", or "Nouvel appareil de X"; `pendingAskPreview`, derived from the ask store, so the
+ordinary preview returns once it is answered). Preview only: no badge, no unread change, no notification.
 
 **Every online member sees the ask at once, and sees it go at once (2026-10-25).** A
 `welcome_request` reaches ONE elected device, so every other member used to learn of an ask only at
